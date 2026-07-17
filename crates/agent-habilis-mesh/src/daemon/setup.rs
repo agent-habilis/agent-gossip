@@ -150,13 +150,13 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
         }
         // Explicit target: needs RendezvousParams, so can't live in lookups.
         tracing::info!(
-            target: "agent_square::lookup",
+            target: "agent_gossip::lookup",
             rungs = params.bind_ports.len(),
             "pre-registered rendezvous on the loopback port ladder"
         );
     } else if let Some(relay) = params.bootstrap_relay.clone() {
         tracing::info!(
-            target: "agent_square::lookup",
+            target: "agent_gossip::lookup",
             relay = %relay,
             "pre-registered rendezvous at the relay rung for zero-lookup dial"
         );
@@ -215,7 +215,7 @@ pub struct SetupParams<'a> {
     /// forwarding). Off by default on every path.
     pub multihop: bool,
     /// Skill-drift warning folded into the `ready` event. Computed by the CLI
-    /// (the real `agent-square create`/`join` path) from the on-disk install;
+    /// (the real `agent-gossip create`/`join` path) from the on-disk install;
     /// `None` on the in-process paths, which keeps the in-process
     /// tests hermetic (no dependence on the dev machine's install state).
     pub drift: Option<&'a str>,
@@ -475,7 +475,7 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
     }
     if mesh.requires_invite() {
         sink.emit(NodeEvent::Info(
-            "invite-only — mint a 🎟️ invite with `agent-square invite` for joiners".to_owned(),
+            "invite-only — mint a 🎟️ invite with `agent-gossip invite` for joiners".to_owned(),
         ));
     }
     if let Some(directory) = &advertise {
@@ -574,7 +574,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         author.as_str(),
         mesh.network_label(),
     );
-    // A topic square announces the raw string, not the derived `#name` — the
+    // A topic room announces the raw string, not the derived `#name` — the
     // name is lossy and the string is what a user shares to meet peers.
     sink.emit(NodeEvent::Info(match &topic_string {
         Some(raw_topic) => format!("joined topic {raw_topic} as <{author}>"),

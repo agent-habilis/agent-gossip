@@ -8,13 +8,15 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // task matches `ci`'s clippy invocation. Without it, code reachable only
     // under the feature (e.g. `Message::new_state`, the extra `handle_session_request`
     // arms and their gated `expect`) trips false dead-code / too-many-lines errors.
-    // The feature is qualified (`agent-square/adversarial`) because a second `-p`
-    // makes a bare feature name ambiguous. `agent-square-test-fixtures` is named
-    // explicitly: clippy only lints the packages it is given, so the test harness
-    // would otherwise be compiled but never linted.
+    // The feature stays qualified (`agent-gossip/adversarial`) because a
+    // workspace-wide invocation makes a bare feature name ambiguous.
+    //
+    // `--workspace`: clippy lints only the packages it is given. Naming the app
+    // left the engine, the transport and the template crates compiled as
+    // dependencies but never linted.
     cmd!(
         sh,
-        "cargo clippy -p agent-square -p agent-square-test-fixtures --all-targets --features agent-square/adversarial -- -D warnings"
+        "cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings"
     )
     .quiet()
     .run()?;

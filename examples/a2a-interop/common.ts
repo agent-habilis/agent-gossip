@@ -14,17 +14,17 @@ import type { Message, Part } from "@a2a-js/sdk";
 export const APPROVAL_TEXT = "approve";
 
 export interface DaemonSession {
-  square: string;
+  room: string;
   name: string;
   nickname: string;
   a2aPort: number;
   a2aToken: string;
 }
 
-export function agentSquareBin(): string {
+export function agentRoomBin(): string {
   return (
-    process.env.AGENT_SQUARE_BIN ??
-    new URL("../../target/debug/agent-square", import.meta.url).pathname
+    process.env.AGENT_GOSSIP_BIN ??
+    new URL("../../target/debug/agent-gossip", import.meta.url).pathname
   );
 }
 
@@ -40,7 +40,7 @@ export async function waitForSession(
       const raw = await Bun.file(stateFile).json();
       if (raw.ready && raw.a2a_port && raw.a2a_token) {
         return {
-          square: raw.square,
+          room: raw.room,
           name: raw.name,
           nickname: raw.nickname,
           a2aPort: raw.a2a_port,
@@ -78,14 +78,14 @@ export function messageText(message: Message | undefined): string {
     .join("\n");
 }
 
-export async function runAgentSquare(args: string[]): Promise<void> {
-  const proc = Bun.spawn([agentSquareBin(), ...args], {
+export async function runAgentGossip(args: string[]): Promise<void> {
+  const proc = Bun.spawn([agentRoomBin(), ...args], {
     stdout: "inherit",
     stderr: "inherit",
   });
   const code = await proc.exited;
   if (code !== 0) {
-    throw new Error(`agent-square ${args.join(" ")} exited with ${code}`);
+    throw new Error(`agent-gossip ${args.join(" ")} exited with ${code}`);
   }
 }
 
@@ -99,12 +99,12 @@ export interface Mesh {
   stop(): void;
 }
 
-// Two agent-square daemons on a fresh loopback square: daemon A (`create`)
+// Two agent-gossip daemons on a fresh loopback room: daemon A (`create`)
 // and daemon B (`join`, nicknamed "worker"), both with `--a2a-serve`. A
 // fresh mkdtempSync dir + OS-assigned ports every call, so this is safe to
 // invoke repeatedly with no leftover state between runs.
 export async function startMesh(): Promise<Mesh> {
-  const bin = agentSquareBin();
+  const bin = agentRoomBin();
   const dir = mkdtempSync(join(tmpdir(), "a2a-interop-"));
   const stateA = join(dir, "a.json");
   const stateB = join(dir, "b.json");
@@ -123,7 +123,7 @@ export async function startMesh(): Promise<Mesh> {
     const sessionA = await waitForSession(stateA);
 
     const daemonB = Bun.spawn(
-      [bin, "join", sessionA.square, "--nickname", "worker", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateB],
+      [bin, "join", sessionA.room, "--nickname", "worker", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateB],
       { stdout: Bun.file(join(dir, "daemon-b.log")), stderr: Bun.file(join(dir, "daemon-b.err.log")) },
     );
     children.push(daemonB);

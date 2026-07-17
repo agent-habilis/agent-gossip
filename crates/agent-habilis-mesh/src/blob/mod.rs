@@ -106,7 +106,7 @@ pub async fn url_part(
 /// ALPN for the blob channel — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from `GOSSIP_ALPN` and the a2a bridge's
 /// `A2A_ALPN`, so a mismatched dial is rejected at the QUIC handshake.
-pub(crate) const BLOB_ALPN: &[u8] = b"agent-square/blob/1";
+pub(crate) const BLOB_ALPN: &[u8] = b"agent-gossip/blob/1";
 
 /// Length of the bearer-capability secret carried in a blob ticket, and of the
 /// auth token opening the fetch stream (the raw secret, or its Argon2id stretch
@@ -142,14 +142,14 @@ mod tests {
     /// A throwaway file under the OS temp dir holding `bytes`; the caller drops it.
     fn temp_file(bytes: &[u8]) -> PathBuf {
         let path =
-            std::env::temp_dir().join(format!("agent-square-blob-src-{}", rand::rng().next_u64()));
+            std::env::temp_dir().join(format!("agent-gossip-blob-src-{}", rand::rng().next_u64()));
         fs::write(&path, bytes).expect("write temp file");
         path
     }
 
     fn temp_spool() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-square-blob-spool-{}",
+            "agent-gossip-blob-spool-{}",
             rand::rng().next_u64()
         ))
     }

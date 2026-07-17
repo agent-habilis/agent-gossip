@@ -4,15 +4,15 @@ use crate::TaskOutcome;
 use crate::util::{output, repo_root};
 
 pub(crate) fn run(sh: &Shell) -> TaskOutcome {
-    output::status("Installing", "agent-square");
+    output::status("Installing", "agent-gossip");
     // Absolute, not `--path .`: no task changes directory, so a relative path
     // would only resolve when invoked from the workspace root.
-    let pkg = repo_root().join("crates/agent-square");
+    let pkg = repo_root().join("crates/agent-gossip");
     // `--force` is required: the crate version rarely changes between builds
     // (it stays `0.2.0` across many commits), and without `--force`
     // `cargo install` treats "0.2.0 already installed" as up-to-date
     // and **skips the rebuild entirely**, silently leaving the previously
-    // installed binary in place. That shipped a stale `agent-square` to fleet hosts
+    // installed binary in place. That shipped a stale `agent-gossip` to fleet hosts
     // (the binary's git-hash stamp lagged the checked-out commit). `--force`
     // always rebuilds + reinstalls the current tree.
     //
@@ -32,7 +32,10 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     let installed = std::env::var_os("CARGO_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::home_dir().map(|user_home| user_home.join(".cargo")))
-        .map_or_else(|| "agent-square".into(), |cargo| cargo.join("bin/agent-square"));
+        .map_or_else(
+            || "agent-gossip".into(),
+            |cargo| cargo.join("bin/agent-gossip"),
+        );
     let version = cmd!(sh, "{installed} --version")
         .quiet()
         .read()

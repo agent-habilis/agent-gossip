@@ -3,7 +3,7 @@
 // B's localhost binding). The worker legs — status updates and the artifact —
 // are not JSON-RPC methods on the binding (the daemon is the A2A server; the
 // agent behind it authors those frames), so they go through the
-// `agent-square a2a status|artifact` CLI against the same daemon.
+// `agent-gossip a2a status|artifact` CLI against the same daemon.
 //
 // Standalone usage: bun worker.ts <state-file-of-daemon-B>
 import {
@@ -12,7 +12,7 @@ import {
   Task,
   taskStateToJSON,
 } from "@a2a-js/sdk";
-import { makeClientFactory, runAgentSquare, waitForSession } from "./common";
+import { makeClientFactory, runAgentGossip, waitForSession } from "./common";
 
 export interface WorkerResult {
   taskId: string;
@@ -26,11 +26,11 @@ export async function runWorker(stateFile: string): Promise<WorkerResult> {
   const client = await makeClientFactory(session.a2aToken).createFromUrl(base);
 
   const workerLeg = (taskId: string, args: string[]) =>
-    runAgentSquare([
+    runAgentGossip([
       "a2a",
       ...args.slice(0, 1),
-      "--square",
-      session.square,
+      "--room",
+      session.room,
       "--nickname",
       session.nickname,
       "--task-id",
@@ -55,7 +55,7 @@ export async function runWorker(stateFile: string): Promise<WorkerResult> {
 
   // 2. Accept, answer, and park the task for approval. The "skill" is
   //    deliberately trivial: the demo prompt asks for 6 * 7. (The request
-  //    text itself rides the daemon's event stream / `agent-square poll`,
+  //    text itself rides the daemon's event stream / `agent-gossip poll`,
   //    not the served Task — GetTask carries the state machine + mesh
   //    metadata.)
   await workerLeg(pending.id, ["status", "--state", "working", "--text", "computing"]);

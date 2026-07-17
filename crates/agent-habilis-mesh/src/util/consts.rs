@@ -5,14 +5,20 @@
 
 // The runtime base for per-mesh files is per-user and computed at runtime —
 // see [`crate::util::runtime_base`] / [`crate::util::ensure_runtime_base`].
-// It used to be a hardcoded shared `/tmp/agent-square` const; that let other
+// It used to be a hardcoded shared `/tmp/agent-gossip` const; that let other
 // local users traverse it and read per-member logs, so it moved to a
 // uid-scoped, `0700` directory.
 
-/// The mesh sigil — the single definition of the glyph. It prefixes every
-/// mesh id (`💬://<base58>`) and marks every human/operator output line.
-/// Change this one line to re-glyph the project. Display code that wants the
-/// emoji-presentation selector appends `\u{FE0F}` itself (see the output sink).
+/// The mesh sigil — the single definition of the glyph *in code*. It prefixes
+/// every mesh id (`💬://<base58>`) and marks every human/operator output line.
+/// Display code that wants the emoji-presentation selector appends `\u{FE0F}`
+/// itself (see the output sink).
+///
+/// Re-glyphing is not one line. Help text, doc comments, snapshots and test
+/// fixtures spell the glyph literally in ~200 places and cannot interpolate a
+/// const, and a stale one is invisible until a user reads the wrong sigil out
+/// of `--help` — `mesh-pipe` advertised the previous glyph long after this line
+/// moved. Change this, then sweep the literals.
 pub const MESH_GLYPH: &str = "💬";
 
 /// The peer sigil — brands a participant's address in its A2A card interface
@@ -175,7 +181,7 @@ pub(crate) const MAX_BLOB_STORE_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
 pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
 
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
-/// IPC contract (the `agent-square poll` client can't know the daemon's configured
+/// IPC contract (the `agent-gossip poll` client can't know the daemon's configured
 /// log size, so the read cap can't depend on it). At the default log size
 /// this equals the log, so `poll` returns everything; a larger configured
 /// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
@@ -265,7 +271,7 @@ pub(crate) const PASSWORD_KDF_P_COST: u32 = 1;
 // control, with history), never an ephemeral shell var. Each is the default
 // for the matching hidden CLI flag (`--alive-timeout-secs`, …) that the
 // subprocess test suite passes to run with short timings; production reads the
-// const. See `agent_square::util::tuning`.
+// const. See `agent_gossip::util::tuning`.
 
 /// How long a peer can go unheard before the sweeper evicts it. Must exceed
 /// the alive-keepalive interval comfortably (3× absorbs one or two lost
@@ -329,7 +335,7 @@ pub const RIVAL_RECHECK_FIRST_SECS: u64 = 12;
 pub const RIVAL_RECHECK_SECS: u64 = 30;
 
 /// Steady shed cadence while meshed — the island-vs-island backstop. Slow,
-/// because a healthy square pays the shed's ~probe-budget beacon blip each
+/// because a healthy room pays the shed's ~probe-budget beacon blip each
 /// cycle and a meshed split (two multi-member islands) is already rare.
 /// Flag: `--rival-recheck-meshed-secs`.
 pub const RIVAL_RECHECK_MESHED_SECS: u64 = 300;
@@ -340,7 +346,7 @@ pub const RIVAL_RECHECK_MESHED_SECS: u64 = 300;
 /// and yields — a tie-break, not a delay knob, so no flag.
 pub const RIVAL_RECHECK_OFFSET_SPAN_SECS: u64 = 8;
 
-/// How long an `agent-square ping` round collects pongs before the daemon emits its
+/// How long an `agent-gossip ping` round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub const PING_WINDOW_SECS: u64 = 10;
 
@@ -391,7 +397,7 @@ pub const ANTIENTROPY_MAX_RESEND: usize = 64;
 /// before returning an empty batch — the single long-poll park length. Kept
 /// under typical MCP-host per-request timeouts so a held call returns before
 /// the host gives up; the daemon itself never blocks (the waiter parks in a
-/// registry). Infinite waiting is a *client* concern: `agent-square poll --long`
+/// registry). Infinite waiting is a *client* concern: `agent-gossip poll --long`
 /// re-issues the read on each empty return. Flag: `--longpoll-max-ms`
 /// (tests shorten it to force the timeout path).
 pub const LONGPOLL_MAX_MS: u64 = 60_000;

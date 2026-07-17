@@ -17,7 +17,7 @@ pub(crate) fn slot_charge(body_len: usize) -> usize {
 }
 
 /// `tracing` target for reassembly (matches the owning gossip plane).
-const LOG_TARGET: &str = "agent_square::gossip";
+const LOG_TARGET: &str = "agent_gossip::gossip";
 
 /// What became of one ingested shard.
 pub(crate) enum ShardIngest {

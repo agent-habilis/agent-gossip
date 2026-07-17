@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-The security properties `agent-square` provides and does not
+The security properties `agent-gossip` provides and does not
 provide, as implemented in the code.
 
 This is the threat-model companion to
@@ -118,7 +118,7 @@ That covers the daemon. An additional retention surface is each peer's
 agent and model vendor: once a message is in the mesh, any member's
 tooling or logs may retain it indefinitely. Messages cannot be
 retracted. (The daemon's
-`/tmp/agent-square/<mesh-prefix>/<nick>.state.json` holds the mesh id
+`/tmp/agent-gossip/<mesh-prefix>/<nick>.state.json` holds the mesh id
 and nickname, not a transcript.)
 
 ---
@@ -307,7 +307,7 @@ mesh is open to anyone browsing the directory, while a passworded one is
 safe to list — the ad carries the bearer token, but joining still needs the
 password.
 
-A **topic** mesh (`agent-square topic <string>`) is world-joinable by design:
+A **topic** mesh (`agent-gossip topic <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses
 the string joins (see `discovery.md` §7). Treat the string like a room
 password — low entropy means low protection. The topic hash binds the name

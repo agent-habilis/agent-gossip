@@ -1,11 +1,11 @@
 # AGENTS.md — Instructions for AI Agents
 
-agent-square is a serverless gossip network that lets AI agents exchange
+agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
-A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 10.0) carried over
+A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 11.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding — see [`docs/a2a-binding.md`](docs/a2a-binding.md). This file is guidance for working **on**
-the project; user/agent-facing usage of the `agent-square` CLI lives in `agent-square man`
+the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
 (source: `docs/manual.txt`).
 
 ## Concept Glossary
@@ -53,7 +53,7 @@ every subcommand.
 ### Workspace layout
 
 The root `Cargo.toml` is a **virtual manifest** — it owns no package. Every
-crate lives under `crates/` (`agent-square` the app, `agent-habilis-mesh` the
+crate lives under `crates/` (`agent-gossip` the app, `agent-habilis-mesh` the
 engine, `iroh-multihop-transport`, `slot-template`, and the dev-only `tasks`),
 with `examples/mesh-pipe` as a second engine consumer.
 
@@ -63,7 +63,7 @@ dropping any of them changes the build silently:
 - **`resolver = "3"`** — a virtual workspace inherits nothing from its members,
   so it otherwise defaults to the edition-2015 `resolver = "1"` and unifies
   dev-/build-dependency features into the shipped binary.
-- **`default-members = ["crates/agent-square"]`** — an unscoped `cargo build` /
+- **`default-members = ["crates/agent-gossip"]`** — an unscoped `cargo build` /
   `test` / `clippy` at a virtual root means *all* members. This pins it to the
   app; widening coverage is a deliberate change, not a default.
 - **`[profile.*]` and `[patch.crates-io]`** — cargo honours these only in the
@@ -82,31 +82,31 @@ observable markers instead of sleeping fixed floors, but the suite still
 takes minutes end to end. The remaining floors are iroh-bound, not ours:
 the 15s direct-path idle timeout floors the freeze-window tests, the two
 beacon-migration tests keep a fixed ~36s handoff wait at the production heal
-cadence (see `RENDEZVOUS_HANDOFF` in `crates/agent-square/tests/gossip_network.rs` — shortening
+cadence (see `RENDEZVOUS_HANDOFF` in `crates/agent-gossip/tests/gossip_network.rs` — shortening
 the cadence there trips a zombie-link pathology), and the serial-gated
 reliability section runs one test at a time.
 
-The suite shares one harness, the **`agent-square-test-fixtures`** crate
+The suite shares one harness, the **`agent-gossip-test-fixtures`** crate
 (`InProcNode`, the subprocess `Node`, the `cli_*` helpers). It is a library
 crate, not a `tests/common/` module, because each integration binary is its own
 compilation unit: as a module, every helper a given binary did not call looked
 dead, which forced a blanket `#![allow(dead_code)]` that also hid genuinely dead
 helpers. A library's `pub` surface is exempt from the lint, while the crate's own
-private helpers stay checked. It is a dev-dependency of `agent-square` and
-depends on `agent-square` in turn — cargo permits the cycle because the back-edge
+private helpers stay checked. It is a dev-dependency of `agent-gossip` and
+depends on `agent-gossip` in turn — cargo permits the cycle because the back-edge
 is a dev-dependency. Note `bin()` resolves the binary under test by walking up
-from `current_exe()`: `env!("CARGO_BIN_EXE_agent-square")` is defined only for
+from `current_exe()`: `env!("CARGO_BIN_EXE_agent-gossip")` is defined only for
 the owning package's integration tests, never for a library.
 
 Three layers:
 - **In-process (default, fast):** behavioral + output-schema tests drive the
-  real event loop via the library `api` (`agent_square_test_fixtures::InProcNode`).
+  real event loop via the library `api` (`agent_gossip_test_fixtures::InProcNode`).
   Real iroh mesh, no subprocess — sub-second.
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
   `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT
-  heal recovery, anti-entropy backfill) — `crates/agent-square/tests/gossip_network.rs`.
-- **Adversarial (`--features adversarial`, `crates/agent-square/tests/adversarial.rs`):** an
+  heal recovery, anti-entropy backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
+- **Adversarial (`--features adversarial`, `crates/agent-gossip/tests/adversarial.rs`):** an
   in-process attacker injects crafted wire bytes a correct client never
   produces; defended cases pass, open-gap `#[should_panic]` tripwires go red
   the moment a gap is closed. `cargo task test`/`ci` enable the feature.
@@ -134,25 +134,25 @@ command is JSON-only, and a live skill parses each. Two invariants:
 ### Logging
 
 Developer logs use `tracing`. Daemons (`create`/`join`) write to
-`<log_dir>/<mesh_prefix>-<nick>.log` (default: the `agent-square/logs`
+`<log_dir>/<mesh_prefix>-<nick>.log` (default: the `agent-gossip/logs`
 subdir of the OS temp dir; `--log-dir` overrides). **Message bodies are
 redacted by default** so a log is safe to share; pass the hidden `--log-raw`
 for local debugging only. The `--output json` stdout stream is the functional
 agent API — always raw, a separate path from the file sink.
 
 The module path is the log target (`EnvFilter` prefix-matches), one per
-subsystem: `agent_square::{lookup,gossip,lifecycle,beacon,directory}`.
+subsystem: `agent_gossip::{lookup,gossip,lifecycle,beacon,directory}`.
 Override at runtime, e.g.
-`RUST_LOG=agent_square::gossip=trace cargo run -- create`.
+`RUST_LOG=agent_gossip::gossip=trace cargo run -- create`.
 
 ### Man pages
 
 Two manuals, one source each:
-- **`agent-square man`** — the manual in man-page form, embedded from
+- **`agent-gossip man`** — the manual in man-page form, embedded from
   `docs/manual.txt` via `include_str!`. Edit that file to change it.
-- **roff man pages** (`man agent-square`) — `cargo task man` walks the clap tree
-  (`agent_square::cli_command()`) through `clap_mangen` in-process; the
-  dep lives only in the dev-only `tasks` crate, never the shipped `agent-square`.
+- **roff man pages** (`man agent-gossip`) — `cargo task man` walks the clap tree
+  (`agent_gossip::cli_command()`) through `clap_mangen` in-process; the
+  dep lives only in the dev-only `tasks` crate, never the shipped `agent-gossip`.
 
 ### Releasing
 

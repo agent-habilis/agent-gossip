@@ -47,34 +47,37 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `10.0` for the
-/// **agent-mesh → agent-square** product rename, which rebrands every crypto
-/// byte-domain (message/unicast/circuit/blob ALPNs, the seal/sym/x25519/invite
-/// seeds, and the directory base seed all move from `agent-mesh/…` to
-/// `agent-square/…`). Because those domains are mixed into signature and
-/// key-derivation transcripts, a `9.0` peer derives different bytes and its
-/// signature verification fails silently — so the version gate rejects the
-/// cross-version frame loudly instead. The identity wire key itself stays
-/// **`mesh`** (the concept is unchanged).
+/// Protocol version embedded in every message, `11.0` for the agent-gossip
+/// rebrand. The crypto byte-domains carry the product name (the
+/// message/unicast/a2a/blob ALPNs, the seal/sym/x25519/invite seeds, the
+/// directory base seed), and they are mixed into signature and key-derivation
+/// transcripts — so any rebrand changes the bytes an older build derives and its
+/// signature verification fails *silently*. The exact-match gate in `parse`
+/// exists to turn that into a loud rejection rather than a frame that folds to a
+/// no-op and diverges. Rebrand the domains, bump this.
 ///
-/// `9.0` was the **swarm → mesh** rename, which broke interop with an `8.0`
-/// peer: the per-message identity field renamed from `swarm` to **`mesh`** (the
-/// JSON wire key became `"mesh"`), and the mesh terminology carried through the
-/// whole surface — card extensions, meta keys, and JSON-RPC method namespace all
-/// moved from `swarm:*` / `swarm/*` to `mesh:*` / `mesh/*`. An `8.0` peer keyed
-/// the identity gate on the old `swarm` key, so a `9.0` frame read as a
-/// foreign/absent id and was dropped.
+/// The identity wire key stays **`mesh`**, and so does the internal vocabulary.
+/// The user-facing noun for a session became **room** at the same time, but that
+/// is a CLI/docs/MCP surface word and never reaches the wire.
 ///
-/// (`8.0` was three co-shipped wire changes: the payload-generic `App` envelope
-/// (opaque `tag`, addressee `to`, generic `corr`), unbounded multipart bodies up
-/// to [`crate::util::consts::MAX_SHARD_TOTAL`] (`64 MiB`), and password-mesh
-/// `{"k":"enc",…}` content encryption. `7.0` was the automerge `state`/`meta`
-/// channels — Base58 change bodies + heads-based digests; `6.0` directed
-/// sealing; `5.0` the A2A v1.0 / `ProtoJSON` migration; `4.0` the native-A2A
-/// port; `3.0` the A2A migration; `2.0` the RFC 6902 → RFC 7386 shared-state
-/// change.) The exact-match gate in `parse` drops cross-version messages loudly
-/// rather than letting them silently fold to no-ops and diverge.
-pub(crate) const VERSION: &str = "10.0";
+/// Earlier versions are *format* history, not interop history — nothing shipped,
+/// so no peer ever ran them:
+///
+/// - `10.0` / `9.0` — the agent-mesh → agent-square and swarm → mesh renames.
+///   `9.0` also moved the identity wire key to `"mesh"` and the JSON-RPC
+///   namespace to `mesh:*`.
+/// - `8.0` — the payload-generic `App` envelope (opaque `tag`, addressee `to`,
+///   generic `corr`), multipart bodies up to
+///   [`crate::util::consts::MAX_SHARD_TOTAL`] (`64 MiB`), and password-mesh
+///   `{"k":"enc",…}` content encryption.
+/// - `7.0` — the automerge `state`/`meta` channels: Base58 change bodies,
+///   heads-based digests.
+/// - `6.0` — directed sealing.
+/// - `5.0` — the A2A v1.0 / `ProtoJSON` migration.
+/// - `4.0` — the native-A2A port.
+/// - `3.0` — the A2A migration.
+/// - `2.0` — RFC 6902 → RFC 7386 shared state.
+pub(crate) const VERSION: &str = "11.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -436,7 +439,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"10.0","id":"<uuid>","type":"app","tag":"a2a_msg","mesh":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"11.0","id":"<uuid>","type":"app","tag":"a2a_msg","mesh":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for a directed app frame.
@@ -730,7 +733,7 @@ impl Message {
     /// (deterministic, sorted-key) `serde_json` encodings.
     #[must_use]
     pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
-        const DOMAIN: &[u8] = b"agent-square/msg";
+        const DOMAIN: &[u8] = b"agent-gossip/msg";
         let mut buf = Vec::new();
         let mut field = |bytes: &[u8]| {
             buf.extend_from_slice(
@@ -1116,7 +1119,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -1126,7 +1129,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -1148,14 +1151,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#mesh` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"10.0","id":"not-a-uuid","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"11.0","id":"not-a-uuid","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1163,7 +1166,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1175,7 +1178,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.

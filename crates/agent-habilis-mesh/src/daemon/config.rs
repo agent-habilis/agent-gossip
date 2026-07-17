@@ -22,7 +22,7 @@ use crate::beacon;
 /// carrying them as independent, drift-prone bools.
 #[derive(Debug)]
 pub enum DriverMode {
-    /// The `agent-square create` / `join` CLI. Owns the unix-socket IPC listener
+    /// The `agent-gossip create` / `join` CLI. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
     /// Fully in-process, driven by a [`Node`](super::Node). Outbound sends +
@@ -102,7 +102,7 @@ pub struct EventLoopConfig {
     /// The raw string a topic mesh was derived from; `None` for create/join.
     /// The derived `name` is lossy (URL scheme and query stripped, truncated),
     /// so this is what the joined/left lines, the state file, and `leave`'s
-    /// report show for a topic square.
+    /// report show for a topic room.
     pub topic_string: Option<String>,
     /// The raw mesh password, retained for the process lifetime when the
     /// mesh is password-protected (`None` otherwise). Needed at blob-offload
@@ -177,7 +177,7 @@ pub struct EventLoopConfig {
 /// needs (mesh id, name, nickname) `run` already holds.
 #[derive(Debug, Default)]
 pub struct ReadyAnnounce {
-    /// A stale skill install, rendered by `agent-square`'s `drift_warning`.
+    /// A stale skill install, rendered by `agent-gossip`'s `drift_warning`.
     pub drift: Option<String>,
     /// The bound A2A HTTP port under `--a2a-serve`.
     pub http_port: Option<u16>,

@@ -1,5 +1,5 @@
 // Rerunnable harness for the interop scenario: two external @a2a-js/sdk
-// agents completing a full A2A task lifecycle through two agent-square
+// agents completing a full A2A task lifecycle through two agent-gossip
 // daemons bridged by --a2a-serve. Deterministic — no LLM anywhere, every
 // exchanged string is a literal (see client.ts/worker.ts) — so this is safe
 // to run repeatedly (`bun test`), including back-to-back in the same shell:
@@ -20,7 +20,7 @@ afterAll(() => {
 });
 
 test(
-  "two external @a2a-js/sdk agents complete a task through the agent-square bridge",
+  "two external @a2a-js/sdk agents complete a task through the agent-gossip bridge",
   async () => {
     const [initiator, worker] = await Promise.all([
       runInitiator(mesh.stateA, mesh.sessionB.nickname),

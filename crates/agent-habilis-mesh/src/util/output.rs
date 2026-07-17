@@ -9,7 +9,7 @@
 //
 // Stream split: stdout is the product, stderr is only for errors. A status line
 // IS the product of `plug`/`unplug` (they print nothing else), so it goes to
-// stdout and survives `agent-square plug > roster.txt`. Only `warn`/`error` —
+// stdout and survives `agent-gossip plug > roster.txt`. Only `warn`/`error` —
 // diagnostics, not output — go to stderr.
 
 use std::path::{Path, PathBuf};

@@ -248,7 +248,7 @@ where
     let path = socket_path(mesh, nickname);
     let name = to_name(&path).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
-        "No active square server running for nickname '{nickname}'. Start one with `agent-square create` or `agent-square join {{{MESH_GLYPH}...}} --nickname {nickname}`."
+        "No active room server running for nickname '{nickname}'. Start one with `agent-gossip create` or `agent-gossip join {{{MESH_GLYPH}...}} --nickname {nickname}`."
     ))?;
     round_trip(stream, cmd).await
 }

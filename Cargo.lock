@@ -68,6 +68,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-gossip"
+version = "0.6.0"
+dependencies = [
+ "agent-gossip-test-fixtures",
+ "agent-habilis-mesh",
+ "anstream 0.6.21",
+ "anstyle",
+ "anyhow",
+ "async-trait",
+ "automerge",
+ "bs58",
+ "bytes",
+ "clap",
+ "dhat",
+ "divan",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "include_dir",
+ "insta",
+ "iroh",
+ "mimalloc",
+ "proptest",
+ "rand 0.9.4",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "slot-template",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "agent-gossip-test-fixtures"
+version = "0.5.0"
+dependencies = [
+ "agent-gossip",
+ "anyhow",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "agent-habilis-mesh"
 version = "0.5.0"
 dependencies = [
@@ -103,52 +149,6 @@ dependencies = [
  "vergen-gitcl 1.0.8",
  "x25519-dalek",
  "zeroize",
-]
-
-[[package]]
-name = "agent-square"
-version = "0.6.0"
-dependencies = [
- "agent-habilis-mesh",
- "agent-square-test-fixtures",
- "anstream 0.6.21",
- "anstyle",
- "anyhow",
- "async-trait",
- "automerge",
- "bs58",
- "bytes",
- "clap",
- "dhat",
- "divan",
- "http-body-util",
- "hyper",
- "hyper-util",
- "include_dir",
- "insta",
- "iroh",
- "mimalloc",
- "proptest",
- "rand 0.9.4",
- "rmcp",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "slot-template",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "agent-square-test-fixtures"
-version = "0.5.0"
-dependencies = [
- "agent-square",
- "anyhow",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -4552,8 +4552,8 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "tasks"
 version = "0.1.0"
 dependencies = [
+ "agent-gossip",
  "agent-habilis-mesh",
- "agent-square",
  "cargo-zigbuild",
  "clap",
  "clap_mangen",

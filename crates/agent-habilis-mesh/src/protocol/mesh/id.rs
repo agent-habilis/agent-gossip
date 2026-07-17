@@ -42,7 +42,7 @@ impl fmt::Display for MeshIdError {
             MeshIdError::Charset(value) => {
                 write!(formatter, "mesh id has invalid Base58 char(s): {value:?}")
             }
-            MeshIdError::InvalidHash => formatter.write_str("invalid square hash"),
+            MeshIdError::InvalidHash => formatter.write_str("invalid room hash"),
         }
     }
 }
@@ -209,7 +209,7 @@ mod mesh_id_tests {
     fn serde_rejects_an_invalid_hash() {
         let invalid = serde_json::to_string("💬://AbCdEf1234").unwrap();
         let error = serde_json::from_str::<MeshId>(&invalid).unwrap_err();
-        assert!(error.to_string().contains("invalid square hash"));
+        assert!(error.to_string().contains("invalid room hash"));
     }
 
     #[test]

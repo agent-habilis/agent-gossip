@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-agent-square has no central server. Every peer is equal, and
+agent-gossip has no central server. Every peer is equal, and
 every message that lands on one peer eventually lands on every other
 peer in the mesh.
 

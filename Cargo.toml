@@ -11,7 +11,7 @@ resolver = "3"
 # `cargo build`/`test`/`clippy`/`run` defaults to *every* member instead of the
 # app. This pins the pre-split meaning. Widening coverage to the whole workspace
 # is a deliberate follow-up (drop this key), not a side effect of the move.
-default-members = ["crates/agent-square"]
+default-members = ["crates/agent-gossip"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep
@@ -20,7 +20,7 @@ default-members = ["crates/agent-square"]
 edition = "2024"
 rust-version = "1.93"
 
-# Deps shared by the app (`agent-square`) and the engine
+# Deps shared by the app (`agent-gossip`) and the engine
 # (`agent-habilis-mesh`), pinned once here so versions stay in lockstep.
 # Each crate opts in with `dep.workspace = true` (and may union in extra
 # features). Feature sets here are the union across both crates — cargo

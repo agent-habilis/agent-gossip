@@ -10,11 +10,11 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Running", "clippy");
     // `--features adversarial` so the adversarial suite + shim are linted
     // too (they are `required-features`-gated, else clippy would skip them).
-    // See `lint.rs` for why the feature is qualified and the fixtures crate
-    // is named explicitly.
+    // See `lint.rs` for why the feature is qualified and why this is
+    // `--workspace`.
     cmd!(
         sh,
-        "cargo clippy -p agent-square -p agent-square-test-fixtures --all-targets --features agent-square/adversarial -- -D warnings"
+        "cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings"
     )
     .quiet()
     .run()?;
@@ -33,12 +33,21 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // except adversarial at 2, then the adversarial suite alone at 4.
     // (GitHub CI runs only the first — it does not enable the
     // `adversarial` feature.)
-    cmd!(sh, "cargo test -p agent-square -- --test-threads=2")
-        .quiet()
-        .run()?;
+    //
+    // `--workspace` covers `agent-habilis-mesh`, which owns the wire version,
+    // the crypto byte-domains and `runtime_base()` — the highest-risk code in
+    // the tree, and untested here until it was scoped in. The engine is
+    // in-process and finishes in seconds, so -j2 costs it nothing.
+    // `--no-fail-fast` so one red binary does not hide every binary after it.
     cmd!(
         sh,
-        "cargo test -p agent-square --features adversarial --test adversarial -- --test-threads=4"
+        "cargo test --workspace --no-fail-fast -- --test-threads=2"
+    )
+    .quiet()
+    .run()?;
+    cmd!(
+        sh,
+        "cargo test -p agent-gossip --features adversarial --test adversarial --no-fail-fast -- --test-threads=4"
     )
     .quiet()
     .run()?;

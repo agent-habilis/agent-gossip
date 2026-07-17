@@ -22,7 +22,7 @@ pub(crate) fn tick_prune(state: &mut EventLoopState, sink: &dyn NodeSink) {
         // gone for good (a chat surfaces nothing; an RPC ends as its waiter's
         // timeout), so make the loss loud.
         tracing::warn!(
-            target: "agent_square::gossip",
+            target: "agent_gossip::gossip",
             evicted,
             "stale partial shard groups evicted from the reassembly store"
         );
@@ -50,7 +50,7 @@ fn warn_on_high_resident_memory(
     if resident_mb >= threshold_mb {
         state.resident_memory_warned = true;
         tracing::warn!(
-            target: "agent_square::lifecycle",
+            target: "agent_gossip::lifecycle",
             resident_mb,
             threshold_mb,
             "resident memory crossed the warn threshold (possible leak); not exiting — see consts::RESIDENT_MEMORY_WARN_MB"
@@ -80,7 +80,7 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
 
     if state.meshed && link_len == 0 && roster_len > 0 {
         tracing::warn!(
-            target: "agent_square::lifecycle",
+            target: "agent_gossip::lifecycle",
             roster_len,
             link_len,
             meshed = state.meshed,
@@ -98,7 +98,7 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
     // flap counts — no external `ps` sampler needed (0 if it is unreadable on
     // this platform).
     tracing::info!(
-        target: "agent_square::lifecycle",
+        target: "agent_gossip::lifecycle",
         roster_len,
         link_len,
         meshed = state.meshed,
@@ -111,7 +111,7 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
     // `lifecycle` is pinned to `info` by default, so skip the whole loop
     // unless DEBUG is actually live — otherwise the tick pays N
     // round-trips every interval for output the subscriber discards.
-    if !tracing::enabled!(target: "agent_square::lifecycle", tracing::Level::DEBUG) {
+    if !tracing::enabled!(target: "agent_gossip::lifecycle", tracing::Level::DEBUG) {
         return;
     }
     let (mut direct, mut relay, mut other) = (0usize, 0usize, 0usize);
@@ -123,7 +123,7 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
             _ => other += 1,
         }
         tracing::debug!(
-            target: "agent_square::lifecycle",
+            target: "agent_gossip::lifecycle",
             endpoint_id = %peer_id,
             conn,
             relay = relay_url.as_ref().map_or("-", |url| url.as_str()),
@@ -131,7 +131,7 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
         );
     }
     tracing::debug!(
-        target: "agent_square::lifecycle",
+        target: "agent_gossip::lifecycle",
         roster_len,
         link_len,
         meshed = state.meshed,
@@ -173,7 +173,7 @@ pub(crate) fn note_tick_gap(
     let suspended = wall_gap.saturating_sub(mono_gap) > expected.saturating_mul(2);
     if throttled || suspended {
         tracing::warn!(
-            target: "agent_square::lifecycle",
+            target: "agent_gossip::lifecycle",
             timer,
             mono_gap_ms,
             wall_gap_ms,
@@ -183,7 +183,7 @@ pub(crate) fn note_tick_gap(
         );
     } else {
         tracing::debug!(
-            target: "agent_square::lifecycle",
+            target: "agent_gossip::lifecycle",
             timer,
             mono_gap_ms,
             wall_gap_ms,

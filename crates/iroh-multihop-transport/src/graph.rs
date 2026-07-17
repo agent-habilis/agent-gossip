@@ -47,7 +47,7 @@ impl Graph {
 
     /// Up to `k` **node-disjoint** paths from `src` to `dst`, shortest first.
     /// Greedy: take the shortest, block its interior hops, repeat.
-    /// Interior-disjoint so one dead hop can't sever two circuits at once
+    /// Interior-disjoint so one dead hop can't sever two routes at once
     /// (`src`/`dst` are shared by construction). Stops early when no further
     /// disjoint path exists.
     pub(crate) fn disjoint_paths(

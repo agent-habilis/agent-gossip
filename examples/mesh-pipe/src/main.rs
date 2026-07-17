@@ -4,9 +4,9 @@
 //! deliberately non-a2a one: it defines its own two-tag `App` taxonomy
 //! (`pipe_data` / `pipe_eof`) and a [`NodeApp`]/[`NodeDriver`] that turns
 //! inbound frames into stdout bytes — proving the engine is payload-generic (it
-//! carries a2a tasks and raw bytes over the *same* mesh/discovery/circuit stack,
-//! never inspecting either payload). It depends only on the engine crate, never
-//! on `agent-square`.
+//! carries a2a tasks and raw bytes over the *same* mesh/discovery/directed-routing
+//! stack, never inspecting either payload). It depends only on the engine crate,
+//! never on `agent-gossip`.
 //!
 //! `listen` reads stdin, base64s each ≤`--chunk` slice into a `pipe_data` frame,
 //! and emits one `pipe_eof` at EOF. `connect` joins the same mesh and streams
@@ -70,8 +70,8 @@ enum Command {
 /// Mesh sizing shared by both subcommands.
 #[derive(Args, Clone, Copy)]
 struct MeshArgs {
-    /// Cap on active-view neighbours (a small cap forces a partial mesh, so
-    /// routes to non-neighbours become multi-hop).
+    /// Cap on active-view neighbours (a small cap forces a partial mesh, so a
+    /// peer beyond the active view is no longer a gossip neighbour).
     #[arg(long, value_name = "N", default_value_t = GOSSIP_ACTIVE_VIEW_CAPACITY)]
     max_peers: usize,
 }
@@ -79,11 +79,11 @@ struct MeshArgs {
 #[derive(Args)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "four independent CLI discovery flags (--public/--mdns/--dht/--relay) mirroring the agent-square CLI; they are flat clap flags, not a state machine to model as an enum"
+    reason = "four independent CLI discovery flags (--public/--mdns/--dht/--relay) mirroring the agent-gossip CLI; they are flat clap flags, not a state machine to model as an enum"
 )]
 struct ListenArgs {
-    /// Join an existing mesh by its 🐝… id.
-    #[arg(long, value_name = "🐝…")]
+    /// Join an existing mesh by its 💬… id.
+    #[arg(long, value_name = "💬…")]
     mesh: Option<String>,
     /// Derive a public mesh from a shared string (both sides pass the same).
     #[arg(long, value_name = "STRING")]
@@ -115,8 +115,8 @@ struct ListenArgs {
 
 #[derive(Args)]
 struct ConnectArgs {
-    /// The mesh 🐝… id to join (omit when using `--topic`).
-    #[arg(value_name = "🐝…")]
+    /// The mesh 💬… id to join (omit when using `--topic`).
+    #[arg(value_name = "💬…")]
     id: Option<String>,
     /// Derive the same public mesh from a shared string as the sender.
     #[arg(long, value_name = "STRING")]
@@ -253,7 +253,7 @@ impl NodeDriver for PipeApp {
 
 /// How the two subcommands select a mesh, resolved into a [`SetupKind`].
 enum Select {
-    /// Join a 🐝… id.
+    /// Join a 💬… id.
     Mesh(String),
     /// Derive a public mesh from a shared string.
     Topic(String),
@@ -446,10 +446,10 @@ async fn run_listen(args: ListenArgs) -> Result<()> {
 
 async fn run_connect(args: ConnectArgs) -> Result<()> {
     let select = match (args.id, args.topic) {
-        (Some(_), Some(_)) => anyhow::bail!("pass either a 🐝… id or --topic, not both"),
+        (Some(_), Some(_)) => anyhow::bail!("pass either a 💬… id or --topic, not both"),
         (Some(id), None) => Select::Mesh(id),
         (None, Some(string)) => Select::Topic(string),
-        (None, None) => anyhow::bail!("connect needs a 🐝… id or --topic <string>"),
+        (None, None) => anyhow::bail!("connect needs a 💬… id or --topic <string>"),
     };
     let nickname = args
         .nick

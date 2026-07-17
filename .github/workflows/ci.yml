@@ -29,10 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      # `agent-square-test-fixtures` is named explicitly: clippy lints only the
-      # packages it is given, so the shared test harness would otherwise be
-      # compiled as a dependency but never linted.
-      - run: cargo clippy -p agent-square -p agent-square-test-fixtures --all-targets -- -D warnings
+      # `--workspace`: clippy lints only the packages it is given. Naming the
+      # app left the engine, the transport, the template crate and the shared
+      # test harness compiled as dependencies but never linted.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -66,4 +66,11 @@ jobs:
       # anti-entropy). At 4 those active windows overlap and starve each
       # other's timing, flaking even though the daemons mesh fine; 2 still
       # overlaps the long deliberate sleeps for speed.
-      - run: cargo test -p agent-square --profile ci -- --test-threads=2
+      #
+      # `--workspace`, not `-p agent-gossip`: `agent-habilis-mesh` owns the wire
+      # version, every crypto byte-domain and `runtime_base()`, and its
+      # snapshots pin the frame format. While CI named only the app, none of
+      # that ran here — a stale engine snapshot could go green. It is
+      # in-process and finishes in seconds. `--no-fail-fast` so one red binary
+      # does not hide every binary after it.
+      - run: cargo test --workspace --profile ci --no-fail-fast -- --test-threads=2

@@ -372,12 +372,12 @@ mod tests {
         let template = "```bash\n<!-- slot name=\"launch\" --> --state-file X &\n```\n\nPrint the output <!-- slot name=\"noun\" -->.\n";
         let out = render(
             template,
-            &[("launch", "agent-square create"), ("noun", "block")],
+            &[("launch", "agent-gossip create"), ("noun", "block")],
         )
         .expect("render");
         assert_eq!(
             out,
-            "```bash\nagent-square create --state-file X &\n```\n\nPrint the output block.\n"
+            "```bash\nagent-gossip create --state-file X &\n```\n\nPrint the output block.\n"
         );
     }
 
@@ -492,11 +492,11 @@ mod tests {
     fn include_resolves_relative_to_the_importing_file() {
         let out = expand_files(
             &[
-                ("skills/square-join/SKILL.md", "# join\n\n<!-- include path=\"workflow.md\" -->\n<!-- include path=\"../shared/loop.md\" -->\n"),
-                ("skills/square-join/workflow.md", "## Workflow\n"),
+                ("skills/room-join/SKILL.md", "# join\n\n<!-- include path=\"workflow.md\" -->\n<!-- include path=\"../shared/loop.md\" -->\n"),
+                ("skills/room-join/workflow.md", "## Workflow\n"),
                 ("skills/shared/loop.md", "## Loop\n"),
             ],
-            "skills/square-join/SKILL.md",
+            "skills/room-join/SKILL.md",
         )
         .expect("expand");
         assert_eq!(out, "# join\n\n## Workflow\n\n## Loop\n\n");
@@ -508,7 +508,7 @@ mod tests {
             &[
                 (
                     "a/SKILL.md",
-                    "<!-- include path=\"../shared/session.md\" launch=\"agent-square join \\\"{TARGET}\\\"\" noun=\"line\" -->",
+                    "<!-- include path=\"../shared/session.md\" launch=\"agent-gossip join \\\"{TARGET}\\\"\" noun=\"line\" -->",
                 ),
                 (
                     "shared/session.md",
@@ -520,7 +520,7 @@ mod tests {
         .expect("expand");
         assert_eq!(
             out,
-            "run: agent-square join \"{TARGET}\" &\nprint the line\n"
+            "run: agent-gossip join \"{TARGET}\" &\nprint the line\n"
         );
     }
 
@@ -550,7 +550,7 @@ mod tests {
         // `b.md`'s include is not alone on its line — that is an error, not a splice.
         assert!(matches!(out, Err(Error::MalformedInclude { .. })));
 
-        let out = expand_files(
+        let nested = expand_files(
             &[
                 ("top/a.md", "<!-- include path=\"../mid/b.md\" -->"),
                 (
@@ -562,7 +562,7 @@ mod tests {
             "top/a.md",
         )
         .expect("expand");
-        assert_eq!(out, "before\nc\nafter\n");
+        assert_eq!(nested, "before\nc\nafter\n");
     }
 
     #[test]

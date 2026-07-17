@@ -73,7 +73,7 @@ impl Identity {
 
 /// KDF label deriving the X25519 encryption key from the Ed25519 identity seed —
 /// distinct from every other `derive_secret` label so the keys stay independent.
-const SEAL_ENC_LABEL: &[u8] = b"agent-square/x25519-enc/v1";
+const SEAL_ENC_LABEL: &[u8] = b"agent-gossip/x25519-enc/v1";
 
 /// Verify `signature` over `bytes` against `pubkey`. A malformed or
 /// non-matching signature returns `false` (never panics).

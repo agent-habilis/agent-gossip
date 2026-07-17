@@ -99,9 +99,9 @@ decodes the current wire format. A raw string therefore cannot enter APIs as a
 ## Examples
 
 ```
-agent-square create --public                            # default lookups
-agent-square create --public --relay https://r.example  # custom relay ladder, baked in
-agent-square create --public --password=pw              # verifier baked in; joiners need pw
-agent-square join 💬…                                    # inherits ALL of the above
-agent-square join 💬… --password=pw                      # verified locally before any network
+agent-gossip create --public                            # default lookups
+agent-gossip create --public --relay https://r.example  # custom relay ladder, baked in
+agent-gossip create --public --password=pw              # verifier baked in; joiners need pw
+agent-gossip join 💬…                                    # inherits ALL of the above
+agent-gossip join 💬… --password=pw                      # verified locally before any network
 ```

@@ -1,0 +1,31 @@
+[package]
+name = "agent-gossip-test-fixtures"
+version = "0.5.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["Caio Gondim <me@caiogondim.com>"]
+description = "shared harness for the agent-gossip integration suites"
+documentation = "https://github.com/agent-habilis/agent-gossip"
+license = "MIT"
+repository = "https://github.com/agent-habilis/agent-gossip"
+homepage = "https://github.com/agent-habilis/agent-gossip"
+readme = "../../README.md"
+keywords = ["agents", "gossip", "testing"]
+categories = ["development-tools::testing"]
+# Never leaves the workspace: it exists only so the integration binaries share
+# one harness. Publishing `agent-gossip` must not drag it along.
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The harness drives the app's *public* surface only (`api`, `a2a::gossip`,
+# `mesh_prefix`, `runtime_base`, `event_json`) — never a `pub(crate)` internal.
+# `agent-gossip` in turn dev-depends on this crate; cargo permits the cycle
+# because the back-edge is a dev-dependency, and this is the standard shape of
+# a fixtures crate.
+agent-gossip = { path = "../agent-gossip" }
+tokio.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

@@ -15,11 +15,11 @@ use crate::TaskOutcome;
 /// microbenchmarks need; the transfer bench uses only the public API.
 pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
     match args.first().map(String::as_str) {
-        None => cmd!(sh, "cargo bench -p agent-square --features bench").run()?,
-        Some("transfer") => cmd!(sh, "cargo bench -p agent-square --bench transfer").run()?,
+        None => cmd!(sh, "cargo bench -p agent-gossip --features bench").run()?,
+        Some("transfer") => cmd!(sh, "cargo bench -p agent-gossip --bench transfer").run()?,
         _ => cmd!(
             sh,
-            "cargo bench -p agent-square --features bench --bench hot_paths -- {args...}"
+            "cargo bench -p agent-gossip --features bench --bench hot_paths -- {args...}"
         )
         .run()?,
     }

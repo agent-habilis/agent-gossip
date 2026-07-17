@@ -10,7 +10,7 @@ use crate::util::consts::MESH_GLYPH;
 
 /// What `join` accepts: a literal `💬…` mesh id, or a creator-minted `🎟️`
 /// invite to an invite-only mesh. A shared *string* is not a join target — it
-/// derives its own mesh via `agent-square topic`. Classified and validated
+/// derives its own mesh via `agent-gossip topic`. Classified and validated
 /// **once**, at the boundary (clap `FromStr` / MCP entry), so `resolve` matches
 /// the variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +59,7 @@ impl FromStr for JoinTarget {
         Err(JoinTargetError(format!(
             "`{trimmed}` is not a mesh id or invite (expected a {MESH_GLYPH}… or 🎟️… \
              token). To join a public mesh derived from a shared string, use \
-             `agent-square topic {quoted}`."
+             `agent-gossip topic {quoted}`."
         )))
     }
 }
@@ -74,7 +74,7 @@ pub(crate) fn resolve(target: &JoinTarget) -> Result<Mesh> {
             if mesh.requires_invite() {
                 bail!(
                     "this mesh is invite-only — redeem a 🎟️ invite \
-                     (`agent-square join <🎟️…>`), not the bare hash"
+                     (`agent-gossip join <🎟️…>`), not the bare hash"
                 );
             }
             Ok(mesh)
@@ -96,7 +96,7 @@ mod tests {
         let err = "github.com/alice/proj".parse::<JoinTarget>().unwrap_err();
         assert!(
             err.to_string()
-                .contains("agent-square topic 'github.com/alice/proj'"),
+                .contains("agent-gossip topic 'github.com/alice/proj'"),
             "got: {err}"
         );
     }
@@ -107,14 +107,14 @@ mod tests {
         assert!(
             whitespace_err
                 .to_string()
-                .contains("agent-square topic 'my secret room'"),
+                .contains("agent-gossip topic 'my secret room'"),
             "got: {whitespace_err}"
         );
         let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
         assert!(
             quote_err
                 .to_string()
-                .contains(r"agent-square topic 'it'\''s here'"),
+                .contains(r"agent-gossip topic 'it'\''s here'"),
             "got: {quote_err}"
         );
     }
@@ -138,12 +138,12 @@ mod tests {
     }
 
     #[test]
-    fn mistyped_mesh_id_reports_an_invalid_square_hash() {
+    fn mistyped_mesh_id_reports_an_invalid_room_hash() {
         let mut mistyped = known_mesh_id();
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
         let error = mistyped.parse::<JoinTarget>().unwrap_err();
-        assert_eq!(error.to_string(), "invalid square hash");
+        assert_eq!(error.to_string(), "invalid room hash");
     }
 
     #[test]

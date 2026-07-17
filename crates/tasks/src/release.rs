@@ -22,16 +22,16 @@ pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
         output::status("Releasing", &format!("{level} {}", release_args.join(" ")));
         cmd!(
             sh,
-            "cargo release -p agent-square {level} {release_args...}"
+            "cargo release -p agent-gossip {level} {release_args...}"
         )
         .quiet()
         .run()?;
         return Ok(());
     }
     output::status("Building", "release binary");
-    cmd!(sh, "cargo build -p agent-square --release")
+    cmd!(sh, "cargo build -p agent-gossip --release")
         .quiet()
         .run()?;
-    output::status("Built", "target/release/agent-square");
+    output::status("Built", "target/release/agent-gossip");
     Ok(())
 }

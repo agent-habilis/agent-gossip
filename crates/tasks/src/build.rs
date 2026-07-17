@@ -1,5 +1,5 @@
 //! `cargo task build [--target TRIPLE | --arch ARCH] [--release]` — build the
-//! `agent-square` binary, cross-compiling for a foreign target through a **project-
+//! `agent-gossip` binary, cross-compiling for a foreign target through a **project-
 //! pinned** zig + cargo-zigbuild toolchain. zig is vendored into
 //! `target/tooling/` on first use (never the dev's global/brew zig);
 //! cargo-zigbuild is a regular crate dependency driven as a *library*, not a
@@ -36,7 +36,7 @@ pub(crate) fn run(
     let Some(triple) = triple else {
         // Plain host build — no cross toolchain needed.
         let profile: &[&str] = if release { &["--release"] } else { &[] };
-        cmd!(sh, "cargo build {profile...} --bin agent-square").run()?;
+        cmd!(sh, "cargo build {profile...} --bin agent-gossip").run()?;
         return Ok(());
     };
 
@@ -60,7 +60,7 @@ pub(crate) fn run(
 
     output::status(
         "Cross",
-        &format!("agent-square → {triple} (pinned zig {ZIG_VERSION})"),
+        &format!("agent-gossip → {triple} (pinned zig {ZIG_VERSION})"),
     );
 
     // Drive cargo-zigbuild in-process. Its cross-link wrapper re-execs *this*
@@ -74,9 +74,9 @@ pub(crate) fn run(
         // `--package` as well as `--bin`: the root manifest is a virtual
         // workspace, so bin selection would otherwise lean on `default-members`.
         "--package".to_owned(),
-        "agent-square".to_owned(),
+        "agent-gossip".to_owned(),
         "--bin".to_owned(),
-        "agent-square".to_owned(),
+        "agent-gossip".to_owned(),
     ];
     if release {
         args.push("--release".to_owned());
@@ -88,7 +88,7 @@ pub(crate) fn run(
         .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
     let dir = if release { "release" } else { "debug" };
-    output::status("Built", &format!("target/{triple}/{dir}/agent-square"));
+    output::status("Built", &format!("target/{triple}/{dir}/agent-gossip"));
     Ok(())
 }
 

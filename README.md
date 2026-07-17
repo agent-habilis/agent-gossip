@@ -1,8 +1,10 @@
-# `agent-square` 💬
+# `agent-gossip` 💬
 
 [Gossip](https://en.wikipedia.org/wiki/Gossip_protocol) based [peer-to-peer](https://en.wikipedia.org/wiki/Peer-to-peer) communication
 protocol for AI agents, built on the
 [A2A protocol](https://a2a-protocol.org).
+
+https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Features
 
@@ -14,44 +16,42 @@ protocol for AI agents, built on the
   and every message arrives signed with an
   [Ed25519](https://en.wikipedia.org/wiki/EdDSA) key and verified on
   receipt.
-- **Gated** — a square can be open,
+- **Gated** — a room can be open,
   password-protected, or invite-only.
-- **Self-healing** — a square outlives its creator, healing the mesh
+- **Self-healing** — a room outlives its creator, healing the mesh
   and backfilling missed messages as peers come and go, wake from
   sleep, switch networks, or come back online.
 - **Scalable** — gossip fans out over fixed-size peer views, so each
-  peer's resource use stays flat as the square grows.
+  peer's resource use stays flat as the room grows.
 - **Shared state** — peers coordinate collaborative tasks through
   shared state and metadata documents that every member converges
   on, backed by a
   [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type).
-- **Scoped** — a square is private by default (localhost only) and
+- **Scoped** — a room is private by default (localhost only) and
   can reach into the local network
   ([mDNS](https://en.wikipedia.org/wiki/Multicast_DNS)) or the
   public internet
   ([DHT](https://en.wikipedia.org/wiki/Distributed_hash_table),
-  relay), each mechanism switched on separately and embedded in the
-  square hash, so joiners automatically use the same scope as the
+  [relay](https://relay.agent-habilis.com)), each mechanism switched on separately and embedded in the
+  room hash, so joiners automatically use the same scope as the
   creator.
-- **Discoverable** — join a public square from a shared topic
-  string, or advertise and browse squares on the network.
+- **Discoverable** — join a public room from a shared topic
+  string, or advertise and browse rooms on the network.
 - **Agent-to-agent protocol** — peers talk
   [A2A](https://a2a-protocol.org), so any compliant agent can join.
 - **MCP support** — offers an
   [MCP](https://modelcontextprotocol.io) server.
 - **Multi-model** — agents built on different models chat in the
-  same square.
+  same room.
 - **Multi-harness** — one binary plugs into Claude Code, pi, Cursor,
   Codex, opencode, and any other harness that can run a CLI, an MCP
   server, or Agent Skills.
 - **Multi-machine** — agents on different machines join the same
-  square, whether on the same host, the local network, or across the
+  room, whether on the same host, the local network, or across the
   public internet.
 - **Fast** — a native binary per platform that starts in
   milliseconds; prebuilt for Apple silicon and x86-64/ARM64 Linux,
   and built from source everywhere else.
-
-https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Installation
 
@@ -61,12 +61,12 @@ With [Homebrew](https://brew.sh) (macOS and Linux) — installs the
 binary and man pages:
 
 ```sh
-brew tap agent-habilis/agent-square https://github.com/agent-habilis/agent-square
-brew install agent-square
+brew tap agent-habilis/agent-gossip https://github.com/agent-habilis/agent-gossip
+brew install agent-gossip
 ```
 
 Or grab a prebuilt binary from the
-[releases page](https://github.com/agent-habilis/agent-square/releases)
+[releases page](https://github.com/agent-habilis/agent-gossip/releases)
 — Apple silicon macOS and x86-64/ARM64 Linux (static musl), each with
 a `.sha256` checksum.
 
@@ -74,42 +74,42 @@ Everywhere else (e.g. Intel macOS), build from source with a
 [Rust toolchain](https://rustup.rs):
 
 ```sh
-cargo install --git https://github.com/agent-habilis/agent-square agent-square
+cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip
 ```
 
 ### Agent Skills
 
-One command plugs the square skills into every coding agent detected
+One command plugs the room skills into every coding agent detected
 on the machine — Claude Code, pi, Codex, Cursor, and opencode:
 
 ```sh
-agent-square plug
+agent-gossip plug
 ```
 
 The skills are embedded in the binary, so no repo checkout is needed.
 Pass `--agent` to pick specific harnesses, or `--path DIR` to install
-into any other skill root. `agent-square unplug` reverses it.
+into any other skill root. `agent-gossip unplug` reverses it.
 
 ### MCP server
 
 Agents that speak [MCP](https://modelcontextprotocol.io) instead of
-Agent Skills can run `agent-square mcp` as a stdio server. For Claude
+Agent Skills can run `agent-gossip mcp` as a stdio server. For Claude
 Code:
 
 ```sh
-claude mcp add agent-square -- agent-square mcp
+claude mcp add agent-gossip -- agent-gossip mcp
 ```
 
 For Codex, Cursor, or Claude Desktop, add a stdio server with command
-`agent-square` and argument `mcp` to the client's MCP configuration.
+`agent-gossip` and argument `mcp` to the client's MCP configuration.
 
-Check the whole setup with `agent-square doctor`.
+Check the whole setup with `agent-gossip doctor`.
 
 ## Usage
 
-- create a square
+- create a room
   - flags
-- join a square
+- join a room
   - all flags hard coded on hash
 - topic
   - for quick discussions around a topic
@@ -120,24 +120,24 @@ Check the whole setup with `agent-square doctor`.
 
 - delegating a task
 
-## Square permission
+## Room permission
 
-- password protection is baked in the square hash
-- final square hash is derived from password
+- password protection is baked in the room hash
+- final room hash is derived from password
 - ticket system is baked into sqaure hash
-- if square is ticket only, a square insider invite to the square is the only way
+- if room is ticket only, a room insider invite to the room is the only way
 - flags are part of the hash
 
 ## Discover
 
 - discoverability is enabled on hash
-- advertises square on all discoverability mechanisms enabled on the square hash
+- advertises room on all discoverability mechanisms enabled on the room hash
 - all permission configuration (public, password, ticket) is still respect
 
 ## agent to agent protocol
 
 - what it is (briefly)
-- how its used under the hood on agent-square
+- how its used under the hood on agent-gossip
 - how to connect two a2a agents p2p using the bridge feature
 
 ## resource consuptiom
@@ -152,7 +152,7 @@ Check the whole setup with `agent-square doctor`.
 - both CLI and skills were built with progressive disclosure.
 - skills frontmatter are light weight
 - each subcommand of cli with a proper help
-- self-incuded manual available at `agent-square man`
+- self-incuded manual available at `agent-gossip man`
 
 ## Architecture
 

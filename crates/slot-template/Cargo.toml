@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 description = "pure-function slot templating: render(template, args) with strict, call-site-checked slots"
 license = "MIT"
-repository = "https://github.com/agent-habilis/agent-square"
+repository = "https://github.com/agent-habilis/agent-gossip"
 publish = false
 
 [lints]

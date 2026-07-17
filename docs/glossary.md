@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`agent-square peers` / `square_info` `reach`): `participant_endpoints` maps a nickname
+(`agent-gossip peers` / `room_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -37,7 +37,7 @@ State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
 The point-to-point QUIC channel every **directed** frame (one addressee) takes
 — a real client/server link this node opens to one participant's endpoint, on
-its own ALPN (`agent-square/unicast/1`), off the gossip flood. Gossip carries
+its own ALPN (`agent-gossip/unicast/1`), off the gossip flood. Gossip carries
 broadcasts only, structurally: a directed frame (`a2a_req`/`a2a_resp`, a task
 push leg, a `pong`) is unicast-only, dialed inline when no warm connection
 exists, and errors as undeliverable when the addressee's endpoint is unknown
@@ -86,7 +86,7 @@ route is self-contained and reversible for replies). Forwarding rides a dedicate
 distinct from the application endpoint whose packets it carries.
 
 Reachability-first (v1): confidentiality is QUIC-TLS end-to-end; per-hop onion
-anonymity (which the former **circuit** plane provided) is a future addition.
+anonymity is a future addition.
 Registered by the `--multihop` flag. State: `multihop`
 (`iroh_multihop_transport::MultihopHandle`). See
 [`iroh-multihop-transport`](../iroh-multihop-transport).
@@ -118,6 +118,11 @@ mesh's **config** (lookups). The config is mixed into the gossip topic, so
 every member necessarily shares it, and `join` needs nothing beyond the hash
 itself.
 
+User-facing docs, the CLI, and the MCP tools call this a **room**; the code
+calls it a `mesh`. One concept, two spellings — deliberate, and the only such
+pair in the vocabulary. `room` is not a layer term and owns nothing: prefer
+`mesh` anywhere the reader is looking at code.
+
 Code: `protocol::mesh` (`Mesh` / `MeshConfig`). Byte layout:
 [mesh-hash.md](./mesh-hash.md).
 
@@ -132,7 +137,7 @@ URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — inva
 runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `topic`
 if empty; this affects the name only, not the seed), and the config is always
 the public preset — so the
-**string alone** determines the mesh: anyone running `agent-square topic <string>`
+**string alone** determines the mesh: anyone running `agent-gossip topic <string>`
 converges. Joined via the `topic` command, not `join`.
 
 Code: `protocol::crypto::topic_seed`, `Mesh::from_topic`,
@@ -161,7 +166,7 @@ shared surface, not just entry:
 
 - **blob** tickets inherit it automatically — a minted ticket carries a public
   salt and the producer stores the Argon2id stretch as the compare token, so a
-  scraped ticket can't be redeemed without the password (`agent-square a2a fetch
+  scraped ticket can't be redeemed without the password (`agent-gossip a2a fetch
   … --password`). This reuses the ticket machinery above.
 - the **state** and **meta** channel change bodies are encrypted with a
   symmetric key derived from the stretched mesh key (`derive_secret(key,
@@ -186,7 +191,7 @@ creator-minted **invite**: a `🎟️` bearer ticket carrying the mesh hash, the
 invite root, an **expiry** (TTL), and the creator's **Ed25519 signature** over
 those fields. A redeemer verifies the signature against the **issuer pubkey** the
 id carries, checks the expiry against its local clock, and derives the topic;
-`agent-square join <🎟️…>` does this. If the mesh has a password, the invite's
+`agent-gossip join <🎟️…>` does this. If the mesh has a password, the invite's
 root is `seal_symmetric`-wrapped under a password-derived key, so a scraped
 invite still needs the password.
 
@@ -312,7 +317,7 @@ and broadcasting the id makes the mesh open to anyone who finds it.
 
 *Layer: discovery.*
 
-Browse a directory's live meshes (`agent-square discover`) and join one — the consumer
+Browse a directory's live meshes (`agent-gossip discover`) and join one — the consumer
 side of **advertise**.
 
 ### task
@@ -336,7 +341,7 @@ sender's own echo** — a third party never sees it; a beat is liveness plumbing
 (presence-like). There is **no** wire behavior discriminator: the delegation UX
 distinguishes itself by how the skill uses the task, not a marker.
 
-`/square:task` rides this primitive as the **report-back** flow — the worker
+`/room:task` rides this primitive as the **report-back** flow — the worker
 returns a result (`artifact`), the initiator approves, and the worker
 completes; it creates one or more independent tasks (each its own `task_id`,
 worker, and completion criteria) and surfaces each result as it returns, with no
@@ -377,7 +382,7 @@ One concrete carrier of the A2A core: the **gossip binding** (custom, spec
 (`--a2a-serve`, off by default — how off-the-shelf A2A clients on this
 machine reach the mesh). Both execute the same operations against the same
 state; the JSON-RPC binding relays writes onto the gossip binding. The
-gossip binding additionally carries a **request/response** mode (`agent-square a2a
+gossip binding additionally carries a **request/response** mode (`agent-gossip a2a
 call`): a peer calls another peer's A2A server and awaits its reply over
 gossip (a safe method subset — reads, a party-checked cancel, and
 SendMessage directed at the peer). See [a2a-binding.md](./a2a-binding.md).
@@ -406,7 +411,7 @@ extensions, default skills, and its Ed25519 identity carried in the gossip
 into the **meta** channel at `/peers/<nick>/card` on join — the one channel
 write the binary itself makes (see the amended invariant under *shared
 state*) — so peers enumerate each other's cards from the meta document with
-no HTTP anywhere. Read with `agent-square card [--peer <nick>]`. Agent-side facts
+no HTTP anywhere. Read with `agent-gossip card [--peer <nick>]`. Agent-side facts
 the daemon cannot know (`model`, `harness`, `host`, extra skills) remain the
 agent's own merge, as sibling keys under `/peers/<nick>`.
 
@@ -486,7 +491,7 @@ A large file carried by an A2A **part** without inlining its bytes over gossip.
 The producer's daemon serves the content — addressed by its SHA-256 — from a
 per-peer spool (`<RUNTIME_DIR>/<mesh-prefix>/<nick>.blobs/<hash>`, hardlinked or
 copied from the source so the original can change freely) over a dedicated,
-lazily-bound endpoint on the `agent-square/blob/1` ALPN. The **blob
+lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
 reference** — a `🎟️…` Base58Check *ticket* carrying the producer's address, a
 bearer secret, the hash, and the size — rides gossip inside a `Part.url`. The
 ticket carries its own `🎟️` brand, distinct from the mesh id's `💬`, so a
@@ -494,7 +499,7 @@ mesh id can never be mistaken for a ticket (it fails on the prefix). The `🎟�
 brand is shared with the a2a bridge ticket; a *kind* byte inside the framed
 payload tells those two apart, so a wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
 producer, presents the secret, and streams the bytes to disk, verifying the
-SHA-256 as they arrive (`agent-square a2a fetch` — by default into the session's
+SHA-256 as they arrive (`agent-gossip a2a fetch` — by default into the session's
 `<nick>.recv/` folder, or to stdout with `--output -`). Symmetric: an input
 file rides a request `Message.parts`, an output rides a result `Artifact.parts`.
 Confidentiality equals mesh membership (the flooded ticket lets any member
@@ -510,7 +515,7 @@ is an **automerge CRDT**: each member holds a replica, and members exchange
 signed **changes** that automerge merges conflict-free, so the same change set ⇒
 byte-identical document on every member (see the *Shared state converges
 deterministically* invariant). It is never sent whole on the wire; only changes
-are (`agent-square state get` reads the local replica as JSON).
+are (`agent-gossip state get` reads the local replica as JSON).
 
 Each mesh carries **two channels**, `state` and `meta` — the same machinery
 (the [`MeshDoc`](#state-doc) engine), differing by **convention** and one gate:
@@ -521,7 +526,7 @@ is the machine's self-reported hostname). `meta` alone gates **card forgery**
 concurrent per-peer writes merge. With exactly one exception the binary never
 writes a channel itself: the daemon publishes its own **card** at meta
 `/peers/<nick>/card` on join (architectural peer self-description, not app
-state). Every other change is `agent-square state merge` / `agent-square meta merge`. A change
+state). Every other change is `agent-gossip state merge` / `agent-gossip meta merge`. A change
 surfaces as the `state` / `meta` event, carrying both the merge and the
 newly-derived document.
 
@@ -553,7 +558,7 @@ Code: `daemon::doc::MeshDoc`, `gossip::antientropy::{broadcast,handle}_state_dig
 *Layer: state · one automerge change, composed from an RFC 7386-style merge in a
 `State`/`Meta` event body.*
 
-One modification to the **shared state**. The `agent-square state|meta merge` surface
+One modification to the **shared state**. The `agent-gossip state|meta merge` surface
 still takes an RFC 7386-style merge document (an object deep-merges — each key
 set, a `null` value deletes, nested objects recurse, arrays replace wholesale),
 which is translated into a single automerge change. Two semantics differ from a
@@ -568,7 +573,7 @@ Code: `daemon::doc::MeshDoc::{build_change, ingest}`, `daemon::state_doc::change
 
 ### api
 
-*Layer: frontend — the `agent-square` crate's public library surface.*
+*Layer: frontend — the `agent-gossip` crate's public library surface.*
 
 The third frontend of the crate, beside the `pub(crate)` **cli** and **mcp**
 bindings: the one `pub` module a Rust program embeds a mesh through.
@@ -584,7 +589,7 @@ Distinct from **binding**, which the protocol layer owns (the gossip and
 JSON-RPC carriers of A2A): a `cli` / `mcp` / `api` frontend is a *Rust* surface
 on this crate, not a wire carrier.
 
-Code: `agent_square::api`. The engine handle it wraps is
+Code: `agent_gossip::api`. The engine handle it wraps is
 `agent_habilis_mesh::daemon::Node`.
 (Renamed from *embed*: that word names compile-time baking in this repo —
 `include_dir!` of the skill tree, `include_str!` of the manual — and the engine
@@ -615,7 +620,7 @@ presence (`joined` / `left`), plus the heartbeat events `peer_timeout` /
 `peer_return`. All are join-horizon gated and symmetric — a departure is
 surfaced only if the matching arrival was. There is **no** transport-level
 `peer_join` / `peer_leave` event: a raw link to an opaque node id is not
-participant lifecycle. (`agent-square leave` is a CLI verb on top of this
+participant lifecycle. (`agent-gossip leave` is a CLI verb on top of this
 vocabulary, not a new event: it stops a local daemon, whose shutdown emits
 the one `left`.)
 

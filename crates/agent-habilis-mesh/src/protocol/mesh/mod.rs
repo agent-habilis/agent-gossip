@@ -584,10 +584,17 @@ mod mesh_tests {
 
     #[test]
     fn golden_passwordless_id_and_topic_are_pinned() {
-        // Byte-for-byte back-compat pin: a passwordless id and its topic
-        // must never change encoding (live meshes depend on it). If this
-        // fails, the wire format regressed — do not update the constants
-        // without a deliberate, versioned format change.
+        // Byte-for-byte pin on a passwordless id and its topic. Neither is
+        // allowed to move by accident; if this fails and you did not mean to
+        // change the encoding, the format regressed.
+        //
+        // The two constants are pinned against different accidents and do not
+        // move together. The id encodes only seed/name/config, so nothing about
+        // a rename should ever reach it — if the id changes, something leaked
+        // into the encoding that does not belong there. The topic mixes
+        // `crypto::DOMAIN`, so it moves whenever that domain is rebranded; it
+        // last moved for the agent-gossip rebrand, which is why
+        // `message::VERSION` is `11.0`.
         let mesh = Mesh::new(dummy_seed(), dummy_name(), MeshConfig::public_preset());
         assert_eq!(
             mesh.to_string(),
@@ -596,7 +603,7 @@ mod mesh_tests {
         let topic = super::crypto::derive_topic_id(mesh.seed(), &mesh.name, &mesh.config_bytes());
         assert_eq!(
             format!("{topic:?}"),
-            "TopicId(8c401ccceab4524e1ffaf13bc989172c97e81197bcd0e8c2a2ce8411fb4dddd1)"
+            "TopicId(a9de3aea27630a0a362a8c3dad39c66d73de4241f8914b61cd3b1e307a67e126)"
         );
     }
 
@@ -610,7 +617,7 @@ mod mesh_tests {
     #[test]
     fn from_topic_name_is_the_sanitized_string() {
         let mesh = Mesh::from_topic(
-            "https://github.com/agent-habilis/agent-square",
+            "https://github.com/agent-habilis/agent-gossip",
             MeshConfig::public_preset(),
         );
         // Scheme stripped, `/`s kept; the 37-char URL exceeds the 32-char cap,

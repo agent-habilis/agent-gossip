@@ -16,7 +16,7 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
-          manifest=$(cargo pkgid -p agent-square | sed -E 's/.*[@#]//')
+          manifest=$(cargo pkgid -p agent-gossip | sed -E 's/.*[@#]//')
           if [ "$tag" != "$manifest" ]; then
             echo "Tag v$tag does not match Cargo.toml version $manifest" >&2
             exit 1
@@ -64,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # Pull the once-built man pages into ./man so the archive can bundle
-      # them; Homebrew installs them from there (see Formula/agent-square.rb).
+      # them; Homebrew installs them from there (see Formula/agent-gossip.rb).
       - name: Download man pages
         uses: actions/download-artifact@v4
         with:
@@ -72,10 +72,10 @@ jobs:
           path: man
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: agent-square
+          bin: agent-gossip
           # The root manifest is a virtual workspace, so the action cannot
           # derive the package name/version from `./Cargo.toml`.
-          manifest-path: crates/agent-square/Cargo.toml
+          manifest-path: crates/agent-gossip/Cargo.toml
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -94,18 +94,22 @@ jobs:
         with:
           ref: main # commit the formula bump onto main, not the tag
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Bump Formula/agent-square.rb to the released version + checksums
+      - name: Bump Formula/agent-gossip.rb to the released version + checksums
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           ver="${TAG#v}"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp --clobber
-          sed -i -E "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/agent-square.rb
+          # perl, not `sed -i -E`: BSD sed needs `-i ''` and GNU sed needs bare
+          # `-i`, so a sed rewrite here runs on the CI box but dies the moment
+          # anyone reproduces this step on macOS. perl's `-pi -e` is identical
+          # on both, and the sha256 rewrite below already uses it.
+          perl -pi -e "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/agent-gossip.rb
           for target in aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            sum=$(cut -d' ' -f1 "/tmp/agent-square-v$ver-$target.sha256")
+            sum=$(cut -d' ' -f1 "/tmp/agent-gossip-v$ver-$target.sha256")
             # Replace the sha256 line immediately following this target's url line.
-            perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/agent-square.rb
+            perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/agent-gossip.rb
           done
       - name: Commit the formula bump
         env:
@@ -113,6 +117,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/agent-square.rb
+          git add Formula/agent-gossip.rb
           git diff --cached --quiet || git commit -m "chore: update Homebrew formula for ${TAG}"
           git push origin main

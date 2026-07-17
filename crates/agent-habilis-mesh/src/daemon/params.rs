@@ -166,7 +166,7 @@ impl JoinParams {
 /// guard, shared by [`TopicParams::resolve`] and the MCP idempotency check so
 /// neither can drift — an empty string would otherwise silently derive one
 /// globally-fixed mesh that every empty-string caller lands in. (The clap
-/// `value_parser` on `agent-square topic` re-checks emptiness only to surface it as a
+/// `value_parser` on `agent-gossip topic` re-checks emptiness only to surface it as a
 /// parse-time usage error.)
 /// # Errors
 /// Returns an error if the inputs are invalid or the operation fails.

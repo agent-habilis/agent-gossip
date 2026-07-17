@@ -3,8 +3,8 @@
 Read the roster and metadata:
 
 ```bash
-agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
-agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
+agent-gossip peers --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip meta get --room "$ROOM" --nickname "$NICKNAME"
 ```
 
 The candidates are exactly the roster's `participants` — never yourself, and
@@ -25,7 +25,7 @@ it orders the options in the next section, nothing more.
 Only an empty roster stops the flow. Print:
 
 ```text
-💬️ no peers in the square
+💬️ no peers in the room
 ```
 
 Then stop.
@@ -71,7 +71,7 @@ The selected peers are exactly the selected options plus any typed nicknames.
 Skip a typed nickname that is not in the roster, printing one line per skip:
 
 ```text
-💬️ <nick> not in the square · skipped
+💬️ <nick> not in the room · skipped
 ```
 
 If nothing remains, print `💬️ no peers selected` and stop.

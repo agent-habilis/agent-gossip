@@ -187,7 +187,7 @@ impl MultihopHandle {
     }
 
     /// A JSON-serializable snapshot of the routing graph from this node's point of
-    /// view, for the `topology` IPC query / `/square:topology` render.
+    /// view, for the `topology` IPC query / `/room:topology` render.
     ///
     /// # Panics
     /// If the routing-table lock is poisoned by a panic in another thread.

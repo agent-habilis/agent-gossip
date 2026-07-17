@@ -109,12 +109,11 @@ pub async fn run<A: NodeDriver>(
             })
         })
         .map(|path| {
-            StateFile::new(path, &mesh_str, &author, &mesh_name)
-                .with_topic(topic_string.as_deref())
+            StateFile::new(path, &mesh_str, &author, &mesh_name).with_topic(topic_string.as_deref())
         });
-    // The departure line's label: a topic square shows `topic` plus the raw
+    // The departure line's label: a topic room shows `topic` plus the raw
     // string it was derived from (the name is lossy, and the wording mirrors
-    // the `joined topic …` startup line), every other square its `#name`.
+    // the `joined topic …` startup line), every other room its `#name`.
     let leave_label = topic_string.map_or_else(
         || format!("#{mesh_name}"),
         |raw_topic| format!("topic {raw_topic}"),
@@ -202,7 +201,7 @@ pub async fn run<A: NodeDriver>(
     // The event is emitted *here*, beside the flag, rather than in `setup`:
     // there it announced a socket that had not been bound, so a client acting
     // on `ready` could race the listener. The two readiness signals — the
-    // stdout event and the state-file flag `agent-square ready` polls — now
+    // stdout event and the state-file flag `agent-gossip ready` polls — now
     // have one source and cannot disagree.
     if ipc_listener_disabled || ipc_rx.is_some() {
         state.ready = true;
@@ -373,7 +372,7 @@ struct EventLoop<A: NodeDriver> {
     mesh: MeshId,
     name: MeshName,
     /// The departure line's label: the raw topic string for a topic
-    /// square (the derived name is lossy), `#name` otherwise.
+    /// room (the derived name is lossy), `#name` otherwise.
     leave_label: String,
     author: Nickname,
     sink: std::sync::Arc<dyn NodeSink>,
@@ -416,7 +415,7 @@ struct EventLoop<A: NodeDriver> {
 /// survives a release build's `error` base.
 fn log_daemon_start(author: &Nickname) {
     tracing::info!(
-        target: "agent_square::lifecycle",
+        target: "agent_gossip::lifecycle",
         version = crate::VERSION,
         nickname = %author,
         "daemon starting"
@@ -425,7 +424,7 @@ fn log_daemon_start(author: &Nickname) {
 
 #[expect(
     clippy::too_many_lines,
-    reason = "the daemon's central select! loop: one arm per event source (ipc, a2a, gossip, circuit, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
+    reason = "the daemon's central select! loop: one arm per event source (ipc, a2a, gossip, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
 )]
 async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
     let EventLoop {
@@ -659,7 +658,7 @@ async fn shutdown<A: NodeDriver>(
 }
 
 /// The mesh name (for the departure log line), the user-facing departure
-/// label (the raw topic string for a topic square, `#name` otherwise), and
+/// label (the raw topic string for a topic room, `#name` otherwise), and
 /// whether this quit should hard-exit the process — the plain values
 /// [`announce_and_maybe_exit`] needs beyond the loop state and the shared
 /// handler context.
@@ -707,7 +706,7 @@ async fn announce_and_maybe_exit<A: NodeDriver>(
 /// Every catchable termination signal routes through the graceful
 /// `shutdown()` path so the statusline state file is removed. SIGHUP in
 /// particular is what a closing parent (e.g. the Monitor that hosts the
-/// daemon for a `/square:*` session) tends to send; without catching it
+/// daemon for a `/room:*` session) tends to send; without catching it
 /// the default action terminated the daemon without cleanup, stranding a
 /// ghost pill on the statusline. Only SIGKILL stays uncatchable.
 fn spawn_quit_signal_tasks(exit_on_quit: bool) -> mpsc::Receiver<()> {
@@ -846,7 +845,7 @@ fn finalize_ping_round(state: &mut EventLoopState, sink: &dyn NodeSink) {
     let Some(round) = state.ping_round.take() else {
         return;
     };
-    // (Live per-neighbour RTT/delivery telemetry once fed the circuit metric; the
+    // (Live per-neighbour RTT/delivery telemetry once fed the link metric; the
     // multihop transport currently advertises a flat link cost, so the ping round
     // only produces the user-facing report below. Re-wiring telemetry into the
     // multihop metric is a future enhancement.)
@@ -952,7 +951,7 @@ async fn run_heal(
     let hard_edge = is_resume(gap.mono, threshold) || is_wall_resume(gap.wall, gap.mono, threshold);
     if hard_edge {
         tracing::warn!(
-            target: "agent_square::gossip",
+            target: "agent_gossip::gossip",
             mono_gap_ms = u64::try_from(gap.mono.as_millis()).unwrap_or(u64::MAX),
             wall_gap_ms = u64::try_from(gap.wall.as_millis()).unwrap_or(u64::MAX),
             "heal: hard re-bootstrap edge"
@@ -967,8 +966,7 @@ async fn run_heal(
         // settles first.
         if state.next_rival_recheck.is_some() {
             state.next_rival_recheck = Some(
-                Instant::now()
-                    + Duration::from_secs(crate::util::tuning::rival_recheck_secs()),
+                Instant::now() + Duration::from_secs(crate::util::tuning::rival_recheck_secs()),
             );
         }
         // Re-assert the rendezvous hint (the network changed). The rung
@@ -984,7 +982,7 @@ async fn run_heal(
         // the healthy link; see `tick_heal`). `NeighborDown` re-arms
         // this gate instantly.
         tracing::debug!(
-            target: "agent_square::gossip",
+            target: "agent_gossip::gossip",
             "heal tick: rendezvous linked; idle"
         );
     } else {
@@ -1215,7 +1213,7 @@ async fn try_resubscribe(
         Ok(topic) => {
             *attempts = 0;
             tracing::warn!(
-                target: "agent_square::gossip",
+                target: "agent_gossip::gossip",
                 "gossip stream restored (resubscribed)"
             );
             env.parts.sink.emit(NodeEvent::Info(
@@ -1227,7 +1225,7 @@ async fn try_resubscribe(
         Err(error) => {
             *attempts += 1;
             tracing::warn!(
-                target: "agent_square::gossip",
+                target: "agent_gossip::gossip",
                 %error,
                 attempts = *attempts,
                 "gossip resubscribe failed"
@@ -1259,7 +1257,7 @@ fn apply_rung_change(
         lookup::plan_rung_refresh(params.bootstrap_relay.as_ref(), selected)
     {
         tracing::info!(
-            target: "agent_square::beacon",
+            target: "agent_gossip::beacon",
             old = ?params.bootstrap_relay,
             new = ?new,
             "bootstrap relay rung changed; re-registering rendezvous and re-homing the beacon"
@@ -1425,7 +1423,7 @@ fn shed_rival_beacon_if_due(
         return false;
     }
     tracing::info!(
-        target: "agent_square::gossip",
+        target: "agent_gossip::gossip",
         "beacon rival re-check: releasing the rendezvous to re-probe for a same-id co-host"
     );
     // `shed`, not a plain drop: the graceful endpoint close turns the
@@ -1584,20 +1582,27 @@ mod tests {
         // Round 0 must be a *deterministic* function of the endpoint id — it
         // is the tie-break ordering simultaneous claimants, so per-call
         // randomness would defeat it.
-        assert_eq!(next_recheck_delay(0, false, id(1)), next_recheck_delay(0, false, id(1)));
+        assert_eq!(
+            next_recheck_delay(0, false, id(1)),
+            next_recheck_delay(0, false, id(1))
+        );
 
         // Base + phase offset, offset strictly inside the span.
         let base = Duration::from_secs(RIVAL_RECHECK_FIRST_SECS);
         let span = Duration::from_secs(RIVAL_RECHECK_OFFSET_SPAN_SECS);
         for byte in 0..8u8 {
             let delay = next_recheck_delay(0, false, id(byte));
-            assert!(delay >= base && delay < base + span, "out of bounds: {delay:?}");
+            assert!(
+                delay >= base && delay < base + span,
+                "out of bounds: {delay:?}"
+            );
         }
 
         // Distinct ids must (in practice) spread across the span — all-equal
         // offsets would mean the tie-break never orders anyone.
-        let all_equal = (1..8u8)
-            .all(|byte| next_recheck_delay(0, false, id(byte)) == next_recheck_delay(0, false, id(0)));
+        let all_equal = (1..8u8).all(|byte| {
+            next_recheck_delay(0, false, id(byte)) == next_recheck_delay(0, false, id(0))
+        });
         assert!(!all_equal, "phase offsets did not spread across ids");
     }
 

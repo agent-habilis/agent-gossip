@@ -9,8 +9,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// Pull the minted `🐝…` id out of the sender's stderr line
-/// (`mesh-pipe: mesh 🐝…`).
+/// Pull the minted `💬…` id out of the sender's stderr line
+/// (`mesh-pipe: mesh 💬…`).
 async fn read_mesh_id(reader: &mut BufReader<tokio::process::ChildStderr>) -> Option<String> {
     let mut line = String::new();
     loop {
@@ -33,7 +33,7 @@ async fn reap(mut child: Child) {
 #[tokio::test]
 async fn bytes_roundtrip_over_the_mesh() {
     let bin = env!("CARGO_BIN_EXE_mesh-pipe");
-    let payload = "hello over the gossip mesh — 🐝 line one\nand line two\n";
+    let payload = "hello over the gossip mesh — 💬 line one\nand line two\n";
 
     // Sender: create a loopback mesh (bare `listen`), print its id, read stdin.
     let mut listen = Command::new(bin)

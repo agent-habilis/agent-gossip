@@ -31,7 +31,7 @@ pub fn mesh_prefix(mesh_id: &str) -> String {
 
 /// The per-user runtime base — every per-mesh folder lives under it.
 ///
-/// This replaces the former hardcoded, shared `/tmp/agent-square`: a single
+/// This replaces the former hardcoded, shared `/tmp/agent-gossip`: a single
 /// world-traversable base let any *other* local user enumerate meshes and read
 /// the (world-readable) per-member log files. Scoping the base to the user's
 /// id — and creating it `0700` (see [`ensure_runtime_base`]) — closes that
@@ -48,7 +48,7 @@ pub fn mesh_prefix(mesh_id: &str) -> String {
 /// stays well inside the `AF_UNIX` `sun_path` ~104-byte limit.
 #[must_use]
 pub fn runtime_base() -> std::path::PathBuf {
-    std::path::PathBuf::from(format!("/tmp/agent-square-{}", current_uid()))
+    std::path::PathBuf::from(format!("/tmp/agent-gossip-{}", current_uid()))
 }
 
 /// This process's effective user id — the id a newly created file/dir is
@@ -208,7 +208,7 @@ mod tests {
         let base = runtime_base();
         let shown = base.to_string_lossy();
         assert!(
-            shown.starts_with("/tmp/agent-square-"),
+            shown.starts_with("/tmp/agent-gossip-"),
             "unexpected base: {shown}"
         );
     }
@@ -220,7 +220,7 @@ mod tests {
         ));
         assert!(!is_under_runtime_base(Path::new("/etc/passwd")));
         assert!(!is_under_runtime_base(Path::new(
-            "/tmp/agent-square/sessions/x.json"
+            "/tmp/agent-gossip/sessions/x.json"
         )));
     }
 

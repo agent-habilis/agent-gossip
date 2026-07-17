@@ -2,7 +2,7 @@
 
 These are the *sources* for the Agent Skills the binary embeds. `build.rs`
 renders them into one self-contained `SKILL.md` per skill (in `$OUT_DIR/skills`)
-and that generated tree is what `include_dir!` embeds and `agent-square plug`
+and that generated tree is what `include_dir!` embeds and `agent-gossip plug`
 installs. An installed skill never tells the agent to read a second file — the
 whole point is zero extra read round-trips at invocation time.
 
@@ -16,7 +16,7 @@ Rules:
   all inputs named and double-quoted, `\"` and `\\` the only escapes:
 
   ```markdown
-  <!-- include path="../shared/daemon-session.md" launch="agent-square join \"{TARGET}\"" noun="line" -->
+  <!-- include path="../shared/daemon-session.md" launch="agent-gossip join \"{TARGET}\"" noun="line" -->
   <!-- slot name="launch" -->
   ```
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Deferred. The square join failure has higher priority. Do not begin this refactoring until it is explicitly resumed.
+Deferred. The room join failure has higher priority. Do not begin this refactoring until it is explicitly resumed.
 
 ## Summary
 
@@ -30,7 +30,7 @@ Optimize first for contributor clarity: every entity has one owner, dependencies
 
 Keep the existing crates:
 
-- `agent-square`: composition root, A2A application, adapters, and public API.
+- `agent-gossip`: composition root, A2A application, adapters, and public API.
 - `agent-habilis-mesh`: payload-generic mesh runtime.
 - `iroh-multihop-transport`: independent iroh transport.
 - `slot-template`: pure templating.
@@ -41,13 +41,13 @@ Do not create an A2A crate while there is no second consumer. Create an internal
 
 Prepare `agent-habilis-mesh::protocol` as a potential future `mesh-protocol` crate, but do not extract it until it no longer depends on runtime, lookup providers, filesystem behavior, logging, or broad utility modules.
 
-### `agent-square` layout
+### `agent-gossip` layout
 
 ```text
 src/
 ├── a2a/
 │   ├── model/          # Pure A2A v1.0 values and ProtoJSON validation
-│   ├── extensions.rs   # agent-square A2A extension URIs and metadata keys
+│   ├── extensions.rs   # agent-gossip A2A extension URIs and metadata keys
 │   ├── binding/
 │   │   ├── gossip/     # A2A ↔ generic mesh-frame mapping and validation
 │   │   ├── jsonrpc/    # Transport-neutral A2A operation dispatch
@@ -75,7 +75,7 @@ Rules:
 - Task authorization, transitions, heartbeats, and artifact policy live in `a2a::service::tasks`.
 - Rendering depends on application events; application services never depend on output rendering.
 - HTTP, IPC, MCP, CLI, and the Rust API converge on the same application command vocabulary.
-- Preserve `agent_square::a2a::*`, `agent_square::api::*`, and current CLI paths through facade re-exports.
+- Preserve `agent_gossip::a2a::*`, `agent_gossip::api::*`, and current CLI paths through facade re-exports.
 
 ### `agent-habilis-mesh` layout
 
@@ -140,7 +140,7 @@ Replace application-specific growth in `NodeDriver` with a smaller generic contr
 - A single optional application deadline
 - Application events emitted back to the runtime
 
-Keep HTTP, IPC, polling, and surfaced-event rings in `agent-square`; the generic engine must not name those delivery mechanisms.
+Keep HTTP, IPC, polling, and surfaced-event rings in `agent-gossip`; the generic engine must not name those delivery mechanisms.
 
 ## Entity and Communication Corrections
 

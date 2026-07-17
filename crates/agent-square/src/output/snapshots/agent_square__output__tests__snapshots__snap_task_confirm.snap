@@ -1,5 +1,0 @@
----
-source: crates/agent-square/src/output/tests.rs
-expression: "snap_status(crate::a2a::TaskState::Completed, Some(\"looks good\"), None,)"
----
-{"event":"task","id":"00000000-0000-0000-0000-000000000001","square":"💬://2sh6uik3qk2BjD42URSDoBoTsPwnPFLJRNxMPbswdY8xDissgYzRUF4u6aznZ","author":"alice-bot","ts":1700000000,"to":"calm-otter","task_id":"550e8400-e29b-41d4-a716-446655440000","kind":"status-update","state":"completed","body":"looks good","payload":{"contextId":"💬://2sh6uik3qk2BjD42URSDoBoTsPwnPFLJRNxMPbswdY8xDissgYzRUF4u6aznZ","status":{"message":{"contextId":"💬://2sh6uik3qk2BjD42URSDoBoTsPwnPFLJRNxMPbswdY8xDissgYzRUF4u6aznZ","messageId":"00000000-0000-0000-0000-000000000002","parts":[{"text":"looks good"}],"role":"ROLE_AGENT","taskId":"550e8400-e29b-41d4-a716-446655440000"},"state":"TASK_STATE_COMPLETED"},"taskId":"550e8400-e29b-41d4-a716-446655440000"},"display":"💬️ task status-update completed `<alice-bot>` → `<calm-otter>`: looks good","self":false,"is_visible":false}

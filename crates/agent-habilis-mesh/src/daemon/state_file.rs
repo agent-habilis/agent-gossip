@@ -1,37 +1,37 @@
-//! Session state file — the agent-square daemon writes its
+//! Session state file — the agent-gossip daemon writes its
 //! view of the mesh into this file so external tools (e.g. a shell
-//! statusline) and the `/square:*` skills can render the current mesh,
+//! statusline) and the `/room:*` skills can render the current mesh,
 //! nickname, and participant count with a plain local file read. No
 //! IPC, no gossip, no subprocess.
 //!
-//! The daemon is the **sole writer**: the `/square:*` skills are
+//! The daemon is the **sole writer**: the `/room:*` skills are
 //! read-only and never touch this file. The daemon owns every key —
-//! `square`, `name`, `nickname`, `topic` (topic squares only), `pid`,
+//! `room`, `name`, `nickname`, `topic` (topic rooms only), `pid`,
 //! `ready`, `participant_count`, `last_updated` — and writes a fresh,
 //! complete document on each update (no read-merge: there are no foreign
 //! keys to preserve).
 //!
-//! `topic` is the raw string a topic square was derived from. The derived
+//! `topic` is the raw string a topic room was derived from. The derived
 //! `name` is lossy (URL scheme and query stripped, truncated), so the
-//! string is persisted whole — it is what `agent-square leave` and the
-//! skills echo for a topic square.
+//! string is persisted whole — it is what `agent-gossip leave` and the
+//! skills echo for a topic room.
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `agent-square ready`)
+//! once the event loop is serving IPC, so a reader (e.g. `agent-gossip ready`)
 //! can gate on it rather than on the file's mere existence.
 //! `participant_count` is the total number of agents in the mesh,
 //! including self. `last_updated` is a unix timestamp the daemon
 //! refreshes on a fixed heartbeat (see `tuning::STATE_REFRESH_SECS`)
 //! even when membership is unchanged, so a reader can treat a fresh
 //! value as a liveness signal. `pid` is the daemon's own process id —
-//! what lets `agent-square leave`/`agent-square session` map a state file back to a
+//! what lets `agent-gossip leave`/`agent-gossip session` map a state file back to a
 //! running daemon (and, via its ancestry, to the agent session that
 //! spawned it).
 //!
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"square":"💬..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"room":"💬..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -75,7 +75,7 @@ impl StateFile {
         }
     }
 
-    /// Attach the raw topic string a topic square was derived from, so every
+    /// Attach the raw topic string a topic room was derived from, so every
     /// write publishes it as `topic`. A no-op `None` keeps the one
     /// construction site unconditional.
     pub(crate) fn with_topic(mut self, topic: Option<&str>) -> Self {
@@ -88,10 +88,13 @@ impl StateFile {
     /// # Panics
     /// Panics if an internal invariant is violated.
     pub fn set_a2a(&self, port: u16, token: String) {
-        *self.http.lock().expect("state-file http mutex not poisoned") = Some((port, token));
+        *self
+            .http
+            .lock()
+            .expect("state-file http mutex not poisoned") = Some((port, token));
     }
 
-    /// Write a fresh, complete state document — `square`, `name`,
+    /// Write a fresh, complete state document — `room`, `name`,
     /// `nickname`, `ready`, `participant_count`, and a fresh
     /// `last_updated` — atomically, fully replacing any existing file.
     /// `ready` is `false` at the early identity write and `true` once the
@@ -111,11 +114,11 @@ impl StateFile {
         // bearer token). It is born 0o600 below, but the enclosing directory must
         // also be private. `ensure_parent_private` validates the base and fails
         // closed when the target is under it (the default path, and the plugin's
-        // `--state-file /tmp/agent-square-<uid>/sessions/...`), and just creates
+        // `--state-file /tmp/agent-gossip-<uid>/sessions/...`), and just creates
         // the parent for an override that points elsewhere.
         crate::util::ensure_parent_private(&self.path)?;
         let mut obj = serde_json::Map::new();
-        obj.insert("square".into(), self.mesh.clone().into());
+        obj.insert("room".into(), self.mesh.clone().into());
         obj.insert("name".into(), self.name.clone().into());
         obj.insert("nickname".into(), self.nickname.clone().into());
         if let Some(topic) = &self.topic {
@@ -179,7 +182,7 @@ impl Drop for StateFile {
     }
 }
 
-/// What the `agent-square ready` gate needs out of a state file on every poll: whether
+/// What the `agent-gossip ready` gate needs out of a state file on every poll: whether
 /// the daemon is serving (`ready`) and how fresh that claim is (`last_updated`,
 /// unix seconds — the daemon rewrites it on a fixed heartbeat, so a stale
 /// `ready: true` left by a prior daemon killed with SIGKILL is rejected). The
@@ -191,7 +194,7 @@ pub struct ReadySnapshot {
     pub last_updated: u64,
 }
 
-/// Best-effort session identity for `agent-square ready --output json`. Each field is
+/// Best-effort session identity for `agent-gossip ready --output json`. Each field is
 /// `None` when the state file is unreadable, not JSON, or predates that field
 /// — so the JSON the gate prints carries only the keys actually present.
 #[derive(Debug)]
@@ -199,7 +202,7 @@ pub struct SessionIdentity {
     pub mesh: Option<String>,
     pub name: Option<String>,
     pub nickname: Option<String>,
-    /// The raw topic string; present only for a topic square.
+    /// The raw topic string; present only for a topic room.
     pub topic: Option<String>,
 }
 
@@ -220,15 +223,15 @@ pub fn read_identity(path: &Path) -> SessionIdentity {
             .map(str::to_owned)
     };
     SessionIdentity {
-        mesh: field("square"),
+        mesh: field("room"),
         name: field("name"),
         nickname: field("nickname"),
         topic: field("topic"),
     }
 }
 
-/// One running daemon as seen through its state file — what `agent-square leave` /
-/// `agent-square session` need to map the file back to a live process and decide
+/// One running daemon as seen through its state file — what `agent-gossip leave` /
+/// `agent-gossip session` need to map the file back to a live process and decide
 /// whether the calling session owns it. Every field is `Option`: a file
 /// written by an older binary predates `pid`, and discovery must still be
 /// able to *report* such an entry rather than error on it.
@@ -237,7 +240,7 @@ pub struct SessionEntry {
     pub mesh: Option<String>,
     pub name: Option<String>,
     pub nickname: Option<String>,
-    /// The raw topic string; present only for a topic square.
+    /// The raw topic string; present only for a topic room.
     pub topic: Option<String>,
     pub pid: Option<u32>,
 }
@@ -257,7 +260,7 @@ pub fn read_session_entry(path: &Path) -> Option<SessionEntry> {
             .map(str::to_owned)
     };
     Some(SessionEntry {
-        mesh: text("square"),
+        mesh: text("room"),
         name: text("name"),
         nickname: text("nickname"),
         topic: text("topic"),
@@ -320,7 +323,7 @@ mod tests {
 
     fn unique_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-square-state-test-{}-{}-{}.json",
+            "agent-gossip-state-test-{}-{}-{}.json",
             tag,
             std::process::id(),
             clock::unix_nanos(),
@@ -340,7 +343,7 @@ mod tests {
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["square"], mesh.as_str());
+        assert_eq!(parsed["room"], mesh.as_str());
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -349,7 +352,7 @@ mod tests {
         assert!(parsed["last_updated"].is_number());
         assert!(
             parsed.get("topic").is_none(),
-            "non-topic squares carry no topic key"
+            "non-topic rooms carry no topic key"
         );
         state_file.remove();
     }
@@ -431,7 +434,7 @@ mod tests {
     fn creates_parent_dir() {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "agent-square-state-test-parent-{}",
+            "agent-gossip-state-test-parent-{}",
             std::process::id()
         ));
         path.push("sessions");
@@ -466,7 +469,7 @@ mod tests {
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["square"], mesh.as_str());
+        assert_eq!(parsed["room"], mesh.as_str());
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -544,7 +547,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"square":"💬old"}"#,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"room":"💬old"}"#,
         )
         .unwrap();
         let entry = super::read_session_entry(&path).expect("present");
@@ -583,10 +586,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, r#"{"square":"💬x","name":"n"}"#).unwrap();
+        std::fs::write(&path, r#"{"room":"💬x","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, r#"{"ready":true,"square":"💬round"}"#).unwrap();
+        std::fs::write(&path, r#"{"ready":true,"room":"💬round"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

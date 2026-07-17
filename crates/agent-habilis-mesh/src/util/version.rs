@@ -1,13 +1,13 @@
 //! The single source of truth for the build's version string: the crate
 //! version plus the git short hash and dirty flag stamped by `build.rs`
-//! (via vergen). Surfaced in `agent-square --version`, the `ready` event, and a
+//! (via vergen). Surfaced in `agent-gossip --version`, the `ready` event, and a
 //! once-per-daemon "daemon starting" log line (one log file == one process ==
 //! one build), so a node self-identifies which commit it is running.
 
 /// The git stamp alone, e.g. `"(1c362892 dirty:false)"`. Split out so a
 /// *consumer* binary can lead with its own crate version — this engine
 /// crate's `env!("CARGO_PKG_VERSION")` is the engine's number, and an
-/// `agent-square --version` that led with it read as a stale release
+/// `agent-gossip --version` that led with it read as a stale release
 /// (engine 0.5.0 vs app 0.6.0) during the fossil-stamp incident.
 pub const GIT_STAMP: &str = concat!(
     "(",

@@ -11,7 +11,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // integration suites would otherwise over-subscribe and flake.
     cmd!(
         sh,
-        "cargo llvm-cov -p agent-square --no-report -- --test-threads=2"
+        "cargo llvm-cov -p agent-gossip --no-report -- --test-threads=2"
     )
     .quiet()
     .run()?;

@@ -8,11 +8,11 @@ against the code.
 ## Context
 
 After a long MacBook sleep, Claude Code stopped the background task hosting
-the square daemon, killing the daemon with it. The daemon's log proves the
+the room daemon, killing the daemon with it. The daemon's log proves the
 engine handles sleep correctly (repeated "freeze/sleep" stalls each followed
 by a hard re-bootstrap and re-mesh) and that it did not self-exit — the log
 stops mid-operation: external kill. Requirement: the daemon reconnects across
-sleep/wake (already true) and exits ONLY on `agent-square leave`, a signal,
+sleep/wake (already true) and exits ONLY on `agent-gossip leave`, a signal,
 or the real end of the agent session — never because harness task
 supervision reaped a background task.
 
@@ -46,7 +46,7 @@ orphan watch. Two verified constraints shape it:
    `state_file.rs`: `with_session_pid` builder + write-when-Some +
    `SessionEntry.session_pid` in `read_session_entry`. Non-CLI `SetupParams`
    sites (`api/session.rs:97`, `api/setup.rs:66,:137`) pass `None`.
-3. **CLI flags** — `crates/agent-square/src/cli/args/shared.rs`
+3. **CLI flags** — `crates/agent-gossip/src/cli/args/shared.rs`
    (`SharedServerOpts`, visible, clap docs as help): `--detach`
    (`requires = "watch_pid"`) and `--watch-pid <PID>`.
 4. **Detach re-exec** — new `cli/detach.rs`: `current_exe()` + argv minus the
@@ -70,7 +70,7 @@ orphan watch. Two verified constraints shape it:
    calls); one-line why (session-owned via watch-pid, so harness task
    supervision or a long sleep can never kill it). Bell (`bell_prefix`) and
    gate unchanged. `cli/agent.rs` test
-   `long_running_square_commands_discard_stdout_and_stderr` (:393): reword
+   `long_running_room_commands_discard_stdout_and_stderr` (:393): reword
    its framing and add an assertion that the launch line carries
    `--detach --watch-pid`.
 7. **Tests** — unit: `lifetime_watch_mode` truth table; state-file
@@ -99,10 +99,10 @@ orphan watch. Two verified constraints shape it:
 ## Verification
 
 - `cargo task lint`; `cargo task test` in the background.
-- Manual: `agent-square topic smoke --detach --watch-pid $$ --state-file
+- Manual: `agent-gossip topic smoke --detach --watch-pid $$ --state-file
   /tmp/as-test.json` returns immediately; `ps` shows the daemon with ppid 1
   in its own session; `session --session-pid $$` finds it; killing the
   watched shell removes daemon + state file; `leave` works.
-- `cargo task install` + `agent-square plug`; live `/square-topic`; the
+- `cargo task install` + `agent-gossip plug`; live `/room-topic`; the
   acceptance test: daemon survives laptop sleep/wake and harness task
-  cleanup, and `/square-leave` still stops it.
+  cleanup, and `/room-leave` still stops it.

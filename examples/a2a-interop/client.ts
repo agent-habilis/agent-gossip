@@ -45,11 +45,11 @@ export async function runInitiator(
   const factory = makeClientFactory(session.a2aToken);
 
   // 1. Discover our own daemon's card (unauthenticated well-known path) and
-  //    broadcast a chat message to the whole square.
+  //    broadcast a chat message to the whole room.
   const self = await factory.createFromUrl(base);
   const selfCard = await self.getAgentCard();
   await self.sendMessage(
-    SendMessageRequest.fromJSON(textMessage("hello square — sent by @a2a-js/sdk")),
+    SendMessageRequest.fromJSON(textMessage("hello room — sent by @a2a-js/sdk")),
   );
 
   // 2. Discover the worker peer's card served by OUR daemon — it carries a

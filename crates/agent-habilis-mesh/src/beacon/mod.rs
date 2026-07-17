@@ -205,8 +205,7 @@ async fn build_rendezvous_endpoint(
             let budget = Duration::from_secs(HEAL_PROBE_SECS.min(heal_interval_secs()));
             let found_rival = match build_endpoint(&lookups, None, None, Vec::new(), None).await {
                 Ok(prober) => {
-                    let found =
-                        probe_connect(&prober, EndpointAddr::new(params.id), budget).await;
+                    let found = probe_connect(&prober, EndpointAddr::new(params.id), budget).await;
                     prober.close().await;
                     found
                 }

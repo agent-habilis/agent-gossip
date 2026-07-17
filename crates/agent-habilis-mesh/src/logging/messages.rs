@@ -1,5 +1,5 @@
 //! One line per mesh message (sent/received) on the
-//! `agent_square::messages` tracing target, pinned always-on in
+//! `agent_gossip::messages` tracing target, pinned always-on in
 //! the default filter (`src/main.rs`). Logging only, no control flow.
 //! Msg + presence joined/left at `info`; Alive/PeerInfo/Digest at
 //! `trace`.
@@ -52,7 +52,7 @@ pub fn log_out(msg: &Message) {
 fn log(direction: &'static str, msg: &Message) {
     let plumbing = || {
         tracing::trace!(
-            target: "agent_square::messages",
+            target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,
             kind = %msg.kind,
@@ -64,7 +64,7 @@ fn log(direction: &'static str, msg: &Message) {
             "a2a_msg" => {
                 if log_raw() {
                     tracing::info!(
-                        target: "agent_square::messages",
+                        target: "agent_gossip::messages",
                         dir = direction,
                         author = %msg.author,
                         ts = msg.timestamp,
@@ -73,7 +73,7 @@ fn log(direction: &'static str, msg: &Message) {
                     );
                 } else {
                     tracing::info!(
-                        target: "agent_square::messages",
+                        target: "agent_gossip::messages",
                         dir = direction,
                         author = %msg.author,
                         ts = msg.timestamp,
@@ -87,7 +87,7 @@ fn log(direction: &'static str, msg: &Message) {
                 // app-layer concern the engine's redaction log doesn't decode;
                 // the `to` addressee + `kind` are enough to correlate the leg.
                 tracing::info!(
-                    target: "agent_square::messages",
+                    target: "agent_gossip::messages",
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
@@ -103,7 +103,7 @@ fn log(direction: &'static str, msg: &Message) {
         MessageKind::Presence {
             subtype: subtype @ (PresenceSubtype::Joined | PresenceSubtype::Left),
         } => tracing::info!(
-            target: "agent_square::messages",
+            target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,
             ts = msg.timestamp,
@@ -113,7 +113,7 @@ fn log(direction: &'static str, msg: &Message) {
         // Durable state event: worth an info line (membership/settings change),
         // body redacted by default like a `Msg`.
         MessageKind::State | MessageKind::Meta => tracing::info!(
-            target: "agent_square::messages",
+            target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,
             ts = msg.timestamp,
