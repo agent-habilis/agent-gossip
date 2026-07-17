@@ -26,6 +26,7 @@ const OWNED_SKILL_DIRS: &[&str] = &[
     "square-meta",
     "square-msg",
     "square-ping",
+    "square-reattach",
     "square-review",
     "square-state",
     "square-status",
