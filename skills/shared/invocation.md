@@ -2,16 +2,16 @@
 
 Render user-facing skill commands with the current harness's command prefix.
 
-- Codex: `$room-*`
-- All other harnesses: `/room-*`
+- Codex: `$gossip-*`
+- All other harnesses: `/gossip-*`
 
 Hold `$SKILL_PREFIX` as `$` for Codex and `/` otherwise. When printing usage,
 guards, or next-step instructions, render commands as:
 
 ```text
-${SKILL_PREFIX}room-create
-${SKILL_PREFIX}room-join
-${SKILL_PREFIX}room-leave
+${SKILL_PREFIX}gossip-create
+${SKILL_PREFIX}gossip-join
+${SKILL_PREFIX}gossip-leave
 ```
 
 Do not show the other harness's prefix as an alias in the same output. The

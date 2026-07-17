@@ -492,11 +492,11 @@ mod tests {
     fn include_resolves_relative_to_the_importing_file() {
         let out = expand_files(
             &[
-                ("skills/room-join/SKILL.md", "# join\n\n<!-- include path=\"workflow.md\" -->\n<!-- include path=\"../shared/loop.md\" -->\n"),
-                ("skills/room-join/workflow.md", "## Workflow\n"),
+                ("skills/gossip-join/SKILL.md", "# join\n\n<!-- include path=\"workflow.md\" -->\n<!-- include path=\"../shared/loop.md\" -->\n"),
+                ("skills/gossip-join/workflow.md", "## Workflow\n"),
                 ("skills/shared/loop.md", "## Loop\n"),
             ],
-            "skills/room-join/SKILL.md",
+            "skills/gossip-join/SKILL.md",
         )
         .expect("expand");
         assert_eq!(out, "# join\n\n## Workflow\n\n## Loop\n\n");

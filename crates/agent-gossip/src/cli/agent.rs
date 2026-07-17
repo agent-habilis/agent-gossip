@@ -13,20 +13,20 @@ use include_dir::{Dir, include_dir};
 pub(crate) static SKILLS: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
 const OWNED_SKILL_DIRS: &[&str] = &[
-    "room-create",
-    "room-discover",
-    "room-doctor",
-    "room-join",
-    "room-leave",
-    "room-meta",
-    "room-msg",
-    "room-ping",
-    "room-reattach",
-    "room-review",
-    "room-state",
-    "room-status",
-    "room-task",
-    "room-topic",
+    "gossip-create",
+    "gossip-discover",
+    "gossip-doctor",
+    "gossip-join",
+    "gossip-leave",
+    "gossip-meta",
+    "gossip-msg",
+    "gossip-ping",
+    "gossip-reattach",
+    "gossip-review",
+    "gossip-state",
+    "gossip-status",
+    "gossip-task",
+    "gossip-topic",
 ];
 
 /// Ties this module's compilation to the embedded artifacts' content
@@ -166,7 +166,7 @@ impl Agent {
     }
 }
 
-/// The `room-*` dirs `plug` writes under a skill root — the set an agent
+/// The `gossip-*` dirs `plug` writes under a skill root — the set an agent
 /// install owns, and the set `plug --path` writes/removes under an explicit
 /// directory. Only these are removed on `unplug`, so a custom `--path` folder
 /// keeps anything else it holds.
@@ -332,15 +332,15 @@ mod tests {
         // which truncated message bodies at 500 chars and persisted them to
         // disk. `discover` still needs Monitor — it streams until killed and
         // has no poll equivalent.
-        for skill in ["room-create", "room-join", "room-topic"] {
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
             assert!(
                 !root.join(skill).join("adapters").exists(),
                 "{skill} must not reintroduce per-skill adapters"
             );
         }
         assert!(
-            root.join("room-discover/adapters/claude-code.md").is_file(),
-            "room-discover still has a Monitor adapter (tracked follow-up)"
+            root.join("gossip-discover/adapters/claude-code.md").is_file(),
+            "gossip-discover still has a Monitor adapter (tracked follow-up)"
         );
         assert!(!root.join("shared/SKILL.md").exists());
     }
@@ -350,7 +350,7 @@ mod tests {
     /// truncates message bodies and persists them to disk).
     #[test]
     fn generated_daemon_starters_never_mention_monitor() {
-        for skill in ["room-create", "room-join", "room-topic"] {
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
             let body = SKILLS
                 .get_file(format!("{skill}/SKILL.md"))
                 .and_then(include_dir::File::contents_utf8)
@@ -409,7 +409,7 @@ mod tests {
                 );
             }
 
-            if ["room-create", "room-join", "room-topic"].contains(skill) {
+            if ["gossip-create", "gossip-join", "gossip-topic"].contains(skill) {
                 assert_eq!(
                     long_running
                         .iter()
@@ -454,7 +454,7 @@ mod tests {
         write_embedded_dir(&SKILLS, &dir);
         assert!(Agent::Codex.in_sync(&home));
 
-        let file = dir.join("room-create/SKILL.md");
+        let file = dir.join("gossip-create/SKILL.md");
         let mut contents = std::fs::read_to_string(&file).unwrap();
         contents.push('\n');
         std::fs::write(&file, contents).unwrap();
@@ -480,7 +480,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::write(dir.join("shared/extra.md"), "extra").unwrap();
         assert!(Agent::Cursor.in_sync(&home));
-        std::fs::remove_file(dir.join("room-join/SKILL.md")).unwrap();
+        std::fs::remove_file(dir.join("gossip-join/SKILL.md")).unwrap();
         assert!(!Agent::Cursor.in_sync(&home));
 
         std::fs::remove_dir_all(&home).unwrap();
@@ -495,7 +495,7 @@ mod tests {
         write_embedded_dir(&SKILLS, &dir);
         assert!(super::drift_warning(&home).is_none());
 
-        std::fs::write(dir.join("room-join/SKILL.md"), "stale").unwrap();
+        std::fs::write(dir.join("gossip-join/SKILL.md"), "stale").unwrap();
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
         assert!(warning.contains("out of date"));

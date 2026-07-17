@@ -8,7 +8,7 @@ which is why the script carries them.
 Meta changes are document-only: they converge to every peer via gossip, but no
 one prints them and they never ring a receive bell — your own report produces
 no echo, and peer identity is read on demand with
-`${SKILL_PREFIX}room-status`.
+`${SKILL_PREFIX}gossip-status`.
 
 To change your entry later, merge only your own `/peers/$NICKNAME` key
 (RFC 7386). Never overwrite another peer's entry:

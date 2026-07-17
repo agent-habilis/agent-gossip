@@ -42,7 +42,7 @@ fn skills_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
 }
 
-/// Expand every `skills/room-*/SKILL.md` template into `dest`, one
+/// Expand every `skills/gossip-*/SKILL.md` template into `dest`, one
 /// self-contained `SKILL.md` per skill. `shared/` is never emitted.
 fn render_skills(src: &Path, dest: &Path) {
     if dest.exists() {
@@ -58,7 +58,7 @@ fn render_skills(src: &Path, dest: &Path) {
             path.is_dir()
                 && path
                     .file_name()
-                    .is_some_and(|name| name.to_string_lossy().starts_with("room-"))
+                    .is_some_and(|name| name.to_string_lossy().starts_with("gossip-"))
         })
         .collect();
     skills.sort();

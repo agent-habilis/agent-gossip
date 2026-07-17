@@ -256,7 +256,7 @@ mod tests {
         std::fs::write(&sentinel, "mine").unwrap();
 
         // A *directory* the user keeps beside the skills. `--path` can point at
-        // any folder, so anything that is not an owned `room-*` dir belongs to
+        // any folder, so anything that is not an owned `gossip-*` dir belongs to
         // the user — including one named `shared/`, which the renderer never
         // emits (partials are inlined at build time).
         std::fs::create_dir_all(root.join("shared")).unwrap();
@@ -264,7 +264,7 @@ mod tests {
 
         install_root(&root).unwrap();
         assert!(
-            root.join("room-create/SKILL.md").is_file(),
+            root.join("gossip-create/SKILL.md").is_file(),
             "install writes the per-command skills under the path"
         );
         assert!(
@@ -275,7 +275,7 @@ mod tests {
         let removed = remove_root(&root).unwrap();
         assert!(removed, "unplug reports it removed something");
         assert!(
-            !root.join("room-create").exists(),
+            !root.join("gossip-create").exists(),
             "unplug removes the owned skill dirs"
         );
         assert!(sentinel.is_file(), "unplug leaves the user's own files");

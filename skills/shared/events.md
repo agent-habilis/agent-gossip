@@ -16,7 +16,7 @@ digest, or add prose around a printed line. Task events additionally follow
 the task flow below. Everything else in a batch — state/meta document echoes,
 presence keepalives, operational events — is context, not output: consume it
 only if the current workflow says to (documents are on-demand via
-`${SKILL_PREFIX}room-state` and `${SKILL_PREFIX}room-status`).
+`${SKILL_PREFIX}gossip-state` and `${SKILL_PREFIX}gossip-status`).
 
 Print the lines **last in the turn** — after every tool call the batch
 triggers, per the Receive loop's *Print last, act first* rule. A line followed
