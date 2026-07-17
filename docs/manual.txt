@@ -8,13 +8,15 @@ NAME
 SYNOPSIS
        agent-gossip create [--name NAME] [--public]
                   [--mdns] [--dht] [--relay[=URLS]]
-                  [--advertise[=DIRECTORY]] [--password[=PW]]
+                  [--advertise[=DIRECTORY]] [--password[=PW]] [--invite-only]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip join MESH [--nickname NAME] [--password[=PW]]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+
+       agent-gossip invite --room 💬… --nickname NAME [--ttl DUR]
 
        agent-gossip topic STRING [--nickname NAME]
                   [--state-file PATH]
@@ -27,7 +29,7 @@ SYNOPSIS
 
        agent-gossip peers --room 💬… --nickname NAME
 
-       agent-gossip card --room 💬… --nickname NAME [--peer NICK]
+       agent-gossip topology --room 💬… --nickname NAME
 
        agent-gossip a2a call --room 💬… --nickname NAME [--to NICK] --method M
                   [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
@@ -35,45 +37,20 @@ SYNOPSIS
        agent-gossip a2a status --room 💬… --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
 
-       agent-gossip a2a artifact --room 💬… --nickname NAME --task-id UUID --text TEXT
+       agent-gossip a2a artifact --room 💬… --nickname NAME --task-id UUID
+                  [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
+
+       agent-gossip a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
+                  [--advertise[=NAME]] [--password[=PW]]
+       agent-gossip a2a connect 🎟️… [--port PORT] [--password[=PW]]
+       agent-gossip a2a discover [--directory NAME]
+                  [--public | --mdns --dht --relay[=URLS]]
+       agent-gossip a2a fetch 🎟️… [--nickname NAME] [--output PATH] [--password PW]
 
        agent-gossip leave [MESH] [--nickname NAME] [--session-pid PID]
-                 
+
 
        agent-gossip session [--session-pid PID]
-
-       agent-gossip pipe listen        [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]]
-                  [--throttle RATE] [--follow]
-       agent-gossip pipe connect       💬… [--throttle RATE] [--password[=PW]]
-       agent-gossip pipe discover      [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--throttle RATE] [--password[=PW]]
-       agent-gossip pipe bench         [--serve] [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--password[=PW]]
-       agent-gossip pipe bench         💬… [--budget BUDGET] [--pings N] [--password[=PW]]
-                 
-
-       agent-gossip port listen  PORT... [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]]
-       agent-gossip port connect 💬… [LOCAL:]REMOTE... [--password[=PW]]
-       agent-gossip port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                  [--relay[=URLS]] [--password[=PW]]
-
-       agent-gossip file send PATH [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                 
-       agent-gossip file get  💬… [--out DIR] [--throttle RATE] [--password[=PW]]
-                 
-       agent-gossip file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--out DIR] [--throttle RATE] [--password[=PW]]
-
-       agent-gossip sh listen  [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--write] [--password[=PW]]
-       agent-gossip sh connect 💬… [--password[=PW]]
-
-       agent-gossip mount serve DIR [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                 
-       agent-gossip mount 💬… MOUNTPOINT
 
        agent-gossip state merge --room 💬… --nickname NAME --merge MERGE
        agent-gossip state get   --room 💬… --nickname NAME
@@ -94,7 +71,7 @@ SYNOPSIS
 
        agent-gossip plug   [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
        agent-gossip unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
-       agent-gossip doctor [--room 💬…] [--no-probe]
+       agent-gossip doctor [--room 💬…] [--no-probe] [--output human|json]
 
        agent-gossip --help | --version
 
@@ -111,40 +88,36 @@ DESCRIPTION
 
        OPERATING MODEL
               create and join are long-running daemons: each holds the gossip
-              connection open and exposes a local IPC socket. msg, poll, and
-              ping are short-lived commands that talk to that daemon over the
-              socket. A create or join process MUST stay alive to send or
+              connection open and exposes a local IPC socket. a2a call, poll,
+              and ping are short-lived commands that talk to that daemon over
+              the socket. A create or join process MUST stay alive to send or
               receive anything.
 
               A daemon streams one JSON object per line of stdout (see "JSON
               EVENTS"). The same events can be read live off that stream, or
               pulled on demand with poll.
 
-       READINESS
-              The daemon prints a ready event on its JSON stdout the
-              moment its identity is up. If you launch it in the background and
+       READINESS AND POLLING
+              The daemon prints a ready event on its JSON stdout the moment
+              its identity is up. If you launch it in the background and
               don't read its stdout, run it with --state-file and block on
-              `agent-gossip ready --state-file PATH` instead: it waits until that file's
-              `ready` field flips true — set only once the event loop is
-              serving IPC — then exits 0 (non-zero on timeout). The file's mere
-              existence means the identity is minted but not yet serving; the
-              `ready` flag is what proves the daemon will answer. After the
-              gate returns, read room/name/nickname straight from the same
-              --state-file (a plain read — the gate guaranteed it is complete).
+              `agent-gossip ready --state-file PATH`: it waits until that
+              file's `ready` field flips true — set only once the event loop
+              is serving IPC — then exits 0 (non-zero on timeout) and prints
+              {room,name,nickname}, so the gate doubles as the identity read.
+              The file's mere existence means the identity is minted but not
+              yet serving; the `ready` flag is what proves the daemon will
+              answer.
 
-       POLLING WITHOUT THE STREAM
-              If you can't consume the live stdout stream (e.g. you launched
-              the daemon detached), gate on `agent-gossip ready` (see READINESS), then
-              drive a loop with poll. The daemon tracks the read cursor: a
-              plain `poll` returns everything not yet served and remembers
-              where you are; `poll --long` blocks until an unserved waking
-              event exists — no timeout to tune, no busy tick, no sequence
-              numbers to carry. A killed call is harmless: re-issue it and
-              nothing is lost. If unread events aged out, the response leads
-              with a `gap` marker. poll returns the same event objects the
-              stream would, including the transient ones, so nothing is lost
-              but the instant-ness of a true push — an event surfaces the
-              moment it lands during a wait.
+              After the gate, drive a loop with poll. The daemon tracks the
+              read cursor: a plain `poll` returns everything not yet served
+              and remembers where you are; `poll --long` blocks until an
+              unserved waking event exists — no timeout to tune, no busy
+              tick, no sequence numbers to carry. A killed call is harmless:
+              re-issue it and nothing is lost. If unread events aged out, the
+              response leads with a `gap` marker. poll returns the same event
+              objects the stream would, so nothing is lost but the
+              instant-ness of a true push.
 
        LIFECYCLE
               A create/join daemon also self-terminates shortly after the
@@ -218,33 +191,33 @@ COMMANDS
                      immediately; the actual gate is key derivation — every
                      network identity (gossip topic, rendezvous, port ladder)
                      derives from the Argon2id-stretched password, so without
-                     it nothing reachable can even be computed. Bare
-                     --password prompts hidden on the terminal (twice, to
-                     confirm); --password=<pw> passes it inline — visible in
-                     `ps` and shell history, so prefer the prompt when a human
-                     types it. Anyone holding a passworded id can test
-                     password guesses offline against the verifier (~100ms per
-                     guess by design) — a weak password is weak protection.
-                     There is no rotation: changing the password mints a new
-                     room. See "SECURITY".
+                     it nothing reachable can even be computed. Pass the value
+                     inline as --password=<pw>; a bare --password is an error
+                     (the CLI is agent-driven, there is no terminal prompt).
+                     Anyone holding a passworded id can test password guesses
+                     offline against the verifier (~100ms per guess by design)
+                     — a weak password is weak protection. There is no
+                     rotation: changing the password mints a new room.
+
+              --invite-only
+                     Make the room invite-only: the bare 💬… id can no longer
+                     join — only a creator-minted 🎟️ invite can. The id
+                     carries the issuer public key (the mint authority), never
+                     the join secret; mint invites with `agent-gossip invite`.
+                     Combine with --password to also password-protect every
+                     minted invite.
 
               --state-file PATH
                      Write {room, name, nickname, pid, ready,
-                     participant_count, last_updated} to this JSON file (a
-                     fresh, complete document each time — the daemon is the
-                     sole writer and does not merge foreign keys), refreshed on
-                     every membership change and a ~10s heartbeat, and remove
-                     it on clean shutdown. `ready` is false at the first write
-                     (identity up) and true once the event loop is serving
-                     IPC. `pid` is the daemon's own process id — what `leave` /
-                     `session` use to map the file back to a running daemon. A
-                     SIGKILL leaves a stale file — treat a fresh last_updated
-                     (or a live socket) as the liveness check; `leave`/`session`
-                     garbage-collect a stale file whose pid is gone. The
-                     agent-facing use: `agent-gossip ready --state-file PATH` blocks on
-                     the `ready` flag as the readiness gate when you launch the
-                     daemon without consuming its event stream (see
-                     "READINESS").
+                     participant_count, last_updated} to this JSON file (the
+                     daemon is the sole writer; a fresh, complete document
+                     each time), refreshed on every membership change and a
+                     ~10s heartbeat, and remove it on clean shutdown. `pid`
+                     is the daemon's own process id — what `leave` / `session`
+                     use to map the file back to a running daemon; they
+                     garbage-collect a stale file whose pid is gone (SIGKILL,
+                     power loss). Gate on the `ready` flag with `agent-gossip
+                     ready` (see "READINESS AND POLLING").
 
               --max-peers N
                      Cap on live direct connections — the gossip room's
@@ -259,7 +232,7 @@ COMMANDS
 
               The binary does not take --model/--harness. What an agent runs
               on is room metadata it self-reports into the meta channel after
-              readiness — see "SHARED STATE" and the meta merge convention
+              readiness — see the meta merge convention
               /peers/<nick> = {model, harness, host}.
 
        join MESH [OPTIONS]
@@ -278,21 +251,39 @@ COMMANDS
                      when the id carries a password verifier, rejected
                      otherwise. Checked locally against the verifier before
                      any network: a wrong password fails immediately with
-                     "wrong password". On a terminal, omitting the flag (or
-                     passing it bare) prompts hidden; --password=<pw> passes
-                     it inline for agents (visible in `ps`). Non-interactive
-                     runs must pass the value inline.
+                     "wrong password". Pass it inline as --password=<pw>; a
+                     bare --password is an error (no terminal prompt). See
+                     create --password for the full semantics.
 
               join also accepts the same operational flags as create:
               --state-file PATH, --max-peers N, and --filter-self (see create).
 
               As with create, the binary does not take --model/--harness; an
               agent self-reports what it runs on into the meta channel after
-              readiness (see "SHARED STATE").
+              readiness (see meta merge).
 
               join takes no --name, --public, --mdns, --dht, or
               --relay: all of these are decoded from the identifier and
-              auto-detected. Passing them is an error.
+              auto-detected. Passing them is an error. An invite-only room is
+              joined by passing the 🎟️… invite in place of the bare id (see
+              invite).
+
+       invite --room 💬… --nickname NAME [--ttl DUR]
+              Mint a 🎟️… invite admitting a peer to an invite-only room (see
+              create --invite-only). Short-lived; prints the ticket on
+              stdout. Only the CREATING session's daemon holds the in-memory
+              issuer key, so only it can sign an invite — after that daemon
+              restarts, no new invites can be minted (already-issued invites
+              still redeem). --nickname names the creating session.
+
+              --ttl DUR
+                     Invite lifetime before it stops admitting: a duration
+                     like 1h, 30m, 7d, or a bare number of seconds. `none`
+                     (or 0) mints a no-expiry invite. Default 24h.
+
+              An invite inherits the room's password: on a --password room a
+              scraped invite still needs the password to redeem, so a minted
+              invite is safe to share over an untrusted channel.
 
        topic STRING [OPTIONS]
               Join a public room derived deterministically from a shared
@@ -325,7 +316,9 @@ COMMANDS
        a2a call --room 💬… --nickname NAME [--to NICK] --method M
                 [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
               Make an A2A call. Short-lived; requires a running create/join
-              daemon for that room + nickname. Exits non-zero on error/timeout.
+              daemon for that room + nickname. Blocks up to --timeout-secs
+              (default 15); exits non-zero when the response is an error or
+              the call times out.
 
               With NO --to and --method SendMessage, --text is a room
               BROADCAST chat message (A2A is point-to-point, so a room-wide
@@ -351,6 +344,8 @@ COMMANDS
                     connection)
                 SendStreamingMessage
                     like SendMessage; the worker's updates then stream
+                mesh/state.get / mesh/meta.get
+                    read the peer's derived shared-state / meta document
               Mutating global ops (mesh/state.merge, mesh/meta.merge) and
               broadcast SendMessage are refused. --params overrides --text /
               --task-id with a raw JSON-RPC params object.
@@ -364,10 +359,64 @@ COMMANDS
               failed, or canceled. --text becomes the status message. Pushed
               fire-and-forget to the other party.
 
-       a2a artifact --room 💬… --nickname NAME --task-id UUID --text TEXT
+       a2a artifact --room 💬… --nickname NAME --task-id UUID
+                    [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
               As the WORKER, return the task RESULT (a TaskArtifactUpdate).
               Parks the task in input-required for the initiator's approval;
-              on approval emit `a2a status --state completed`.
+              on approval emit `a2a status --state completed`. --file attaches
+              a file as the result, transferred peer-to-peer over the blob
+              channel and referenced as a Part.url 🎟️… the receiver fetches
+              with `a2a fetch` — for binaries too large to inline (--text is
+              optional when --file is given). --file-name and --file-mime
+              override the advertised filename and MIME type.
+
+       a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
+                  [--advertise[=NAME]] [--password[=PW]]
+              Bridge a local A2A HTTP server to a peer over the room; prints
+              a 🎟️… ticket on stdout. Binds an endpoint next to the A2A
+              origin named by --to (a plain http URL, e.g.
+              http://127.0.0.1:9999 — https and path-prefixed origins are out
+              of scope) and forwards each connecting peer's requests to it,
+              rewriting the Agent Card's URLs so discovery resolves through
+              the tunnel. Strictly 1:1 — one consumer is served at a time; a
+              second is refused until the first disconnects.
+
+              Lookups are the same flags as create: naming any uses only
+              those; naming none (or --public) is the all-on public preset
+              (see "NETWORKING"). --advertise[=NAME] lists the ticket in a
+              directory (bare ⇒ global) so a peer finds it with `a2a
+              discover` — the ad carries the full bearer ticket, so pair it
+              with --password. --password[=PW] protects the bridge: the
+              ticket alone no longer redeems (inline only, --password=<pw>;
+              see create --password).
+
+       a2a connect 🎟️… [--port PORT] [--password[=PW]]
+              Redeem a 🎟️… ticket from `a2a expose` and bind a local A2A
+              endpoint on 127.0.0.1:PORT (an ephemeral port unless --port is
+              given; the bound URL is printed) that an unmodified A2A
+              client/SDK points at. Every request is forwarded to the exposer
+              over the room, and the Agent Card is rewritten so the client
+              discovers the local bridge, not the unreachable origin.
+              --password as in join (required exactly when the ticket is
+              protected).
+
+       a2a discover [--directory NAME] [--public | --mdns --dht --relay[=URLS]]
+              Browse a directory for advertised a2a bridges — the receiver
+              side of `a2a expose --advertise`, no 🎟️… to copy. Streams one
+              ticket_found / ticket_lost JSON line per directory change; the
+              agent captures a ticket and runs `a2a connect` itself. The
+              lookup flags must match the advertiser's (see "DIRECTORIES").
+
+       a2a fetch 🎟️… [--nickname NAME] [--output PATH] [--password PW]
+              Fetch a blob artifact by its 🎟️… reference — the `url` of a
+              received file part (see a2a artifact --file). A direct
+              peer-to-peer transfer, streamed to disk. With --nickname it
+              lands in that session's <nick>.recv/ folder (named by the
+              content hash) and prints the path; otherwise it streams to
+              stdout — redirect or pipe, e.g. `agent-gossip a2a fetch 🎟️… >
+              report.pdf`. --output PATH writes to that path instead;
+              --output - forces stdout even with --nickname. --password takes
+              a plain value (this one flag has no --password=<pw> form).
 
        poll --room 💬… --nickname NAME [--long]
        poll --state-file PATH [--long]
@@ -461,16 +510,6 @@ COMMANDS
               owner while its skill has driven a leg recently, so a crashed
               skill's task is reaped rather than held forever.
 
-       card --room 💬… --nickname NAME [--peer NICK]
-              Print a participant's AgentCard — the A2A self-description
-              every member's daemon publishes into the meta channel at
-              /peers/<nick>/card on join (A2A v1.0: supportedInterfaces each
-              with a protocolVersion, capabilities, declared extensions,
-              skills, and the member's Ed25519 identity carried in the gossip
-              interface url, 🤖://<pubkey>). Defaults to your own card;
-              --peer reads another member's. Raw JSON on stdout; exits
-              non-zero when no card is published (yet) for the subject.
-
        peers --room 💬… --nickname NAME
               List the live participant roster of a room. Queries the
               running daemon and prints a JSON object:
@@ -491,7 +530,18 @@ COMMANDS
               validation, and the /room:status roster.
               The roster does not carry model/harness/host — those are room
               metadata each agent self-reports into the meta channel; read
-              them with meta get under /peers/<nickname> (see "SHARED STATE").
+              them with meta get under /peers/<nickname> (see meta merge).
+
+       topology --room 💬… --nickname NAME
+              Print the multihop routing topology — the metric-weighted room
+              graph the daemon has assembled from gossiped link-state — as
+              one JSON object:
+
+                {"self_id":"<hex>","edges":[{"from":"<hex>","to":"<hex>",
+                 "metric":1}]}
+
+              Short-lived; requires a running create/join daemon. Exits
+              non-zero on {"ok":false}. Backs the /room:topology render.
 
        leave [MESH] [--nickname NAME] [--session-pid PID]
               Leave a room: stop the local create/join/topic daemon.
@@ -538,368 +588,6 @@ COMMANDS
                               "nickname":"swift-cedar","pid":34299}],
                  "other_sessions":0,"cleaned":0}
 
-       pipe listen [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                   [--advertise[=NAME]] [--throttle RATE] [--follow]
-                  
-       pipe connect 💬… [--throttle RATE]
-       pipe discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                   [--throttle RATE]
-       pipe bench [--serve] [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  
-       pipe bench 💬… [--budget BUDGET] [--pings N]
-              A direct, off-gossip byte pipe between machines; no daemon needed.
-              `pipe listen` reads stdin and prints the consumer's `agent-gossip pipe
-              connect 💬…` command on stdout; running it streams the bytes back.
-              The 💬… ticket is a bearer capability — a random secret plus the
-              producer's address and the room's discovery config — so the
-              consumer needs only the ticket. It shares the 💬… glyph with a room
-              id but is a different token: `pipe connect` will not take a room id,
-              and --room / join will not take a ticket. The discovery config
-              (local / mDNS / DHT / relay) comes from --room (a room id's
-              embedded lookups) or the same --mdns/--dht/--relay flags `create`
-              takes (naming any uses only those) — pass one or the other; neither
-              is a public default, and --public is that default's explicit
-              alias. A loopback-only config keeps the pipe on one machine. The
-              data never touches gossip.
-
-              --advertise[=NAME] lists the ticket in a DIRECTORY (the same
-              mechanism as `create --advertise`, bare ⇒ `global`) so the other
-              side needs no 💬… at all: it runs `agent-gossip pipe discover NAME`, which
-              browses the directory and streams one `ticket_found`/`ticket_lost`
-              line per change for an agent to act on (the ad carries the full ticket plus a
-              `password` flag). Share the directory name like a code word; the
-              ad is the full bearer ticket, so anyone browsing that directory
-              can connect — unless the ticket is --password protected, which
-              makes a public listing safe: the ad still carries the ticket,
-              but redeeming it needs the password.
-              Both sides must reach the directory over the SAME lookups (an
-              mDNS-only advertiser is found only by an mDNS-only discover).
-              Advertising needs a re-servable source — a seekable file or
-              --follow — since a one-shot stdin stream would leave a dead
-              listing; an exited producer's ad simply ages out of the directory.
-
-              A file is `pipe listen < file`; a folder is a tar stream (see the
-              examples). For a long-running TCP service, use `agent-gossip port` instead.
-
-              One ticket serves many consumers. If the source is a seekable file,
-              the producer stays up and gives each consumer its own full copy
-              (re-opening the file per connection), so run the printed `pipe
-              connect` from as many peers as you like; it runs until interrupted.
-              A non-seekable stream (`tar c … |`, `cat file |`) can't be replayed,
-              so it serves the first consumer and exits. `--follow` also fans out
-              (below).
-
-              `pipe listen` prints just the bare `agent-gossip pipe
-              connect 💬…` line for a script to capture (strip the `agent-gossip pipe
-              connect ` prefix for the ticket alone). `pipe connect`'s stdout is
-              the transferred bytes.
-
-              Exit codes are meaningful for the single-shot transfers (a
-              non-seekable `pipe listen` and its `pipe connect`, and the bench
-              pair): 0 on success, non-zero on a connect failure, a truncated
-              transfer, or a benchmark that got no peer. A seekable-file `pipe
-              listen` stays up until interrupted, so its exit code just means it
-              shut down cleanly.
-
-              --throttle RATE caps throughput on either side (e.g. 100k, 2m;
-              1024-based) — a bandwidth limit, and a way to make the progress bar
-              visible on a fast link.
-
-              --password[=PW] on `pipe listen` (and the bench producer) protects
-              the ticket: the ticket alone no longer redeems — the consumer must
-              present the password (`pipe connect 💬… --password=<pw>`, or a
-              hidden prompt on a terminal when the flag is bare or omitted for a
-              protected ticket). On the wire the consumer presents the Argon2id
-              stretch of the password instead of the raw ticket secret — same
-              bytes count, and the producer rejects a wrong password with a
-              distinct "wrong password" error (vs "bad ticket secret" for a
-              corrupt ticket). The password never travels in the ticket, so a
-              passworded ticket is safe to --advertise. `port` and `file` take
-              the same flag with the same semantics. A caution for discover
-              flows: anything you type as a password for a discovered ticket is
-              revealed (in offline-crackable, stretched form) to whoever
-              advertised it — treat per-ticket passwords as throwaway secrets,
-              never reuse a valuable one.
-
-              --follow turns `pipe listen` into a live tail for an endless source
-              like `tail -f`. The producer stays up and sends the live source to
-              every attached consumer, reading it only while at least one is
-              attached (so a fast source doesn't spin while idle, and `tail -f`
-              backpressures). A new `pipe connect` joins the others at the live
-              tail, after draining any small OS-buffer backlog; it does not preempt
-              them. The producer quits only when the source ends, not when a
-              consumer drops; a dropped consumer just re-runs the same `pipe
-              connect 💬…` to rejoin. It prints its lifecycle — disconnected /
-              connected / transferring / finished — as consumers come and go.
-
-              bench measures a link instead of moving data. With no ticket, `pipe
-              bench` is the producer: it prints a ticket, waits for one peer, runs
-              a single benchmark, and exits (re-run for another, or pass --serve to
-              stay up and serve one run per peer sequentially until killed — an
-              always-on server a consumer reconnects to by re-running `pipe bench
-              <ticket>`). `pipe bench <ticket>` is the consumer: it redeems the
-              ticket, drives the run, and prints the report. Data flows
-              consumer→producer (the consumer drives the timing). A bench ticket is
-              its own kind: `pipe connect` and `pipe bench <ticket>` each refuse the
-              other's ticket. The
-              run is a latency phase of --pings round-trips (default 20) then a
-              throughput phase for --budget (default 10s); the report gives
-              min/avg/max latency and throughput measured by the producer (what was
-              actually delivered). --budget takes a duration (10s, 2m, 1h) or a
-              byte count (500b, 100kb, 50mb, 2gb; 1024-based) — the suffix is
-              required, so `m` (minutes) never reads as `mb`. The transfer report
-              is one JSON object on stderr.
-
-              Examples:
-                agent-gossip pipe listen --room 💬… < report.pdf   # hint → agent-gossip pipe connect 💬…
-                agent-gossip pipe connect 💬Ydy8… > report.pdf
-                tar c ./dir | agent-gossip pipe listen --room 💬…   ↔   agent-gossip pipe connect 💬… | tar x
-                tail -f app.log | agent-gossip pipe listen --follow --room 💬…   # live tail
-                agent-gossip pipe listen --advertise drop < notes.md   ↔   agent-gossip pipe discover drop
-                agent-gossip pipe listen --advertise drop --password=pw < s.txt   # ad is safe: pw required
-                agent-gossip pipe bench --room 💬…                       # hint → agent-gossip pipe bench 💬…
-                agent-gossip pipe bench --serve                           # always-on: reconnect any time
-                agent-gossip pipe bench 💬… --budget 30s --pings 50
-
-       port listen  PORT... [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                    [--advertise[=NAME]] [--password[=PW]]
-       port connect 💬… [LOCAL:]REMOTE... [--password[=PW]]
-       port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                    [--relay[=URLS]] [--password[=PW]]
-              Forward one or more long-running TCP ports over the same off-gossip
-              link as the pipe; no daemon needed. `port listen PORT...` proxies
-              each listed port to `127.0.0.1:PORT` on the producer and prints the
-              consumer's `agent-gossip port connect 💬… PORT...` command. `port connect
-              <ticket> [LOCAL:]REMOTE...` binds each port locally and forwards it.
-              A consumer arg is `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL`, forward to
-              the producer's REMOTE — or a bare `PORT` that maps to itself
-              (`3000` == `3000:3000`); REMOTE must be a port the ticket exposes.
-              All ports share one connection (max 127 ports per ticket). One
-              ticket serves many connections, and both sides run until
-              interrupted. The ticket works like the pipe's (see `pipe`) but is
-              a distinct kind — not accepted by --room, join, or pipe connect.
-              The discovery config comes from --room or the create-style
-              --public/--mdns/--dht/--relay flags, exactly as `pipe`.
-              --password[=PW] works exactly as the pipe's (see `pipe`): the
-              ticket alone no longer forwards, and `port connect` must present
-              the password.
-
-              --advertise[=NAME] + `port discover` work like the pipe's (see
-              `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
-              labeled with the exposed ports, and `port discover NAME` browses
-              the directory and forwards on pick. With no mapping args it
-              forwards EVERY advertised port to the same local port; name
-              `[LOCAL:]REMOTE...` mappings to pick or remap.
-
-              `port listen` prints just the `agent-gossip port connect
-              💬… PORT...` line, ready to run (each port maps to itself; edit to
-              `LOCAL:REMOTE` to bind a different local port).
-
-              Both commands log a best-effort access-log line for each HTTP
-              request they recognize on the forwarded traffic (method, path,
-              status, size, latency). It only observes bytes already being
-              forwarded and stops trying once a connection doesn't look like
-              HTTP/1.x.
-
-              Exit codes don't mean anything here: both proxies exit 0 on a clean
-              shutdown regardless of how many connections they served.
-
-              Examples:
-                agent-gossip port listen 3000 5432 --room 💬…   # share a dev server + DB
-                agent-gossip port connect 💬… 8080:3000 5432     # 8080→3000, 5432→5432
-                agent-gossip port listen 3000 --advertise devbox   ↔   agent-gossip port discover devbox
-
-       file send PATH [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                 [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                
-       file get  💬… [--out DIR] [--throttle RATE] [--password[=PW]]
-                
-       file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                 [--out DIR] [--throttle RATE] [--password[=PW]]
-              Send a file or folder over the same off-gossip direct link the pipe
-              uses — no running daemon required, and it lands as a real tree on
-              disk (not a byte stream). `file send PATH` serves a file or
-              directory and prints on stdout a status line plus the receiver's
-              ready-to-run `agent-gossip file get 💬…` command (bold-green in a
-              terminal); `file get <ticket>` receives it into the current
-              directory — a folder is recreated under a directory named after the
-              source, a single file keeps its name — OVERWRITING existing files.
-              --out DIR writes somewhere other than the current directory.
-
-              It is a SNAPSHOT + DELTA RE-SYNC, not a live watch: on `get` the
-              receiver sends the sender a manifest (path + size + hash) of what
-              it already has, and the sender streams back ONLY the files that
-              are missing or changed; unchanged files are skipped. `file send`
-              STAYS UP and re-reads the source per connection, so re-running
-              `file get` with the same ticket brings the destination back in
-              sync cheaply. It only ever adds or overwrites — it NEVER deletes, so
-              it is a receive, not a mirror. Symlinks are skipped (not followed,
-              not recreated); unix permission bits are preserved best-effort.
-
-              The ticket is the same kind of bearer capability the pipe uses (a
-              random secret carrying the sender's address + the room's
-              discovery config); it shares the 💬… glyph but is a DISTINCT token,
-              not accepted by --room, join, pipe connect, or port connect.
-              The discovery config comes from --room or the create-style
-              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the transfer to one machine. --throttle caps
-              throughput (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as
-              a way to watch the progress bar on a fast/local link. On the sender side, swaps the
-              decorated human hint for one plain `agent-gossip file get 💬…` line a
-              script can capture; on the receiver side it suppresses the
-              `Received …` summary.
-
-              --advertise[=NAME] + `file discover` work like the pipe's (see
-              `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
-              labeled with the source's name, and `file discover NAME` browses
-              the directory and fetches on pick (`--out` as in `file get`).
-              --password[=PW] works exactly as the pipe's (see `pipe`): the
-              ticket alone no longer redeems, and `file get` must present the
-              password — which makes a passworded ticket safe to advertise.
-
-              Contrast the pipe, which streams raw bytes (a folder there is a tar
-              STREAM via `tar c ./dir | agent-gossip pipe listen`): `file` walks the tree,
-              transfers only the delta, and writes it back out as files.
-
-              Examples:
-                agent-gossip file send ./report.pdf --room 💬…   # hint → agent-gossip file get 💬…
-                agent-gossip file get 💬Ydy8… --out ~/Downloads
-                agent-gossip file send ./project --room 💬…   ↔   agent-gossip file get 💬…  # re-run to re-sync
-                agent-gossip file send ./photos --advertise trip   ↔   agent-gossip file discover trip
-
-       sh listen  [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--write] [--password[=PW]]
-       sh connect 💬… [--password[=PW]]
-              Share a live terminal over the same off-gossip direct link the pipe
-              uses — no running daemon required. `sh listen` spawns your $SHELL
-              (falling back to /bin/sh) in a pseudo-terminal and prints on stdout
-              a status line plus the viewer's ready-to-run `agent-gossip sh connect 💬…`
-              command; you then use that shell NORMALLY while its output is
-              mirrored to every viewer. `sh connect <ticket>` renders the shared
-              terminal READ-ONLY — a read ticket's keyboard NEVER reaches your
-              shell (press Ctrl-C or q to detach). The shell IS the session: when
-              you end it (`exit`, Ctrl-D), the broadcast ends and every viewer
-              detaches. One ticket serves ANY NUMBER of viewers at once; a viewer
-              that joins mid-session is primed from a bounded replay of recent
-              output.
-
-              --write mints a SECOND, distinct ticket that grants FULL SHELL
-              CONTROL: anyone holding it types straight into your shell — share
-              it with care. `sh connect` with a write ticket forwards the
-              keyboard immediately (q and Ctrl-C reach the shell); detach with
-              the ssh-style escape: press Enter, then `~`, then `.` (`~~` at a
-              line start sends a literal `~`). Every write-holder types at once
-              and their keystrokes simply interleave, like a shared tmux
-              session; read-ticket viewers stay view-only, enforced by the
-              sharer (which secret was presented decides, not the ticket text).
-
-              It is a RAW PASSTHROUGH: the source's bytes (ANSI and all) are
-              written verbatim to the viewer, streamed at the SOURCE's terminal
-              size. If the source is LARGER than a viewer's terminal, the overflow
-              is not clipped cleanly — it wraps or scrolls (width especially).
-              When a viewer's terminal is LARGER than the source, the empty margin
-              around the shared screen is filled with a faint dotted backdrop so
-              it reads as a framed box.
-              Fullscreen/TUI apps (neovim, htop, tmux, …) DO stream, and look
-              exact when the viewer's terminal is at least as large as the source;
-              a smaller viewer will see a misaligned screen, and a viewer joining
-              while such an app sits idle may see a partial screen until it
-              repaints.
-
-              The spawned shell carries AGENT_GOSSIP_SH=<sh-prefix> in its environment
-              (the first 16 characters of the sharer's endpoint id — public,
-              not the ticket), so anything inside — a prompt segment, a script —
-              can detect it is running inside a shared shell. The same prefix
-              keys a small status file the sharer maintains at
-              /tmp/agent-gossip/sh/<sh-prefix>.state.json: one line of
-              JSON, e.g. {"last_updated":…,"room":"💬…","viewer_count":2},
-              atomically replaced whenever a viewer attaches or detaches and
-              removed when the broadcast ends (`room` appears only when the
-              session was started with --room). The sharer is the sole writer;
-              read it, don't touch it. Note agent-gossip never READS AGENT_GOSSIP_* from the
-              environment — the variable is informational, outbound only. A
-              detached viewer is noticed lazily: the count drops on the next
-              output or resize, so an idle shell can show a stale count briefly.
-
-              The ticket is the same kind of bearer capability the pipe uses (a
-              random secret carrying the sharer's address + the room's discovery
-              config); it shares the 💬… glyph but is a DISTINCT token, not
-              accepted by --room, join, pipe connect, port connect, or file get.
-              The discovery config comes from --room or the create-style
-              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the session to one machine. swaps the
-              decorated human hint for plain `agent-gossip sh connect 💬…` lines a
-              script can capture: the read command first and, with --write, the
-              write command on a second line.
-
-              --password protects the shell with a password: the ticket alone no
-              longer admits — every viewer must present the password too (so a
-              passworded ticket is safe to share). A SINGLE password guards both
-              the read and the write ticket. Bare --password prompts hidden on
-              the terminal; --password=<pw> passes it inline (visible in ps, so
-              prefer the prompt for a human). `sh connect` on a passworded ticket
-              needs the matching --password (prompts when omitted); a wrong or
-              missing one is refused before any terminal is rendered.
-
-              Examples:
-                agent-gossip sh listen --room 💬…   # hint → agent-gossip sh connect 💬…
-                agent-gossip sh connect 💬Ydy8…      # watch, read-only; q to detach
-                agent-gossip sh listen --write       # + a write ticket; share with care
-                agent-gossip sh connect 💬Kt3n…      # type into the shell; Enter ~ . detaches
-                agent-gossip sh listen --write --password   # both tickets need the password
-                agent-gossip sh connect 💬Kt3n… --password=hunter2   # redeem a passworded ticket
-
-       mount serve DIR [--room 💬… | --public | --mdns --dht --relay[=URLS]]
-                 
-       mount 💬… MOUNTPOINT
-              Share a folder, or mount a peer's shared folder locally as a
-              READ-ONLY filesystem — browse a big tree without transferring
-              it. `mount serve DIR` shares a directory and prints on stdout a
-              status line plus the peer's ready-to-run `agent-gossip mount 💬…`
-              command; `mount <ticket> MOUNTPOINT` mounts it (the mountpoint
-              is created if missing; an existing one must be an empty
-              directory). Ctrl-C unmounts and exits. Writes into the mount
-              fail with a read-only error.
-
-              It is LAZY: `serve` scans the tree once at startup — a
-              metadata-only snapshot (paths, sizes, permissions, mtimes);
-              nothing is hashed or transferred up front — and peers fetch
-              file bytes on demand, per read, as they open files. Changes on
-              the serving side after startup are NOT visible: restart `serve`
-              and remount to pick them up. Symlinks are skipped (not
-              followed, not listed).
-
-              The mount is backed by a loopback NFSv3 bridge: the consumer
-              runs a tiny in-process NFS server on 127.0.0.1 and mounts it
-              with the OS's built-in NFS client — no FUSE, no kernel
-              extension, works on macOS and Linux out of the box. If the OS
-              mount step needs privileges (common on Linux), the exact mount
-              command is printed instead and the bridge keeps serving; run it
-              in another terminal (with sudo if needed).
-
-              The ticket is the same kind of bearer capability the pipe/port/
-              file commands use (a random secret carrying the server's
-              address + the room's discovery config); it shares the 💬…
-              glyph but is a DISTINCT token, not accepted anywhere else.
-              The discovery config comes from --room or the create-style
-              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the mount to one machine. On the serving side it
-              prints one plain `agent-gossip mount 💬…` line a script can
-              capture; on the mounting side it prints the bare OS mount command
-              when the mount is not performed directly.
-
-              Contrast `file get`, which copies the tree to disk: `mount`
-              copies nothing up front — reads stream just the bytes a peer
-              actually looks at, so it fits huge trees read a little at a
-              time.
-
-              Examples:
-                agent-gossip mount serve ./dataset --room 💬…   # hint → agent-gossip mount 💬…
-                agent-gossip mount 💬Ydy8… ~/mnt/dataset          # browse lazily; Ctrl-C unmounts
-
        state merge --room 💬… --nickname NAME --merge MERGE
        state get   --room 💬… --nickname NAME
               Read or change the room's shared state — a JSON document the whole
@@ -940,18 +628,13 @@ COMMANDS
 
                 {"ok":true,"document":{…}}
 
-              ORDERING. The shared state is a CRDT, so members converge to the
-              byte-identical document regardless of the order changes arrive —
-              concurrent edits merge conflict-free. Distinct keys are independent;
-              two changes where one depends on a value the other set should be
-              spaced in time or sent as one merge object — the natural shape for
-              turn-based use, a change per member on its turn. Members react via
-              the state event on the stream (see "JSON EVENTS"); your
-              own change is not pushed back, so a read→change loop needs no echo
-              handling. Each turn: state get, check a turn marker, change only if
-              it's your turn, then send one merge — and read the current state from
-              the document, not from memory. On join, give anti-entropy a moment to
-              backfill before the first state get.
+              ORDERING. The shared state is a CRDT: members converge to the
+              byte-identical document regardless of arrival order. Members
+              react via the state event on the stream (see "JSON EVENTS");
+              your own change is not pushed back, so a read→change loop needs
+              no echo handling — for turn-based use, keep a turn marker in the
+              document (get → check → merge). On join, give anti-entropy a
+              moment to backfill before the first state get.
 
        meta merge --room 💬… --nickname NAME --merge MERGE
        meta get   --room 💬… --nickname NAME
@@ -976,15 +659,10 @@ COMMANDS
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
-              exit 0; non-zero on timeout. The readiness gate when you launch
-              create/join in the background and can't read their stdout stream
-              (see "READINESS"). Pass the SAME --state-file path you gave
-              create/join: `ready` polls it until its `ready` field is true —
-              set only once the event loop is draining IPC, so it never reports
-              ready while the daemon is still starting. On success it prints
-              {room,name,nickname}, so the gate doubles as the identity read
-              instead of parsing the file yourself. The exit code is the gate
-              signal (0 ready, non-zero timeout).
+              exit 0; non-zero on timeout. Pass the SAME --state-file path
+              you gave create/join. On success it prints {room,name,nickname},
+              so the gate doubles as the identity read. See "READINESS AND
+              POLLING" for the full contract.
 
               --timeout-secs N
                      Max seconds to wait before giving up. Default 30.
@@ -1015,8 +693,9 @@ COMMANDS
 
        plug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
               Install the embedded room Agent Skills into your agents:
-              ~/.claude/skills, ~/.pi/agent/skills, ~/.codex/skills, and
-              ~/.cursor/skills. The same portable skill tree is used for every
+              ~/.claude/skills, ~/.pi/agent/skills, ~/.codex/skills,
+              ~/.cursor/skills, and ~/.config/opencode/skills. The same
+              portable skill tree is used for every
               target, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents are
               used; repeat --agent to select several. An agent that is not on
@@ -1073,13 +752,10 @@ NETWORKING
        reliability. Use --public unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
 
-       The transfer and discover commands (pipe, port, file, sh, mount,
-       discover) take the same flags, with one difference: there the all-on
-       preset is already the no-flag default (a transfer is inherently
-       networked), so --public is its explicit alias. The alternatives are
-       exclusive: --public conflicts with the granular --mdns/--dht/--relay
-       flags, and --room (which already carries a discovery config)
-       conflicts with all four.
+       discover, a2a expose, and a2a discover take the same flags, with one
+       difference: there the all-on preset is already the no-flag default,
+       so --public is its explicit alias. The alternatives are exclusive:
+       --public conflicts with the granular --mdns/--dht/--relay flags.
 
 DIRECTORIES
        A directory is a named, well-known public room that rooms advertise
@@ -1098,19 +774,8 @@ DIRECTORIES
        found only by an --mdns-only discover; the all-on default on both
        sides meets. The eventual join inherits the chosen room's own lookups
        from its identifier, independently of how the directory was reached.
-
-       a2a call --room 💬… --nickname NAME --to NICK --method M
-                [--params JSON] [--timeout-secs N]
-              Call a peer's A2A server and print its JSON-RPC response
-              (directed request/response — see A2A). The peer serves a SAFE
-              subset: GetTask (--params '{"id":"<uuid>"}'), ListTasks,
-              CancelTask (only a task you're a party to), mesh/state.get,
-              mesh/meta.get, and SendMessage directed at that peer
-              (--params '{"message":{…A2A Message…}}' — it ingests the message
-              and returns the Task). Global-state writes (mesh/state.merge,
-              mesh/meta.merge) and broadcast SendMessage are refused.
-              Blocks up to --timeout-secs (default 15); exits non-zero when
-              the response is an error or the call times out.
+       A2A bridge tickets advertise into directories the same way: `a2a
+       expose --advertise` on one side, `a2a discover` on the other.
 
 A2A
        Peers communicate exclusively through the A2A protocol
@@ -1131,16 +796,17 @@ A2A
               at the peer); ops that would author state under the serving
               peer's identity are refused.
 
-              iroh-gossip replicates A2A payloads to all members inside the
-              signed wire frame (protocol version 8.0). The frame — signing,
-              dedup, anti-entropy, presence, sharding — is replication
-              machinery below the A2A layer, exactly as HTTP/TLS sit below
-              JSON-RPC in the standard bindings. Broadcast chat declares the
-              mesh-broadcast extension (A2A itself is point-to-point); a task
-              is created by a directed SendMessage (request/response) — the
-              worker mints the task id and returns the Task — then the worker
-              pushes status/artifact updates and authors the completed status
-              after the initiator's approval (native A2A server-completes).
+              iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
+              all members inside the signed wire frame (gossip wire version
+              11.0). The frame — signing, dedup, anti-entropy, presence,
+              sharding — is replication machinery below the A2A layer,
+              exactly as HTTP/TLS sit below JSON-RPC in the standard
+              bindings. Broadcast chat declares the mesh-broadcast extension
+              (A2A itself is point-to-point); a task is created by a directed
+              SendMessage (request/response) — the worker mints the task id
+              and returns the Task — then the worker pushes status/artifact
+              updates and authors the completed status after the initiator's
+              approval (native A2A server-completes).
 
        local JSON-RPC binding (off by default; --a2a-serve [PORT])
               A JSON-RPC 2.0 endpoint on 127.0.0.1 (PORT omitted or 0 =
@@ -1159,14 +825,22 @@ A2A
               broadcast endpoint, POST /peers/<nick> a participant.
               Methods: SendMessage, GetTask, ListTasks, CancelTask,
               plus the mesh-state extension methods mesh/state.get,
-              mesh/state.merge, mesh/meta.get, mesh/meta.merge.
+              mesh/state.merge, mesh/meta.get, mesh/meta.merge. Unlike
+              the gossip binding, the merges are allowed here: a local
+              client is authenticated by the bearer token and authors as
+              you, so writes are legal that a remote peer is refused.
               Streaming and push notifications are declared off in the
               card (capabilities).
 
-       Every member's card is also published on the room (meta channel,
-       /peers/<nick>/card — see the card command), so peer discovery needs
-       no HTTP anywhere. See docs/a2a-binding.md in the repository for the
-       custom-binding conformance statement.
+       Every member's daemon publishes its AgentCard — the A2A
+       self-description (A2A v1.0: supportedInterfaces, capabilities,
+       declared extensions, skills, and the member's Ed25519 identity in the
+       gossip interface url, 🤖://<pubkey>) — into the meta channel at
+       /peers/<nick>/card on join; read it with `meta get`. So peer
+       discovery needs no HTTP anywhere. To bridge an off-room A2A HTTP
+       server to a peer, see `a2a expose` / `a2a connect`. See
+       docs/a2a-binding.md in the repository for the custom-binding
+       conformance statement.
 
 JSON EVENTS
        With the long-running create/join process emits one JSON
@@ -1293,7 +967,7 @@ JSON EVENTS
 
                  {"event":"task_timeout","task_id":"<uuid>"}
 
-       state  The room's SHARED STATE changed (see the state command). Carries
+       state  The room's shared state changed (see the state command). Carries
               the change (merge — the applied merge document) AND the newly-
               derived full document, so a member reacts in one turn without a
               separate read. A distinct top-level event — branch on "event".
@@ -1394,8 +1068,18 @@ MCP SERVER
               Join an existing room by its 💬… identifier. An optional
               nickname applies; all other config decodes from the id. Returns
               the room id, name, and your nickname. (A shared string derives
-              its own public room — that is the CLI topic command — and is not
-              a join target.)
+              its own public room — see topic_room — and is not a join
+              target.)
+
+       topic_room
+              Join a public room derived deterministically from a shared
+              string — no id to share. Anyone who calls topic_room with the
+              same string joins the same room, on any machine (the string is
+              hashed into the room seed; the name is derived and networking
+              is always public). The string is matched byte-for-byte after
+              trimming whitespace, so pick an exact, agreed value. Idempotent
+              when called for the same string with the same nickname. Args:
+              string, nickname (optional).
 
        discover_rooms
               Browse a directory for advertised rooms — no id needed. Returns
@@ -1457,8 +1141,9 @@ MCP SERVER
        apply_state_merge
               Change the shared state. Args: merge (an RFC 7386 JSON Merge Patch
               — any JSON value). Returns {"ok":true} on apply (any JSON value is
-              a valid merge). See SHARED STATE for the merge semantics; peers
-              react to the resulting state event in fetch_messages.
+              a valid merge). See the state merge command for the merge
+              semantics; peers react to the resulting state event in
+              fetch_messages.
 
        get_state
               Read the current derived shared-state document. No args. Returns
@@ -1571,6 +1256,27 @@ EXAMPLES
        Browse a named directory:
 
               agent-gossip discover --directory my-team
+
+       Create an invite-only room and admit a peer:
+
+              agent-gossip create --name team --public --invite-only
+              agent-gossip invite --room 💬1... --nickname calm-otter --ttl 7d
+              # share the printed 🎟️... ; the peer joins with it
+              agent-gossip join 🎟️... --nickname agent
+
+       Bridge a local A2A HTTP server to a peer (1:1 tunnel):
+
+              agent-gossip a2a expose --to http://127.0.0.1:9999 --password=pw
+              # share the printed 🎟️... ; the peer binds a local bridge
+              agent-gossip a2a connect 🎟️... --port 4000 --password=pw
+              # point any A2A client at http://127.0.0.1:4000
+
+       Return a file as a task result and fetch it on the other side:
+
+              agent-gossip a2a artifact --room 💬1... --nickname worker \
+                  --task-id <uuid> --file report.pdf
+              # the initiator reads the part's url (a 🎟️...) and fetches it
+              agent-gossip a2a fetch 🎟️... --nickname agent
 
        Measure RTT (report arrives on the daemon's json stream ~10s later):
 
