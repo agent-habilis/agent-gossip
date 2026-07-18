@@ -13,27 +13,22 @@ If no session is found, print:
 
 Then stop.
 
-## Drain and re-arm
+## Drain
 
-A context clear also killed the background bell, so the receive slot is empty
-and events have been queueing unheard. Issue ONE message with two parallel
-tool calls, per the **Receive loop** section:
+The bell survived the context clear along with the daemon: the one armed at
+join or create — or by the last Receive-loop re-arm — is still running under
+the harness. Treat it as armed. Arm no new bell and run no background command
+here; that is what makes consecutive reattach calls idempotent. When the
+outstanding bell exits later, the **Receive loop** re-arms as usual (a topic
+room on Claude Code keeps its `sleep 5; ` prefix on every re-arm).
 
-1. **Content** (foreground) — everything that arrived while detached:
+Events that arrived while detached are still queued. Drain them with one
+foreground poll — the daemon's read cursor advances, so repeating it returns
+an empty array:
 
-   ```bash
-   agent-gossip poll --room "$ROOM" --nickname "$NICKNAME"
-   ```
-
-2. **Re-armed bell** (background, output discarded):
-
-   ```bash
-   agent-gossip poll --room "$ROOM" --nickname "$NICKNAME" --long > /dev/null 2>&1
-   ```
-
-   If the recovered session carries `topic` and the harness is Claude Code,
-   prefix this bell — and every later re-arm — with `sleep 5; `, the settle
-   window.
+```bash
+agent-gossip poll --room "$ROOM" --nickname "$NICKNAME"
+```
 
 Handle the drained batch per the **Event handling** section — act first
 (replies, todo updates), and hold its visible `display` lines for the
