@@ -481,9 +481,6 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
     if let Some(directory) = &advertise {
         sink.emit(NodeEvent::Info(format!("advertising on #{directory}")));
     }
-    sink.emit(NodeEvent::MeshId {
-        id: mesh_id.clone(),
-    });
     // `ready` is emitted by `run`, once the IPC socket accepts — not here.
     let topic_id = mesh.topic_id();
     lifecycle::log_ready(

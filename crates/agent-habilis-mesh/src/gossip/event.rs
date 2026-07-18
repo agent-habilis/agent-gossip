@@ -23,9 +23,6 @@ pub enum NodeEvent {
         drift: Option<String>,
         a2a_port: Option<u16>,
     },
-    MeshId {
-        id: MeshId,
-    },
     Info(String),
     Error(String),
     Fork {

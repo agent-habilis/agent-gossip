@@ -269,7 +269,6 @@ mod tests {
             | OutputEvent::Presence { msg }
             | OutputEvent::Task { msg, .. } => Some(msg),
             OutputEvent::Ready { .. }
-            | OutputEvent::MeshId { .. }
             | OutputEvent::PeerTimeout { .. }
             | OutputEvent::PeerReturn { .. }
             | OutputEvent::Fork { .. }

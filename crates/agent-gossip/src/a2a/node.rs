@@ -304,8 +304,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
-        | OutputEvent::Ready { .. }
-        | OutputEvent::MeshId { .. } => false,
+        | OutputEvent::Ready { .. } => false,
     }
 }
 

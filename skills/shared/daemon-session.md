@@ -28,10 +28,10 @@ owned by this agent session. It must remain alive for the whole room session.
 
 The `> /dev/null 2>&1` is not cosmetic and must never be dropped. A harness
 writes a background command's output to a file. The daemon's JSON stdout
-carries every message body, and its stderr prints the bare room id — a
-join credential. Discarding both is the only thing keeping either off disk;
-diagnostics still land in the daemon's own log, where bodies are redacted. Do
-not parse daemon stdout or logs on this path.
+carries every message body; discarding it is the only thing keeping bodies
+off disk, and stderr is discarded with it so an error never lands in a
+harness-persisted file. Diagnostics still land in the daemon's own log,
+where bodies are redacted. Do not parse daemon stdout or logs on this path.
 
 **Tool call 2 — the bell**, a second background task. `--state-file` makes the
 poll wait for the daemon and resolve the identity itself, so the bell is armed

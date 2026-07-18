@@ -339,8 +339,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
-        | OutputEvent::Ready { .. }
-        | OutputEvent::MeshId { .. } => false,
+        | OutputEvent::Ready { .. } => false,
     }
 }
 
@@ -659,7 +658,7 @@ pub(super) fn format_state_json(
 /// advance its `--after` cursor. The body after `seq` is byte-identical to the
 /// live `--output json` line for the same event (same [`event_json`]
 /// renderer) — the parity guarantee `poll` rests on. `None` for events that
-/// produce no JSON line (e.g. `MeshId`).
+/// produce no JSON line.
 #[must_use]
 pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
     let line = event_json(event)?;
@@ -675,8 +674,7 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// daemon writes in `--output json` mode. Reuses the same serializers
 /// as the `Stream` sink, so in-process tests assert the byte-identical
 /// wire format the `/mesh` skill + MCP clients parse. `None` for events
-/// that produce no JSON line in JSON mode (`MeshId` is the bare stderr
-/// `💬…` line, never JSON).
+/// that produce no JSON line in JSON mode.
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {
@@ -768,7 +766,6 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             document,
             is_self,
         } => return Some(format_state_json(*channel, event, document, *is_self)),
-        OutputEvent::MeshId { .. } => return None,
     };
     json.ok()
         .map(|line| stamp_visibility(line, is_visible(event)))

@@ -364,10 +364,9 @@ mod tests {
     }
 
     /// A harness writes a background command's output to a file. The daemon's
-    /// `--output json` stdout carries every message body, and its stderr prints
-    /// the bare room id — a join credential (`Output::mesh_id_line`). The
-    /// `> /dev/null 2>&1` on each such line is therefore the only thing keeping
-    /// either off disk; dropping one would reintroduce the leak silently, so pin
+    /// `--output json` stdout carries every message body, so the
+    /// `> /dev/null 2>&1` on each such line is the only thing keeping bodies
+    /// off disk; dropping one would reintroduce the leak silently, so pin
     /// it here rather than trust review.
     ///
     /// Backgrounding leaves no trace in the rendered text to match on — the

@@ -219,18 +219,6 @@ impl Output {
         );
     }
 
-    /// Surface the mesh identifier at startup (stderr). JSON mode prints the
-    /// bare `💬…` id (the integration harness greps this); Silent suppresses it.
-    pub(crate) fn mesh_id_line(&self, id: &MeshId) {
-        self.dispatch(
-            || OutputEvent::MeshId { id: id.clone() },
-            |mode| match mode {
-                OutputMode::Json => eprintln!("{id}"),
-                OutputMode::Silent => {}
-            },
-        );
-    }
-
     pub(crate) fn print_message(&self, msg: &Message) {
         self.print_message_ex(msg, false);
     }
@@ -593,7 +581,6 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
                 drift: drift.as_deref(),
                 a2a_port,
             }),
-            NodeEvent::MeshId { id } => self.mesh_id_line(&id),
             NodeEvent::Info(message) => self.info(&message),
             NodeEvent::Error(message) => self.error(&message),
             NodeEvent::Fork {

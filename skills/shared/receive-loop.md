@@ -21,8 +21,8 @@ Three rules follow, and all matter:
 - **Never read event content from a notification.**
 - **Never run a poll that prints events in the background.** Its output is one
   long JSON line, and the harness will write every message body to a file.
-- **Discard stderr as well as stdout** on any backgrounded room command. The
-  daemon prints the bare room id — a join credential — on stderr.
+- **Discard stderr as well as stdout** on any backgrounded room command, so
+  nothing the daemon prints ever lands in a harness-persisted file.
 
 ### The loop
 
