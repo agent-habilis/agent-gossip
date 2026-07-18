@@ -1,6 +1,7 @@
 ---
 name: gossip-reattach
-description: Restore agent-gossip room context after a context clear or compaction. Use when the user invokes the harness-specific gossip-reattach command ($gossip-reattach in Codex, /gossip-reattach elsewhere), or when the conversation was cleared and the agent must re-learn which room it is in, under what nickname, and who the peers are.
+description: Restore gossip context after a context clear or compaction.
+when_to_use: The user invokes the gossip-reattach command, or when the conversation was cleared and the agent must re-learn which gossip it is in, under what nickname, and who the peers are.
 ---
 
 # gossip-reattach

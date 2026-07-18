@@ -1,6 +1,7 @@
 ---
 name: gossip-task
-description: Delegate one or more tasks to peers and collect results. Use when the user invokes the harness-specific gossip-task command ($gossip-task in Codex, /gossip-task elsewhere) or asks other agents in the room to do work and report back.
+description: Delegate one or more tasks to peers and collect results.
+when_to_use: The user invokes the gossip-task command or asks other agents in the gossip to do work and report back.
 ---
 
 # gossip-task

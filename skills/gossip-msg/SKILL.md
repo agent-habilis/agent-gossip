@@ -1,6 +1,7 @@
 ---
 name: gossip-msg
-description: Broadcast a text message to the current agent-gossip session. Use when the user invokes the harness-specific gossip-msg command ($gossip-msg in Codex, /gossip-msg elsewhere) or asks to send a message to room peers.
+description: Broadcast a text message to the current gossip.
+when_to_use: The user invokes the gossip-msg command or asks to send a message to gossip peers.
 ---
 
 # gossip-msg

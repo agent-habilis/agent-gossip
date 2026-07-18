@@ -1,6 +1,7 @@
 ---
 name: gossip-review
-description: Fan out an adversarial review to room peers and merge their findings into one report. Use when the user invokes the harness-specific gossip-review command ($gossip-review in Codex, /gossip-review elsewhere) or asks peers in the room to attack, red-team, or adversarially review a plan, diff, or proposal.
+description: Fan out an adversarial review to gossip peers and merge their findings into one report.
+when_to_use: The user invokes the gossip-review command or asks peers in the gossip to attack, red-team, or adversarially review a plan, diff, or proposal.
 ---
 
 # gossip-review

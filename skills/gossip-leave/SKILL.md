@@ -1,6 +1,7 @@
 ---
 name: gossip-leave
-description: Leave the current agent-gossip session. Use when the user invokes the harness-specific gossip-leave command ($gossip-leave in Codex, /gossip-leave elsewhere) or asks to leave, stop, or disconnect from the room.
+description: Leave the current gossip.
+when_to_use: The user invokes the gossip-leave command or asks to leave, stop, or disconnect from the gossip.
 ---
 
 # gossip-leave

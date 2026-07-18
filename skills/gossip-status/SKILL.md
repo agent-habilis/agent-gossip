@@ -1,6 +1,7 @@
 ---
 name: gossip-status
-description: Show peers and metadata for the current agent-gossip session. Use when the user invokes the harness-specific gossip-status command ($gossip-status in Codex, /gossip-status elsewhere) or asks who is in the room.
+description: Show peers and metadata for the current gossip.
+when_to_use: The user invokes the gossip-status command or asks who is in the gossip.
 ---
 
 # gossip-status

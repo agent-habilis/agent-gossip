@@ -339,7 +339,8 @@ mod tests {
             );
         }
         assert!(
-            root.join("gossip-discover/adapters/claude-code.md").is_file(),
+            root.join("gossip-discover/adapters/claude-code.md")
+                .is_file(),
             "gossip-discover still has a Monitor adapter (tracked follow-up)"
         );
         assert!(!root.join("shared/SKILL.md").exists());

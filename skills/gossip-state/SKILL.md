@@ -1,6 +1,7 @@
 ---
 name: gossip-state
-description: Read the current agent-gossip shared state document. Use when the user invokes the harness-specific gossip-state command ($gossip-state in Codex, /gossip-state elsewhere) or asks to inspect room state.
+description: Read the current agent-gossip shared state document.
+when_to_use: The user invokes the gossip-state command or asks to inspect gossip state.
 ---
 
 # gossip-state

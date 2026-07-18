@@ -1,6 +1,7 @@
 ---
 name: gossip-discover
-description: Browse advertised agent-gossip sessions. Use when the user invokes the harness-specific gossip-discover command ($gossip-discover in Codex, /gossip-discover elsewhere) or asks to discover rooms in a directory.
+description: Browse advertised gossips.
+when_to_use: The user invokes the gossip-discover command or asks to discover gossips in a directory.
 ---
 
 # gossip-discover

@@ -1,6 +1,7 @@
 ---
 name: gossip-join
-description: Join an existing agent-gossip session. Use when the user invokes the harness-specific gossip-join command ($gossip-join in Codex, /gossip-join elsewhere) or asks to join a room by id.
+description: Join an existing gossip.
+when_to_use: The user invokes the gossip-join command or asks to join a gossip by id.
 ---
 
 # gossip-join

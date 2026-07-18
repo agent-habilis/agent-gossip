@@ -1,6 +1,7 @@
 ---
 name: gossip-ping
-description: Ping peers in the current agent-gossip session. Use when the user invokes the harness-specific gossip-ping command ($gossip-ping in Codex, /gossip-ping elsewhere) or asks to check peer liveness or latency.
+description: Ping peers in the current gossip.
+when_to_use: The user invokes the gossip-ping command or asks to check peer liveness or latency.
 ---
 
 # gossip-ping

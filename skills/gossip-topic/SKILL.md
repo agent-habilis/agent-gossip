@@ -1,6 +1,7 @@
 ---
 name: gossip-topic
-description: Join a public agent-gossip session derived from a shared string. Use when the user invokes the harness-specific gossip-topic command ($gossip-topic in Codex, /gossip-topic elsewhere) or asks to join a topic room without a join id.
+description: Join a public gossip derived from a shared string.
+when_to_use: The user invokes the gossip-topic command or asks to join a topic gossip without a join id.
 ---
 
 # gossip-topic

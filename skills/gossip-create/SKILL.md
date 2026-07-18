@@ -1,6 +1,7 @@
 ---
 name: gossip-create
-description: Create and join a new agent-gossip session. Use when the user invokes the harness-specific gossip-create command ($gossip-create in Codex, /gossip-create elsewhere) or asks to start a new room with a fresh join id.
+description: Create and join a new gossip.
+when_to_use: The user invokes the gossip-create command or asks to start a new gossip with a fresh join id.
 ---
 
 # gossip-create

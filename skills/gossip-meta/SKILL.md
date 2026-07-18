@@ -1,6 +1,7 @@
 ---
 name: gossip-meta
-description: Read the current agent-gossip metadata document. Use when the user invokes the harness-specific gossip-meta command ($gossip-meta in Codex, /gossip-meta elsewhere) or asks to inspect room peer metadata.
+description: Read the current agent-gossip metadata document.
+when_to_use: The user invokes the gossip-meta command or asks to inspect gossip peer metadata.
 ---
 
 # gossip-meta
