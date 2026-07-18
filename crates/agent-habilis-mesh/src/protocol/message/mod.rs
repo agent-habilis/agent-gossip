@@ -44,7 +44,7 @@ pub(crate) use crate::util::consts::MAX_MESSAGE_SIZE;
 /// limit under us fails the build here, not in production.
 const _: () = assert!(
     MAX_MESSAGE_SIZE + 256 <= iroh_gossip::proto::DEFAULT_MAX_MESSAGE_SIZE,
-    "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
+    "MAX_MESSAGE_SIZE leaves too little headroom under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
 /// Protocol version embedded in every message, `11.0` for the agent-gossip
@@ -57,7 +57,7 @@ const _: () = assert!(
 /// no-op and diverges. Rebrand the domains, bump this.
 ///
 /// The identity wire key stays **`mesh`**, and so does the internal vocabulary.
-/// The user-facing noun for a session became **room** at the same time, but that
+/// The user-facing noun for a session became **gossip** at the same time, but that
 /// is a CLI/docs/MCP surface word and never reaches the wire.
 ///
 /// Earlier versions are *format* history, not interop history — nothing shipped,
@@ -81,7 +81,7 @@ pub(crate) const VERSION: &str = "11.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
-/// by the heartbeat-based participant tracker.
+/// by the heartbeat-based peer tracker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PresenceSubtype {
@@ -102,7 +102,7 @@ impl fmt::Display for PresenceSubtype {
 
 /// The single addressee of a directed frame — the routing mirror of
 /// `gossip::recv::addressed_to_us`. `Some(nick)` for a frame that targets
-/// exactly one participant (`Pong`, the A2A task-push legs, the A2A RPC
+/// exactly one peer (`Pong`, the A2A task-push legs, the A2A RPC
 /// request/response); `None` for a broadcast or infrastructure kind. The
 /// [`crate::transport`] send router uses this to decide point-to-point vs gossip.
 ///

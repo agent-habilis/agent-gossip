@@ -24,10 +24,8 @@ use iroh_gossip::proto::HyparviewConfig;
 use crate::protocol::mesh::{LookupOpts, RelayChoice};
 
 pub use capability::{NetworkCapability, probe as capability_probe};
-pub use relay::{
-    RungRefresh, plan_rung_refresh, probe_ladder, relay_ladder, select_bootstrap_rung,
-    spawn_relay_monitor,
-};
+pub use relay::{RungRefresh, probe_ladder, relay_ladder};
+pub(crate) use relay::{plan_rung_refresh, select_bootstrap_rung, spawn_relay_monitor};
 
 /// Build an iroh endpoint for a mesh's lookups.
 ///
@@ -38,7 +36,7 @@ pub use relay::{
 ///   them.
 /// - `secret_key`: `Some` pins a deterministic identity (used for the
 ///   shared rendezvous endpoint); `None` lets iroh generate a fresh
-///   random key (the normal participant endpoint).
+///   random key (the normal peer endpoint).
 /// - `bind_port`: loopback-only — `Some(port)` binds
 ///   `127.0.0.1:port` (the deterministic rendezvous port; a bind
 ///   failure with `AddrInUse` is the claim-if-free signal that another
@@ -57,7 +55,7 @@ pub async fn build_endpoint(
     alpns: Vec<Vec<u8>>,
     multihop: Option<iroh_multihop_transport::MultihopHandle>,
 ) -> Result<Endpoint> {
-    // The multihop participant endpoint carries a pinned key too, so it is *not*
+    // The multihop peer endpoint carries a pinned key too, so it is *not*
     // a beacon; the presence of a multihop handle disambiguates.
     let is_beacon = secret_key.is_some() && multihop.is_none();
     let network = lookups.network_label();
@@ -111,7 +109,7 @@ pub async fn build_endpoint(
     // Register the multi-hop custom transport (plus its address lookup + backup
     // path selector) so a `connect` to a peer with no direct path rides the
     // multihop path. The handle's app id must match this endpoint's key — the
-    // caller (`build_participant_multihop`) pins the same secret.
+    // caller (`build_peer_multihop`) pins the same secret.
     if let Some(handle) = multihop {
         builder = builder.preset(handle);
     }
@@ -143,31 +141,31 @@ pub async fn build_endpoint(
         mdns = lookups.mdns,
         dht = lookups.dht,
         relay = ?lookups.relay,
-        role = if is_beacon { "beacon" } else { "participant" },
+        role = if is_beacon { "beacon" } else { "peer" },
         endpoint_id = %endpoint.id(),
         "endpoint bound"
     );
     Ok(endpoint)
 }
 
-/// The normal participant endpoint: a fresh random identity, no
+/// The normal peer endpoint: a fresh random identity, no
 /// pinned port. Thin intent-named wrapper over `build_endpoint`
 /// so call sites don't carry the rendezvous-only `None, None`.
 /// # Errors
 /// Returns an error if the inputs are invalid or the operation fails.
-pub async fn build_participant_endpoint(lookups: &LookupOpts) -> Result<Endpoint> {
+pub async fn build_peer_endpoint(lookups: &LookupOpts) -> Result<Endpoint> {
     build_endpoint(lookups, None, None, Vec::new(), None).await
 }
 
-/// A participant endpoint with the multi-hop transport registered, plus the
+/// A peer endpoint with the multi-hop transport registered, plus the
 /// [`MultihopHandle`](iroh_multihop_transport::MultihopHandle) that owns the
 /// forwarding underlay and routing table. The app endpoint's key is pinned so it
 /// matches the handle's advertised hop identity. The underlay is a second,
-/// plain participant endpoint dedicated to hop-by-hop packet forwarding.
+/// plain peer endpoint dedicated to hop-by-hop packet forwarding.
 ///
 /// # Errors
 /// Returns an error if either endpoint fails to bind.
-pub async fn build_participant_multihop(
+pub(crate) async fn build_peer_multihop(
     lookups: &LookupOpts,
 ) -> Result<(Endpoint, iroh_multihop_transport::MultihopHandle)> {
     let mut key_bytes = [0u8; 32];
@@ -265,8 +263,8 @@ pub(crate) fn build_mesh(
         .membership_config(membership)
         .spawn(endpoint.clone());
     let mut builder = Router::builder(endpoint).accept(GOSSIP_ALPN, gossip.clone());
-    // A participant also accepts inbound unicast; the rendezvous/beacon endpoint
-    // passes `None` (it is not a participant and carries no unicast traffic).
+    // A peer also accepts inbound unicast; the rendezvous/beacon endpoint
+    // passes `None` (it is not a peer and carries no unicast traffic).
     if let Some(acceptor) = unicast {
         builder = builder.accept(crate::transport::UNICAST_ALPN, acceptor);
     }
@@ -276,7 +274,7 @@ pub(crate) fn build_mesh(
 
 #[cfg(test)]
 mod tests {
-    use super::{LookupOpts, build_participant_endpoint};
+    use super::{LookupOpts, build_peer_endpoint};
 
     // Binds the `Minimal`-based reachable branch (the default relay
     // ladder, no lookup wired) and the loopback all-off branch. mDNS
@@ -287,7 +285,7 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_all_off_binds() {
-        let endpoint = build_participant_endpoint(&LookupOpts::loopback())
+        let endpoint = build_peer_endpoint(&LookupOpts::loopback())
             .await
             .expect("loopback endpoint must bind");
         endpoint.close().await;
@@ -298,7 +296,7 @@ mod tests {
         // No lookup wired: exercises the `Minimal` + pinned-ladder
         // composition. `bind()` is non-blocking wrt the relay, so this
         // is offline-safe even with the relay ladder configured.
-        let endpoint = build_participant_endpoint(&LookupOpts::public_preset())
+        let endpoint = build_peer_endpoint(&LookupOpts::public_preset())
             .await
             .expect("endpoint with pinned relay ladder must bind");
         endpoint.close().await;

@@ -8,7 +8,7 @@ pub mod messages;
 mod sink;
 
 pub use sink::LogSink;
-pub use sink::{attach, detach, flush_pending_to_stderr, install};
+pub use sink::{attach, flush_pending_to_stderr, install};
 
 /// Default tracing directives when `RUST_LOG` is unset (`RUST_LOG`
 /// wins). Quiets benign `noq_proto::connection`; release also drops the

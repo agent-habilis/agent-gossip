@@ -21,7 +21,7 @@
 /// moved. Change this, then sweep the literals.
 pub const MESH_GLYPH: &str = "💬";
 
-/// The peer sigil — brands a participant's address in its A2A card interface
+/// The peer sigil — brands a peer's address in its A2A card interface
 /// url (`🤖://<pubkey>`). A robot for the AI agent behind the pubkey; distinct
 /// from the mesh `💬` and the ticket `🎟️` so the three token families never
 /// collide. Emoji-presentation by default, so no variation selector.
@@ -335,13 +335,13 @@ pub const RIVAL_RECHECK_FIRST_SECS: u64 = 12;
 pub const RIVAL_RECHECK_SECS: u64 = 30;
 
 /// Steady shed cadence while meshed — the island-vs-island backstop. Slow,
-/// because a healthy room pays the shed's ~probe-budget beacon blip each
+/// because a healthy gossip pays the shed's ~probe-budget beacon blip each
 /// cycle and a meshed split (two multi-member islands) is already rare.
 /// Flag: `--rival-recheck-meshed-secs`.
 pub const RIVAL_RECHECK_MESHED_SECS: u64 = 300;
 
 /// Span of the deterministic per-node phase offset added to the first shed,
-/// derived from the participant endpoint id. Orders simultaneous claimants so
+/// derived from the peer endpoint id. Orders simultaneous claimants so
 /// the earlier-offset node sheds first, finds the other's still-held beacon,
 /// and yields — a tie-break, not a delay knob, so no flag.
 pub const RIVAL_RECHECK_OFFSET_SPAN_SECS: u64 = 8;

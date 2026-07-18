@@ -114,7 +114,7 @@ impl Topology {
 
     /// A JSON-serializable snapshot of the routing graph from `self_id`'s point
     /// of view — every metric-labelled edge assembled from the held vectors, plus
-    /// which node is "us". Backs the `topology` IPC query / `/room:topology`.
+    /// which node is "us". Backs the `topology` IPC query.
     #[must_use]
     pub fn view(&self, self_id: EndpointId) -> TopologyView {
         let edges = self
@@ -147,7 +147,7 @@ impl Topology {
 }
 
 /// A node's-eye view of the routing graph, ready to serialize to JSON for the
-/// `topology` IPC query and the `/room:topology` render.
+/// `topology` IPC query.
 #[derive(Debug, serde::Serialize)]
 pub struct TopologyView {
     /// This node's own endpoint id (hex) — the graph's "you".

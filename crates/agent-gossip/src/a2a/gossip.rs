@@ -35,7 +35,7 @@ pub fn send_message_payload(mesh: &MeshId, task_id: Option<&TaskId>, text: &str)
 /// text. Input files ride the request `Message.parts`; they are never wrapped in
 /// an `Artifact` (the A2A request has no artifact slot).
 #[must_use]
-pub fn send_message_payload_parts(
+pub(crate) fn send_message_payload_parts(
     mesh: &MeshId,
     task_id: Option<&TaskId>,
     parts: Vec<Part>,
@@ -84,7 +84,7 @@ pub fn chat_payload(frame: &Frame) -> Result<Message> {
         bail!("a2a messageId does not match the frame id");
     }
     if payload.context_id.as_deref() != Some(frame.mesh.as_str()) {
-        bail!("a2a contextId does not name the frame's room");
+        bail!("a2a contextId does not name the frame's gossip");
     }
     if !payload
         .extensions
@@ -123,7 +123,7 @@ pub fn display_text(message: &Message) -> String {
 /// The plain-text projection of a run of parts: each part's [`Part::display`],
 /// newline-joined. Shared by the message and artifact rendering paths.
 #[must_use]
-pub fn parts_text(parts: &[Part]) -> String {
+pub(crate) fn parts_text(parts: &[Part]) -> String {
     parts
         .iter()
         .map(Part::display)
@@ -229,7 +229,7 @@ pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
     let payload: TaskStatusUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a status payload")?;
     if payload.context_id != frame.mesh.as_str() {
-        bail!("a2a status contextId does not name the frame's room");
+        bail!("a2a status contextId does not name the frame's gossip");
     }
     Ok(payload)
 }
@@ -245,7 +245,7 @@ pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate> {
     let payload: TaskArtifactUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a artifact payload")?;
     if payload.context_id != frame.mesh.as_str() {
-        bail!("a2a artifact contextId does not name the frame's room");
+        bail!("a2a artifact contextId does not name the frame's gossip");
     }
     Ok(payload)
 }

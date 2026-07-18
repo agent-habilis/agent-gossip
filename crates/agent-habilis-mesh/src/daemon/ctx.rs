@@ -24,7 +24,7 @@ pub struct HandlerCtx<'a> {
     pub our_pubkey: &'a str,
     pub max_peers: usize,
     /// Well-known rendezvous endpoint id. Its co-hosted pseudo-node
-    /// shows up as a gossip neighbor on participant endpoints; it is
+    /// shows up as a gossip neighbor on peer endpoints; it is
     /// filtered out of peer accounting everywhere it could leak.
     pub rendezvous_id: EndpointId,
     /// Inbound push channel. `Some` only when the in-process consumer wired one

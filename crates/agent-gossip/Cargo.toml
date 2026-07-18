@@ -60,10 +60,6 @@ clap = { version = "4", features = ["derive"] }
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-gossip plug` is self-contained.
 include_dir = "0.7"
-# The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
-# merge without a bespoke ordered-log fold. `default-features` stays on (the
-# `storage-v2` on-disk format is unused — we carry changes on the wire).
-automerge.workspace = true
 # `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
 # capability probe (`lookup::capability`) reads the report directly.
 iroh.workspace = true

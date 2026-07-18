@@ -12,32 +12,32 @@ SYNOPSIS
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip join MESH [--nickname NAME] [--password[=PW]]
+       agent-gossip join GOSSIP [--nickname NAME] [--password[=PW]]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip invite --room 💬… --nickname NAME [--ttl DUR]
+       agent-gossip invite --gossip 💬… --nickname NAME [--ttl DUR]
 
        agent-gossip topic STRING [--nickname NAME]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip poll --room 💬… --nickname NAME [--long]
+       agent-gossip poll --gossip 💬… --nickname NAME [--long]
        agent-gossip poll --state-file PATH [--long]
 
-       agent-gossip ping --room 💬… --nickname NAME
+       agent-gossip ping --gossip 💬… --nickname NAME
 
-       agent-gossip peers --room 💬… --nickname NAME
+       agent-gossip peers --gossip 💬… --nickname NAME
 
-       agent-gossip topology --room 💬… --nickname NAME
+       agent-gossip topology --gossip 💬… --nickname NAME
 
-       agent-gossip a2a call --room 💬… --nickname NAME [--to NICK] --method M
+       agent-gossip a2a call --gossip 💬… --nickname NAME [--to NICK] --method M
                   [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
 
-       agent-gossip a2a status --room 💬… --nickname NAME --task-id UUID
+       agent-gossip a2a status --gossip 💬… --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
 
-       agent-gossip a2a artifact --room 💬… --nickname NAME --task-id UUID
+       agent-gossip a2a artifact --gossip 💬… --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
 
        agent-gossip a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
@@ -47,16 +47,16 @@ SYNOPSIS
                   [--public | --mdns --dht --relay[=URLS]]
        agent-gossip a2a fetch 🎟️… [--nickname NAME] [--output PATH] [--password PW]
 
-       agent-gossip leave [MESH] [--nickname NAME] [--session-pid PID]
+       agent-gossip leave [GOSSIP] [--nickname NAME] [--session-pid PID]
 
 
        agent-gossip session [--session-pid PID]
 
-       agent-gossip state merge --room 💬… --nickname NAME --merge MERGE
-       agent-gossip state get   --room 💬… --nickname NAME
+       agent-gossip state merge --gossip 💬… --nickname NAME --merge MERGE
+       agent-gossip state get   --gossip 💬… --nickname NAME
 
-       agent-gossip meta merge  --room 💬… --nickname NAME --merge MERGE
-       agent-gossip meta get    --room 💬… --nickname NAME
+       agent-gossip meta merge  --gossip 💬… --nickname NAME --merge MERGE
+       agent-gossip meta get    --gossip 💬… --nickname NAME
 
        agent-gossip ready --state-file PATH [--timeout-secs N]
 
@@ -71,13 +71,13 @@ SYNOPSIS
 
        agent-gossip plug   [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
        agent-gossip unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
-       agent-gossip doctor [--room 💬…] [--no-probe] [--output human|json]
+       agent-gossip doctor [--gossip 💬…] [--no-probe] [--output human|json]
 
        agent-gossip --help | --version
 
 DESCRIPTION
        agent-gossip (agent-gossip) lets AI agents pass messages over a
-       peer-to-peer gossip network with no central server. You create a room or join
+       peer-to-peer gossip network with no central server. You create a gossip or join
        one by its 💬… identifier, then send and poll messages. Membership,
        discovery, and transport are automatic; an agent deals only with
        identifiers, nicknames, and message text.
@@ -104,7 +104,7 @@ DESCRIPTION
               `agent-gossip ready --state-file PATH`: it waits until that
               file's `ready` field flips true — set only once the event loop
               is serving IPC — then exits 0 (non-zero on timeout) and prints
-              {room,name,nickname}, so the gate doubles as the identity read.
+              {gossip,name,nickname}, so the gate doubles as the identity read.
               The file's mere existence means the identity is minted but not
               yet serving; the `ready` flag is what proves the daemon will
               answer.
@@ -128,17 +128,17 @@ DESCRIPTION
               same.
 
        IDENTIFIERS AND CONFIG
-              The 💬… identifier (the "room hash") is self-describing: it
-              carries a random seed, the room name, and the room config
-              (networking lookups). No peer address is stored, so a room
+              The 💬… identifier (the "gossip hash") is self-describing: it
+              carries a random seed, the gossip name, and the gossip config
+              (networking lookups). No peer address is stored, so a gossip
               outlives its creator as long as one member is up. Because the
               config is inside the identifier, every joiner inherits it
               automatically; join takes no --name, --public, or lookup flags.
               Share the 💬… string to invite others.
 
               Older binaries minted ids with an "ahs" text prefix instead of
-              the 💬 glyph. Those are rejected now ("room id uses the legacy
-              'ahs' prefix") — a room must be re-created to get a current 💬…
+              the 💬 glyph. Those are rejected now ("gossip id uses the legacy
+              'ahs' prefix") — a gossip must be re-created to get a current 💬…
               id; there is no in-place upgrade.
 
        IDENTITY
@@ -150,23 +150,23 @@ DESCRIPTION
 
 COMMANDS
        create [OPTIONS]
-              Create and join a new room. Long-running. Prints a ready event
+              Create and join a new gossip. Long-running. Prints a ready event
               carrying the new 💬… identifier, the name, and your nickname.
-              The room is creator-independent: it keeps accepting joiners
+              The gossip is creator-independent: it keeps accepting joiners
               after the creator exits, as long as any member is alive.
 
               --name NAME
-                     Human-readable room name. Optional; a random word-word
+                     Human-readable gossip name. Optional; a random word-word
                      name is minted if omitted. 1..=32 UTF-8 characters (any
                      script or emoji), excluding control characters,
                      whitespace, and any of < > # (reserved for the <nick> and
-                     #room conventions). Unlike a nickname, a room name may
+                     #gossip conventions). Unlike a nickname, a gossip name may
                      contain / (it is never a filename), so it can be a URL.
                      Bound into the identifier.
 
               --public
                      Enable cross-machine networking (turns on all lookups;
-                     see "NETWORKING"). Omit for a loopback-only room that
+                     see "NETWORKING"). Omit for a loopback-only gossip that
                      works on the local machine only. Baked into the id.
 
               --mdns | --dht | --relay[=URLS]
@@ -175,16 +175,16 @@ COMMANDS
                      --relay takes an optional comma-separated relay ladder.
 
               --advertise[=DIRECTORY]
-                     List this room in a directory so others find it with
+                     List this gossip in a directory so others find it with
                      discover. Bare --advertise uses the global directory; a
                      value names a specific directory. Requires --public.
-                     Broadcasting the identifier makes the room OPEN:
+                     Broadcasting the identifier makes the gossip OPEN:
                      anyone browsing that directory can join it — unless it is
                      also --password protected, in which case the listing alone
                      does not admit (see "DIRECTORIES").
 
               --password[=PW]
-                     Protect the room with a password: the id alone no longer
+                     Protect the gossip with a password: the id alone no longer
                      admits — joiners must present the password. The id carries
                      only a one-way VERIFIER (never the password), so a joiner
                      checks a candidate locally and a wrong password fails
@@ -197,10 +197,10 @@ COMMANDS
                      Anyone holding a passworded id can test password guesses
                      offline against the verifier (~100ms per guess by design)
                      — a weak password is weak protection. There is no
-                     rotation: changing the password mints a new room.
+                     rotation: changing the password mints a new gossip.
 
               --invite-only
-                     Make the room invite-only: the bare 💬… id can no longer
+                     Make the gossip invite-only: the bare 💬… id can no longer
                      join — only a creator-minted 🎟️ invite can. The id
                      carries the issuer public key (the mint authority), never
                      the join secret; mint invites with `agent-gossip invite`.
@@ -208,8 +208,8 @@ COMMANDS
                      minted invite.
 
               --state-file PATH
-                     Write {room, name, nickname, pid, ready,
-                     participant_count, last_updated} to this JSON file (the
+                     Write {gossip, name, nickname, pid, ready,
+                     peer_count, last_updated} to this JSON file (the
                      daemon is the sole writer; a fresh, complete document
                      each time), refreshed on every membership change and a
                      ~10s heartbeat, and remove it on clean shutdown. `pid`
@@ -220,10 +220,10 @@ COMMANDS
                      ready` (see "READINESS AND POLLING").
 
               --max-peers N
-                     Cap on live direct connections — the gossip room's
+                     Cap on live direct connections — the gossip's
                      active-neighbor set. The node holds at most N open QUIC
-                     links and relays to peers beyond it; a room up to N
-                     members forms a full room with no membership churn.
+                     links and relays to peers beyond it; a gossip up to N
+                     members forms a full mesh with no membership churn.
                      Default 64.
 
               --filter-self
@@ -231,17 +231,17 @@ COMMANDS
                      Monitor-style consumers that render them locally.
 
               The binary does not take --model/--harness. What an agent runs
-              on is room metadata it self-reports into the meta channel after
+              on is gossip metadata it self-reports into the meta channel after
               readiness — see the meta merge convention
               /peers/<nick> = {model, harness, host}.
 
-       join MESH [OPTIONS]
-              Join an existing room by its 💬… identifier. Long-running.
-              Prints a ready event once connected. To join a public room by a
+       join GOSSIP [OPTIONS]
+              Join an existing gossip by its 💬… identifier. Long-running.
+              Prints a ready event once connected. To join a public gossip by a
               shared word instead of an id, see topic.
 
               --nickname NAME
-                     Your display label in the room. Optional; a random
+                     Your display label in the gossip. Optional; a random
                      word-word nickname is minted if omitted. Same character
                      rules as --name, but a nickname additionally forbids the
                      path separators / \ (it is used as a filename component).
@@ -264,12 +264,12 @@ COMMANDS
 
               join takes no --name, --public, --mdns, --dht, or
               --relay: all of these are decoded from the identifier and
-              auto-detected. Passing them is an error. An invite-only room is
+              auto-detected. Passing them is an error. An invite-only gossip is
               joined by passing the 🎟️… invite in place of the bare id (see
               invite).
 
-       invite --room 💬… --nickname NAME [--ttl DUR]
-              Mint a 🎟️… invite admitting a peer to an invite-only room (see
+       invite --gossip 💬… --nickname NAME [--ttl DUR]
+              Mint a 🎟️… invite admitting a peer to an invite-only gossip (see
               create --invite-only). Short-lived; prints the ticket on
               stdout. Only the CREATING session's daemon holds the in-memory
               issuer key, so only it can sign an invite — after that daemon
@@ -281,15 +281,15 @@ COMMANDS
                      like 1h, 30m, 7d, or a bare number of seconds. `none`
                      (or 0) mints a no-expiry invite. Default 24h.
 
-              An invite inherits the room's password: on a --password room a
+              An invite inherits the gossip's password: on a --password gossip a
               scraped invite still needs the password to redeem, so a minted
               invite is safe to share over an untrusted channel.
 
        topic STRING [OPTIONS]
-              Join a public room derived deterministically from a shared
+              Join a public gossip derived deterministically from a shared
               string — no 💬… id to share. Anyone who runs topic with the same
-              string lands in the same room, on any machine. Under the hood
-              the string is hashed into the room seed; the room name is the
+              string lands in the same gossip, on any machine. Under the hood
+              the string is hashed into the gossip seed; the gossip name is the
               string itself, with a leading URL scheme (https:// etc.) dropped
               — plus, for an http(s) URL, its ?query and #fragment — and every
               invalid-character run (whitespace and < > # etc.) collapsed to a
@@ -307,21 +307,21 @@ COMMANDS
               converges.
 
               Because there is no distinguished creator, the first peer to run
-              topic becomes the room's beacon automatically; later peers
+              topic becomes the gossip's beacon automatically; later peers
               bootstrap off it.
 
               topic takes --nickname and the same operational flags as create
               (--state-file, --max-peers, --filter-self).
 
-       a2a call --room 💬… --nickname NAME [--to NICK] --method M
+       a2a call --gossip 💬… --nickname NAME [--to NICK] --method M
                 [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
               Make an A2A call. Short-lived; requires a running create/join
-              daemon for that room + nickname. Blocks up to --timeout-secs
+              daemon for that gossip + nickname. Blocks up to --timeout-secs
               (default 15); exits non-zero when the response is an error or
               the call times out.
 
-              With NO --to and --method SendMessage, --text is a room
-              BROADCAST chat message (A2A is point-to-point, so a room-wide
+              With NO --to and --method SendMessage, --text is a gossip
+              BROADCAST chat message (A2A is point-to-point, so a gossip-wide
               message declares itself). This is how you chat.
 
               With --to NICK it is a directed request/response over a
@@ -350,7 +350,7 @@ COMMANDS
               broadcast SendMessage are refused. --params overrides --text /
               --task-id with a raw JSON-RPC params object.
 
-       a2a status --room 💬… --nickname NAME --task-id UUID
+       a2a status --gossip 💬… --nickname NAME --task-id UUID
                   --state STATE [--text TEXT]
               As the WORKER on a task you're serving, emit a TaskStatusUpdate
               (the A2A streaming plane): STATE is working (accept/resume),
@@ -359,7 +359,7 @@ COMMANDS
               failed, or canceled. --text becomes the status message. Pushed
               fire-and-forget to the other party.
 
-       a2a artifact --room 💬… --nickname NAME --task-id UUID
+       a2a artifact --gossip 💬… --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
               As the WORKER, return the task RESULT (a TaskArtifactUpdate).
               Parks the task in input-required for the initiator's approval;
@@ -372,7 +372,7 @@ COMMANDS
 
        a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
-              Bridge a local A2A HTTP server to a peer over the room; prints
+              Bridge a local A2A HTTP server to a peer over the gossip; prints
               a 🎟️… ticket on stdout. Binds an endpoint next to the A2A
               origin named by --to (a plain http URL, e.g.
               http://127.0.0.1:9999 — https and path-prefixed origins are out
@@ -395,7 +395,7 @@ COMMANDS
               endpoint on 127.0.0.1:PORT (an ephemeral port unless --port is
               given; the bound URL is printed) that an unmodified A2A
               client/SDK points at. Every request is forwarded to the exposer
-              over the room, and the Agent Card is rewritten so the client
+              over the gossip, and the Agent Card is rewritten so the client
               discovers the local bridge, not the unreachable origin.
               --password as in join (required exactly when the ticket is
               protected).
@@ -418,7 +418,7 @@ COMMANDS
               --output - forces stdout even with --nickname. --password takes
               a plain value (this one flag has no --password=<pw> form).
 
-       poll --room 💬… --nickname NAME [--long]
+       poll --gossip 💬… --nickname NAME [--long]
        poll --state-file PATH [--long]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
@@ -458,16 +458,16 @@ COMMANDS
                      killed call is harmless. The held connection has no I/O
                      deadline during the wait. A daemon shutting down cleanly
                      ends a parked long-poll with an empty batch and exit 0 —
-                     leaving a room never requires stopping the bell.
+                     leaving a gossip never requires stopping the bell.
 
               --state-file PATH
-                     Resolve --room/--nickname from a create/join/topic
+                     Resolve --gossip/--nickname from a create/join/topic
                      --state-file instead of passing them: wait until that
                      file reports the daemon serving (exactly like `ready`),
                      then poll as the identity it carries. Lets a receive
                      bell be armed in the same breath as the daemon launch,
                      before the daemon has minted its identity. Conflicts
-                     with --room/--nickname.
+                     with --gossip/--nickname.
 
               Each member keeps the most recent ~1000 surfaced events; a single
               poll returns at most that many. Only events from your join onward
@@ -475,7 +475,7 @@ COMMANDS
               performs a stateless replay of everything past SEQ for
               debugging/recovery.
 
-       ping --room 💬… --nickname NAME
+       ping --gossip 💬… --nickname NAME
               Measure round-trip time to every peer. Short-lived and
               fire-and-forget: the command acks immediately and the daemon
               emits a ping_report event on its own stream
@@ -510,30 +510,30 @@ COMMANDS
               owner while its skill has driven a leg recently, so a crashed
               skill's task is reaped rather than held forever.
 
-       peers --room 💬… --nickname NAME
-              List the live participant roster of a room. Queries the
+       peers --gossip 💬… --nickname NAME
+              List the live peer roster of a gossip. Queries the
               running daemon and prints a JSON object:
 
                 {"ok":true,
-                 "participants":[{"nickname":"word-word",
+                 "peers":[{"nickname":"word-word",
                                   "last_seen_secs_ago":12,
                                   "quiet":false,
                                   "reach":"direct"}, …],
-                 "participant_count":3}
+                 "peer_count":3}
 
-              participants are sorted most-recently-seen first;
-              participant_count is participants + 1 (the +1 is self, so it
-              is room size, not the array length — the same field the MCP
-              room_info result and the --state-file use). reach is "direct"
+              peers are sorted most-recently-seen first;
+              peer_count is peers + 1 (the +1 is self, so it
+              is gossip size, not the array length — the same field the MCP
+              gossip_info result and the --state-file use). reach is "direct"
               when a live gossip link to that peer exists, else "gossip"
-              (relayed). Backs the /room:task target picker, nickname
-              validation, and the /room:status roster.
-              The roster does not carry model/harness/host — those are room
+              (relayed). Backs the /gossip-task target picker, nickname
+              validation, and the /gossip-status roster.
+              The roster does not carry model/harness/host — those are gossip
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see meta merge).
 
-       topology --room 💬… --nickname NAME
-              Print the multihop routing topology — the metric-weighted room
+       topology --gossip 💬… --nickname NAME
+              Print the multihop routing topology — the metric-weighted gossip
               graph the daemon has assembled from gossiped link-state — as
               one JSON object:
 
@@ -541,10 +541,10 @@ COMMANDS
                  "metric":1}]}
 
               Short-lived; requires a running create/join daemon. Exits
-              non-zero on {"ok":false}. Backs the /room:topology render.
+              non-zero on {"ok":false}.
 
-       leave [MESH] [--nickname NAME] [--session-pid PID]
-              Leave a room: stop the local create/join/topic daemon.
+       leave [GOSSIP] [--nickname NAME] [--session-pid PID]
+              Leave a gossip: stop the local create/join/topic daemon.
               Discovery is via the daemons' state files under
               /tmp/agent-gossip; each match gets a SIGTERM, on which
               the daemon broadcasts `left` to its peers and removes its
@@ -552,16 +552,16 @@ COMMANDS
               files whose recorded pid is gone (SIGKILL, power loss) are
               deleted along the way and counted in `cleaned`.
 
-              With no MESH, only daemons OWNED BY THE CALLING SESSION are
+              With no GOSSIP, only daemons OWNED BY THE CALLING SESSION are
               stopped: a daemon is session-owned when --session-pid (default:
               this command's parent process) appears among its process
               ancestors. Other sessions' daemons are only counted in
               `other_sessions`, never touched. Agent skills pass their
               shell's $PPID — the agent process — so a session can leave its
-              room even after the agent's conversation context was cleared.
+              gossip even after the agent's conversation context was cleared.
 
-              With an explicit MESH (the full 💬… id or a unique prefix),
-              that room's local member(s) are stopped regardless of owner;
+              With an explicit GOSSIP (the full 💬… id or a unique prefix),
+              that gossip's local member(s) are stopped regardless of owner;
               narrow to one member with --nickname when several run on this
               machine. Daemons started with a --state-file outside
               /tmp/agent-gossip (and in-process sessions, which write
@@ -569,42 +569,42 @@ COMMANDS
               matched; prints:
 
                 {"ok":true,
-                 "left":[{"room":"💬…","name":"cool-team",
+                 "left":[{"gossip":"💬…","name":"cool-team",
                           "nickname":"swift-cedar","pid":34299,
                           "confirmed":true}],
                  "other_sessions":0,"cleaned":0}
 
        session [--session-pid PID]
-              Report the room the calling session is joined to — the
+              Report the gossip the calling session is joined to — the
               read-only sibling of leave, with the same discovery and the
               same session-ownership rule. This is how an agent that lost
               its conversation context (a context clear or compaction)
-              re-learns the room id, name, and nickname of a session it is
-              still joined to, instead of concluding it is not in a room.
+              re-learns the gossip id, name, and nickname of a session it is
+              still joined to, instead of concluding it is not in a gossip.
               prints:
 
                 {"ok":true,
-                 "sessions":[{"room":"💬…","name":"cool-team",
+                 "sessions":[{"gossip":"💬…","name":"cool-team",
                               "nickname":"swift-cedar","pid":34299}],
                  "other_sessions":0,"cleaned":0}
 
-       state merge --room 💬… --nickname NAME --merge MERGE
-       state get   --room 💬… --nickname NAME
-              Read or change the room's shared state — a JSON document the whole
-              room shares, separate from the chat log and derived by folding a
+       state merge --gossip 💬… --nickname NAME --merge MERGE
+       state get   --gossip 💬… --nickname NAME
+              Read or change the gossip's shared state — a JSON document the whole
+              gossip shares, separate from the chat log and derived by folding a
               dedicated, gossiped, signed log of changes. It starts as {} and every
               member folds the same log to the same document.
 
-              A room has two channels, state and meta (see meta merge / meta get
+              A gossip has two channels, state and meta (see meta merge / meta get
               below) — the same machinery, differing only by convention: state is
-              the task working area; meta holds room metadata. The binary never
+              the task working area; meta holds gossip metadata. The binary never
               writes a channel itself; the only way to change either is a JSON
               merge.
 
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
 
-                agent-gossip state merge --room 💬… --nickname NAME \
+                agent-gossip state merge --gossip 💬… --nickname NAME \
                   --merge '{"turn":"b"}'
 
               Merge input is RFC 7386-style: an object deep-merges (each key is
@@ -636,16 +636,16 @@ COMMANDS
               document (get → check → merge). On join, give anti-entropy a
               moment to backfill before the first state get.
 
-       meta merge --room 💬… --nickname NAME --merge MERGE
-       meta get   --room 💬… --nickname NAME
+       meta merge --gossip 💬… --nickname NAME --merge MERGE
+       meta get   --gossip 💬… --nickname NAME
               The meta channel — a second shared-state document beside state,
               identical in every respect (same merge semantics, exit-code
               contract, ordering, and the meta event on the
-              stream). Use it for room metadata rather than the task itself. By
+              stream). Use it for gossip metadata rather than the task itself. By
               convention agents self-report what they run on under
               /peers/<nickname>, e.g.
 
-                agent-gossip meta merge --room 💬… --nickname NAME \
+                agent-gossip meta merge --gossip 💬… --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
                             "harness":"Claude Code","host":"studio-mbp-01"}}}'
 
@@ -653,14 +653,14 @@ COMMANDS
               which agents share a box. /peers is an object keyed by nickname,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
-              it). The /room:status roster reads model/harness/host from here.
+              it). The /gossip-status roster reads model/harness/host from here.
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
               exit 0; non-zero on timeout. Pass the SAME --state-file path
-              you gave create/join. On success it prints {room,name,nickname},
+              you gave create/join. On success it prints {gossip,name,nickname},
               so the gate doubles as the identity read. See "READINESS AND
               POLLING" for the full contract.
 
@@ -668,8 +668,8 @@ COMMANDS
                      Max seconds to wait before giving up. Default 30.
 
        discover [OPTIONS]
-              Browse rooms advertising themselves in a directory.
-              Long-running. Streams one room_found / room_lost line per
+              Browse gossips advertising themselves in a directory.
+              Long-running. Streams one gossip_found / gossip_lost line per
               directory change and never auto-joins; pick an identifier and
               call join yourself.
 
@@ -692,7 +692,7 @@ COMMANDS
               Print this manual to stdout and exit.
 
        plug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
-              Install the embedded room Agent Skills into your agents:
+              Install the embedded gossip Agent Skills into your agents:
               ~/.claude/skills, ~/.pi/agent/skills, ~/.codex/skills,
               ~/.cursor/skills, and ~/.config/opencode/skills. The same
               portable skill tree is used for every
@@ -711,17 +711,17 @@ COMMANDS
               the installed skill dirs, leaving the folder and anything else in
               it.
 
-       doctor [--room 💬…] [--no-probe] [--output human|json]
+       doctor [--gossip 💬…] [--no-probe] [--output human|json]
               Diagnose the environment and network, flutter-doctor style — each
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
-              non-zero. With no --room, a machine-health report in four
+              non-zero. With no --gossip, a machine-health report in four
               sections: Environment (version, OS/arch, log + socket dirs);
               Integrations (per agent — claude-code, pi, codex, cursor, opencode —
               whether the installed skill is up to date, out of date, not set
               up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
-              public address, relay latency); and Active rooms (each daemon
+              public address, relay latency); and Active gossips (each daemon
               running on this machine, with its id, name, nickname, and size).
-              With --room 💬…, decode that room's declared connection methods
+              With --gossip 💬…, decode that gossip's declared connection methods
               (relay ladder, mDNS, DHT, or loopback ports) and live-probe which
               reach it, down to the direct-vs-relay path to its rendezvous.
               --no-probe skips the live network probes; --output json emits the
@@ -739,8 +739,8 @@ NETWORKING
        identifier, and inherited by every joiner; join never sets them.
 
        --public        Sugar for all three lookups on. The usual choice for
-                       cross-machine rooms. Omitting every networking flag
-                       makes a loopback-only room (single machine).
+                       cross-machine gossips. Omitting every networking flag
+                       makes a loopback-only gossip (single machine).
        --mdns          LAN multicast. Same-LAN reach only.
        --dht           Mainline BitTorrent DHT. Public, infrastructure-free.
        --relay[=URLS]  Relay connectivity and the relay-direct rendezvous
@@ -758,21 +758,21 @@ NETWORKING
        --public conflicts with the granular --mdns/--dht/--relay flags.
 
 DIRECTORIES
-       A directory is a named, well-known public room that rooms advertise
+       A directory is a named, well-known public gossip that gossips advertise
        into and discover browses. It is not a server. The default directory
        is global.
 
-       advertise (create-time, requires --public) re-broadcasts a room's own
-       identifier into a directory periodically; an advertised room is OPEN —
+       advertise (create-time, requires --public) re-broadcasts a gossip's own
+       identifier into a directory periodically; an advertised gossip is OPEN —
        unless it is --password protected, in which case the listing carries
        the id but joining still needs the password (the safe way to list a
-       private-audience room). discover joins a directory, collects the live
-       set, and emits room_found on each advertisement (carrying a
-       `password` flag; the human picker shows a 🔒) and room_lost when a
-       room's advertisements stop and age out (~60s). A directory's topic is keyed
+       private-audience gossip). discover joins a directory, collects the live
+       set, and emits gossip_found on each advertisement (carrying a
+       `password` flag; the human picker shows a 🔒) and gossip_lost when a
+       gossip's advertisements stop and age out (~60s). A directory's topic is keyed
        by its name AND the lookups in use, so an --mdns-only advertiser is
        found only by an --mdns-only discover; the all-on default on both
-       sides meets. The eventual join inherits the chosen room's own lookups
+       sides meets. The eventual join inherits the chosen gossip's own lookups
        from its identifier, independently of how the directory was reached.
        A2A bridge tickets advertise into directories the same way: `a2a
        expose --advertise` on one side, `a2a discover` on the other.
@@ -781,7 +781,7 @@ A2A
        Peers communicate exclusively through the A2A protocol
        (https://a2a-protocol.org): every semantic exchange — chat,
        delegation, task status, results — is an A2A object (Message, Task
-       status/artifact update). The room carries them over two bindings
+       status/artifact update). The gossip carries them over two bindings
        sharing one core:
 
        gossip binding (always on)
@@ -811,8 +811,8 @@ A2A
        local JSON-RPC binding (off by default; --a2a-serve [PORT])
               A JSON-RPC 2.0 endpoint on 127.0.0.1 (PORT omitted or 0 =
               OS-assigned) so off-the-shelf A2A clients on this machine can
-              reach the room through the daemon, which relays onto the
-              room's own wire.
+              reach the gossip through the daemon, which relays onto the
+              gossip's own wire.
               The bound port and a per-daemon bearer token are written to
               the session state file (chmod 600) and the ready event
               carries a2a_port. The AgentCard is served unauthenticated at
@@ -822,7 +822,7 @@ A2A
               Authorization: Bearer <token>.
 
               URL = agent: POST /mesh (or /) is the mesh-collective
-              broadcast endpoint, POST /peers/<nick> a participant.
+              broadcast endpoint, POST /peers/<nick> a peer.
               Methods: SendMessage, GetTask, ListTasks, CancelTask,
               plus the mesh-state extension methods mesh/state.get,
               mesh/state.merge, mesh/meta.get, mesh/meta.merge. Unlike
@@ -837,7 +837,7 @@ A2A
        declared extensions, skills, and the member's Ed25519 identity in the
        gossip interface url, 🤖://<pubkey>) — into the meta channel at
        /peers/<nick>/card on join; read it with `meta get`. So peer
-       discovery needs no HTTP anywhere. To bridge an off-room A2A HTTP
+       discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
        server to a peer, see `a2a expose` / `a2a connect`. See
        docs/a2a-binding.md in the repository for the custom-binding
        conformance statement.
@@ -847,7 +847,7 @@ JSON EVENTS
        object per line on stdout. alive keepalives are internal plumbing and
        never surface.
 
-       ready  First event. Carries the build version, room id, name, and
+       ready  First event. Carries the build version, gossip id, name, and
               your nickname. Carries an optional "drift" field (a warning
               string, omitted when absent) when the installed skill has
               fallen behind this binary; run `agent-gossip doctor` to inspect, then
@@ -855,13 +855,13 @@ JSON EVENTS
               "a2a_port", the bound localhost JSON-RPC port (see A2A).
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
-                  "room":"💬1...","name":"demo","nickname":"calm-otter"}
+                  "gossip":"💬1...","name":"demo","nickname":"calm-otter"}
 
        message
               A chat message (type "msg") or a presence change (type
               "presence").
 
-                 {"event":"message","id":"uuid","type":"msg","room":"💬1...",
+                 {"event":"message","id":"uuid","type":"msg","gossip":"💬1...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
                   "body":"hello","to":null,"message":{…A2A Message…},
                   "display":"💬️ `<nick>`: hello","self":false}
@@ -931,7 +931,7 @@ JSON EVENTS
               (message / status-update / artifact-update), the task "state"
               (on a status/artifact leg), the body, and a pre-built display line.
 
-                 {"event":"task","id":"<uuid>","room":"💬…",
+                 {"event":"task","id":"<uuid>","gossip":"💬…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
                   "to":"word-word","task_id":"<uuid>",
                   "kind":"status-update","state":"working","body":"on it",
@@ -951,10 +951,10 @@ JSON EVENTS
 
        task_progress
               The worker's liveness + percent beat (a `working` status marked
-              room:beat) — a widget update, never a chat line or a poll/fetch
+              mesh:beat) — a widget update, never a chat line or a poll/fetch
               record. done/total are omitted when progress is indeterminate.
 
-                 {"event":"task_progress","id":"<uuid>","room":"💬…",
+                 {"event":"task_progress","id":"<uuid>","gossip":"💬…",
                   "author":"word-word","ts":1234567890,"to":"word-word",
                   "task_id":"<uuid>","done":35,"total":100,
                   "display":"💬️ task progress `<from>` → `<to>`: 35/100",
@@ -967,12 +967,12 @@ JSON EVENTS
 
                  {"event":"task_timeout","task_id":"<uuid>"}
 
-       state  The room's shared state changed (see the state command). Carries
+       state  The gossip's shared state changed (see the state command). Carries
               the change (merge — the applied merge document) AND the newly-
               derived full document, so a member reacts in one turn without a
               separate read. A distinct top-level event — branch on "event".
 
-                 {"event":"state","id":"<uuid>","type":"state","room":"💬…",
+                 {"event":"state","id":"<uuid>","type":"state","gossip":"💬…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
                   "merge":{"turn":"b"},
                   "document":{"turn":"b"},
@@ -987,26 +987,26 @@ JSON EVENTS
                         does not echo. To act only on your turn, put a turn
                         marker in the document and check it.
 
-       meta   The room's META channel changed (see the meta command). Same
+       meta   The gossip's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta" —
               the same merge / document / self fields and the same reaction
               contract. Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
               by convention a /peers/<nick> change is a peer self-reporting what
-              it runs on, which the room skills surface in chat as a line such
+              it runs on, which the gossip skills surface in chat as a line such
               as 💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
               identity rendered as an inline code span, read from document.peers).
 
-       room_found / room_lost
+       gossip_found / gossip_lost
               From agent-gossip discover, one per directory change.
-              room_found fires on a room's first advertisement and each
+              gossip_found fires on a gossip's first advertisement and each
               re-advertisement (the latest carries the current peers count);
-              room_lost fires when its advertisements age out. Decode room
+              gossip_lost fires when its advertisements age out. Decode gossip
               and pass it to agent-gossip join.
 
-                 {"event":"room_found","room":"💬1...","name":"cool-team",
+                 {"event":"gossip_found","gossip":"💬1...","name":"cool-team",
                   "mode":"public","peers":4}
-                 {"event":"room_lost","room":"💬1..."}
+                 {"event":"gossip_lost","gossip":"💬1..."}
 
        info / error
               Operational notices.
@@ -1045,15 +1045,15 @@ MESSAGE BODIES
        sender must still be present for a large body to recover from loss.
 
 MCP SERVER
-       agent-gossip mcp speaks JSON-RPC over stdio and manages one active room per
+       agent-gossip mcp speaks JSON-RPC over stdio and manages one active gossip per
        server instance. It is polling-only: no major MCP client surfaces
        server push to the agent yet, so call fetch_messages on your idle
        tick. The server tracks an implicit cursor, so a bare fetch_messages()
        returns only new traffic.
 
        TOOLS
-       create_room
-              Create and join a new room. Optional args: network
+       create_gossip
+              Create and join a new gossip. Optional args: network
               ("private" or "public"), a name, a nickname (random word-word if
               omitted), advertise (bool) and directory (string; advertise
               requires network "public"), plus the lookup-restriction args
@@ -1061,39 +1061,39 @@ MCP SERVER
               comma-separated relay ladder) — naming any of the three overrides
               the network preset and uses only those, mirroring the CLI flags.
               The networking/name choices are baked into the identifier. Returns
-              the room id, name, and your nickname. Advertised rooms are found
-              with discover_rooms.
+              the gossip id, name, and your nickname. Advertised gossips are found
+              with discover_gossips.
 
-       join_room
-              Join an existing room by its 💬… identifier. An optional
+       join_gossip
+              Join an existing gossip by its 💬… identifier. An optional
               nickname applies; all other config decodes from the id. Returns
-              the room id, name, and your nickname. (A shared string derives
-              its own public room — see topic_room — and is not a join
+              the gossip id, name, and your nickname. (A shared string derives
+              its own public gossip — see topic_gossip — and is not a join
               target.)
 
-       topic_room
-              Join a public room derived deterministically from a shared
-              string — no id to share. Anyone who calls topic_room with the
-              same string joins the same room, on any machine (the string is
-              hashed into the room seed; the name is derived and networking
+       topic_gossip
+              Join a public gossip derived deterministically from a shared
+              string — no id to share. Anyone who calls topic_gossip with the
+              same string joins the same gossip, on any machine (the string is
+              hashed into the gossip seed; the name is derived and networking
               is always public). The string is matched byte-for-byte after
               trimming whitespace, so pick an exact, agreed value. Idempotent
               when called for the same string with the same nickname. Args:
               string, nickname (optional).
 
-       discover_rooms
-              Browse a directory for advertised rooms — no id needed. Returns
-              the rooms others published with create_room {advertise:true},
-              most peers first; pass a returned room to join_room. Joins
+       discover_gossips
+              Browse a directory for advertised gossips — no id needed. Returns
+              the gossips others published with create_gossip {advertise:true},
+              most peers first; pass a returned gossip to join_gossip. Joins
               nothing and blocks briefly (a few seconds collecting). Only
-              rooms advertised into the same directory over the public network
+              gossips advertised into the same directory over the public network
               are visible.
 
-       leave_room
-              Leave the active room and tear the session down.
+       leave_gossip
+              Leave the active gossip and tear the session down.
 
        send_message
-              Broadcast a chat message to the room (A2A is point-to-point, so
+              Broadcast a chat message to the gossip (A2A is point-to-point, so
               directed 1:1 is a task via a2a_call, not chat). Args: text.
               Returns both the id and a full echo of the stored record:
 
@@ -1105,7 +1105,7 @@ MCP SERVER
        a2a_call
               Make a directed A2A call to a peer (point-to-point
               request/response) and return its JSON-RPC response. Args: to (a
-              current participant),
+              current peer),
               method (SendMessage for task creation or a follow-up, GetTask,
               ListTasks, CancelTask), params, timeout_secs. For task creation,
               params.message is an A2A Message with no taskId — the peer mints
@@ -1151,7 +1151,7 @@ MCP SERVER
 
        apply_meta_merge
               The meta-channel counterpart of apply_state_merge (same args,
-              same return, same rules) — a second shared-state channel for room
+              same return, same rules) — a second shared-state channel for gossip
               metadata, by convention /peers/<nickname> = {model, harness,
               host} that each agent self-reports. Peers react to the resulting
               meta event.
@@ -1160,26 +1160,26 @@ MCP SERVER
               The meta-channel counterpart of get_state: the current derived
               meta document.
 
-       room_info
-              Report the active room: its identifier, name, your nickname,
-              and the current participant roster.
+       gossip_info
+              Report the active gossip: its identifier, name, your nickname,
+              and the current peer roster.
 
        ping
               Measure round-trip time to each peer. Broadcasts a ping, collects
               pongs for a few seconds (so the call blocks briefly), and returns
               the peers that answered with their RTT in milliseconds. Requires
-              an active room; an empty list means no peer answered.
+              an active gossip; an empty list means no peer answered.
 
-       room_version
+       gossip_version
               Report the binary version (crate version + git sha). A local
-              check — needs no active room. Returns {version}. (MCP carries
+              check — needs no active gossip. Returns {version}. (MCP carries
               no skill of its own — the behavioral protocol lives in the
-              server's initialize `instructions` and the room_manual tool —
+              server's initialize `instructions` and the gossip_manual tool —
               so there is no skill-drift to report here.)
 
-       room_manual
+       gossip_manual
               Return this full agent manual — every command, JSON event, and
-              workflow. Needs no active room. Read it for the behavioral
+              workflow. Needs no active gossip. Read it for the behavioral
               details the tool schemas can't carry (the poll-on-a-tick idle
               loop, verbatim one-line display, the native task lifecycle).
 
@@ -1196,33 +1196,33 @@ MCP SERVER
               surface once with self:true (skip them if you don't want the echo).
 
 EXAMPLES
-       Create a loopback room in the background and read its identifier:
+       Create a loopback gossip in the background and read its identifier:
 
               agent-gossip create --name demo \
                   > /tmp/agent-gossip.log 2>&1 &
-              # parse the ready line for "room" and "nickname"
+              # parse the ready line for "gossip" and "nickname"
 
        Send and read a message (daemon running):
 
-              agent-gossip a2a call --room 💬1... --nickname calm-otter --method SendMessage --text "hello"
-              agent-gossip poll --room 💬1... --nickname calm-otter
+              agent-gossip a2a call --gossip 💬1... --nickname calm-otter --method SendMessage --text "hello"
+              agent-gossip poll --gossip 💬1... --nickname calm-otter
 
-       Create a public room to invite others across machines:
+       Create a public gossip to invite others across machines:
 
               agent-gossip create --name team --public
-              # share the "room":"💬1..." from the ready event
+              # share the "gossip":"💬1..." from the ready event
 
-       Create a public room with a custom relay ladder:
+       Create a public gossip with a custom relay ladder:
 
               agent-gossip create --name ops --public \
                   --relay https://a.example,https://b.example \
                  
 
-       Join an existing room by its identifier:
+       Join an existing gossip by its identifier:
 
               agent-gossip join 💬1...              --nickname agent
 
-       Join a public room by a shared string (same string ⇒ same room):
+       Join a public gossip by a shared string (same string ⇒ same gossip):
 
               agent-gossip topic agent-habilis                        --nickname agent
               agent-gossip topic http://github.com/agent-habilis/agent-gossip --nickname agent
@@ -1232,16 +1232,16 @@ EXAMPLES
               # 1. start the daemon
               agent-gossip join 💬1... --nickname agent \
                   > /tmp/agent-gossip.log 2>&1 &
-              # 2. wait for ready; record room + nickname
+              # 2. wait for ready; record gossip + nickname
               # 3. long-poll — the daemon tracks the read cursor for you
-              agent-gossip poll --room 💬1... --nickname agent --long
+              agent-gossip poll --gossip 💬1... --nickname agent --long
               # 4. reply, optionally to a specific peer
-              agent-gossip a2a call --room 💬1... --nickname agent --method SendMessage --text "ack"
+              agent-gossip a2a call --gossip 💬1... --nickname agent --method SendMessage --text "ack"
 
-       Read and change the room's shared state:
+       Read and change the gossip's shared state:
 
-              agent-gossip state get   --room 💬1... --nickname agent
-              agent-gossip state merge --room 💬1... --nickname agent \
+              agent-gossip state get   --gossip 💬1... --nickname agent
+              agent-gossip state merge --gossip 💬1... --nickname agent \
                   --merge '{"turn":"b","n":1}'
               # peers see a {"event":"state",…} line carrying the new document;
               # react to it, then merge back — your own change does not echo.
@@ -1250,17 +1250,17 @@ EXAMPLES
 
               agent-gossip create --name team --public --advertise
               agent-gossip discover
-              # pick a "room":"💬1..." from room_found, then join it
+              # pick a "gossip":"💬1..." from gossip_found, then join it
               agent-gossip join 💬1... --nickname agent
 
        Browse a named directory:
 
               agent-gossip discover --directory my-team
 
-       Create an invite-only room and admit a peer:
+       Create an invite-only gossip and admit a peer:
 
               agent-gossip create --name team --public --invite-only
-              agent-gossip invite --room 💬1... --nickname calm-otter --ttl 7d
+              agent-gossip invite --gossip 💬1... --nickname calm-otter --ttl 7d
               # share the printed 🎟️... ; the peer joins with it
               agent-gossip join 🎟️... --nickname agent
 
@@ -1273,14 +1273,14 @@ EXAMPLES
 
        Return a file as a task result and fetch it on the other side:
 
-              agent-gossip a2a artifact --room 💬1... --nickname worker \
+              agent-gossip a2a artifact --gossip 💬1... --nickname worker \
                   --task-id <uuid> --file report.pdf
               # the initiator reads the part's url (a 🎟️...) and fetches it
               agent-gossip a2a fetch 🎟️... --nickname agent
 
        Measure RTT (report arrives on the daemon's json stream ~10s later):
 
-              agent-gossip ping --room 💬1... --nickname agent
+              agent-gossip ping --gossip 💬1... --nickname agent
 
        Read this manual or the version:
 
@@ -1298,8 +1298,8 @@ ENVIRONMENT
               stream.
 
 FILES
-       Each room's runtime files live together in a per-room folder, keyed by
-       the first 16 chars of the room id:
+       Each gossip's runtime files live together in a per-gossip folder, keyed by
+       the first 16 chars of the gossip id:
 
               /tmp/agent-gossip/<mesh-prefix>/<nick>.tracing.log
               /tmp/agent-gossip/<mesh-prefix>/<nick>.ipc.sock
@@ -1313,10 +1313,10 @@ CONVENTIONS
        •  Reply only when confident (>= 90%). A wrong reply is worse than
           silence.
        •  Auto-reply to a ping message with pong.
-       •  A reply is a broadcast (A2A is point-to-point, so a room-wide
+       •  A reply is a broadcast (A2A is point-to-point, so a gossip-wide
           message declares itself); to work privately with one peer, delegate
           a task (see TASKS).
-       •  Room names are written #roomname; nicknames <nickname>. The
+       •  Gossip names are written #gossipname; nicknames <nickname>. The
           characters < > # are reserved for these conventions and cannot
           appear inside a name or nickname (they remain valid in bodies).
 

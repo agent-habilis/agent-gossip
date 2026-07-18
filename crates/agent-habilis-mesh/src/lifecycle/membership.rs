@@ -1,5 +1,5 @@
 //! The **membership layer**: pure roster transitions. Decides what an
-//! inbound message means for the participant roster (`participants` /
+//! inbound message means for the peer roster (`peers` /
 //! `quiet`) — first-sight, return-from-quiet, departure — without any
 //! transport, presentation, or surfacing concern. See the Concept
 //! Glossary in AGENTS.md for the layer split.
@@ -13,7 +13,7 @@ use crate::protocol::{MessageKind, Nickname, PresenceSubtype};
 pub(crate) struct MembershipUpdate {
     /// The sender was in `quiet` (evicted as silent) and this
     /// message proves they're back. Triggers `peer_return` output and
-    /// re-inclusion in `participants`.
+    /// re-inclusion in `peers`.
     pub returned: bool,
     /// This is the first time we've seen this author. Gates the
     /// state-file write and the `has joined` line (we suppress it
@@ -21,7 +21,7 @@ pub(crate) struct MembershipUpdate {
     pub joined_new: bool,
 }
 
-/// Decide what a message from `author` means for our participant
+/// Decide what a message from `author` means for our peer
 /// tracking. Pure: takes `&` refs, no side effects.
 ///
 /// `Left` never counts as a join (even on first sight), because a
@@ -55,7 +55,7 @@ pub(crate) fn compute(
         | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
-        | MessageKind::LinkState => !state.participants.contains(author.as_str()),
+        | MessageKind::LinkState => !state.peers.contains(author.as_str()),
     };
     MembershipUpdate {
         returned,
@@ -69,18 +69,18 @@ pub(crate) fn compute(
 pub(crate) fn apply(update: &MembershipUpdate, author: &Nickname, state: &mut EventLoopState) {
     if update.returned {
         state.quiet.remove(author.as_str());
-        state.participants.insert(author.clone());
+        state.peers.insert(author.clone());
     }
     if update.joined_new {
-        state.participants.insert(author.clone());
+        state.peers.insert(author.clone());
     }
     if update.returned || update.joined_new {
-        state.write_participant_count();
+        state.write_peer_count();
         tracing::debug!(
             nickname = %author,
             returned = update.returned,
             joined_new = update.joined_new,
-            participants = state.participants.len(),
+            peers = state.peers.len(),
             "roster changed"
         );
     }
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn known_author_is_not_joined_new() {
         let mut state = fresh_state();
-        state.participants.insert(nick("swift-cedar"));
+        state.peers.insert(nick("swift-cedar"));
         let update = compute(
             &MessageKind::app_broadcast("a2a_msg"),
             &nick("swift-cedar"),
@@ -155,7 +155,7 @@ mod tests {
             &state,
         );
         assert!(update.returned);
-        assert!(update.joined_new); // not in participants yet
+        assert!(update.joined_new); // not in peers yet
     }
 
     #[test]
@@ -173,14 +173,14 @@ mod tests {
     }
 
     #[test]
-    fn apply_inserts_into_participants_on_joined_new() {
+    fn apply_inserts_into_peers_on_joined_new() {
         let mut state = fresh_state();
         let update = MembershipUpdate {
             returned: false,
             joined_new: true,
         };
         apply(&update, &nick("swift-cedar"), &mut state);
-        assert!(state.participants.contains("swift-cedar"));
+        assert!(state.peers.contains("swift-cedar"));
     }
 
     #[test]
@@ -193,6 +193,6 @@ mod tests {
         };
         apply(&update, &nick("swift-cedar"), &mut state);
         assert!(!state.quiet.contains("swift-cedar"));
-        assert!(state.participants.contains("swift-cedar"));
+        assert!(state.peers.contains("swift-cedar"));
     }
 }

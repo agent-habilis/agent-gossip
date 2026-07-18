@@ -2,7 +2,7 @@
 //! daemon reports — via its `--state-file` `ready` flag — that it is
 //! serving, then exit. A gate for the CLI-polling fallback: launch the
 //! daemon backgrounded, `agent-gossip ready` on the same `--state-file`,
-//! then `poll`. On success the gate prints `{room,name,nickname}`, so the
+//! then `poll`. On success the gate prints `{gossip,name,nickname}`, so the
 //! caller need not parse the file itself.
 
 use clap::Parser;

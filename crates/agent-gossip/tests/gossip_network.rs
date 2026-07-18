@@ -106,7 +106,7 @@ fn wait_rendezvous_served(mesh: &str, survivors: &[&str]) -> bool {
 
 /// Wire contract for the `info` IPC + `doctor` active-meshes scan: a live
 /// daemon answers `info` over its socket with its own identity, so
-/// `doctor` lists it under "Active rooms" with the full mesh
+/// `doctor` lists it under "Active gossips" with the full mesh
 /// id and name. `--no-probe` keeps this to the fast local-socket scan (no
 /// net-report), so the test stays offline-safe.
 #[test]
@@ -131,8 +131,8 @@ fn doctor_lists_active_mesh_as_json() {
         "doctor json shape:\n{stdout}"
     );
     assert!(
-        stdout.contains("Active rooms"),
-        "no Active rooms section:\n{stdout}"
+        stdout.contains("Active gossips"),
+        "no Active gossips section:\n{stdout}"
     );
     assert!(
         stdout.contains(mesh.as_str()),
@@ -400,8 +400,8 @@ fn test_no_server_error() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("No active room server"),
-        "expected 'No active room server' in stderr, got: {stderr}"
+        stderr.contains("No active gossip server"),
+        "expected 'No active gossip server' in stderr, got: {stderr}"
     );
 }
 
@@ -800,7 +800,7 @@ fn test_ready_gate_succeeds_when_serving() {
     assert_eq!(parsed["ready"], true, "gate returned but ready is not true");
     assert_eq!(parsed["name"], "ready-test");
     assert!(
-        parsed["room"]
+        parsed["gossip"]
             .as_str()
             .is_some_and(|mesh| mesh.starts_with("💬"))
     );
@@ -899,7 +899,7 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
-        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"room":"💬deadbeef"}"#,
+        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","peer_count":1,"ready":true,"gossip":"💬deadbeef"}"#,
     )
     .unwrap();
 
@@ -934,7 +934,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     fs::write(
         &state_file,
         format!(
-            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"room":"💬deadbeef"}}"#
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"ready":true,"gossip":"💬deadbeef"}}"#
         ),
     )
     .unwrap();
@@ -952,7 +952,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
-    assert_eq!(parsed["room"], "💬deadbeef");
+    assert_eq!(parsed["gossip"], "💬deadbeef");
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
@@ -2431,7 +2431,7 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .find(|event| event["event"] == "ready")?;
     Some((
-        ready["room"].as_str()?.to_owned(),
+        ready["gossip"].as_str()?.to_owned(),
         ready["nickname"].as_str()?.to_owned(),
     ))
 }
@@ -2482,7 +2482,7 @@ fn leave_explicit_target_stops_only_that_mesh() {
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     let left = report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
-    assert_eq!(left[0]["room"], victim_mesh.as_str());
+    assert_eq!(left[0]["gossip"], victim_mesh.as_str());
     assert_eq!(left[0]["confirmed"], true);
     assert!(
         !default_state_file(&victim_mesh, &victim_nick).exists(),
@@ -2603,7 +2603,7 @@ fn leave_session_scope_via_decoy_parent() {
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     let sessions = report["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
-    assert_eq!(sessions[0]["room"], mesh.as_str());
+    assert_eq!(sessions[0]["gossip"], mesh.as_str());
     assert_eq!(sessions[0]["nickname"], nickname.as_str());
     assert!(
         default_state_file(&mesh, &nickname).exists(),
@@ -2619,7 +2619,7 @@ fn leave_session_scope_via_decoy_parent() {
         serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
     let left = leave_report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
-    assert_eq!(left[0]["room"], mesh.as_str());
+    assert_eq!(left[0]["gossip"], mesh.as_str());
     assert_eq!(left[0]["confirmed"], true);
     assert!(!default_state_file(&mesh, &nickname).exists());
 

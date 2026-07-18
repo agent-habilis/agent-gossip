@@ -230,11 +230,10 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 }
 
 /// The one canonical "skill out of date" nag, shared by the `ready`-event
-/// drift warning (below) and the MCP `room_version` tool — one source of
+/// drift warning (below) and the MCP `gossip_version` tool — one source of
 /// truth so the two can't drift apart. `agent-gossip plug` refreshes every
 /// installed integration, so the message names no specific one.
-pub(crate) const SKILL_DRIFT_MSG: &str =
-    "⚠️ room skill out of date. Run `agent-gossip plug` to update";
+pub(crate) const SKILL_DRIFT_MSG: &str = "💬️ run `agent-gossip plug` to update skills";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
@@ -374,7 +373,7 @@ mod tests {
     /// `&`. So key off what is still visible: the two commands that run long, and
     /// are therefore the only ones ever handed to that facility.
     #[test]
-    fn long_running_room_commands_discard_stdout_and_stderr() {
+    fn long_running_gossip_commands_discard_stdout_and_stderr() {
         fn is_daemon_launch(line: &str) -> bool {
             ["create", "join", "topic"]
                 .iter()
@@ -404,7 +403,7 @@ mod tests {
                 assert!(
                     line.ends_with("> /dev/null 2>&1"),
                     "{path}: a long-running command must discard stdout AND stderr, \
-                     or the harness writes message bodies and the room id to a \
+                     or the harness writes message bodies and the gossip id to a \
                      file: {line}"
                 );
             }
@@ -498,7 +497,6 @@ mod tests {
         std::fs::write(dir.join("gossip-join/SKILL.md"), "stale").unwrap();
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
-        assert!(warning.contains("out of date"));
         assert!(warning.contains("agent-gossip plug"));
 
         std::fs::remove_dir_all(&home).unwrap();

@@ -38,7 +38,7 @@ pub(crate) enum SessionRequest {
         file: Option<agent_habilis_mesh::blob::FileRef>,
         resp: oneshot::Sender<Result<Message>>,
     },
-    /// Snapshot the live participant roster (active + quiet, recency-sorted).
+    /// Snapshot the live peer roster (active + quiet, recency-sorted).
     Peers {
         resp: oneshot::Sender<RosterSnapshot>,
     },
@@ -87,14 +87,6 @@ pub(crate) enum SessionRequest {
     /// the adversarial-gated `MeshSession::inject_raw`.
     #[cfg(feature = "adversarial")]
     InjectRaw { bytes: bytes::Bytes },
-    /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
-    /// Adversarial-suite only — lets it assert that messages we don't
-    /// retain (rate-dropped, or replies addressed to another peer) are never
-    /// folded into the indexes, i.e. the unbounded-growth leak is closed.
-    #[cfg(feature = "adversarial")]
-    IndexStats {
-        resp: oneshot::Sender<(usize, usize, usize)>,
-    },
     /// Simulate the gossip event stream terminally ending (flips
     /// `gossip_open` off, exactly what the real `None` arm does — the
     /// orphaned receiver is dropped when the heal arm resubscribes).

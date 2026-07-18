@@ -8,7 +8,7 @@
 //!
 //! A co-hosting member binds a second iroh endpoint to the shared
 //! `rendezvous_secret` and glues it into the local mesh via this
-//! process's own participant endpoint, so a cold joiner that dials the
+//! process's own peer endpoint, so a cold joiner that dials the
 //! seed-derived `rendezvous_id` is shuffled into the full mesh.
 //!
 //! - **Public:** ephemeral port, discoverable by node id via N0 pkarr.
@@ -22,7 +22,7 @@
 //! - **Private:** a deterministic loopback port *ladder* (no
 //!   pkarr/DNS). Exactly one member per mesh is the beacon: a member
 //!   binds the first free rung; on `AddrInUse` it probes the rung's
-//!   node id — *ours* ⇒ the beacon already exists, stay a participant;
+//!   node id — *ours* ⇒ the beacon already exists, stay a peer;
 //!   *foreign* (an unrelated mesh that derived the same port) ⇒ skip
 //!   to the next rung. So independent private meshes on one host never
 //!   hijack each other, and there is no second same-identity co-host
@@ -30,7 +30,7 @@
 //!   frees and the next heal/reclaim tick re-elects.
 //!
 //! The rendezvous endpoint never authors app messages; its node id is
-//! filtered out of participant-side neighbor handling.
+//! filtered out of peer-side neighbor handling.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -60,7 +60,7 @@ pub struct RendezvousParams {
     pub bind_ports: Vec<u16>,
     /// `rendezvous_id`, memoized for neighbor filtering / bootstrap seeding.
     pub id: EndpointId,
-    /// The participant's resolved lookup config. The beacon
+    /// The peer's resolved lookup config. The beacon
     /// endpoint must publish `rendezvous_id` to the *same*
     /// address-lookups (or a joiner using only mDNS/DHT could never
     /// resolve it) — see `beacon_lookups`.
@@ -90,14 +90,14 @@ pub struct RendezvousParams {
 /// deterministic port for the next member to claim).
 pub(crate) struct Rendezvous {
     /// The gossip co-host: subscribes, bridges the rendezvous into the
-    /// mesh, and re-asserts the participant link each heal tick.
+    /// mesh, and re-asserts the peer link each heal tick.
     task: JoinHandle<()>,
     /// The relay-rung liveness/discovery monitor (`spawn_relay_monitor`).
     /// `None` for private / relay-disabled meshes (nothing to monitor).
     monitor: Option<JoinHandle<()>>,
     /// The co-hosted endpoint itself, retained so [`Self::shed`] can close
     /// it gracefully — a plain drop (task abort) skips the orderly QUIC
-    /// close, and the participant's link to its own dead beacon lingers as
+    /// close, and the peer's link to its own dead beacon lingers as
     /// a zombie until the idle timeout, stalling the post-shed re-graft.
     endpoint: Endpoint,
 }
@@ -105,7 +105,7 @@ pub(crate) struct Rendezvous {
 impl Rendezvous {
     /// Release the beacon *gracefully*: abort the tasks, then close the
     /// endpoint off-loop so every peer holding a link to it (including our
-    /// own participant) sees an immediate `NeighborDown` instead of a
+    /// own peer) sees an immediate `NeighborDown` instead of a
     /// zombie link that only dies at the QUIC idle timeout.
     pub(crate) fn shed(self) {
         let endpoint = self.endpoint.clone();
@@ -132,27 +132,18 @@ impl Drop for Rendezvous {
 /// TLS handshake) — a foreign rendezvous (different key) is rejected,
 /// a dead socket times out. Resolves in milliseconds against a live
 /// loopback listener; the timeout only guards a pathological socket.
-async fn rung_serves_our_mesh(
-    participant: &Endpoint,
-    rendezvous_id: EndpointId,
-    port: u16,
-) -> bool {
+async fn rung_serves_our_mesh(peer: &Endpoint, rendezvous_id: EndpointId, port: u16) -> bool {
     let addr = EndpointAddr::new(rendezvous_id)
         .with_ip_addr(SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
-    let ours = probe_connect(
-        participant,
-        addr,
-        Duration::from_secs(RENDEZVOUS_PROBE_SECS),
-    )
-    .await;
+    let ours = probe_connect(peer, addr, Duration::from_secs(RENDEZVOUS_PROBE_SECS)).await;
     tracing::trace!(port, ours, "private rung identity-probe");
     ours
 }
 
-/// The beacon mirrors the participant's *address-lookups* (so a joiner
+/// The beacon mirrors the peer's *address-lookups* (so a joiner
 /// resolves `rendezvous_id` via whichever it enabled) but homes on a
 /// **single** relay rung — `params.bootstrap_relay`, the first
-/// reachable rung of the ladder. Unlike a participant (which spreads
+/// reachable rung of the ladder. Unlike a peer (which spreads
 /// across the whole multi-relay set for resilience), the beacon must be
 /// at the one deterministic rung the joiner pre-registers
 /// (`daemon::setup::register_rendezvous`), or the relay-direct dial
@@ -174,25 +165,25 @@ fn beacon_lookups(params: &RendezvousParams) -> LookupOpts {
 /// Build the rendezvous endpoint (see module docs for the one-beacon /
 /// claim-if-free / identity-probe rationale). Public: one
 /// ephemeral-port endpoint. Private: bind the first **free** ladder
-/// rung; on `AddrInUse`, probe — *ours* ⇒ `None` (stay a participant),
+/// rung; on `AddrInUse`, probe — *ours* ⇒ `None` (stay a peer),
 /// *foreign* ⇒ next rung. `None` also covers public build failure /
 /// every rung foreign-squatted (≈0); the next tick retries.
 async fn build_rendezvous_endpoint(
     params: &RendezvousParams,
-    participant: &Endpoint,
+    peer: &Endpoint,
     probe_first: bool,
 ) -> Option<Endpoint> {
     let lookups = beacon_lookups(params);
     if params.bind_ports.is_empty() {
         // Public probe-before-claim — the analog of the private rung
         // identity-probe below. If a beacon already serves the
-        // rendezvous, stay a participant rather than binding a second
+        // rendezvous, stay a peer rather than binding a second
         // copy of the same `rendezvous_id` on the shared relay, which
         // would collide and capture our own bootstrap dial. Skipped for
         // the eager origin (`probe_first == false`): it has no peers to
         // collide with and must be the beacon from t=0.
         //
-        // The probe dials from a **throwaway endpoint**, not `participant`:
+        // The probe dials from a **throwaway endpoint**, not `peer`:
         // an ex-holder re-probing after a rival re-check shed carries stale
         // per-id connection state for the shared `rendezvous_id` (the link
         // to its own just-dropped beacon — the reused-endpoint-id pathology
@@ -210,7 +201,7 @@ async fn build_rendezvous_endpoint(
                     found
                 }
                 // Can't build a prober ⇒ can't tell; claiming blind here
-                // risks the duplicate-id collision, so stay a participant
+                // risks the duplicate-id collision, so stay a peer
                 // and let the next tick retry.
                 Err(error) => {
                     tracing::debug!(%error, "rival probe endpoint build failed; next tick retries");
@@ -218,9 +209,7 @@ async fn build_rendezvous_endpoint(
                 }
             };
             if found_rival {
-                tracing::debug!(
-                    "public rendezvous already served by a beacon; staying participant"
-                );
+                tracing::debug!("public rendezvous already served by a beacon; staying peer");
                 return None;
             }
         }
@@ -254,13 +243,13 @@ async fn build_rendezvous_endpoint(
             return Some(endpoint);
         }
         // build failed (AddrInUse): is it our beacon, or a foreign squat?
-        if rung_serves_our_mesh(participant, params.id, port).await {
-            tracing::debug!(port, "rung already serves our beacon; staying participant");
+        if rung_serves_our_mesh(peer, params.id, port).await {
+            tracing::debug!(port, "rung already serves our beacon; staying peer");
             return None;
         }
         tracing::debug!(port, "rung squatted by a foreign mesh; trying next rung");
     }
-    tracing::debug!("all rendezvous ladder rungs occupied; staying participant");
+    tracing::debug!("all rendezvous ladder rungs occupied; staying peer");
     None
 }
 
@@ -277,7 +266,7 @@ async fn build_rendezvous_endpoint(
 /// re-check scheduling keys on.
 pub(crate) async fn ensure(
     params: &RendezvousParams,
-    participant: &Endpoint,
+    peer: &Endpoint,
     current: &mut Option<Rendezvous>,
     probe_first: bool,
 ) -> bool {
@@ -294,7 +283,7 @@ pub(crate) async fn ensure(
     // no-op on an already-finished task) before re-arming.
     *current = None;
 
-    let Some(endpoint) = build_rendezvous_endpoint(params, participant, probe_first).await else {
+    let Some(endpoint) = build_rendezvous_endpoint(params, peer, probe_first).await else {
         // Public: endpoint build failed. Private: every ladder rung is
         // occupied — our mesh's beacon(s) already exist on the ladder
         // (joiners reach them by identity-checked dial). Either way,
@@ -303,19 +292,19 @@ pub(crate) async fn ensure(
     };
 
     // The rendezvous pseudo-node's active view is overlay plumbing, not the
-    // participant peer cap, so it stays at the shipped default rather than
+    // member peer cap, so it stays at the shipped default rather than
     // tracking `--max-peers`.
-    // The rendezvous pseudo-node accepts no unicast — it is not a participant.
+    // The rendezvous pseudo-node accepts no unicast — it is not a peer.
     let (gossip, router) = build_mesh(
         endpoint.clone(),
         crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
         None,
     );
 
-    // Register the participant's address so the rendezvous can dial it
+    // Register the peer's address so the rendezvous can dial it
     // in private mode (no lookup); a harmless direct hint in public.
-    let participant_id = participant.id();
-    let _ = add_peer_addr(&endpoint, participant.addr());
+    let peer_id = peer.id();
+    let _ = add_peer_addr(&endpoint, peer.addr());
     let topic_id = params.topic_id;
 
     // Relay-monitor inputs. The monitor runs as its **own** task (below),
@@ -343,14 +332,14 @@ pub(crate) async fn ensure(
         let _endpoint = endpoint;
         let _router = router;
 
-        // Subscribe + bounded-wait to mesh with our own participant so
+        // Subscribe + bounded-wait to mesh with our own peer so
         // a joiner dialing the rendezvous finds it bridged in, not a
         // bare socket. *Inside the task*, not in `ensure`, so
         // `daemon::run` never blocks here — blocking it stalls
         // in-process two-session setups whose runtime must also drive
         // the peer. Subscribe failure / `joined()` timeout: fall
-        // through, the heal loop keeps converging (empty-room safe).
-        let Ok(mut topic) = gossip.subscribe(topic_id, vec![participant_id]).await else {
+        // through, the heal loop keeps converging (empty-gossip safe).
+        let Ok(mut topic) = gossip.subscribe(topic_id, vec![peer_id]).await else {
             return;
         };
         // Retain the gossip frontend for the task's lifetime.
@@ -372,8 +361,8 @@ pub(crate) async fn ensure(
                     // relays the gossip overlay.
                 }
                 _ = heal.tick() => {
-                    // Re-assert the participant link across blips.
-                    let _ = sender.join_peers(vec![participant_id]).await;
+                    // Re-assert the peer link across blips.
+                    let _ = sender.join_peers(vec![peer_id]).await;
                 }
             }
         }

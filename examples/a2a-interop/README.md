@@ -50,7 +50,7 @@ bun install
 bun test
 ```
 
-`bun test` starts both daemons on a fresh loopback room (`startMesh()` in
+`bun test` starts both daemons on a fresh loopback gossip (`startMesh()` in
 `common.ts`), runs one external agent against each concurrently, and asserts
 on the whole lifecycle — `submitted → working → input-required →
 completed`, plus the artifact content arriving on the initiator's stream.

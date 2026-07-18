@@ -111,9 +111,9 @@ pub async fn run<A: NodeDriver>(
         .map(|path| {
             StateFile::new(path, &mesh_str, &author, &mesh_name).with_topic(topic_string.as_deref())
         });
-    // The departure line's label: a topic room shows `topic` plus the raw
+    // The departure line's label: a topic gossip shows `topic` plus the raw
     // string it was derived from (the name is lossy, and the wording mirrors
-    // the `joined topic …` startup line), every other room its `#name`.
+    // the `joined topic …` startup line), every other gossip its `#name`.
     let leave_label = topic_string.map_or_else(
         || format!("#{mesh_name}"),
         |raw_topic| format!("topic {raw_topic}"),
@@ -205,7 +205,7 @@ pub async fn run<A: NodeDriver>(
     // have one source and cannot disagree.
     if ipc_listener_disabled || ipc_rx.is_some() {
         state.ready = true;
-        state.write_participant_count();
+        state.write_peer_count();
         sink.emit(NodeEvent::Ready {
             mesh: mesh_str.clone(),
             name: mesh_name.clone(),
@@ -266,7 +266,7 @@ fn wire_session_state(state: &mut EventLoopState, endpoint: &Endpoint, wiring: S
     state.unicast_pool = crate::transport::UnicastPool::new(endpoint.clone());
     state.live_count = wiring.live_count;
     state.rendezvous_id = Some(wiring.rendezvous_id);
-    state.write_participant_count();
+    state.write_peer_count();
 }
 
 /// The per-session value cluster [`wire_session_state`] folds into a fresh
@@ -372,7 +372,7 @@ struct EventLoop<A: NodeDriver> {
     mesh: MeshId,
     name: MeshName,
     /// The departure line's label: the raw topic string for a topic
-    /// room (the derived name is lossy), `#name` otherwise.
+    /// gossip (the derived name is lossy), `#name` otherwise.
     leave_label: String,
     author: Nickname,
     sink: std::sync::Arc<dyn NodeSink>,
@@ -658,7 +658,7 @@ async fn shutdown<A: NodeDriver>(
 }
 
 /// The mesh name (for the departure log line), the user-facing departure
-/// label (the raw topic string for a topic room, `#name` otherwise), and
+/// label (the raw topic string for a topic gossip, `#name` otherwise), and
 /// whether this quit should hard-exit the process — the plain values
 /// [`announce_and_maybe_exit`] needs beyond the loop state and the shared
 /// handler context.
@@ -706,7 +706,7 @@ async fn announce_and_maybe_exit<A: NodeDriver>(
 /// Every catchable termination signal routes through the graceful
 /// `shutdown()` path so the statusline state file is removed. SIGHUP in
 /// particular is what a closing parent (e.g. the Monitor that hosts the
-/// daemon for a `/room:*` session) tends to send; without catching it
+/// daemon for a `/gossip-*` session) tends to send; without catching it
 /// the default action terminated the daemon without cleanup, stranding a
 /// ghost pill on the statusline. Only SIGKILL stays uncatchable.
 fn spawn_quit_signal_tasks(exit_on_quit: bool) -> mpsc::Receiver<()> {
@@ -867,7 +867,7 @@ fn finalize_ping_round(state: &mut EventLoopState, sink: &dyn NodeSink) {
     // `known` must never be less than the number that responded: a peer can
     // pong and then leave the roster before this ~10s finalize, which would
     // otherwise report responded > known. Clamp so the count stays coherent.
-    let known = state.participants.len().max(peers.len());
+    let known = state.peers.len().max(peers.len());
     sink.emit(NodeEvent::PingReport { peers, known });
 }
 
@@ -1403,7 +1403,7 @@ fn schedule_rival_recheck(
 /// dial of the shared id preferentially reaches itself. Dropping our copy
 /// first removes us from every resolution channel (relay registration,
 /// mDNS record, pooled connection), so the re-probe's answer is finally
-/// meaningful: *connects* ⇒ a rival serves it, stay a participant and let
+/// meaningful: *connects* ⇒ a rival serves it, stay a peer and let
 /// the heal re-graft merge the overlays; *times out* ⇒ genuinely alone,
 /// re-claim. Returns whether a shed happened (the caller then skips this
 /// tick's synchronous re-claim).
@@ -1427,7 +1427,7 @@ fn shed_rival_beacon_if_due(
         "beacon rival re-check: releasing the rendezvous to re-probe for a same-id co-host"
     );
     // `shed`, not a plain drop: the graceful endpoint close turns the
-    // participant's link to its own dead beacon into an immediate
+    // peer's link to its own dead beacon into an immediate
     // `NeighborDown` instead of a zombie that only dies at the QUIC idle
     // timeout — the zombie both stalls the post-shed re-graft and leaves
     // a poisoned pool entry under the shared id.

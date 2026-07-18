@@ -1,11 +1,11 @@
 ## Guard
 
-If `$ROOM`, `$NAME`, or `$NICKNAME` is missing, follow the **Reattach**
+If `$GOSSIP`, `$NAME`, or `$NICKNAME` is missing, follow the **Reattach**
 section and try to recover the session identity. If that does not yield a
-room, print:
+gossip, print:
 
 ```text
-💬 Not in a room. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -15,7 +15,7 @@ Then stop.
 Run:
 
 ```bash
-agent-gossip meta get --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 If the command fails or returns `ok:false`, print `💬 Could not read the meta

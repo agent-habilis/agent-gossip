@@ -29,16 +29,6 @@ impl MeshSession {
         self.core.sever_gossip().await
     }
 
-    /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
-    /// Adversarial-suite only — lets it assert that messages we don't
-    /// retain are never folded into the indexes (no unbounded leak).
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
-        self.core.index_stats().await
-    }
-
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only —
     /// lets it assert crafted shard streams stay inside the byte budgets.

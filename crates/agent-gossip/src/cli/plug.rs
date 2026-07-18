@@ -115,7 +115,7 @@ fn finish(acted: usize) {
         warn("nothing to do (try --agent claude-code|pi|codex|cursor|opencode or --path DIR)");
     } else {
         let noun = if acted == 1 { "target" } else { "targets" };
-        status("Finished", &format!("unplugging room · {acted} {noun}"));
+        status("Finished", &format!("unplugging gossip · {acted} {noun}"));
     }
 }
 

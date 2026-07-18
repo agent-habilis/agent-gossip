@@ -1,6 +1,6 @@
 //! The `discover` subcommand: browse a directory's live meshes.
 //!
-//! Streams `room_found`/`room_lost` JSON lines for an agent to act on
+//! Streams `gossip_found`/`gossip_lost` JSON lines for an agent to act on
 //! (the agent picks and joins by id itself). The pure directory primitives
 //! live in [`agent_habilis_mesh::directory`]; the live consumer in
 //! [`crate::api::Directory`]; this file is just the CLI command + mesh
@@ -13,7 +13,7 @@ use crate::api::{Directory, DirectoryEvent};
 use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};
 
-/// Browse a directory, streaming `room_found`/`room_lost` JSON lines until
+/// Browse a directory, streaming `gossip_found`/`gossip_lost` JSON lines until
 /// interrupted (SIGINT or SIGTERM).
 pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // Reach the directory over the chosen lookups (default all-on). Must
@@ -50,21 +50,21 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
 }
 
 /// One directory change as a JSON line for `agent-gossip discover`.
-/// `Found`/`Updated` both surface as `room_found` (upsert semantics —
-/// the agent treats a re-ad as a refresh); a departure is `room_lost`.
+/// `Found`/`Updated` both surface as `gossip_found` (upsert semantics —
+/// the agent treats a re-ad as a refresh); a departure is `gossip_lost`.
 fn discover_event_json(event: &DirectoryEvent) -> String {
     let value = match event {
         DirectoryEvent::Found(listing) | DirectoryEvent::Updated(listing) => serde_json::json!({
-            "event": "room_found",
-            "room": listing.mesh.as_str(),
+            "event": "gossip_found",
+            "gossip": listing.mesh.as_str(),
             "name": listing.name,
             "mode": if listing.public { "public" } else { "private" },
             "password": listing.password,
             "peers": listing.peers,
         }),
         DirectoryEvent::Lost(mesh) => serde_json::json!({
-            "event": "room_lost",
-            "room": mesh.as_str(),
+            "event": "gossip_lost",
+            "gossip": mesh.as_str(),
         }),
     };
     value.to_string()

@@ -264,8 +264,8 @@ mod tests {
         // whitespace, `#`, `<>`, and control collapse to one `-`; leading and
         // trailing suppressed. `/` is NOT forbidden and survives verbatim.
         assert_eq!(
-            MeshName::from_topic_string("my secret room").as_str(),
-            "my-secret-room"
+            MeshName::from_topic_string("my secret gossip").as_str(),
+            "my-secret-gossip"
         );
         assert_eq!(MeshName::from_topic_string("a#b").as_str(), "a-b");
         assert_eq!(MeshName::from_topic_string("a\u{0007}b").as_str(), "a-b");

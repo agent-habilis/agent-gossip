@@ -59,10 +59,10 @@ pub(crate) async fn read_bounded_line<R: AsyncBufRead + Unpin>(
 
 /// Append `piece` to `buf` if it fits within `max`; otherwise leave `buf`
 /// untouched and report the overflow. Split out of [`read_bounded_line`] so
-/// the room-check/extend branch isn't nested inside its `if let`/`if`.
+/// the overflow-check/extend branch isn't nested inside its `if let`/`if`.
 fn would_overflow(buf: &mut Vec<u8>, piece: &[u8], max: usize) -> bool {
-    let room = max.saturating_sub(buf.len());
-    if piece.len() > room {
+    let remaining = max.saturating_sub(buf.len());
+    if piece.len() > remaining {
         return true;
     }
     buf.extend_from_slice(piece);

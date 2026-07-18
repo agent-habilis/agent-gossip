@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::protocol::mesh::LookupOpts;
 
-use super::build_participant_endpoint;
+use super::build_peer_endpoint;
 
 /// This machine's network capability, read from iroh's net-report — the data
 /// behind `doctor`'s Network section and its hole-punch verdict. The
@@ -34,7 +34,7 @@ pub struct NetworkCapability {
     pub captive_portal: Option<bool>,
 }
 
-/// Build a public participant endpoint and read iroh's net-report, bounded by
+/// Build a public peer endpoint and read iroh's net-report, bounded by
 /// `timeout`. Bind failure is the only hard error; a net-report that never
 /// completes (offline) still yields a `NetworkCapability` with the local bind
 /// info and `report_obtained = false`.
@@ -42,7 +42,7 @@ pub struct NetworkCapability {
 /// # Errors
 /// The endpoint fails to bind (the local network stack is broken).
 pub async fn probe(timeout: Duration) -> Result<NetworkCapability> {
-    let endpoint = build_participant_endpoint(&LookupOpts::public_preset()).await?;
+    let endpoint = build_peer_endpoint(&LookupOpts::public_preset()).await?;
     let node_id = endpoint.id().to_string();
     let local_addrs = endpoint.bound_sockets();
 

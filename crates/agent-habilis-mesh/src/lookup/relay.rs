@@ -98,15 +98,15 @@ pub fn relay_ladder(choice: &RelayChoice) -> Vec<RelayUrl> {
 ///   joiners pre-register. The caller encodes that by passing a
 ///   one-element `Custom([rung])` (the rung `select_bootstrap_rung`
 ///   chose), so the beacon never reaches the multi-relay `Pinned` arm.
-/// - **Participant** on `Pinned` uses iroh's resilient multi-relay
-///   `default_relay_mode()` (the n0 prod set): pinning a participant to
+/// - **Peer** on `Pinned` uses iroh's resilient multi-relay
+///   `default_relay_mode()` (the n0 prod set): pinning a peer to
 ///   one relay made `bind()` block on that relay's handshake and dropped
-///   iroh's relay fallback — a `Default` participant still reaches the
+///   iroh's relay fallback — a `Default` peer still reaches the
 ///   beacon at its rung and skips relays entirely same-LAN via mDNS. A
-///   `Custom` ladder pins the participant to that whole set.
+///   `Custom` ladder pins the peer to that whole set.
 ///
 /// So `Custom(ladder)` covers both: a 1-rung beacon and a multi-rung
-/// participant alike map to `RelayMode::Custom`.
+/// peer alike map to `RelayMode::Custom`.
 pub(super) fn relay_mode(choice: &RelayChoice) -> RelayMode {
     match choice {
         RelayChoice::Disabled => {
@@ -118,7 +118,7 @@ pub(super) fn relay_mode(choice: &RelayChoice) -> RelayMode {
             RelayMode::custom(ladder.iter().cloned())
         }
         RelayChoice::Pinned => {
-            tracing::debug!("participant on iroh resilient multi-relay default");
+            tracing::debug!("peer on iroh resilient multi-relay default");
             default_relay_mode()
         }
     }
@@ -134,7 +134,10 @@ pub(super) fn relay_mode(choice: &RelayChoice) -> RelayMode {
 /// `None` ⇒ the ladder is empty (relay disabled) or every rung was
 /// unreachable; the caller then leans on mDNS/DHT (the other reliability
 /// layers).
-pub async fn select_bootstrap_rung(ladder: &[RelayUrl], per_rung: Duration) -> Option<RelayUrl> {
+pub(crate) async fn select_bootstrap_rung(
+    ladder: &[RelayUrl],
+    per_rung: Duration,
+) -> Option<RelayUrl> {
     let selected = select_first_reachable(ladder, |rung| async move {
         let reachable = relay_rung_reachable(&rung, per_rung).await;
         if !reachable {
@@ -230,7 +233,10 @@ pub enum RungRefresh {
 /// `Rehome` iff the rung differs (the current one died, an earlier
 /// preferred one recovered, or every rung is now down → `Rehome(None)`).
 #[must_use]
-pub fn plan_rung_refresh(current: Option<&RelayUrl>, selected: Option<RelayUrl>) -> RungRefresh {
+pub(crate) fn plan_rung_refresh(
+    current: Option<&RelayUrl>,
+    selected: Option<RelayUrl>,
+) -> RungRefresh {
     if selected.as_ref() == current {
         RungRefresh::NoChange
     } else {
@@ -281,7 +287,7 @@ fn next_relay_backoff(current: Duration) -> Duration {
 /// the new state. So the monitor returns after publishing a change;
 /// teardown otherwise is by `beacon::Rendezvous` drop aborting it.
 #[must_use]
-pub fn spawn_relay_monitor(
+pub(crate) fn spawn_relay_monitor(
     endpoint: Endpoint,
     ladder: Vec<RelayUrl>,
     rung_tx: watch::Sender<Option<RelayUrl>>,

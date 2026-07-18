@@ -10,7 +10,7 @@ use iroh::endpoint::ConnectionError;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use agent_habilis_mesh::lookup::{add_peer_addr, build_participant_endpoint};
+use agent_habilis_mesh::lookup::{add_peer_addr, build_peer_endpoint};
 use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth};
 use agent_habilis_mesh::protocol::mesh::LookupOpts;
 
@@ -98,7 +98,7 @@ async fn drive(
 }
 
 async fn consumer(ticket: &A2aTicket) -> (iroh::Endpoint, SharedConnection) {
-    let endpoint = build_participant_endpoint(&ticket.lookups)
+    let endpoint = build_peer_endpoint(&ticket.lookups)
         .await
         .expect("consumer endpoint");
     add_peer_addr(&endpoint, ticket.addr.clone()).expect("add peer addr");

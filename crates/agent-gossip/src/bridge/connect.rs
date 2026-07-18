@@ -12,7 +12,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
-use agent_habilis_mesh::lookup::{add_peer_addr, build_participant_endpoint};
+use agent_habilis_mesh::lookup::{add_peer_addr, build_peer_endpoint};
 use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth};
 
 use super::A2A_ALPN;
@@ -41,7 +41,7 @@ pub(crate) async fn connect(
         (Some(_), false) => bail!("this ticket has no password — drop --password"),
         _ => TicketAuth::a2a(&ticket.secret, password.as_ref()),
     };
-    let endpoint = build_participant_endpoint(&ticket.lookups).await?;
+    let endpoint = build_peer_endpoint(&ticket.lookups).await?;
     add_peer_addr(&endpoint, ticket.addr.clone())?;
     let bind_addr = format!("127.0.0.1:{}", local_port.unwrap_or(0));
     let listener = TcpListener::bind(&bind_addr)

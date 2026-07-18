@@ -1,6 +1,6 @@
 //! `SharedServerOpts` — the option group flattened into the long-running
 //! daemon commands (`create`, `join`, `topic`). Holds only genuinely-local,
-//! per-process settings; lookup selection is a room-wide property carried in
+//! per-process settings; lookup selection is a gossip-wide property carried in
 //! the id (see `create`'s `LookupArgs`). The hidden knobs live in
 //! [`TuningOpts`](super::tuning::TuningOpts) so a command that needs the tuning
 //! but not the daemon flags (`discover`) can take just those.
@@ -20,8 +20,8 @@ pub(crate) struct SharedServerOpts {
     pub filter_self: bool,
 
     /// Cap on live direct connections (the gossip overlay's active-neighbor
-    /// set). The room holds at most this many QUIC links and relays to peers
-    /// beyond it; rooms up to this size form a full mesh with no membership
+    /// set). The gossip holds at most this many QUIC links and relays to peers
+    /// beyond it; gossips up to this size form a full mesh with no membership
     /// churn.
     #[arg(long, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
     pub max_peers: usize,
@@ -38,7 +38,7 @@ pub(crate) struct SharedServerOpts {
     pub a2a_serve: Option<u16>,
 
     /// Override the session state-file path. The daemon writes
-    /// `{room, name, nickname, participant_count, ready, last_updated}` to a
+    /// `{gossip, name, nickname, peer_count, ready, last_updated}` to a
     /// JSON file on every peer-set change and a ~10s heartbeat, and deletes it
     /// on clean shutdown — for external tools (e.g. a shell statusline) to
     /// render live count + liveness without IPC. Defaults to

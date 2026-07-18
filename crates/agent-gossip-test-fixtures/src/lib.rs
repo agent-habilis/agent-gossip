@@ -245,7 +245,7 @@ pub fn cli_message_raw(mesh: &str, nickname: &str, body: &str) -> Output {
         .args([
             "a2a",
             "call",
-            "--room",
+            "--gossip",
             mesh,
             "--nickname",
             nickname,
@@ -278,7 +278,7 @@ pub fn cli_message_checked(mesh: &str, nickname: &str, body: &str) -> String {
 /// Spawn `agent-gossip poll …`, assert success,
 /// return trimmed stdout.
 pub fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
-    let mut args = vec!["poll", "--room", mesh, "--nickname", nickname];
+    let mut args = vec!["poll", "--gossip", mesh, "--nickname", nickname];
     if let Some(id) = after {
         args.extend(["--after", id]);
     }
@@ -298,7 +298,7 @@ pub fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.
 pub fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
-    let mut args = vec!["poll", "--room", mesh, "--nickname", nickname, "--long"];
+    let mut args = vec!["poll", "--gossip", mesh, "--nickname", nickname, "--long"];
     if let Some(id) = after {
         args.extend(["--after", id]);
     }
@@ -370,9 +370,9 @@ pub fn await_peer_card_cli(mesh: &str, nickname: &str, target: &str) {
 
 /// Create a task on `to` via the CLI (`agent-gossip a2a call --to <peer> --method
 /// SendMessage --text`) and return the raw `Output` (no success assertion —
-/// callers that test the unknown-participant failure path inspect it).
+/// callers that test the unknown-peer failure path inspect it).
 ///
-/// Deliberately **unguarded**: it is the helper the unknown-participant and
+/// Deliberately **unguarded**: it is the helper the unknown-peer and
 /// unicast-retry tests use, and waiting on a card that will never arrive (or
 /// that the test means to race) is exactly what they must not do. Callers
 /// targeting a known peer want [`cli_task_create`].
@@ -381,7 +381,7 @@ pub fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &str) -> 
         .args([
             "a2a",
             "call",
-            "--room",
+            "--gossip",
             mesh,
             "--nickname",
             nickname,
@@ -448,7 +448,7 @@ pub fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Value {
         .args([
             "a2a",
             "call",
-            "--room",
+            "--gossip",
             mesh,
             "--nickname",
             nickname,
@@ -478,7 +478,7 @@ pub fn cli_task_artifact(mesh: &str, nickname: &str, task_id: &str, text: &str) 
         .args([
             "a2a",
             "artifact",
-            "--room",
+            "--gossip",
             mesh,
             "--nickname",
             nickname,
@@ -502,7 +502,7 @@ pub fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: &str) {
         .args([
             "a2a",
             "status",
-            "--room",
+            "--gossip",
             mesh,
             "--nickname",
             nickname,
@@ -521,10 +521,10 @@ pub fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: &str) {
 }
 
 /// Spawn `agent-gossip peers …`, assert success, return trimmed stdout (the
-/// raw `{ok, participants, count}` JSON line).
+/// raw `{ok, peers, peer_count}` JSON line).
 pub fn cli_peers(mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
-        .args(["peers", "--room", mesh, "--nickname", nickname])
+        .args(["peers", "--gossip", mesh, "--nickname", nickname])
         .output()
         .expect("peers command failed to spawn");
     assert!(
@@ -539,7 +539,7 @@ pub fn cli_peers(mesh: &str, nickname: &str) -> String {
 /// report lands on the target daemon's own output stream, not here.
 pub fn cli_ping(mesh: &str, nickname: &str) {
     let out = test_cmd()
-        .args(["ping", "--room", mesh, "--nickname", nickname])
+        .args(["ping", "--gossip", mesh, "--nickname", nickname])
         .output()
         .expect("ping command failed to spawn");
     assert!(
@@ -564,7 +564,7 @@ pub fn channel_subcommand(channel: Channel) -> &'static str {
 pub fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args([channel_subcommand(channel), "get"])
-        .args(["--room", mesh, "--nickname", nickname])
+        .args(["--gossip", mesh, "--nickname", nickname])
         .output()
         .expect("channel get failed to spawn");
     assert!(
@@ -583,7 +583,7 @@ pub fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
 pub fn cli_channel_merge(channel: Channel, mesh: &str, nickname: &str, merge: &str) -> Output {
     test_cmd()
         .args([channel_subcommand(channel), "merge"])
-        .args(["--room", mesh, "--nickname", nickname, "--merge", merge])
+        .args(["--gossip", mesh, "--nickname", nickname, "--merge", merge])
         .output()
         .expect("channel merge failed to spawn")
 }
@@ -946,7 +946,7 @@ impl InProcNode {
     /// resend overflows the outbound queue instead. See [`Self::a2a_call`].
     ///
     /// Only a transport timeout is retried. Any genuine answer — including a
-    /// semantic error such as "not permitted" or "unknown participant" — means
+    /// semantic error such as "not permitted" or "unknown peer" — means
     /// the round trip completed, and is returned untouched.
     pub async fn a2a_call_retrying(
         &self,
@@ -1294,7 +1294,7 @@ impl InProcNode {
 ///
 /// The two directions are not equally likely to be ready, which is why guarding
 /// only one hides the bug rather than fixing it: the creator publishes its card
-/// when it mints the room, so a joiner tends to pick it up during its initial
+/// when it mints the gossip, so a joiner tends to pick it up during its initial
 /// `meta` sync, while the joiner's own card has to propagate *back* afterwards.
 /// Waiting on the caller's view alone therefore passes most of the time and
 /// flakes under load.
@@ -1321,7 +1321,7 @@ pub async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProcNode) {
 
 /// Scan a `create`/`join` log's full contents so far for the mesh id and
 /// nickname, filling in whichever of `mesh_id`/`nickname` is still unset. The
-/// daemon's JSON `ready` event carries both (`room` / `nickname`).
+/// daemon's JSON `ready` event carries both (`gossip` / `nickname`).
 fn scan_create_log(content: &str, mesh_id: &mut Option<String>, nickname: &mut Option<String>) {
     for line in content.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
@@ -1331,7 +1331,7 @@ fn scan_create_log(content: &str, mesh_id: &mut Option<String>, nickname: &mut O
             continue;
         }
         if mesh_id.is_none() {
-            *mesh_id = value["room"].as_str().map(str::to_owned);
+            *mesh_id = value["gossip"].as_str().map(str::to_owned);
         }
         if nickname.is_none() {
             *nickname = value["nickname"].as_str().map(str::to_owned);
@@ -1431,27 +1431,6 @@ impl Node {
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn join");
-        Node {
-            child,
-            log,
-            nickname: nickname.to_string(),
-        }
-    }
-
-    /// Spawn `agent-gossip topic <string> --nickname <nickname>` with extra
-    /// hidden tuning flags as `(flag, value)` pairs. The daemon logs its
-    /// mesh id like `join` does, so readiness gating works unchanged.
-    pub fn topic_flags(string: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
-        let log = tmp_log(nickname);
-        let file = File::create(&log).unwrap();
-        let mut cmd = test_cmd();
-        cmd.args(["topic", string, "--nickname", nickname]);
-        apply_flags(&mut cmd, flags);
-        let child = cmd
-            .stdout(Stdio::from(file.try_clone().unwrap()))
-            .stderr(Stdio::from(file))
-            .spawn()
-            .expect("failed to spawn topic");
         Node {
             child,
             log,

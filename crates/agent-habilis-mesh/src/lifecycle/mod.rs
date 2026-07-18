@@ -1,4 +1,4 @@
-//! The **lifecycle subsystem**: everything about a *participant's*
+//! The **lifecycle subsystem**: everything about a *peer's*
 //! presence over time — heartbeat + membership transitions + the
 //! join-horizon surfacing decisions (`joined` / `left` / `peer_return`
 //! / `peer_timeout`). The pure gossip router calls [`observe`] for
@@ -147,10 +147,10 @@ pub(crate) async fn handle_presence(
         return;
     }
     if subtype == PresenceSubtype::Left {
-        if state.participants.remove(message.author.as_str()) {
-            state.write_participant_count();
+        if state.peers.remove(message.author.as_str()) {
+            state.write_peer_count();
         }
-        state.participant_endpoints.remove(message.author.as_str());
+        state.peer_endpoints.remove(message.author.as_str());
         state.quiet.remove(message.author.as_str());
         // Only announce a departure for a peer whose arrival we
         // surfaced — keeps the join-horizon view symmetric. A `left`

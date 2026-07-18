@@ -70,7 +70,7 @@ pub(crate) fn directory_config(lookups: LookupOpts) -> MeshConfig {
 }
 
 /// A directory advertisement: the advertised mesh's `💬…` id plus its
-/// live participant count. The id already encodes the mesh name and
+/// live peer count. The id already encodes the mesh name and
 /// network mode, so a discoverer decodes those locally — nothing else need
 /// be on the wire. Serialized as a JSON object (room for future fields;
 /// discoverers ignore unknown keys via serde's default behaviour and
@@ -116,7 +116,7 @@ pub struct Listing {
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
     /// Unix seconds when this mesh was *first* seen in the directory
-    /// (preserved across re-ads). Carried on the `room_found` event so a
+    /// (preserved across re-ads). Carried on the `gossip_found` event so a
     /// consumer can order or age the listing.
     pub first_seen_unix: i64,
 }

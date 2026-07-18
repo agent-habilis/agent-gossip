@@ -46,7 +46,7 @@ const ASCII_SPAN: u64 = 94;
 // fails the build here instead of silently dropping every send.
 const _: () = assert!(
     CHUNK_BODY_LEN + 512 <= agent_gossip::MAX_MESSAGE_SIZE,
-    "chunk body leaves too little room under MAX_MESSAGE_SIZE for the JSON envelope"
+    "chunk body leaves too little headroom under MAX_MESSAGE_SIZE for the JSON envelope"
 );
 
 /// Deterministic printable-ASCII payload for `index` (`SplitMix64` →

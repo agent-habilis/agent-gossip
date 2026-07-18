@@ -7,7 +7,7 @@
 //!   the inbound acceptor (`accept`). Distinct from `link` (a gossip
 //!   active-view neighbor) and from `Reach::Direct` (a gossip-overlay
 //!   concept): a unicast connection is a real client/server QUIC link this
-//!   node opens to one participant's endpoint, on its own ALPN, off the
+//!   node opens to one peer's endpoint, on its own ALPN, off the
 //!   gossip flood.
 //! - [`MeshSender`] — the gossip broadcast handle (`sender`).
 //! - `ipc` — the unix-socket / named-pipe listener used by the CLI's `msg`

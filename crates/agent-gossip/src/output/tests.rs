@@ -46,7 +46,7 @@ fn json_message_has_all_fields() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "msg");
-    assert_eq!(parsed["room"], sid().as_str());
+    assert_eq!(parsed["gossip"], sid().as_str());
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
     assert!(parsed["to"].is_null());
@@ -94,12 +94,10 @@ fn ready_event_drift_is_present_only_when_stale() {
     assert!(clean.get("drift").is_none());
 
     // Stale: the warning rides along verbatim.
-    let stale = parse(&make(Some(
-        "⚠️ room skill out of date. Run `agent-gossip plug` to update",
-    )));
+    let stale = parse(&make(Some("💬️ run `agent-gossip plug` to update skills")));
     assert_eq!(
         stale["drift"],
-        "⚠️ room skill out of date. Run `agent-gossip plug` to update"
+        "💬️ run `agent-gossip plug` to update skills"
     );
 }
 
@@ -153,7 +151,7 @@ fn json_presence_joined() {
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["room"], sid().as_str());
+    assert_eq!(parsed["gossip"], sid().as_str());
     assert_eq!(parsed["display"], "💬️ `<alice>` has joined");
 }
 

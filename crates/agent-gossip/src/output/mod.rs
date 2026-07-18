@@ -206,7 +206,7 @@ impl Output {
                     emit_json(
                         &SimpleEvent::Ready {
                             version: crate::VERSION,
-                            room: mesh.as_str(),
+                            gossip: mesh.as_str(),
                             name: name.as_str(),
                             nickname: nickname.as_str(),
                             drift,
@@ -419,7 +419,7 @@ impl Output {
 
     /// Emit a peer-timeout event. Distinct from `presence left` (a
     /// voluntary departure): this fires when the local heartbeat
-    /// sweeper evicts a participant silent past `ALIVE_TIMEOUT_SECS`.
+    /// sweeper evicts a peer silent past `ALIVE_TIMEOUT_SECS`.
     pub(crate) fn peer_timeout(&self, nickname: &Nickname, last_seen_secs_ago: u64) {
         self.dispatch(
             || OutputEvent::PeerTimeout {
@@ -514,7 +514,7 @@ impl Output {
 
     /// Emit the result of an `agent-gossip ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
-    /// `peers.len()`). `known` is the current participant roster size.
+    /// `peers.len()`). `known` is the current peer roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {
         // Not routed through `dispatch`: `peers` is owned and each arm
         // consumes (or drops) it, so there is nothing to clone.

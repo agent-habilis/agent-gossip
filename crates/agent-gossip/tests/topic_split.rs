@@ -113,7 +113,7 @@ async fn two_simultaneous_topic_joiners_converge() {
     );
     assert_eq!(
         alice.mesh, bob.mesh,
-        "same string must derive the same room id"
+        "same string must derive the same gossip id"
     );
 
     // Convergence = each side holds the other's card in its meta doc (the

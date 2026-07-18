@@ -28,7 +28,7 @@ pub struct MeshListing {
     /// `true` if the mesh id carries a password verifier — joining needs
     /// the password, so the listing alone does not admit.
     pub password: bool,
-    /// Live participant count from the most recent ad.
+    /// Live peer count from the most recent ad.
     pub peers: usize,
     /// Unix seconds when this mesh was first seen in the directory
     /// (stable across re-ads).

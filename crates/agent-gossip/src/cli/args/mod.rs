@@ -96,32 +96,32 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
-    /// Create and join a new room
+    /// Create and join a new gossip
     Create {
         #[command(flatten)]
         opts: CreateOpts,
     },
 
-    /// Join an existing room
+    /// Join an existing gossip
     Join {
         #[command(flatten)]
         opts: JoinOpts,
     },
 
-    /// Join a public room derived from a shared string
+    /// Join a public gossip derived from a shared string
     Topic {
         #[command(flatten)]
         opts: TopicOpts,
     },
 
-    /// Leave a room: stop this session's local daemon.
+    /// Leave a gossip: stop this session's local daemon.
     ///
     /// Finds running create/join/topic daemons through their state files
     /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
-    /// and removes its state file on the way out. With no ROOM, stops
+    /// and removes its state file on the way out. With no GOSSIP, stops
     /// only the daemons owned by the calling session — those with
     /// `--session-pid` among their process ancestors — and never touches
-    /// other sessions'. An explicit ROOM targets that room's local
+    /// other sessions'. An explicit GOSSIP targets that gossip's local
     /// member(s) regardless of owner. State files whose daemon is gone
     /// (SIGKILL, power loss) are cleaned up along the way.
     Leave {
@@ -129,19 +129,19 @@ pub(crate) enum Commands {
         opts: LeaveOpts,
     },
 
-    /// Report the room this session is joined to.
+    /// Report the gossip this session is joined to.
     ///
     /// The read-only sibling of `leave`: discovers running daemons through
     /// their state files and prints the ones owned by the calling session
     /// (see `--session-pid`). This is how an agent that lost its
     /// conversation context (e.g. after a context clear) re-learns the
-    /// room id and nickname of a session it is still joined to.
+    /// gossip id and nickname of a session it is still joined to.
     Session {
         #[command(flatten)]
         opts: SessionOpts,
     },
 
-    /// Check for new messages in a room
+    /// Check for new messages in a gossip
     Poll {
         #[command(flatten)]
         opts: PollOpts,
@@ -153,17 +153,17 @@ pub(crate) enum Commands {
         opts: PingOpts,
     },
 
-    /// Browse rooms advertising themselves in a directory.
+    /// Browse gossips advertising themselves in a directory.
     ///
-    /// Joins the directory and streams `room_found` / `room_lost` JSON
-    /// lines for rooms created with `--advertise` — capture an id and call
+    /// Joins the directory and streams `gossip_found` / `gossip_lost` JSON
+    /// lines for gossips created with `--advertise` — capture an id and call
     /// `join` yourself. Does not auto-join.
     Discover {
         #[command(flatten)]
         opts: DiscoverOpts,
     },
 
-    /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the room.
+    /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the gossip.
     ///
     /// `a2a expose --to http://127.0.0.1:PORT` runs next to a local A2A server
     /// and prints a `🎟️…` ticket; `a2a connect <ticket>` binds a local endpoint
@@ -175,30 +175,30 @@ pub(crate) enum Commands {
         opts: A2aOpts,
     },
 
-    /// List the live participant roster of a room.
+    /// List the live peer roster of a gossip.
     ///
-    /// Queries the running daemon for current participants (nicknames +
+    /// Queries the running daemon for current peers (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
-    /// task target picker; prints a JSON object with `participants`
-    /// and `participant_count`.
+    /// task target picker; prints a JSON object with `peers`
+    /// and `peer_count`.
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
     },
 
-    /// Mint a ticket to an invite-only room
+    /// Mint a ticket to an invite-only gossip
     ///
     /// The creating session's daemon signs the invite with its in-memory issuer
     /// key and prints the `🎟️…` token — share it so a peer can `join` with it.
     /// After the creator's daemon restarts the issuer key is gone, so no new
     /// invites can be minted (already-issued ones still redeem). Password: an
-    /// invite inherits the room's password, so a scraped invite still needs it.
+    /// invite inherits the gossip's password, so a scraped invite still needs it.
     Invite {
         #[command(flatten)]
         opts: InviteOpts,
     },
 
-    /// Read or change the room's shared state.
+    /// Read or change the gossip's shared state.
     ///
     /// Shared state is a JSON document every member derives from a dedicated,
     /// gossiped log of RFC 7386 JSON Merge Patch changes. `state merge` applies a
@@ -209,10 +209,10 @@ pub(crate) enum Commands {
         opts: StateOpts,
     },
 
-    /// Read or change the room's meta state.
+    /// Read or change the gossip's meta state.
     ///
     /// A second shared-state document beside `state`, identical machinery but
-    /// conventionally holding room metadata (peer info, …) rather than the task.
+    /// conventionally holding gossip metadata (peer info, …) rather than the task.
     /// `meta merge` applies an RFC 7386 JSON Merge Patch; `meta get` prints the
     /// current document. The two channels are fully independent.
     Meta {
@@ -222,22 +222,21 @@ pub(crate) enum Commands {
 
     /// Print the multihop routing topology from a running daemon's point of view.
     ///
-    /// Emits the metric-weighted room graph the daemon has assembled from
-    /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`) —
-    /// the data behind the `/room:topology` render.
+    /// Emits the metric-weighted gossip graph the daemon has assembled from
+    /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`).
     Topology {
         #[command(flatten)]
         opts: TopologyOpts,
     },
 
-    /// Wait until a room daemon is serving, then exit.
+    /// Wait until a gossip daemon is serving, then exit.
     ///
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
     /// `agent-gossip ready --state-file <path>` blocks until that file reports the
     /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
     /// silent gate (exit code only); with `--output json` it prints
-    /// `{room,name,nickname}` on success, so the gate doubles as the
+    /// `{gossip,name,nickname}` on success, so the gate doubles as the
     /// identity read.
     Ready {
         #[command(flatten)]
@@ -246,7 +245,7 @@ pub(crate) enum Commands {
 
     /// Run as a Model Context Protocol server over stdio.
     ///
-    /// Exposes room lifecycle + messaging as MCP tools for AI clients
+    /// Exposes gossip lifecycle + messaging as MCP tools for AI clients
     /// (Codex, Cursor, Claude Desktop, Claude Code). Reads JSON-RPC from
     /// stdin, writes to stdout; the caller is expected to be an MCP client
     /// that manages this process's lifetime.
@@ -275,7 +274,7 @@ pub(crate) enum Commands {
     /// checkout.
     Man,
 
-    /// Plug the room integrations into your agents.
+    /// Plug the gossip integrations into your agents.
     ///
     /// Targets Claude Code, pi, Codex, and Cursor. The skills are embedded in
     /// the binary, so this needs no repo checkout. With no `--agent`, the
@@ -292,7 +291,7 @@ pub(crate) enum Commands {
         paths: Vec<std::path::PathBuf>,
     },
 
-    /// Remove the room integrations from your agents.
+    /// Remove the gossip integrations from your agents.
     ///
     /// With no `--agent`, the agents that have it are used.
     Unplug {
@@ -307,13 +306,13 @@ pub(crate) enum Commands {
         paths: Vec<std::path::PathBuf>,
     },
 
-    /// Diagnose the room environment and network.
+    /// Diagnose the gossip environment and network.
     ///
-    /// With no `--room`: a machine-health report — binary/OS, which agents
+    /// With no `--gossip`: a machine-health report — binary/OS, which agents
     /// have the integration installed (and where), the local network
     /// capability (UDP, NAT/hole-punch behavior, public address, relay
-    /// latency), and the rooms running on this machine. With `--room <💬…>`:
-    /// decode that room's declared connection methods and live-probe which
+    /// latency), and the gossips running on this machine. With `--gossip <💬…>`:
+    /// decode that gossip's declared connection methods and live-probe which
     /// reach it (down to direct-vs-relay path per peer). `--output json` for
     /// the machine form.
     Doctor {

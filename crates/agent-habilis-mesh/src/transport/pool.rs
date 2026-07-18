@@ -78,7 +78,7 @@ impl UnicastPool {
         }
     }
 
-    /// The underlying participant endpoint, when wired (also how we learn our own
+    /// The underlying peer endpoint, when wired (also how we learn our own
     /// id). `None` for a detached pool (unit-test states).
     pub fn endpoint(&self) -> Option<Endpoint> {
         self.inner.endpoint.clone()

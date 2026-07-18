@@ -13,7 +13,7 @@ document covers the layer below it — how two machines that have never
 exchanged a packet locate and reach each other, and how they recover
 when the network drops.
 
-Two participants are used throughout: **Alice** runs `create`; **Bob**
+Two peers are used throughout: **Alice** runs `create`; **Bob**
 runs `join`. Note up front: nothing below makes Alice special. The
 mesh is **creator-independent** — Alice can quit and the mesh keeps
 working, because identity is derived from a shared seed, not from
@@ -138,7 +138,7 @@ packets**. The rendezvous has no DNS/relay to resolve, so instead the
 seed derives a deterministic **loopback port ladder**
 (`derive_secret(seed,"port")`, 8 rungs). Exactly one member is the beacon: it
 binds the first free rung; `AddrInUse` triggers an identity probe
-distinguishing *our* beacon (stay a participant) from an unrelated mesh
+distinguishing *our* beacon (stay a peer) from an unrelated mesh
 that derived the same port (skip to the next rung). Only other processes
 on the machine can join. (`src/lookup/mod.rs` loopback branch;
 `src/beacon/mod.rs` claim-if-free.)
@@ -147,7 +147,7 @@ on the machine can join. (`src/lookup/mod.rs` loopback branch;
 
 ```mermaid
 flowchart LR
-    B["Bob (participant:<br/>multi-relay default)"]
+    B["Bob (peer:<br/>multi-relay default)"]
     B -->|"1. pre-registered:<br/>rendezvous_id @ pinned relay"| RL[("pinned relay")]
     B -->|"2. same-LAN: direct via mDNS"| BC["a member's beacon<br/>(co-hosts rendezvous_id)"]
     B -.->|"3. eternal backstop"| DHT[("mainline DHT")]
@@ -163,10 +163,10 @@ The asymmetry matters:
   (`RENDEZVOUS_RELAY`, iroh's prod NA-east) — or the custom `--relay`
   if given. Bob pre-registered exactly that address in §4, so the
   first dial is relay-direct with **zero lookup**.
-- The **participant** endpoint (Bob's own data endpoint) instead uses
+- The **peer** endpoint (Bob's own data endpoint) instead uses
   iroh's resilient **multi-relay default** (nearest of several, with
   fallback). Pinning it to one relay made `bind()` block on that relay's
-  handshake and dropped iroh's fallback. A default participant still
+  handshake and dropped iroh's fallback. A default peer still
   reaches the beacon at its pinned relay, and skips relays on a LAN via
   mDNS.
 - Two **address-lookups** are wired (publish + resolve
@@ -284,7 +284,7 @@ captures its own bootstrap dial and sits alone in its own overlay. The
 **rival re-check** repairs this: an `EagerProbed` public beacon holder
 periodically *sheds* its beacon (a graceful endpoint close, so its own
 link drops immediately) and re-probes the rendezvous from a fresh
-throwaway endpoint; finding a rival it stays a participant and the heal
+throwaway endpoint; finding a rival it stays a peer and the heal
 re-graft merges the two overlays. Shed times are phase-offset per node
 (endpoint-id-derived on the first check, jittered after), so one holder
 catches the other still up.
@@ -337,10 +337,10 @@ a silent death recovers as fast as a clean one.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant N as node
-    participant H as heartbeat / heal
-    participant Rv as rendezvous_id (in bootstrap cache)
-    participant G as gossip overlay
+    peer N as node
+    peer H as heartbeat / heal
+    peer Rv as rendezvous_id (in bootstrap cache)
+    peer G as gossip overlay
     Note over N,G: meshed; Alive keepalives flow both ways
     N--xG: internet drops on both sides (no clean close)
     Note over N: relay path later auto-restored,<br/>but the gossip link is dead and<br/>NO NeighborDown ever fires
@@ -363,12 +363,12 @@ Recovery is bounded by the heartbeat timescale (~`alive_timeout`,
 ```mermaid
 sequenceDiagram
     autonumber
-    participant A as Alice — create
-    participant Sd as 💬… (seed+name+config)
-    participant B as Bob — join
-    participant Rv as rendezvous (seed-derived id)
-    participant Rl as pinned relay / mDNS / DHT
-    participant G as gossip overlay
+    peer A as Alice — create
+    peer Sd as 💬… (seed+name+config)
+    peer B as Bob — join
+    peer Rv as rendezvous (seed-derived id)
+    peer Rl as pinned relay / mDNS / DHT
+    peer G as gossip overlay
     A->>A: random seed → 💬…; derive rendezvous_id, TopicId
     A->>Rv: co-host the rendezvous (home on pinned relay)
     A->>Rl: publish rendezvous_id (mDNS + DHT)

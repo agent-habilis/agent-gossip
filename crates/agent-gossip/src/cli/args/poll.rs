@@ -1,4 +1,4 @@
-//! `poll` command args: retrieve buffered messages from a running room
+//! `poll` command args: retrieve buffered messages from a running gossip
 //! process via IPC.
 
 use clap::Parser;
@@ -9,19 +9,19 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
-    /// Room identifier (💬...)
-    #[arg(long, required_unless_present = "state_file")]
-    pub room: Option<MeshId>,
+    /// Gossip identifier (💬...)
+    #[arg(long, alias = "room", required_unless_present = "state_file")]
+    pub gossip: Option<MeshId>,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long, required_unless_present = "state_file")]
     pub nickname: Option<Nickname>,
 
-    /// Resolve --room/--nickname from a create/join --state-file instead:
+    /// Resolve --gossip/--nickname from a create/join --state-file instead:
     /// wait until that file reports the daemon serving (like `agent-gossip ready`),
     /// then poll as the identity it carries. Lets a poll be armed before the
     /// daemon has minted its identity.
-    #[arg(long, value_name = "PATH", conflicts_with_all = ["room", "nickname"])]
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["gossip", "nickname"])]
     pub state_file: Option<std::path::PathBuf>,
 
     /// Debug/recovery read: only return events surfaced after this sequence
@@ -55,20 +55,20 @@ mod tests {
     }
 
     #[test]
-    fn room_and_nickname_form_parses() {
+    fn gossip_and_nickname_form_parses() {
         let cli = parse(&[
             "agent-gossip",
             "poll",
-            "--room",
+            "--gossip",
             "💬://abc",
             "--nickname",
             "calm-fox",
         ])
-        .expect("room+nickname form must parse");
+        .expect("gossip+nickname form must parse");
         let Commands::Poll { opts } = cli.command else {
             panic!("expected poll");
         };
-        assert!(opts.room.is_some());
+        assert!(opts.gossip.is_some());
         assert!(opts.nickname.is_some());
         assert!(opts.state_file.is_none());
     }
@@ -86,21 +86,21 @@ mod tests {
         let Commands::Poll { opts } = cli.command else {
             panic!("expected poll");
         };
-        assert!(opts.room.is_none());
+        assert!(opts.gossip.is_none());
         assert!(opts.nickname.is_none());
         assert!(opts.state_file.is_some());
         assert!(opts.long);
     }
 
     #[test]
-    fn state_file_conflicts_with_room_and_nickname() {
+    fn state_file_conflicts_with_gossip_and_nickname() {
         assert!(
             parse(&[
                 "agent-gossip",
                 "poll",
                 "--state-file",
                 "/tmp/s.json",
-                "--room",
+                "--gossip",
                 "💬://abc",
             ])
             .is_err()
@@ -125,7 +125,7 @@ mod tests {
         let cli = parse(&[
             "agent-gossip",
             "poll",
-            "--room",
+            "--gossip",
             "💬://abc",
             "--nickname",
             "calm-fox",
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn identity_is_required_without_state_file() {
         assert!(parse(&["agent-gossip", "poll"]).is_err());
-        assert!(parse(&["agent-gossip", "poll", "--room", "💬://abc"]).is_err());
+        assert!(parse(&["agent-gossip", "poll", "--gossip", "💬://abc"]).is_err());
         assert!(parse(&["agent-gossip", "poll", "--nickname", "calm-fox"]).is_err());
     }
 }

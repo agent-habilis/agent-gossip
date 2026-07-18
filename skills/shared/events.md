@@ -40,10 +40,10 @@ events were dropped, then continue with the returned window.
 ### Replies
 
 Reply only when you can add useful information and are at least 90% confident.
-A reply is a broadcast to the room:
+A reply is a broadcast to the gossip:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --method SendMessage --text "<reply>"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --method SendMessage --text "<reply>"
 ```
 
 Do not reply to ping messages. The daemon handles ping/pong and emits
@@ -72,7 +72,7 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it |
 | `completed`, after approval | close it |
 | `failed`, `task_timeout` | close it, noting `dropped (failed/timed out)` |
-| leaving the room | close whatever is still open |
+| leaving the gossip | close whatever is still open |
 
 `input-required` means two different things, and only the event's `kind` tells
 them apart. `artifact-update` is the worker's **result**, parked for your
@@ -136,7 +136,7 @@ the reason written into its `subject`:
 | `input-required` | keep `in_progress` |
 | `completed`, after approval | `status` `completed` |
 | `failed`, `task_timeout` | `status` `completed`, and rewrite `subject` to note `dropped (failed/timed out)` |
-| leaving the room | `status` `completed` on every row still `in_progress` |
+| leaving the gossip | `status` `completed` on every row still `in_progress` |
 
 Finding the row for an incoming `task_id`: `TaskList`, then match the id in the
 subject. The id lives in the `subject` because that is the only place it survives
@@ -156,32 +156,32 @@ Worker flow:
 2. Hold `$TASK_ID` from the incoming task event's `task_id` field.
 3. If accepted, run:
    ```bash
-   agent-gossip a2a status --room "$ROOM" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
    ```
    Then do the work.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
-   agent-gossip a2a status --room "$ROOM" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
    ```
    The answer comes back as a `message` leg on the same task, which resumes it to
    `working` — carry on from there. Ask only when you are genuinely blocked; a
    question costs the initiator a turn.
 5. For a report-back task, return the result with:
    ```bash
-   agent-gossip a2a artifact --room "$ROOM" --nickname "$NICKNAME" --task-id "$TASK_ID" --text "$RESULT"
+   agent-gossip a2a artifact --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --text "$RESULT"
    ```
    This parks the task in `input-required` for the initiator's approval. It is
    not the end of the task — you still owe it a terminal state.
 6. When the initiator's approval arrives, close the task yourself:
    ```bash
-   agent-gossip a2a status --room "$ROOM" --nickname "$NICKNAME" --task-id "$TASK_ID" --state completed
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state completed
    ```
    You are the task's server: only you can author `completed`. The initiator's
    approval is a message, not a state change — the task stays open until you
    close it.
 7. If declined, run:
    ```bash
-   agent-gossip a2a status --room "$ROOM" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
    ```
 
 Initiator flow:
@@ -191,7 +191,7 @@ Initiator flow:
 2. Every follow-up into that task — an answer, an approval, a change request —
    carries `--task-id`:
    ```bash
-   agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
+   agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
    ```
    **A `SendMessage` without `--task-id` is not a follow-up — it opens a brand
    new task.** That is the protocol's rule, not a quirk: an absent task id means

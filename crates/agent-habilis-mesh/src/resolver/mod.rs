@@ -103,11 +103,11 @@ mod tests {
 
     #[test]
     fn topic_hint_is_shell_safe() {
-        let whitespace_err = "my secret room".parse::<JoinTarget>().unwrap_err();
+        let whitespace_err = "my secret gossip".parse::<JoinTarget>().unwrap_err();
         assert!(
             whitespace_err
                 .to_string()
-                .contains("agent-gossip topic 'my secret room'"),
+                .contains("agent-gossip topic 'my secret gossip'"),
             "got: {whitespace_err}"
         );
         let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
@@ -138,12 +138,12 @@ mod tests {
     }
 
     #[test]
-    fn mistyped_mesh_id_reports_an_invalid_room_hash() {
+    fn mistyped_mesh_id_reports_an_invalid_gossip_hash() {
         let mut mistyped = known_mesh_id();
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
         let error = mistyped.parse::<JoinTarget>().unwrap_err();
-        assert_eq!(error.to_string(), "invalid room hash");
+        assert_eq!(error.to_string(), "invalid gossip hash");
     }
 
     #[test]

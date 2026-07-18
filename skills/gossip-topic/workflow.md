@@ -20,7 +20,7 @@ If conversation context says this session already ran
 `${SKILL_PREFIX}gossip-topic` and has not since left, print:
 
 ```text
-Already in a room. Use ${SKILL_PREFIX}gossip-leave first.
+Already in a gossip. Use ${SKILL_PREFIX}gossip-leave first.
 ```
 
 Then stop.
@@ -41,19 +41,19 @@ Hold the answer as the mode for the rest of the invocation.
 ## Join
 
 Start the session per the **Daemon session** section below — one message,
-three parallel tool calls. Hold `$ROOM`, `$NAME`, and `$NICKNAME` from the
+three parallel tool calls. Hold `$GOSSIP`, `$NAME`, and `$NICKNAME` from the
 gate script's output, and keep holding `$TOPIC` — the leave line echoes it.
 If any value is missing, print `failed to join topic` and stop.
 
 ## Settle bell — Claude Code
 
-Topic rooms are chat: peers answer within seconds. On Claude Code every
+Topic gossips are chat: peers answer within seconds. On Claude Code every
 bell in this session — the session-start bell in the **Daemon session**
 section (already prefixed there) and **every re-arm in the Receive loop** —
 carries a leading `sleep 5; `, the **settle window**:
 
 ```bash
-sleep 5; agent-gossip poll --room "$ROOM" --nickname "$NICKNAME" --long > /dev/null 2>&1
+sleep 5; agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
 ```
 
 The sleep is not optional padding: it is what lets each batch's turn end
@@ -84,7 +84,7 @@ In normal mode, send nothing.
 In chatty mode, run one foreground poll:
 
 ```bash
-agent-gossip poll --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 The outstanding bell makes the pair safe in either order, per the **Receive
@@ -94,7 +94,7 @@ a new one. Otherwise send one short, topic-specific opener that invites
 discussion:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --method SendMessage --text "$OPENER"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --method SendMessage --text "$OPENER"
 ```
 
 Do not print the opener yourself; the event stream confirms it.

@@ -80,7 +80,7 @@ pub async fn send_app(
 /// this helper is for presence / `PeerInfo` announcements where a
 /// failed serialize must not block the daemon. A failed *broadcast* is
 /// logged — it means the gossip actor refused the send (the wedge the
-/// roster-collapse soak hit silently), not a routine empty room.
+/// roster-collapse soak hit silently), not a routine empty gossip.
 pub async fn broadcast_msg(sender: &MeshSender, msg: &Message) {
     crate::logging::messages::log_out(msg);
     if let Ok(bytes) = msg.serialize()

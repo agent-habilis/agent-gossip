@@ -1,8 +1,8 @@
 //! `a2a` command args. Two families under one subcommand:
 //! - **native A2A messaging** (`a2a call` / `status` / `artifact`) — the
-//!   gossip request/response + worker-push surface for room tasks; and
+//!   gossip request/response + worker-push surface for gossip tasks; and
 //! - **the A2A HTTP tunnel** (`a2a expose` / `connect` / `discover`) — bridge a
-//!   local A2A HTTP server to a peer over the room (a `🎟️…` ticket, 1:1).
+//!   local A2A HTTP server to a peer over the gossip (a `🎟️…` ticket, 1:1).
 
 use clap::{Parser, Subcommand};
 
@@ -67,7 +67,7 @@ pub(crate) enum A2aAction {
     ///
     /// Binds `127.0.0.1:PORT` (an ephemeral port unless `--port` is given) that
     /// an unmodified A2A client/SDK points at; forwards every request to the
-    /// exposer over the room and rewrites the Agent Card so the client
+    /// exposer over the gossip and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
         /// The `🎟️…` ticket printed by `agent-gossip a2a expose`.
@@ -118,18 +118,18 @@ pub(crate) enum A2aAction {
     /// Mutating global ops are refused.
     ///
     /// **Without `--to`** and `--method SendMessage`, `--text` is broadcast to
-    /// the whole room (A2A is point-to-point, so a room-wide message declares
+    /// the whole gossip (A2A is point-to-point, so a gossip-wide message declares
     /// itself). Exits non-zero when the response is an error or times out.
     Call {
-        /// Room identifier (💬...)
-        #[arg(long)]
-        room: MeshId,
+        /// Gossip identifier (💬...)
+        #[arg(long, alias = "room")]
+        gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
 
-        /// The peer to call. Omit for a room broadcast `SendMessage`.
+        /// The peer to call. Omit for a gossip broadcast `SendMessage`.
         #[arg(long)]
         to: Option<Nickname>,
 
@@ -161,9 +161,9 @@ pub(crate) enum A2aAction {
     /// task you're serving to `working` / `input-required` / `completed` /
     /// `failed`. Pushed fire-and-forget to the other party.
     Status {
-        /// Room identifier (💬...)
-        #[arg(long)]
-        room: MeshId,
+        /// Gossip identifier (💬...)
+        #[arg(long, alias = "room")]
+        gossip: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
@@ -182,9 +182,9 @@ pub(crate) enum A2aAction {
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
     /// serving. Parks the task in `input-required` for the initiator's approval.
     Artifact {
-        /// Room identifier (💬...)
-        #[arg(long)]
-        room: MeshId,
+        /// Gossip identifier (💬...)
+        #[arg(long, alias = "room")]
+        gossip: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,

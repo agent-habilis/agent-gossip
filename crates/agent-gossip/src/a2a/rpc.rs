@@ -62,7 +62,7 @@ impl RpcError {
 
 /// One A2A operation the HTTP binding hands to the event loop. The URL names
 /// the target agent (`to: None` = the mesh-collective broadcast endpoint,
-/// `Some(nick)` = that participant), per the A2A rule that the endpoint
+/// `Some(nick)` = that peer), per the A2A rule that the endpoint
 /// identifies the agent.
 pub(crate) enum A2aOp {
     SendMessage {

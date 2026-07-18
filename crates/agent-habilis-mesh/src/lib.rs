@@ -10,7 +10,7 @@
 // (e.g. `LinkVector`) without a second direct dependency.
 pub use iroh_multihop_transport;
 
-pub mod beacon;
+pub(crate) mod beacon;
 pub mod blob;
 pub mod daemon;
 pub mod directory;

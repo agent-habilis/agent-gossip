@@ -4,10 +4,10 @@
 //! Claude Desktop, Claude Code) can spawn as a child process.
 //! Exposes fifteen tools that wrap the existing mesh lifecycle:
 //!
-//! - `create_room`
-//! - `join_room`
-//! - `discover_rooms`
-//! - `leave_room`
+//! - `create_gossip`
+//! - `join_gossip`
+//! - `discover_gossips`
+//! - `leave_gossip`
 //! - `send_message`
 //! - `a2a_call`
 //! - `task_status`
@@ -17,10 +17,10 @@
 //! - `get_state`
 //! - `apply_meta_merge`
 //! - `get_meta`
-//! - `room_info`
+//! - `gossip_info`
 //! - `ping`
-//! - `room_version`
-//! - `room_manual`
+//! - `gossip_version`
+//! - `gossip_manual`
 //!
 //! # Polling-only
 //!
@@ -94,7 +94,7 @@ impl AgentGossipServer {
 
 // ── tool argument schemas ────────────────────────────────────────
 
-/// Network reachability for a new room. A typed JSON-RPC enum (renders
+/// Network reachability for a new gossip. A typed JSON-RPC enum (renders
 /// as `"private"` / `"public"` in the tool schema), so an unknown value is
 /// rejected at deserialize rather than by a hand-written string match.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -109,15 +109,15 @@ enum NetworkMode {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CreateMeshArgs {
-    /// Human-readable room name. Optional — omit for a random
+    /// Human-readable gossip name. Optional — omit for a random
     /// `word-word` name (the same style as the nickname). When given:
     /// 1..=32 UTF-8 characters (any script/emoji), excluding control
     /// characters, whitespace, and any of / \ < > #. Bound
-    /// cryptographically into the room identity so joiners decode the
+    /// cryptographically into the gossip identity so joiners decode the
     /// same name and forgery is infeasible.
     #[serde(default)]
     name: Option<String>,
-    /// Network mode. "private" keeps the room loopback-only (same
+    /// Network mode. "private" keeps the gossip loopback-only (same
     /// machine); "public" enables the all-on lookup preset (mDNS + DHT +
     /// default relay). Naming any of `mdns`/`dht`/`relay` below overrides
     /// the preset and uses only those (the same model as the CLI flags).
@@ -138,9 +138,9 @@ struct CreateMeshArgs {
     /// ordered ladder.
     #[serde(default)]
     relay: Option<String>,
-    /// List this room in a directory so others can find it with
+    /// List this gossip in a directory so others can find it with
     /// `agent-gossip discover` (no id to share). Requires `network: "public"`. Note:
-    /// advertising broadcasts the join token — the room becomes open to
+    /// advertising broadcasts the join token — the gossip becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
     advertise: bool,
@@ -148,7 +148,7 @@ struct CreateMeshArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
-    /// Protect the room with a password: joiners must present it, and the
+    /// Protect the gossip with a password: joiners must present it, and the
     /// id alone no longer admits (safe to advertise). Never prompts.
     #[serde(default)]
     password: Option<String>,
@@ -156,13 +156,13 @@ struct CreateMeshArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinMeshArgs {
-    /// Room identifier (💬…). A shared string derives its own public
-    /// room — use the `topic` command — and is not a valid join target.
-    room: String,
+    /// Gossip identifier (💬…). A shared string derives its own public
+    /// gossip — use the `topic` command — and is not a valid join target.
+    gossip: String,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Password for a password-protected room id. Never prompts — required
+    /// Password for a password-protected gossip id. Never prompts — required
     /// exactly when the id is password-protected, rejected otherwise.
     #[serde(default)]
     password: Option<String>,
@@ -170,8 +170,8 @@ struct JoinMeshArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct TopicMeshArgs {
-    /// Any string. Hashed into a deterministic **public** room — anyone who
-    /// joins with the same string lands in the same room, on any machine.
+    /// Any string. Hashed into a deterministic **public** gossip — anyone who
+    /// joins with the same string lands in the same gossip, on any machine.
     /// Compared byte-for-byte after trimming surrounding whitespace (not
     /// lowercased), so `http://x` and `https://x` are different topics.
     string: String,
@@ -183,7 +183,7 @@ struct TopicMeshArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct DiscoverMeshesArgs {
     /// Directory to browse. Omit for the well-known `global` directory.
-    /// Only rooms advertised into this directory over the same (public)
+    /// Only gossips advertised into this directory over the same (public)
     /// lookups are visible.
     #[serde(default)]
     directory: Option<String>,
@@ -192,7 +192,7 @@ struct DiscoverMeshesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SendMessageArgs {
     /// Message body. UTF-8; newlines/tabs allowed, other control
-    /// characters rejected. Broadcast to the whole room (A2A is
+    /// characters rejected. Broadcast to the whole gossip (A2A is
     /// point-to-point, so directed 1:1 is a task via `a2a_call`, not chat).
     text: String,
 }
@@ -249,7 +249,7 @@ struct TaskArtifactArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct A2aCallArgs {
-    /// The peer to call (a current participant).
+    /// The peer to call (a current peer).
     to: String,
     /// The A2A JSON-RPC method. The peer serves a safe subset:
     /// "`GetTask`", "`ListTasks`", "`CancelTask`" (only a task you're a
@@ -299,7 +299,7 @@ struct ApplyStateMergeArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ApplyMetaMergeArgs {
-    /// The RFC 7386 JSON Merge Patch for the **meta** channel — room metadata,
+    /// The RFC 7386 JSON Merge Patch for the **meta** channel — gossip metadata,
     /// by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…}`
     /// self-reported by each agent (`host` is the machine's hostname), e.g.
     /// `{"peers":{"swift-cedar":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}}`.
@@ -315,7 +315,7 @@ struct NoArgs {}
 
 #[derive(Debug, Serialize)]
 struct MeshRef {
-    room: MeshId,
+    gossip: MeshId,
     name: String,
     nickname: Nickname,
 }
@@ -323,7 +323,7 @@ struct MeshRef {
 impl From<&Session> for MeshRef {
     fn from(session: &Session) -> Self {
         MeshRef {
-            room: session.mesh().clone(),
+            gossip: session.mesh().clone(),
             // `MeshRef` is the serialized tool output; the wire shape
             // keeps `name` a plain string.
             name: session.name().as_str().to_owned(),
@@ -332,33 +332,33 @@ impl From<&Session> for MeshRef {
     }
 }
 
-/// `room_info` tool output: the session identity plus the live roster
-/// (`participant_count` = participants + 1 for self, and the per-peer
+/// `gossip_info` tool output: the session identity plus the live roster
+/// (`peer_count` = peers + 1 for self, and the per-peer
 /// recency list that backs a task sender's target picker).
 #[derive(Debug, Serialize)]
 struct MeshInfoResult {
     #[serde(flatten)]
     mesh: MeshRef,
-    participant_count: usize,
-    participants: Vec<RosterEntry>,
+    peer_count: usize,
+    peers: Vec<RosterEntry>,
 }
 
 #[derive(Debug, Serialize)]
 struct DiscoveredMesh {
-    /// The advertised room's id — pass to `join_room`.
-    room: MeshId,
+    /// The advertised gossip's id — pass to `join_gossip`.
+    gossip: MeshId,
     name: String,
     peers: usize,
     /// `true` if advertised on the public network.
     public: bool,
-    /// `true` if password-protected — `join_room` needs the password.
+    /// `true` if password-protected — `join_gossip` needs the password.
     password: bool,
 }
 
 #[derive(Debug, Serialize)]
 struct DiscoverResult {
-    /// Advertised rooms found, most-peers first.
-    rooms: Vec<DiscoveredMesh>,
+    /// Advertised gossips found, most-peers first.
+    gossips: Vec<DiscoveredMesh>,
 }
 
 #[derive(Debug, Serialize)]
@@ -403,9 +403,9 @@ struct LeaveResult {
     ok: bool,
 }
 
-/// `room_version` tool output: the binary build string. MCP carries no
+/// `gossip_version` tool output: the binary build string. MCP carries no
 /// skill of its own (the behavioral protocol lives in the server's
-/// `instructions` and the `room_manual` tool), so there is no skill-drift
+/// `instructions` and the `gossip_manual` tool), so there is no skill-drift
 /// to report here.
 #[derive(Debug, Serialize)]
 struct VersionResult {
@@ -418,9 +418,9 @@ struct VersionResult {
 #[tool_router]
 impl AgentGossipServer {
     #[tool(
-        description = "Create a new room and become its first member. Returns the room id (share it so others can join) and the chosen nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Create a new gossip and become its first member. Returns the gossip id (share it so others can join) and the chosen nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
-    async fn create_room(
+    async fn create_gossip(
         &self,
         Parameters(args): Parameters<CreateMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -444,7 +444,7 @@ impl AgentGossipServer {
         let name = match args.name {
             None => MeshName::random(),
             Some(raw) => MeshName::new(raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid room name: {error}"), None)
+                McpError::invalid_params(format!("invalid gossip name: {error}"), None)
             })?,
         };
         let nickname = args
@@ -487,14 +487,14 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Join an existing room by its 💬… identifier. (A shared string derives its own public room — that is the `topic` command — and is not a join target.) Idempotent when called for the same room id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing gossip by its 💬… identifier. (A shared string derives its own public gossip — that is the `topic` command — and is not a join target.) Idempotent when called for the same gossip id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
-    async fn join_room(
+    async fn join_gossip(
         &self,
         Parameters(args): Parameters<JoinMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let target: JoinTarget = args.room.parse().map_err(|error| {
-            McpError::invalid_params(format!("invalid room target: {error}"), None)
+        let target: JoinTarget = args.gossip.parse().map_err(|error| {
+            McpError::invalid_params(format!("invalid gossip target: {error}"), None)
         })?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
@@ -521,9 +521,9 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Join a public room derived deterministically from a shared string — no id to share. Anyone who calls topic_room with the same string joins the same room, on any machine (the string is hashed into the room seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
+        description = "Join a public gossip derived deterministically from a shared string — no id to share. Anyone who calls topic_gossip with the same string joins the same gossip, on any machine (the string is hashed into the gossip seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
     )]
-    async fn topic_room(
+    async fn topic_gossip(
         &self,
         Parameters(args): Parameters<TopicMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -548,8 +548,8 @@ impl AgentGossipServer {
         ok_json(result)
     }
 
-    #[tool(description = "Leave the currently active room. No-op if not in one.")]
-    async fn leave_room(
+    #[tool(description = "Leave the currently active gossip. No-op if not in one.")]
+    async fn leave_gossip(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -563,9 +563,9 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Browse a directory for advertised rooms — no id needed. Returns rooms others published with `create_room { advertise: true }`, most peers first; pass a returned `room` to `join_room`. Joins nothing. Collects for a few seconds, so the call blocks briefly. Only rooms advertised into the same directory over the public network are visible."
+        description = "Browse a directory for advertised gossips — no id needed. Returns gossips others published with `create_gossip { advertise: true }`, most peers first; pass a returned `gossip` to `join_gossip`. Joins nothing. Collects for a few seconds, so the call blocks briefly. Only gossips advertised into the same directory over the public network are visible."
     )]
-    async fn discover_rooms(
+    async fn discover_gossips(
         &self,
         Parameters(args): Parameters<DiscoverMeshesArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -600,24 +600,24 @@ impl AgentGossipServer {
                 Ok(None) | Err(_) => break,
             }
         }
-        let mut rooms: Vec<DiscoveredMesh> = directory
+        let mut gossips: Vec<DiscoveredMesh> = directory
             .snapshot()
             .into_iter()
             .map(|listing| DiscoveredMesh {
-                room: listing.mesh,
+                gossip: listing.mesh,
                 name: listing.name.as_str().to_owned(),
                 peers: listing.peers,
                 public: listing.public,
                 password: listing.password,
             })
             .collect();
-        rooms.sort_by_key(|listing| std::cmp::Reverse(listing.peers));
+        gossips.sort_by_key(|listing| std::cmp::Reverse(listing.peers));
         let _ = directory.close().await;
-        ok_json(DiscoverResult { rooms })
+        ok_json(DiscoverResult { gossips })
     }
 
     #[tool(
-        description = "Broadcast a message to the current room. Returns the new message's id and a full echo of the authoritative record (id, author, ts, to, and body carrying the serialized A2A Message payload) so the agent doesn't need a follow-up fetch just to see its own send."
+        description = "Broadcast a message to the current gossip. Returns the new message's id and a full echo of the authoritative record (id, author, ts, to, and body carrying the serialized A2A Message payload) so the agent doesn't need a follow-up fetch just to see its own send."
     )]
     async fn send_message(
         &self,
@@ -632,7 +632,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current room — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current gossip — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -681,9 +681,9 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the current session's room id, nickname, participant count, and the live participant roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a task target."
+        description = "Return the current session's gossip id, nickname, peer count, and the live peer roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a task target."
     )]
-    async fn room_info(
+    async fn gossip_info(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -693,13 +693,13 @@ impl AgentGossipServer {
         let roster = session.peers().await.map_err(to_mcp_error)?;
         ok_json(MeshInfoResult {
             mesh,
-            participant_count: roster.count,
-            participants: roster.participants,
+            peer_count: roster.count,
+            peers: roster.peers,
         })
     }
 
     #[tool(
-        description = "Measure round-trip time to each peer. Broadcasts a ping, collects pongs for a few seconds (so the call blocks briefly), and returns the peers that answered with their RTT in milliseconds. Requires an active room; an empty list means no peer answered."
+        description = "Measure round-trip time to each peer. Broadcasts a ping, collects pongs for a few seconds (so the call blocks briefly), and returns the peers that answered with their RTT in milliseconds. Requires an active gossip; an empty list means no peer answered."
     )]
     async fn ping(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
@@ -709,9 +709,9 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Report the agent-gossip binary version (crate version + git sha). A local check — needs no active room."
+        description = "Report the agent-gossip binary version (crate version + git sha). A local check — needs no active gossip."
     )]
-    async fn room_version(
+    async fn gossip_version(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -721,9 +721,9 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active room. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task phases)."
+        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active gossip. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task phases)."
     )]
-    async fn room_manual(
+    async fn gossip_manual(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -815,7 +815,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the room's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value replaces the target. Returns `{ok:true}` on apply (any JSON value is a valid merge). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value replaces the target. Returns `{ok:true}` on apply (any JSON value is a valid merge). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
     )]
     async fn apply_state_merge(
         &self,
@@ -831,7 +831,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the room's current shared-state document — the JSON value derived by folding every gossiped merge in deterministic order. Starts as {} before any merge. Requires an active room. Read it to decide your next `apply_state_merge`."
+        description = "Return the gossip's current shared-state document — the JSON value derived by folding every gossiped merge in deterministic order. Starts as {} before any merge. Requires an active gossip. Read it to decide your next `apply_state_merge`."
     )]
     async fn get_state(
         &self,
@@ -844,7 +844,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the room's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for room metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}} (`host` is the machine's hostname). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}} (`host` is the machine's hostname). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
     async fn apply_meta_merge(
         &self,
@@ -860,7 +860,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the room's current `meta`-channel document (the room-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active room. Read it to decide your next `apply_meta_merge` or to see what peers run on."
+        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on."
     )]
     async fn get_meta(
         &self,
@@ -876,9 +876,9 @@ impl AgentGossipServer {
 /// Behavioral protocol an MCP agent needs but cannot read off the tool
 /// schemas — surfaced at `initialize` so a capable client shows it without
 /// any skill install. The per-tool *reference* lives in the schemas and in
-/// the `room_manual` tool; this is only the how-to-behave half.
+/// the `gossip_manual` tool; this is only the how-to-behave half.
 const MCP_INSTRUCTIONS: &str = "\
-You are a peer in a room — a serverless gossip network where AI \
+You are a peer in a gossip — a serverless gossip network where AI \
 agents collaborate. Tone: write like a status display, not a conversation — no \
 preamble, no acknowledgements; stay silent when nothing happened.
 
@@ -938,7 +938,7 @@ missing/unrecognized marker means `[[task]]`. To initiate a task, prepend the \
 marker to your own offer body. Don't display task legs as chat lines — drive \
 the flow.
 
-SHARED STATE is one JSON document the whole room shares, separate from chat. \
+SHARED STATE is one JSON document the whole gossip shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \
 Merge Patch: a JSON object merged in — keys are set, a null deletes, nested \
 objects merge, the root is never replaced). Every member folds the same gossiped \
@@ -950,14 +950,14 @@ put a turn marker in the document and act only when it is yours.
 
 META is a SECOND shared-state channel beside `state` — byte-for-byte the same \
 (read with `get_meta`, change with `apply_meta_merge`, peer changes arrive as \
-`event:\"meta\"`), reserved by convention for room metadata rather than the task. \
-Report what YOU run on once you are in the room: `apply_meta_merge` \
+`event:\"meta\"`), reserved by convention for gossip metadata rather than the task. \
+Report what YOU run on once you are in the gossip: `apply_meta_merge` \
 {\"peers\":{\"<your-nickname>\":{\"model\":…,\"harness\":…,\"host\":…}}} (`host` is your \
 machine's hostname; the binary does not self-report this) — merge means your entry \
 never clobbers another peer's. Re-merge it if you switch models; set your peer key \
 to null to clear it. Read `/peers` to see what peers run on.
 
-Call `room_manual` for the full command/event reference.";
+Call `gossip_manual` for the full command/event reference.";
 
 #[tool_handler]
 impl ServerHandler for AgentGossipServer {
@@ -970,7 +970,7 @@ impl ServerHandler for AgentGossipServer {
 
 fn not_in_mesh_error() -> McpError {
     McpError::invalid_request(
-        "not in a room; call create_room or join_room first".to_string(),
+        "not in a gossip; call create_gossip or join_gossip first".to_string(),
         None,
     )
 }
@@ -978,7 +978,7 @@ fn not_in_mesh_error() -> McpError {
 fn already_in_mesh_error(existing: &Session) -> McpError {
     McpError::invalid_request(
         format!(
-            "already in room {} as {}; call leave_room first",
+            "already in gossip {} as {}; call leave_gossip first",
             existing.mesh(),
             existing.nickname()
         ),
@@ -986,7 +986,7 @@ fn already_in_mesh_error(existing: &Session) -> McpError {
     )
 }
 
-/// Idempotency shared by `join_room` / `topic_room`: re-joining the room
+/// Idempotency shared by `join_gossip` / `topic_gossip`: re-joining the gossip
 /// the request resolves to, with the same (or no) nickname, is a no-op that
 /// returns the existing session; any other request while in a mesh errors.
 fn rejoin_existing(

@@ -1,14 +1,14 @@
 ## Recover
 
-Run the **Reattach** procedure unconditionally — even when `$ROOM`, `$NAME`,
+Run the **Reattach** procedure unconditionally — even when `$GOSSIP`, `$NAME`,
 or `$NICKNAME` appear to be set, a cleared or compacted context may hold stale
-values. Adopt the recovered `room`, `name`, and `nickname`; when the chosen
+values. Adopt the recovered `gossip`, `name`, and `nickname`; when the chosen
 session carries `topic`, hold that too.
 
 If no session is found, print:
 
 ```text
-💬 Not in a room. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -20,14 +20,14 @@ join or create — or by the last Receive-loop re-arm — is still running under
 the harness. Treat it as armed. Arm no new bell and run no background command
 here; that is what makes consecutive reattach calls idempotent. When the
 outstanding bell exits later, the **Receive loop** re-arms as usual (a topic
-room on Claude Code keeps its `sleep 5; ` prefix on every re-arm).
+gossip on Claude Code keeps its `sleep 5; ` prefix on every re-arm).
 
 Events that arrived while detached are still queued. Drain them with one
 foreground poll — the daemon's read cursor advances, so repeating it returns
 an empty array:
 
 ```bash
-agent-gossip poll --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 Handle the drained batch per the **Event handling** section — act first
@@ -39,11 +39,11 @@ Handle the drained batch per the **Event handling** section — act first
 Run:
 
 ```bash
-agent-gossip peers --room "$ROOM" --nickname "$NICKNAME"
-agent-gossip meta get --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
+agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-Use `participants` from `peers` and `document.peers` from `meta`.
+Use `peers` from `peers` and `document.peers` from `meta`.
 
 ## Output
 
@@ -58,7 +58,7 @@ If there are no peers:
 Otherwise:
 
 ```text
-💬 Reattached to `#$NAME` as `<$NICKNAME>` · $PARTICIPANT_COUNT participants
+💬 Reattached to `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
 
 | peer | transport | model | harness | host | status | last seen |
 | ---- | --------- | ----- | ------- | ---- | ------ | --------- |

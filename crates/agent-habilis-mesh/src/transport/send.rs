@@ -38,7 +38,7 @@ pub async fn deliver(
             // Two distinct causes hide behind one route: waiting on PeerInfo
             // is retryable, an addressee advertising the rendezvous is not.
             let via_rendezvous = addressee
-                .and_then(|nick| state.participant_endpoints.get(nick))
+                .and_then(|nick| state.peer_endpoints.get(nick))
                 .is_some_and(|eid| state.rendezvous_id == Some(*eid));
             let cause = if via_rendezvous {
                 "its advertised endpoint is the rendezvous pseudo-node, never a directed target"
@@ -107,7 +107,7 @@ pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
 /// addressee we hold no endpoint for or the rendezvous pseudo-node (never a
 /// directed target). Reachability is left to iroh's connect (direct or multihop).
 fn directed_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointId> {
-    let eid = *state.participant_endpoints.get(nick)?;
+    let eid = *state.peer_endpoints.get(nick)?;
     if state.rendezvous_id == Some(eid) {
         return None;
     }
@@ -184,7 +184,7 @@ mod tests {
         let mut state = empty_state();
         state.meshed = true;
         let bob = endpoint_id(1);
-        state.participant_endpoints.insert(nick("bob"), bob);
+        state.peer_endpoints.insert(nick("bob"), bob);
         (state, bob)
     }
 
@@ -267,7 +267,7 @@ mod tests {
         let rendezvous = endpoint_id(9);
         state.rendezvous_id = Some(rendezvous);
         // bob's advertised endpoint *is* the rendezvous pseudo-node.
-        state.participant_endpoints.insert(nick("bob"), rendezvous);
+        state.peer_endpoints.insert(nick("bob"), rendezvous);
         assert_eq!(route(&directed_msg(), &state), Route::Undeliverable);
     }
 

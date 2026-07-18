@@ -127,7 +127,7 @@ async fn rpc_state_merge_is_refused() {
     bob.leave().await;
 }
 
-/// Creating a task on a peer that isn't a current participant fails fast (no
+/// Creating a task on a peer that isn't a current peer fails fast (no
 /// wait for the timeout). The hard roster check gates task *creation* only;
 /// follow-ups/reads to a briefly-absent peer are let through to the timeout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -145,8 +145,8 @@ async fn rpc_unknown_peer_fails_fast() {
     assert!(
         response["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("unknown participant")),
-        "creating a task on a non-participant fails fast: {response}"
+            .is_some_and(|message| message.contains("unknown peer")),
+        "creating a task on a non-peer fails fast: {response}"
     );
 
     alice.leave().await;

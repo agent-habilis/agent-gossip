@@ -310,7 +310,7 @@ impl MeshSession {
         self.core.a2a_call(call).await
     }
 
-    /// Snapshot the live participant roster (active + quiet, recency-sorted).
+    /// Snapshot the live peer roster (active + quiet, recency-sorted).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.

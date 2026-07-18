@@ -1,25 +1,25 @@
 //! Session state file — the agent-gossip daemon writes its
 //! view of the mesh into this file so external tools (e.g. a shell
-//! statusline) and the `/room:*` skills can render the current mesh,
-//! nickname, and participant count with a plain local file read. No
+//! statusline) and the `/gossip-*` skills can render the current mesh,
+//! nickname, and peer count with a plain local file read. No
 //! IPC, no gossip, no subprocess.
 //!
-//! The daemon is the **sole writer**: the `/room:*` skills are
+//! The daemon is the **sole writer**: the `/gossip-*` skills are
 //! read-only and never touch this file. The daemon owns every key —
-//! `room`, `name`, `nickname`, `topic` (topic rooms only), `pid`,
-//! `ready`, `participant_count`, `last_updated` — and writes a fresh,
+//! `gossip`, `name`, `nickname`, `topic` (topic gossips only), `pid`,
+//! `ready`, `peer_count`, `last_updated` — and writes a fresh,
 //! complete document on each update (no read-merge: there are no foreign
 //! keys to preserve).
 //!
-//! `topic` is the raw string a topic room was derived from. The derived
+//! `topic` is the raw string a topic gossip was derived from. The derived
 //! `name` is lossy (URL scheme and query stripped, truncated), so the
 //! string is persisted whole — it is what `agent-gossip leave` and the
-//! skills echo for a topic room.
+//! skills echo for a topic gossip.
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
 //! once the event loop is serving IPC, so a reader (e.g. `agent-gossip ready`)
 //! can gate on it rather than on the file's mere existence.
-//! `participant_count` is the total number of agents in the mesh,
+//! `peer_count` is the total number of agents in the mesh,
 //! including self. `last_updated` is a unix timestamp the daemon
 //! refreshes on a fixed heartbeat (see `tuning::STATE_REFRESH_SECS`)
 //! even when membership is unchanged, so a reader can treat a fresh
@@ -31,7 +31,7 @@
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"room":"💬..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","peer_count":3,"pid":34299,"ready":true,"gossip":"💬..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -75,7 +75,7 @@ impl StateFile {
         }
     }
 
-    /// Attach the raw topic string a topic room was derived from, so every
+    /// Attach the raw topic string a topic gossip was derived from, so every
     /// write publishes it as `topic`. A no-op `None` keeps the one
     /// construction site unconditional.
     pub(crate) fn with_topic(mut self, topic: Option<&str>) -> Self {
@@ -94,8 +94,8 @@ impl StateFile {
             .expect("state-file http mutex not poisoned") = Some((port, token));
     }
 
-    /// Write a fresh, complete state document — `room`, `name`,
-    /// `nickname`, `ready`, `participant_count`, and a fresh
+    /// Write a fresh, complete state document — `gossip`, `name`,
+    /// `nickname`, `ready`, `peer_count`, and a fresh
     /// `last_updated` — atomically, fully replacing any existing file.
     /// `ready` is `false` at the early identity write and `true` once the
     /// daemon's event loop is serving IPC, so a reader can gate on it. The
@@ -103,13 +103,13 @@ impl StateFile {
     /// nothing to merge. Creates parent directories as needed. Errors are
     /// logged but not propagated — the statusline going stale must not
     /// crash the daemon.
-    pub(crate) fn write(&self, participant_count: usize, ready: bool) {
-        if let Err(error) = self.try_write(participant_count, ready) {
+    pub(crate) fn write(&self, peer_count: usize, ready: bool) {
+        if let Err(error) = self.try_write(peer_count, ready) {
             eprintln!("state_file: write failed: {error}");
         }
     }
 
-    fn try_write(&self, participant_count: usize, ready: bool) -> std::io::Result<()> {
+    fn try_write(&self, peer_count: usize, ready: bool) -> std::io::Result<()> {
         // The state file carries the full mesh id (and, with `--a2a-serve`, the
         // bearer token). It is born 0o600 below, but the enclosing directory must
         // also be private. `ensure_parent_private` validates the base and fails
@@ -118,7 +118,7 @@ impl StateFile {
         // the parent for an override that points elsewhere.
         crate::util::ensure_parent_private(&self.path)?;
         let mut obj = serde_json::Map::new();
-        obj.insert("room".into(), self.mesh.clone().into());
+        obj.insert("gossip".into(), self.mesh.clone().into());
         obj.insert("name".into(), self.name.clone().into());
         obj.insert("nickname".into(), self.nickname.clone().into());
         if let Some(topic) = &self.topic {
@@ -126,7 +126,7 @@ impl StateFile {
         }
         obj.insert("pid".into(), std::process::id().into());
         obj.insert("ready".into(), ready.into());
-        obj.insert("participant_count".into(), participant_count.into());
+        obj.insert("peer_count".into(), peer_count.into());
         if let Some((port, token)) = self
             .http
             .lock()
@@ -202,7 +202,7 @@ pub struct SessionIdentity {
     pub mesh: Option<String>,
     pub name: Option<String>,
     pub nickname: Option<String>,
-    /// The raw topic string; present only for a topic room.
+    /// The raw topic string; present only for a topic gossip.
     pub topic: Option<String>,
 }
 
@@ -223,11 +223,22 @@ pub fn read_identity(path: &Path) -> SessionIdentity {
             .map(str::to_owned)
     };
     SessionIdentity {
-        mesh: field("room"),
+        mesh: parsed.as_ref().and_then(mesh_field),
         name: field("name"),
         nickname: field("nickname"),
         topic: field("topic"),
     }
+}
+
+/// The mesh-id key, falling back to the pre-rename `room` spelling: a daemon
+/// from the previous release may still be running, and `ready`/`session`/
+/// `leave` must map its file. The one home for that rule — retire the
+/// fallback here when the compat window closes.
+fn mesh_field(doc: &serde_json::Value) -> Option<String> {
+    ["gossip", "room"]
+        .iter()
+        .find_map(|key| doc.get(key).and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
 }
 
 /// One running daemon as seen through its state file — what `agent-gossip leave` /
@@ -240,7 +251,7 @@ pub struct SessionEntry {
     pub mesh: Option<String>,
     pub name: Option<String>,
     pub nickname: Option<String>,
-    /// The raw topic string; present only for a topic room.
+    /// The raw topic string; present only for a topic gossip.
     pub topic: Option<String>,
     pub pid: Option<u32>,
 }
@@ -260,7 +271,7 @@ pub fn read_session_entry(path: &Path) -> Option<SessionEntry> {
             .map(str::to_owned)
     };
     Some(SessionEntry {
-        mesh: text("room"),
+        mesh: mesh_field(&parsed),
         name: text("name"),
         nickname: text("nickname"),
         topic: text("topic"),
@@ -343,16 +354,16 @@ mod tests {
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["room"], mesh.as_str());
+        assert_eq!(parsed["gossip"], mesh.as_str());
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
-        assert_eq!(parsed["participant_count"], 3);
+        assert_eq!(parsed["peer_count"], 3);
         assert_eq!(parsed["pid"], std::process::id());
         assert!(parsed["last_updated"].is_number());
         assert!(
             parsed.get("topic").is_none(),
-            "non-topic rooms carry no topic key"
+            "non-topic gossips carry no topic key"
         );
         state_file.remove();
     }
@@ -394,7 +405,7 @@ mod tests {
         state_file.write(7, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["participant_count"], 7);
+        assert_eq!(parsed["peer_count"], 7);
         assert_eq!(parsed["ready"], true);
         state_file.remove();
     }
@@ -469,10 +480,10 @@ mod tests {
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["room"], mesh.as_str());
+        assert_eq!(parsed["gossip"], mesh.as_str());
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
-        assert_eq!(parsed["participant_count"], 3);
+        assert_eq!(parsed["peer_count"], 3);
         assert!(parsed["last_updated"].is_number());
         assert!(parsed.get("auto_reply").is_none());
         assert!(parsed.get("junk").is_none());
@@ -547,12 +558,32 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"room":"💬old"}"#,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","peer_count":1,"ready":true,"gossip":"💬old"}"#,
         )
         .unwrap();
         let entry = super::read_session_entry(&path).expect("present");
         assert_eq!(entry.mesh.as_deref(), Some("💬old"));
         assert_eq!(entry.pid, None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_room_keyed_file_still_maps_its_mesh() {
+        // A daemon from the previous release writes `room`, not `gossip`;
+        // `session`/`leave`/`ready` must still map (and reap) it. Pins the
+        // `mesh_field` fallback — deleting it must go red here, not in the
+        // field as an unreapable orphan daemon.
+        let path = unique_path("session-entry-legacy-room");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"pid":7,"ready":true,"room":"💬legacy"}"#,
+        )
+        .unwrap();
+        let entry = super::read_session_entry(&path).expect("present");
+        assert_eq!(entry.mesh.as_deref(), Some("💬legacy"));
+        let identity = super::read_identity(&path);
+        assert_eq!(identity.mesh.as_deref(), Some("💬legacy"));
         let _ = std::fs::remove_file(&path);
     }
 
@@ -586,10 +617,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, r#"{"room":"💬x","name":"n"}"#).unwrap();
+        std::fs::write(&path, r#"{"gossip":"💬x","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, r#"{"ready":true,"room":"💬round"}"#).unwrap();
+        std::fs::write(&path, r#"{"ready":true,"gossip":"💬round"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

@@ -63,7 +63,7 @@ pub enum CoHostPolicy {
     /// rendezvous don't collide — the directory advertiser, where several
     /// meshes advertising into the same directory share one seed-derived
     /// `rendezvous_id`. The first to start claims (its probe finds nothing);
-    /// the rest stay participants and mesh through it, so every advertiser's
+    /// the rest stay peers and mesh through it, so every advertiser's
     /// ad reaches discoverers.
     EagerProbed,
     /// Co-host once meshed, or speculatively after the empty-mesh
@@ -102,7 +102,7 @@ pub struct EventLoopConfig {
     /// The raw string a topic mesh was derived from; `None` for create/join.
     /// The derived `name` is lossy (URL scheme and query stripped, truncated),
     /// so this is what the joined/left lines, the state file, and `leave`'s
-    /// report show for a topic room.
+    /// report show for a topic gossip.
     pub topic_string: Option<String>,
     /// The raw mesh password, retained for the process lifetime when the
     /// mesh is password-protected (`None` otherwise). Needed at blob-offload
@@ -134,7 +134,7 @@ pub struct EventLoopConfig {
     pub max_peers: usize,
     /// Inputs for (re)building the co-hosted rendezvous endpoint.
     /// `rendezvous_params.id` doubles as the bootstrap-cache heal
-    /// anchor and the participant-side neighbor-filter id;
+    /// anchor and the peer-side neighbor-filter id;
     /// `beacon::ensure` is called with these on startup and every
     /// heal tick (claim-if-free in private mode).
     pub rendezvous_params: beacon::RendezvousParams,
@@ -149,7 +149,7 @@ pub struct EventLoopConfig {
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
     /// The multi-hop transport handle when `--multihop` registered it on the
-    /// participant endpoint; `run()` moves it into `EventLoopState::multihop`.
+    /// peer endpoint; `run()` moves it into `EventLoopState::multihop`.
     /// `None` when multihop is off. Built in `setup_mesh`.
     pub multihop: Option<iroh_multihop_transport::MultihopHandle>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
@@ -157,7 +157,7 @@ pub struct EventLoopConfig {
     /// transports share signature-verify + dedup. Built in `setup_mesh`.
     pub unicast_rx: mpsc::Receiver<bytes::Bytes>,
     /// When advertising (`create --advertise`), the shared counter the
-    /// directory re-broadcast task reads the live participant count
+    /// directory re-broadcast task reads the live peer count
     /// from. `setup_mesh` leaves this `None`; the advertise path sets
     /// it before `run` (same late-assignment pattern as `driver`).
     pub live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,

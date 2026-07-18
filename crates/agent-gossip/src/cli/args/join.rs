@@ -1,4 +1,4 @@
-//! `join` command args: attach to an existing room by id/domain/repo.
+//! `join` command args: attach to an existing gossip by id/domain/repo.
 
 use clap::Parser;
 
@@ -10,9 +10,9 @@ use super::shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
-    /// Room identifier (💬...). Validated at parse (clap `FromStr`). For a
-    /// public room derived from a shared string, use `agent-gossip topic <string>`.
-    pub room: JoinTarget,
+    /// Gossip identifier (💬...). Validated at parse (clap `FromStr`). For a
+    /// public gossip derived from a shared string, use `agent-gossip topic <string>`.
+    pub gossip: JoinTarget,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
@@ -21,16 +21,16 @@ pub(crate) struct JoinOpts {
     pub nickname: Option<Nickname>,
 
     /// Accepted only to emit a clear error: the network mode is
-    /// encoded in the room id, so `join` has no `--public`.
+    /// encoded in the gossip id, so `join` has no `--public`.
     #[arg(long, hide = true)]
     pub public: bool,
 
-    /// Accepted only to emit a clear error: the room name is
-    /// encoded in the room id, so `join` has no `--name`.
+    /// Accepted only to emit a clear error: the gossip name is
+    /// encoded in the gossip id, so `join` has no `--name`.
     #[arg(long, hide = true)]
     pub name: Option<String>,
 
-    /// Password for a password-protected room id — required exactly when
+    /// Password for a password-protected gossip id — required exactly when
     /// the id carries a password verifier (checked locally before any
     /// network; a wrong password fails immediately). Pass it inline as
     /// `--password=<pw>`; a bare `--password`, or omitting the flag on a
@@ -49,12 +49,12 @@ mod tests {
     use crate::cli::args::Cli;
 
     #[test]
-    fn mistyped_room_hash_fails_during_cli_parsing() {
+    fn mistyped_gossip_hash_fails_during_cli_parsing() {
         let mut mistyped = agent_habilis_mesh::protocol::MeshId::from("join-cli-test").to_string();
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
 
         let error = Cli::try_parse_from(["agent-gossip", "join", &mistyped]).unwrap_err();
-        assert!(error.to_string().contains("invalid room hash"));
+        assert!(error.to_string().contains("invalid gossip hash"));
     }
 }

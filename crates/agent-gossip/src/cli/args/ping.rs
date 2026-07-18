@@ -10,9 +10,9 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
-    /// Room identifier (💬...)
-    #[arg(long)]
-    pub room: MeshId,
+    /// Gossip identifier (💬...)
+    #[arg(long, alias = "room")]
+    pub gossip: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
@@ -29,11 +29,11 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
 
     #[test]
-    fn ping_parses_room_and_nickname() {
+    fn ping_parses_gossip_and_nickname() {
         let cli = Cli::parse_from([
             "agent-gossip",
             "ping",
-            "--room",
+            "--gossip",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",

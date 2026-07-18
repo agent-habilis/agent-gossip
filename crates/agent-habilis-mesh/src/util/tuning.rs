@@ -254,7 +254,7 @@ fn current() -> Tuning {
     TUNING.get().copied().unwrap_or(Tuning::DEFAULTS)
 }
 
-/// How often the daemon re-asserts `participant_count` +
+/// How often the daemon re-asserts `peer_count` +
 /// `last_updated` into the session state file even when membership is
 /// unchanged. A fresh `last_updated` is what external readers (the
 /// shell statusline) treat as liveness — file presence alone would
@@ -367,11 +367,11 @@ pub(crate) fn starvation_threshold_secs() -> u64 {
 
 /// How long `beacon::ensure` eagerly waits for the freshly-bound
 /// rendezvous to gossip-mesh with this process's own (already
-/// subscribed) participant before returning. Closes the
+/// subscribed) peer before returning. Closes the
 /// rendezvous-readiness race: a joiner that dials the rendezvous finds
 /// it already bridged into the mesh, not a bare socket. Bounded — on
 /// timeout we fall through and the beacon's heal loop keeps the link
-/// converging exactly as before (empty-room joinability preserved;
+/// converging exactly as before (empty-gossip joinability preserved;
 /// never blocks the event loop indefinitely). Generous enough to
 /// cover a public endpoint's relay-home warmup, capped so a
 /// pathological case can't stall startup.
@@ -387,7 +387,7 @@ pub(crate) const RECLAIM_WINDOW_SECS: u64 = 6;
 /// Cadence of the fast reclaim burst while the window (above) is open.
 pub(crate) const RECLAIM_INTERVAL_MS: u64 = 400;
 
-/// Max remembered `quiet` (silence-evicted but maybe-returning) participants.
+/// Max remembered `quiet` (silence-evicted but maybe-returning) peers.
 /// `quiet` is drained only when a peer returns, so without a cap a churn / sybil
 /// stream of one-shot nicknames would grow it without bound — the one unbounded
 /// collection we own. Evicting a long-departed peer that never came back costs
@@ -457,7 +457,7 @@ pub(crate) fn rival_recheck_meshed_secs() -> u64 {
 /// beacon-claim race is otherwise unreachable in CI (no public relay), same
 /// rationale as `--directory-private` — see `tests/topic_split.rs`.
 #[must_use]
-pub fn topic_mdns_only_for_test() -> bool {
+pub(crate) fn topic_mdns_only_for_test() -> bool {
     current().topic_mdns_only
 }
 
@@ -508,7 +508,7 @@ pub(crate) const RELAY_REPROBE_BACKOFF_MAX_SECS: u64 = 300;
 
 /// Timeout for the private-mode rendezvous identity probe. When a
 /// ladder rung is `AddrInUse`, a member probes it to tell *our*
-/// mesh's beacon (→ stay a participant) from an unrelated mesh
+/// mesh's beacon (→ stay a peer) from an unrelated mesh
 /// squatting the rung (→ try the next rung). The probe is a loopback
 /// connect to a live listener, so it resolves in milliseconds; this
 /// is only a guard against a pathological non-responding socket, kept

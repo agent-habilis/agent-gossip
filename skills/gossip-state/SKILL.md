@@ -7,9 +7,9 @@ when_to_use: The user invokes the gossip-state command or asks to inspect gossip
 # gossip-state
 
 This file is self-contained: every section it needs is below. Read nothing
-else. The **Reattach** section applies only if `$ROOM`, `$NAME`, or
+else. The **Reattach** section applies only if `$GOSSIP`, `$NAME`, or
 `$NICKNAME` is missing; follow the **Receive loop** contract before replying
-while in a room.
+while in a gossip.
 
 <!-- include path="../shared/quiet.md" -->
 

@@ -4,7 +4,7 @@
 //! Both matter because a harness that runs the daemon in the background renders
 //! only a truncated prefix of each stdout line into the conversation, and writes
 //! the rest to a file. So the skills discard the daemon's stdout entirely (that
-//! redirect is pinned by `cli::agent::tests::backgrounded_room_commands_discard_stdout`)
+//! redirect is pinned by `cli::agent::tests::long_running_gossip_commands_discard_stdout_and_stderr`)
 //! and read content back through `poll`, which must never truncate.
 
 use agent_gossip_test_fixtures as common;
@@ -104,7 +104,7 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
                 && value["event"] == "ready"
             {
                 break (
-                    value["room"].as_str().expect("room").to_owned(),
+                    value["gossip"].as_str().expect("gossip").to_owned(),
                     value["nickname"].as_str().expect("nickname").to_owned(),
                 );
             }
@@ -114,7 +114,7 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
     (daemon, mesh, nick)
 }
 
-/// `(room, nickname)` from the `ready` line, if it has been written.
+/// `(gossip, nickname)` from the `ready` line, if it has been written.
 fn read_ready(log: &std::path::Path) -> Option<(String, String)> {
     let content = fs::read_to_string(log).ok()?;
     content.lines().find_map(|line| {
@@ -123,7 +123,7 @@ fn read_ready(log: &std::path::Path) -> Option<(String, String)> {
             return None;
         }
         Some((
-            value["room"].as_str()?.to_owned(),
+            value["gossip"].as_str()?.to_owned(),
             value["nickname"].as_str()?.to_owned(),
         ))
     })
@@ -148,7 +148,7 @@ fn ready_event_implies_the_ipc_socket_accepts() {
     );
 
     let out = test_cmd()
-        .args(["peers", "--room", &mesh, "--nickname", &nick])
+        .args(["peers", "--gossip", &mesh, "--nickname", &nick])
         .output()
         .expect("peers spawns");
     assert!(
@@ -174,7 +174,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
         .args([
             "meta",
             "merge",
-            "--room",
+            "--gossip",
             &mesh,
             "--nickname",
             &nick,
@@ -187,7 +187,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
 
     // Arm the bell AFTER the report landed: it must park, not fire.
     let mut bell = test_cmd()
-        .args(["poll", "--room", &mesh, "--nickname", &nick, "--long"])
+        .args(["poll", "--gossip", &mesh, "--nickname", &nick, "--long"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -230,7 +230,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
 /// still parked after a grace period.
 fn park_bell(mesh: &str, nick: &str) -> Child {
     let mut bell = test_cmd()
-        .args(["poll", "--room", mesh, "--nickname", nick, "--long"])
+        .args(["poll", "--gossip", mesh, "--nickname", nick, "--long"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -255,7 +255,7 @@ fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
     }
 }
 
-/// Leaving a room never requires stopping the bell: a daemon shutting down
+/// Leaving a gossip never requires stopping the bell: a daemon shutting down
 /// cleanly answers parked long-polls with the shutdown sentinel, and the bell
 /// exits 0 with the truthful empty batch — no error to surface, no stop-order
 /// dependency between the daemon task and the bell task.

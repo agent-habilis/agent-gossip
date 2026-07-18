@@ -24,19 +24,19 @@ For the mechanisms behind these terms, see the companion docs:
 
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
-one thing derived from it is the per-participant **connected vs gossip** tag
-(`agent-gossip peers` / `room_info` `reach`): `participant_endpoints` maps a nickname
+one thing derived from it is the per-peer **connected vs gossip** tag
+(`agent-gossip peers` / `gossip_info` `reach`): `peer_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
-State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
+State: `linked_endpoints` (the links), `peer_endpoints` (the bridge).
 
 ### unicast
 
 *Layer: transport · keyed by node id (hex).*
 
 The point-to-point QUIC channel every **directed** frame (one addressee) takes
-— a real client/server link this node opens to one participant's endpoint, on
+— a real client/server link this node opens to one peer's endpoint, on
 its own ALPN (`agent-gossip/unicast/1`), off the gossip flood. Gossip carries
 broadcasts only, structurally: a directed frame (`a2a_req`/`a2a_resp`, a task
 push leg, a `pong`) is unicast-only, dialed inline when no warm connection
@@ -91,23 +91,16 @@ Registered by the `--multihop` flag. State: `multihop`
 (`iroh_multihop_transport::MultihopHandle`). See
 [`iroh-multihop-transport`](../iroh-multihop-transport).
 
-### participant
+### peer
 
 *Layer: membership · keyed by nickname.*
 
 A member of the mesh other than yourself — the roster. The live count
-includes you: `participant_count == participants.len() + 1`, where the `+1`
-is self.
+includes you: `peer_count == peers.len() + 1`, where the `+1` is self.
+This is the one membership word: `participant` is banned everywhere
+(identifiers, JSON keys, docs, prose alike).
 
-State: `participants`.
-
-### peer
-
-*Layer: prose only.*
-
-An informal synonym for "another participant". Fine in comments and
-conversation, but never a load-bearing identifier or field name in new code —
-reach for **participant** instead.
+State: `peers`.
 
 ### mesh hash
 
@@ -118,10 +111,17 @@ mesh's **config** (lookups). The config is mixed into the gossip topic, so
 every member necessarily shares it, and `join` needs nothing beyond the hash
 itself.
 
-User-facing docs, the CLI, and the MCP tools call this a **room**; the code
+User-facing docs, the CLI, and the MCP tools call this a **gossip**; the code
 calls it a `mesh`. One concept, two spellings — deliberate, and the only such
-pair in the vocabulary. `room` is not a layer term and owns nothing: prefer
-`mesh` anywhere the reader is looking at code.
+pair in the vocabulary. User-facing "gossip" is not a layer term and owns
+nothing: prefer `mesh` anywhere the reader is looking at code.
+
+Disambiguation: in user-facing text a bare **gossip** always means the
+session ("create a gossip", "leave the gossip"). The message fan-out plane is
+always *qualified* — "gossip protocol", "gossip binding", "gossip overlay" —
+and keeps the bare name only in code (the `gossip` module, the
+`agent_gossip::gossip` log target), where the session is always `mesh`, so
+the two never collide in the same vocabulary.
 
 Code: `protocol::mesh` (`Mesh` / `MeshConfig`). Byte layout:
 [mesh-hash.md](./mesh-hash.md).
@@ -223,7 +223,7 @@ Code: `protocol::crypto`.
 
 *Layer: identity · keyed by pubkey.*
 
-A per-participant Ed25519 keypair minted in-process at `create` / `join`
+A per-peer Ed25519 keypair minted in-process at `create` / `join`
 (ephemeral). The **public key is the author's identity**; the nickname is only
 a non-unique display label and is never claimed cryptographically. Every
 message is signed with this key and verified on receipt, and fork detection
@@ -279,8 +279,8 @@ Code: `beacon` (ports), `lookup::select_bootstrap_rung` (relays).
 
 *Layer: presentation · keyed by nickname.*
 
-A participant whose arrival was actually *shown* to the operator or agent.
-`surfaced ⊆ participants`; it is presentation-only, so the roster stays
+A peer whose arrival was actually *shown* to the operator or agent.
+`surfaced ⊆ peers`; it is presentation-only, so the roster stays
 complete for anti-entropy regardless of what has been displayed.
 
 State: `surfaced`.
@@ -289,7 +289,7 @@ State: `surfaced`.
 
 *Layer: heartbeat · keyed by nickname.*
 
-A participant evicted for going silent past `ALIVE_TIMEOUT_SECS`, but who may
+A peer evicted for going silent past `ALIVE_TIMEOUT_SECS`, but who may
 yet return.
 
 State: `quiet`.
@@ -341,7 +341,7 @@ sender's own echo** — a third party never sees it; a beat is liveness plumbing
 (presence-like). There is **no** wire behavior discriminator: the delegation UX
 distinguishes itself by how the skill uses the task, not a marker.
 
-`/room:task` rides this primitive as the **report-back** flow — the worker
+`/gossip-task` rides this primitive as the **report-back** flow — the worker
 returns a result (`artifact`), the initiator approves, and the worker
 completes; it creates one or more independent tasks (each its own `task_id`,
 worker, and completion criteria) and surfaces each result as it returns, with no
@@ -365,7 +365,7 @@ Code: `MessageKind::App` with the A2A tags in `a2a::wire`,
 *Layer: protocol — the agent-communication layer.*
 
 The [A2A protocol](https://a2a-protocol.org): every semantic exchange between
-participants — chat, delegation, task status, results — is an A2A object
+peers — chat, delegation, task status, results — is an A2A object
 (`Message`, `Task`, status/artifact update) from `src/a2a`. The layer owns the
 A2A spec's words — *message parts*, *artifact*, *role*, *context* — and is
 carried by a **binding**; everything below it (signing, dedup, digests,
@@ -404,14 +404,15 @@ contradicts its frame is dropped whole.
 
 *Layer: a2a · keyed by nickname.*
 
-A participant's `AgentCard` — its canonical A2A self-description (A2A v1.0:
+A peer's `AgentCard` — its canonical A2A self-description (A2A v1.0:
 `supportedInterfaces[]` each with a `protocolVersion`, capabilities, declared
 extensions, default skills, and its Ed25519 identity carried in the gossip
 `AgentInterface` url, `🤖://<pubkey>`). Each member's daemon publishes its card
 into the **meta** channel at `/peers/<nick>/card` on join — the one channel
 write the binary itself makes (see the amended invariant under *shared
 state*) — so peers enumerate each other's cards from the meta document with
-no HTTP anywhere. Read with `agent-gossip card [--peer <nick>]`. Agent-side facts
+no HTTP anywhere. Read with `agent-gossip meta get` under
+`/peers/<nick>/card`. Agent-side facts
 the daemon cannot know (`model`, `harness`, `host`, extra skills) remain the
 agent's own merge, as sibling keys under `/peers/<nick>`.
 
@@ -620,14 +621,14 @@ presence (`joined` / `left`), plus the heartbeat events `peer_timeout` /
 `peer_return`. All are join-horizon gated and symmetric — a departure is
 surfaced only if the matching arrival was. There is **no** transport-level
 `peer_join` / `peer_leave` event: a raw link to an opaque node id is not
-participant lifecycle. (`agent-gossip leave` is a CLI verb on top of this
+peer lifecycle. (`agent-gossip leave` is a CLI verb on top of this
 vocabulary, not a new event: it stops a local daemon, whose shutdown emits
 the one `left`.)
 
 ### author
 
 The `Nickname` that wrote a message. It is the same value-type as a
-participant id; the distinct word marks "sender of *this* message", not a
+peer id; the distinct word marks "sender of *this* message", not a
 separate concept.
 
 ### Shared state converges deterministically
@@ -663,5 +664,5 @@ member computes identically — the **ladder**. Under equal relay visibility,
 "first reachable rung" is a global function, so all members meet at the same
 rung and fail over together. Under *unequal* visibility the relay layer can't
 guarantee a meeting, and that is exactly where mDNS and the DHT take over.
-(Participant *connectivity* still uses the full multi-relay set for
+(Peer *connectivity* still uses the full multi-relay set for
 resilience — only the rendezvous rung is pinned.)

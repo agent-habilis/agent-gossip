@@ -118,7 +118,7 @@ fn rpc_error_response(id: &serde_json::Value, error: &RpcError) -> Response<Full
 }
 
 /// Route one request. The URL names the target agent: `/` and `/mesh` are
-/// the mesh-collective endpoint (broadcast), `/peers/<nick>` a participant.
+/// the mesh-collective endpoint (broadcast), `/peers/<nick>` a peer.
 /// Cards are served unauthenticated (they are public on the mesh already);
 /// every JSON-RPC call requires the bearer token.
 async fn handle(

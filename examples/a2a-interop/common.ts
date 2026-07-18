@@ -14,14 +14,14 @@ import type { Message, Part } from "@a2a-js/sdk";
 export const APPROVAL_TEXT = "approve";
 
 export interface DaemonSession {
-  room: string;
+  gossip: string;
   name: string;
   nickname: string;
   a2aPort: number;
   a2aToken: string;
 }
 
-export function agentRoomBin(): string {
+export function agentGossipBin(): string {
   return (
     process.env.AGENT_GOSSIP_BIN ??
     new URL("../../target/debug/agent-gossip", import.meta.url).pathname
@@ -40,7 +40,7 @@ export async function waitForSession(
       const raw = await Bun.file(stateFile).json();
       if (raw.ready && raw.a2a_port && raw.a2a_token) {
         return {
-          room: raw.room,
+          gossip: raw.gossip,
           name: raw.name,
           nickname: raw.nickname,
           a2aPort: raw.a2a_port,
@@ -79,7 +79,7 @@ export function messageText(message: Message | undefined): string {
 }
 
 export async function runAgentGossip(args: string[]): Promise<void> {
-  const proc = Bun.spawn([agentRoomBin(), ...args], {
+  const proc = Bun.spawn([agentGossipBin(), ...args], {
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -99,12 +99,12 @@ export interface Mesh {
   stop(): void;
 }
 
-// Two agent-gossip daemons on a fresh loopback room: daemon A (`create`)
+// Two agent-gossip daemons on a fresh loopback gossip: daemon A (`create`)
 // and daemon B (`join`, nicknamed "worker"), both with `--a2a-serve`. A
 // fresh mkdtempSync dir + OS-assigned ports every call, so this is safe to
 // invoke repeatedly with no leftover state between runs.
 export async function startMesh(): Promise<Mesh> {
-  const bin = agentRoomBin();
+  const bin = agentGossipBin();
   const dir = mkdtempSync(join(tmpdir(), "a2a-interop-"));
   const stateA = join(dir, "a.json");
   const stateB = join(dir, "b.json");
@@ -123,7 +123,7 @@ export async function startMesh(): Promise<Mesh> {
     const sessionA = await waitForSession(stateA);
 
     const daemonB = Bun.spawn(
-      [bin, "join", sessionA.room, "--nickname", "worker", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateB],
+      [bin, "join", sessionA.gossip, "--nickname", "worker", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateB],
       { stdout: Bun.file(join(dir, "daemon-b.log")), stderr: Bun.file(join(dir, "daemon-b.err.log")) },
     );
     children.push(daemonB);

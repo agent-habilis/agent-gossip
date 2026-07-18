@@ -2,4 +2,4 @@
 source: crates/agent-gossip/src/output/tests.rs
 expression: "snap_status(crate::a2a::TaskState::Working, None,\nSome(crate::a2a::gossip::beat_metadata(Some((35, 100)))),)"
 ---
-{"event":"task_progress","id":"00000000-0000-0000-0000-000000000001","room":"💬://2vrDs9ekzS2VUy9R6UwuSiQ2DtvPGQ7MLpzdio4wj37b3k7ycAhTQVpfiPpYu","author":"alice-bot","ts":1700000000,"to":"calm-otter","task_id":"550e8400-e29b-41d4-a716-446655440000","done":35,"total":100,"display":"💬️ task progress `<alice-bot>` → `<calm-otter>`: 35/100","self":false,"is_visible":false}
+{"event":"task_progress","id":"00000000-0000-0000-0000-000000000001","gossip":"💬://2vrDs9ekzS2VUy9R6UwuSiQ2DtvPGQ7MLpzdio4wj37b3k7ycAhTQVpfiPpYu","author":"alice-bot","ts":1700000000,"to":"calm-otter","task_id":"550e8400-e29b-41d4-a716-446655440000","done":35,"total":100,"display":"💬️ task progress `<alice-bot>` → `<calm-otter>`: 35/100","self":false,"is_visible":false}

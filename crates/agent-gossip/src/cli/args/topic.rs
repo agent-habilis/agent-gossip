@@ -5,7 +5,7 @@ use agent_habilis_mesh::protocol::Nickname;
 use super::shared::SharedServerOpts;
 
 /// Reject an empty / whitespace-only topic string at parse time — it would
-/// otherwise hash to a real (but useless, un-guessable-on-purpose) room.
+/// otherwise hash to a real (but useless, un-guessable-on-purpose) gossip.
 fn non_empty_string(raw: &str) -> Result<String, String> {
     if raw.trim().is_empty() {
         return Err("topic string must not be empty".to_owned());
@@ -15,7 +15,7 @@ fn non_empty_string(raw: &str) -> Result<String, String> {
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopicOpts {
-    /// Any string — hashed into a deterministic **public** room. The same
+    /// Any string — hashed into a deterministic **public** gossip. The same
     /// string always joins the same topic, on any machine, with no id to
     /// share. Compared byte-for-byte after trimming surrounding whitespace, so
     /// `http://…` and `https://…`, or `Repo` and `repo`, are different topics.

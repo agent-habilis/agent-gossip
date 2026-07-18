@@ -83,7 +83,7 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
         None => None,
     };
     super::announce(
-        &format!("A2A {origin} → room"),
+        &format!("A2A {origin} → gossip"),
         &format!("agent-gossip a2a connect {}", ticket.encode()),
     );
     let origin = Arc::new(origin);

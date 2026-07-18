@@ -1,10 +1,10 @@
 ## Guard
 
-If `$ROOM` or `$NICKNAME` is missing, follow the **Reattach** section and try
-to recover the session identity. If that does not yield a room, print:
+If `$GOSSIP` or `$NICKNAME` is missing, follow the **Reattach** section and try
+to recover the session identity. If that does not yield a gossip, print:
 
 ```text
-💬 Not in a room. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -26,7 +26,7 @@ criteria. This is the one `SendMessage` that carries no `--task-id` — that is
 what makes it a new task:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --text "$BRIEF"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --text "$BRIEF"
 ```
 
 Capture `result.task.id` as `$TASK_ID`. Track each task per the **Task
@@ -42,7 +42,7 @@ Every follow-up into the task — answer, approval, change request — carries
 `--task-id`:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
 ```
 
 Drop `--task-id` and you have not approved anything — you have opened a second

@@ -108,7 +108,7 @@ impl Report {
 }
 
 pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
-    let report = match opts.room {
+    let report = match opts.gossip {
         Some(mesh) => mesh_report(&mesh, opts.no_probe).await,
         None => machine_report(opts.no_probe).await,
     };
@@ -328,28 +328,36 @@ async fn active_meshes_section() -> Section {
         };
         let detail = format!(
             "{} · <{}> · {} {}",
-            info.room,
+            info.gossip,
             info.nickname,
-            info.participant_count,
-            plural(info.participant_count, "member", "members"),
+            info.peer_count,
+            plural(info.peer_count, "member", "members"),
         );
         checks.push(Check::new(format!("#{}", info.name), Verdict::Ok, detail));
     }
     if checks.is_empty() {
-        checks.push(Check::bare("no active rooms on this machine", Verdict::Ok));
+        checks.push(Check::bare(
+            "no active gossips on this machine",
+            Verdict::Ok,
+        ));
     }
     Section {
-        title: "Active rooms".to_owned(),
+        title: "Active gossips".to_owned(),
         checks,
     }
 }
 
+// The `room`/`participant_count` aliases mirror the state-file read fallback:
+// a daemon from the previous release may still be serving, and doctor must
+// list it rather than silently skip its unparseable info reply.
 #[derive(serde::Deserialize)]
 struct InfoResponse {
-    room: String,
+    #[serde(alias = "room")]
+    gossip: String,
     name: String,
     nickname: String,
-    participant_count: usize,
+    #[serde(alias = "participant_count")]
+    peer_count: usize,
 }
 
 // ---- Mode 2: per-mesh connection analysis ---------------------------------
@@ -359,14 +367,14 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
         Ok(mesh) => mesh,
         Err(error) => {
             let section = Section {
-                title: "Room".to_owned(),
+                title: "Gossip".to_owned(),
                 checks: vec![Check::new(
                     "decode",
                     Verdict::Fail,
-                    format!("could not decode room id: {error}"),
+                    format!("could not decode gossip id: {error}"),
                 )],
             };
-            return Report::new("room", vec![section]);
+            return Report::new("gossip", vec![section]);
         }
     };
 
@@ -381,7 +389,7 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
     if !no_probe && !mesh.requires_password() && !mesh.requires_invite() {
         sections.push(live_reachability_section(&mesh).await);
     }
-    Report::new("room", sections)
+    Report::new("gossip", sections)
 }
 
 fn mesh_identity_section(mesh: &Mesh) -> Section {
@@ -397,7 +405,7 @@ fn mesh_identity_section(mesh: &Mesh) -> Section {
         ));
     }
     Section {
-        title: "Room".to_owned(),
+        title: "Gossip".to_owned(),
         checks,
     }
 }
@@ -510,7 +518,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     }
 
     // Rendezvous reachability + the resulting path type (direct vs relay).
-    match lookup::build_participant_endpoint(lookups).await {
+    match lookup::build_peer_endpoint(lookups).await {
         Ok(endpoint) => {
             let rendezvous_id = mesh.rendezvous_id();
             let mut addr = iroh::EndpointAddr::new(rendezvous_id);

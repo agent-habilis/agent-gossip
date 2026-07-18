@@ -1,10 +1,10 @@
 ## Guard
 
-If `$ROOM` or `$NICKNAME` is missing, follow the **Reattach** section and try
-to recover the session identity. If that does not yield a room, print:
+If `$GOSSIP` or `$NICKNAME` is missing, follow the **Reattach** section and try
+to recover the session identity. If that does not yield a gossip, print:
 
 ```text
-💬 Not in a room. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -33,7 +33,7 @@ Send one task per selected peer — a directed `SendMessage` carrying no
 `--task-id`, which is what makes it a new task:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --text "$BRIEF"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --text "$BRIEF"
 ```
 
 `$BRIEF` is this template with `$NICKNAME` and `$SUBJECT` spliced in:
@@ -60,7 +60,7 @@ On `input-required` kind `artifact-update` from a reviewer: approve with a
 `--task-id` follow-up so the reviewer closes, then print the findings:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --task-id "$TASK_ID" --text "findings received — close the task"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --task-id "$TASK_ID" --text "findings received — close the task"
 ```
 
 ```text

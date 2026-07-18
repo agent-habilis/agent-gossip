@@ -818,7 +818,7 @@ fn ingest_remote_message(
 
 /// Adopt `author`'s published endpoint hint (`/peers/<nick>/card/endpoint`) into
 /// the dial book — the meta-doc counterpart to `handle_peer_info`. Binds
-/// `participant_endpoints[author] = eid` and seeds iroh's address book via
+/// `peer_endpoints[author] = eid` and seeds iroh's address book via
 /// [`add_peer_addr`], so a directed unicast can reach a peer we learned about
 /// from the synced meta doc even before its gossiped `PeerInfo` arrives. Both
 /// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
@@ -832,7 +832,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
     if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
         return;
     }
-    state.participant_endpoints.insert(author.clone(), peer_id);
+    state.peer_endpoints.insert(author.clone(), peer_id);
     if let Err(error) = add_peer_addr(ctx.endpoint, peer_addr) {
         tracing::debug!(%error, %author, "could not seed a meta-doc endpoint into the address book");
     }

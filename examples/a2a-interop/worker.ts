@@ -29,8 +29,8 @@ export async function runWorker(stateFile: string): Promise<WorkerResult> {
     runAgentGossip([
       "a2a",
       ...args.slice(0, 1),
-      "--room",
-      session.room,
+      "--gossip",
+      session.gossip,
       "--nickname",
       session.nickname,
       "--task-id",

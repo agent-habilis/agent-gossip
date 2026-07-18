@@ -11,16 +11,16 @@ Use the selected adapter (see **Adapters** below) to run:
 agent-gossip discover [--directory DIR]
 ```
 
-Discovery does not join a room. It only returns advertised room ids.
+Discovery does not join a gossip. It only returns advertised gossip ids.
 
 ## Selection
 
-Track `room_found` and `room_lost` events by full `room` id. Present the
+Track `gossip_found` and `gossip_lost` events by full `gossip` id. Present the
 live set to the user, preferring entries with more peers. When the user selects
-one, stop discovery and invoke `${SKILL_PREFIX}gossip-join $ROOM`.
+one, stop discovery and invoke `${SKILL_PREFIX}gossip-join $GOSSIP`.
 
-If no room is found within a bounded wait, print:
+If no gossip is found within a bounded wait, print:
 
 ```text
-💬️ no rooms in `#$DIR` yet
+💬️ no gossips in `#$DIR` yet
 ```

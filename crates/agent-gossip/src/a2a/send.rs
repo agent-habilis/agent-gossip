@@ -1126,7 +1126,7 @@ pub(crate) struct BroadcastA2aCallParams<'a> {
 }
 
 /// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
-/// responder) when `peer` isn't a current participant or the waiter registry
+/// responder) when `peer` isn't a current peer or the waiter registry
 /// is full — no silent park.
 pub(crate) async fn broadcast_a2a_call(
     call: BroadcastA2aCallParams<'_>,
@@ -1146,7 +1146,7 @@ pub(crate) async fn broadcast_a2a_call(
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
     };
-    // Fast-fail an unknown participant, EXCEPT when we already hold a task with
+    // Fast-fail an unknown peer, EXCEPT when we already hold a task with
     // this peer: a follow-up / read / cancel into a live task must survive a
     // brief roster flap (the waiter's timeout is the feedback if the peer is
     // truly gone), so it isn't wedged. Task creation (we hold no task with the
@@ -1154,8 +1154,8 @@ pub(crate) async fn broadcast_a2a_call(
     // require the peer present — method-agnostic, so `SendStreamingMessage`
     // creates gate the same as `SendMessage`.
     let party_to_a_task = app.tasks.values().any(|rec| rec.peer == peer);
-    if !party_to_a_task && !state.participants.contains(peer.as_str()) {
-        responder.send_response(&rpc_error(-32602, &format!("unknown participant '{peer}'")));
+    if !party_to_a_task && !state.peers.contains(peer.as_str()) {
+        responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
@@ -1542,16 +1542,6 @@ pub(crate) async fn handle_session_request(
         SessionRequest::InjectRaw { bytes } => {
             let _ = sender.broadcast(bytes).await;
             true
-        }
-        // Index-size snapshot (adversarial only) for the leak regression test.
-        #[cfg(feature = "adversarial")]
-        SessionRequest::IndexStats { resp } => {
-            let _ = resp.send((
-                state.by_hash.len(),
-                state.dag_heads.len(),
-                state.author_seqs.len(),
-            ));
-            false
         }
         // Simulated stream end (adversarial only): indistinguishable from
         // the real `None` arm as far as the event loop is concerned.

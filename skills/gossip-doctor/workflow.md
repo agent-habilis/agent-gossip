@@ -1,6 +1,6 @@
 ## Arguments
 
-If the user supplied a room id, pass it as `--room`. Otherwise run the
+If the user supplied a gossip id, pass it as `--gossip`. Otherwise run the
 machine-health report.
 
 ## Run
@@ -11,10 +11,10 @@ Machine health:
 agent-gossip doctor
 ```
 
-Specific room:
+Specific gossip:
 
 ```bash
-agent-gossip doctor --room "$ROOM"
+agent-gossip doctor --gossip "$GOSSIP"
 ```
 
 ## Output

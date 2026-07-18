@@ -31,7 +31,7 @@ fn parse_ready_event(line: &str) -> Option<(String, String, String)> {
     if parsed["event"] != "ready" {
         return None;
     }
-    let mesh = parsed["room"].as_str()?.to_string();
+    let mesh = parsed["gossip"].as_str()?.to_string();
     let name = parsed["name"].as_str()?.to_string();
     let nickname = parsed["nickname"].as_str()?.to_string();
     Some((mesh, name, nickname))
@@ -262,10 +262,10 @@ async fn test_ready_event_shape() {
         .expect("no ready event found");
 
     assert_eq!(ready["event"], "ready");
-    assert!(ready["room"].is_string());
+    assert!(ready["gossip"].is_string());
     assert!(ready["name"].is_string());
     assert!(ready["nickname"].is_string());
-    assert_eq!(ready["room"].as_str().unwrap(), mesh);
+    assert_eq!(ready["gossip"].as_str().unwrap(), mesh);
     assert_eq!(ready["name"].as_str().unwrap(), "readyshape");
     assert_eq!(ready["nickname"].as_str().unwrap(), nick);
     // The build self-identifies: the ready event carries the exact version
@@ -760,7 +760,7 @@ fn test_hard_kill_triggers_peer_timeout() {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
                 && parsed["event"] == "ready"
             {
-                mesh = parsed["room"].as_str().map(ToString::to_string);
+                mesh = parsed["gossip"].as_str().map(ToString::to_string);
             }
         }
         std::thread::sleep(POLL);
@@ -771,20 +771,20 @@ fn test_hard_kill_triggers_peer_timeout() {
     let mut victim = JsonNode::join(&mesh, "victim-alpha");
     assert!(victim.wait_ready(&mesh));
 
-    // Confirm survivor sees participant_count = 2 in state file.
+    // Confirm survivor sees peer_count = 2 in state file.
     let count_deadline = Instant::now() + MSG_TIMEOUT;
     let mut got_two = false;
     while Instant::now() < count_deadline {
         if let Ok(raw) = fs::read_to_string(&state_file)
             && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw)
-            && parsed["participant_count"] == 2
+            && parsed["peer_count"] == 2
         {
             got_two = true;
             break;
         }
         std::thread::sleep(POLL);
     }
-    assert!(got_two, "state file never reached participant_count=2");
+    assert!(got_two, "state file never reached peer_count=2");
 
     // Hard-kill the victim.
     let _ = victim.child.kill();
@@ -798,7 +798,7 @@ fn test_hard_kill_triggers_peer_timeout() {
     while Instant::now() < eviction_deadline {
         if let Ok(raw) = fs::read_to_string(&state_file)
             && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw)
-            && parsed["participant_count"] == 1
+            && parsed["peer_count"] == 1
         {
             evicted = true;
             break;
@@ -807,7 +807,7 @@ fn test_hard_kill_triggers_peer_timeout() {
     }
     assert!(
         evicted,
-        "state file never dropped to participant_count=1 after hard kill"
+        "state file never dropped to peer_count=1 after hard kill"
     );
 
     // Confirm the JSON stream emitted exactly one peer_timeout event.
@@ -1047,15 +1047,15 @@ async fn test_task_event_wire_contract() {
 }
 
 /// A directed `message/send` (task creation) to a nickname that is not a
-/// current participant exits non-zero with an `unknown participant` error.
+/// current peer exits non-zero with an `unknown peer` error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_task_unknown_participant_errors() {
+async fn test_task_unknown_peer_errors() {
     let (creator, _joiner_a, _joiner_b, mesh) = three_peers("ho-unknown");
 
     let out = common::cli_task_create_raw(&mesh, &creator.nickname, "ghost-peer", "brief");
     assert!(
         !out.status.success(),
-        "task creation to an unknown participant must exit non-zero"
+        "task creation to an unknown peer must exit non-zero"
     );
     let combined = format!(
         "{}{}",
@@ -1063,8 +1063,8 @@ async fn test_task_unknown_participant_errors() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        combined.contains("unknown participant"),
-        "expected an unknown-participant error, got: {combined}"
+        combined.contains("unknown peer"),
+        "expected an unknown-peer error, got: {combined}"
     );
 }
 
@@ -1332,15 +1332,15 @@ async fn test_completed_task_is_never_reaped() {
     );
 }
 
-/// `agent-gossip peers` returns the live roster: `ok`, a `count` (participants + 1
-/// for self), and a `participants` array carrying nickname + recency +
+/// `agent-gossip peers` returns the live roster: `ok`, a `count` (peers + 1
+/// for self), and a `peers` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_peers_roster_shape() {
     let (creator, joiner_a, joiner_b, mesh) = three_peers("peers");
 
     let reach_values = |roster: &serde_json::Value| -> Vec<String> {
-        roster["participants"]
+        roster["peers"]
             .as_array()
             .into_iter()
             .flatten()
@@ -1356,7 +1356,7 @@ async fn test_peers_roster_shape() {
     while Instant::now() < deadline {
         roster = serde_json::from_str(&common::cli_peers(&mesh, &creator.nickname))
             .expect("peers response is JSON");
-        if roster["participant_count"].as_u64() == Some(3)
+        if roster["peer_count"].as_u64() == Some(3)
             && reach_values(&roster).iter().any(|reach| reach == "direct")
         {
             break;
@@ -1365,18 +1365,16 @@ async fn test_peers_roster_shape() {
     }
 
     assert_eq!(roster["ok"], true);
-    assert_eq!(roster["participant_count"], 3, "creator + 2 joiners");
-    let participants = roster["participants"]
-        .as_array()
-        .expect("participants is an array");
-    let nicks: Vec<&str> = participants
+    assert_eq!(roster["peer_count"], 3, "creator + 2 joiners");
+    let peers = roster["peers"].as_array().expect("peers is an array");
+    let nicks: Vec<&str> = peers
         .iter()
         .filter_map(|entry| entry["nickname"].as_str())
         .collect();
     assert!(nicks.contains(&joiner_a.nickname.as_str()));
     assert!(nicks.contains(&joiner_b.nickname.as_str()));
     // Each entry carries the documented fields, with a valid reach tag.
-    for entry in participants {
+    for entry in peers {
         assert!(entry["nickname"].is_string());
         assert!(entry.get("last_seen_secs_ago").is_some());
         assert!(entry["quiet"].is_boolean());
@@ -1396,7 +1394,7 @@ async fn test_peers_roster_shape() {
     // must still tag the beacon `direct` — earlier this always read `gossip`
     // from a joiner's perspective.
     let creator_reach_from_joiner = |view: &serde_json::Value| -> Option<String> {
-        view["participants"]
+        view["peers"]
             .as_array()
             .into_iter()
             .flatten()

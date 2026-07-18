@@ -9,10 +9,10 @@ when_to_use: The user invokes the gossip-reattach command, or when the conversat
 This file is self-contained: every section it needs is below. Read nothing
 else. This skill restores context, nothing more: the daemon and its bell
 survived the context clear and are still running, so it never rejoins, never
-regenerates credentials, and starts no processes. Unlike other room skills,
+regenerates credentials, and starts no processes. Unlike other gossip skills,
 the **Reattach** section here is not a fallback — the workflow runs it
 unconditionally; follow the **Receive loop** contract before replying while
-in a room.
+in a gossip.
 
 <!-- include path="../shared/quiet.md" -->
 

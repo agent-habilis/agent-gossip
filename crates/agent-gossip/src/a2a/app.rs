@@ -381,11 +381,10 @@ mod tests {
         assert_eq!(ok["task"]["id"], "t1");
 
         // A JSON-RPC error carries the peer's code + message verbatim.
-        let err =
-            rpc_result_from_body(r#"{"error":{"code":-32602,"message":"unknown participant"}}"#)
-                .expect_err("an error body is Err");
+        let err = rpc_result_from_body(r#"{"error":{"code":-32602,"message":"unknown peer"}}"#)
+            .expect_err("an error body is Err");
         assert_eq!(err.code, -32602);
-        assert_eq!(err.message, "unknown participant");
+        assert_eq!(err.message, "unknown peer");
 
         // Garbage is an internal error, not a panic.
         let garbage = rpc_result_from_body("not json").expect_err("garbage is Err");

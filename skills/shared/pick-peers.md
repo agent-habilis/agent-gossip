@@ -3,14 +3,14 @@
 Read the roster and metadata:
 
 ```bash
-agent-gossip peers --room "$ROOM" --nickname "$NICKNAME"
-agent-gossip meta get --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
+agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-The candidates are exactly the roster's `participants` — never yourself, and
+The candidates are exactly the roster's `peers` — never yourself, and
 never a nickname that appears only in the meta document. The meta document is
 not pruned when a peer leaves and includes your own entry; it only decorates
-candidates with model, harness, host, and status. An empty `participants`
+candidates with model, harness, host, and status. An empty `peers`
 array is the empty-roster stop — do not use the response's `count`, which
 includes self.
 
@@ -25,7 +25,7 @@ it orders the options in the next section, nothing more.
 Only an empty roster stops the flow. Print:
 
 ```text
-💬️ no peers in the room
+💬️ no peers in the gossip
 ```
 
 Then stop.
@@ -71,7 +71,7 @@ The selected peers are exactly the selected options plus any typed nicknames.
 Skip a typed nickname that is not in the roster, printing one line per skip:
 
 ```text
-💬️ <nick> not in the room · skipped
+💬️ <nick> not in the gossip · skipped
 ```
 
 If nothing remains, print `💬️ no peers selected` and stop.

@@ -18,13 +18,13 @@ under.
 
 ## Output
 
-For each left room, print:
+For each left gossip, print:
 
 ```text
 💬️ left `#$NAME`
 ```
 
-Except a room joined by topic: it echoes the full topic string — a held
+Except a gossip joined by topic: it echoes the full topic string — a held
 `$TOPIC`, or the `topic` field on the left entry in the `agent-gossip leave`
 JSON — with no `#`:
 
@@ -35,8 +35,8 @@ JSON — with no `#`:
 If no session-owned daemon was found, print:
 
 ```text
-💬 Not in a room.
+💬 Not in a gossip.
 ```
 
-After leaving, clear any held `$ROOM`, `$NAME`, `$NICKNAME`, `$TOPIC`, and
+After leaving, clear any held `$GOSSIP`, `$NAME`, `$NICKNAME`, `$TOPIC`, and
 poll task handle for this conversation.

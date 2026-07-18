@@ -6,13 +6,13 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
-    /// The `💬…` id of the room to leave — the full id or a unique prefix
-    /// of it. Omitted: every room owned by the calling session.
-    pub room: Option<MeshId>,
+    /// The `💬…` id of the gossip to leave — the full id or a unique prefix
+    /// of it. Omitted: every gossip owned by the calling session.
+    pub gossip: Option<MeshId>,
 
     /// Leave only the member with this nickname (when this machine hosts
-    /// several members of one room).
-    #[arg(long, requires = "room")]
+    /// several members of one gossip).
+    #[arg(long, requires = "gossip")]
     pub nickname: Option<Nickname>,
 
     /// The agent-session process that owns the daemons: a daemon is
@@ -43,7 +43,7 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert!(opts.room.is_none());
+        assert!(opts.gossip.is_none());
         assert!(opts.nickname.is_none());
         assert!(opts.session_pid.is_none());
         assert_eq!(opts.confirm_timeout_secs, 5);
@@ -62,7 +62,7 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.room.unwrap(), expected);
+        assert_eq!(opts.gossip.unwrap(), expected);
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
     }
 

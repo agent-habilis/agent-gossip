@@ -69,7 +69,7 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
     pub advertise_interval_secs: u64,
 
-    /// How long a discoverer keeps showing a room after its last ad (seconds).
+    /// How long a discoverer keeps showing a gossip after its last ad (seconds).
     #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
     pub directory_expiry_secs: u64,
 
@@ -101,7 +101,7 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub topic_mdns_only: bool,
 
-    /// Register the multi-hop transport on the participant endpoint: a directed
+    /// Register the multi-hop transport on the peer endpoint: a directed
     /// message to a peer with no direct path rides the multihop path (relayed
     /// through peers). Stands up a second underlay endpoint.
     #[arg(long, hide = true, default_value_t = false)]

@@ -224,7 +224,7 @@ impl InProcessSession {
         .await
     }
 
-    /// Snapshot the live participant roster (active + quiet, recency-sorted).
+    /// Snapshot the live peer roster (active + quiet, recency-sorted).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -289,16 +289,6 @@ impl InProcessSession {
     #[cfg(feature = "adversarial")]
     pub(crate) async fn sever_gossip(&self) -> anyhow::Result<()> {
         self.node.send(SessionRequest::SeverGossip).await
-    }
-
-    /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
-    /// Adversarial-suite only.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped or dropped the response.
-    #[cfg(feature = "adversarial")]
-    pub(crate) async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
-        self.call(|resp| SessionRequest::IndexStats { resp }).await
     }
 
     /// Snapshot the reassembly store's accounting

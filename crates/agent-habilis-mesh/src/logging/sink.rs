@@ -87,38 +87,13 @@ pub fn install() -> LogSink {
 
 /// Identity resolved: open `<mesh-prefix>/<nick>.tracing.log` (truncate),
 /// flush the buffer, pass through after. First-attach-wins — already
-/// `Attached`/`Stderr` is a no-op. The `discover` → `join` handoff
-/// calls [`detach`] in between so this opens a *fresh* file for the
-/// joined mesh (with its full logs), rather than appending to the
-/// directory's file.
+/// `Attached`/`Stderr` is a no-op.
 pub fn attach(mesh: &MeshId, nickname: &Nickname) {
     let Some(sink) = SINK.get() else { return };
     sink.open(log_file_path(mesh.as_str(), nickname.as_str()));
 }
 
-/// Reset an attached sink back to buffering. The `discover` picker calls
-/// this when it leaves the directory to hand off to `join`, so the next
-/// [`attach`] (a different mesh) opens that mesh's own file and
-/// captures its setup logs from the first line — instead of the join's
-/// logs trailing into the directory session's file. No-op unless
-/// currently `Attached` (a `Pending` sink is already buffering; a
-/// `Stderr` sink stays degraded).
-pub fn detach() {
-    if let Some(sink) = SINK.get() {
-        sink.detach();
-    }
-}
-
 impl LogSink {
-    /// Reset an `Attached` sink back to buffering (no-op for
-    /// `Pending`/`Stderr`). See the free [`detach`].
-    fn detach(&self) {
-        let mut state = self.0.lock().expect("log sink poisoned");
-        if matches!(*state, State::Attached { .. }) {
-            *state = State::Pending(Vec::new());
-        }
-    }
-
     fn open(&self, path: PathBuf) {
         let mut state = self.0.lock().expect("log sink poisoned");
         if !matches!(*state, State::Pending(_)) {
@@ -244,38 +219,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{LogSink, State};
-
-    #[test]
-    fn detach_reattaches_to_a_fresh_file() {
-        let dir =
-            std::env::temp_dir().join(format!("agent-gossip-logswitch-{}", std::process::id()));
-        let _ = fs::create_dir_all(&dir);
-        let path_a = dir.join("a.log");
-        let path_b = dir.join("b.log");
-
-        let mut sink = LogSink(Arc::new(Mutex::new(State::Pending(Vec::new()))));
-        // Buffered bytes flush into the first file on open.
-        sink.write_all(b"pending-").expect("write");
-        sink.open(path_a.clone());
-        sink.write_all(b"alpha").expect("write");
-        sink.flush().expect("flush");
-
-        // The discover→join handoff: detach (back to buffering), then the
-        // join's open() makes its own fresh file. The directory file keeps
-        // its bytes; the join file gets the join's logs from the first byte.
-        sink.detach();
-        sink.open(path_b.clone());
-        sink.write_all(b"beta").expect("write");
-        sink.flush().expect("flush");
-
-        assert_eq!(
-            fs::read_to_string(&path_a).expect("read a"),
-            "pending-alpha"
-        );
-        assert_eq!(fs::read_to_string(&path_b).expect("read b"), "beta");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
 
     #[test]
     fn attached_file_rotates_at_cap() {

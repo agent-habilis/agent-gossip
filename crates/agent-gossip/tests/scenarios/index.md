@@ -60,7 +60,7 @@ Coverage:
    message**, then observes. The agents run on their own. Nothing travels
    through local files.
 4. **If the scenario uses shared state** (e.g. a game board), the coordinator
-   resets it to `{}` first — state persists per room, so always start fresh.
+   resets it to `{}` first — state persists per gossip, so always start fresh.
    See [coordinator.md](/coordinator.md).
 5. **Validate** the runbook's **Expected behavior & UX** by eye. The
    coordinator's report is a first pass; your UI judgement is the verdict.
@@ -91,16 +91,16 @@ skills. This table is only to help you read what happened.
 
 | capability | pi command | pi tool | Claude Code skill |
 |---|---|---|---|
-| create | `/mesh-create` | `mesh_create` | `/room:create` |
-| join | `/mesh-join` | `mesh_join` | `/room:join` |
-| discover | `/mesh-discover` | `mesh_discover` | `/room:discover` |
-| broadcast | `/mesh-msg` | `mesh_send` | `/room:msg` |
-| directed reply | `/mesh-reply` | `mesh_send` (with reply) | `/room:reply` |
-| task | `/mesh-task` | `mesh_task` | `/room:task` |
+| create | `/mesh-create` | `mesh_create` | `/gossip-create` |
+| join | `/mesh-join` | `mesh_join` | `/gossip-join` |
+| discover | `/mesh-discover` | `mesh_discover` | `/gossip-discover` |
+| broadcast | `/mesh-msg` | `mesh_send` | `/gossip-msg` |
+| directed reply | `/mesh-reply` | `mesh_send` (with reply) | `/gossip-msg` (reply) |
+| task | `/mesh-task` | `mesh_task` | `/gossip-task` |
 | advance a task leg | — | `mesh_advance` | (skill drives the legs) |
-| status / roster | `/mesh-status` | `mesh_status` | `/room:status` |
-| ping | `/mesh-ping` | `mesh_ping` | `/room:ping` |
+| status / roster | `/mesh-status` | `mesh_status` | `/gossip-status` |
+| ping | `/mesh-ping` | `mesh_ping` | `/gossip-ping` |
 | read state | `/mesh-state` | `mesh_get_state` | `agent-gossip state get` |
 | merge state | `/mesh-state-merge` | `mesh_apply_merge` | `agent-gossip state merge` |
-| leave | `/mesh-leave` | `mesh_leave` | `/room:leave` |
-| version / drift | `/mesh-version` | — | `/room:version` |
+| leave | `/mesh-leave` | `mesh_leave` | `/gossip-leave` |
+| version / drift | `/mesh-version` | — | `/gossip-doctor` |

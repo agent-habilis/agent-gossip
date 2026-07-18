@@ -20,7 +20,7 @@ each command as the task's own foreground process — never with a trailing
 `&`.
 
 **Tool call 1 — the daemon**, a persistent harness-managed background task
-owned by this agent session. It must remain alive for the whole room session.
+owned by this agent session. It must remain alive for the whole gossip session.
 
 ```bash
 <!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2>&1
@@ -43,7 +43,7 @@ before the identity exists:
 
 The bell's exit is the signal; its output is discarded. Read content with a
 **foreground** poll per the **Receive loop** section. Any prefix on the
-command above is part of the bell (a topic room's settle window on Claude
+command above is part of the bell (a topic gossip's settle window on Claude
 Code): keep it on every re-arm.
 
 **Tool call 3 — the foreground gate**, one script: wait for the daemon, report
@@ -53,8 +53,8 @@ timeout, so racing the daemon launch is fine.
 ```bash
 out=$(agent-gossip ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || exit 1
 nick=$(printf '%s' "$out" | sed -n 's/.*"nickname":"\([^"]*\)".*/\1/p')
-room=$(printf '%s' "$out" | sed -n 's/.*"room":"\([^"]*\)".*/\1/p')
-agent-gossip meta merge --room "$room" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","status":"idle"}}}'
+gossip=$(printf '%s' "$out" | sed -n 's/.*"gossip":"\([^"]*\)".*/\1/p')
+agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","status":"idle"}}}'
 printf '%s\n' "$out"
 ```
 
@@ -65,7 +65,7 @@ not guess, and do not infer the harness from the model name.
 
 From the script's printed JSON hold:
 
-- `$ROOM` = `room`
+- `$GOSSIP` = `gossip`
 - `$NAME` = `name`
 - `$NICKNAME` = `nickname`
 

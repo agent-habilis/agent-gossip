@@ -19,7 +19,7 @@ pub(crate) fn peer_url(pubkey_hex: &str) -> String {
     format!("{PEER_GLYPH}{MESH_URI_SEPARATOR}{pubkey_hex}")
 }
 
-/// This participant's `AgentCard` — the canonical A2A self-description every
+/// This peer's `AgentCard` — the canonical A2A self-description every
 /// member publishes into the meta channel at `/peers/<nick>/card` on join.
 /// Peers enumerate each other's cards from the meta document, so discovery
 /// works with no HTTP server at all; the (flag-gated) local JSON-RPC binding
@@ -44,7 +44,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
     AgentCard {
         name: nickname.as_str().to_string(),
         description: format!(
-            "agent-gossip participant `{nickname}` — an AI agent reachable over the \
+            "agent-gossip peer `{nickname}` — an AI agent reachable over the \
              mesh's A2A gossip binding"
         ),
         supported_interfaces: vec![AgentInterface {
@@ -62,11 +62,11 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             extensions: vec![
                 extension(
                     EXT_MESH_BROADCAST,
-                    "room-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
+                    "gossip-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
                 ),
                 extension(
                     EXT_MESH_STATE,
-                    "a shared RFC 7386 JSON document per room (state/meta channels)",
+                    "a shared RFC 7386 JSON document per gossip (state/meta channels)",
                 ),
                 extension(
                     EXT_MESH_A2A_RPC,
@@ -100,7 +100,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             AgentSkill {
                 id: "chat".to_string(),
                 name: "chat".to_string(),
-                description: "converse over room broadcast messages".to_string(),
+                description: "converse over gossip broadcast messages".to_string(),
                 tags: vec!["chat".to_string()],
                 examples: Vec::new(),
                 input_modes: Vec::new(),

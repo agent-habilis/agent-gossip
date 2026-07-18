@@ -1,5 +1,5 @@
 //! Heartbeat: the `Alive` keepalive emitter and the silence sweep
-//! that evicts participants we've stopped hearing from. Part of the
+//! that evicts peers we've stopped hearing from. Part of the
 //! lifecycle subsystem (it drives `peer_timeout` / the roster).
 
 use std::time::{Duration, Instant};
@@ -31,9 +31,9 @@ pub(crate) async fn tick_alive(
     tracing::trace!("alive keepalive broadcast");
 }
 
-/// Sweep `last_seen` for participants we've not heard from past the
-/// timeout. Each eviction removes them from `last_seen`/`participants`
-/// and rewrites the statusline. A participant whose arrival we
+/// Sweep `last_seen` for peers we've not heard from past the
+/// timeout. Each eviction removes them from `last_seen`/`peers`
+/// and rewrites the statusline. A peer whose arrival we
 /// *surfaced* is also inserted into `quiet` and emits `peer_timeout`;
 /// a ghost known only through pre-join anti-entropy backlog is evicted
 /// silently (never surfaced as arriving, so never surfaced as
@@ -51,8 +51,8 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, sink: &dyn NodeSink) {
         .collect();
     for (nick, seen, age) in expired {
         state.last_seen.remove(nick.as_str());
-        if state.participants.remove(nick.as_str()) {
-            state.write_participant_count();
+        if state.peers.remove(nick.as_str()) {
+            state.write_peer_count();
             if state.surfaced.remove(nick.as_str()) {
                 state.quiet.insert(nick.clone());
                 // Retain the last-heard instant so the roster can still
@@ -70,7 +70,7 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, sink: &dyn NodeSink) {
                 });
                 tracing::debug!(nickname = %nick, age_secs = age, "peer evicted (silence timeout)");
             } else {
-                state.participant_endpoints.remove(nick.as_str());
+                state.peer_endpoints.remove(nick.as_str());
                 tracing::trace!(
                     nickname = %nick,
                     age_secs = age,
@@ -87,15 +87,15 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, sink: &dyn NodeSink) {
         .quiet_since
         .retain(|nick, _| quiet.contains(nick.as_str()));
     // Same bound for the endpoint dial hints: an entry lives as long as its
-    // nick is an active participant or a returnable quiet evictee, so the map
-    // is capped at |participants| + QUIET_CAP even under nickname churn.
+    // nick is an active peer or a returnable quiet evictee, so the map
+    // is capped at |peers| + QUIET_CAP even under nickname churn.
     // (Safe against a just-arrived `PeerInfo`: `lifecycle::observe` runs
     // before `handle_peer_info`, so a recorded endpoint's author is already a
-    // participant.)
-    let participants = &state.participants;
+    // peer.)
+    let peers = &state.peers;
     state
-        .participant_endpoints
-        .retain(|nick, _| participants.contains(nick) || quiet.contains(nick.as_str()));
+        .peer_endpoints
+        .retain(|nick, _| peers.contains(nick) || quiet.contains(nick.as_str()));
 }
 
 #[cfg(test)]
@@ -120,20 +120,20 @@ mod tests {
     }
 
     #[test]
-    fn sweep_evicts_surfaced_participant_into_quiet() {
+    fn sweep_evicts_surfaced_peer_into_quiet() {
         let mut state = fresh_state();
         let expired_at = Instant::now()
             .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
             .unwrap();
         state.last_seen.insert(nick("swift-cedar"), expired_at);
-        state.participants.insert(nick("swift-cedar"));
+        state.peers.insert(nick("swift-cedar"));
         // Arrival was surfaced => departure must be too.
         state.surfaced.insert(nick("swift-cedar"));
 
         tick_sweep(&mut state, &SilentSink);
 
         assert!(!state.last_seen.contains_key("swift-cedar"));
-        assert!(!state.participants.contains("swift-cedar"));
+        assert!(!state.peers.contains("swift-cedar"));
         assert!(state.quiet.contains("swift-cedar"));
         assert!(!state.surfaced.contains("swift-cedar"));
     }
@@ -147,14 +147,14 @@ mod tests {
             .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
             .unwrap();
         state.last_seen.insert(nick("calm-otter"), expired_at);
-        state.participants.insert(nick("calm-otter"));
+        state.peers.insert(nick("calm-otter"));
         state.surfaced.insert(nick("calm-otter"));
 
         tick_sweep(&mut state, &SilentSink);
 
         let roster = state.roster_snapshot();
         let entry = roster
-            .participants
+            .peers
             .iter()
             .find(|entry| entry.nickname.as_str() == "calm-otter")
             .expect("quiet peer present in roster");
@@ -175,18 +175,16 @@ mod tests {
             .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
             .unwrap();
         state.last_seen.insert(nick("swift-cedar"), expired_at);
-        state.participants.insert(nick("swift-cedar"));
+        state.peers.insert(nick("swift-cedar"));
         state.surfaced.insert(nick("swift-cedar"));
         let endpoint = iroh::SecretKey::from_bytes(&[7; 32]).public();
-        state
-            .participant_endpoints
-            .insert(nick("swift-cedar"), endpoint);
+        state.peer_endpoints.insert(nick("swift-cedar"), endpoint);
 
         tick_sweep(&mut state, &SilentSink);
 
         assert!(state.quiet.contains("swift-cedar"));
         assert_eq!(
-            state.participant_endpoints.get("swift-cedar"),
+            state.peer_endpoints.get("swift-cedar"),
             Some(&endpoint),
             "a returnable quiet peer keeps its dial hint — its return never re-broadcasts PeerInfo"
         );
@@ -196,46 +194,44 @@ mod tests {
     fn sweep_prunes_endpoints_of_nicks_neither_active_nor_quiet() {
         let mut state = fresh_state();
         let endpoint = iroh::SecretKey::from_bytes(&[8; 32]).public();
-        // Not in `participants`, not in `quiet`: fell off the quiet FIFO or
+        // Not in `peers`, not in `quiet`: fell off the quiet FIFO or
         // departed via `left` churn — the dial hint must not outlive it.
-        state
-            .participant_endpoints
-            .insert(nick("gone-fern"), endpoint);
+        state.peer_endpoints.insert(nick("gone-fern"), endpoint);
 
         tick_sweep(&mut state, &SilentSink);
 
-        assert!(!state.participant_endpoints.contains_key("gone-fern"));
+        assert!(!state.peer_endpoints.contains_key("gone-fern"));
     }
 
     #[test]
-    fn sweep_evicts_unsurfaced_participant_silently() {
+    fn sweep_evicts_unsurfaced_peer_silently() {
         let mut state = fresh_state();
         let expired_at = Instant::now()
             .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
             .unwrap();
         state.last_seen.insert(nick("ghost-elm"), expired_at);
-        state.participants.insert(nick("ghost-elm"));
+        state.peers.insert(nick("ghost-elm"));
         // Never in `surfaced`: known only via pre-join backlog.
 
         tick_sweep(&mut state, &SilentSink);
 
         // Still evicted from the roster (hygiene preserved)...
         assert!(!state.last_seen.contains_key("ghost-elm"));
-        assert!(!state.participants.contains("ghost-elm"));
+        assert!(!state.peers.contains("ghost-elm"));
         // ...but never parked in `quiet` => no `went quiet` emitted.
         assert!(!state.quiet.contains("ghost-elm"));
     }
 
     #[test]
-    fn sweep_keeps_recent_participant() {
+    fn sweep_keeps_recent_peer() {
         let mut state = fresh_state();
         state.last_seen.insert(nick("swift-cedar"), Instant::now());
-        state.participants.insert(nick("swift-cedar"));
+        state.peers.insert(nick("swift-cedar"));
 
         tick_sweep(&mut state, &SilentSink);
 
         assert!(state.last_seen.contains_key("swift-cedar"));
-        assert!(state.participants.contains("swift-cedar"));
+        assert!(state.peers.contains("swift-cedar"));
         assert!(!state.quiet.contains("swift-cedar"));
     }
 
@@ -243,24 +239,24 @@ mod tests {
     fn sweep_noop_on_empty_last_seen() {
         let mut state = fresh_state();
         tick_sweep(&mut state, &SilentSink);
-        assert!(state.participants.is_empty());
+        assert!(state.peers.is_empty());
         assert!(state.quiet.is_empty());
     }
 
     #[test]
-    fn sweep_preserves_other_participants() {
+    fn sweep_preserves_other_peers() {
         let mut state = fresh_state();
         let expired_at = Instant::now()
             .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
             .unwrap();
         state.last_seen.insert(nick("stale-nick"), expired_at);
-        state.participants.insert(nick("stale-nick"));
+        state.peers.insert(nick("stale-nick"));
         state.last_seen.insert(nick("fresh-nick"), Instant::now());
-        state.participants.insert(nick("fresh-nick"));
+        state.peers.insert(nick("fresh-nick"));
 
         tick_sweep(&mut state, &SilentSink);
 
-        let expected_participants: HashSet<Nickname> = [nick("fresh-nick")].into_iter().collect();
-        assert_eq!(state.participants, expected_participants);
+        let expected_peers: HashSet<Nickname> = [nick("fresh-nick")].into_iter().collect();
+        assert_eq!(state.peers, expected_peers);
     }
 }

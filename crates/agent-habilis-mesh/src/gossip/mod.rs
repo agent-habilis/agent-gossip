@@ -5,7 +5,7 @@
 //! router); anti-entropy and the healer are [`antientropy`] / [`heal`].
 //! This module itself holds only the shared `conn_path` diagnostic and
 //! re-exports the subsystem's public API. Membership/presentation lives
-//! in `lifecycle`; this layer never touches the participant roster
+//! in `lifecycle`; this layer never touches the peer roster
 //! directly — it calls into `lifecycle::observe` and dispatches by kind.
 
 pub(crate) mod antientropy;

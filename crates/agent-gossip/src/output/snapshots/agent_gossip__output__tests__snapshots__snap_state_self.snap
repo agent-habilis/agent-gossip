@@ -2,4 +2,4 @@
 source: crates/agent-gossip/src/output/tests.rs
 expression: "snap_state(r#\"{\"n\": 1}\"#, &serde_json::json!({\"n\": 1}), true,)"
 ---
-{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","room":"💬://2vrDs9ekzS2VUy9R6UwuSiQ2DtvPGQ7MLpzdio4wj37b3k7ycAhTQVpfiPpYu","author":"alice-bot","ts":1700000000,"merge":{"n":1},"document":{"n":1},"display":"💬️ you changed /n","self":true,"is_visible":false}
+{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","gossip":"💬://2vrDs9ekzS2VUy9R6UwuSiQ2DtvPGQ7MLpzdio4wj37b3k7ycAhTQVpfiPpYu","author":"alice-bot","ts":1700000000,"merge":{"n":1},"document":{"n":1},"display":"💬️ you changed /n","self":true,"is_visible":false}

@@ -1,5 +1,5 @@
 //! `topology` command args: print the multihop routing topology (the assembled
-//! room graph) from a running daemon's point of view, as JSON.
+//! gossip graph) from a running daemon's point of view, as JSON.
 
 use clap::Parser;
 
@@ -7,9 +7,9 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopologyOpts {
-    /// Room identifier (💬...)
-    #[arg(long)]
-    pub room: MeshId,
+    /// Gossip identifier (💬...)
+    #[arg(long, alias = "room")]
+    pub gossip: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]

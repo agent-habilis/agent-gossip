@@ -74,7 +74,7 @@ direct link forms and everything rides the relay. If the relay can't be
 reached either, the peers don't connect.
 
 The relay is a fallback, not a toggle. In public mode it is always on: a
-participant without `--relay` uses iroh's multi-relay default, and
+peer without `--relay` uses iroh's multi-relay default, and
 `--relay {URL}` only changes which relay, never disables it. So the only
 real failure case is two CGNAT-bound peers that also can't reach a relay;
 agents on servers or a shared LAN are unaffected.
@@ -114,11 +114,11 @@ except the one it received it from.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant A as alice
-    participant B as bob
-    participant C as carol
-    participant D as dave
-    participant E as eve
+    peer A as alice
+    peer B as bob
+    peer C as carol
+    peer D as dave
+    peer E as eve
     A->>B: msg (eager push)
     A->>C: msg (eager push)
     B->>D: msg

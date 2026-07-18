@@ -69,7 +69,7 @@ pub use agent_habilis_mesh::protocol::message::{
     Shard, ShardGroup,
 };
 pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
-pub use agent_habilis_mesh::resolver::{JoinTarget, JoinTargetError};
+pub use agent_habilis_mesh::resolver::JoinTarget;
 pub use agent_habilis_mesh::transport::Lane;
 pub use events::{OutputEvent, PingPeer};
 // Wire/runtime constants the external test + bench crates assert against; the

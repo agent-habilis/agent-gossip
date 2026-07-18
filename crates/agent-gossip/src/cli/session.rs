@@ -18,7 +18,7 @@ pub(crate) struct Target {
     mesh: String,
     name: Option<String>,
     nickname: Option<String>,
-    /// The raw topic string (topic rooms only) — what the leave report
+    /// The raw topic string (topic gossips only) — what the leave report
     /// echoes instead of the lossy derived `name`.
     topic: Option<String>,
     pid: u32,
@@ -122,7 +122,7 @@ fn default_session_pid() -> u32 {
 
 fn target_json(target: &Target) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("room".into(), target.mesh.clone().into());
+    obj.insert("gossip".into(), target.mesh.clone().into());
     if let Some(name) = &target.name {
         obj.insert("name".into(), name.clone().into());
     }
@@ -138,7 +138,7 @@ fn target_json(target: &Target) -> serde_json::Value {
 
 pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let LeaveOpts {
-        room: mesh,
+        gossip: mesh,
         nickname,
         session_pid,
         confirm_timeout_secs,

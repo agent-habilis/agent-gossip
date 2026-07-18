@@ -1,7 +1,7 @@
 //! The blob consumer: redeem a `💬` ticket by dialing the producer's blob
 //! endpoint, presenting the bearer secret, and streaming the content-addressed
 //! bytes to a writer while verifying them against the ticket's SHA-256. Constant
-//! memory — nothing is buffered whole. Standalone: it builds its own participant
+//! memory — nothing is buffered whole. Standalone: it builds its own peer
 //! endpoint and never touches the daemon.
 
 use std::time::{Duration, Instant};
@@ -12,7 +12,7 @@ use iroh::endpoint::Connection;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncWrite, AsyncWriteExt as _};
 
-use crate::lookup::{add_peer_addr, build_participant_endpoint};
+use crate::lookup::{add_peer_addr, build_peer_endpoint};
 use crate::protocol::crypto::{Password, TicketAuth};
 use crate::util::consts::MAX_BLOB_BYTES;
 
@@ -39,7 +39,7 @@ where
     W: AsyncWrite + Unpin,
 {
     let token = auth_token(ticket, password.as_ref())?;
-    let endpoint = build_participant_endpoint(&ticket.lookups).await?;
+    let endpoint = build_peer_endpoint(&ticket.lookups).await?;
     add_peer_addr(&endpoint, ticket.addr.clone())?;
     let result = fetch_over(&endpoint, ticket, &token, out).await;
     endpoint.close().await;

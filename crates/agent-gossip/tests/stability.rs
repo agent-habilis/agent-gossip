@@ -172,7 +172,7 @@ async fn fanout_complete_from_each_origin() {
     }
 }
 
-/// **Roster convergence.** Every node's view of the participant set
+/// **Roster convergence.** Every node's view of the peer set
 /// reaches the full N within a budget — each node surfaces N−1 `joined`
 /// presence events for the other peers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

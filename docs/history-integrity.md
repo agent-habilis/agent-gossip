@@ -58,7 +58,7 @@ proof-of-work and consensus latency — and a single chain would orphan the
 
 ## Identity
 
-Each participant holds a per-mesh **Ed25519 keypair**, separate from the
+Each peer holds a per-mesh **Ed25519 keypair**, separate from the
 transport `EndpointId` and the shared seed-derived rendezvous key (the first
 *per-author* credential in the system).
 
@@ -247,12 +247,12 @@ merge is a union of **verified messages only**.
 - **Pre-join history** is not retroactively authenticated: every backfilled
   message's signature is checked, but a malicious backfiller can mint a fresh
   key and fabricate an entire identity + history you never saw live — you
-  cannot tell it from a real participant who left before you joined. Fixing
+  cannot tell it from a real peer who left before you joined. Fixing
   this would need a creator-rooted roster — omitted.
 - During an active partition/eclipse a node cannot know what it is missing;
   the guarantee is **convergence on heal + detection of malice**, not
   real-time global truth.
-- **Membership is still nickname-keyed.** The participant roster, presence
+- **Membership is still nickname-keyed.** The peer roster, presence
   (`joined`/`left`), and heartbeat (`peer_timeout`/`peer_return`) key on the
   nickname, so two identities sharing a display name **collapse** in the
   roster. Message *authenticity and fork detection* are
@@ -270,7 +270,7 @@ Agents key trust/disambiguation on `pubkey`, not the (non-unique) nickname.
 The JSON event stream gains the field. **(Implemented.)**
 
 ```json
-{"event":"message","id":"uuid","type":"msg","room":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","gossip":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
 ```
 
 A new `fork` event (Phase 2) is emitted once per offending key when

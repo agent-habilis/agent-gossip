@@ -1,4 +1,4 @@
-//! `create` command args: mint and join a new room.
+//! `create` command args: mint and join a new gossip.
 
 use clap::Parser;
 
@@ -14,25 +14,25 @@ pub(crate) struct CreateOpts {
     #[command(flatten)]
     pub shared: SharedServerOpts,
 
-    /// Which lookup mechanisms this room uses (baked into its id, so
+    /// Which lookup mechanisms this gossip uses (baked into its id, so
     /// every joiner inherits them). `create`-only: `join` decodes them.
     #[command(flatten)]
     pub lookups: LookupArgs,
 
-    /// Human-readable room name. Optional — a random word-word name is
+    /// Human-readable gossip name. Optional — a random word-word name is
     /// minted if omitted. 1..=32 UTF-8 characters (any script/emoji),
     /// excluding control characters, whitespace, and any of < > # (reserved
-    /// for the `<nick>`/#room display conventions). Unlike a nickname, a room
+    /// for the `<nick>`/#gossip display conventions). Unlike a nickname, a gossip
     /// name may contain `/` (it is never a filename), so it can be a URL. Bound
-    /// cryptographically into the room identity so joiners who decode the ID
+    /// cryptographically into the gossip identity so joiners who decode the ID
     /// see the same name and a forged ID with a fake name fails to find peers.
     #[arg(long)]
     pub name: Option<MeshName>,
 
-    /// Make the room reachable across machines — sugar for the all-on
+    /// Make the gossip reachable across machines — sugar for the all-on
     /// lookup preset (mDNS + DHT + the default relay ladder). Omitted ⇒
     /// loopback only (the default). Refine with the `--mdns`/`--dht`/
-    /// `--relay` flags; all of it is baked into the room id.
+    /// `--relay` flags; all of it is baked into the gossip id.
     #[arg(long, default_value_t = false)]
     pub public: bool,
 
@@ -43,27 +43,27 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
-    /// List this room in a directory so others can find it with
+    /// List this gossip in a directory so others can find it with
     /// `agent-gossip discover` — no `💬…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
-    /// cross-machine room). Note: advertising broadcasts the full join
-    /// token, so the room becomes open to anyone discovering that directory.
+    /// cross-machine gossip). Note: advertising broadcasts the full join
+    /// token, so the gossip becomes open to anyone discovering that directory.
     /// Absent ⇒ unlisted; bare `--advertise` ⇒ the well-known `global`
     /// directory (the `default_missing_value`); valued ⇒ that named directory.
     #[arg(long, num_args(0..=1), default_missing_value = "global")]
     pub advertise: Option<MeshName>,
 
-    /// Protect the room with a password: the id alone no longer admits —
-    /// joiners must present the password (so a passworded room is safe to
+    /// Protect the gossip with a password: the id alone no longer admits —
+    /// joiners must present the password (so a passworded gossip is safe to
     /// `--advertise`). The id carries only a one-way verifier, never the
     /// password. Pass it inline as `--password=<pw>` (a bare `--password` is
     /// an error: there is no terminal prompt).
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
 
-    /// Make the room invite-only: the bare `💬…` id can no longer join —
+    /// Make the gossip invite-only: the bare `💬…` id can no longer join —
     /// only a creator-minted `🎟️` invite can. The id carries the issuer public
     /// key (the mint authority), never the join secret; mint invites with
     /// `agent-gossip invite`. Combine with `--password` to also password-protect

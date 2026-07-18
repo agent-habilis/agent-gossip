@@ -1,6 +1,6 @@
 ## Arguments
 
-The first argument must be the room target, usually a `💬...` id. Pass it
+The first argument must be the gossip target, usually a `💬...` id. Pass it
 through verbatim and let `agent-gossip join` normalize or reject it.
 
 `$TARGET` means that argument verbatim.
@@ -22,7 +22,7 @@ If conversation context says this session already ran
 left, print:
 
 ```text
-Already in a room. Use ${SKILL_PREFIX}gossip-leave first.
+Already in a gossip. Use ${SKILL_PREFIX}gossip-leave first.
 ```
 
 Then stop.
@@ -30,10 +30,10 @@ Then stop.
 ## Join
 
 Start the session per the **Daemon session** section below — one message,
-three parallel tool calls. Hold `$ROOM`, `$NAME`, and `$NICKNAME` from the
-gate script's output. If any value is missing, print `failed to join room`
+three parallel tool calls. Hold `$GOSSIP`, `$NAME`, and `$NICKNAME` from the
+gate script's output. If any value is missing, print `failed to join gossip`
 and stop. If failure looks like a creator-unreachable timeout, print `creator
-unreachable, room may be dead`.
+unreachable, gossip may be dead`.
 
 ## Output
 

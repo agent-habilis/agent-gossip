@@ -81,7 +81,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             agent_habilis_mesh::util::tuning::init(opts.shared.tuning.tuning());
-            Box::pin(join(opts.room, opts.nickname, opts.password, opts.shared)).await
+            Box::pin(join(opts.gossip, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
             agent_habilis_mesh::util::tuning::init(opts.shared.tuning.tuning());
@@ -255,7 +255,7 @@ async fn join(
                 .as_str()
                 .parse::<Mesh>()
                 .is_ok_and(|mesh| mesh.requires_password())
-                .then_some("room"),
+                .then_some("gossip"),
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
         };
         if let Some(what) = requires {
@@ -362,7 +362,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             .await
         }
         A2aAction::Call {
-            room: mesh,
+            gossip: mesh,
             nickname,
             to,
             method,
@@ -410,7 +410,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
         A2aAction::Status {
-            room: mesh,
+            gossip: mesh,
             nickname,
             task_id,
             state,
@@ -428,7 +428,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
         A2aAction::Artifact {
-            room: mesh,
+            gossip: mesh,
             nickname,
             task_id,
             text,
@@ -542,18 +542,18 @@ fn compose_a2a_params(
     }
 }
 
-/// Query the running daemon's live participant roster. Always emits the
-/// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
+/// Query the running daemon's live peer roster. Always emits the
+/// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
-        room,
+        gossip,
         nickname,
         state_file,
         after,
         long,
         legacy_output: _,
     } = opts;
-    // clap enforces exactly one form: `--state-file`, or `--room` +
+    // clap enforces exactly one form: `--state-file`, or `--gossip` +
     // `--nickname`. The state-file form waits for readiness first so a poll
     // can be armed before the daemon has minted its identity.
     let (mesh, nickname) = if let Some(path) = state_file {
@@ -562,7 +562,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         let missing = |field: &'static str| {
             anyhow::anyhow!("state file {} carries no {field}", path.display())
         };
-        let mesh: MeshId = identity.mesh.ok_or_else(|| missing("room id"))?.parse()?;
+        let mesh: MeshId = identity.mesh.ok_or_else(|| missing("gossip id"))?.parse()?;
         let nick: Nickname = identity
             .nickname
             .ok_or_else(|| missing("nickname"))?
@@ -570,7 +570,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         (mesh, nick)
     } else {
         (
-            room.expect("clap: --room required without --state-file"),
+            gossip.expect("clap: --gossip required without --state-file"),
             nickname.expect("clap: --nickname required without --state-file"),
         )
     };
@@ -584,7 +584,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // Surface it instead of printing a blank line / retrying forever.
         anyhow::ensure!(
             !resp.is_empty(),
-            "room daemon closed the connection without a response (shutting down?)"
+            "gossip daemon closed the connection without a response (shutting down?)"
         );
         // Clean daemon shutdown: end the poll with the truthful empty batch
         // and exit 0 — re-issuing would hit a socket that is about to vanish.
@@ -617,7 +617,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
 /// `--output json` stream once the collection window closes.
 async fn ping(opts: PingOpts) -> Result<()> {
     let PingOpts {
-        room: mesh,
+        gossip: mesh,
         nickname,
         legacy_output: _,
     } = opts;
@@ -635,7 +635,7 @@ async fn ping(opts: PingOpts) -> Result<()> {
 
 async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {
-        room: mesh,
+        gossip: mesh,
         nickname,
         legacy_output: _,
     } = opts;
@@ -672,7 +672,7 @@ fn parse_ttl(raw: Option<&str>) -> Result<u64> {
 /// raw `{ok,invite}` line. Exits non-zero on refusal (e.g. not the creator).
 async fn invite(opts: InviteOpts) -> Result<()> {
     let InviteOpts {
-        room: mesh,
+        gossip: mesh,
         nickname,
         ttl,
         legacy_output: _,
@@ -689,9 +689,9 @@ async fn invite(opts: InviteOpts) -> Result<()> {
 }
 
 /// Print the multihop routing topology (assembled mesh graph) from the running
-/// daemon, as JSON. Backs the `/room:topology` render.
+/// daemon, as JSON.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
-    let cmd = IpcCommand::Topology { mesh: opts.room };
+    let cmd = IpcCommand::Topology { mesh: opts.gossip };
     let resp = ipc::send(&cmd, &opts.nickname).await?;
     println!("{resp}");
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
@@ -706,7 +706,7 @@ async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
 async fn state(opts: StateOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
         StateAction::Merge {
-            room: mesh,
+            gossip: mesh,
             nickname,
             merge,
         } => {
@@ -722,7 +722,7 @@ async fn state(opts: StateOpts) -> Result<()> {
             )
         }
         StateAction::Get {
-            room: mesh,
+            gossip: mesh,
             nickname,
         } => (IpcCommand::StateGet { mesh }, nickname),
     };
@@ -745,7 +745,7 @@ async fn state(opts: StateOpts) -> Result<()> {
 async fn meta(opts: MetaOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
         MetaAction::Merge {
-            room: mesh,
+            gossip: mesh,
             nickname,
             merge,
         } => {
@@ -761,7 +761,7 @@ async fn meta(opts: MetaOpts) -> Result<()> {
             )
         }
         MetaAction::Get {
-            room: mesh,
+            gossip: mesh,
             nickname,
         } => (IpcCommand::MetaGet { mesh }, nickname),
     };
@@ -843,13 +843,13 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
 
 /// Print the session identity as a JSON object for `agent-gossip ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
-/// file yields `{}` rather than `{"room":null,…}` that a caller might splice
+/// file yields `{}` rather than `{"gossip":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
 fn print_ready_identity(state_file: &std::path::Path) {
     let identity = agent_habilis_mesh::daemon::state_file::read_identity(state_file);
     let mut obj = serde_json::Map::new();
     for (key, value) in [
-        ("room", identity.mesh),
+        ("gossip", identity.mesh),
         ("name", identity.name),
         ("nickname", identity.nickname),
         ("topic", identity.topic),

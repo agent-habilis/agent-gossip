@@ -9,8 +9,8 @@ use tokio::sync::{mpsc, watch};
 
 use crate::gossip::event::{NodeEvent, NodeSink};
 use crate::lookup::{
-    add_peer_addr, build_mesh, build_participant_endpoint, build_participant_multihop,
-    relay_ladder, select_bootstrap_rung,
+    add_peer_addr, build_mesh, build_peer_endpoint, build_peer_multihop, relay_ladder,
+    select_bootstrap_rung,
 };
 use crate::protocol::crypto::Password;
 use crate::protocol::mesh::{LookupOpts, Mesh, MeshConfig, MeshName};
@@ -188,16 +188,16 @@ fn unicast_inbox() -> (
     (rx, crate::transport::UnicastAcceptor::new(tx))
 }
 
-/// Build this member's participant endpoint, registering the multi-hop transport
+/// Build this member's peer endpoint, registering the multi-hop transport
 /// (and standing up its underlay) when `--multihop` is set.
 async fn build_member_endpoint(
     build: &SetupBuild<'_>,
 ) -> Result<(Endpoint, Option<iroh_multihop_transport::MultihopHandle>)> {
     if build.multihop {
-        let (endpoint, handle) = build_participant_multihop(build.lookups).await?;
+        let (endpoint, handle) = build_peer_multihop(build.lookups).await?;
         Ok((endpoint, Some(handle)))
     } else {
-        Ok((build_participant_endpoint(build.lookups).await?, None))
+        Ok((build_peer_endpoint(build.lookups).await?, None))
     }
 }
 
@@ -210,7 +210,7 @@ pub struct SetupParams<'a> {
     pub max_peers: usize,
     pub state_file: Option<PathBuf>,
     pub sink: std::sync::Arc<dyn NodeSink>,
-    /// `--multihop`: register the multi-hop custom transport on the participant
+    /// `--multihop`: register the multi-hop custom transport on the peer
     /// endpoint (a second underlay endpoint is stood up for hop-by-hop
     /// forwarding). Off by default on every path.
     pub multihop: bool,
@@ -243,7 +243,7 @@ struct SetupBuild<'a> {
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::transport::UnicastAcceptor,
-    /// Register the multi-hop transport on the participant endpoint.
+    /// Register the multi-hop transport on the peer endpoint.
     multihop: bool,
     rung_tx: &'a watch::Sender<Option<RelayUrl>>,
 }
@@ -546,7 +546,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
     let (endpoint, multihop) = build_member_endpoint(build).await?;
 
     let rdv = rendezvous_params(&mesh, topic_id, build.lookups, build.rung_tx.clone());
-    // Must precede the join: the participant resolves the rendezvous id via
+    // Must precede the join: the peer resolves the rendezvous id via
     // this registered address — the loopback port ladder (loopback-only) or
     // the chosen relay rung (reachable across machines).
     register_rendezvous(&endpoint, &rdv);
@@ -571,7 +571,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         author.as_str(),
         mesh.network_label(),
     );
-    // A topic room announces the raw string, not the derived `#name` — the
+    // A topic gossip announces the raw string, not the derived `#name` — the
     // name is lossy and the string is what a user shares to meet peers.
     sink.emit(NodeEvent::Info(match &topic_string {
         Some(raw_topic) => format!("joined topic {raw_topic} as <{author}>"),

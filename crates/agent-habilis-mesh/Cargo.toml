@@ -49,7 +49,7 @@ iroh.workspace = true
 iroh-gossip.workspace = true
 # The multi-hop iroh custom transport: reach a peer with no direct path by
 # relaying its QUIC packets through intermediate peers. Registered on the
-# participant endpoint (the `--multihop` flag).
+# peer endpoint (the `--multihop` flag).
 iroh-multihop-transport = { path = "../iroh-multihop-transport" }
 bs58.workspace = true
 automerge.workspace = true
@@ -66,7 +66,6 @@ iroh-mainline-address-lookup = "0.4"
 # handshake tokens). default-features off: no `password-hash` string format —
 # we only need the raw `hash_password_into` KDF.
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
-governor = "0.10"
 futures-util = "0.3"
 # End-to-end sealing of directed frames: a NaCl-style sealed box (ephemeral
 # X25519 ECDH → ChaCha20-Poly1305) so only the addressed recipient can read a

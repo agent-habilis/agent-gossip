@@ -3,7 +3,7 @@
 //! up/down bookkeeping, the per-message router (parse → self-echo drop →
 //! rate-check → lifecycle observe → dispatch by kind → message-log), and
 //! `PeerInfo` linking. Outbound/send lives in [`super::broadcast`]; this
-//! layer never touches the participant roster directly — it calls into
+//! layer never touches the peer roster directly — it calls into
 //! `lifecycle::observe` and dispatches by kind.
 
 use std::time::{Duration, Instant};
@@ -73,7 +73,7 @@ pub(crate) async fn handle_gossip_event(
                 tracing::info!("announced arrival on first gossip link");
             }
             // The co-hosted rendezvous is overlay plumbing, not a
-            // participant — never cache its pseudo-node in the
+            // peer — never cache its pseudo-node in the
             // bootstrap set. Transport links are not surfaced at all:
             // arrival is surfaced once, via membership presence
             // (`joined`), keyed by nickname and join-horizon gated.
@@ -115,7 +115,7 @@ pub(crate) async fn handle_gossip_event(
             // Arm the fast reclaim burst only on a real beacon-loss /
             // isolation signal: the rendezvous link dropped, or that
             // was our last tracked peer. A plain HyParView shuffle (a
-            // participant flapping while others remain) must NOT arm
+            // peer flapping while others remain) must NOT arm
             // it, or initial multi-node convergence pays a needless
             // ~6s bind storm on every non-beacon node.
             if is_rendezvous || state.linked_endpoints.is_empty() {
@@ -372,11 +372,11 @@ pub(crate) async fn ingest(
         }
         MessageKind::Pong { to } => {
             // Record arrival for the active round only if addressed to us
-            // and from a known participant — the roster gate bounds the
+            // and from a known peer — the roster gate bounds the
             // map and keeps `responded`/`known` honest against a peer that
             // forges pongs from fabricated authors.
             if to == ctx.author
-                && state.participants.contains(message.author.as_str())
+                && state.peers.contains(message.author.as_str())
                 && let Some(round) = state.ping_round.as_mut()
             {
                 round
@@ -1029,10 +1029,8 @@ async fn handle_peer_info(
     // fresh endpoint replaces the old. The beacon gossips *as* the rendezvous,
     // so it advertises `rendezvous_id` here — record that too, so a joiner can
     // tell its rendezvous link belongs to the beacon's nickname.
-    state
-        .participant_endpoints
-        .insert(message.author.clone(), peer_id);
-    // The rendezvous is overlay plumbing, not a dialable participant peer:
+    state.peer_endpoints.insert(message.author.clone(), peer_id);
+    // The rendezvous is overlay plumbing, not a dialable member peer:
     // the binding above is recorded, but skip the known-endpoints/re-bridge
     // dial path for it.
     if peer_id == ctx.rendezvous_id {

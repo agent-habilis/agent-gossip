@@ -110,7 +110,7 @@ you control. (`RENDEZVOUS_RELAY` / `effective_public_relay` in
 The daemon keeps the recent-message buffer **in memory only**
 (`DEFAULT_MESSAGE_LOG_SIZE = 200`, `src/tuning.rs`) and writes **no
 message bodies to disk**. The only file the daemon creates is an atomic
-session state file (`{mesh, nickname, pid, participant_count, last_updated}`),
+session state file (`{mesh, nickname, pid, peer_count, last_updated}`),
 removed on clean exit (`src/state_file.rs`). IPC responses go over a local socket, not a
 log file.
 
@@ -130,7 +130,7 @@ message log — the full mechanism is its own document,
 [`history-integrity.md`](./history-integrity.md), and summarized in
 [Message-history integrity](#message-history-integrity) below.
 
-In short: each participant holds a per-mesh Ed25519 keypair, every message
+In short: each peer holds a per-mesh Ed25519 keypair, every message
 carries that `pubkey` + a `signature` verified before the message is accepted,
 and **the public key (its fingerprint) is the identity** — the `author`
 nickname is a non-unique display label, never claimed. The transport iroh
@@ -151,7 +151,7 @@ threat-facing summary.
 
 ### Identity: keys, not nicknames
 
-Each participant holds a per-mesh **Ed25519 keypair**, generated on first
+Each peer holds a per-mesh **Ed25519 keypair**, generated on first
 `create`/`join` (in-process / ephemeral today; on-disk persistence is a
 follow-up). The **public key is the identity** — its short **fingerprint** is
 the human-facing id. The nickname is a **non-unique display label**: freely
@@ -202,7 +202,7 @@ model, assembled from standard structures:
   back-links the hash of the author's previous entry. Fork detection (one key,
   two entries at the same `seq`) is the same primitive SSB uses.
 - The cross-author `parents` links form a **Merkle-DAG** — the same shape as
-  a Git commit graph, a Matrix room's event DAG, or Hashgraph — encoding a
+  a Git commit graph, a Matrix gossip's event DAG, or Hashgraph — encoding a
   verifiable *partial* (causal) order instead of forcing a single total order.
 - The whole history is a **grow-only set (a CRDT)** reconciled by gossip
   **anti-entropy**: peers exchange what the other lacks and converge, with no
@@ -248,7 +248,7 @@ than electing a winner (a chat must never silently drop a message):
 - **Not verified pre-join history.** Integrity holds **from your join
   onward**. Every backfilled message's signature is checked, but a malicious
   peer can mint a fresh key and fabricate an entire identity + history you
-  never saw live — indistinguishable from a real participant who left before
+  never saw live — indistinguishable from a real peer who left before
   you arrived. It cannot forge or alter a key you *have* seen. Authenticating
   ancient history would need a creator-rooted roster, which this design omits.
 
@@ -309,7 +309,7 @@ password.
 
 A **topic** mesh (`agent-gossip topic <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses
-the string joins (see `discovery.md` §7). Treat the string like a room
+the string joins (see `discovery.md` §7). Treat the string like a gossip
 password — low entropy means low protection. The topic hash binds the name
 and config into the seed derivation, so an id cannot be tampered into a
 different mesh. That is forgery resistance, **not** access control and

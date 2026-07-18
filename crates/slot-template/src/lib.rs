@@ -166,7 +166,7 @@ fn directive_word(interior: &str) -> &str {
 /// [`Error::UnusedArg`] for an arg with no matching slot,
 /// [`Error::MalformedSlot`] / [`Error::MalformedInclude`] for a directive
 /// that fails the grammar.
-pub fn render(template: &str, args: &[(&str, &str)]) -> Result<String, Error> {
+pub(crate) fn render(template: &str, args: &[(&str, &str)]) -> Result<String, Error> {
     let mut output = String::with_capacity(template.len());
     let mut used = vec![false; args.len()];
     let mut cursor = 0;

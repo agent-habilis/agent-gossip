@@ -28,10 +28,10 @@ use crate::util::tuning::{
 /// throttles (`relink`, `peerinfo`) use.
 const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 
-/// How we currently reach a participant: `Direct` when we hold a live gossip
+/// How we currently reach a peer: `Direct` when we hold a live gossip
 /// link to its self-advertised endpoint, else `Gossip` (relayed). Derived
 /// from `linked_endpoints` without surfacing the node id — see
-/// `participant_endpoints`.
+/// `peer_endpoints`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Reach {
@@ -39,7 +39,7 @@ pub enum Reach {
     Gossip,
 }
 
-/// One participant in a [`RosterSnapshot`]. `last_seen_secs_ago` is
+/// One peer in a [`RosterSnapshot`]. `last_seen_secs_ago` is
 /// `None` until the peer's first heartbeat is timed; `quiet` marks a
 /// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable);
 /// `reach` is `direct` only while we hold a live link to it; `transport`
@@ -56,12 +56,12 @@ pub struct RosterEntry {
     pub transport: crate::transport::Lane,
 }
 
-/// Live participant roster: every known peer (active + quiet) sorted
-/// most-recently-seen first, plus `count == participants.len() + 1` (the
-/// `+1` is self — same definition as the statusline `participant_count`).
+/// Live peer roster: every known peer (active + quiet) sorted
+/// most-recently-seen first, plus `count == peers.len() + 1` (the
+/// `+1` is self — same definition as the statusline `peer_count`).
 #[derive(Debug, Clone, Serialize)]
 pub struct RosterSnapshot {
-    pub participants: Vec<RosterEntry>,
+    pub peers: Vec<RosterEntry>,
     pub count: usize,
 }
 
@@ -73,7 +73,7 @@ pub struct RosterSnapshot {
 ///
 /// The peer-tracking fields are deliberately one-per-layer (see the
 /// Concept Glossary in AGENTS.md): `linked_endpoints` (transport),
-/// `participants` (membership roster), `surfaced` (presentation gate),
+/// `peers` (membership roster), `surfaced` (presentation gate),
 /// `quiet` (heartbeat-evicted). Never conflate them — they are keyed
 /// differently (node id vs nickname) and have different lifetimes.
 #[expect(
@@ -89,7 +89,7 @@ pub struct EventLoopState {
     /// entry for a link that never formed has no `NeighborDown` to remove
     /// it — a permanent ghost that suppressed both (the 2026-06-12
     /// roster-collapse). Bounded by HyParView's `active_view_capacity`.
-    /// Distinct from `participants` — links are asymmetric and node-id
+    /// Distinct from `peers` — links are asymmetric and node-id
     /// keyed; the roster is symmetric and nickname keyed.
     pub linked_endpoints: HashSet<EndpointId>,
     /// Re-bridge memory: every peer `EndpointId` we've ever linked to,
@@ -115,38 +115,38 @@ pub struct EventLoopState {
     /// stay independently reasoned (and a new neighbor still gets exactly one
     /// re-flood).
     pub peerinfo: Cooldown<EndpointId>,
-    /// Membership layer: the participant roster. Nickname-keyed set of
-    /// other participants, feeding the state file's `participant_count`
-    /// (`participants.len() + 1`). Excludes self. Driven by
-    /// `joined`/`left` presence messages (they reach every participant
+    /// Membership layer: the peer roster. Nickname-keyed set of
+    /// other peers, feeding the state file's `peer_count`
+    /// (`peers.len() + 1`). Excludes self. Driven by
+    /// `joined`/`left` presence messages (they reach every peer
     /// via gossip; `NeighborUp`/`PeerInfo` are asymmetric for
     /// bootstrap links), by implicit heartbeats from any received
     /// message (self-heal for a missed Joined), and by the sweeper's
-    /// eviction of participants gone silent past `ALIVE_TIMEOUT_SECS`.
-    pub participants: HashSet<Nickname>,
+    /// eviction of peers gone silent past `ALIVE_TIMEOUT_SECS`.
+    pub peers: HashSet<Nickname>,
     /// Implicit-heartbeat tracker: nickname -> last time we heard
-    /// anything from that participant. Drives sweep-based eviction.
+    /// anything from that peer. Drives sweep-based eviction.
     pub last_seen: HashMap<Nickname, Instant>,
     /// Bridge from membership back to transport: nickname -> the endpoint id
     /// that nickname last self-advertised in a signed `PeerInfo`. That
     /// signature is the only thing tying a nickname to an endpoint (the
     /// signing key is deliberately not the transport key), so this is the one
-    /// place the roster can tell whether a participant is a live link.
+    /// place the roster can tell whether a peer is a live link.
     /// Last-writer-wins (a restart re-advertises a new endpoint under the same
-    /// name). Pruned with `participants`, so it stays bounded by the roster.
+    /// name). Pruned with `peers`, so it stays bounded by the roster.
     /// Feeds only the derived `reach` boolean in `roster_snapshot` — the node
     /// id never leaves this layer.
-    pub participant_endpoints: HashMap<Nickname, EndpointId>,
+    pub peer_endpoints: HashMap<Nickname, EndpointId>,
     /// The mesh's rendezvous endpoint id, once known. Paired with
     /// `rendezvous_linked` so `reach_of` can count the rendezvous link as a
     /// live link to the beacon: the beacon gossips *as* the rendezvous, so a
     /// joiner's only link to it is that pseudo-node link (kept out of
     /// `linked_endpoints` by design). `None` until the loop learns it.
     pub rendezvous_id: Option<EndpointId>,
-    /// Heartbeat layer: participants we've evicted as quiet (silent
+    /// Heartbeat layer: peers we've evicted as quiet (silent
     /// past `ALIVE_TIMEOUT_SECS`) but who may still reappear. Any
     /// message from a nickname in this set triggers a symmetric
-    /// `peer_return` event and re-inclusion in `participants`. Bounded FIFO
+    /// `peer_return` event and re-inclusion in `peers`. Bounded FIFO
     /// (cap `QUIET_CAP`): drained on return, so without the cap a churn /
     /// sybil stream of one-shot nicknames would grow it without bound.
     pub quiet: BoundedFifoSet<Nickname>,
@@ -157,13 +157,13 @@ pub struct EventLoopState {
     /// it stays bounded by `QUIET_CAP`; `roster_snapshot` only reads it for
     /// peers currently in `quiet`, so a stale entry never surfaces.
     pub quiet_since: HashMap<Nickname, Instant>,
-    /// Presentation layer: participants for whom we have *surfaced* an
+    /// Presentation layer: peers for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
-    /// `peer_return`). Gates departure surfacing so a participant whose
+    /// `peer_return`). Gates departure surfacing so a peer whose
     /// join we never showed never produces a `went quiet` / `has left`
     /// line — keeps the join-horizon view symmetric. Presentation-only:
-    /// the roster (`participants`) stays complete for
-    /// anti-entropy/membership; `surfaced ⊆ participants` only governs
+    /// the roster (`peers`) stays complete for
+    /// anti-entropy/membership; `surfaced ⊆ peers` only governs
     /// what the operator/agent is shown.
     pub surfaced: HashSet<Nickname>,
     /// Last time we broadcast anything. Lets idle daemons suppress
@@ -191,7 +191,7 @@ pub struct EventLoopState {
     /// lost into an unconnected overlay; subsequent neighbors only get
     /// a (log-invisible) `PeerInfo` re-send.
     pub announced: bool,
-    /// Set once we have a link to a *real participant* (a non-
+    /// Set once we have a link to a *real peer* (a non-
     /// rendezvous `NeighborUp`). `announced` flips on any neighbor —
     /// including the rendezvous relay — which is too early to deliver
     /// user content (the relay path may not be converged). Outbound
@@ -199,7 +199,7 @@ pub struct EventLoopState {
     /// first message after a join can't be a lost one-shot.
     pub meshed: bool,
     /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
-    /// connection to each addressable participant so a directed message goes
+    /// connection to each addressable peer so a directed message goes
     /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
     /// send helpers reach it through `&EventLoopState`. `new` installs a
     /// detached pool; the real loop replaces it with an endpoint-backed one.
@@ -207,9 +207,9 @@ pub struct EventLoopState {
     /// non-neighbor). See [`crate::transport`].
     pub unicast_pool: crate::transport::UnicastPool,
     /// The multi-hop transport handle, when the `--multihop` flag registered it
-    /// on the participant endpoint. Owns the routing table (fed from received
+    /// on the peer endpoint. Owns the routing table (fed from received
     /// `LinkState` frames) and the underlay endpoint. `None` when multihop is off
-    /// or on a non-participant (beacon/rendezvous) endpoint. See
+    /// or on a non-peer (beacon/rendezvous) endpoint. See
     /// [`iroh_multihop_transport`].
     pub multihop: Option<iroh_multihop_transport::MultihopHandle>,
     /// Monotonic sequence for *our own* emitted link-state vectors, so peers keep
@@ -255,9 +255,9 @@ pub struct EventLoopState {
     /// (`agent-gossip ready`) can gate on a write that means the daemon will answer.
     pub ready: bool,
     /// When advertising (`create --advertise`), the directory's
-    /// re-broadcast task reads the live participant count from here.
-    /// Mirrors `participant_count` (`participants.len() + 1`), refreshed
-    /// alongside every `write_participant_count`. `None` for the common
+    /// re-broadcast task reads the live peer count from here.
+    /// Mirrors `peer_count` (`peers.len() + 1`), refreshed
+    /// alongside every `write_peer_count`. `None` for the common
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
@@ -417,9 +417,9 @@ impl EventLoopState {
             known_endpoints: BoundedFifoSet::new(KNOWN_ENDPOINTS_CAP),
             relink: Cooldown::new(RELINK_COOLDOWN),
             peerinfo: Cooldown::new(RELINK_COOLDOWN),
-            participants: HashSet::new(),
+            peers: HashSet::new(),
             last_seen: HashMap::new(),
-            participant_endpoints: HashMap::new(),
+            peer_endpoints: HashMap::new(),
             rendezvous_id: None,
             quiet: BoundedFifoSet::new(QUIET_CAP),
             quiet_since: HashMap::new(),
@@ -467,12 +467,12 @@ impl EventLoopState {
         }
     }
 
-    /// Write `participant_count = participants.len() + 1` (we add 1
+    /// Write `peer_count = peers.len() + 1` (we add 1
     /// for self) to the state file, if configured, carrying the current
     /// `ready` flag, and mirror the count into the advertise counter, if
     /// present. No-op for neither.
-    pub(crate) fn write_participant_count(&self) {
-        let count = self.participants.len() + 1;
+    pub(crate) fn write_peer_count(&self) {
+        let count = self.peers.len() + 1;
         if let Some(sf) = self.state_file.as_ref() {
             sf.write(count, self.ready);
         }
@@ -481,15 +481,15 @@ impl EventLoopState {
         }
     }
 
-    /// Snapshot the live roster (active participants + quiet evictees),
+    /// Snapshot the live roster (active peers + quiet evictees),
     /// sorted most-recently-seen first. Backs `agent-gossip peers`, the MCP
     /// `mesh_info` roster, and the task sender's target picker /
     /// nickname validation.
     pub fn roster_snapshot(&self) -> RosterSnapshot {
         let now = Instant::now();
         let secs_since = |seen: &Instant| now.duration_since(*seen).as_secs();
-        let mut participants: Vec<RosterEntry> = self
-            .participants
+        let mut peers: Vec<RosterEntry> = self
+            .peers
             .iter()
             .map(|nick| RosterEntry {
                 nickname: nick.clone(),
@@ -511,10 +511,10 @@ impl EventLoopState {
             }))
             .collect();
         // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
-        participants.sort_by_key(|entry| entry.last_seen_secs_ago.unwrap_or(u64::MAX));
+        peers.sort_by_key(|entry| entry.last_seen_secs_ago.unwrap_or(u64::MAX));
         RosterSnapshot {
-            participants,
-            count: self.participants.len() + 1,
+            peers,
+            count: self.peers.len() + 1,
         }
     }
 
@@ -526,13 +526,10 @@ impl EventLoopState {
     /// whose link dropped) reads `Gossip` and flips to `Direct` once its next
     /// advertisement lands.
     fn reach_of(&self, nick: &Nickname) -> Reach {
-        let linked = self
-            .participant_endpoints
-            .get(nick)
-            .is_some_and(|endpoint| {
-                self.linked_endpoints.contains(endpoint)
-                    || (self.rendezvous_id == Some(*endpoint) && self.rendezvous_linked)
-            });
+        let linked = self.peer_endpoints.get(nick).is_some_and(|endpoint| {
+            self.linked_endpoints.contains(endpoint)
+                || (self.rendezvous_id == Some(*endpoint) && self.rendezvous_linked)
+        });
         if linked { Reach::Direct } else { Reach::Gossip }
     }
 
@@ -951,26 +948,22 @@ mod tests {
         let mut state = fresh_state();
         let linked_ep = endpoint_id(1);
         let stale_ep = endpoint_id(2);
-        // A participant whose advertised endpoint is a live link → direct.
-        state.participants.insert(nick("linked"));
-        state
-            .participant_endpoints
-            .insert(nick("linked"), linked_ep);
+        // A peer whose advertised endpoint is a live link → direct.
+        state.peers.insert(nick("linked"));
+        state.peer_endpoints.insert(nick("linked"), linked_ep);
         state.linked_endpoints.insert(linked_ep);
         // Advertised, but the endpoint is not (any longer) a live link → gossip.
-        state.participants.insert(nick("unlinked"));
-        state
-            .participant_endpoints
-            .insert(nick("unlinked"), stale_ep);
+        state.peers.insert(nick("unlinked"));
+        state.peer_endpoints.insert(nick("unlinked"), stale_ep);
         // No PeerInfo seen yet → no binding → gossip.
-        state.participants.insert(nick("unknown"));
+        state.peers.insert(nick("unknown"));
         // Quiet evictees are never live-linked → gossip.
         state.quiet.insert(nick("quiet"));
 
         let snapshot = state.roster_snapshot();
         let reach = |name: &str| {
             snapshot
-                .participants
+                .peers
                 .iter()
                 .find(|entry| entry.nickname.as_str() == name)
                 .unwrap_or_else(|| panic!("{name} missing from roster"))
@@ -991,15 +984,13 @@ mod tests {
         let mut state = fresh_state();
         let rendezvous_ep = endpoint_id(7);
         state.rendezvous_id = Some(rendezvous_ep);
-        state.participants.insert(nick("beacon"));
-        state
-            .participant_endpoints
-            .insert(nick("beacon"), rendezvous_ep);
+        state.peers.insert(nick("beacon"));
+        state.peer_endpoints.insert(nick("beacon"), rendezvous_ep);
 
         let reach = |current: &EventLoopState| {
             current
                 .roster_snapshot()
-                .participants
+                .peers
                 .iter()
                 .find(|entry| entry.nickname.as_str() == "beacon")
                 .expect("beacon in roster")
@@ -1019,17 +1010,17 @@ mod tests {
         let mut state = fresh_state();
         state.meshed = true;
         // Known endpoint while meshed → unicast (the send path would dial it).
-        state.participants.insert(nick("dialable"));
+        state.peers.insert(nick("dialable"));
         state
-            .participant_endpoints
+            .peer_endpoints
             .insert(nick("dialable"), endpoint_id(1));
         // No PeerInfo yet → nothing to dial → unreachable for directed frames.
-        state.participants.insert(nick("unknown"));
+        state.peers.insert(nick("unknown"));
 
         let lane = |current: &EventLoopState, name: &str| {
             current
                 .roster_snapshot()
-                .participants
+                .peers
                 .iter()
                 .find(|entry| entry.nickname.as_str() == name)
                 .unwrap_or_else(|| panic!("{name} missing from roster"))

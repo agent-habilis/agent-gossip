@@ -1,7 +1,7 @@
 //! `doctor` command args: the environment + network diagnostic. With no
-//! `--room` it reports machine health (environment, integrations, network
-//! capability, active rooms); with `--room <💬…>` it analyzes the connection
-//! methods to a specific room.
+//! `--gossip` it reports machine health (environment, integrations, network
+//! capability, active gossips); with `--gossip <💬…>` it analyzes the connection
+//! methods to a specific gossip.
 
 use clap::{Parser, ValueEnum};
 
@@ -19,11 +19,11 @@ pub(crate) enum OutputFormat {
 
 #[derive(Parser, Debug)]
 pub(crate) struct DoctorOpts {
-    /// Analyze a specific room (💬...): decode its declared connection
+    /// Analyze a specific gossip (💬...): decode its declared connection
     /// methods and live-probe which actually reach it. Omit for the
     /// machine-health report.
-    #[arg(long)]
-    pub room: Option<MeshId>,
+    #[arg(long, alias = "room")]
+    pub gossip: Option<MeshId>,
 
     /// Skip the live network probes, reporting only what's known without
     /// touching the network (static decode + local state).
@@ -47,7 +47,7 @@ mod tests {
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.room.is_none());
+        assert!(opts.gossip.is_none());
         assert!(!opts.no_probe);
         assert_eq!(opts.output, OutputFormat::Human);
     }
@@ -57,7 +57,7 @@ mod tests {
         let cli = Cli::parse_from([
             "agent-gossip",
             "doctor",
-            "--room",
+            "--gossip",
             "💬AbCdEf1234",
             "--no-probe",
             "--output",
@@ -66,7 +66,7 @@ mod tests {
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.room.is_some());
+        assert!(opts.gossip.is_some());
         assert!(opts.no_probe);
         assert_eq!(opts.output, OutputFormat::Json);
     }

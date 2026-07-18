@@ -61,7 +61,7 @@ fn warn_on_high_resident_memory(
     }
 }
 
-/// Re-asserts `participant_count` + `last_updated` into the state
+/// Re-asserts `peer_count` + `last_updated` into the state
 /// file so external readers can treat a fresh `last_updated` as
 /// liveness. No-op without `--state-file`.
 ///
@@ -74,8 +74,8 @@ fn warn_on_high_resident_memory(
 /// snapshot which skews `relay`. Gated on `debug` being live so the
 /// per-peer `remote_info` round-trips are skipped at the default level.
 pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoint) {
-    state.write_participant_count();
-    let roster_len = state.participants.len();
+    state.write_peer_count();
+    let roster_len = state.peers.len();
     let link_len = state.linked_endpoints.len();
 
     if state.meshed && link_len == 0 && roster_len > 0 {

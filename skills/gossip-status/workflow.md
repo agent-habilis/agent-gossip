@@ -1,11 +1,11 @@
 ## Guard
 
-If `$ROOM`, `$NAME`, or `$NICKNAME` is missing, follow the **Reattach**
+If `$GOSSIP`, `$NAME`, or `$NICKNAME` is missing, follow the **Reattach**
 section and try to recover the session identity. If that does not yield a
-room, print:
+gossip, print:
 
 ```text
-💬 Not in a room. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -15,11 +15,11 @@ Then stop.
 Run:
 
 ```bash
-agent-gossip peers --room "$ROOM" --nickname "$NICKNAME"
-agent-gossip meta get --room "$ROOM" --nickname "$NICKNAME"
+agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
+agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-Use `participants` from `peers` and `document.peers` from `meta`.
+Use `peers` from `peers` and `document.peers` from `meta`.
 
 ## Output
 
@@ -32,7 +32,7 @@ If there are no peers, print:
 Otherwise print a markdown table:
 
 ```text
-💬 `#$NAME` · $PARTICIPANT_COUNT participants
+💬 `#$NAME` · $PEER_COUNT peers
 
 | peer | transport | model | harness | host | status | last seen |
 | ---- | --------- | ----- | ------- | ---- | ------ | --------- |

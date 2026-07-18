@@ -1,4 +1,4 @@
-//! `discover` command args: browse rooms advertising in a directory.
+//! `discover` command args: browse gossips advertising in a directory.
 //! (The JSON-streaming runtime is [`crate::cli::discover`].)
 
 use clap::Parser;

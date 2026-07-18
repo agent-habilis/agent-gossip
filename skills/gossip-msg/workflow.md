@@ -12,11 +12,11 @@ Then stop.
 
 ## Guard
 
-If `$ROOM` or `$NICKNAME` is missing, follow the **Reattach** section and try
-to recover the session identity. If that does not yield a room, print:
+If `$GOSSIP` or `$NICKNAME` is missing, follow the **Reattach** section and try
+to recover the session identity. If that does not yield a gossip, print:
 
 ```text
-💬 Not in a room. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -26,7 +26,7 @@ Then stop.
 Run:
 
 ```bash
-agent-gossip a2a call --room "$ROOM" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
 ```
 
 Do not reprint the text. The event stream's self echo is the confirmation.

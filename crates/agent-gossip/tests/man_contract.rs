@@ -50,8 +50,11 @@ fn man_prints_manual_to_stdout() {
 /// The manual is the one place the old vocabulary can rot back in unnoticed:
 /// it is 1600 lines of prose with no compiler behind it, and it was already
 /// ~250 uses of "square" out of step with the code before the rename. The
-/// session noun is **room** (see `docs/glossary.md`, `mesh hash`); the product
-/// is **agent-gossip**. Neither spelling of the old name may reappear.
+/// session noun is **gossip** (see `docs/glossary.md`, `mesh hash`); the
+/// membership noun is **peer**; the product is **agent-gossip**. None of the
+/// retired spellings — "square", "room", "participant" — may reappear.
+/// "room" is matched as a whole word so legitimate prose like "headroom"
+/// stays available; the other two are unambiguous as substrings.
 #[test]
 fn manual_carries_no_pre_rename_vocabulary() {
     let output = common::test_cmd()
@@ -71,10 +74,18 @@ fn manual_carries_no_pre_rename_vocabulary() {
         "`agent-gossip man` produced no output"
     );
 
+    let carries_banned_word = |line: &str| {
+        let lower = line.to_lowercase();
+        lower.contains("square")
+            || lower.contains("participant")
+            || lower
+                .split(|ch: char| !ch.is_ascii_alphabetic())
+                .any(|word| word == "room" || word == "rooms")
+    };
     let offenders: Vec<_> = stdout
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.to_lowercase().contains("square"))
+        .filter(|(_, line)| carries_banned_word(line))
         .map(|(number, line)| format!("  {}: {line}", number + 1))
         .collect();
 
