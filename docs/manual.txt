@@ -597,9 +597,13 @@ COMMANDS
 
               A gossip has two channels, state and meta (see meta merge / meta get
               below) — the same machinery, differing only by convention: state is
-              the task working area; meta holds gossip metadata. The binary never
-              writes a channel itself; the only way to change either is a JSON
-              merge.
+              the task working area; meta holds gossip metadata. Every change to
+              a channel — the daemon's own included — is a JSON merge, and on
+              meta no writer touches another member's /peers entry: agents by
+              convention, agent cards enforced by the forgery gate. The daemon
+              is one more writer under that rule; it merges its agent card into
+              its own /peers/<nickname> entry on join and merges the entry away
+              (null) on graceful leave, with the same primitive meta merge uses.
 
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
@@ -654,8 +658,13 @@ COMMANDS
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
               it). The /gossip-status roster reads model/harness/host from here.
-              See state merge / state get above for the full semantics — they
-              apply verbatim to meta.
+              A peer's whole /peers/<nickname> entry is removed when it leaves
+              gracefully. A peer that vanishes without a goodbye (crash, kill)
+              leaves a stale entry behind; it persists until a new session
+              under the same nickname overwrites it (nicknames are never
+              burned) and, eventually, leaves cleanly. See state merge /
+              state get above for the full semantics — they apply verbatim
+              to meta.
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
@@ -961,11 +970,14 @@ JSON EVENTS
                   "self":false}
 
        task_timeout
-              A task crossed its 5-minute idle-debounce timeout and was
-              evicted by the daemon. Marks the tasks widget entry as timed
-              out.
+              A task went terminal without a peer-authored status: it crossed
+              its 5-minute idle-debounce timeout and was evicted by the
+              daemon (reason "timeout"), or its counterparty left the gossip
+              gracefully and the task was canceled on the spot (reason
+              "peer-left"). Marks the tasks widget entry as timed out.
 
-                 {"event":"task_timeout","task_id":"<uuid>"}
+                 {"event":"task_timeout","task_id":"<uuid>",
+                  "reason":"timeout"|"peer-left"}
 
        state  The gossip's shared state changed (see the state command). Carries
               the change (merge — the applied merge document) AND the newly-

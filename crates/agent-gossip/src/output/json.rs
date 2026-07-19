@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
-use super::{OutputEvent, PingPeer, TaskMessageLeg};
+use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
 use agent_habilis_mesh::protocol::{Message, MessageKind, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
@@ -56,6 +56,7 @@ pub(super) enum SimpleEvent<'a> {
     },
     TaskTimeout {
         task_id: &'a str,
+        reason: TaskGoneReason,
     },
     Info {
         message: &'a str,
@@ -717,9 +718,12 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 is_self: *is_self,
             }));
         }
-        OutputEvent::TaskTimeout { task_id } => serde_json::to_string(&SimpleEvent::TaskTimeout {
-            task_id: task_id.as_str(),
-        }),
+        OutputEvent::TaskTimeout { task_id, reason } => {
+            serde_json::to_string(&SimpleEvent::TaskTimeout {
+                task_id: task_id.as_str(),
+                reason: *reason,
+            })
+        }
         OutputEvent::Presence { msg } => {
             let MessageKind::Presence { subtype } = &msg.kind else {
                 return None;

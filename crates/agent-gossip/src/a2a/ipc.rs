@@ -351,7 +351,7 @@ pub(crate) async fn handle_ipc_command(
                 },
             )
             .await;
-            let (response, broadcast) = state_merge_response(outcome);
+            let (response, broadcast) = state_merge_response(outcome.map(|_| ()));
             let _ = resp_tx.send(response);
             broadcast
         }
@@ -376,7 +376,7 @@ pub(crate) async fn handle_ipc_command(
                 },
             )
             .await;
-            let (response, broadcast) = state_merge_response(outcome);
+            let (response, broadcast) = state_merge_response(outcome.map(|_| ()));
             let _ = resp_tx.send(response);
             broadcast
         }

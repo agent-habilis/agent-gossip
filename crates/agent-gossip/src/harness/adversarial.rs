@@ -115,8 +115,9 @@ impl CraftedMsg {
         let merge = serde_json::json!({ "peers": { victim: { "card": fake_card } } });
         // `build_change` composes the change without the gate (the gate lives in
         // `ingest`), exactly as a malicious peer bypassing our write path would.
+        // The attacker picks its own actor seed; the nickname bytes serve.
         let change = agent_habilis_mesh::daemon::doc::MeshDoc::new(true)
-            .build_change(&merge, &author)
+            .build_change(&merge, author.as_str().as_bytes())
             .expect("forge change builds")
             .expect("forge merge is not a no-op");
         let body = agent_habilis_mesh::daemon::state_doc::change_body(&change, None)

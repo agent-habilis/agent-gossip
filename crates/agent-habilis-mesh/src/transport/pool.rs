@@ -166,6 +166,19 @@ impl UnicastPool {
         }
         Ok(())
     }
+
+    /// Drop `eid`'s pooled connection and dial-failure cooldown: the peer left
+    /// gracefully, so neither may serve or block a future dial (a rejoin
+    /// re-dials cold). The connection is closed explicitly — `Connection` is a
+    /// cheap clone handle, and in-flight spawned writers hold clones, so just
+    /// dropping the map entry would leave the QUIC connection open until every
+    /// clone drops.
+    pub(crate) async fn forget(&self, eid: EndpointId) {
+        if let Some(conn) = self.inner.conns.lock().await.remove(&eid) {
+            conn.close(0u32.into(), b"peer left");
+        }
+        self.inner.dial_failures.lock().await.remove(&eid);
+    }
 }
 
 /// Whether `eid`'s last dial failed inside the [`DIAL_FAILURE_COOLDOWN`]
@@ -246,5 +259,27 @@ mod tests {
             !failures.contains_key(&bob),
             "the stale entry is cleared, not retained"
         );
+    }
+
+    /// A graceful `Left` forgets the peer's pool slots: the dial cooldown is
+    /// cleared so a rejoin dials immediately, and forgetting an unknown
+    /// endpoint is a no-op. (Closing a warm `Connection` needs a live
+    /// endpoint pair; that path is covered by the network suite.)
+    #[tokio::test]
+    async fn forget_clears_the_cooldown_and_tolerates_absence() {
+        let pool = super::UnicastPool::disconnected();
+        let bob = endpoint_id(1);
+        pool.inner
+            .dial_failures
+            .lock()
+            .await
+            .insert(bob, Instant::now());
+
+        pool.forget(bob).await;
+
+        assert!(pool.inner.dial_failures.lock().await.is_empty());
+        assert!(pool.inner.conns.lock().await.is_empty());
+        // Absent endpoint: nothing to drop, nothing panics.
+        pool.forget(endpoint_id(2)).await;
     }
 }

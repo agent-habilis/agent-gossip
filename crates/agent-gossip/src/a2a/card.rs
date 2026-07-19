@@ -181,6 +181,15 @@ pub(crate) fn publish_merge(nickname: &Nickname, card: &AgentCard) -> serde_json
     })
 }
 
+/// The RFC 7386 merge that retracts this member's whole `/peers/<nick>` meta
+/// entry — card, endpoint hint, and self-reported agent facts — on graceful
+/// leave. Only the entry's owner can author it: the card-forgery gate rejects
+/// the same delete from anyone else.
+#[must_use]
+pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
+    serde_json::json!({ "peers": { nickname.as_str(): null } })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{own_card, publish_merge};
@@ -237,6 +246,16 @@ mod tests {
         assert!(
             merge["peers"]["calm-otter"].get("model").is_none(),
             "agent-side facts are the agent's own merge, not the daemon's"
+        );
+    }
+
+    #[test]
+    fn retract_merge_nulls_the_whole_peer_entry() {
+        let merge = super::retract_merge(&Nickname::from("calm-otter"));
+        assert_eq!(
+            merge,
+            serde_json::json!({ "peers": { "calm-otter": null } }),
+            "an RFC 7386 null must delete the entry itself, not a subtree"
         );
     }
 }

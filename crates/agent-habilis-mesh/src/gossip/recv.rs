@@ -432,6 +432,7 @@ pub(crate) async fn ingest(
                     surfaceable,
                 },
                 state,
+                app,
                 ctx,
             )
             .await;

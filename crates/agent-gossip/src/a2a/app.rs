@@ -277,6 +277,24 @@ impl A2aApp {
             waiter.responder.send_timeout();
         }
     }
+
+    /// Resolve every parked A2A call to `peer` with a peer-left error, now —
+    /// the response can never arrive. The graceful-`Left` analogue of
+    /// [`Self::expire_a2a_waiters`].
+    pub(crate) fn fail_a2a_waiters_for_peer(&mut self, peer: &Nickname) {
+        let survivors: Vec<A2aWaiter> = std::mem::take(&mut self.a2a_waiters)
+            .into_iter()
+            .filter_map(|waiter| {
+                if waiter.peer == *peer {
+                    waiter.responder.send_peer_left(peer);
+                    None
+                } else {
+                    Some(waiter)
+                }
+            })
+            .collect();
+        self.a2a_waiters = survivors;
+    }
 }
 
 /// How a fulfilled/expired gossip A2A call's response is delivered, per
@@ -312,7 +330,17 @@ impl A2aResponder {
 
     /// Deliver a timeout (no response arrived before the deadline).
     pub(crate) fn send_timeout(self) {
-        let message = "a2a request timed out (peer unreachable or slow)";
+        self.send_error("a2a request timed out (peer unreachable or slow)");
+    }
+
+    /// Deliver a peer-left error (the addressee broadcast a graceful `Left`,
+    /// so no response can come).
+    pub(crate) fn send_peer_left(self, peer: &Nickname) {
+        self.send_error(&format!("a2a peer '{peer}' left the mesh"));
+    }
+
+    /// Fail the call with `-32000` and `message`, in each transport's shape.
+    fn send_error(self, message: &str) {
         match self {
             A2aResponder::Ipc(tx) => {
                 let _ = tx.send(
@@ -368,6 +396,7 @@ pub(crate) struct A2aWaiter {
 #[cfg(test)]
 mod tests {
     use super::{A2aResponder, rpc_result_from_body};
+    use agent_habilis_mesh::protocol::Nickname;
 
     /// The localhost binding's `A2aResponder::Rpc` unwraps a peer's JSON-RPC
     /// response body into the `Result<Value, RpcError>` its HTTP handler
@@ -407,6 +436,42 @@ mod tests {
         assert_eq!(
             timeout_rx.blocking_recv().unwrap().unwrap_err().code,
             -32000
+        );
+    }
+
+    /// A graceful `Left` resolves exactly the departed peer's parked calls —
+    /// with a peer-left error, immediately — and leaves other peers' waiters
+    /// parked for their own deadlines.
+    #[test]
+    fn peer_left_fails_only_that_peers_waiters() {
+        let mut app = super::A2aApp::new();
+        let far = tokio::time::Instant::now() + std::time::Duration::from_mins(5);
+        let (bob_tx, bob_rx) = tokio::sync::oneshot::channel();
+        let (carol_tx, carol_rx) = tokio::sync::oneshot::channel();
+        app.a2a_waiters.push(super::A2aWaiter {
+            corr: agent_habilis_mesh::protocol::CorrId::from("corr-bob"),
+            peer: Nickname::from("bob"),
+            deadline: far,
+            responder: A2aResponder::Typed(bob_tx),
+        });
+        app.a2a_waiters.push(super::A2aWaiter {
+            corr: agent_habilis_mesh::protocol::CorrId::from("corr-carol"),
+            peer: Nickname::from("carol"),
+            deadline: far,
+            responder: A2aResponder::Typed(carol_tx),
+        });
+
+        app.fail_a2a_waiters_for_peer(&Nickname::from("bob"));
+
+        let bob_response = bob_rx.blocking_recv().expect("bob's call resolves now");
+        assert_eq!(bob_response["error"]["code"], -32000);
+        assert_eq!(bob_response["error"]["message"], "a2a peer 'bob' left the mesh");
+        assert_eq!(app.a2a_waiters.len(), 1, "carol's waiter survives");
+        assert_eq!(app.a2a_waiters[0].peer, Nickname::from("carol"));
+        drop(app);
+        assert!(
+            carol_rx.blocking_recv().is_err(),
+            "carol's waiter was never resolved, only dropped with the app"
         );
     }
 }

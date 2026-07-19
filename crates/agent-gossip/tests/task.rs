@@ -14,6 +14,7 @@ use agent_gossip_test_fixtures as common;
 
 use std::time::Duration;
 
+use agent_gossip::events::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
@@ -122,6 +123,61 @@ async fn full_lifecycle_worker_completes_after_approval() {
 
     alice.leave().await;
     bob.leave().await;
+}
+
+/// A worker's graceful leave cancels the initiator's live task immediately —
+/// surfaced as `task_timeout` with reason `peer-left`, long before the idle
+/// debounce could fire — and a follow-up call to the departed peer fails fast
+/// as an unknown peer instead of parking for its full deadline (the roster
+/// gate's live-task bypass must not extend to terminal records).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
+    let mut alice = InProcNode::create("t-left").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-left-bob").await;
+    alice.send("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+
+    let resp = alice.create_task("t-left-bob", "doomed work").await;
+    let task_id = task_id_of(&resp);
+    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    bob.task_status(&task_id, TaskState::Working, Some("on it"))
+        .await;
+    assert!(
+        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        "initiator never saw the worker accept"
+    );
+
+    bob.leave().await;
+
+    assert!(
+        alice
+            .wait_for(TASK_WAIT, |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        OutputEvent::TaskTimeout {
+                            reason: TaskGoneReason::PeerLeft,
+                            ..
+                        }
+                    )
+                })
+            })
+            .await,
+        "the worker's leave never canceled the live task"
+    );
+
+    // The record is terminal, so the roster gate applies again: the departed
+    // peer is unknown and the call fails now, not at its deadline.
+    let followup = alice
+        .a2a_call(
+            "t-left-bob",
+            "GetTask",
+            serde_json::json!({ "id": task_id.as_str() }),
+        )
+        .await;
+    assert_eq!(followup["error"]["code"], -32602, "got: {followup}");
+
+    alice.leave().await;
 }
 
 /// The state the **worker** serves from its own registry for `task_id`. The

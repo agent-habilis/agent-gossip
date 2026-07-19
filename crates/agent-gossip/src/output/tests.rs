@@ -294,15 +294,31 @@ fn task_progress_event_json_shape() {
 
 #[test]
 fn task_timeout_event_json_shape() {
-    use super::OutputEvent;
+    use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
     let json = super::json::event_json(&OutputEvent::TaskTimeout {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        reason: TaskGoneReason::Timeout,
     })
     .expect("task_timeout event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "task_timeout");
     assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["reason"], "timeout");
+}
+
+#[test]
+fn task_peer_left_event_json_shape() {
+    use super::{OutputEvent, TaskGoneReason};
+    use crate::a2a::TaskId;
+    let json = super::json::event_json(&OutputEvent::TaskTimeout {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        reason: TaskGoneReason::PeerLeft,
+    })
+    .expect("task_timeout event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_timeout");
+    assert_eq!(parsed["reason"], "peer-left");
 }
 
 // ── peer_timeout / peer_return shape ───────────────────────

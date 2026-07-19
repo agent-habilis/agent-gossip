@@ -188,18 +188,21 @@ impl MeshDoc {
     /// before feeding the bytes back through [`MeshDoc::ingest`] to apply them,
     /// so an oversize change never lands in the doc it could not be gossiped for.
     ///
+    /// `actor_seed` must be unique per session — the daemon passes its signing
+    /// public key (see [`actor_for`]).
+    ///
     /// # Errors
     /// Unrepresentable merge (a non-object at the document root).
     pub fn build_change(
         &self,
         merge: &Value,
-        author: &Nickname,
+        actor_seed: &[u8],
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let Value::Object(_) = merge else {
             anyhow::bail!("merge must be a JSON object (automerge's document root is a map)");
         };
         let mut fork = self.doc.fork();
-        fork.set_actor(actor_for(author));
+        fork.set_actor(actor_for(actor_seed));
         let heads = fork.get_heads();
         {
             let mut tx = fork.transaction();
@@ -362,12 +365,21 @@ fn peers_genesis() -> Change {
         .expect("genesis produced exactly one change")
 }
 
-/// Derive a stable automerge [`ActorId`](automerge::ActorId) from a nickname so
-/// a member's concurrent same-key writes resolve deterministically. Authenticity
-/// is the signed envelope's job, not the actor id — this only stabilizes
-/// automerge's own conflict tie-break.
-fn actor_for(author: &Nickname) -> automerge::ActorId {
-    automerge::ActorId::from(author.as_str().as_bytes())
+/// Derive a stable automerge [`ActorId`](automerge::ActorId) from a
+/// per-session seed (the daemon passes its signing public key) so a member's
+/// concurrent same-key writes resolve deterministically. Authenticity is the
+/// signed envelope's job, not the actor id — this only stabilizes automerge's
+/// own conflict tie-break.
+///
+/// The seed must NOT be the nickname: automerge numbers each actor's changes
+/// sequentially, so a rejoined session (fresh doc, seq restarting at 1) under
+/// a nickname-derived actor collides with its predecessor's history and every
+/// replica rejects its writes as `DuplicateSeqNumber` equivocation. The
+/// session identity is minted fresh per run, which makes it exactly
+/// session-unique. (If identity ever persists across restarts, the seed must
+/// grow a per-run component, since the docs start empty each run.)
+fn actor_for(seed: &[u8]) -> automerge::ActorId {
+    automerge::ActorId::from(seed)
 }
 
 /// Apply an RFC 7386 object merge into the map `obj`: recurse into object
@@ -539,10 +551,18 @@ mod tests {
     }
 
     /// Author a merge on `doc` (build + ingest, as the daemon does) and return
-    /// the signed frame to hand to a peer.
+    /// the signed frame to hand to a peer. The actor seed is the nickname —
+    /// fine for single-session tests; a test spanning two sessions of one
+    /// nickname must use [`author_as`] with distinct seeds.
     fn author(doc: &mut MeshDoc, who: &Nickname, merge: &Value) -> Message {
+        author_as(doc, who, who.as_str().as_bytes(), merge)
+    }
+
+    /// [`author`] with an explicit per-session actor seed, as the daemon
+    /// derives from its signing key.
+    fn author_as(doc: &mut MeshDoc, who: &Nickname, seed: &[u8], merge: &Value) -> Message {
         let bytes = doc
-            .build_change(merge, who)
+            .build_change(merge, seed)
             .expect("merge applies")
             .expect("merge is not a no-op");
         let carrier = frame(who, &bytes);
@@ -661,7 +681,7 @@ mod tests {
         let merge = json!({"secret": "value"});
         let author_doc = MeshDoc::new(false).with_key(Some(zeroize::Zeroizing::new(key)));
         let bytes = author_doc
-            .build_change(&merge, &alice)
+            .build_change(&merge, alice.as_str().as_bytes())
             .expect("builds")
             .expect("not a no-op");
         let (wire, _plain) = author_doc
@@ -726,7 +746,7 @@ mod tests {
         let own_bytes = alice_doc
             .build_change(
                 &json!({"peers": {"alice": {"card": {"name": "alice"}}}}),
-                &alice,
+                alice.as_str().as_bytes(),
             )
             .expect("builds")
             .expect("not a no-op");
@@ -734,5 +754,126 @@ mod tests {
             alice_doc.ingest(&frame(&alice, &own_bytes)),
             Ingested::Applied { .. }
         ));
+    }
+
+    #[test]
+    fn self_entry_delete_passes_gate_foreign_delete_is_rejected() {
+        // The leave-time retraction: a peer nulls its own `/peers/<nick>`
+        // entry. The gate must let the owner do it and refuse anyone else —
+        // which is why departed peers can only ever be pruned by themselves.
+        let (alice, bob) = (nick("alice"), nick("bob"));
+
+        // Craft on one ungated replica so deps are satisfied: alice's card,
+        // then alice's own retraction.
+        let mut source = MeshDoc::new(false);
+        let alice_card = author(
+            &mut source,
+            &alice,
+            &json!({"peers": {"alice": {"card": {"name": "alice"}, "model": "m1"}}}),
+        );
+        let self_delete = author(&mut source, &alice, &json!({"peers": {"alice": null}}));
+
+        let mut victim = MeshDoc::new(true);
+        assert!(matches!(victim.ingest(&alice_card), Ingested::Applied { .. }));
+        assert!(matches!(
+            victim.ingest(&self_delete),
+            Ingested::Applied { .. }
+        ));
+        assert_eq!(
+            victim.to_json().pointer("/peers/alice"),
+            None,
+            "the whole entry — card and agent facts — is gone"
+        );
+
+        // The same delete authored by bob alters alice's card → rejected, and
+        // alice's entry survives on the gated replica.
+        let mut foreign_source = MeshDoc::new(false);
+        let card_frame = author(
+            &mut foreign_source,
+            &alice,
+            &json!({"peers": {"alice": {"card": {"name": "alice"}}}}),
+        );
+        let foreign_delete = author(
+            &mut foreign_source,
+            &bob,
+            &json!({"peers": {"alice": null}}),
+        );
+        let mut gated = MeshDoc::new(true);
+        assert!(matches!(gated.ingest(&card_frame), Ingested::Applied { .. }));
+        assert!(matches!(gated.ingest(&foreign_delete), Ingested::Rejected));
+        assert_eq!(
+            gated.to_json().pointer("/peers/alice/card/name"),
+            Some(&json!("alice"))
+        );
+    }
+
+    /// The rejoin-after-retraction shape: a replica holds a peer's card and
+    /// its self-delete; a *fresh* session (same nickname, new signing key →
+    /// new actor seed, no shared history beyond genesis) publishes a new
+    /// card. The concurrent re-add must survive the merge on both sides — a
+    /// departed nickname is never burned. This is exactly why the actor seed
+    /// is the session key, not the nickname: a nickname-derived actor makes
+    /// the new session's seq-1 change collide with the old session's and
+    /// every replica rejects it as `DuplicateSeqNumber` equivocation.
+    #[test]
+    fn fresh_republish_survives_a_prior_self_delete() {
+        let alice = nick("alice");
+
+        // Old session: card, then the leave-time retraction.
+        let mut old_session = MeshDoc::new(true);
+        let old_card = author_as(
+            &mut old_session,
+            &alice,
+            b"alice-session-key-old",
+            &json!({"peers": {"alice": {"card": {"name": "alice", "session": "old"}}}}),
+        );
+        let retraction = author_as(
+            &mut old_session,
+            &alice,
+            b"alice-session-key-old",
+            &json!({"peers": {"alice": null}}),
+        );
+
+        // A staying peer applied both.
+        let mut host = MeshDoc::new(true);
+        assert!(matches!(host.ingest(&old_card), Ingested::Applied { .. }));
+        assert!(matches!(host.ingest(&retraction), Ingested::Applied { .. }));
+        assert_eq!(host.to_json().pointer("/peers/alice"), None);
+
+        // New session: fresh doc, fresh key, deps = genesis only.
+        let mut new_session = MeshDoc::new(true);
+        let new_card = author_as(
+            &mut new_session,
+            &alice,
+            b"alice-session-key-new",
+            &json!({"peers": {"alice": {"card": {"name": "alice", "session": "new"}}}}),
+        );
+
+        // Both directions converge on the new card.
+        let outcome = host.ingest(&new_card);
+        assert!(
+            matches!(outcome, Ingested::Applied { .. }),
+            "expected applied, got {outcome:?}"
+        );
+        assert_eq!(
+            host.to_json().pointer("/peers/alice/card/session"),
+            Some(&json!("new")),
+            "the fresh publish must survive the earlier delete: {}",
+            host.to_json()
+        );
+        assert!(matches!(
+            new_session.ingest(&old_card),
+            Ingested::Applied { .. }
+        ));
+        assert!(matches!(
+            new_session.ingest(&retraction),
+            Ingested::Applied { .. }
+        ));
+        assert_eq!(
+            new_session.to_json().pointer("/peers/alice/card/session"),
+            Some(&json!("new")),
+            "backfilling the old history must not erase the new card: {}",
+            new_session.to_json()
+        );
     }
 }

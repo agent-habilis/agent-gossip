@@ -642,13 +642,19 @@ async fn shutdown<A: NodeDriver>(
 ) {
     // Release app-owned resources (fail parked app waiters, close the
     // blob-serving endpoint whose store spool is dropped with it).
-    app.on_shutdown(state).await;
+    app.on_shutdown(state, ctx).await;
     if let Some(sf) = state.state_file.as_ref() {
         sf.remove();
     }
     ctx.sink
         .emit(NodeEvent::Info(format!("left {}", quit.leave_label)));
     lifecycle::log_leaving(quit.name.as_str());
+    // The `Left` rides gossip only — deliberately NOT mirrored over unicast
+    // (unlike the meta retraction in `on_shutdown`): presence drives the
+    // survivors' rendezvous fast-reclaim, and a `Left` that lands while a
+    // survivor's gossip still holds the dying beacon's link re-stands the
+    // beacon into a stale connection and stalls (iroh-gossip#10; see the
+    // post-departure-join test's SIGKILL choreography).
     gossip::broadcast_msg(
         ctx.sender,
         &Message::new_left(ctx.mesh, ctx.author).signed(&state.identity),

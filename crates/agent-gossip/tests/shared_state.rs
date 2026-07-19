@@ -530,3 +530,153 @@ async fn agent_cards_publish_to_meta_on_join() {
     alice.leave().await;
     bob.leave().await;
 }
+
+/// A graceful leave retracts the leaver's whole `/peers/<nick>` meta entry —
+/// daemon card and self-reported agent facts alike — on the remaining
+/// replicas, and a later joiner backfills the deletion, not the ghost entry.
+/// The leaver is a joiner, not the creator: a departed creator also takes the
+/// rendezvous beacon with it for ~36s, which is the handoff's own test.
+///
+/// The retraction is broadcast AND mirrored over the unicast plane
+/// (`gossip::unicast_farewell`), so it outlives a silently-linkless overlay;
+/// the test still proves the leaver→host path live right before the leave so
+/// a failure indicts the retraction, not the warmup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graceful_leave_retracts_meta_entry() {
+    let mut host = InProcNode::create_with_nick("ss-retract", "retract-host").await;
+    let mut leaver = InProcNode::join(&host.mesh, "retract-leaver").await;
+    host.send("link").await;
+    assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "leaver meshed");
+
+    // Before the leave the entry holds both writers' data: the daemon's card
+    // and an agent fact.
+    leaver
+        .meta_merge(json!({"peers": {"retract-leaver": {"model": "test-model"}}}))
+        .await;
+    assert!(
+        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+            doc.pointer("/peers/retract-leaver/card").is_some()
+                && doc.pointer("/peers/retract-leaver/model") == Some(&json!("test-model"))
+        })
+        .await,
+        "the host never derived the leaver's full entry: {}",
+        host.meta_get().await
+    );
+
+    // Prove the leaver→host overlay path is live *now*, so the farewell
+    // frames that follow ride a link that demonstrably works.
+    leaver.send("goodbye-imminent").await;
+    assert!(
+        host.wait_body("goodbye-imminent", MSG_TIMEOUT).await,
+        "leaver→host path was not live before the leave"
+    );
+
+    leaver.leave().await;
+
+    // The retraction is delivered on two planes (gossip broadcast + the
+    // unicast farewell mirror), so unlike the best-effort `Left` it survives
+    // a silently-linkless overlay at leave time.
+    assert!(
+        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+            doc.pointer("/peers/retract-leaver").is_none()
+        })
+        .await,
+        "the leaver's meta entry survived its graceful leave: {}",
+        host.meta_get().await
+    );
+
+    // A late joiner backfills the log *including* the deletion: once it holds
+    // the host's card the docs have converged, and the leaver's entry must
+    // not be part of that view. The warmup send is retried: a frame sent into
+    // the post-join overlay flap is dropped for good (chat frames heal by
+    // anti-entropy, but only once a link exists to run it over).
+    let mut late = InProcNode::join(&host.mesh, "retract-late").await;
+    let mut meshed = false;
+    for attempt in 0..3 {
+        host.send(&format!("relink-{attempt}")).await;
+        if late
+            .wait_body(&format!("relink-{attempt}"), MSG_TIMEOUT)
+            .await
+        {
+            meshed = true;
+            break;
+        }
+    }
+    assert!(meshed, "late joiner never meshed");
+    assert!(
+        wait_doc(&late, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+            doc.pointer("/peers/retract-host/card").is_some()
+                && doc.pointer("/peers/retract-leaver").is_none()
+        })
+        .await,
+        "the late joiner backfilled the ghost entry instead of the deletion: {}",
+        late.meta_get().await
+    );
+
+    host.leave().await;
+    late.leave().await;
+}
+
+/// Rejoining under the same nickname after a graceful leave republishes the
+/// card: the fresh publish is a real change on top of the retraction, not a
+/// no-op swallowed by a stale "already published" view.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn meta_entry_returns_after_rejoin() {
+    let mut host = InProcNode::create_with_nick("ss-rejoin", "rejoin-host").await;
+    let mut leaver = InProcNode::join(&host.mesh, "rejoin-peer").await;
+    host.send("link").await;
+    assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "peer meshed");
+
+    assert!(
+        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+            doc.pointer("/peers/rejoin-peer/card").is_some()
+        })
+        .await,
+        "the host never derived the peer's card"
+    );
+    // Same live-path proof as `graceful_leave_retracts_meta_entry`.
+    leaver.send("goodbye-imminent").await;
+    assert!(
+        host.wait_body("goodbye-imminent", MSG_TIMEOUT).await,
+        "leaver→host path was not live before the leave"
+    );
+    leaver.leave().await;
+    assert!(
+        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+            doc.pointer("/peers/rejoin-peer").is_none()
+        })
+        .await,
+        "the retraction never reached the host: {}",
+        host.meta_get().await
+    );
+
+    // Same nickname, fresh identity/replica — the delete-then-republish case.
+    // The rejoin can land while the host's gossip still holds the dead
+    // session's stale link (the retraction mirror makes the leave→rejoin gap
+    // sub-second), so the joiner may only integrate on the next heal tick —
+    // retry the warmup instead of trusting the first frame.
+    let mut returned = InProcNode::join(&host.mesh, "rejoin-peer").await;
+    let mut meshed = false;
+    for attempt in 0..3 {
+        host.send(&format!("welcome-back-{attempt}")).await;
+        if returned
+            .wait_body(&format!("welcome-back-{attempt}"), MSG_TIMEOUT)
+            .await
+        {
+            meshed = true;
+            break;
+        }
+    }
+    assert!(meshed, "the returned peer never meshed");
+    assert!(
+        wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
+            doc.pointer("/peers/rejoin-peer/card").is_some()
+        })
+        .await,
+        "the rejoined peer's card never re-appeared: {}",
+        host.meta_get().await
+    );
+
+    returned.leave().await;
+    host.leave().await;
+}

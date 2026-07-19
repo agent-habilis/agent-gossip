@@ -64,6 +64,20 @@ impl NodeApp for A2aApp {
         // unchanged.
         publish_own_card(state, ctx).await;
     }
+
+    async fn on_peer_left(
+        &mut self,
+        nickname: &Nickname,
+        _state: &mut EventLoopState,
+        _ctx: &HandlerCtx<'_>,
+    ) {
+        // Clone the render sink into a local so it doesn't alias the `&mut
+        // self` passed alongside it. Tasks first, then waiters: a waiter must
+        // never resolve while its task record is still live.
+        let out = self.output.clone();
+        crate::a2a::task::fail_tasks_for_departed_peer(&mut self.tasks, nickname, &out);
+        self.fail_a2a_waiters_for_peer(nickname);
+    }
 }
 
 #[async_trait::async_trait]
@@ -93,8 +107,12 @@ impl NodeDriver for A2aApp {
         crate::a2a::send::send_shard_repair_requests(ctx.mesh, ctx.author, state, ctx.sender).await;
     }
 
-    async fn on_shutdown(&mut self, _state: &mut EventLoopState) {
-        // Empty out any parked A2A-call waiters first so a held call returns a
+    async fn on_shutdown(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+        // Retract our meta entry first so the merge frame is queued ahead of
+        // `Left` and rides the same propagation window the engine sleeps after
+        // this hook.
+        retract_own_meta_entry(state, ctx).await;
+        // Empty out any parked A2A-call waiters so a held call returns a
         // clean timeout, then close the blob-serving endpoint (dropping its
         // store removes the `<nick>.blobs/` spool).
         self.close_a2a_waiters();
@@ -227,11 +245,11 @@ impl NodeDriver for A2aApp {
     }
 }
 
-/// Publish this member's `AgentCard` at meta `/peers/<nick>/card` — the one
-/// channel write the daemon path itself makes (documented glossary exception:
-/// the card is the peer's canonical A2A self-description, architectural rather
-/// than app state). Unmeshed it buffers/backfills like any state event;
-/// agent-side facts (model/harness/host) stay the agent's merge.
+/// Publish this member's `AgentCard` at meta `/peers/<nick>/card` — one of the
+/// daemon's two [`merge_own_meta_entry`] lifecycle merges (the card is the
+/// peer's canonical A2A self-description, architectural rather than app
+/// state). Unmeshed it buffers/backfills like any state event; agent-side
+/// facts (model/harness/host) stay the agent's merge.
 async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
     let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
@@ -242,7 +260,41 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let mut merge = crate::a2a::card::publish_merge(ctx.author, &card);
     merge["peers"][ctx.author.as_str()]["card"]["endpoint"] =
         crate::a2a::card::endpoint_hint(ctx.endpoint);
-    if let Err(error) = agent_habilis_mesh::gossip::broadcast_state_merge(
+    merge_own_meta_entry(state, ctx, merge, false).await;
+}
+
+/// Delete this member's whole `/peers/<nick>` meta entry on graceful leave —
+/// [`publish_own_card`]'s counterpart. Only self-retraction exists: the
+/// card-forgery gate rejects the delete from any other author, so a peer that
+/// dies without a goodbye leaves a stale entry that persists until a new
+/// session under the same nickname (identity is per-session; nicknames are
+/// never burned) overwrites it and eventually leaves cleanly. A foreign
+/// non-card write racing the delete can survive the merge (add wins), but
+/// peers only ever write their own subtree.
+async fn retract_own_meta_entry(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    let merge = crate::a2a::card::retract_merge(ctx.author);
+    merge_own_meta_entry(state, ctx, merge, true).await;
+}
+
+/// The daemon's write path for its own `/peers/<nick>` meta entry. The daemon
+/// is an ordinary channel writer bound by the same rule as its agent — author
+/// only your own subtree, as an RFC 7386 merge through the one shared
+/// pipeline (`broadcast_state_merge`). It makes exactly two lifecycle merges:
+/// the card publish on join/re-mesh and the whole-entry retraction on
+/// graceful leave. Best-effort — a failure is logged, never blocks the
+/// lifecycle edge that triggered it.
+///
+/// `farewell` mirrors the signed frame over the unicast plane — the
+/// retraction only: a leave-time frame dropped into a silently-linkless
+/// overlay dies with the leaver, and anti-entropy can never heal it (see
+/// `gossip::unicast_farewell`).
+async fn merge_own_meta_entry(
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+    merge: serde_json::Value,
+    farewell: bool,
+) {
+    match agent_habilis_mesh::gossip::broadcast_state_merge(
         state,
         agent_habilis_mesh::gossip::StateMergeParams {
             mesh: ctx.mesh,
@@ -251,14 +303,20 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
             sender: ctx.sender,
             sink: ctx.sink,
             channel: Channel::Meta,
-            // Internal plumbing: the agent didn't write this, so don't surface it as
-            // a "you changed shared state" event (nor race a fetch long-poll).
+            // Daemon plumbing: the agent didn't write this, so don't surface it
+            // as a "you changed shared state" event (nor race a fetch long-poll).
             surface: false,
         },
     )
     .await
     {
-        tracing::warn!(%error, "failed to publish this member's agent card");
+        Ok(Some(bytes)) if farewell => {
+            agent_habilis_mesh::gossip::unicast_farewell(state, &bytes);
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(%error, "own /peers entry merge failed");
+        }
     }
 }
 

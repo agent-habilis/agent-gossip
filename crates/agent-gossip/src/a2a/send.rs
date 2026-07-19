@@ -1146,14 +1146,19 @@ pub(crate) async fn broadcast_a2a_call(
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
     };
-    // Fast-fail an unknown peer, EXCEPT when we already hold a task with
-    // this peer: a follow-up / read / cancel into a live task must survive a
-    // brief roster flap (the waiter's timeout is the feedback if the peer is
-    // truly gone), so it isn't wedged. Task creation (we hold no task with the
-    // peer yet) and any read/cancel to a peer we share no task with still
-    // require the peer present — method-agnostic, so `SendStreamingMessage`
-    // creates gate the same as `SendMessage`.
-    let party_to_a_task = app.tasks.values().any(|rec| rec.peer == peer);
+    // Fast-fail an unknown peer, EXCEPT when we already hold a **live** task
+    // with this peer: a follow-up / read / cancel into a live task must
+    // survive a brief roster flap (the waiter's timeout is the feedback if
+    // the peer is truly gone), so it isn't wedged. A terminal record — the
+    // peer left, timed out, or the task completed — no longer justifies
+    // parking a new call for its full deadline. Task creation (we hold no
+    // task with the peer yet) and any read/cancel to a peer we share no task
+    // with still require the peer present — method-agnostic, so
+    // `SendStreamingMessage` creates gate the same as `SendMessage`.
+    let party_to_a_task = app
+        .tasks
+        .values()
+        .any(|rec| rec.peer == peer && !rec.state.is_terminal());
     if !party_to_a_task && !state.peers.contains(peer.as_str()) {
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
@@ -1480,7 +1485,7 @@ pub(crate) async fn handle_session_request(
             )
             .await;
             let sent = outcome.is_ok();
-            let _ = resp.send(outcome);
+            let _ = resp.send(outcome.map(|_| ()));
             sent
         }
         SessionRequest::StateGet { resp } => {
@@ -1502,7 +1507,7 @@ pub(crate) async fn handle_session_request(
             )
             .await;
             let sent = outcome.is_ok();
-            let _ = resp.send(outcome);
+            let _ = resp.send(outcome.map(|_| ()));
             sent
         }
         SessionRequest::MetaGet { resp } => {

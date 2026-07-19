@@ -447,7 +447,7 @@ pub(crate) async fn tick_task_sweep(
         if let Some(rec) = app.tasks.get_mut(&task_id) {
             rec.state = TaskState::Canceled;
         }
-        out.task_timeout(&task_id);
+        out.task_timeout(&task_id, output::TaskGoneReason::Timeout);
         tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
         let update = gossip::status_update(
             ctx.mesh,
@@ -492,6 +492,27 @@ pub(crate) async fn tick_task_sweep(
     app.tasks.retain(|_, rec| {
         !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
     });
+}
+
+/// Terminally cancel every non-terminal task whose counterparty broadcast a
+/// graceful `Left` — its next leg can never arrive, so waiting out the idle
+/// debounce only delays the inevitable. No wire broadcast, unlike the sweep's
+/// eviction: task records are strictly per-pair (third-party relays never
+/// insert), and the only other holder just left. Freezing the record also
+/// stops [`tick_task_keepalive`] (`should_keepalive` gates on non-terminal),
+/// and the frozen record ages into [`tick_task_sweep`]'s GC as usual.
+pub(crate) fn fail_tasks_for_departed_peer(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    peer: &Nickname,
+    out: &output::Output,
+) {
+    for (task_id, rec) in tasks.iter_mut() {
+        if rec.peer == *peer && !rec.state.is_terminal() {
+            rec.state = TaskState::Canceled;
+            out.task_timeout(task_id, output::TaskGoneReason::PeerLeft);
+            tracing::debug!(%task_id, %peer, "task canceled (peer left)");
+        }
+    }
 }
 
 /// Emit a beat (keepalive) status for every live task whose ball we hold,
@@ -664,6 +685,49 @@ mod tests {
             mine,
             fraction: None,
         }
+    }
+
+    /// The graceful-`Left` cancel pass hits exactly the departed peer's live
+    /// tasks: another peer's task and an already-terminal record with the
+    /// departed peer are both untouched.
+    #[test]
+    fn peer_left_cancels_only_that_peers_live_tasks() {
+        let now = Instant::now();
+        let departed = Nickname::from("calm-otter");
+        let offer = |task_id: &'static str, peer: &'static str| LegInfo {
+            task_id: Box::leak(Box::new(TaskId::from(task_id))),
+            peer: Box::leak(Box::new(Nickname::from(peer))),
+            kind: LegKind::Offer,
+            mine: false,
+            fraction: None,
+        };
+        let live_id = "550e8400-e29b-41d4-a716-446655440001";
+        let staying_id = "550e8400-e29b-41d4-a716-446655440002";
+        let done_id = "550e8400-e29b-41d4-a716-446655440003";
+
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &offer(live_id, "calm-otter"), now);
+        apply(&mut tasks, &offer(staying_id, "drift-oak"), now);
+        apply(&mut tasks, &offer(done_id, "calm-otter"), now);
+        tasks.get_mut(&TaskId::from(done_id)).unwrap().state = TaskState::Completed;
+
+        let out = crate::output::Output::silent();
+        super::fail_tasks_for_departed_peer(&mut tasks, &departed, &out);
+
+        assert_eq!(
+            tasks[&TaskId::from(live_id)].state,
+            TaskState::Canceled,
+            "the departed peer's live task is canceled"
+        );
+        assert!(
+            !tasks[&TaskId::from(staying_id)].state.is_terminal(),
+            "another peer's task is untouched"
+        );
+        assert_eq!(
+            tasks[&TaskId::from(done_id)].state,
+            TaskState::Completed,
+            "a terminal record is frozen, not rewritten to canceled"
+        );
     }
 
     /// Regression for findings ① (daemon panic) + ② (state divergence): a

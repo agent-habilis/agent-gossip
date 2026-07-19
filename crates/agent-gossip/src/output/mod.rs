@@ -8,7 +8,7 @@ mod json;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use crate::events::{OutputEvent, PingPeer};
+pub(crate) use crate::events::{OutputEvent, PingPeer, TaskGoneReason};
 pub(crate) use json::is_visible;
 use json::{
     SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
@@ -335,19 +335,22 @@ impl Output {
         );
     }
 
-    /// A task crossed its idle-debounce timeout and was evicted by the
+    /// A task went terminal without a peer-authored status: evicted by the
     /// daemon's per-task silence sweep (the task analogue of
-    /// [`peer_timeout`](Self::peer_timeout)). JSON mode emits a `task_timeout`
-    /// event for the widget.
-    pub(crate) fn task_timeout(&self, task_id: &TaskId) {
+    /// [`peer_timeout`](Self::peer_timeout)) or canceled because its
+    /// counterparty left. JSON mode emits a `task_timeout` event for the
+    /// widget; `reason` says which trigger fired.
+    pub(crate) fn task_timeout(&self, task_id: &TaskId, reason: TaskGoneReason) {
         self.dispatch(
             || OutputEvent::TaskTimeout {
                 task_id: task_id.clone(),
+                reason,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
                     &SimpleEvent::TaskTimeout {
                         task_id: task_id.as_str(),
+                        reason,
                     },
                     false,
                 ),

@@ -524,12 +524,21 @@ Each mesh carries **two channels**, `state` and `meta` — the same machinery
 `/peers/<nick> = { model, harness, host }` that each agent self-reports (`host`
 is the machine's self-reported hostname). `meta` alone gates **card forgery**
 (see [state doc](#state-doc)) and seeds a deterministic `/peers` container so
-concurrent per-peer writes merge. With exactly one exception the binary never
-writes a channel itself: the daemon publishes its own **card** at meta
-`/peers/<nick>/card` on join (architectural peer self-description, not app
-state). Every other change is `agent-gossip state merge` / `agent-gossip meta merge`. A change
-surfaces as the `state` / `meta` event, carrying both the merge and the
-newly-derived document.
+concurrent per-peer writes merge. A channel has one write primitive — the RFC
+7386 merge, translated into one automerge change — and `meta` adds one
+authorship rule: a member writes only its own `/peers/<nick>` subtree (agents
+by convention, cards enforced by the forgery gate). The daemon is an ordinary
+writer under that rule, making two lifecycle merges of its own: it merges its
+**card** into `/peers/<nick>/card` on join (architectural peer
+self-description, not app state) and merges the whole entry away on graceful
+leave. Only the entry's own nickname can author that retraction — the card
+gate refuses it from any other author — so a peer that dies without a goodbye
+leaves a stale entry behind. Identity is per-session (a dead session's key
+never returns), but nicknames are never burned: the stale entry persists until
+a new session under the same nickname overwrites the card and, eventually,
+leaves cleanly. Agent writes are `agent-gossip state merge` /
+`agent-gossip meta merge`. A change surfaces as the `state` / `meta` event,
+carrying both the merge and the newly-derived document.
 
 Code: `daemon::doc::MeshDoc`, `protocol::Channel`, `OutputEvent::StateChanged`.
 

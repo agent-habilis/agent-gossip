@@ -14,6 +14,7 @@ use std::time::Instant;
 
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
+use crate::gossip::app::NodeApp;
 use crate::gossip::event::NodeEvent;
 use crate::protocol::{Message, MessageKind, PresenceSubtype};
 
@@ -135,6 +136,7 @@ pub(crate) struct PresenceEvent<'a> {
 pub(crate) async fn handle_presence(
     event: PresenceEvent<'_>,
     state: &mut EventLoopState,
+    app: &mut dyn NodeApp,
     ctx: &HandlerCtx<'_>,
 ) {
     let PresenceEvent {
@@ -150,7 +152,12 @@ pub(crate) async fn handle_presence(
         if state.peers.remove(message.author.as_str()) {
             state.write_peer_count();
         }
-        state.peer_endpoints.remove(message.author.as_str());
+        // A graceful goodbye, unlike a silence timeout, drops the dial hint —
+        // and with it the warm unicast connection and any dial cooldown, so a
+        // rejoin re-dials cold.
+        if let Some(endpoint_id) = state.peer_endpoints.remove(message.author.as_str()) {
+            state.unicast_pool.forget(endpoint_id).await;
+        }
         state.quiet.remove(message.author.as_str());
         // Only announce a departure for a peer whose arrival we
         // surfaced — keeps the join-horizon view symmetric. A `left`
@@ -161,6 +168,12 @@ pub(crate) async fn handle_presence(
                 msg: Box::new(message.clone()),
             });
             tracing::info!(nickname = %message.author, "peer left");
+        }
+        // App cleanup last, with the roster already consistent. Gated on
+        // `surfaceable`: a relayed pre-join `Left` must never cancel live
+        // work — the same join-horizon symmetry as the announcement above.
+        if surfaceable {
+            app.on_peer_left(&message.author, state, ctx).await;
         }
     } else if subtype == PresenceSubtype::Joined && update.joined_new {
         // Re-announce so late joiners seed their roster.

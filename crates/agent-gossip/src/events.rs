@@ -60,6 +60,7 @@ pub enum OutputEvent {
     },
     TaskTimeout {
         task_id: TaskId,
+        reason: TaskGoneReason,
     },
     StateChanged {
         channel: agent_habilis_mesh::protocol::Channel,
@@ -73,4 +74,13 @@ pub enum OutputEvent {
 pub struct PingPeer {
     pub nickname: Nickname,
     pub rtt_ms: u64,
+}
+
+/// Why a task left the live set without a peer-authored terminal status:
+/// the idle-debounce sweep, or its counterparty's graceful `Left`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskGoneReason {
+    Timeout,
+    PeerLeft,
 }

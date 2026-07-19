@@ -128,13 +128,17 @@ pub struct StateMergeParams<'a> {
 /// internal plumbing, not something the agent did, so it must not appear as a
 /// "you changed shared state" event (nor race into a `fetch_messages` long-poll).
 ///
+/// Returns the signed wire bytes that were gossiped (`None` for a no-op
+/// merge), so a shutdown-path caller can mirror them over the unicast plane
+/// ([`unicast_farewell`]).
+///
 /// # Errors
 /// Unrepresentable merge, oversize frame, a rejected foreign-card write, or a
 /// broadcast refusal.
 pub async fn broadcast_state_merge(
     state: &mut EventLoopState,
     params: StateMergeParams<'_>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Bytes>> {
     use crate::daemon::doc::Ingested;
 
     let StateMergeParams {
@@ -149,12 +153,16 @@ pub async fn broadcast_state_merge(
 
     // 1. Build the change on a fork (no live mutation yet); a no-op merge is a
     //    silent success.
+    // The actor seed is the session's signing key, not the nickname: a
+    // rejoined session under a nickname-derived actor would collide seq
+    // numbers with its predecessor's history (see `doc::actor_for`).
+    let actor_seed = *state.identity.public().as_bytes();
     let built = match channel {
-        Channel::State => state.state_doc.build_change(&merge, author)?,
-        Channel::Meta => state.meta_doc.build_change(&merge, author)?,
+        Channel::State => state.state_doc.build_change(&merge, &actor_seed)?,
+        Channel::Meta => state.meta_doc.build_change(&merge, &actor_seed)?,
     };
     let Some(change_bytes) = built else {
-        return Ok(());
+        return Ok(None);
     };
 
     // 2. Compose + sign + size-gate before the change touches the live doc.
@@ -184,7 +192,7 @@ pub async fn broadcast_state_merge(
     };
     let after = match ingested {
         Ingested::Applied { doc, .. } => doc,
-        Ingested::Duplicate => return Ok(()),
+        Ingested::Duplicate => return Ok(None),
         Ingested::Rejected => {
             anyhow::bail!("write rejected: a member may only write its own /peers/<nick>/card")
         }
@@ -206,18 +214,51 @@ pub async fn broadcast_state_merge(
             is_self: true,
         });
     }
+    let bytes = Bytes::from(bytes);
     if state.meshed {
         sender
-            .broadcast(Bytes::from(bytes))
+            .broadcast(bytes.clone())
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     } else {
         // Unmeshed: buffer until we mesh. (The change is already in the local
         // doc, so heads anti-entropy still reconciles it if the buffer is
         // full.)
-        state.pending_outbound.push((signed, Bytes::from(bytes)));
+        state.pending_outbound.push((signed, bytes.clone()));
     }
-    Ok(())
+    Ok(Some(bytes))
+}
+
+/// Mirror a farewell frame over the unicast plane to every rostered peer —
+/// fire-and-forget dials racing the shutdown propagation sleep. The gossip
+/// overlay can be silently linkless (a post-join flap heals in seconds, but a
+/// leaver exits first), and a farewell that dies with the leaver can never be
+/// healed by anti-entropy — no live replica holds it. Receiver-side dedup
+/// makes the double delivery a no-op; the unicast acceptor feeds the same
+/// `ingest` path as gossip. Spawned dials that outlive the shutdown window
+/// die with the endpoint — still best-effort, just no longer single-path.
+///
+/// For channel-event farewells (the meta retraction) ONLY — never presence:
+/// a mirrored `Left` from a beacon host can land while a survivor's gossip
+/// still holds the dying beacon's link, and the presence-driven fast-reclaim
+/// then re-stands the beacon into a stale connection and stalls
+/// (iroh-gossip#10).
+pub fn unicast_farewell(state: &EventLoopState, bytes: &Bytes) {
+    for (nick, endpoint_id) in &state.peer_endpoints {
+        // The rendezvous pseudo-node is never a directed target, and a
+        // quiet/ghost peer's stale hint isn't worth a dial at shutdown.
+        if state.rendezvous_id == Some(*endpoint_id) || !state.peers.contains(nick) {
+            continue;
+        }
+        let pool = state.unicast_pool.clone();
+        let endpoint_id = *endpoint_id;
+        let bytes = bytes.clone();
+        tokio::spawn(async move {
+            if let Err(error) = pool.dial_and_send(endpoint_id, bytes).await {
+                tracing::debug!(target: "agent_gossip::gossip", %error, "unicast farewell mirror failed");
+            }
+        });
+    }
 }
 
 /// Broadcast a `PeerInfo` carrying our endpoint address so peers can

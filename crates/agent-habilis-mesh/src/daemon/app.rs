@@ -53,11 +53,13 @@ pub trait NodeDriver: NodeApp {
 
     /// Graceful-shutdown hook: release app-owned resources and fail parked
     /// waiters. Runs after the engine has closed its own poll waiters, before
-    /// the daemon removes the state file and broadcasts `Left`.
+    /// the daemon removes the state file and broadcasts `Left` — so this is
+    /// the app's last chance to broadcast a farewell that rides the same
+    /// propagation window as `Left`.
     ///
     /// Defaults to a no-op.
-    async fn on_shutdown(&mut self, state: &mut EventLoopState) {
-        let _ = state;
+    async fn on_shutdown(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+        let _ = (state, ctx);
     }
 
     /// The earliest app-owned request deadline, for the loop's timer arm
