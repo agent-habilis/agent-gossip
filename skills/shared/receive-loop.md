@@ -40,9 +40,10 @@ two sequential messages:
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
    Launch it through the harness's background facility, the command as the
-   task's own foreground process — no trailing `&`. It blocks until an
-   unserved event needs your attention, then exits. Its exit is the only
-   signal you need.
+   task's own foreground process — no trailing `&`. On Pi that facility is
+   the `process` tool: action `start` with `alertOnSuccess: true`, same as
+   the session-start bell. It blocks until an unserved event needs your
+   attention, then exits. Its exit is the only signal you need.
 
 Handle the content batch per the **Event handling** section, then reply. The
 daemon's read cursor makes the pair safe in either execution order: an event
