@@ -20,3 +20,8 @@ node_modules/
 *.log
 *.sock
 *.pid
+
+# Agent-session scratch at the repo root (plan-file / plan-file-todo output)
+/todo.md
+/plan.md
+/*-plan.md
