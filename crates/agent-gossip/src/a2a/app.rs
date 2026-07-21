@@ -465,7 +465,10 @@ mod tests {
 
         let bob_response = bob_rx.blocking_recv().expect("bob's call resolves now");
         assert_eq!(bob_response["error"]["code"], -32000);
-        assert_eq!(bob_response["error"]["message"], "a2a peer 'bob' left the mesh");
+        assert_eq!(
+            bob_response["error"]["message"],
+            "a2a peer 'bob' left the mesh"
+        );
         assert_eq!(app.a2a_waiters.len(), 1, "carol's waiter survives");
         assert_eq!(app.a2a_waiters[0].peer, Nickname::from("carol"));
         drop(app);

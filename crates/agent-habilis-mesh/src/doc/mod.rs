@@ -774,7 +774,10 @@ mod tests {
         let self_delete = author(&mut source, &alice, &json!({"peers": {"alice": null}}));
 
         let mut victim = MeshDoc::new(true);
-        assert!(matches!(victim.ingest(&alice_card), Ingested::Applied { .. }));
+        assert!(matches!(
+            victim.ingest(&alice_card),
+            Ingested::Applied { .. }
+        ));
         assert!(matches!(
             victim.ingest(&self_delete),
             Ingested::Applied { .. }
@@ -799,7 +802,10 @@ mod tests {
             &json!({"peers": {"alice": null}}),
         );
         let mut gated = MeshDoc::new(true);
-        assert!(matches!(gated.ingest(&card_frame), Ingested::Applied { .. }));
+        assert!(matches!(
+            gated.ingest(&card_frame),
+            Ingested::Applied { .. }
+        ));
         assert!(matches!(gated.ingest(&foreign_delete), Ingested::Rejected));
         assert_eq!(
             gated.to_json().pointer("/peers/alice/card/name"),
