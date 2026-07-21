@@ -1,19 +1,14 @@
 ## Generic adapter
 
-Directory discovery has no poll API because it does not join a gossip. In a
-shell-only harness, run a bounded foreground discovery and parse its JSON stdout:
+Directory discovery has no poll API because it does not join a gossip. Run:
 
 ```bash
-agent-gossip discover [--directory DIR]
+agent-gossip discover [--directory DIR] --window-secs 25
 ```
 
-Stop the command after a short collection window if the harness supports command
-timeouts. Use only complete JSON lines printed by the command; do not read logs.
-
-If the harness cannot bound or interrupt a foreground command, print:
-
-```text
-💬 Discovery needs a cancellable foreground command or the Monitor tool.
-Ask whoever runs the gossip for its `💬…` id and use
-`${SKILL_PREFIX}gossip-join <id>` directly.
-```
+The command exits on its own when the window closes — no harness timeout or
+kill needed. If the harness can run it in the background and poll its interim
+output, poll every few seconds and apply the **Selection** rule as soon as the
+first `gossip_found` appears; otherwise run it in the foreground and read its
+output when it exits. Use only complete JSON lines printed by the command; do
+not read logs.

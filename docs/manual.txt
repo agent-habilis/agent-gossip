@@ -60,7 +60,7 @@ SYNOPSIS
 
        agent-gossip ready --state-file PATH [--timeout-secs N]
 
-       agent-gossip discover [--directory DIRECTORY]
+       agent-gossip discover [--directory DIRECTORY] [--window-secs N]
                   [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self]
@@ -678,13 +678,19 @@ COMMANDS
 
        discover [OPTIONS]
               Browse gossips advertising themselves in a directory.
-              Long-running. Streams one gossip_found / gossip_lost line per
-              directory change and never auto-joins; pick an identifier and
-              call join yourself.
+              Long-running by default; --window-secs bounds it. Streams one
+              gossip_found / gossip_lost line per directory change and never
+              auto-joins; pick an identifier and call join yourself.
 
               --directory DIRECTORY
                      Directory to browse. Omit for global. Must match the
                      directory the advertiser passed to --advertise.
+
+              --window-secs N
+                     Collect for N seconds, then exit 0 (found or not). The
+                     window starts once the directory session is up;
+                     advertisers re-broadcast every 20 seconds, so 25 sees
+                     every live listing. Omit to stream until interrupted.
 
               --public | --mdns | --dht | --relay[=URLS]
                      Lookup allowlist for reaching the directory. Naming none

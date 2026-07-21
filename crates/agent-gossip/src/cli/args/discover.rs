@@ -17,6 +17,13 @@ pub(crate) struct DiscoverOpts {
     #[arg(long)]
     pub directory: Option<MeshName>,
 
+    /// Exit on our own after listening this many seconds (bounded collection
+    /// window; exit code 0 whether or not anything was found). Omit to stream
+    /// until interrupted. The window starts once the directory session is up.
+    /// Advertisers re-broadcast every 20s, so 25 sees every live listing.
+    #[arg(long)]
+    pub window_secs: Option<u64>,
+
     /// Lookups used to reach the directory (`--mdns`/`--dht`/`--relay`).
     /// Naming none (or `--public`) uses all three; naming any restricts to
     /// those (a disabled leg makes no network requests). Must match the
@@ -43,40 +50,60 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
     use agent_habilis_mesh::protocol::mesh::MeshName;
 
+    fn discover_opts(args: &[&str]) -> super::DiscoverOpts {
+        match Cli::parse_from(args).command {
+            Commands::Discover { opts } => opts,
+            Commands::Create { .. }
+            | Commands::Join { .. }
+            | Commands::Topic { .. }
+            | Commands::Poll { .. }
+            | Commands::Ping { .. }
+            | Commands::Mcp { .. }
+            | Commands::Man
+            | Commands::Peers { .. }
+            | Commands::State { .. }
+            | Commands::Meta { .. }
+            | Commands::Topology { .. }
+            | Commands::A2a { .. }
+            | Commands::Ready { .. }
+            | Commands::Plug { .. }
+            | Commands::Unplug { .. }
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Invite { .. }
+            | Commands::Session { .. } => panic!("expected Discover"),
+        }
+    }
+
     #[test]
     fn discover_parses_directory() {
-        fn directory_of(args: &[&str]) -> Option<MeshName> {
-            match Cli::parse_from(args).command {
-                Commands::Discover { opts } => opts.directory,
-                Commands::Create { .. }
-                | Commands::Join { .. }
-                | Commands::Topic { .. }
-                | Commands::Poll { .. }
-                | Commands::Ping { .. }
-                | Commands::Mcp { .. }
-                | Commands::Man
-                | Commands::Peers { .. }
-                | Commands::State { .. }
-                | Commands::Meta { .. }
-                | Commands::Topology { .. }
-                | Commands::A2a { .. }
-                | Commands::Ready { .. }
-                | Commands::Plug { .. }
-                | Commands::Unplug { .. }
-                | Commands::Doctor { .. }
-                | Commands::Leave { .. }
-                | Commands::Invite { .. }
-                | Commands::Session { .. } => panic!("expected Discover"),
-            }
-        }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).
-        assert!(directory_of(&["agent-gossip", "discover"]).is_none());
+        assert!(
+            discover_opts(&["agent-gossip", "discover"])
+                .directory
+                .is_none()
+        );
         // `--directory` is decoded into a MeshName.
         assert_eq!(
-            directory_of(&["agent-gossip", "discover", "--directory", "gamedev"])
+            discover_opts(&["agent-gossip", "discover", "--directory", "gamedev"])
+                .directory
                 .as_ref()
                 .map(MeshName::as_str),
             Some("gamedev")
+        );
+    }
+
+    #[test]
+    fn discover_parses_window_secs() {
+        // Omitted ⇒ stream until interrupted (today's behavior).
+        assert!(
+            discover_opts(&["agent-gossip", "discover"])
+                .window_secs
+                .is_none()
+        );
+        assert_eq!(
+            discover_opts(&["agent-gossip", "discover", "--window-secs", "25"]).window_secs,
+            Some(25)
         );
     }
 }

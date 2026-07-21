@@ -14,7 +14,8 @@ use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};
 
 /// Browse a directory, streaming `gossip_found`/`gossip_lost` JSON lines until
-/// interrupted (SIGINT or SIGTERM).
+/// interrupted (SIGINT or SIGTERM) or, with `--window-secs`, until the window
+/// closes.
 pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // Reach the directory over the chosen lookups (default all-on). Must
     // match the lookups the advertiser used — an mDNS-only advertiser is
@@ -33,12 +34,31 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
         .events()
         .expect("discoverer events receiver is available exactly once");
 
+    // Pinned once: recreating the sleep inside `select!` would restart the
+    // window on every event.
+    let window = async {
+        match opts.window_secs {
+            Some(secs) => tokio::time::sleep(std::time::Duration::from_secs(secs)).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(window);
+
     // One JSON line per directory change until interrupted (SIGINT or
-    // SIGTERM — see `interrupted`).
+    // SIGTERM — see `interrupted`) or the collection window closes.
     let mut sigterm = sigterm_stream();
     loop {
         tokio::select! {
             () = interrupted(&mut sigterm) => break,
+            () = &mut window => {
+                // The window bounds listening, not printing: flush events
+                // already buffered in the channel so a listing that arrived
+                // moments before the deadline is not silently dropped.
+                while let Ok(change) = events.try_recv() {
+                    println!("{}", discover_event_json(&change));
+                }
+                break;
+            }
             received = events.recv() => match received {
                 Some(change) => println!("{}", discover_event_json(&change)),
                 None => break,

@@ -197,3 +197,82 @@ fn discover_stops_on_sigterm() {
         "discover did not exit within 5s of SIGTERM (hang regressed)"
     );
 }
+
+/// `discover --window-secs N` still streams events but exits 0 on its own
+/// once the window closes — no signal, no external kill.
+#[test]
+fn discover_window_exits_on_its_own() {
+    let adv_log = tmp_log("win-adv");
+    let adv_file = File::create(&adv_log).unwrap();
+    let mut advertiser = test_cmd()
+        .args([
+            "create",
+            "--advertise",
+            // Own directory so this runs in parallel with the other
+            // directory tests (a shared private directory derives the
+            // same loopback ports → contention).
+            "wintest",
+            "--nickname",
+            "adv",
+        ])
+        .args(common::flag_args(&DIR_FLAGS))
+        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
+        .stderr(Stdio::from(adv_file))
+        .spawn()
+        .expect("spawn advertiser");
+    let ready = wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT);
+    let Some(ready) = ready else {
+        reap(&mut advertiser);
+        panic!("advertiser never became ready");
+    };
+    let ready: serde_json::Value = serde_json::from_str(&ready).expect("ready json");
+    let listed_id = ready["gossip"].as_str().expect("mesh id").to_string();
+
+    // Window wide enough for directory join + one 2s ad cycle even when the
+    // sibling directory tests run in parallel (contended loopback ladder).
+    let disc_log = tmp_log("win-disc");
+    let disc_file = File::create(&disc_log).unwrap();
+    let mut discoverer = test_cmd()
+        .args(["discover", "--directory", "wintest", "--window-secs", "30"])
+        .args(common::flag_args(&DIR_FLAGS))
+        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
+        .stderr(Stdio::from(disc_file))
+        .spawn()
+        .expect("spawn discoverer");
+
+    // The bounded run must still surface the advertised mesh.
+    let found = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT);
+    let found_ok = found
+        .as_deref()
+        .is_some_and(|line| line.contains(&listed_id));
+    if !found_ok {
+        let disc = fs::read_to_string(&disc_log).unwrap_or_default();
+        reap(&mut advertiser);
+        reap(&mut discoverer);
+        panic!("windowed discover never reported gossip_found for {listed_id}\ndisc:\n{disc}");
+    }
+
+    // The window clock starts when the directory session comes up, which is
+    // strictly before the found line can appear — so anchoring at the found
+    // guarantees the exit lands within one window (30s) + grace, no matter
+    // how slow the contended bootstrap was.
+    let deadline = Instant::now() + Duration::from_secs(40);
+    let mut status = None;
+    while Instant::now() < deadline {
+        if let Some(exit) = discoverer.try_wait().expect("try_wait") {
+            status = Some(exit);
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    reap(&mut advertiser);
+    // Always reap (harmless if it already exited) — guarantees `wait`.
+    reap(&mut discoverer);
+    let _ = fs::remove_file(&adv_log);
+    let _ = fs::remove_file(&disc_log);
+
+    let Some(status) = status else {
+        panic!("discover did not exit on its own after the 30s window");
+    };
+    assert!(status.success(), "windowed discover exited with {status}");
+}
