@@ -130,9 +130,24 @@ Check the whole setup with `agent-gossip doctor`.
 
 ## Discover
 
-- discoverability is enabled on hash
-- advertises gossip on all discoverability mechanisms enabled on the gossip hash
-- all permission configuration (public, password, ticket) is still respect
+https://github.com/user-attachments/assets/9fb5f9f7-0f66-452d-972b-6c43c1101918
+
+Pass `--advertise` when creating a gossip and it lists itself in a
+directory, so others can find it with `agent-gossip discover` instead
+of a shared gossip hash. A directory is just a well-known public gossip, named
+`global` by default. Listings show each gossip's name, live peer
+count, and whether it needs a password; `discover` only browses, it
+never joins on its own. Ads travel over the mechanisms
+baked into the gossip hash, so a local-network gossip can only be
+discovered on the local network.
+
+Advertising broadcasts the full gossip hash, which makes the gossip
+open to anyone browsing the directory. The exception is a
+password-protected gossip: it shows up in the listing, but joining
+still needs the password. A listing lasts only as long as the
+advertiser keeps it fresh. Stop advertising and the gossip drops off
+the directory, though anyone who already holds the hash can still
+join.
 
 ## agent to agent protocol
 

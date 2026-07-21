@@ -22,6 +22,13 @@ use std::path::{Path, PathBuf};
 /// Names never staged/embedded — shared verbatim with `src/cli/agent.rs`'s
 /// write-out filter via one `include!`d fragment, so staging and write-out can
 /// never disagree (the binary never carries a file it would discard on install).
+///
+/// `include!` forces a compile-time `env!`, which bakes the path into the
+/// cached build-script binary: after the checkout moves, this reads the *old*
+/// location until something recompiles the script (`cargo clean -p
+/// agent-gossip`). Tolerable here because the fragment rarely changes and a
+/// deleted old path fails the compile loudly — but never copy this pattern
+/// for paths read at script runtime; see [`skills_dir`].
 const SKIP: &[&str] = include!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/src/cli/embed_skip.rs"
@@ -38,8 +45,14 @@ fn main() {
 /// to `CARGO_MANIFEST_DIR` rather than the CWD, which cargo only *happens* to set
 /// to the package dir — an absolute source path also keeps the `<!-- include -->`
 /// directives inside each template resolving against a real base.
+///
+/// Read at script *runtime*, never via `env!`: the compile-time macro bakes
+/// the path into the cached build-script binary, and after the checkout moves
+/// the script keeps rendering the old location's skills — fresh mtimes, stale
+/// content, no error as long as the old path exists.
 fn skills_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
+    Path::new(&manifest_dir).join("../../skills")
 }
 
 /// Expand every `skills/gossip-*/SKILL.md` template into `dest`, one

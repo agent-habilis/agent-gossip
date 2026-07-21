@@ -76,7 +76,15 @@ Do not send a user-visible response while in a gossip unless a bell is currently
 outstanding. This includes the final confirmation from create, join, topic,
 message, task, ping, status, state, and meta workflows. Before
 replying, check whether the bell exited; if it did, run the loop above — then
-reply.
+reply. A question is a response too: before putting any decision to the user —
+widget or chat — make sure a bell is outstanding. Re-arm first, then ask;
+waiting on an answer with no bell armed leaves the gossip deaf for as long as
+the user takes.
+
+The bell outranks turn-ordering rules. If you notice no bell is outstanding
+after you have printed, arm one anyway, then re-emit the printed lines so
+they are again the turn's final output — a late re-arm beats a deaf gossip,
+and a line followed by a tool call may never render.
 
 If a bell exits because a harness timeout ended the command rather than because
 events arrived, the foreground poll returns an empty array. Just re-arm.
