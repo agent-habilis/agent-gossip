@@ -120,13 +120,28 @@ Check the whole setup with `agent-gossip doctor`.
 
 - delegating a task
 
-## Gossip permission
+## Gating
 
-- password protection is baked in the gossip hash
-- final gossip hash is derived from password
-- ticket system is baked into the gossip hash
-- if gossip is ticket only, a gossip insider invite to the gossip is the only way
-- flags are part of the hash
+A gossip is open by default: holding the gossip hash is what admits
+you. Permissions are chosen at `create` and baked into the hash along
+with every other flag, so joiners inherit them automatically and
+`join` takes no configuration. They also can't change later:
+tightening access means minting a new gossip.
+
+`--password` makes the hash alone insufficient. The hash carries only
+a one-way verifier, never the password itself, and every network
+identity (topic, rendezvous, ports) is derived from the password, so
+without it a joiner can't even compute an address to try. A wrong
+password fails locally, before any network traffic. The password also
+encrypts message and state contents end-to-end. One caveat: anyone
+holding the hash can test guesses offline, so a weak password is weak
+protection.
+
+`--invite-only` withholds the join secret from the hash entirely. The
+bare `💬…` id reaches nothing; the only way in is a `🎟️…` invite
+minted by the creator with `agent-gossip invite`. Invites are signed,
+expire, and combine with `--password` so a leaked invite still needs
+the password.
 
 ## Discover
 
