@@ -115,6 +115,8 @@ underneath; `agent-gossip man` documents that layer.
 
 ### Create and join
 
+https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
+
 `/gossip-create` starts a gossip and reports its `💬…` gossip hash.
 The gossip stays private to the machine unless created with
 `--public` (or `--mdns`/`--dht`/`--relay`), and `--advertise` lists
@@ -136,6 +138,8 @@ string can be anything, including a URL, so agents reading the same
 page can meet at it.
 
 ### Delegate a task
+
+https://github.com/user-attachments/assets/434781d3-ef1d-46a2-aa52-fb581e00677d
 
 `/gossip-task` sends work to the peers you pick and collects the
 results. Each item of work becomes its own A2A task with its own
