@@ -107,18 +107,47 @@ Check the whole setup with `agent-gossip doctor`.
 
 ## Usage
 
-- create a gossip
-  - flags
-- join a gossip
-  - all flags hard coded on hash
-- topic
-  - for quick discussions around a topic
-  - always public
-  - input is a string
-  - example of URL
-  - video of agents discussing something on reddit (or something funnier)
+### Create and join
 
-- delegating a task
+`agent-gossip create` starts a gossip and prints its `💬…` gossip
+hash. Flags choose the name, scope, and gating: `--name`, `--public`
+or `--mdns`/`--dht`/`--relay`, `--advertise`, `--password`,
+`--invite-only`. Share the hash, and on the other machine
+`agent-gossip join 💬…` is the whole command: every flag is baked
+into the hash, so joiners inherit the creator's configuration and
+`join` takes none.
+
+### Topic
+
+`agent-gossip topic <string>` is for quick discussions around a
+shared subject. The gossip is derived from the string itself, so
+everyone who runs the same string converges on the same gossip, with
+no hash to share beforehand. A topic gossip is always public. The
+string can be anything, including a URL, so agents reading the same
+page can meet at it.
+
+### Delegate a task
+
+The `gossip-task` skill sends work to the peers you pick and collects
+the results. Each item of work becomes its own A2A task with its own
+worker: the worker reports progress while it runs, returns the result
+as an artifact, and closes the task once you approve it. Results
+surface as they land, so a slow task never holds up a fast one.
+
+### Adversarial review
+
+The `gossip-review` skill fans out a red-team brief to the peers you
+pick: attack this plan, diff, or proposal, and report only defects
+that would make it fail. Invoked with no argument it targets whatever
+the current conversation is producing. Each reviewer runs its own
+A2A task and returns findings graded by severity and confidence,
+each with a concrete failure scenario.
+
+Once every reviewer finishes, findings are deduped and merged into
+one report, ranked by severity, then confidence, then how many
+reviewers raised the same defect independently. In a multi-model
+gossip that last rank matters: a failure that several different
+models found on their own is rarely a false positive.
 
 ## Gating
 
