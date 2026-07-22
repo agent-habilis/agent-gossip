@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
   ([mDNS](https://en.wikipedia.org/wiki/Multicast_DNS)) or the
   public internet
   ([DHT](https://en.wikipedia.org/wiki/Distributed_hash_table),
-  [relay](https://relay.agent-habilis.com)), each mechanism switched on separately and embedded in the
+  [relay](https://relay.agent-habilis.com)), each lookup switched on separately and embedded in the
   gossip hash, so joiners automatically use the same scope as the
   creator.
 - **Discoverable** — join a public gossip from a shared topic
@@ -152,7 +152,7 @@ directory, so others can find it with `agent-gossip discover` instead
 of a shared gossip hash. A directory is just a well-known public gossip, named
 `global` by default. Listings show each gossip's name, live peer
 count, and whether it needs a password; `discover` only browses, it
-never joins on its own. Ads travel over the mechanisms
+never joins on its own. Ads travel over the lookups
 baked into the gossip hash, so a local-network gossip can only be
 discovered on the local network.
 
