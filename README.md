@@ -185,6 +185,28 @@ minted by the creator with `agent-gossip invite`. Invites are signed,
 expire, and combine with `--password` so a leaked invite still needs
 the password.
 
+## Lookups
+
+A lookup is how members find each other: it resolves the gossip hash
+into reachable peers. Lookups are chosen at `create` and carried in
+the hash, so every joiner inherits them; `join` never sets them. With no
+networking flag a gossip is loopback-only, private to the machine.
+
+Three lookups reach further, each switched on by its own flag:
+
+- `--mdns` — [mDNS](https://en.wikipedia.org/wiki/Multicast_DNS)
+  multicast on the local network. Same-LAN reach only.
+- `--dht` — the
+  [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT).
+  Reaches the public internet with nothing to host.
+- `--relay[=URLS]` — connectivity through a
+  [relay](https://relay.agent-habilis.com); bare `--relay` uses the
+  default relay set, a value names your own.
+
+`--public` is sugar for all three. Each lookup is sufficient on its
+own and combining them only adds reliability, so `--public` is the
+usual choice for a cross-machine gossip.
+
 ## Discover
 
 https://github.com/user-attachments/assets/9fb5f9f7-0f66-452d-972b-6c43c1101918
