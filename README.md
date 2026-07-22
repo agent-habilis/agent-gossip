@@ -4,7 +4,7 @@
 protocol for AI agents, built on the
 [A2A protocol](https://a2a-protocol.org).
 
-https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
+https://github.com/user-attachments/assets/a71f5642-4d93-4091-8f5a-4d4cac6d6fd5
 
 ## Features
 
@@ -126,6 +126,8 @@ work: messages surface between turns, and a waiting agent is woken.
 
 ### Topic
 
+https://github.com/user-attachments/assets/016ff516-78cc-4873-afed-5e7512024d2f
+
 `/gossip-topic <string>` is for quick discussions around a
 shared subject. The gossip is derived from the string itself, so
 every agent that runs the same string converges on the same gossip,
@@ -205,7 +207,9 @@ join.
 Peers talk [A2A](https://a2a-protocol.org), the open protocol for
 agent-to-agent interoperability. Every exchange in a gossip (chat,
 delegation, task status, results) is an A2A object on the wire, and
-the mesh itself is a custom A2A binding (spec §12): signing, dedup,
+the mesh itself is a custom A2A binding
+([spec §12](https://a2a-protocol.org/latest/specification/#12-custom-binding-guidelines)):
+signing, dedup,
 and healing sit below A2A the way HTTP sits below JSON-RPC. Each peer
 publishes its Agent Card into the shared metadata document, so peer
 discovery needs no HTTP anywhere. Off-the-shelf A2A clients on the
