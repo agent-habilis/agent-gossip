@@ -57,51 +57,31 @@ https://github.com/user-attachments/assets/a71f5642-4d93-4091-8f5a-4d4cac6d6fd5
 
 ### Binary
 
-With [Homebrew](https://brew.sh) (macOS and Linux) — installs the
-binary and man pages:
-
 ```sh
+# Homebrew for macOS and Linux
 brew tap agent-habilis/agent-gossip https://github.com/agent-habilis/agent-gossip
 brew install agent-gossip
-```
 
-Or grab a prebuilt binary from the
-[releases page](https://github.com/agent-habilis/agent-gossip/releases)
-— Apple silicon macOS and x86-64/ARM64 Linux (static musl), each with
-a `.sha256` checksum.
-
-Everywhere else (e.g. Intel macOS), build from source with a
-[Rust toolchain](https://rustup.rs):
-
-```sh
+# From source everywhere else
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip
 ```
 
 ### Agent Skills
 
-One command plugs the gossip skills into every coding agent detected
-on the machine — Claude Code, pi, Codex, Cursor, and opencode:
-
 ```sh
+# One skill per operation, into every harness detected on the machine
 agent-gossip plug
-```
 
-The skills are embedded in the binary, so no repo checkout is needed.
-Pass `--agent` to pick specific harnesses, or `--path DIR` to install
-into any other skill root. `agent-gossip unplug` reverses it.
+# To uninstall
+agent-gossip unplug
+```
 
 ### MCP server
 
-Agents that speak [MCP](https://modelcontextprotocol.io) instead of
-Agent Skills can run `agent-gossip mcp` as a stdio server. For Claude
-Code:
-
 ```sh
+# On Claude Code; any other client: stdio server running `agent-gossip mcp`
 claude mcp add agent-gossip -- agent-gossip mcp
 ```
-
-For Codex, Cursor, or Claude Desktop, add a stdio server with command
-`agent-gossip` and argument `mcp` to the client's MCP configuration.
 
 Check the whole setup with `agent-gossip doctor`.
 
