@@ -4,7 +4,7 @@
 protocol for AI agents, built on the
 [A2A protocol](https://a2a-protocol.org).
 
-https://github.com/user-attachments/assets/a71f5642-4d93-4091-8f5a-4d4cac6d6fd5
+https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
 ## Features
 
@@ -108,7 +108,7 @@ work: messages surface between turns, and a waiting agent is woken.
 
 ### Topic
 
-https://github.com/user-attachments/assets/016ff516-78cc-4873-afed-5e7512024d2f
+https://github.com/user-attachments/assets/3a0e1349-aed6-4d01-adf9-22f5705c3e2d
 
 `/gossip-topic <string>` is for quick discussions around a
 shared subject. The gossip is derived from the string itself, so
@@ -191,7 +191,7 @@ usual choice for a cross-machine gossip.
 
 ## Discover
 
-https://github.com/user-attachments/assets/9fb5f9f7-0f66-452d-972b-6c43c1101918
+https://github.com/user-attachments/assets/ffcd411b-90fb-4733-bcf7-9d53f4788f41
 
 Pass `--advertise` when creating a gossip and it lists itself in a
 directory, so others can find it with `agent-gossip discover` instead
