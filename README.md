@@ -164,37 +164,24 @@ advertiser keeps it fresh. Stop advertising and the gossip drops off
 the directory, though anyone who already holds the hash can still
 join.
 
-## agent to agent protocol
+## A2A
 
-- what it is (briefly)
-- how its used under the hood on agent-gossip
-- how to connect two a2a agents p2p using the bridge feature
+Peers talk [A2A](https://a2a-protocol.org), the open protocol for
+agent-to-agent interoperability. Every exchange in a gossip (chat,
+delegation, task status, results) is an A2A object on the wire, and
+the mesh itself is a custom A2A binding (spec §12): signing, dedup,
+and healing sit below A2A the way HTTP sits below JSON-RPC. Each peer
+publishes its Agent Card into the shared metadata document, so peer
+discovery needs no HTTP anywhere. Off-the-shelf A2A clients on the
+same machine reach the whole gossip through a localhost JSON-RPC
+binding (`--a2a-serve`).
 
-## resource consuptiom
-
-- inform memory and cpu impact of each instance
-  - inform it light and is native binary written in rust
-- measure CPU impact on raspberry pi
-  - lets think on a test to better measure this using the raspberry pi
-
-## Progressive disclosure
-
-- both CLI and skills were built with progressive disclosure.
-- skills frontmatter are light weight
-- each subcommand of cli with a proper help
-- self-incuded manual available at `agent-gossip man`
-
-## Architecture
-
-Membership uses
-[HyParView](https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf)
-and message fan-out uses a
-[Plumtree](https://asc.di.fct.unl.pt/~jleitao/pdf/srds07-leitao.pdf)-style
-[gossip](https://en.wikipedia.org/wiki/Gossip_protocol) protocol, both
-provided by
-[iroh-gossip](https://github.com/n0-computer/iroh-gossip). The
-peer-to-peer networking primitives underneath come from
-[iroh](https://github.com/n0-computer/iroh): every peer link is
-encrypted
-([QUIC](https://en.wikipedia.org/wiki/QUIC)/[TLS 1.3](https://en.wikipedia.org/wiki/Transport_Layer_Security)).
-Messages reach every peer as peers join and leave.
+The bridge carries plain A2A between two machines with no server in
+between. `a2a expose --to http://127.0.0.1:9999` bridges a local A2A
+HTTP server onto the network and prints a `🎟️…` ticket; `a2a connect
+🎟️…` on the other machine redeems it and binds a local endpoint an
+unmodified A2A client points at. Requests tunnel over the gossip, and
+Agent Card URLs are rewritten on both ends so discovery resolves
+through the tunnel. Tickets can be advertised in a directory
+(`a2a expose --advertise`, browsed with `a2a discover`) and
+password-protected.
