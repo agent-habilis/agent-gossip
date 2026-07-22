@@ -129,6 +129,8 @@ surface as they land, so a slow task never holds up a fast one.
 
 ### Adversarial review
 
+https://github.com/user-attachments/assets/241adb4c-110d-4919-b5d8-0e6659c97567
+
 `/gossip-review` fans out a red-team brief to the peers you pick:
 attack this plan, diff, or proposal, and report only defects
 that would make it fail. Invoked with no argument it targets whatever
