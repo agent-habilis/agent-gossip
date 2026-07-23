@@ -21,7 +21,7 @@ under.
 For each left gossip, print:
 
 ```text
-💬️ left `#$NAME`
+💬 left `#$NAME`
 ```
 
 Except a gossip joined by topic: it echoes the full topic string — a held
@@ -29,13 +29,13 @@ Except a gossip joined by topic: it echoes the full topic string — a held
 JSON — with no `#`:
 
 ```text
-💬️ left topic `$TOPIC`
+💬 left topic `$TOPIC`
 ```
 
 If no session-owned daemon was found, print:
 
 ```text
-💬 Not in a gossip.
+💬 not in a gossip.
 ```
 
 After leaving, clear any held `$GOSSIP`, `$NAME`, `$NICKNAME`, `$TOPIC`, and

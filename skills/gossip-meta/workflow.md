@@ -5,7 +5,7 @@ section and try to recover the session identity. If that does not yield a
 gossip, print:
 
 ```text
-💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 not in a gossip. use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -18,7 +18,7 @@ Run:
 agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-If the command fails or returns `ok:false`, print `💬 Could not read the meta
+If the command fails or returns `ok:false`, print `💬 could not read the meta
 channel.` and stop.
 
 ## Output

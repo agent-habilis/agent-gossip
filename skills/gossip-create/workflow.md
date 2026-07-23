@@ -3,7 +3,7 @@
 Treat all user arguments as the optional create arguments:
 
 ```text
-[name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]]
+[name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]] [--password[=pw]]
 ```
 
 If a name is present, convert it to `--name NAME` before calling
@@ -12,6 +12,10 @@ If a name is present, convert it to `--name NAME` before calling
 
 `$CREATE_ARGS` means the normalized CLI flags after that conversion. It never
 contains a positional name.
+
+A password must be inline and single-quoted in `$CREATE_ARGS` —
+`--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the
+password back in chat.
 
 ## Guard
 
@@ -28,7 +32,7 @@ If the check succeeds, handle any returned events per the **Event handling**
 section, print:
 
 ```text
-Already in a gossip. Use ${SKILL_PREFIX}gossip-leave first if you want to create a new one.
+💬 already in a gossip. use ${SKILL_PREFIX}gossip-leave first if you want to create a new one.
 ```
 
 Then stop.
@@ -45,8 +49,8 @@ new gossip does not require reattach unless the guard is ambiguous.
 
 Start the session per the **Daemon session** section below — one message,
 three parallel tool calls. Hold `$GOSSIP`, `$NAME`, and `$NICKNAME` from the
-gate script's output. If any value is missing, print `failed to create gossip`
-and stop.
+gate script's output. If any value is missing, print `💬 failed to create
+gossip` and stop.
 
 ## Output
 
@@ -54,13 +58,16 @@ Print exactly these lines as plain chat text — never the fence — including
 the advertising line only when `--advertise` was used:
 
 ```text
-💬️ created `#$NAME` and joined as `<$NICKNAME>`
+💬 created `#$NAME` and joined as `<$NICKNAME>`
 advertising on `#$DIRECTORY`
 others can join with: `${SKILL_PREFIX}gossip-join $GOSSIP`
+joiners must also pass `--password=<pw>`
 ```
 
 For bare `--advertise`, `$DIRECTORY` is `global`. Omit the advertising line
-entirely when not advertising.
+entirely when not advertising. Include the joiners line only when
+`--password` was used; never print the password itself — it is shared out of
+band.
 
 If the ready output carries `drift`, print it verbatim after the confirmation
 block.

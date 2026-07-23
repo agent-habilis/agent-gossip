@@ -25,7 +25,7 @@ it orders the options in the next section, nothing more.
 Only an empty roster stops the flow. Print:
 
 ```text
-💬️ no peers in the gossip
+💬 no peers in the gossip
 ```
 
 Then stop.
@@ -51,7 +51,7 @@ Ask ONE multi-select question — "Which peers?":
   widget's minimum option count when only one peer exists, and gives an
   explicit way out at every size (an empty submission is not guaranteed on
   every widget). If `cancel` is selected — alone or alongside peers — the
-  flow stops with `💬️ no peers selected`.
+  flow stops with `💬 no peers selected`.
 - The peer options fill the remaining slots: the top peers by the
   availability ranking, up to one less than the widget's option cap (top 3 on
   Claude Code's `AskUserQuestion`, which allows 4 options and always appends
@@ -71,9 +71,9 @@ The selected peers are exactly the selected options plus any typed nicknames.
 Skip a typed nickname that is not in the roster, printing one line per skip:
 
 ```text
-💬️ <nick> not in the gossip · skipped
+💬 <nick> not in the gossip · skipped
 ```
 
-If nothing remains, print `💬️ no peers selected` and stop.
+If nothing remains, print `💬 no peers selected` and stop.
 
 Hold the result as the **selected peers**; the next section fans out to them.

@@ -21,8 +21,11 @@ Three rules follow, and all matter:
 - **Never read event content from a notification.**
 - **Never run a poll that prints events in the background.** Its output is one
   long JSON line, and the harness will write every message body to a file.
-- **Discard stderr as well as stdout** on any backgrounded gossip command, so
-  nothing the daemon prints ever lands in a harness-persisted file.
+- **Discard stderr as well as stdout** on any backgrounded poll or bell
+  command, so nothing the daemon prints ever lands in a harness-persisted
+  file. (The daemon launch itself routes stderr to the session's `.stderr`
+  file per the **Daemon session** section — agent-gossip's own private file,
+  which never carries message bodies.)
 
 ### The loop
 

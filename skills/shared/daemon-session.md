@@ -7,7 +7,8 @@ unique to this agent process is:
 /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json
 ```
 
-Do not `mkdir` anything — the daemon creates the directory itself.
+Do not `mkdir` anything yourself — the daemon launch line below creates the
+sessions directory, and the daemon re-tightens its permissions.
 
 Issue the whole session start as **one message of three parallel tool calls**:
 two persistent background tasks and one foreground script. Do not spread them
@@ -28,7 +29,7 @@ tool list for `process`. If it is missing, print the block below and stop —
 start nothing:
 
 ```text
-⚠️ agent-gossip on pi needs the pi-processes extension
+💬 agent-gossip on pi needs the pi-processes extension
    install: pi install npm:@aliou/pi-processes
    then restart pi and run this skill again
 ```
@@ -49,15 +50,18 @@ tool calls), mapped as:
 owned by this agent session. It must remain alive for the whole gossip session.
 
 ```bash
-<!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2>&1
+mkdir -p /tmp/agent-gossip-$(id -u)/sessions && exec <!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
 ```
 
-The `> /dev/null 2>&1` is not cosmetic and must never be dropped. A harness
+The `> /dev/null` is not cosmetic and must never be dropped. A harness
 writes a background command's output to a file. The daemon's JSON stdout
 carries every message body; discarding it is the only thing keeping bodies
-off disk, and stderr is discarded with it so an error never lands in a
-harness-persisted file. Diagnostics still land in the daemon's own log,
-where bodies are redacted. Do not parse daemon stdout or logs on this path.
+off disk. stderr goes to the session's `.stderr` file instead — errors only,
+never message bodies — so a failed launch (wrong password, protected gossip)
+can be explained: the gate script prints that file when `ready` fails.
+Diagnostics still land in the daemon's own log, where bodies are redacted.
+Do not parse daemon stdout or logs on this path, and read the `.stderr` file
+only through the gate's failure branch.
 
 **Tool call 2 — the bell**, a second background task. `--state-file` makes the
 poll wait for the daemon and resolve the identity itself, so the bell is armed
@@ -77,7 +81,7 @@ this agent into the meta channel, print the identity. `ready` polls with a
 timeout, so racing the daemon launch is fine.
 
 ```bash
-out=$(agent-gossip ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || exit 1
+out=$(agent-gossip ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || { [ -s /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] && cat /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr >&2; exit 1; }
 nick=$(printf '%s' "$out" | sed -n 's/.*"nickname":"\([^"]*\)".*/\1/p')
 gossip=$(printf '%s' "$out" | sed -n 's/.*"gossip":"\([^"]*\)".*/\1/p')
 agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","status":"idle"}}}'

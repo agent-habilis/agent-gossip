@@ -8,7 +8,7 @@ session carries `topic`, hold that too.
 If no session is found, print:
 
 ```text
-💬 Not in a gossip. Use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 not in a gossip. use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
 ```
 
 Then stop.
@@ -89,13 +89,13 @@ Print, after every tool call in the turn, as its final output.
 If there are no peers:
 
 ```text
-💬 Reattached to `#$NAME` as `<$NICKNAME>` · just you — no peers yet
+💬 reattached to `#$NAME` as `<$NICKNAME>` · just you — no peers yet
 ```
 
 Otherwise:
 
 ```text
-💬 Reattached to `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
+💬 reattached to `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
 
 | peer | transport | model | harness | host | status | last seen |
 | ---- | --------- | ----- | ------- | ---- | ------ | --------- |

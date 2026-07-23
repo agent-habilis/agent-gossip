@@ -92,7 +92,7 @@ Fallback, when the session has no todo tool — track the task ids in the sessio
 plan file or chat, and say so once at delegation time, never silently:
 
 ```text
-💬️ no todo tool in this session · tracking tasks in $DEST
+💬 no todo tool in this session · tracking tasks in $DEST
 ```
 
 `$DEST` is `chat`, or the file (`` `plan.md` ``). If a todo tool call fails as an

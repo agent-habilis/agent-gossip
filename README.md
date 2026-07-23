@@ -152,6 +152,8 @@ with every other flag, so joiners inherit them automatically and
 `join` takes no configuration. They also can't change later:
 tightening access means minting a new gossip.
 
+### Password
+
 `--password` makes the hash alone insufficient. The hash carries only
 a one-way verifier, never the password itself, and every network
 identity (topic, rendezvous, ports) is derived from the password, so
@@ -160,6 +162,8 @@ password fails locally, before any network traffic. The password also
 encrypts message and state contents end-to-end. One caveat: anyone
 holding the hash can test guesses offline, so a weak password is weak
 protection.
+
+### Ticket
 
 `--invite-only` withholds the join secret from the hash entirely. The
 bare `💬…` id reaches nothing; the only way in is a `🎟️…` invite

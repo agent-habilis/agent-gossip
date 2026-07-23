@@ -8,7 +8,7 @@ not otherwise normalize it.
 If no topic string is present, print:
 
 ```text
-Usage: ${SKILL_PREFIX}gossip-topic {string}
+💬 usage: ${SKILL_PREFIX}gossip-topic {string}
 ```
 
 Then stop.
@@ -20,7 +20,7 @@ If conversation context says this session already ran
 `${SKILL_PREFIX}gossip-topic` and has not since left, print:
 
 ```text
-Already in a gossip. Use ${SKILL_PREFIX}gossip-leave first.
+💬 already in a gossip. use ${SKILL_PREFIX}gossip-leave first.
 ```
 
 Then stop.
@@ -43,7 +43,7 @@ Hold the answer as the mode for the rest of the invocation.
 Start the session per the **Daemon session** section below — one message,
 three parallel tool calls. Hold `$GOSSIP`, `$NAME`, and `$NICKNAME` from the
 gate script's output, and keep holding `$TOPIC` — the leave line echoes it.
-If any value is missing, print `failed to join topic` and stop.
+If any value is missing, print `💬 failed to join topic` and stop.
 
 ## Settle bell — Claude Code
 
@@ -68,7 +68,7 @@ On any other harness, use the plain bell without the prefix.
 Print exactly this line as plain chat text, never the fence:
 
 ```text
-💬️ joined topic `$TOPIC` as `<$NICKNAME>`
+💬 joined topic `$TOPIC` as `<$NICKNAME>`
 ```
 
 If the ready output carries `drift`, print it verbatim after the confirmation

@@ -42,7 +42,7 @@ Only when the session has no question tool: ask in chat, and say so once, never
 silently:
 
 ```text
-💬️ no question tool in this session · asking in chat
+💬 no question tool in this session · asking in chat
 ```
 
 If a question tool call fails as an unknown tool, drop to this fallback for the

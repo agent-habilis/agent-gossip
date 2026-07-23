@@ -27,5 +27,5 @@ Only the empty case waits out the window. If the process exits with nothing
 found, print:
 
 ```text
-💬️ no gossips in `#$DIR` yet
+💬 no gossips in `#$DIR` yet
 ```
