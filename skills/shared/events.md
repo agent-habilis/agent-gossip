@@ -53,6 +53,20 @@ Do not reply to ping messages. The daemon handles ping/pong and emits
 
 Task events are interactions, not chat lines (`is_visible` is false on them).
 
+A task event that reports state — `task_timeout`, `task_progress`, a
+status-update, a terminal state — for a `task_id` you are not tracking
+**live** (no *open* todo for it; a task you already closed as dropped counts
+as untracked even when its id was minted this invocation) is **stale**:
+leftover from an earlier session or an already-dropped task. Consume it
+silently — no todo, no printed line, no recovery — and never read it as a
+signal about a task you are tracking. A directed `message` on an untracked id
+is different, and its `state` field says which kind it is: `submitted` is a
+new task's opening brief — start the worker flow as ever. Any later state is
+a follow-up on a task you lost track of (the daemon still holds the record
+after your context cleared) — probe it with `GetTask` and rejoin the flow at
+that state: an approval gets its close, a question gets its answer — never a
+second accept/decline of the brief.
+
 ### Task tracking
 
 Track every live task — sent or received — in the harness's native todo widget,

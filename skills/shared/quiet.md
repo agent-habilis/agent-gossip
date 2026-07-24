@@ -14,3 +14,10 @@ around them.
 
 A question is not printed text. When a section tells you to ask the user
 something, it goes through the harness's question widget, never chat prose.
+
+An idle turn — a batch that ends with tool calls and nothing this skill says
+to print — ends with no prose at all. The tool calls are the turn; this
+overrides any harness habit of closing a turn with a summary sentence. There
+is no filler for an idle turn — no placeholder line, no status note: every
+harness ends a turn on a bare tool call, and text invented to close one reads
+as a broken message.

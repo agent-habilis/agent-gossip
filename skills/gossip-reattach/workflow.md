@@ -59,9 +59,9 @@ This check runs only after **Recover** found a live session: a bell also
 exits cleanly when the daemon shuts down, and the no-session path above
 already stopped — never re-arm against a dead daemon.
 
-Events that arrived while detached are still queued. Drain them with one
-foreground poll — the daemon's read cursor advances, so repeating it returns
-an empty array:
+Events that arrived while context was detached are still queued. Drain them
+with one foreground poll — the daemon's read cursor advances, so repeating it
+returns an empty array:
 
 ```bash
 agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
@@ -88,19 +88,19 @@ Print, after every tool call in the turn, as its final output.
 If there are no peers:
 
 ```text
-💬 reattached to `#$NAME` as `<$NICKNAME>` · just you · no peers yet
+💬 context reattached for `#$NAME` as `<$NICKNAME>` · just you · no peers yet
 ```
 
 Otherwise:
 
 ```text
-💬 reattached to `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
+💬 context reattached for `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
 ```
 
 If the drained batch held visible events, print after the reattach line:
 
 ```text
-💬 missed while detached:
+💬 missed while context was detached:
 ```
 
 followed by their `display` lines, verbatim, in order. If the batch led with a

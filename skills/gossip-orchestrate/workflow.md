@@ -112,9 +112,18 @@ dependents — both effects land in the same turn: mark dependents ready, then
 dispatch per the Keep-every-worker-busy invariant. A `failed` or
 `task_timeout` also frees its worker; its subtask returns to the front of the
 queue for the next free worker, and after a second drop goes to the user per
-the **Decisions** section. One carve-out: a task that drops *after* its
-result was verified counts as done — only the close was lost, so keep the
-result and do not re-queue the subtask. When the user drops a subtask, every
+the **Decisions** section. One carve-out: the eviction clock
+keeps running while a result is parked on you, so verify in the same turn the
+artifact arrives — before anything goes to the user. A task that drops
+*after* its artifact arrived is a lost close, not lost work: the result is in
+hand. Verified criteria count the subtask done — do not re-queue it; a
+criterion that fails now re-queues the subtask as a fresh dispatch, since the
+dead task can carry no change request — and the failure still counts: both
+escalation counters (fails-verification-twice, second-drop) follow the
+*subtask* across task ids and workers, so a fresh dispatch never resets them.
+Never send a holding message to reset the clock: a message leg on a parked
+task resumes the worker to `working`, and anything that is not the approval
+reads as a change request. When the user drops a subtask, every
 subtask depending on it drops with it — remove them from the queue; all of
 them appear on the report's `dropped:` line.
 
