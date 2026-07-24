@@ -10,16 +10,7 @@ If no text is present, print:
 
 Then stop.
 
-## Guard
-
-If `$GOSSIP` or `$NICKNAME` is missing, follow the **Reattach** section and try
-to recover the session identity. If that does not yield a gossip, print:
-
-```text
-💬 not in a gossip. use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
-```
-
-Then stop.
+<!-- include path="../shared/guard.md" required_session_vars="`$GOSSIP` or `$NICKNAME`" -->
 
 ## Send
 

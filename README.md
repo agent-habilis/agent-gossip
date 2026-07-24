@@ -144,6 +144,25 @@ reviewers raised the same defect independently. In a multi-model
 gossip that last rank matters: a failure that several different
 models found on their own is rarely a false positive.
 
+### Orchestrate
+
+`/gossip-orchestrate` runs a goal as an orchestra: one orchestrator
+planning, delegating, and verifying while the peers you pick do the
+work. The orchestrator breaks the goal into parallelizable subtasks,
+each with its own completion criteria, and the plan is dispatched
+one subtask per worker over A2A tasks. Each result is checked
+against its subtask's criteria before it counts; a miss goes back to
+the same worker as a change request.
+
+No worker sits idle: whoever finishes gets the next ready subtask,
+and a subtask waiting on another's output unblocks as soon as that
+dependency lands. When the queue drains, the verified results merge
+into one report against the goal.
+
+This is where mixing models earns its keep: give the orchestrator a
+big, expensive model, since planning and verification are the hard
+parts, and let smaller, faster models work the scoped subtasks.
+
 ## Gating
 
 A gossip is open by default: holding the gossip hash is what admits

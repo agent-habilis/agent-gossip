@@ -284,15 +284,17 @@ pub const SWEEP_INTERVAL_SECS: u64 = 10;
 
 /// Idle-debounce timeout for a task: a task with no leg (content
 /// or keepalive) for this long is evicted (`task_timeout` + a `Cancel`
-/// broadcast). 5 minutes — comfortably above the keepalive cadence so a
-/// genuinely-active task is never falsely evicted. Flag:
-/// `--task-timeout-secs` (tests shorten it to seconds).
-pub const TASK_TIMEOUT_SECS: u64 = 300;
+/// broadcast). 2 minutes — the timeout doubles as the pickup deadline (a
+/// SUBMITTED task whose worker never drives a leg gets no keepalive cover,
+/// so it is reaped this long after dispatch) and stays comfortably above
+/// the keepalive cadence so a genuinely-active task is never falsely
+/// evicted. Flag: `--task-timeout-secs` (tests shorten it to seconds).
+pub const TASK_TIMEOUT_SECS: u64 = 120;
 
 /// How often the current ball-owner's daemon emits a `Progress` keepalive
-/// for a live task. 1 minute, ≈5× under the debounce, so ~4 missed beats
+/// for a live task. 30 seconds, ≈4× under the debounce, so ~3 missed beats
 /// of slack absorb gossip drops. Flag: `--task-keepalive-secs`.
-pub const TASK_KEEPALIVE_SECS: u64 = 60;
+pub const TASK_KEEPALIVE_SECS: u64 = 30;
 
 /// The longest the ball-owner's daemon keeps auto-covering a **silent** task
 /// since its last real leg. The keepalive must not read the same clock the
@@ -300,11 +302,11 @@ pub const TASK_KEEPALIVE_SECS: u64 = 60;
 /// skill holds the peer forever. So the daemon auto-covers a quiet ball-owner
 /// for at most this long; past it, the *skill* must send its own `progress`
 /// beat to prove liveness (which refreshes the window), else the keepalive
-/// stops and the peer's debounce reaps the task. 15 minutes — comfortably
-/// above any human/agent think gap, so a live task doing long work only needs
-/// an occasional beat, while a dead one is bounded. Flag:
-/// `--task-keepalive-max-secs`.
-pub const TASK_KEEPALIVE_MAX_SECS: u64 = 900;
+/// stops and the peer's debounce reaps the task. 2 minutes — the skills'
+/// beat contract is one beat per minute of work, so a live worker refreshes
+/// the window with margin while a dead one is detected within this window
+/// plus one debounce (≈2–4 minutes). Flag: `--task-keepalive-max-secs`.
+pub const TASK_KEEPALIVE_MAX_SECS: u64 = 120;
 
 /// Whole-task budget of **content** legs (offer/accept/decline/context/
 /// done/confirm/change/cancel — `progress` is exempt). Hitting it forces

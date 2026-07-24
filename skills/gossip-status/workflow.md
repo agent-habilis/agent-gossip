@@ -1,14 +1,4 @@
-## Guard
-
-If `$GOSSIP`, `$NAME`, or `$NICKNAME` is missing, follow the **Reattach**
-section and try to recover the session identity. If that does not yield a
-gossip, print:
-
-```text
-💬 not in a gossip. use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
-```
-
-Then stop.
+<!-- include path="../shared/guard.md" required_session_vars="`$GOSSIP`, `$NAME`, or `$NICKNAME`" -->
 
 ## Read
 
@@ -26,7 +16,7 @@ Use `peers` from `peers` and `document.peers` from `meta`.
 If there are no peers, print:
 
 ```text
-💬 `#$NAME` · just you — no peers yet
+💬 `#$NAME` · just you · no peers yet
 ```
 
 Otherwise print a markdown table:

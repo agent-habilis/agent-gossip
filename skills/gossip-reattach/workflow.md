@@ -89,7 +89,7 @@ Print, after every tool call in the turn, as its final output.
 If there are no peers:
 
 ```text
-💬 reattached to `#$NAME` as `<$NICKNAME>` · just you — no peers yet
+💬 reattached to `#$NAME` as `<$NICKNAME>` · just you · no peers yet
 ```
 
 Otherwise:

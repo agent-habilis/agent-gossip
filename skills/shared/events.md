@@ -158,7 +158,12 @@ Worker flow:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
    ```
-   Then do the work.
+   Then do the work — and **beat while you work**: re-emit that same
+   `--state working` status at least once a minute. The daemon marks the
+   repeat as a liveness beat (exempt from the task's content-leg cap), and a
+   task with no leg for ~2 minutes is evicted as dead. So run any command
+   expected to exceed a minute through the harness's background facility and
+   beat while it runs.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
@@ -184,6 +189,26 @@ Worker flow:
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
    ```
 
+The eviction clock is symmetric — the initiator is on the same ~2-minute
+timeout whenever the ball is theirs. Three rules follow for the worker:
+
+- **Beat only while the task is `working` — never while parked in
+  `input-required`.** A beat is a re-emitted `working` status, so beating a
+  parked task yanks its state back — and keeps a dead initiator's task alive
+  forever. Silence-while-parked is what times an unresponsive initiator out.
+- **`task_timeout` while parked drops the task, not the work.** Close the
+  todo as dropped, keep the artifact, and tell your user the initiator never
+  responded and the result is kept.
+- **The initiator vanished mid-work:** on `peer_timeout` for the task's
+  counterparty with no `peer_return` within ~2 minutes, stop the work, emit
+  `a2a status --state failed --text "initiator unreachable"` — an explicit
+  terminal beats going silent and waiting to be reaped — close the todo, and
+  tell your user. A graceful leave needs none of this: the daemon cancels on
+  the spot (`task_timeout`, reason `peer-left`).
+
+You never reassign a task you are serving; your recoveries are
+fail-explicitly or keep-the-result-and-stop.
+
 Initiator flow:
 
 1. Capture the task id from the directed `SendMessage` response
@@ -199,3 +224,27 @@ Initiator flow:
    `--task-id` is the one that creates the task.
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
+4. A task you initiated is **unacknowledged** until the worker's first event
+   on it — `working`, or a decline `failed`. `task_timeout` (~2 minutes of
+   task silence) is the stall signal for both phases of a task's life: on an
+   unacknowledged task it means the brief was never picked up; on a `working`
+   task it means the worker went dead, since a live worker beats at least
+   once a minute. Either way close the todo, print one line —
+
+   ```text
+   💬 `<$WORKER>` · $TASK_LABEL · dropped · $REASON
+   ```
+
+   — with `$REASON` `no pickup` or `worker went silent`, and put the
+   recovery to the user per the **Decisions** section: retry the same peer,
+   reassign to another, or drop. `CancelTask` the old task only when the
+   user picks reassign or drop. A workflow section may override this
+   recovery with its own (orchestrate reassigns on its own); the detection
+   above is the same everywhere.
+5. To check a task's current state on demand — before re-briefing, or when a
+   worker seems quiet — probe it:
+   ```bash
+   agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method GetTask --task-id "$TASK_ID"
+   ```
+   `TASK_STATE_SUBMITTED` on a task dispatched minutes ago is a stalled
+   pickup, not a slow worker.

@@ -505,10 +505,40 @@ COMMANDS
               receiving daemon emits `task` / `task_progress` events on its
               stream (see "JSON EVENTS"). Content legs count
               against a whole-task 100-message cap; beats are exempt. The daemon
-              runs a 5-minute idle-debounce timeout and a keepalive for the
-              party that holds the ball — the keepalive only covers a silent
-              owner while its skill has driven a leg recently, so a crashed
-              skill's task is reaped rather than held forever.
+              runs a 2-minute idle-debounce timeout and a keepalive (every 30s)
+              for the party that holds the ball — the keepalive only covers a
+              silent owner for up to 2 minutes past its last real leg, so a
+              crashed skill's task is reaped rather than held forever. A worker
+              on a long task keeps its side alive by re-emitting the `working`
+              status at least once a minute (the repeat is marked as a beat and
+              is cap-exempt); a never-picked-up task has no cover at all, so
+              the timeout doubles as a ~2-minute pickup deadline.
+
+       ORCHESTRATION
+              A skill-level convention layered on tasks: one agent (the
+              orchestrator) breaks a goal into parallel subtasks and runs
+              one report-back TASK per subtask across a set of workers.
+              The wire underneath is ordinary directed tasks; only the
+              skill's handling differs.
+
+                • Each subtask brief begins "ORCHESTRATED SUBTASK · from
+                  <nick> · goal: …" and carries the subtask plus its
+                  completion criteria. The worker stays inside the
+                  subtask's boundaries, returns ONE artifact, and closes
+                  only after the orchestrator's approval.
+                • The orchestrator verifies every artifact against the
+                  subtask's completion criteria before approving. A miss
+                  is a change request on the same task (--task-id), never
+                  a new task; a task that drops after its result was
+                  verified still counts as done.
+                • Scheduling maximizes parallelism: surplus subtasks
+                  queue, a worker that frees up is dispatched the next
+                  ready subtask at once, and a subtask depending on
+                  another becomes ready when that dependency completes.
+                  A dropped subtask takes its dependents with it.
+
+              Driven by the /gossip-orchestrate skill; the wire legs are
+              the a2a subcommands above.
 
        peers --gossip 💬… --nickname NAME
               List the live peer roster of a gossip. Queries the
@@ -977,7 +1007,7 @@ JSON EVENTS
 
        task_timeout
               A task went terminal without a peer-authored status: it crossed
-              its 5-minute idle-debounce timeout and was evicted by the
+              its 2-minute idle-debounce timeout and was evicted by the
               daemon (reason "timeout"), or its counterparty left the gossip
               gracefully and the task was canceled on the spot (reason
               "peer-left"). Marks the tasks widget entry as timed out.

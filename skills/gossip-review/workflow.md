@@ -1,13 +1,4 @@
-## Guard
-
-If `$GOSSIP` or `$NICKNAME` is missing, follow the **Reattach** section and try
-to recover the session identity. If that does not yield a gossip, print:
-
-```text
-💬 not in a gossip. use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
-```
-
-Then stop.
+<!-- include path="../shared/guard.md" required_session_vars="`$GOSSIP` or `$NICKNAME`" -->
 
 ## Review subject
 
@@ -39,7 +30,7 @@ agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --m
 `$BRIEF` is this template with `$NICKNAME` and `$SUBJECT` spliced in:
 
 ```text
-ADVERSARIAL REVIEW · from <$NICKNAME>. Attack the subject below: try to refute it, find failure scenarios, edge cases, and concrete counterexamples. Do not summarize it, do not praise it, do not suggest polish — only defects that would make it fail.
+ADVERSARIAL REVIEW · from <$NICKNAME>. Attack the subject below: try to refute it, find failure scenarios, edge cases, and concrete counterexamples. Do not summarize it, do not praise it, do not suggest polish: only defects that would make it fail.
 
 SUBJECT:
 $SUBJECT
@@ -96,9 +87,9 @@ Separate the numbered findings with a blank line:
 ```text
 💬 adversarial review · $SUBJECT_LABEL · $R reviewers · $M findings
 
-1. **critical** · high — <claim> — <failure scenario> — `<nick-a>`, `<nick-b>`
+1. **critical** · high · <claim> · <failure scenario> · `<nick-a>`, `<nick-b>`
 
-2. **major** · medium — <claim> — <failure scenario> — `<nick-c>`
+2. **major** · medium · <claim> · <failure scenario> · `<nick-c>`
 
 no findings survived: `<nick-d>`
 dropped (failed/timed out): `<nick-e>`

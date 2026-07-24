@@ -20,6 +20,7 @@ const OWNED_SKILL_DIRS: &[&str] = &[
     "gossip-leave",
     "gossip-meta",
     "gossip-msg",
+    "gossip-orchestrate",
     "gossip-ping",
     "gossip-reattach",
     "gossip-review",
@@ -315,9 +316,12 @@ mod tests {
         }
         for partial in [
             "daemon-session.md",
+            "decisions.md",
             "events.md",
+            "guard.md",
             "invocation.md",
             "meta.md",
+            "pick-peers.md",
             "quiet.md",
             "reattach.md",
             "receive-loop.md",

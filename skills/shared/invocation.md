@@ -40,3 +40,6 @@ templates and event `display` strings — is chat markdown. Emit the lines
 bare: never wrap them in a code fence and never backslash-escape the
 backticks. A fence around a template only delimits it inside this document;
 it is not part of the output.
+
+In any `💬` line you compose beyond these templates, separate fields with
+` · ` — never a hyphen or dash.
