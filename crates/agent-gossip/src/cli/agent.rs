@@ -368,9 +368,12 @@ mod tests {
 
     /// A harness writes a background command's output to a file. The daemon's
     /// `--output json` stdout carries every message body, so the
-    /// `> /dev/null 2>&1` on each such line is the only thing keeping bodies
+    /// `> /dev/null` on each such line is the only thing keeping bodies
     /// off disk; dropping one would reintroduce the leak silently, so pin
-    /// it here rather than trust review.
+    /// it here rather than trust review. stderr must never land in a
+    /// harness-persisted file either: bells discard it (`2>&1`), and the
+    /// daemon launch routes it to the session's own `.stderr` file —
+    /// agent-gossip's private path, errors only, never message bodies.
     ///
     /// Backgrounding leaves no trace in the rendered text to match on — the
     /// harness's background facility owns it, and the launches carry no trailing
@@ -379,9 +382,10 @@ mod tests {
     #[test]
     fn long_running_gossip_commands_discard_stdout_and_stderr() {
         fn is_daemon_launch(line: &str) -> bool {
-            ["create", "join", "topic"]
-                .iter()
-                .any(|sub| line.starts_with(&format!("agent-gossip {sub} ")))
+            ["create", "join", "topic"].iter().any(|sub| {
+                line.starts_with(&format!("agent-gossip {sub} "))
+                    || line.contains(&format!("exec agent-gossip {sub} "))
+            })
         }
         fn is_bell(line: &str) -> bool {
             line.starts_with("agent-gossip poll ") && line.contains("--long")
@@ -404,11 +408,16 @@ mod tests {
                 .collect();
 
             for line in &long_running {
+                let discards = line.ends_with("> /dev/null 2>&1")
+                    || (is_daemon_launch(line)
+                        && line.contains("> /dev/null 2> ")
+                        && line.ends_with(".stderr"));
                 assert!(
-                    line.ends_with("> /dev/null 2>&1"),
-                    "{path}: a long-running command must discard stdout AND stderr, \
-                     or the harness writes message bodies and the gossip id to a \
-                     file: {line}"
+                    discards,
+                    "{path}: a long-running command must discard stdout and keep \
+                     stderr out of harness files (`> /dev/null 2>&1`, or the daemon \
+                     launch's `> /dev/null 2> …/<pid>.stderr`), or the harness \
+                     writes message bodies and the gossip id to a file: {line}"
                 );
             }
 
