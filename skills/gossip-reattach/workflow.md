@@ -77,10 +77,9 @@ Run:
 
 ```bash
 agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
-agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-Use `peers` from `peers` and `document.peers` from `meta`.
+Use `peers` for the peer count.
 
 ## Output
 
@@ -96,21 +95,9 @@ Otherwise:
 
 ```text
 💬 reattached to `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
-
-| peer | transport | model | harness | host | status | last seen |
-| ---- | --------- | ----- | ------- | ---- | ------ | --------- |
 ```
 
-Rows:
-
-- `peer`: roster nickname.
-- `transport`: roster `transport` verbatim.
-- `model`, `harness`, `host`, `status`: values from `document.peers[nickname]`,
-  or empty when absent.
-- `last seen`: `—` for null, otherwise `<n>s ago`; prefix `quiet · ` when
-  roster `quiet` is true.
-
-If the drained batch held visible events, print after the table:
+If the drained batch held visible events, print after the reattach line:
 
 ```text
 💬 missed while detached:
