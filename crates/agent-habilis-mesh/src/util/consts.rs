@@ -308,11 +308,6 @@ pub const TASK_KEEPALIVE_SECS: u64 = 30;
 /// plus one debounce (≈2–4 minutes). Flag: `--task-keepalive-max-secs`.
 pub const TASK_KEEPALIVE_MAX_SECS: u64 = 120;
 
-/// Whole-task budget of **content** legs (offer/accept/decline/context/
-/// done/confirm/change/cancel — `progress` is exempt). Hitting it forces
-/// the skill to a terminal decision; the daemon warns once on crossing.
-pub const TASK_CONTENT_CAP: u32 = 100;
-
 /// Grace before an unmeshed joiner co-hosts the rendezvous anyway (empty
 /// mesh ⇒ become the beacon for the next joiner). Flag:
 /// `--beacon-cohost-grace-secs`.

@@ -503,15 +503,14 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              stream (see "JSON EVENTS"). Content legs count
-              against a whole-task 100-message cap; beats are exempt. The daemon
+              stream (see "JSON EVENTS"). The daemon
               runs a 2-minute idle-debounce timeout and a keepalive (every 30s)
               for the party that holds the ball — the keepalive only covers a
               silent owner for up to 2 minutes past its last real leg, so a
               crashed skill's task is reaped rather than held forever. A worker
               on a long task keeps its side alive by re-emitting the `working`
-              status at least once a minute (the repeat is marked as a beat and
-              is cap-exempt); a never-picked-up task has no cover at all, so
+              status at least once a minute (the repeat is marked as a beat);
+              a never-picked-up task has no cover at all, so
               the timeout doubles as a ~2-minute pickup deadline.
 
        ORCHESTRATION

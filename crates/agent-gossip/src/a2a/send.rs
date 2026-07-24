@@ -517,7 +517,7 @@ async fn broadcast_task_frame(
             },
         )
         .await?;
-        ingest_own_leg(app, &echo, task_id, out);
+        ingest_own_leg(app, &echo, task_id);
         return Ok((id, single));
     }
     // Only content legs are ever large enough to split; the beat is a tiny
@@ -589,13 +589,13 @@ async fn broadcast_task_frame(
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group.clone(), cache_frames);
     }
-    // Echo + ingest the logical leg once (one content leg toward the cap);
-    // the echo is the plaintext twin (the logical body is sealed).
+    // Echo + ingest the logical leg once; the echo is the plaintext twin
+    // (the logical body is sealed).
     let logical =
         Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
     let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
     out.print_task(&echo, true);
-    ingest_own_leg(app, &echo, task_id, out);
+    ingest_own_leg(app, &echo, task_id);
     Ok((logical.id.clone(), logical))
 }
 
@@ -1014,22 +1014,16 @@ fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLe
     }
 }
 
-/// Advance our own coarse task state machine for a leg we just sent and warn
-/// once if a content leg pushed the task past its whole-task cap. `msg` must be
-/// the **plaintext twin** of the leg, never the wire frame: the wire body is
-/// sealed to the addressee, so a status leg's state could not be read back out
-/// of it. The `task_id` is threaded in for the same reason it always was — the
-/// artifact leg never needs its body at all.
+/// Advance our own coarse task state machine for a leg we just sent. `msg`
+/// must be the **plaintext twin** of the leg, never the wire frame: the wire
+/// body is sealed to the addressee, so a status leg's state could not be read
+/// back out of it. The `task_id` is threaded in for the same reason it always
+/// was — the artifact leg never needs its body at all.
 ///
 /// Only *skill-driven* legs may come through here. The daemon's own keepalive
 /// beat must NOT — see [`crate::a2a::task::broadcast_status`].
-fn ingest_own_leg(
-    app: &mut A2aApp,
-    msg: &Message,
-    task_id: &crate::a2a::TaskId,
-    out: &output::Output,
-) {
-    if crate::a2a::task::ingest(
+fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
+    crate::a2a::task::ingest(
         &mut app.tasks,
         crate::a2a::task::IngestLegParams {
             frame: msg,
@@ -1037,13 +1031,7 @@ fn ingest_own_leg(
             mine: true,
             now: Instant::now(),
         },
-    ) {
-        out.info(&format!(
-            "task exceeded {} messages; wrap it up",
-            agent_habilis_mesh::util::consts::TASK_CONTENT_CAP
-        ));
-        tracing::warn!("task content cap exceeded");
-    }
+    );
 }
 
 /// Client side of the gossip A2A request/response: mint an `rpc_id`, park a

@@ -7,14 +7,14 @@
 //! advance it, a `TaskArtifactUpdate` returns the result, and the **worker's**
 //! `completed` status closes it (after the initiator's approval message). The
 //! daemon owns only the *coarse* lifecycle — state advance, the per-task idle
-//! debounce, the ball-owner keepalive, and the content-message cap — while the
-//! skill owns the *content*.
+//! debounce, and the ball-owner keepalive — while the skill owns the
+//! *content*.
 //!
 //! The machine is **distributed** with no consensus: each party derives
 //! state from the legs it has seen, so the rules are deliberately
 //! conservative — **monotonic** advance (a leg that would move backward is
 //! ignored), **idempotent** (a duplicate leg is a no-op), and a terminal
-//! record is frozen. Local triggers (timeout, cap) *broadcast* a terminal
+//! record is frozen. Local triggers (the timeout) *broadcast* a terminal
 //! `canceled` status so the other side converges.
 
 use std::collections::HashMap;
@@ -27,7 +27,6 @@ use crate::output;
 use agent_habilis_mesh::daemon::ctx::HandlerCtx;
 use agent_habilis_mesh::daemon::state::EventLoopState;
 use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname};
-use agent_habilis_mesh::util::consts::TASK_CONTENT_CAP;
 use agent_habilis_mesh::util::tuning::{
     task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs,
 };
@@ -77,8 +76,6 @@ pub(crate) struct TaskRecord {
     /// refreshes would let it feed the timeout it is subject to, so a crashed
     /// skill would keepalive the peer forever. See [`should_keepalive`].
     pub last_skill_activity: Instant,
-    /// Count of **content** legs seen (beats excluded) — the cap.
-    pub content_count: u32,
     /// Last progress fraction reported, replayed on keepalives.
     pub last_fraction: Option<(u64, u64)>,
     /// Which role currently owes the next move — that party's daemon emits
@@ -149,9 +146,8 @@ pub(crate) struct IngestLegParams<'a> {
 /// broadcast (`mine = true`) or receive (`mine = false`) path. The single
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
 /// peer and the beat fraction) and advances the machine. A frame that
-/// belongs to no task is a no-op. Returns `true` if this leg crossed the
-/// content cap.
-pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegParams<'_>) -> bool {
+/// belongs to no task is a no-op.
+pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegParams<'_>) {
     let IngestLegParams {
         frame,
         task_id,
@@ -171,12 +167,12 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         tag, to: Some(to), ..
     } = &frame.kind
     else {
-        return false;
+        return;
     };
     let (kind, fraction) = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = gossip::status_payload(frame) else {
-                return false;
+                return;
             };
             if gossip::is_beat(&payload) {
                 (LegKind::Beat, gossip::beat_fraction(&payload))
@@ -185,7 +181,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             }
         }
         wire::ARTIFACT => (LegKind::Artifact, None),
-        _ => return false,
+        _ => return,
     };
     let peer = if mine { to } else { &frame.author };
     apply(
@@ -198,7 +194,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             fraction,
         },
         now,
-    )
+    );
 }
 
 /// The value cluster [`adopt_initiator`] needs beyond its `tasks` registry
@@ -236,7 +232,6 @@ pub(crate) fn adopt_initiator(
                 review: false,
                 last_activity: now,
                 last_skill_activity: now,
-                content_count: 0,
                 last_fraction: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -270,19 +265,14 @@ pub(crate) fn adopt_initiator(
 }
 
 /// Apply one task leg to the registry, advancing the coarse machine.
-/// Monotonic + idempotent + terminal-frozen. Returns `true` if this leg
-/// pushed the content count **over** the cap (the daemon warns once).
-pub(crate) fn apply(
-    tasks: &mut HashMap<TaskId, TaskRecord>,
-    leg: &LegInfo<'_>,
-    now: Instant,
-) -> bool {
+/// Monotonic + idempotent + terminal-frozen.
+pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, now: Instant) {
     // A terminal record is immutable — late/duplicate legs are ignored.
     if tasks
         .get(leg.task_id)
         .is_some_and(|rec| rec.state.is_terminal())
     {
-        return false;
+        return;
     }
 
     if matches!(leg.kind, LegKind::Offer) {
@@ -300,7 +290,6 @@ pub(crate) fn apply(
                 review: false,
                 last_activity: now,
                 last_skill_activity: now,
-                content_count: 0,
                 last_fraction: None,
                 ball: TaskRole::Receiver,
             });
@@ -309,7 +298,7 @@ pub(crate) fn apply(
     let Some(rec) = tasks.get_mut(leg.task_id) else {
         // A non-offer leg for a task we never saw open — drop it (out of
         // order, or a task that began before our join horizon).
-        return false;
+        return;
     };
 
     advance(rec, leg.kind, leg.mine);
@@ -321,14 +310,6 @@ pub(crate) fn apply(
     // task; the daemon's own keepalive never routes through `apply`, so it
     // cannot refresh this clock and thus cannot cover for a dead skill forever.
     rec.last_skill_activity = now;
-
-    // Content legs (everything but the plumbing beat) burn the budget.
-    let mut over_cap = false;
-    if !matches!(leg.kind, LegKind::Beat) {
-        rec.content_count = rec.content_count.saturating_add(1);
-        over_cap = rec.content_count == TASK_CONTENT_CAP + 1;
-    }
-    over_cap
 }
 
 /// The per-leg coarse transition (state + review + ball). Illegal /
@@ -1087,30 +1068,4 @@ mod tests {
         assert!(tasks[&tid()].review);
     }
 
-    /// Content legs count toward the cap; beats do not, and the cap
-    /// crossing is reported exactly once.
-    #[test]
-    fn content_cap_excludes_beats() {
-        let mut tasks = HashMap::new();
-        let now = Instant::now();
-        apply(&mut tasks, &leg(LegKind::Offer, true), now); // count 1
-        apply(
-            &mut tasks,
-            &leg(LegKind::Status(TaskState::Working), false),
-            now,
-        ); // count 2
-        for _ in 0..50 {
-            // Beats never increment the content count.
-            apply(&mut tasks, &leg(LegKind::Beat, false), now);
-        }
-        assert_eq!(tasks[&tid()].content_count, 2);
-        // Drive to exactly the cap, then one past it.
-        let mut over = false;
-        while tasks[&tid()].content_count < super::TASK_CONTENT_CAP {
-            over |= apply(&mut tasks, &leg(LegKind::Text, false), now);
-        }
-        assert!(!over, "no crossing while at/under the cap");
-        let crossing = apply(&mut tasks, &leg(LegKind::Text, false), now);
-        assert!(crossing, "the leg that pushes past the cap reports it");
-    }
 }
