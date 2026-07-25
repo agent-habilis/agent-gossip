@@ -1067,5 +1067,4 @@ mod tests {
         assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
         assert!(tasks[&tid()].review);
     }
-
 }
