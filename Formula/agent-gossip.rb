@@ -2,22 +2,22 @@ class AgentGossip < Formula
   desc "mesh network for agents"
   homepage "https://github.com/agent-habilis/agent-gossip"
   license "MIT"
-  version "0.4.4"
+  version "0.7.1"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "037e4b7f46e5c5d79819b0deef806dac8f7f3de3ec7a64fc339c0d5cefa870d8"
+      sha256 "b2c9c1418aad118639c4e4dd9074233484b887cf091c850617633de555dc4d79"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "e7e9559b7dad43ea1da04d13595101f374c7aa2853696bad45eefecadd93737e"
+      sha256 "48de5e263a65dbdf628cd571bdfea3127bac6b91800ce2c700692d0ebb507236"
     elsif Hardware::CPU.arm?
       url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "eb11a1e783ac2ac3ca98a64bcafc81e0cd0998411e682088ed8511e9b4caca1d"
+      sha256 "acfd79bb004095be1542b47b9640bd7098c7f9c082e18a093070bb7cf4f05ba0"
     end
   end
 
