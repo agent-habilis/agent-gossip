@@ -146,6 +146,8 @@ models found on their own is rarely a false positive.
 
 ### Orchestrate
 
+https://github.com/user-attachments/assets/f819f259-0e39-44b5-a49f-36268b3b7b5d
+
 `/gossip-orchestrate` runs a goal as an orchestra: one orchestrator
 planning, delegating, and verifying while the peers you pick do the
 work. The orchestrator breaks the goal into parallelizable subtasks,
