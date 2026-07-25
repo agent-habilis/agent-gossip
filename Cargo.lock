@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "agent-gossip"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "agent-gossip-test-fixtures",
  "agent-habilis-mesh",
