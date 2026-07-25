@@ -716,7 +716,7 @@ impl AgentGossipServer {
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
         ok_json(VersionResult {
-            version: crate::VERSION,
+            version: crate::version(),
         })
     }
 

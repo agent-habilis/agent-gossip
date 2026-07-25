@@ -77,13 +77,40 @@ pub use events::{OutputEvent, PingPeer, TaskGoneReason};
 pub use agent_habilis_mesh::util::consts::{
     MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, MESH_GLYPH,
 };
-pub use agent_habilis_mesh::util::version::VERSION;
 pub use agent_habilis_mesh::util::{ensure_runtime_base, mesh_prefix, runtime_base};
 pub use output::{event_json, surfaced_event_json};
 
 use anyhow::Result;
 
 use cli::Cli;
+
+/// This build's stamp: **this** crate's version plus the engine's git stamp,
+/// e.g. `"0.7.2 (90103e5 dirty:false)"`. Every version surface reads it —
+/// `--version`, `doctor`, the `ready` event, MCP `gossip_version`, and the A2A
+/// card peers see — so they can never disagree.
+///
+/// Not the engine's ready-made `VERSION`: that leads with the *engine* crate's
+/// number, which shipped as a stale-looking `0.5.0` on a `0.7.2` binary. Built
+/// at runtime because `concat!` cannot splice a cross-crate const, and parked
+/// in a `OnceLock` for the `&'static str` clap's `version` requires.
+#[must_use]
+pub fn version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        format!(
+            "{} {}",
+            env!("CARGO_PKG_VERSION"),
+            agent_habilis_mesh::util::version::GIT_STAMP
+        )
+    })
+}
+
+/// Hand [`version`] to the engine so its daemon-start log line reports the
+/// app's number instead of the engine's own. Idempotent; call before any
+/// daemon spawns.
+pub(crate) fn register_build_version() {
+    agent_habilis_mesh::util::version::set_build_version(version());
+}
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
 ///
@@ -96,6 +123,7 @@ use cli::Cli;
 /// Propagates any error from the selected subcommand — mesh setup
 /// failure, join timeout, IPC errors, invalid mesh-mode flags, etc.
 pub async fn run_cli() -> Result<()> {
+    register_build_version();
     // Parse through `cli_command()` (not `Cli::parse()`) so the `help`
     // subcommand blurb override in that builder applies at runtime too.
     let matches = cli_command().get_matches();

@@ -53,7 +53,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             tenant: None,
             protocol_version: PROTOCOL_VERSION.to_string(),
         }],
-        version: crate::VERSION.to_string(),
+        version: crate::version().to_string(),
         documentation_url: None,
         capabilities: AgentCapabilities {
             streaming: Some(true),

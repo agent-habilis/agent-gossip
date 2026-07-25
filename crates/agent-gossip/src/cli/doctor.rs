@@ -138,11 +138,7 @@ async fn machine_report(no_probe: bool) -> Report {
 
 fn environment_section() -> Section {
     let checks = vec![
-        Check::new(
-            "agent-gossip",
-            Verdict::Ok,
-            agent_habilis_mesh::util::version::VERSION,
-        ),
+        Check::new("agent-gossip", Verdict::Ok, crate::version()),
         Check::new(
             "platform",
             Verdict::Ok,

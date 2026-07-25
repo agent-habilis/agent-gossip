@@ -270,7 +270,7 @@ async fn test_ready_event_shape() {
     assert_eq!(ready["nickname"].as_str().unwrap(), nick);
     // The build self-identifies: the ready event carries the exact version
     // string (crate version + git sha + dirty flag).
-    assert_eq!(ready["version"].as_str().unwrap(), agent_gossip::VERSION);
+    assert_eq!(ready["version"].as_str().unwrap(), agent_gossip::version());
 }
 
 /// Three peers: creator surfaces a membership `joined` presence for

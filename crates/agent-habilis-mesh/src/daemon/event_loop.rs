@@ -416,7 +416,7 @@ struct EventLoop<A: NodeDriver> {
 fn log_daemon_start(author: &Nickname) {
     tracing::info!(
         target: "agent_gossip::lifecycle",
-        version = crate::VERSION,
+        version = crate::util::version::build_version(),
         nickname = %author,
         "daemon starting"
     );

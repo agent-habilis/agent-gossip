@@ -686,7 +686,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             drift,
             a2a_port,
         } => serde_json::to_string(&SimpleEvent::Ready {
-            version: crate::VERSION,
+            version: crate::version(),
             gossip: mesh.as_str(),
             name: name.as_str(),
             nickname: nickname.as_str(),

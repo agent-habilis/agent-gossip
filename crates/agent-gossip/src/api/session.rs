@@ -83,6 +83,7 @@ impl MeshSession {
         nickname: Option<Nickname>,
         cohost: CoHostPolicy,
     ) -> anyhow::Result<Self> {
+        crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
         let (output, events_rx) = crate::output::capture_events();
         let io = crate::a2a::app::SurfacedIo::new(output);

@@ -46,28 +46,11 @@ pub(crate) use state::{StateAction, StateOpts};
 pub(crate) use topic::TopicOpts;
 pub(crate) use topology::TopologyOpts;
 
-/// `--version` string: the **app** crate's version plus the engine's git
-/// stamp. The engine's ready-made `VERSION` leads with the engine crate's
-/// number instead, which read as a stale release during the fossil-stamp
-/// incident (engine 0.5.0 vs app 0.6.0). Assembled at runtime because
-/// `concat!` cannot splice a cross-crate const; parked in a `OnceLock` for
-/// the `&'static str` clap's `version` requires.
-fn cli_version() -> &'static str {
-    static CLI_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    CLI_VERSION.get_or_init(|| {
-        format!(
-            "{} {}",
-            env!("CARGO_PKG_VERSION"),
-            agent_habilis_mesh::util::version::GIT_STAMP
-        )
-    })
-}
-
 #[derive(Parser, Debug)]
 #[command(
     name = "agent-gossip",
     about = "mesh network for agents",
-    version = cli_version(),
+    version = crate::version(),
     after_help = "a tool by agent-habilis █🫈"
 )]
 pub(crate) struct Cli {

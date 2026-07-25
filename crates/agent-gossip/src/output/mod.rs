@@ -205,7 +205,7 @@ impl Output {
                 if mode == OutputMode::Json {
                     emit_json(
                         &SimpleEvent::Ready {
-                            version: crate::VERSION,
+                            version: crate::version(),
                             gossip: mesh.as_str(),
                             name: name.as_str(),
                             nickname: nickname.as_str(),

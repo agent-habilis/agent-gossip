@@ -25,6 +25,7 @@ pub(super) async fn create_setup(
     ),
     CreateError,
 > {
+    crate::register_build_version();
     let config = MeshConfig {
         lookups: resolve_lookups(cfg.public, cfg.lookups),
         password: None,
@@ -129,6 +130,7 @@ async fn resolved_setup(
     max_peers: usize,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
+    crate::register_build_version();
     let Resolved { kind, author, .. } = resolved;
     let io = crate::a2a::app::SurfacedIo::new(output);
     let sink = io.sink();

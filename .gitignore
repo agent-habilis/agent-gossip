@@ -1,6 +1,12 @@
 # Rust build output (one workspace -> one target/, at the root)
 /target
 
+# Generated roff man pages. `cargo task man` writes them under /target, but the
+# release workflow's download-artifact drops them here before the build runs —
+# untracked, which vergen's `dirty(true)` counts, stamping every shipped binary
+# `dirty:true`.
+/man
+
 # Node
 node_modules/
 

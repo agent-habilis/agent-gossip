@@ -104,6 +104,48 @@ fn wait_rendezvous_served(mesh: &str, survivors: &[&str]) -> bool {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
+/// Every version surface reports the same string, and it leads with the **app**
+/// crate's version. `doctor` used to read the engine crate's `VERSION` const,
+/// so a shipped 0.7.2 binary answered `--version` with 0.7.2 and `doctor` with
+/// the engine's 0.5.0. Asserting the two agree needs a real process — clap
+/// renders `--version` itself — and pinning the prefix is what catches a
+/// re-slip to the engine's number, since the two consts share a git stamp and
+/// differ only in the leading version.
+#[test]
+fn version_surfaces_agree_and_lead_with_the_app_crate() {
+    let version_out = common::test_cmd()
+        .arg("--version")
+        .output()
+        .expect("--version failed to spawn");
+    let rendered = String::from_utf8_lossy(&version_out.stdout);
+    let stamp = rendered
+        .trim()
+        .strip_prefix("agent-gossip ")
+        .expect("--version renders as `agent-gossip <stamp>`")
+        .to_owned();
+
+    assert_eq!(
+        stamp,
+        agent_gossip::version(),
+        "`--version` and the library's version() disagree"
+    );
+    assert!(
+        stamp.starts_with(env!("CARGO_PKG_VERSION")),
+        "version must lead with the app crate's version {}, got: {stamp}",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    let doctor_out = common::test_cmd()
+        .args(["doctor", "--no-probe", "--output", "json"])
+        .output()
+        .expect("doctor failed to spawn");
+    let doctor = String::from_utf8_lossy(&doctor_out.stdout);
+    assert!(
+        doctor.contains(&stamp),
+        "doctor reports a different version than `--version` ({stamp}):\n{doctor}"
+    );
+}
+
 /// Wire contract for the `info` IPC + `doctor` active-meshes scan: a live
 /// daemon answers `info` over its socket with its own identity, so
 /// `doctor` lists it under "Active gossips" with the full mesh
