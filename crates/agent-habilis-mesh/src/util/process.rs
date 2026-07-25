@@ -36,7 +36,8 @@ pub fn comm_of(pid: u32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn parent_of(pid: u32) -> Option<u32> {
+#[must_use]
+pub fn parent_of(pid: u32) -> Option<u32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // The comm field is parenthesized and may itself contain spaces and `)`,
     // so fields are only positional after the *last* `)`.
@@ -47,7 +48,8 @@ pub(crate) fn parent_of(pid: u32) -> Option<u32> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn comm_of(pid: u32) -> Option<String> {
+#[must_use]
+pub fn comm_of(pid: u32) -> Option<String> {
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
     Some(comm.trim_end().to_string())
 }
