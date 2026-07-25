@@ -59,8 +59,7 @@ https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
 ```sh
 # Homebrew for macOS and Linux
-brew tap agent-habilis/agent-gossip https://github.com/agent-habilis/agent-gossip
-brew install agent-gossip
+brew install agent-habilis/tap/agent-gossip
 
 # From source everywhere else
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip

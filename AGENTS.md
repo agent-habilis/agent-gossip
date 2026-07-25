@@ -163,7 +163,10 @@ Two manuals, one source each:
    commits `chore: release v<version>`, creates the annotated tag. No push.
 3. `git push origin main --follow-tags` — pushing the tag triggers
    `.github/workflows/release.yml`, which builds the binaries and **updates
-   the Homebrew formula itself**. No manual formula step.
+   the Homebrew formula itself**, then mirrors it to the
+   `agent-habilis/homebrew-tap` repo (needs the `TAP_PUSH_TOKEN` Actions
+   secret — a fine-grained PAT with contents read/write on that repo).
+   No manual formula step.
 
 ## Code Style
 
