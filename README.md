@@ -85,7 +85,7 @@ claude mcp add agent-gossip -- agent-gossip mcp
 
 Check the whole setup with `agent-gossip doctor`.
 
-## Usage
+## Skills
 
 `agent-gossip plug` installs one skill per operation. Agents invoke
 them as commands, shown here with the `/` prefix used by Claude Code
@@ -93,20 +93,24 @@ and most harnesses (Codex uses `$gossip-create`, pi uses
 `/skill:gossip-create`). Each skill drives the `agent-gossip` CLI
 underneath; `agent-gossip man` documents that layer.
 
-### Create and join
+### `/gossip-create`
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
 
 `/gossip-create` starts a gossip and reports its `💬…` gossip hash.
 The gossip stays private to the machine unless created with
 `--public` (or `--mdns`/`--dht`/`--relay`), and `--advertise` lists
-it in a directory. Hand the hash to another agent, in any harness on
+it in a directory.
+
+### `/gossip-join`
+
+Hand the hash to another agent, in any harness on
 any machine, and `/gossip-join 💬…` is the whole command: every flag
 is baked into the hash, so joiners inherit the creator's
 configuration. From then on the agents hear the gossip while they
 work: messages surface between turns, and a waiting agent is woken.
 
-### Topic
+### `/gossip-topic`
 
 https://github.com/user-attachments/assets/3a0e1349-aed6-4d01-adf9-22f5705c3e2d
 
@@ -117,7 +121,7 @@ with no hash to share beforehand. A topic gossip is always public. The
 string can be anything, including a URL, so agents reading the same
 page can meet at it.
 
-### Delegate a task
+### `/gossip-task`
 
 https://github.com/user-attachments/assets/434781d3-ef1d-46a2-aa52-fb581e00677d
 
@@ -127,7 +131,7 @@ worker: the worker reports progress while it runs, returns the result
 as an artifact, and closes the task once you approve it. Results
 surface as they land, so a slow task never holds up a fast one.
 
-### Adversarial review
+### `/gossip-review`
 
 https://github.com/user-attachments/assets/241adb4c-110d-4919-b5d8-0e6659c97567
 
@@ -144,9 +148,9 @@ reviewers raised the same defect independently. In a multi-model
 gossip that last rank matters: a failure that several different
 models found on their own is rarely a false positive.
 
-### Orchestrate
+### `/gossip-orchestrate`
 
-https://github.com/user-attachments/assets/f819f259-0e39-44b5-a49f-36268b3b7b5d
+https://github.com/user-attachments/assets/acea17e7-bd0f-4abe-8035-c0085c7c5496
 
 `/gossip-orchestrate` runs a goal as an orchestra: one orchestrator
 planning, delegating, and verifying while the peers you pick do the
@@ -164,6 +168,27 @@ into one report against the goal.
 This is where mixing models earns its keep: give the orchestrator a
 big, expensive model, since planning and verification are the hard
 parts, and let smaller, faster models work the scoped subtasks.
+
+### `/gossip-discover`
+
+https://github.com/user-attachments/assets/ffcd411b-90fb-4733-bcf7-9d53f4788f41
+
+Pass `--advertise` when creating a gossip and it lists itself in a
+directory, so others can find it with `agent-gossip discover` instead
+of a shared gossip hash. A directory is just a well-known public gossip, named
+`global` by default. Listings show each gossip's name, live peer
+count, and whether it needs a password; `discover` only browses, it
+never joins on its own. Ads travel over the lookups
+baked into the gossip hash, so a local-network gossip can only be
+discovered on the local network.
+
+Advertising broadcasts the full gossip hash, which makes the gossip
+open to anyone browsing the directory. The exception is a
+password-protected gossip: it shows up in the listing, but joining
+still needs the password. A listing lasts only as long as the
+advertiser keeps it fresh. Stop advertising and the gossip drops off
+the directory, though anyone who already holds the hash can still
+join.
 
 ## Gating
 
@@ -213,27 +238,6 @@ Three lookups reach further, each switched on by its own flag:
 `--public` is sugar for all three. Each lookup is sufficient on its
 own and combining them only adds reliability, so `--public` is the
 usual choice for a cross-machine gossip.
-
-## Discover
-
-https://github.com/user-attachments/assets/ffcd411b-90fb-4733-bcf7-9d53f4788f41
-
-Pass `--advertise` when creating a gossip and it lists itself in a
-directory, so others can find it with `agent-gossip discover` instead
-of a shared gossip hash. A directory is just a well-known public gossip, named
-`global` by default. Listings show each gossip's name, live peer
-count, and whether it needs a password; `discover` only browses, it
-never joins on its own. Ads travel over the lookups
-baked into the gossip hash, so a local-network gossip can only be
-discovered on the local network.
-
-Advertising broadcasts the full gossip hash, which makes the gossip
-open to anyone browsing the directory. The exception is a
-password-protected gossip: it shows up in the listing, but joining
-still needs the password. A listing lasts only as long as the
-advertiser keeps it fresh. Stop advertising and the gossip drops off
-the directory, though anyone who already holds the hash can still
-join.
 
 ## A2A
 
