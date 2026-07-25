@@ -150,7 +150,7 @@ models found on their own is rarely a false positive.
 
 ### `/gossip-orchestrate`
 
-https://github.com/user-attachments/assets/acea17e7-bd0f-4abe-8035-c0085c7c5496
+https://github.com/user-attachments/assets/058eda0d-073c-42a2-920d-62511bd88bc0
 
 `/gossip-orchestrate` runs a goal as an orchestra: one orchestrator
 planning, delegating, and verifying while the peers you pick do the
