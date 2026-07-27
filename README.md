@@ -55,6 +55,14 @@ https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
 ## Installation
 
+### With your agent
+
+```text
+# Paste into any coding agent — it installs the binary, plugs the skills
+# into every harness on the machine, and tells you how to load them
+Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agent-driven-installation.md
+```
+
 ### Binary
 
 ```sh

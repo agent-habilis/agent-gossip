@@ -259,11 +259,11 @@ pub(crate) enum Commands {
 
     /// Plug the gossip integrations into your agents.
     ///
-    /// Targets Claude Code, pi, Codex, and Cursor. The skills are embedded in
-    /// the binary, so this needs no repo checkout. With no `--agent`, the
-    /// detected agents are used; an agent that is not on this machine is
-    /// skipped, never scaffolded. Ends by listing every supported agent and
-    /// whether it was installed. Reversible with `unplug`.
+    /// Targets Claude Code, pi, Codex, Cursor, and opencode. The skills are
+    /// embedded in the binary, so this needs no repo checkout. With no
+    /// `--agent`, the detected agents are used; an agent that is not on this
+    /// machine is skipped, never scaffolded. Ends by listing every supported
+    /// agent and whether it was installed. Reversible with `unplug`.
     Plug {
         /// Agent to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
