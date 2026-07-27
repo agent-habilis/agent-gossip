@@ -31,10 +31,11 @@ Everywhere else, including Windows and any machine without Homebrew:
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip
 ```
 
-Prebuilt binaries exist for Apple silicon macOS and x86-64/ARM64 Linux; every
-other platform builds from source, which needs a Rust toolchain and takes a
-few minutes. If neither `brew` nor `cargo` is on the PATH, stop and tell the
-user to install one of them — do not try to fetch a release tarball by hand.
+Prebuilt binaries exist for macOS (Apple silicon and Intel) and Linux (x86-64
+and ARM64); every other platform builds from source, which needs a Rust
+toolchain and takes a few minutes. If neither `brew` nor `cargo` is on the
+PATH, stop and tell the user to install one of them — do not try to fetch a
+release tarball by hand.
 
 `cargo install` writes to `~/.cargo/bin`. If `agent-gossip --version` still
 fails afterwards, that directory is not on the PATH; say so and give the user

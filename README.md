@@ -50,8 +50,8 @@ https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
   gossip, whether on the same host, the local network, or across the
   public internet.
 - **Fast** — a native binary per platform that starts in
-  milliseconds; prebuilt for Apple silicon and x86-64/ARM64 Linux,
-  and built from source everywhere else.
+  milliseconds; prebuilt for macOS (Apple silicon and Intel) and
+  Linux (x86-64 and ARM64), and built from source everywhere else.
 
 ## Installation
 
