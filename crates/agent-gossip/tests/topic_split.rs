@@ -64,6 +64,30 @@ async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Du
     }
 }
 
+/// Convergence budget. A quiet run crosses cards in ~15-25s; the merge is a
+/// geometric race across shed rounds, so the bound is several rounds rather
+/// than one. Trimmed from 150s: at 150s a host that simply cannot converge
+/// (no working multicast) burned 300s of CI proving it, and 75s still leaves
+/// 3x headroom over the slowest observed healthy run.
+const MERGE_BUDGET: Duration = Duration::from_secs(75);
+
+/// `false` (plus a loud note) when this host cannot send LAN multicast, so the
+/// mDNS-only lane is unrunnable here. Returning early would otherwise report a
+/// silent pass, so the reason is printed; the CI shard for this binary runs
+/// with `--nocapture` to keep that visible in the log.
+fn mdns_lane_runnable(test: &str) -> bool {
+    if common::mdns_multicast_available() {
+        return true;
+    }
+    eprintln!(
+        "SKIP {test}: this host cannot send to the mDNS multicast groups \
+         (no route for 224.0.0.251 or ff02::fb), and the topic lane discovers \
+         peers only over LAN multicast. Not a product failure — the split-brain \
+         regression is simply unverifiable here."
+    );
+    false
+}
+
 /// A topic string no other run (or parallel CI runner on the same LAN — mDNS
 /// crosses process and machine boundaries) can collide with.
 fn unique_topic() -> String {
@@ -80,6 +104,9 @@ fn unique_topic() -> String {
 /// isolating any simultaneous-test failure to the shed/merge logic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn staggered_topic_joiners_converge() {
+    if !mdns_lane_runnable("staggered_topic_joiners_converge") {
+        return;
+    }
     let _serial = SERIAL.lock().await;
     init_short_tuning();
     let topic = unique_topic();
@@ -92,7 +119,7 @@ async fn staggered_topic_joiners_converge() {
     // Same bound as the simultaneous test, not the fixture's fixed 60s
     // helper: when host mDNS is slow, even the no-race path may fall back
     // to a duplicate claim repaired by shed rounds.
-    await_cards_bounded(&alice, &bob, Duration::from_secs(150)).await;
+    await_cards_bounded(&alice, &bob, MERGE_BUDGET).await;
 
     alice.leave().await;
     bob.leave().await;
@@ -100,6 +127,9 @@ async fn staggered_topic_joiners_converge() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_simultaneous_topic_joiners_converge() {
+    if !mdns_lane_runnable("two_simultaneous_topic_joiners_converge") {
+        return;
+    }
     let _serial = SERIAL.lock().await;
     init_short_tuning();
     let topic = unique_topic();
@@ -125,7 +155,7 @@ async fn two_simultaneous_topic_joiners_converge() {
     // Generous for a loaded host (the full suite runs other binaries in
     // parallel and a busy machine stretches every mDNS query round); a
     // quiet run converges in ~15-25s.
-    await_cards_bounded(&alice, &bob, Duration::from_secs(150)).await;
+    await_cards_bounded(&alice, &bob, MERGE_BUDGET).await;
 
     // And traffic flows across the merged overlay, both directions.
     alice.send("after-merge-a").await;

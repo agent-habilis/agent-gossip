@@ -136,7 +136,7 @@ async fn rung_serves_our_mesh(peer: &Endpoint, rendezvous_id: EndpointId, port: 
     let addr = EndpointAddr::new(rendezvous_id)
         .with_ip_addr(SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
     let ours = probe_connect(peer, addr, Duration::from_secs(RENDEZVOUS_PROBE_SECS)).await;
-    tracing::trace!(port, ours, "private rung identity-probe");
+    tracing::trace!(target: "agent_gossip::beacon", port, ours, "private rung identity-probe");
     ours
 }
 
@@ -204,12 +204,12 @@ async fn build_rendezvous_endpoint(
                 // risks the duplicate-id collision, so stay a peer
                 // and let the next tick retry.
                 Err(error) => {
-                    tracing::debug!(%error, "rival probe endpoint build failed; next tick retries");
+                    tracing::debug!(target: "agent_gossip::beacon", %error, "rival probe endpoint build failed; next tick retries");
                     return None;
                 }
             };
             if found_rival {
-                tracing::debug!("public rendezvous already served by a beacon; staying peer");
+                tracing::debug!(target: "agent_gossip::beacon", "public rendezvous already served by a beacon; staying peer");
                 return None;
             }
         }
@@ -223,9 +223,9 @@ async fn build_rendezvous_endpoint(
         .await
         .ok();
         if endpoint.is_some() {
-            tracing::info!("beacon assumed: bound public rendezvous endpoint (ephemeral port)");
+            tracing::info!(target: "agent_gossip::beacon", "beacon assumed: bound public rendezvous endpoint (ephemeral port)");
         } else {
-            tracing::debug!("public beacon endpoint build failed; next tick retries");
+            tracing::debug!(target: "agent_gossip::beacon", "public beacon endpoint build failed; next tick retries");
         }
         return endpoint;
     }
@@ -239,17 +239,17 @@ async fn build_rendezvous_endpoint(
         )
         .await
         {
-            tracing::info!(port, "beacon assumed: bound rendezvous ladder rung");
+            tracing::info!(target: "agent_gossip::beacon", port, "beacon assumed: bound rendezvous ladder rung");
             return Some(endpoint);
         }
         // build failed (AddrInUse): is it our beacon, or a foreign squat?
         if rung_serves_our_mesh(peer, params.id, port).await {
-            tracing::debug!(port, "rung already serves our beacon; staying peer");
+            tracing::debug!(target: "agent_gossip::beacon", port, "rung already serves our beacon; staying peer");
             return None;
         }
-        tracing::debug!(port, "rung squatted by a foreign mesh; trying next rung");
+        tracing::debug!(target: "agent_gossip::beacon", port, "rung squatted by a foreign mesh; trying next rung");
     }
-    tracing::debug!("all rendezvous ladder rungs occupied; staying peer");
+    tracing::debug!(target: "agent_gossip::beacon", "all rendezvous ladder rungs occupied; staying peer");
     None
 }
 
@@ -277,7 +277,7 @@ pub(crate) async fn ensure(
         return false;
     }
     if current.is_some() {
-        tracing::info!("beacon released (co-host task ended); attempting re-stand-up");
+        tracing::info!(target: "agent_gossip::beacon", "beacon released (co-host task ended); attempting re-stand-up");
     }
     // Finished task = dead beacon; drop it (aborting is a harmless
     // no-op on an already-finished task) before re-arming.
@@ -375,7 +375,7 @@ pub(crate) async fn ensure(
         crate::lookup::spawn_relay_monitor(monitor_endpoint, ladder, monitor_rung_tx, monitor_homed)
     });
 
-    tracing::info!("beacon role active: serving the rendezvous");
+    tracing::info!(target: "agent_gossip::beacon", "beacon role active: serving the rendezvous");
     *current = Some(Rendezvous {
         task,
         monitor,

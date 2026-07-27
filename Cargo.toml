@@ -158,10 +158,24 @@ opt-level = 3
 # Release-quality runtime perf with much faster build times — for CI and
 # anywhere local "full test" runs need crypto/network speed without
 # paying the fat-LTO + 1-codegen-unit price of `[profile.release]`.
+#
+# `lto = false`, not `"thin"`: what this profile is *for* is fast crypto and
+# network paths, and that comes from `opt-level = 3` — LTO only trims the
+# cross-crate seams on top. But the thing being built is ~20 integration-test
+# binaries, and each one links the whole iroh/QUIC/DHT graph, so thin LTO is
+# paid once per binary. On a 4-core CI runner that alone was 29 minutes with
+# every dependency already cached, which overran the job's cap and got the run
+# cancelled mid-suite. `codegen-units = 256` (the non-LTO default) then buys
+# back the codegen parallelism `16` was giving up for LTO's sake.
+#
+# `strip = false` overrides the inherited `true`: stripped test binaries make
+# every CI panic backtrace a bare "details are omitted" stub, which is exactly
+# the diagnostic needed when a reliability test fails only on the runner.
 [profile.ci]
 inherits = "release"
-lto = "thin"
-codegen-units = 16
+lto = false
+codegen-units = 256
+strip = false
 
 # Local, uncommitted patch consuming the leak fixes from our GitHub forks
 # (kept out of `main` until the upstream PRs merge, then dropped for the released

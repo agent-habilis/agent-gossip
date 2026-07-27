@@ -42,7 +42,7 @@ pub(crate) async fn handle_gossip_event(
         }
         Some(Ok(Event::NeighborUp(node_id))) => {
             let (conn, relay) = conn_path(ctx.endpoint, node_id).await;
-            tracing::info!(
+            tracing::info!(target: "agent_gossip::gossip",
                 endpoint_id = %node_id,
                 is_rendezvous = node_id == ctx.rendezvous_id,
                 conn,
@@ -59,7 +59,7 @@ pub(crate) async fn handle_gossip_event(
             let now = Instant::now();
             if state.announced {
                 if state.peerinfo_on_cooldown(node_id, now) {
-                    tracing::debug!(endpoint_id = %node_id, "skipped PeerInfo re-flood (cooldown)");
+                    tracing::debug!(target: "agent_gossip::gossip", endpoint_id = %node_id, "skipped PeerInfo re-flood (cooldown)");
                 } else {
                     broadcast_peer_info(ctx).await;
                     state.note_peerinfo(node_id, now);
@@ -70,7 +70,7 @@ pub(crate) async fn handle_gossip_event(
                 state.announced = true;
                 state.note_peerinfo(node_id, now);
                 state.last_sent_at = now;
-                tracing::info!("announced arrival on first gossip link");
+                tracing::info!(target: "agent_gossip::gossip", "announced arrival on first gossip link");
             }
             // The co-hosted rendezvous is overlay plumbing, not a
             // peer — never cache its pseudo-node in the
@@ -106,7 +106,7 @@ pub(crate) async fn handle_gossip_event(
         }
         Some(Ok(Event::NeighborDown(node_id))) => {
             let is_rendezvous = node_id == ctx.rendezvous_id;
-            tracing::info!(endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
+            tracing::info!(target: "agent_gossip::gossip", endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
             if is_rendezvous {
                 state.rendezvous_linked = false;
             } else {
@@ -121,7 +121,7 @@ pub(crate) async fn handle_gossip_event(
             if is_rendezvous || state.linked_endpoints.is_empty() {
                 state.reclaim_until =
                     Some(Instant::now() + Duration::from_secs(RECLAIM_WINDOW_SECS));
-                tracing::info!(
+                tracing::info!(target: "agent_gossip::gossip",
                     reason = if is_rendezvous {
                         "rendezvous-loss"
                     } else {
@@ -138,12 +138,12 @@ pub(crate) async fn handle_gossip_event(
             ctx.sink.emit(NodeEvent::Info(
                 "Event stream lagged, some messages may have been missed".to_owned(),
             ));
-            tracing::warn!("gossip event stream lagged; some messages missed");
+            tracing::warn!(target: "agent_gossip::gossip", "gossip event stream lagged; some messages missed");
         }
         Some(Err(error)) => {
             ctx.sink
                 .emit(NodeEvent::Error(format!("Gossip error: {error}")));
-            tracing::warn!(%error, "gossip error");
+            tracing::warn!(target: "agent_gossip::gossip", %error, "gossip error");
         }
         None => {
             // Terminal: the actor closed this subscription (lag
@@ -153,7 +153,7 @@ pub(crate) async fn handle_gossip_event(
             ctx.sink.emit(NodeEvent::Error(
                 "gossip stream ended; resubscribing".to_owned(),
             ));
-            tracing::error!("gossip stream ended; heal arm will resubscribe");
+            tracing::error!(target: "agent_gossip::gossip", "gossip stream ended; heal arm will resubscribe");
         }
     }
 }
@@ -186,7 +186,7 @@ pub(crate) async fn drain_dead_receiver(
             Some(None) | None => break,
         }
     }
-    tracing::info!(
+    tracing::info!(target: "agent_gossip::gossip",
         recovered,
         "drained buffered messages from the dead gossip subscription"
     );
@@ -213,12 +213,12 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
         };
         if state.pending_outbound.push((msg, bytes)) {
             requeued += 1;
-            tracing::debug!(%error, "buffered outbound message not deliverable yet; requeued");
+            tracing::debug!(target: "agent_gossip::gossip", %error, "buffered outbound message not deliverable yet; requeued");
         } else {
-            tracing::warn!(%error, "buffered outbound message undeliverable and the buffer is full; dropped");
+            tracing::warn!(target: "agent_gossip::gossip", %error, "buffered outbound message undeliverable and the buffer is full; dropped");
         }
     }
-    tracing::info!(
+    tracing::info!(target: "agent_gossip::gossip",
         delivered,
         requeued,
         edge,
@@ -245,7 +245,7 @@ pub(crate) async fn ingest(
     let Ok(mut message) = Message::parse(&content) else {
         ctx.sink
             .emit(NodeEvent::Error("Failed to parse message".to_owned()));
-        tracing::warn!("failed to parse inbound gossip message");
+        tracing::warn!(target: "agent_gossip::gossip", "failed to parse inbound gossip message");
         return;
     };
     // Self-echo drop: keyed on our **public key**, not the nickname. With
@@ -256,7 +256,7 @@ pub(crate) async fn ingest(
     if message.pubkey == ctx.our_pubkey {
         return;
     }
-    tracing::trace!(author = %message.author, "gossip message received");
+    tracing::trace!(target: "agent_gossip::gossip", author = %message.author, "gossip message received");
     // Authenticity gate, **before** dedup: every inbound message must carry a
     // valid signature over its canonical bytes. Verifying before `mark_seen`
     // stops a forged/unsigned message from poisoning the dedup window with a
@@ -266,7 +266,7 @@ pub(crate) async fn ingest(
     // content hash at the log site, so a Msg is not re-serialized twice.
     let canonical = message.canonical_bytes();
     if !message.verify_signature_with(&canonical) {
-        tracing::warn!(author = %message.author, "dropping message with missing/invalid signature");
+        tracing::warn!(target: "agent_gossip::gossip", author = %message.author, "dropping message with missing/invalid signature");
         return;
     }
     // Mesh gate: the gossip topic already isolates honest meshes, but a peer
@@ -274,7 +274,7 @@ pub(crate) async fn ingest(
     // that would otherwise flow unchecked into the `--output json` agent API.
     // Drop anything not stamped with our own mesh id.
     if message.mesh != *ctx.mesh {
-        tracing::warn!(author = %message.author, "dropping message stamped with a foreign mesh id");
+        tracing::warn!(target: "agent_gossip::gossip", author = %message.author, "dropping message stamped with a foreign mesh id");
         return;
     }
     // Starvation watchdog signal, *before* dedup: even a duplicate
@@ -366,7 +366,7 @@ pub(crate) async fn ingest(
                 && let Err(error) =
                     crate::transport::deliver(&pong, Bytes::from(bytes), state, ctx.sender).await
             {
-                tracing::debug!(%error, pinger = %message.author, "auto-pong not delivered");
+                tracing::debug!(target: "agent_gossip::gossip", %error, pinger = %message.author, "auto-pong not delivered");
             }
             return;
         }
@@ -485,14 +485,14 @@ fn handle_link_state(message: &Message, state: &mut EventLoopState) {
     match serde_json::from_str::<iroh_multihop_transport::LinkVector>(message.body.as_str()) {
         Ok(vector) => {
             let updated = handle.feed_topology(vector);
-            tracing::debug!(
+            tracing::debug!(target: "agent_gossip::gossip",
                 author = %message.author,
                 updated,
                 "multihop link-state received"
             );
         }
         Err(error) => {
-            tracing::debug!(
+            tracing::debug!(target: "agent_gossip::gossip",
                 author = %message.author,
                 %error,
                 "dropping malformed multihop link-state"
@@ -569,7 +569,7 @@ async fn handle_shard(
         // Classify the reassembled body once; thread it to the push step.
         let logical_class = logical.kind.app_tag().map(|_| app.classify(&logical));
         if logical_class.as_ref().is_some_and(|cls| !cls.valid) {
-            tracing::warn!(
+            tracing::warn!(target: "agent_gossip::gossip",
                 author = %logical.author,
                 "dropping reassembled app frame with an invalid payload"
             );
@@ -637,11 +637,11 @@ fn retain_and_index(
                 pubkey: message.pubkey.clone(),
                 seq,
             });
-            tracing::warn!(author = %message.author, seq, "fork detected: conflicting messages at same seq");
+            tracing::warn!(target: "agent_gossip::gossip", author = %message.author, seq, "fork detected: conflicting messages at same seq");
         }
         // Fold into the DAG tip set; flag a backdated timestamp.
         if state.note_dag(hash, &message.parents, message.timestamp) {
-            tracing::warn!(author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
+            tracing::warn!(target: "agent_gossip::gossip", author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
         }
     }
     if let Some(evicted) = state.message_log.push(message) {
@@ -741,7 +741,7 @@ fn ingest_channel_event(
             });
         }
         Ingested::Rejected => {
-            tracing::warn!(
+            tracing::warn!(target: "agent_gossip::gossip",
                 author = %message.author,
                 "dropping a {} change that forges another peer's agent card",
                 channel.label()
@@ -797,7 +797,7 @@ fn gate_app_payload(message: &Message, app: &dyn NodeApp) -> Option<AppClass> {
     if class.valid {
         Some(class)
     } else {
-        tracing::warn!(
+        tracing::warn!(target: "agent_gossip::gossip",
             author = %message.author,
             "dropping app frame with an invalid payload"
         );
@@ -910,7 +910,7 @@ fn decrypt_broadcast(message: &mut Message, state: &EventLoopState) -> Option<Me
     // did not mesh-key-seal its body lands here; see `send_app`'s doc.
     let Some(plain) = crate::daemon::state_doc::decrypt_body(message.body.as_str(), Some(key))
     else {
-        tracing::warn!(
+        tracing::warn!(target: "agent_gossip::gossip",
             author = %message.author,
             "dropping a broadcast body that failed mesh-key decryption (cleartext on a passworded mesh?)"
         );
@@ -933,7 +933,7 @@ fn decrypt_directed(message: &mut Message, state: &EventLoopState, ctx: &Handler
             Err(_) => false,
         },
         Err(error) => {
-            tracing::warn!(%error, author = %message.author, "dropping a directed frame sealed to us that failed to open");
+            tracing::warn!(target: "agent_gossip::gossip", %error, author = %message.author, "dropping a directed frame sealed to us that failed to open");
             false
         }
     }
@@ -1042,7 +1042,8 @@ async fn handle_peer_info(
     // state — a `PeerInfo` normally arrives over an already-formed link,
     // and recovery (`heal::rebridge_known`, the starvation watchdog's
     // precondition) needs the memory precisely *after* that link dies.
-    if state.known_endpoints.insert(peer_id) {
+    let first_sighting = state.known_endpoints.insert(peer_id);
+    if first_sighting {
         let _ = add_peer_addr(ctx.endpoint, peer_addr.clone());
     }
     // A buffered directed frame addressed to this author may just have become
@@ -1052,24 +1053,51 @@ async fn handle_peer_info(
         flush_pending(state, ctx, "peer info arrival").await;
     }
     let now = Instant::now();
+    // Simultaneous-open tie-break: on a peer's *first* sighting, only the
+    // numerically lower endpoint id dials.
+    //
+    // A join floods its `PeerInfo` to everyone at once, so both sides of a new
+    // pair reach this dial in the same millisecond and each opens a connection.
+    // iroh-gossip does dedup the pair — but each side independently closes the
+    // connection *it* dialed, and those are the two different halves, so both
+    // die and the pair is left unlinked. Observed directly: `neighbor up` for
+    // both, then `remaining 1 other connections`, then `closed by peer: close
+    // from disconnect` ~23ms later, leaving each node in `silent partition
+    // (meshed but zero peer links)` — which is how a graceful `Left` came to be
+    // broadcast into the void, since by then the leaver had no neighbors.
+    //
+    // Comparing ids gives both sides the same answer without a round trip.
+    // Deliberately scoped to the first sighting, so it defers a dial rather
+    // than vetoing one: if the lower id never dials (it may not hold our
+    // `PeerInfo` yet), the next re-receipt past the relink cooldown dials from
+    // this side after all. The rendezvous is exempt — it returned above — so
+    // the bootstrap link is never subject to this.
+    let defer_first_dial = first_sighting && ctx.endpoint.id() > peer_id;
+    if defer_first_dial {
+        tracing::debug!(target: "agent_gossip::gossip",
+            endpoint_id = %peer_id,
+            "deferring first dial to the lower endpoint id (simultaneous-open tie-break)"
+        );
+    }
     // A `PeerInfo` is a dial hint, never a link: `linked_endpoints` is
     // owned by `NeighborUp`/`NeighborDown` (link truth), so an unlinked
     // peer's `PeerInfo` only re-registers its (possibly fresh) address
     // and *asks* the gossip actor to graft it. Until the link
     // materializes, each post-cooldown re-receipt retries the dial —
     // the healer's per-peer backstop.
-    if state.linked_endpoints.len() < ctx.max_peers
+    if !defer_first_dial
+        && state.linked_endpoints.len() < ctx.max_peers
         && !state.linked_endpoints.contains(&peer_id)
         && !state.relink_on_cooldown(peer_id, now)
     {
         state.note_relink(peer_id, now);
         let _ = add_peer_addr(ctx.endpoint, peer_addr);
         if let Err(error) = ctx.sender.join_peers(vec![peer_id]).await {
-            tracing::warn!(endpoint_id = %peer_id, %error, "PeerInfo graft request failed");
+            tracing::warn!(target: "agent_gossip::gossip", endpoint_id = %peer_id, %error, "PeerInfo graft request failed");
         }
         let _ = ctx.sender.broadcast(content).await;
         state.last_sent_at = Instant::now();
-        tracing::debug!(
+        tracing::debug!(target: "agent_gossip::gossip",
             endpoint_id = %peer_id,
             linked = state.linked_endpoints.len(),
             "dialing peer from PeerInfo"

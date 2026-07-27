@@ -75,6 +75,14 @@ const RENDEZVOUS_HANDOFF: Duration = Duration::from_secs(36);
 /// has released its sockets, so a joiner's rung-walk cannot dial a
 /// dead-but-bound rung — the historical first-message-lost flake.
 fn survivor_serves_rendezvous(mesh: &str, nick: &str) -> bool {
+    let (assumed, ups, downs) = rendezvous_signals(mesh, nick);
+    assumed && ups > downs
+}
+
+/// The two independent signals [`survivor_serves_rendezvous`] ANDs together:
+/// did this survivor ever bind a rendezvous rung, and is its rendezvous gossip
+/// link currently up.
+fn rendezvous_signals(mesh: &str, nick: &str) -> (bool, usize, usize) {
     let trace = trace_log(mesh, nick);
     let rendezvous_links = |direction: &str| {
         trace
@@ -82,8 +90,31 @@ fn survivor_serves_rendezvous(mesh: &str, nick: &str) -> bool {
             .filter(|line| line.contains(direction) && line.contains("is_rendezvous=true"))
             .count()
     };
-    trace.contains("beacon assumed")
-        && rendezvous_links("gossip neighbor up") > rendezvous_links("gossip neighbor down")
+    (
+        trace.contains("beacon assumed"),
+        rendezvous_links("gossip neighbor up"),
+        rendezvous_links("gossip neighbor down"),
+    )
+}
+
+/// Why a survivor is not serving the rendezvous, for assertion messages. The
+/// JSON stdout log cannot answer this — a mesh that healed fine still prints a
+/// clean roster — so a bare stdout tail left CI handoff failures unreadable.
+fn rendezvous_diagnosis(mesh: &str, nick: &str) -> String {
+    let (assumed, ups, downs) = rendezvous_signals(mesh, nick);
+    format!(
+        "<{nick}>: beacon assumed={assumed}, rendezvous links up={ups} down={downs} \
+         (needs assumed=true and up>down)\ntrace tail:\n{}",
+        trace_log(mesh, nick)
+            .lines()
+            .rev()
+            .take(25)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }
 
 /// Poll until any survivor serves the rendezvous (see
@@ -1336,7 +1367,8 @@ fn test_join_after_creator_departed_with_surviving_member() {
     drop(creator);
     assert!(
         wait_rendezvous_served(&mesh, &[&bystander.nickname]),
-        "bystander never served the rendezvous after creator exit\nbystander log tail:\n{}",
+        "bystander never served the rendezvous after creator exit\n{}\nbystander log tail:\n{}",
+        rendezvous_diagnosis(&mesh, &bystander.nickname),
         bystander.log_tail(15),
     );
 

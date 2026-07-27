@@ -36,29 +36,64 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    # Outer wedged-run cap for the unit/integration suite. It is
-    # mostly in-process (sub-second) plus the every-run subprocess
-    # reliability/contract set — including the relocated ungraceful-
-    # death, sleep/wake heal, and anti-entropy-backfill tests (they
-    # inject short cadences via the hidden tuning flags, e.g.
-    # `--heal-interval-secs`, and poll observable markers instead of
-    # sleeping fixed floors). A healthy run is a few minutes. In-test
-    # polling deadlines (`CONNECT_TIMEOUT`
-    # 1m / `MSG_TIMEOUT` 30s) self-abort a stuck test well before this.
-    # The cap must also clear a *cold* `rust-cache` run: the first push
-    # (or any post-eviction run) compiles the whole iroh/gossip/DHT
-    # graph from scratch under `--profile ci` (release + thin LTO,
-    # build-override opt-level 3), which alone outran a 20m cap. 40m is
-    # the cold-build headroom plus a generous net against a truly hung
-    # run; warm-cache runs stay a few minutes, well under it.
-    timeout-minutes: 40
+    # Sharded: the suite's cost is dominated by one binary
+    # (`gossip_network`, the subprocess reliability set, ~5m and serial by
+    # design), so running every binary in one job spent ~15m wall doing
+    # ~5m of critical path. Each shard builds the workspace and runs its
+    # own slice of the test binaries, so wall-clock is the slowest shard
+    # rather than the sum.
+    #
+    # `fail-fast: false` so one red shard does not cancel the others —
+    # the same reason the single job used `--no-fail-fast`.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    # Per-shard cap: a shard is a workspace build (~2m warm, longer on a
+    # cold `rust-cache` run that recompiles the whole iroh/gossip/DHT
+    # graph) plus at most the reliability slice. Well clear of both, and
+    # tight enough that a wedged run is killed while it still means
+    # something. The old single job needed 40-60m and still got cancelled
+    # mid-suite, reporting a red X with no failing step.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # Build every test binary, capturing the artifact list. `--no-run`
+      # so the build is a separate, readable step from the run, and
+      # `--message-format=json` because the executable paths it reports
+      # are what the shard step slices — enumerated from the actual
+      # build, never a hand-maintained list that a new test file could
+      # silently fall off.
+      #
       # `--profile ci` is release-quality runtime (opt-level=3,
-      # strip, panic=abort) with thin LTO + 16 codegen units — fast
-      # enough build for CI, fast enough crypto/network paths for
-      # integration tests. See Cargo.toml `[profile.ci]`.
+      # panic=abort) without LTO — fast enough build for CI, fast enough
+      # crypto/network paths for integration tests. See Cargo.toml
+      # `[profile.ci]` for why LTO is off.
+      #
+      # `--workspace`, not `-p agent-gossip`: `agent-habilis-mesh` owns the
+      # wire version, every crypto byte-domain and `runtime_base()`, and its
+      # snapshots pin the frame format. While CI named only the app, none of
+      # that ran here — a stale engine snapshot could go green.
+      #
+      # `--exclude tasks`: the dev-only `cargo task` crate has no tests at
+      # all, so under `--workspace` CI paid to build it — and its
+      # `clap_mangen` line — under an optimizing profile purely to run
+      # nothing. `cargo task lint`/`ci` still cover it locally.
+      - name: Build test binaries
+        run: |
+          cargo test --workspace --exclude tasks --profile ci --no-run \
+            --message-format=json > /tmp/build.json
+      # Every shard enumerates the same sorted list from the same commit,
+      # then takes its own slice, so the union is the whole suite by
+      # construction. Both the full list and this shard's selection are
+      # printed: a shard that silently ran nothing is visible in the log,
+      # not inferred from a green check.
+      #
+      # `gossip_network` is pinned to shard 1 rather than left to the
+      # round-robin: at ~5m it is longer than every other binary combined,
+      # so isolating it makes the shards even instead of stacking it on
+      # top of an already-full slice.
       #
       # `--test-threads=2`, not 4 (kept in sync with `cargo task ci`/`test`):
       # the daemon-spawning reliability tests in `gossip_network.rs` assert
@@ -66,11 +101,48 @@ jobs:
       # anti-entropy). At 4 those active windows overlap and starve each
       # other's timing, flaking even though the daemons mesh fine; 2 still
       # overlaps the long deliberate sleeps for speed.
-      #
-      # `--workspace`, not `-p agent-gossip`: `agent-habilis-mesh` owns the wire
-      # version, every crypto byte-domain and `runtime_base()`, and its
-      # snapshots pin the frame format. While CI named only the app, none of
-      # that ran here — a stale engine snapshot could go green. It is
-      # in-process and finishes in seconds. `--no-fail-fast` so one red binary
-      # does not hide every binary after it.
-      - run: cargo test --workspace --profile ci --no-fail-fast -- --test-threads=2
+      - name: Run shard ${{ matrix.shard }} of 3
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: 3
+        run: |
+          set -uo pipefail
+          # `while read`, not `mapfile`: mapfile is bash 4+, and this loop
+          # also runs under the bash 3.2 a macOS contributor has.
+          ALL=()
+          while IFS= read -r exe; do ALL+=("$exe"); done < <(
+            jq -r 'select(.reason == "compiler-artifact" and .profile.test == true)
+                   | .executable | select(. != null)' /tmp/build.json | sort -u
+          )
+          if [ "${#ALL[@]}" -eq 0 ]; then
+            echo "::error::no test binaries were built"; exit 1
+          fi
+          echo "::group::All ${#ALL[@]} test binaries"
+          printf '%s\n' "${ALL[@]}"
+          echo "::endgroup::"
+
+          mine=(); rest=0
+          for exe in "${ALL[@]}"; do
+            stem=$(basename "$exe"); stem=${stem%-*}
+            if [ "$stem" = gossip_network ]; then
+              want=1
+            else
+              want=$(( rest % (TOTAL - 1) + 2 )); rest=$(( rest + 1 ))
+            fi
+            [ "$want" -eq "$SHARD" ] && mine+=("$exe")
+          done
+
+          echo "Shard $SHARD/$TOTAL selected ${#mine[@]} of ${#ALL[@]} binaries"
+          status=0
+          for exe in "${mine[@]}"; do
+            name=$(basename "$exe")
+            # `--nocapture` for the mDNS lane only: it skips itself when the
+            # host cannot send multicast, and libtest hides a passing test's
+            # output, so without this the skip would read as a silent pass.
+            extra=""
+            case "$name" in topic_split-*) extra="--nocapture" ;; esac
+            echo "::group::$name"
+            "$exe" --test-threads=2 $extra || status=1
+            echo "::endgroup::"
+          done
+          exit $status

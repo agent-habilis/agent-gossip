@@ -163,7 +163,12 @@ async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
                 })
             })
             .await,
-        "the worker's leave never canceled the live task"
+        // Which of the two links broke matters: no `presence:left` at all means
+        // the leave broadcast never reached the initiator, whereas a `left`
+        // without the `task_timeout` means it arrived and the cancel did not
+        // fire off it.
+        "the worker's leave never canceled the live task\nalice saw: {:?}",
+        alice.events()
     );
 
     // The record is terminal, so the roster gate applies again: the departed

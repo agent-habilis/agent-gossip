@@ -140,10 +140,26 @@ redacted by default** so a log is safe to share; pass the hidden `--log-raw`
 for local debugging only. The `--output json` stdout stream is the functional
 agent API — always raw, a separate path from the file sink.
 
-The module path is the log target (`EnvFilter` prefix-matches), one per
-subsystem: `agent_gossip::{lookup,gossip,lifecycle,beacon,directory}`.
-Override at runtime, e.g.
+Every log line carries an explicit `target:`, one per subsystem:
+`agent_gossip::{lookup,gossip,lifecycle,beacon,directory,messages}`
+(`EnvFilter` prefix-matches). Override at runtime, e.g.
 `RUST_LOG=agent_gossip::gossip=trace cargo run -- create`.
+
+**Write `target: "agent_gossip::<subsystem>"` on every new `tracing` call in
+`agent-habilis-mesh`.** It is not inferred: the default target is the *module
+path*, which in the engine crate is `agent_habilis_mesh::…` and matches none of
+the directives `logging::log_filter` pins. Those pins are what keep the
+connectivity story at `info` in a release build, whose base level is `error` —
+so an untargeted `info!`/`warn!` compiles, passes review, works in a debug
+build, and is silently dropped from every optimized one. Not hypothetical: the
+beacon and gossip-neighbour lines lost their targets, which made
+`test_join_after_creator_departed_with_surviving_member` (it asserts on those
+lines) fail 100% under `--profile ci` while passing locally in dev, and left
+shipped release binaries with no beacon diagnostics at all.
+
+In-process tests install no subscriber of their own; call
+`agent_gossip_test_fixtures::init_test_tracing()` (every `InProcNode`
+constructor already does) and they honour `RUST_LOG` like a daemon.
 
 ### Man pages
 

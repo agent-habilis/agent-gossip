@@ -29,3 +29,4 @@ agent-gossip = { path = "../agent-gossip" }
 tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+tracing-subscriber.workspace = true

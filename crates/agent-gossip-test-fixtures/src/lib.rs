@@ -406,10 +406,15 @@ pub fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &str) -> 
 pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
     await_peer_card_cli(mesh, nickname, to);
     let out = cli_task_create_raw(mesh, nickname, to, text);
+    // stdout, not just stderr: a rejected JSON-RPC call reports itself in the
+    // response body it prints on stdout, so a stderr-only message renders as a
+    // bare "a2a create failed:" — which is what CI failures looked like.
     assert!(
         out.status.success(),
-        "a2a create failed: {}",
-        String::from_utf8_lossy(&out.stderr)
+        "a2a create failed ({}) from <{nickname}> to <{to}>\nstdout: {}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value =
@@ -628,9 +633,43 @@ fn test_mesh_name(name: &str) -> MeshName {
     MeshName::new(name).expect("valid test mesh name")
 }
 
+/// Route the daemon's `tracing` to the test's captured stdout when `RUST_LOG`
+/// is set, so an in-process failure can be debugged the same way a subprocess
+/// one can (`RUST_LOG=agent_gossip::gossip=debug cargo test …`). Without this
+/// the in-process tests install no subscriber at all and every diagnostic the
+/// engine emits is discarded — the reason a flake here had to be chased by
+/// bisecting asserts rather than reading a log.
+///
+/// Idempotent and silent when `RUST_LOG` is unset: `try_init` fails harmlessly
+/// if a subscriber is already installed, and an empty filter emits nothing, so
+/// a normal run is unaffected.
+pub fn init_test_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
+}
+
+/// Whether this host can send to the mDNS multicast groups at all — the
+/// precondition for any test whose peers find each other over LAN multicast.
+///
+/// Deliberately asymmetric: a successful send does **not** prove discovery
+/// works (nothing may be listening), but a failure on *both* families proves it
+/// cannot, so this only ever gates out a host that is certainly incapable. A
+/// VPN that captures the default route, or a runner image without an `IPv6`
+/// route, makes every `send_to` fail with `EHOSTUNREACH` — and an mDNS test
+/// then burns its whole budget proving only that the host has no multicast.
+pub fn mdns_multicast_available() -> bool {
+    fn can_send(bind: &str, group: &str) -> bool {
+        std::net::UdpSocket::bind(bind).is_ok_and(|sock| sock.send_to(&[0_u8], group).is_ok())
+    }
+    can_send("0.0.0.0:0", "224.0.0.251:5353") || can_send("[::]:0", "[ff02::fb]:5353")
+}
+
 impl InProcNode {
     /// Create a new private mesh. `self.mesh` holds the `💬…` id.
     pub async fn create(name: &str) -> Self {
+        init_test_tracing();
         Self::from_session(
             MeshSession::create(CreateConfig::new(test_mesh_name(name)))
                 .await
@@ -640,6 +679,7 @@ impl InProcNode {
 
     /// Create a new private mesh with an explicit nickname.
     pub async fn create_with_nick(name: &str, nick: &str) -> Self {
+        init_test_tracing();
         let mut cfg = CreateConfig::new(test_mesh_name(name));
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         Self::from_session(
@@ -651,6 +691,7 @@ impl InProcNode {
 
     /// Create a new private, password-protected mesh.
     pub async fn create_with_password(name: &str, password: &str) -> Self {
+        init_test_tracing();
         let mut cfg = CreateConfig::new(test_mesh_name(name));
         cfg.password = Some(password.to_owned());
         Self::from_session(
@@ -663,6 +704,7 @@ impl InProcNode {
     /// Create a mesh under an explicit active-view cap (a small cap forces a
     /// partial mesh, so directed traffic must reach non-neighbours).
     pub async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
+        init_test_tracing();
         let mut cfg = CreateConfig::new(test_mesh_name(name));
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         cfg.max_peers = max_peers;
@@ -675,6 +717,7 @@ impl InProcNode {
 
     /// Join `mesh` under an explicit active-view cap.
     pub async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
+        init_test_tracing();
         let target = mesh.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
@@ -701,6 +744,7 @@ impl InProcNode {
 
     /// Join `mesh` (a `💬…` id) with an explicit nickname.
     pub async fn join(mesh: &str, nickname: &str) -> Self {
+        init_test_tracing();
         let target = mesh.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
@@ -714,6 +758,7 @@ impl InProcNode {
     /// Join the public topic mesh derived from `string`, with an explicit
     /// nickname.
     pub async fn topic(string: &str, nickname: &str) -> Self {
+        init_test_tracing();
         let mut cfg = agent_gossip::api::TopicConfig::new(string.to_owned());
         cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
         Self::from_session(
