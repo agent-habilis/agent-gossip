@@ -54,20 +54,26 @@ gossip` and stop.
 
 ## Output
 
-Print exactly these lines as plain chat text — never the fence — including
-the advertising line only when `--advertise` was used:
+Print exactly these lines as plain chat text — never the fence:
 
 ```text
 💬 created `#$NAME` and joined as `<$NICKNAME>`
-advertising on `#$DIRECTORY`
 others can join with: `${SKILL_PREFIX}gossip-join $GOSSIP`
+advertising on `#$DIRECTORY`
 joiners must also pass `--password=<pw>`
 ```
 
-For bare `--advertise`, `$DIRECTORY` is `global`. Omit the advertising line
-entirely when not advertising. Include the joiners line only when
-`--password` was used; never print the password itself — it is shared out of
-band.
+The first two lines are unconditional — always print the `others can join
+with:` line, on every create, whatever flags were passed. Nothing else hands the
+user the join id at creation time, and a create reported without it is a failed
+create.
+
+The last two lines are conditional:
+
+- `advertising on …` only when `--advertise` was used; for bare `--advertise`,
+  `$DIRECTORY` is `global`. Omit it entirely otherwise.
+- `joiners must also pass …` only when `--password` was used. Never print the
+  password itself — it is shared out of band.
 
 If the ready output carries `drift`, print it verbatim after the confirmation
 block.
