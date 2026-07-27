@@ -1,4 +1,4 @@
-//! Contract test for `docs/agent-driven-installation.md` — the prompt agents
+//! Contract test for `docs/agentic-installation.md` — the prompt agents
 //! fetch from the raw `GitHub` URL and execute against a user's machine. Nothing
 //! compiles it and no one runs it locally, so a renamed subcommand or a sixth
 //! harness would leave it quietly wrong for every new user. These tests pin it
@@ -6,9 +6,9 @@
 
 use agent_gossip_test_fixtures as common;
 
-const DOC: &str = include_str!("../../../docs/agent-driven-installation.md");
+const DOC: &str = include_str!("../../../docs/agentic-installation.md");
 const README: &str = include_str!("../../../README.md");
-const URL: &str = "https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agent-driven-installation.md";
+const URL: &str = "https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md";
 
 /// Everything the doc presents as something to type: fenced-block lines plus
 /// inline code spans.
@@ -125,6 +125,34 @@ fn reload_table_covers_every_harness() {
     );
 }
 
+/// The closing banner is the doc's only output template, and it is presented
+/// inside a fence it must not reproduce: an agent that copies the block
+/// verbatim prints literal backticks instead of inline code. Three ways that
+/// breaks, all asserted against the banner section alone so a doc-wide match
+/// elsewhere cannot stand in for the real thing: the disclaimer disappears, box
+/// art returns whose fixed width a real version string would overrun, or a
+/// placeholder re-grows the `/` prefix that only Claude Code and Cursor use.
+#[test]
+fn the_banner_template_forbids_fencing() {
+    let banner = DOC
+        .rsplit_once("\n---\n")
+        .expect("the doc separates its closing banner with a rule")
+        .1;
+
+    assert!(
+        banner.contains("only delimits the template inside this document"),
+        "the banner section must disclaim its own fence"
+    );
+    assert!(
+        !banner.contains(['│', '─', '┌', '┐', '└', '┘']),
+        "the closing banner should be plain markdown, not fixed-width box art"
+    );
+    assert!(
+        !banner.contains("`/<"),
+        "the banner's placeholders must not hardcode the `/` command prefix"
+    );
+}
+
 /// The doc is only reachable through the URL baked into the README and into its
 /// own footer; nothing else ties that string to this file's path.
 #[test]
@@ -135,7 +163,7 @@ fn the_published_url_resolves_to_this_doc() {
     let (_, path) = URL
         .rsplit_once("/main/")
         .expect("the URL pins the main branch");
-    assert_eq!(path, "docs/agent-driven-installation.md");
+    assert_eq!(path, "docs/agentic-installation.md");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     assert!(
         root.join(path).is_file(),

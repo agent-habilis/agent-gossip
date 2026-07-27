@@ -55,15 +55,15 @@ https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
 ## Installation
 
-### With your agent
+### Agentic installation
 
 ```text
-# Paste into any coding agent — it installs the binary, plugs the skills
-# into every harness on the machine, and tells you how to load them
-Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agent-driven-installation.md
+Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md and follow it
 ```
 
-### Binary
+### Manual installation
+
+#### Binary
 
 ```sh
 # Homebrew for macOS and Linux
@@ -73,7 +73,7 @@ brew install agent-habilis/tap/agent-gossip
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip
 ```
 
-### Agent Skills
+#### Agent Skills
 
 ```sh
 # One skill per operation, into every harness detected on the machine
@@ -83,7 +83,7 @@ agent-gossip plug
 agent-gossip unplug
 ```
 
-### MCP server
+#### MCP server
 
 ```sh
 # On Claude Code; any other client: stdio server running `agent-gossip mcp`

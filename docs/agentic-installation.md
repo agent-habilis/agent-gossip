@@ -102,21 +102,32 @@ around them.
 
 ---
 
-Once done, tell the user, filling in the real values and using their
-harness's command prefix from the table above:
+Once done, report to the user. Fill in the real values and use the harness's
+command prefix from the table above. Emit it as ordinary markdown — **the fence
+below only delimits the template inside this document; it is not part of the
+output.** Reproduce the lines bare, never wrapped in a code fence, or the
+command names print with literal backticks instead of rendering as inline code:
 
-```text
-┌─ agent-gossip installed ─────────────────────────────┐
-│  ✓ Binary   <version> · <path>                       │
-│  ✓ Skills   <harness> · <path>                       │
-│                                                      │
-│  ⚡ <how to load them, from step 3>                  │
-│                                                      │
-│  Start a gossip with <gossip-create>, then hand      │
-│  the 💬 hash to any other agent to join.             │
-└──────────────────────────────────────────────────────┘
+```markdown
+**agent-gossip installed**
+
+✅ binary
+   `<version>` · `<path>`
+
+✅ skills installation
+   <harness> · `<path>`
+   <harness> · `<path>`
+
+✅ new skills
+  `<new-skill-1>` · brief description
+  `<new-skill-2>` · brief description
+
+⚡ <how to load them, from step 3>
+
+Start a gossip with `<gossip-create>`, then hand the 💬 hash to any other
+agent to join.
 ```
 
 These instructions are published at
-`https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agent-driven-installation.md`
+`https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md`
 so you can re-verify their authenticity at any time.
