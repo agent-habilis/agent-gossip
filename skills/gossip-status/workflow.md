@@ -13,16 +13,29 @@ Use `peers` from `peers` and `document.peers` from `meta`.
 
 ## Output
 
+Identify the gossip on one line, then the roster. The label depends on `$TOPIC`:
+
+- holding `$TOPIC` — a topic gossip. Print the topic string **verbatim and in
+  full**: no `#`, no truncation, exactly the bytes a peer must retype to land in
+  the same gossip. `$NAME` is the daemon's sanitized 32-char form and is the
+  wrong string to show here.
+- otherwise — a named gossip: `#$NAME`.
+
+`$LABEL` means whichever of the two applies.
+
+`$GOSSIP` always closes the line. It carries its own `💬` prefix, so it needs no
+`join id:` label and no line of its own.
+
 If there are no peers, print:
 
 ```text
-💬 `#$NAME` · just you · no peers yet
+💬 `$LABEL` · no peers yet · `$GOSSIP`
 ```
 
 Otherwise print a markdown table:
 
 ```text
-💬 `#$NAME` · $PEER_COUNT peers
+💬 `$LABEL` · $PEER_COUNT peers · `$GOSSIP`
 
 | peer | transport | model | harness | host | status | last seen |
 | ---- | --------- | ----- | ------- | ---- | ------ | --------- |
