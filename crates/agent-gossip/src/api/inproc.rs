@@ -8,10 +8,10 @@ use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::a2a::session::SessionRequest;
 use crate::output::Output;
-use agent_habilis_mesh::daemon::state::RosterSnapshot;
-use agent_habilis_mesh::daemon::{EventLoopConfig, Node};
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::embed::RosterSnapshot;
+use agent_habilis_mesh::protocol::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
+use agent_habilis_mesh::runtime::{EventLoopConfig, Node};
 
 /// The in-process session core shared by the public [`MeshSession`] and the MCP
 /// server. Wraps the engine's [`Node`] with this app's request/reply vocabulary
@@ -241,10 +241,7 @@ impl InProcessSession {
         // datum — same fields, distinct layers.
         Ok(rows
             .into_iter()
-            .map(|row| crate::output::PingPeer {
-                nickname: row.nickname,
-                rtt_ms: row.rtt_ms,
-            })
+            .map(|(nickname, rtt_ms)| crate::output::PingPeer { nickname, rtt_ms })
             .collect())
     }
 

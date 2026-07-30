@@ -1,6 +1,6 @@
+use agent_habilis_mesh::protocol::JoinTarget;
 use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::protocol::mesh::{LookupSet, MeshName};
-use agent_habilis_mesh::resolver::JoinTarget;
+use agent_habilis_mesh::protocol::{LookupSet, MeshName};
 use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
 /// How to join a mesh.

@@ -593,8 +593,8 @@ mod mesh_tests {
         // a rename should ever reach it — if the id changes, something leaked
         // into the encoding that does not belong there. The topic mixes
         // `crypto::DOMAIN`, so it moves whenever that domain is rebranded; it
-        // last moved when the domains dropped the product name for the
-        // engine's (`agent-gossip/…` → `habilis-mesh/…`), which is why
+        // last moved when the domains dropped the product's name for the
+        // engine's (`habilis-mesh/…`), which is why
         // `message::VERSION` is `12.0`.
         //
         // That split is the point: this pair is what proved the de-branding
@@ -622,12 +622,12 @@ mod mesh_tests {
     #[test]
     fn from_topic_name_is_the_sanitized_string() {
         let mesh = Mesh::from_topic(
-            "https://github.com/agent-habilis/agent-gossip",
+            "https://github.com/example-org/example-project",
             MeshConfig::public_preset(),
         );
-        // Scheme stripped, `/`s kept; the 37-char URL exceeds the 32-char cap,
+        // Scheme stripped, `/`s kept; the 38-char URL exceeds the 32-char cap,
         // so the tail truncates to `…`.
-        assert_eq!(mesh.name.as_str(), "github.com/agent-habilis/agent…");
+        assert_eq!(mesh.name.as_str(), "github.com/example-org/example…");
     }
 
     #[test]

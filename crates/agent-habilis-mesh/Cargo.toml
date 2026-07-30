@@ -22,10 +22,6 @@ path = "src/lib.rs"
 # them. The app enables it through its `[dev-dependencies]`, so it is on for
 # `cargo test` and off for a normal/release build.
 test-fixtures = []
-# Off by default. Exposes the engine's `pub(crate)` hot paths so the app's
-# `benches/hot_paths.rs` (via `agent_gossip::harness::bench`) can reach them.
-# Never enabled in a normal/release build.
-bench = ["test-fixtures"]
 # Off by default. Exposes the engine internals (crafted-message + state-doc
 # constructors) the app's `harness::adversarial` shim reaches so the adversarial
 # suite can inject malicious wire messages. Never enabled in a normal build.

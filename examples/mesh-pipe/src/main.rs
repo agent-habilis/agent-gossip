@@ -17,19 +17,19 @@
 use std::time::Duration;
 
 use agent_habilis_mesh::async_trait;
-use agent_habilis_mesh::daemon::Node;
-use agent_habilis_mesh::daemon::app::NodeDriver;
-use agent_habilis_mesh::daemon::ctx::HandlerCtx;
-use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
-use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
-use agent_habilis_mesh::gossip::app::{AppClass, InboundApp, NodeApp};
-use agent_habilis_mesh::gossip::event::SilentSink;
-use agent_habilis_mesh::protocol::mesh::{
+use agent_habilis_mesh::embed::EventLoopState;
+use agent_habilis_mesh::embed::HandlerCtx;
+use agent_habilis_mesh::embed::NodeDriver;
+use agent_habilis_mesh::embed::SilentSink;
+use agent_habilis_mesh::embed::{AppClass, InboundApp, NodeApp};
+use agent_habilis_mesh::protocol::JoinTarget;
+use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, Message, MessageBody, Nickname};
+use agent_habilis_mesh::protocol::{
     DirectorySelection, LookupSet, MeshConfig, MeshName, RelaySelection, resolve_lookups,
 };
-use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, Message, MessageBody, Nickname};
-use agent_habilis_mesh::resolver::JoinTarget;
+use agent_habilis_mesh::runtime::Node;
+use agent_habilis_mesh::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
+use agent_habilis_mesh::runtime::{SetupKind, SetupParams, setup_mesh};
 use agent_habilis_mesh::util::consts::{GOSSIP_ACTIVE_VIEW_CAPACITY, MAX_MESSAGE_SIZE};
 
 use anyhow::{Context, Result};
@@ -233,7 +233,7 @@ impl NodeDriver for PipeApp {
         ctx: &HandlerCtx<'_>,
     ) -> bool {
         let PipeRequest::Send { tag, to, body } = req;
-        if let Err(error) = agent_habilis_mesh::gossip::send_app(
+        if let Err(error) = agent_habilis_mesh::ops::send_app(
             state,
             ctx,
             AppFrameParams {
@@ -352,13 +352,17 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
         SetupParams {
             author,
             max_peers,
+            // Our own base, never agent-gossip's: two embedders of this engine
+            // must not share a /tmp root or they would find each other's
+            // sockets and state files.
+            runtime_base: Some(agent_habilis_mesh::util::runtime_base("mesh-pipe")),
             state_file: None,
             sink: std::sync::Arc::new(SilentSink),
             multihop: false,
-            drift: None,
-            http_serve: None,
             // A byte pipe publishes no per-peer identity, so `meta` stays free-form.
             per_peer_gate: None,
+            cohost: None,
+            live_count: None,
         },
     )
     .await

@@ -14,7 +14,7 @@ use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
 #[derive(Debug)]
-pub struct BoundedFifoSet<T> {
+pub(crate) struct BoundedFifoSet<T> {
     capacity: usize,
     set: HashSet<T>,
     order: VecDeque<T>,

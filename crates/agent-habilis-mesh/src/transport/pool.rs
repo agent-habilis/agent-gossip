@@ -31,7 +31,7 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 const DIAL_FAILURE_COOLDOWN: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
-pub struct UnicastPool {
+pub(crate) struct UnicastPool {
     inner: Arc<PoolInner>,
 }
 
@@ -76,12 +76,6 @@ impl UnicastPool {
                 dial_failures: Mutex::new(HashMap::new()),
             }),
         }
-    }
-
-    /// The underlying peer endpoint, when wired (also how we learn our own
-    /// id). `None` for a detached pool (unit-test states).
-    pub fn endpoint(&self) -> Option<Endpoint> {
-        self.inner.endpoint.clone()
     }
 
     /// Send `bytes` over a warm connection to `eid` if one exists, returning

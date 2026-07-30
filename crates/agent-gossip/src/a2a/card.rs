@@ -1,8 +1,12 @@
 use iroh::{Endpoint, EndpointAddr, EndpointId};
 
-use agent_habilis_mesh::protocol::nickname::Nickname;
+use agent_habilis_mesh::protocol::Nickname;
 
-use agent_habilis_mesh::util::consts::{MESH_URI_SEPARATOR, PEER_GLYPH};
+use agent_habilis_mesh::util::consts::MESH_URI_SEPARATOR;
+
+/// URI sigil for a peer identity in an A2A card. An application-layer display
+/// prefix, not a wire format the engine parses.
+pub(crate) const PEER_GLYPH: &str = "🤖";
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -168,7 +172,7 @@ pub(crate) fn peer_endpoint(
     peer: &Nickname,
 ) -> Option<(EndpointId, EndpointAddr)> {
     let hint = meta_doc.pointer(&format!("/peers/{peer}/card/endpoint"))?;
-    agent_habilis_mesh::protocol::peer_addr::endpoint_addr_from_json(hint).ok()
+    agent_habilis_mesh::net::endpoint_addr_from_json(hint).ok()
 }
 
 /// The RFC 7386 merge that publishes `card` at `/peers/<nick>/card`.

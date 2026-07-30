@@ -4,7 +4,7 @@
 //! `--output json` (stdout) is a separate path and is unaffected by
 //! anything here.
 
-pub mod messages;
+pub(crate) mod messages;
 mod sink;
 
 pub use sink::LogSink;
@@ -23,7 +23,7 @@ pub use sink::{attach, flush_pending_to_stderr, install};
 /// the file sink; `--output json` (stdout) is a separate path, so this
 /// never affects the event stream.
 #[must_use]
-pub fn log_filter() -> tracing_subscriber::EnvFilter {
+pub fn log_filter(consumer_pins: &str) -> tracing_subscriber::EnvFilter {
     use tracing_subscriber::EnvFilter;
     const SUBSYSTEMS: &str = "agent_habilis_mesh::gossip=info,\
         agent_habilis_mesh::lookup=info,\
@@ -32,10 +32,16 @@ pub fn log_filter() -> tracing_subscriber::EnvFilter {
         agent_habilis_mesh::directory=info,\
         agent_habilis_mesh::messages=info";
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(if cfg!(debug_assertions) {
-            format!("info,noq_proto::connection=off,{SUBSYSTEMS}")
+        let base = if cfg!(debug_assertions) {
+            "info,noq_proto::connection=off"
         } else {
-            format!("error,noq_proto::connection=off,mainline::rpc=off,{SUBSYSTEMS}")
-        })
+            "error,noq_proto::connection=off,mainline::rpc=off"
+        };
+        let mut directives = format!("{base},{SUBSYSTEMS}");
+        if !consumer_pins.is_empty() {
+            directives.push(',');
+            directives.push_str(consumer_pins);
+        }
+        EnvFilter::new(directives)
     })
 }

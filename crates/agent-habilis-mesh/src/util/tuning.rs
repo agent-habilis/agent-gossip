@@ -93,7 +93,7 @@ pub const NODE_INBOUND_CAP: usize = 1024;
 /// driver drains. Pure backpressure: every request carries its own `oneshot`
 /// reply, so one caller has at most one in flight — the queue only grows when
 /// several tasks share a session.
-pub const SESSION_REQUEST_CAP: usize = 64;
+pub(crate) const SESSION_REQUEST_CAP: usize = 64;
 
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
@@ -129,28 +129,6 @@ pub(crate) fn sweep_interval_secs() -> u64 {
     current().sweep_interval_secs
 }
 
-/// Idle-debounce timeout for a task (seconds). Hidden flag
-/// `--task-timeout-secs` so integration tests exercise eviction in seconds.
-#[must_use]
-pub fn task_timeout_secs() -> u64 {
-    current().task_timeout_secs
-}
-
-/// How often the ball-owner's daemon emits a task keepalive (seconds).
-/// Hidden flag `--task-keepalive-secs`.
-#[must_use]
-pub fn task_keepalive_secs() -> u64 {
-    current().task_keepalive_secs
-}
-
-/// Longest the daemon auto-covers a silent task without a skill-driven leg
-/// (seconds); past it the keepalive stops so a crashed skill can't hold the
-/// peer forever. Hidden flag `--task-keepalive-max-secs`.
-#[must_use]
-pub fn task_keepalive_max_secs() -> u64 {
-    current().task_keepalive_max_secs
-}
-
 /// Grace before an **unmeshed joiner** co-hosts the rendezvous anyway
 /// (empty mesh ⇒ become the beacon for the next joiner). Rationale:
 /// `EventLoopConfig::cohost`. Non-blocking — only consulted
@@ -161,7 +139,7 @@ pub(crate) fn cohost_grace_secs() -> u64 {
     current().cohost_grace_secs
 }
 
-/// How long an `agent-gossip ping` round collects pongs before the daemon
+/// How long a ping round collects pongs before the daemon
 /// emits its `ping_report`. Long enough for a relayed round-trip
 /// across the mesh; hidden flag `--ping-window-secs` so tests don't
 /// wait the full window.
@@ -189,13 +167,9 @@ pub struct Tuning {
     pub sweep_interval_secs: u64,
     pub heal_interval_secs: u64,
     pub antientropy_interval_secs: u64,
-    pub task_timeout_secs: u64,
-    pub task_keepalive_secs: u64,
-    pub task_keepalive_max_secs: u64,
     pub cohost_grace_secs: u64,
     pub ping_window_secs: u64,
     pub ppid_watch_interval_ms: u64,
-    pub longpoll_max_ms: u64,
     pub heal_stall_threshold_secs: u64,
     pub starvation_threshold_secs: u64,
     pub advertise_interval_secs: u64,
@@ -215,13 +189,9 @@ impl Tuning {
         sweep_interval_secs: crate::util::consts::SWEEP_INTERVAL_SECS,
         heal_interval_secs: crate::util::consts::HEAL_INTERVAL_SECS,
         antientropy_interval_secs: crate::util::consts::ANTIENTROPY_INTERVAL_SECS,
-        task_timeout_secs: crate::util::consts::TASK_TIMEOUT_SECS,
-        task_keepalive_secs: crate::util::consts::TASK_KEEPALIVE_SECS,
-        task_keepalive_max_secs: crate::util::consts::TASK_KEEPALIVE_MAX_SECS,
         cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
         ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
         ppid_watch_interval_ms: crate::util::consts::PPID_WATCH_INTERVAL_MS,
-        longpoll_max_ms: crate::util::consts::LONGPOLL_MAX_MS,
         heal_stall_threshold_secs: crate::util::consts::HEAL_STALL_THRESHOLD_SECS,
         starvation_threshold_secs: crate::util::consts::STARVATION_THRESHOLD_SECS,
         advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,
@@ -297,7 +267,7 @@ pub(crate) const IPC_ACCEPT_BACKOFF_MAX_SECS: u64 = 5;
 /// real `msg`/`poll` round-trip, so only a hung client ever hits it.
 pub(crate) const IPC_IO_TIMEOUT_SECS: u64 = 10;
 
-/// `agent-gossip ready` gate: how long to wait for the daemon's `--state-file` to
+/// Readiness gate: how long to wait for the daemon's `--state-file` to
 /// report `ready: true` before giving up (the `--timeout-secs` default),
 /// and the fixed interval between file reads while waiting. 30s covers a
 /// cold daemon start (the file appears sub-second once the process is up).
@@ -313,16 +283,7 @@ pub const READY_POLL_INTERVAL_MS: u64 = 100;
 /// missed refresh without trusting a truly stale file.
 pub const READY_FRESH_SECS: u64 = 2 * STATE_REFRESH_SECS;
 
-/// Long-poll (`poll`/`fetch_messages` `long: true`): how long the daemon
-/// parks a read before returning an empty batch. See
-/// `consts::LONGPOLL_MAX_MS` for the rationale; the suite shortens it via the
-/// hidden `--longpoll-max-ms` flag to force the timeout path.
-#[must_use]
-pub fn longpoll_max_ms() -> u64 {
-    current().longpoll_max_ms
-}
-
-/// Floor on one `agent-gossip poll --long` re-issue cycle. Normally dormant — a parked
+/// Floor on one long-poll re-issue cycle. Normally dormant — a parked
 /// read returns at the ~60s cap, far above it — it only engages when the
 /// daemon degrades a long read to an immediate empty (waiter registry at
 /// `POLL_WAITERS_CAP`), keeping the CLI's re-poll loop from spinning hot.

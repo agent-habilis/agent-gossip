@@ -47,24 +47,24 @@ use crate::util::tuning::{HEAL_PROBE_SECS, RENDEZVOUS_PROBE_SECS, heal_interval_
 /// Everything [`ensure`] needs to (re)build the rendezvous endpoint.
 /// Cheap to clone-hold for the event loop's lifetime.
 #[derive(Debug)]
-pub struct RendezvousParams {
-    pub topic_id: TopicId,
+pub(crate) struct RendezvousParams {
+    pub(crate) topic_id: TopicId,
     /// `rendezvous_secret(seed)` — the shared identity every co-host binds.
-    pub secret: SecretKey,
+    pub(crate) secret: SecretKey,
     /// Empty when the mesh has lookups (ephemeral, address-lookup
     /// discoverable). Non-empty for a loopback-only mesh: the
     /// deterministic loopback port *ladder* in preference order. The
     /// beacon binds the first free rung; an independent mesh squatting a
     /// rung (seed collision) is skipped instead of mistaken for our own
     /// beacon.
-    pub bind_ports: Vec<u16>,
+    pub(crate) bind_ports: Vec<u16>,
     /// `rendezvous_id`, memoized for neighbor filtering / bootstrap seeding.
-    pub id: EndpointId,
+    pub(crate) id: EndpointId,
     /// The peer's resolved lookup config. The beacon
     /// endpoint must publish `rendezvous_id` to the *same*
     /// address-lookups (or a joiner using only mDNS/DHT could never
     /// resolve it) — see `beacon_lookups`.
-    pub lookups: LookupOpts,
+    pub(crate) lookups: LookupOpts,
     /// The single relay **rung** the beacon homes on — initialized to
     /// the first ladder rung (optimistic, unprobed) at setup and
     /// corrected off the event loop: a backgrounded startup probe and
@@ -75,14 +75,14 @@ pub struct RendezvousParams {
     /// here or that relay-direct dial finds nothing. `None` ⇒ no
     /// reachable relay (private mode, relay disabled, or every rung
     /// down) — joiners fall back to mDNS/DHT.
-    pub bootstrap_relay: Option<RelayUrl>,
+    pub(crate) bootstrap_relay: Option<RelayUrl>,
     /// How the off-loop rung selectors (the backgrounded startup probe
     /// and the beacon co-host's liveness self-monitor) publish a freshly
     /// chosen rung. The event loop holds the matching receiver and, on a
     /// change, updates [`Self::bootstrap_relay`], re-registers the
     /// rendezvous, and re-homes the beacon — so the heavy ladder walk
     /// never runs on the sole event loop.
-    pub rung_tx: watch::Sender<Option<RelayUrl>>,
+    pub(crate) rung_tx: watch::Sender<Option<RelayUrl>>,
 }
 
 /// A live co-hosted rendezvous endpoint. Dropping it aborts both tasks,

@@ -217,7 +217,7 @@ async fn relay_rung_reachable(rung: &RelayUrl, timeout: Duration) -> bool {
 /// one — applied by the event loop's rung-update arm when the beacon's
 /// self-monitor publishes a new rung.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RungRefresh {
+pub(crate) enum RungRefresh {
     /// Keep the current rung (still the first reachable, or we must not
     /// act — not the beacon, or relay disabled).
     NoChange,

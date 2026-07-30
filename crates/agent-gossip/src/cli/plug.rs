@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use include_dir::Dir;
 
-use agent_habilis_mesh::util::output::{home_path, status, status_warn, warn};
+use crate::status::{home_path, status, status_warn, warn};
 
 use super::agent::{self, Agent, AgentState, SKILLS, home_dir, owned_skill_dirs_under, skipped};
 

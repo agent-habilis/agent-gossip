@@ -66,7 +66,7 @@ fn json_message_has_all_fields() {
 fn json_signed_message_exposes_full_pubkey() {
     // A real (signed) message carries the author's full Ed25519 public key
     // (hex) in the JSON event — the identity behind the display nickname.
-    let identity = agent_habilis_mesh::protocol::identity::Identity::generate();
+    let identity = agent_habilis_mesh::protocol::Identity::generate();
     let msg = chat_frame("alice", "hi").signed(&identity);
     let parsed = parse(&format_msg_json(&msg, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
@@ -80,7 +80,7 @@ fn ready_event_drift_is_present_only_when_stale() {
     let make = |drift: Option<&str>| {
         super::json::event_json(&OutputEvent::Ready {
             mesh: sid(),
-            name: agent_habilis_mesh::protocol::mesh::MeshName::new("team").unwrap(),
+            name: agent_habilis_mesh::protocol::MeshName::new("team").unwrap(),
             nickname: nick("alice"),
             drift: drift.map(str::to_owned),
             a2a_port: None,

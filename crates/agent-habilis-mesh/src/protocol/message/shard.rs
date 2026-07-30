@@ -9,7 +9,7 @@
 //! heals a missing message; a bigger group skips the log on both ends (one
 //! huge body must not evict the mesh's anti-entropy history) and heals via
 //! **shard repair** — the sender caches its outbound frames
-//! (`daemon::reassembly::ShardCache`) and a stalled receiver asks for the
+//! (`reassembly::ShardCache`) and a stalled receiver asks for the
 //! missing indexes over the `shard/repair` gossip RPC.
 
 use std::fmt;

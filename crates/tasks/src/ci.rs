@@ -9,7 +9,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
 
     // Cheap and first: a layering leak is a design regression, and finding it
     // before the multi-minute clippy+test legs keeps the feedback fast.
-    crate::layering::run()?;
+    crate::layering::run(false)?;
 
     output::status("Running", "clippy");
     // `--features adversarial` so the adversarial suite + shim are linted

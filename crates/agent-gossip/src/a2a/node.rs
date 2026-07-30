@@ -8,14 +8,14 @@ use crate::a2a::rpc::{A2aOp, A2aRequest};
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
-use agent_habilis_mesh::daemon::app::{IpcRequest, NodeDriver};
-use agent_habilis_mesh::daemon::ctx::HandlerCtx;
-use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::daemon::state_file::StateFile;
-use agent_habilis_mesh::gossip::app::{AppClass, InboundApp, NodeApp};
-use agent_habilis_mesh::lookup::add_peer_addr;
-use agent_habilis_mesh::protocol::message::MessageBody;
+use agent_habilis_mesh::embed::EventLoopState;
+use agent_habilis_mesh::embed::HandlerCtx;
+use agent_habilis_mesh::embed::{AppClass, InboundApp, NodeApp};
+use agent_habilis_mesh::embed::{IpcRequest, NodeDriver};
+use agent_habilis_mesh::net::add_peer_addr;
+use agent_habilis_mesh::protocol::MessageBody;
 use agent_habilis_mesh::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
+use agent_habilis_mesh::runtime::state_file::StateFile;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
@@ -258,7 +258,7 @@ impl NodeDriver for A2aApp {
 /// state). Unmeshed it buffers/backfills like any state event; agent-side
 /// facts (model/harness/host) stay the agent's merge.
 async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-    let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
+    let seal_b58 = bs58::encode(state.identity().seal_public()).into_string();
     let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
     // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
     // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
@@ -301,9 +301,9 @@ async fn merge_own_meta_entry(
     merge: serde_json::Value,
     farewell: bool,
 ) {
-    match agent_habilis_mesh::gossip::broadcast_state_merge(
+    match agent_habilis_mesh::ops::broadcast_state_merge(
         state,
-        agent_habilis_mesh::gossip::StateMergeParams {
+        agent_habilis_mesh::ops::StateMergeParams {
             mesh: ctx.mesh,
             author: ctx.author,
             merge,
@@ -318,7 +318,7 @@ async fn merge_own_meta_entry(
     .await
     {
         Ok(Some(bytes)) if farewell => {
-            agent_habilis_mesh::gossip::unicast_farewell(state, &bytes);
+            agent_habilis_mesh::ops::unicast_farewell(state, &bytes);
         }
         Ok(_) => {}
         Err(error) => {
@@ -773,7 +773,7 @@ struct ShardRepairParams<'a> {
 
 /// Serve a `shard/repair` ask: re-deliver the named cached frames of one of our
 /// big (unlogged) outbound groups to the requester. The frames are the raw,
-/// already-signed shards we cached at send time (`state.shard_cache`), so they
+/// already-signed shards we cached at send time (`state.shard_cache_mut()`), so they
 /// reassemble on the requester exactly as the original send would have.
 async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
@@ -785,18 +785,18 @@ async fn resend_cached_shards(
         missing,
         requester,
     } = params;
-    let frames = state.shard_cache.frames(group, missing);
+    let frames = state.shard_cache_mut().frames(group, missing);
     let mut resent = 0usize;
     for bytes in frames {
         let Ok(msg) = Message::parse(&bytes) else {
             continue; // never: the cache holds frames we serialized ourselves
         };
-        if let Some(to) = agent_habilis_mesh::protocol::message::sole_addressee(&msg.kind)
+        if let Some(to) = agent_habilis_mesh::protocol::sole_addressee(&msg.kind)
             && to != requester
         {
             continue;
         }
-        if agent_habilis_mesh::transport::deliver(&msg, bytes, state, ctx.sender)
+        if agent_habilis_mesh::ops::deliver(&msg, bytes, state, ctx.sender)
             .await
             .is_ok()
         {
@@ -804,7 +804,7 @@ async fn resend_cached_shards(
         }
     }
     tracing::debug!(
-        target: "agent_habilis_mesh::gossip",
+        target: "agent_gossip::a2a",
         %group,
         requested = missing.len(),
         resent,
@@ -889,7 +889,7 @@ fn ingest_remote_message(
 /// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
 /// does **not** graft a gossip link — mesh formation stays `PeerInfo`'s job.
 fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-    let doc = state.meta_doc.to_json();
+    let doc = state.doc(Channel::Meta).to_json();
     let Some((peer_id, peer_addr)) = crate::a2a::card::peer_endpoint(&doc, author) else {
         return;
     };
@@ -897,7 +897,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
     if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
         return;
     }
-    state.peer_endpoints.insert(author.clone(), peer_id);
+    state.note_peer_endpoint(author.clone(), peer_id);
     if let Err(error) = add_peer_addr(ctx.endpoint, peer_addr) {
         tracing::debug!(%error, %author, "could not seed a meta-doc endpoint into the address book");
     }

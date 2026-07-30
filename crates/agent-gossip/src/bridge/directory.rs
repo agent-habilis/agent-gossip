@@ -19,11 +19,11 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
-use agent_habilis_mesh::daemon::CoHostPolicy;
-use agent_habilis_mesh::directory::directory_mesh;
-use agent_habilis_mesh::protocol::mesh::{LookupOpts, LookupSet, MeshName, resolve_lookups};
+use agent_habilis_mesh::ops::directory::directory_mesh;
+use agent_habilis_mesh::protocol::{LookupOpts, LookupSet, MeshName, resolve_lookups};
 use agent_habilis_mesh::protocol::{MeshId, MessageBody, Nickname};
-use agent_habilis_mesh::util::tuning::{
+use agent_habilis_mesh::runtime::CoHostPolicy;
+use agent_habilis_mesh::runtime::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
 
@@ -187,7 +187,7 @@ pub(crate) fn spawn_ticket_advertiser(
             Ok(session) => session,
             Err(error) => {
                 tracing::warn!(
-                    target: "agent_habilis_mesh::directory",
+                    target: "agent_gossip::directory",
                     %error,
                     directory = %directory,
                     "a2a advertise: could not join the directory; ticket stays unlisted"
@@ -200,7 +200,7 @@ pub(crate) fn spawn_ticket_advertiser(
             ticker.tick().await;
             if let Err(error) = session.send(body.clone()).await {
                 tracing::debug!(
-                    target: "agent_habilis_mesh::directory",
+                    target: "agent_gossip::directory",
                     %error,
                     "a2a advertise: re-broadcast failed (will retry next tick)"
                 );
@@ -337,7 +337,7 @@ mod tests {
 
     use super::{TicketAd, TicketChange, TicketListings};
     use crate::bridge::ticket::A2aTicket;
-    use agent_habilis_mesh::protocol::mesh::LookupOpts;
+    use agent_habilis_mesh::protocol::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn a2a_ticket(secret: u8, password: bool) -> String {

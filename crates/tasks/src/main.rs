@@ -85,8 +85,14 @@ enum Task {
     Fmt,
     /// Run clippy lints.
     Lint,
-    /// Check that the engine crate names neither A2A nor the application.
-    Layering,
+    /// Check that the engine crate names neither A2A nor the application, and
+    /// that its public surface still matches the committed snapshot.
+    Layering {
+        /// Rewrite the public-surface snapshot instead of checking it. Review
+        /// the diff: every added line is a widening of the engine's API.
+        #[arg(long)]
+        bless: bool,
+    },
     /// Remove build artifacts.
     Clean,
     /// Print the logs directory (creating it if missing).
@@ -137,7 +143,7 @@ fn main() -> ExitCode {
         Task::Ci => ci::run(&sh),
         Task::Fmt => fmt::run(&sh),
         Task::Lint => lint::run(&sh),
-        Task::Layering => layering::run(),
+        Task::Layering { bless } => layering::run(bless),
         Task::Clean => clean::run(&sh),
         Task::Logs => logs::run(),
         Task::Man => man::run(),

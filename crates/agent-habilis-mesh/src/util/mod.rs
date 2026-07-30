@@ -1,4 +1,12 @@
-//! Small cross-cutting helpers shared across layers.
+//! Host-level helpers a consumer needs alongside the mesh itself: where its
+//! runtime files live, the clock, the log sink, process introspection, the
+//! build stamp.
+
+/// Deferred `tracing` sink and the pinned directive filter.
+pub mod logging {
+    pub use crate::logging::messages::log_out;
+    pub use crate::logging::{LogSink, attach, flush_pending_to_stderr, install, log_filter};
+}
 
 pub(crate) mod bounded_fifo_set;
 pub(crate) mod bounded_queue;
@@ -7,7 +15,6 @@ pub mod clock;
 pub mod consts;
 pub(crate) mod cooldown;
 pub mod logs;
-pub mod output;
 pub mod process;
 pub(crate) mod resident_memory;
 pub mod tuning;
@@ -29,26 +36,34 @@ pub fn mesh_prefix(mesh_id: &str) -> String {
         .collect()
 }
 
-/// The per-user runtime base — every per-mesh folder lives under it.
+/// The per-user runtime base for `product` — every per-mesh folder lives under
+/// it. Consumers call this **once** and pass the resulting base down; nothing
+/// below re-derives it.
 ///
-/// This replaces the former hardcoded, shared `/tmp/agent-gossip`: a single
-/// world-traversable base let any *other* local user enumerate meshes and read
-/// the (world-readable) per-member log files. Scoping the base to the user's
-/// id — and creating it `0700` (see [`ensure_runtime_base`]) — closes that
-/// cross-user exposure.
+/// A single world-traversable base would let any *other* local user enumerate
+/// meshes and read the (world-readable) per-member log files. Scoping the base
+/// to the user's id — and creating it `0700` (see [`ensure_runtime_base`]) —
+/// closes that cross-user exposure.
 ///
-/// The path is a **fixed function of the uid alone**, deliberately *not* of the
-/// environment: a daemon started in one context (say an interactive shell) and
-/// a later `leave` / `session` / `msg` run in another (cron, a statusline
-/// helper, `sudo`) must compute the *same* base or the CLI can no longer find
-/// the daemon's socket and state file. That rules out `$XDG_RUNTIME_DIR`
-/// (which varies across those contexts and would silently relocate everything)
-/// and keeps us consistent with the project's "no env-var config" rule. The
-/// `-<uid>` suffix adds only a few bytes over the old base, so the socket path
-/// stays well inside the `AF_UNIX` `sun_path` ~104-byte limit.
+/// `product` is the consumer's name, supplied rather than assumed: the engine
+/// is embedded by more than one binary and must not claim a path under any
+/// single one's name. It is a **parameter, not a registered global**, precisely
+/// because of the determinism requirement below — a global set on some entry
+/// paths and missed on others would relocate the base for exactly the callers
+/// that must agree, and do it silently.
+///
+/// The path is otherwise a **fixed function of the uid alone**, deliberately
+/// *not* of the environment: a daemon started in one context (say an
+/// interactive shell) and a later `leave` / `session` / `msg` run in another
+/// (cron, a statusline helper, `sudo`) must compute the *same* base or the
+/// consumer can no longer find the daemon's socket and state file. That rules
+/// out `$XDG_RUNTIME_DIR` (which varies across those contexts and would
+/// silently relocate everything) and keeps us consistent with the project's "no
+/// env-var config" rule. The `-<uid>` suffix adds only a few bytes, so the
+/// socket path stays well inside the `AF_UNIX` `sun_path` ~104-byte limit.
 #[must_use]
-pub fn runtime_base() -> std::path::PathBuf {
-    std::path::PathBuf::from(format!("/tmp/agent-gossip-{}", current_uid()))
+pub fn runtime_base(product: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("/tmp/{product}-{}", current_uid()))
 }
 
 /// This process's effective user id — the id a newly created file/dir is
@@ -63,8 +78,8 @@ fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-/// Ensure [`runtime_base`] exists as a private (`0700`) directory this user
-/// owns, tightening or rejecting a hostile pre-created one. Idempotent and
+/// Ensure `base` (from [`runtime_base`]) exists as a private (`0700`) directory
+/// this user owns, tightening or rejecting a hostile pre-created one. Idempotent and
 /// **run on every call, never cached** — a cached success would let a base
 /// deleted mid-run (the OS `/tmp` reaper) silently reappear at `0755`.
 ///
@@ -81,7 +96,7 @@ fn current_uid() -> u32 {
 /// user (a squatting attempt — a clear message so the operator can remove it);
 /// or the create / chmod syscalls fail. Fails *closed*: a failure here must
 /// abort the write, never fall through to an unvalidated directory.
-pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
+pub fn ensure_runtime_base(base: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 
     // Deliberately *not* cached: a long-running daemon writes on every heartbeat,
@@ -90,11 +105,10 @@ pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
     // syscalls — is what keeps a reaped base from silently reappearing at the
     // umask default `0755` on the next write. Idempotent and concurrency-safe:
     // racing creates collapse to `AlreadyExists`, the checks are read-only.
-    let base = runtime_base();
     match std::fs::DirBuilder::new()
         .mode(0o700)
         .recursive(true)
-        .create(&base)
+        .create(base)
     {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -102,7 +116,7 @@ pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
     }
     // `symlink_metadata` does not follow a link, so a base swapped for a symlink
     // into a world-readable dir is rejected rather than trusted.
-    let meta = std::fs::symlink_metadata(&base)?;
+    let meta = std::fs::symlink_metadata(base)?;
     if !meta.file_type().is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
@@ -124,33 +138,40 @@ pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
         ));
     }
     if meta.permissions().mode() & 0o077 != 0 {
-        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::set_permissions(base, std::fs::Permissions::from_mode(0o700))?;
     }
-    Ok(base)
+    Ok(())
 }
 
-/// Whether `path` is inside [`runtime_base`]. A `--state-file` / `--log-dir`
-/// override can point outside the base and must not be gated on its validation.
+/// Whether `path` is inside `base`. A `--state-file` / `--log-dir` override can
+/// point outside the base and must not be gated on its validation.
 #[must_use]
-pub(crate) fn is_under_runtime_base(path: &std::path::Path) -> bool {
-    path.starts_with(runtime_base())
+pub(crate) fn is_under_runtime_base(base: &std::path::Path, path: &std::path::Path) -> bool {
+    path.starts_with(base)
 }
 
 /// Prepare the parent directory of a file about to be written at `path`, with
-/// the fail-closed base policy in one place: when `path` is under
-/// [`runtime_base`], validate the private base first (aborting on a
-/// squat/symlink) so `create_dir_all` never follows an attacker's redirect;
-/// when it is an override outside the base, just create the parent. The single
-/// home for the "gate on `is_under_runtime_base`, then ensure, then
-/// `create_dir_all`" sequence — the token-bearing state file and the log sink
-/// both route through here so the policy cannot drift between copies.
+/// the fail-closed base policy in one place: when `path` is under `base`,
+/// validate the private base first (aborting on a squat/symlink) so
+/// `create_dir_all` never follows an attacker's redirect; when it is an override
+/// outside the base, just create the parent. The single home for the "gate on
+/// `is_under_runtime_base`, then ensure, then `create_dir_all`" sequence — the
+/// token-bearing state file and the log sink both route through here so the
+/// policy cannot drift between copies.
 ///
 /// # Errors
 /// [`ensure_runtime_base`] rejected the base, or the parent create failed.
-pub(crate) fn ensure_parent_private(path: &std::path::Path) -> std::io::Result<()> {
+/// `base` is `None` for a consumer that configured no runtime base at all —
+/// there is then no protected directory to validate, only a parent to create.
+pub(crate) fn ensure_parent_private(
+    base: Option<&std::path::Path>,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt as _;
-    if is_under_runtime_base(path) {
-        ensure_runtime_base()?;
+    if let Some(base) = base
+        && is_under_runtime_base(base, path)
+    {
+        ensure_runtime_base(base)?;
     }
     if let Some(parent) = path.parent() {
         // Mode 0700 (not plain `create_dir_all`, which is 0755): closes the
@@ -164,14 +185,14 @@ pub(crate) fn ensure_parent_private(path: &std::path::Path) -> std::io::Result<(
     Ok(())
 }
 
-/// A mesh's runtime folder — `<runtime_base>/<mesh-prefix>/`. All of one
-/// mesh's per-member files (`<nick>.tracing.log`, `<nick>.ipc.sock`,
+/// A mesh's runtime folder — `<base>/<mesh-prefix>/`. All of one mesh's
+/// per-member files (`<nick>.tracing.log`, `<nick>.ipc.sock`,
 /// `<nick>.state.json`) live here, so the socket, log, and state-file path
 /// builders all derive from it. Pure — a path only; use
 /// [`ensure_mesh_runtime_dir`] when about to *create* files under it.
 #[must_use]
-pub(crate) fn mesh_runtime_dir(mesh_id: &str) -> std::path::PathBuf {
-    runtime_base().join(mesh_prefix(mesh_id))
+pub(crate) fn mesh_runtime_dir(base: &std::path::Path, mesh_id: &str) -> std::path::PathBuf {
+    base.join(mesh_prefix(mesh_id))
 }
 
 /// Validate the private base (fail closed on a squat/symlink), then create the
@@ -182,10 +203,13 @@ pub(crate) fn mesh_runtime_dir(mesh_id: &str) -> std::path::PathBuf {
 ///
 /// # Errors
 /// [`ensure_runtime_base`] rejected the base, or the subdir create failed.
-pub fn ensure_mesh_runtime_dir(mesh_id: &str) -> std::io::Result<std::path::PathBuf> {
+pub fn ensure_mesh_runtime_dir(
+    base: &std::path::Path,
+    mesh_id: &str,
+) -> std::io::Result<std::path::PathBuf> {
     use std::os::unix::fs::DirBuilderExt as _;
-    ensure_runtime_base()?;
-    let dir = mesh_runtime_dir(mesh_id);
+    ensure_runtime_base(base)?;
+    let dir = mesh_runtime_dir(base, mesh_id);
     // 0700, and closes the reaper race (see `ensure_parent_private`).
     std::fs::DirBuilder::new()
         .mode(0o700)
@@ -201,27 +225,31 @@ mod tests {
 
     #[test]
     fn runtime_base_is_deterministic_and_uid_scoped() {
-        // Regression guard: the base must be a fixed function of the uid, not of
-        // the environment — a daemon and a later CLI in a different context
-        // (cron/sudo/statusline) have to agree, or the CLI can't find the socket.
-        assert_eq!(runtime_base(), runtime_base());
-        let base = runtime_base();
-        let shown = base.to_string_lossy();
-        assert!(
-            shown.starts_with("/tmp/agent-gossip-"),
-            "unexpected base: {shown}"
-        );
+        // Regression guard: for a given product the base must be a fixed function
+        // of the uid, not of the environment — a daemon and a later CLI in a
+        // different context (cron/sudo/statusline) have to agree, or the CLI can't
+        // find the socket.
+        assert_eq!(runtime_base("demo"), runtime_base("demo"));
+        let shown = runtime_base("demo").to_string_lossy().into_owned();
+        assert!(shown.starts_with("/tmp/demo-"), "unexpected base: {shown}");
+        // …and two embedders never share a base, so their daemons can never
+        // collide on a socket or read each other's state files.
+        assert_ne!(runtime_base("demo"), runtime_base("other"));
     }
 
     #[test]
     fn is_under_runtime_base_discriminates() {
+        let base = runtime_base("demo");
         assert!(is_under_runtime_base(
-            &runtime_base().join("💬abc/nick.state.json")
+            &base,
+            &base.join("💬abc/nick.state.json")
         ));
-        assert!(!is_under_runtime_base(Path::new("/etc/passwd")));
-        assert!(!is_under_runtime_base(Path::new(
-            "/tmp/agent-gossip/sessions/x.json"
-        )));
+        assert!(!is_under_runtime_base(&base, Path::new("/etc/passwd")));
+        // The un-suffixed sibling is a different directory, not a parent.
+        assert!(!is_under_runtime_base(
+            &base,
+            Path::new("/tmp/demo/sessions/x.json")
+        ));
     }
 
     #[test]

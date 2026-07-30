@@ -69,6 +69,24 @@ dropping any of them changes the build silently:
 - **`[profile.*]` and `[patch.crates-io]`** — cargo honours these only in the
   workspace root. They cannot move into a member manifest.
 
+#### The engine's public surface
+
+`agent-habilis-mesh` exposes **six** modules, grouped by what a consumer needs
+rather than by the engine's internal topology. Everything else is `pub(crate)`.
+
+| Module | What it is for |
+|---|---|
+| `protocol` | Wire value types — `Message`, `MeshId`, `Nickname`, `JoinTarget`, … **Flat**: the submodules are private, so a consumer writes one import path, and the engine can rearrange its files without churning them. |
+| `embed` | The seams you implement (`NodeApp`, `NodeDriver`, `NodeSink`) and the values they are handed (`EventLoopState`, `HandlerCtx`, `NodeEvent`). |
+| `runtime` | Standing a node up: `*Params::resolve` → `setup_mesh` → `Node::spawn` / `run`, plus `state_file`, `ipc`, `tuning`. |
+| `ops` | What a hook may *do*: `deliver`, `broadcast_*`, `doc`, `blob`, `directory`, `invite`. |
+| `net` | The quarantined `iroh` corner — endpoint construction and reachability probes. Every other module is iroh-free so a consumer's surface can be. |
+| `util` | Host helpers: runtime paths, clock, `logging`, process, version. |
+
+`EventLoopConfig` and `EventLoopState` are **opaque** — accessors only. Both were
+once bags of public fields, and three of the config's were patched in after
+construction, which meant a window where the value was knowingly wrong.
+
 `docs/`, `skills/`, and `assets/` stay at the repo root, so the app reaches up
 for them: `build.rs` renders `../../skills`, and the embedded manual is an
 `include_str!("../../../../docs/manual.txt")` from `src/{cli,mcp}/mod.rs`.
@@ -176,6 +194,12 @@ Every log line carries an explicit `target:`, one per subsystem:
 `agent_habilis_mesh::{lookup,gossip,lifecycle,beacon,directory,messages}`
 (`EnvFilter` prefix-matches). Override at runtime, e.g.
 `RUST_LOG=agent_habilis_mesh::gossip=trace cargo run -- create`.
+
+`agent-gossip` emits under its **own** targets — `agent_gossip::{a2a,directory}`
+— never the engine's. Those are pinned separately, in `APP_LOG_PINS`
+(`agent-gossip/src/lib.rs`), which `agent_gossip::log_filter()` appends to the
+engine's list; `cargo task layering` forbids the engine from naming them, and
+`tests/log_pins.rs` fails if a target is emitted without a pin.
 
 **Write `target: "agent_habilis_mesh::<subsystem>"` on every new `tracing` call
 in `agent-habilis-mesh`.** The targets deliberately match the engine's own

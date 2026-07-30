@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 
+use agent_habilis_mesh::protocol::MeshId;
 use agent_habilis_mesh::protocol::Message as Frame;
 use agent_habilis_mesh::protocol::MessageBody;
-use agent_habilis_mesh::protocol::mesh::MeshId;
 
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_TOTAL, Message, Part, Role, TaskArtifactUpdate,
@@ -341,9 +341,9 @@ pub fn task_text(frame: &Frame) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Frame, chat_message, chat_payload, display_text, payload_body};
+    use agent_habilis_mesh::protocol::MeshId;
+    use agent_habilis_mesh::protocol::MessageId;
     use agent_habilis_mesh::protocol::MessageKind;
-    use agent_habilis_mesh::protocol::mesh::MeshId;
-    use agent_habilis_mesh::protocol::message::MessageId;
 
     fn mesh() -> MeshId {
         MeshId::from("💬test")

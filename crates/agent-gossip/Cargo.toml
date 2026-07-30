@@ -25,11 +25,11 @@ name = "agent-gossip"
 path = "src/main.rs"
 
 [features]
-# Off by default. Forwards to the engine's `bench` feature, which exposes its
-# `pub(crate)` hot paths so `benches/hot_paths.rs` (via `harness::bench`) can
-# reach them; never enabled in a normal or release build, so the public API
-# surface is unchanged.
-bench = ["agent-habilis-mesh/bench"]
+# Off by default. Exposes `src/harness/bench.rs` so `benches/hot_paths.rs` can
+# build its fixtures; never enabled in a normal or release build, so the public
+# API surface is unchanged. Forwards to the engine's `test-fixtures` (not a
+# `bench` feature of its own — the engine gates no hot path on one).
+bench = ["agent-habilis-mesh/test-fixtures"]
 # Off by default. Forwards to the engine's `adversarial` feature and exposes
 # `src/harness/{adversarial,session}.rs` — the crafted-message injector and the
 # `MeshSession` testkit — so the adversarial suite (`tests/adversarial.rs`) can

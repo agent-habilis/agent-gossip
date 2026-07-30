@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 ///
 /// [`note`]: Cooldown::note
 #[derive(Debug)]
-pub struct Cooldown<K> {
+pub(crate) struct Cooldown<K> {
     seen: HashMap<K, Instant>,
     window: Duration,
 }

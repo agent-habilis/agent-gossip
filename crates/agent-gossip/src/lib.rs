@@ -42,6 +42,7 @@ pub(crate) mod mcp;
 pub(crate) mod output;
 
 pub mod api;
+pub mod status;
 
 // Not public API. Feature-gated, doc-hidden shims that expose the engine's
 // internals to the crate's own bench/adversarial suites. See harness/mod.rs.
@@ -57,28 +58,63 @@ pub use a2a::{TaskId, TaskState};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting
 // them keeps the roster readable without widening the surface.
-pub use agent_habilis_mesh::daemon::state::{Reach, RosterEntry, RosterSnapshot};
-pub use agent_habilis_mesh::invite::InviteTicket;
-pub use agent_habilis_mesh::logging::LogSink;
-pub use agent_habilis_mesh::protocol::mesh::{
-    LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
-    RelaySelection,
-};
-pub use agent_habilis_mesh::protocol::message::{
+pub use agent_habilis_mesh::embed::Lane;
+pub use agent_habilis_mesh::embed::{Reach, RosterEntry, RosterSnapshot};
+pub use agent_habilis_mesh::protocol::InviteTicket;
+pub use agent_habilis_mesh::protocol::JoinTarget;
+pub use agent_habilis_mesh::protocol::{
     BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
     Shard, ShardGroup,
 };
-pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
-pub use agent_habilis_mesh::resolver::JoinTarget;
-pub use agent_habilis_mesh::transport::Lane;
+pub use agent_habilis_mesh::protocol::{
+    LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
+    RelaySelection,
+};
+pub use agent_habilis_mesh::protocol::{Nickname, NicknameError};
+pub use agent_habilis_mesh::util::logging::LogSink;
 pub use events::{OutputEvent, PingPeer, TaskGoneReason};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
 pub use agent_habilis_mesh::util::consts::{
     MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, MESH_GLYPH,
 };
-pub use agent_habilis_mesh::util::{ensure_runtime_base, mesh_prefix, runtime_base};
+pub use agent_habilis_mesh::util::mesh_prefix;
 pub use output::{event_json, surfaced_event_json};
+
+/// This binary's name — the single place it is spelled for path purposes. The
+/// engine takes it as a parameter (see [`agent_habilis_mesh::util::runtime_base`])
+/// rather than assuming it, because it is embedded by more than one binary.
+pub(crate) const PRODUCT: &str = "agent-gossip";
+
+/// This product's per-user runtime base: `/tmp/agent-gossip-<uid>`.
+///
+/// A live filesystem contract — `skills/shared/daemon-session.md` hardcodes this
+/// path, and every running daemon's socket and state file sit under it — so the
+/// bytes must not change. Only [`PRODUCT`] feeds it.
+#[must_use]
+pub fn runtime_base() -> std::path::PathBuf {
+    agent_habilis_mesh::util::runtime_base(PRODUCT)
+}
+
+/// [`runtime_base`], created and validated as a private (`0700`) directory this
+/// user owns.
+///
+/// # Errors
+/// The base is a symlink, is not a directory, is owned by another user, or the
+/// create/chmod syscalls failed. See [`agent_habilis_mesh::util::ensure_runtime_base`].
+pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
+    let base = runtime_base();
+    agent_habilis_mesh::util::ensure_runtime_base(&base)?;
+    Ok(base)
+}
+
+/// The per-mesh folder under [`runtime_base`], created after validating the base.
+///
+/// # Errors
+/// As [`ensure_runtime_base`], or the subdir create failed.
+pub fn ensure_mesh_runtime_dir(mesh_id: &str) -> std::io::Result<std::path::PathBuf> {
+    agent_habilis_mesh::util::ensure_mesh_runtime_dir(&runtime_base(), mesh_id)
+}
 
 use anyhow::Result;
 
@@ -159,7 +195,7 @@ pub fn cli_command() -> clap::Command {
 /// until `cli` resolves the mesh id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
-    agent_habilis_mesh::logging::install()
+    agent_habilis_mesh::util::logging::install()
 }
 
 /// The default tracing directive filter; pass to
@@ -167,14 +203,30 @@ pub fn install_log_sink() -> LogSink {
 /// it. See `logging`.
 #[must_use]
 pub fn log_filter() -> tracing_subscriber::EnvFilter {
-    agent_habilis_mesh::logging::log_filter()
+    agent_habilis_mesh::util::logging::log_filter(APP_LOG_PINS)
 }
+
+/// This crate's own `tracing` targets, pinned to `info`.
+///
+/// **Load-bearing.** A release build's base level is `error`, so a target that
+/// matches no pin compiles, works in a debug build, and is silently dropped from
+/// every optimized one — the exact failure that once made a reliability test go
+/// red only under `--profile ci`. Any new `target:` in this crate belongs here.
+///
+/// The engine cannot hold these: `cargo task layering` forbids the string
+/// `agent_gossip::` in engine sources, and rightly — the pins for a consumer's
+/// targets are the consumer's business.
+///
+/// `pub` + `doc(hidden)` so `tests/log_pins.rs` can assert this list covers
+/// every `target:` the crate actually emits under. Not public API.
+#[doc(hidden)]
+pub const APP_LOG_PINS: &str = "agent_gossip::a2a=info,agent_gossip::directory=info";
 
 /// Flush buffered logs to stderr if identity was never resolved
 /// (transient command, or startup failed before attach). Call after
 /// `run_cli` returns.
 pub fn flush_log_if_pending() {
-    agent_habilis_mesh::logging::flush_pending_to_stderr();
+    agent_habilis_mesh::util::logging::flush_pending_to_stderr();
 }
 
 // Shared config for the crate's `proptest!` blocks. Overrides the default

@@ -22,7 +22,7 @@ use crate::beacon;
 /// carrying them as independent, drift-prone bools.
 #[derive(Debug)]
 pub enum DriverMode {
-    /// The `agent-gossip create` / `join` CLI. Owns the unix-socket IPC listener
+    /// A long-running CLI daemon. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
     /// Fully in-process, driven by a [`Node`](super::Node). Outbound sends +
@@ -82,109 +82,122 @@ pub const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::EagerProbed;
 
 /// Configuration for the event loop, shared by `create` and `join`.
 /// The driver-specific channels live in [`DriverMode`].
+/// Opaque to consumers: built whole by
+/// [`setup_mesh`](super::setup::setup_mesh) and handed to
+/// [`Node::spawn`](super::Node::spawn) or [`run`](super::run) unmodified. The
+/// fields are crate-private both because most are `iroh` types the surface must
+/// not expose, and because three of them used to be patched in after
+/// construction — a window in which the value was knowingly wrong.
 pub struct EventLoopConfig {
-    pub topic: GossipTopic,
+    pub(crate) topic: GossipTopic,
     /// The gossip frontend the topic was subscribed on. Held by the
     /// event loop so it can **re-subscribe** after the topic stream
     /// terminally ends — iroh-gossip closes a lagging subscriber and
     /// its docs say to re-open it; without this handle the daemon
     /// would stay permanently deaf (review finding H1).
-    pub gossip: iroh_gossip::net::Gossip,
-    pub author: Nickname,
+    pub(crate) gossip: iroh_gossip::net::Gossip,
+    pub(crate) author: Nickname,
     /// This member's signing identity (Ed25519), minted in `setup_mesh`.
     /// In-process / ephemeral for now (see [`crate::protocol::identity`]).
-    pub identity: std::sync::Arc<crate::protocol::identity::Identity>,
-    pub mesh: MeshId,
+    pub(crate) identity: std::sync::Arc<crate::protocol::identity::Identity>,
+    pub(crate) mesh: MeshId,
     /// Decoded mesh name (from the `💬…` id). Carried so the
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
-    pub name: MeshName,
+    pub(crate) name: MeshName,
     /// The raw string a topic mesh was derived from; `None` for create/join.
     /// The derived `name` is lossy (URL scheme and query stripped, truncated),
     /// so this is what the joined/left lines, the state file, and `leave`'s
     /// report show for a topic gossip.
-    pub topic_string: Option<String>,
+    pub(crate) topic_string: Option<String>,
     /// The raw mesh password, retained for the process lifetime when the
     /// mesh is password-protected (`None` otherwise). Needed at blob-offload
     /// time to key blob tickets with the same password — the Argon2id stretch
     /// takes the raw password string, which cannot be recovered from
     /// `mesh_key`. `Password`'s `Debug`/`Display` redact to `***`.
-    pub mesh_password: Option<crate::protocol::crypto::Password>,
+    pub(crate) mesh_password: Option<crate::protocol::crypto::Password>,
     /// The Argon2id-stretched mesh key (`Mesh::stretched_key`), retained to
     /// derive the per-channel keys that encrypt the `state`/`meta` docs and
     /// broadcast chat. `None` for a passwordless mesh — those stay plaintext.
     /// Wiped on drop.
-    pub mesh_key: Option<zeroize::Zeroizing<[u8; 32]>>,
+    pub(crate) mesh_key: Option<zeroize::Zeroizing<[u8; 32]>>,
     /// Per-loop generic event sink (the tapped `Output`, wrapped as a
     /// [`NodeSink`]). The engine emits `NodeEvent`s through it and hands a clone
     /// to every handler, so multiple in-process sessions each have their own and
     /// never race a shared global.
-    pub sink: std::sync::Arc<dyn NodeSink>,
+    pub(crate) sink: std::sync::Arc<dyn NodeSink>,
     /// The invite-only **creator's** mesh, retained (in-memory, secrets and
     /// all) so the `invite` command can mint from its issuer key + root. `Some`
     /// only on the creator of an invite-only mesh; `None` everywhere else (a
     /// joiner holds no issuer key, so it could never mint).
-    pub mint_mesh: Option<Mesh>,
-    pub endpoint: Endpoint,
+    pub(crate) mint_mesh: Option<Mesh>,
+    pub(crate) endpoint: Endpoint,
     /// iroh router whose accept loop routes inbound gossip
     /// connections. Must be held alive for the whole event loop —
     /// dropping it kills the accept task and makes the daemon
     /// unreachable to new peers.
-    pub router: Router,
-    pub max_peers: usize,
+    pub(crate) router: Router,
+    pub(crate) max_peers: usize,
     /// Inputs for (re)building the co-hosted rendezvous endpoint.
     /// `rendezvous_params.id` doubles as the bootstrap-cache heal
     /// anchor and the peer-side neighbor-filter id;
     /// `beacon::ensure` is called with these on startup and every
     /// heal tick (claim-if-free in private mode).
-    pub rendezvous_params: beacon::RendezvousParams,
+    pub(crate) rendezvous_params: beacon::RendezvousParams,
     /// Receives the bootstrap relay rung chosen off the event loop — by
     /// the backgrounded startup probe and the beacon's liveness
     /// self-monitor (`rendezvous_params.rung_tx` is the sending half). On
     /// a change the loop re-registers the rendezvous and re-homes the
     /// beacon, so the ladder walk never runs on the sole loop.
-    pub rung_rx: watch::Receiver<Option<iroh::RelayUrl>>,
+    pub(crate) rung_rx: watch::Receiver<Option<iroh::RelayUrl>>,
     /// When this member may serve the rendezvous (beacon role).
-    pub cohost: CoHostPolicy,
+    pub(crate) cohost: CoHostPolicy,
+    /// The consumer's per-user runtime base — the root the control socket, the
+    /// default state file, and the default log dir live under. Carried from
+    /// [`SetupParams`](super::setup::SetupParams) rather than derived here; see
+    /// [`runtime_base`](crate::util::runtime_base) for why it is supplied.
+    /// `None` for an embedder that writes no files and binds no socket.
+    pub(crate) runtime_base: Option<PathBuf>,
     /// When set, the daemon writes peer count changes to this file.
-    pub state_file: Option<PathBuf>,
+    pub(crate) state_file: Option<PathBuf>,
     /// The multi-hop transport handle when `--multihop` registered it on the
     /// peer endpoint; `run()` moves it into `EventLoopState::multihop`.
     /// `None` when multihop is off. Built in `setup_mesh`.
-    pub multihop: Option<iroh_multihop_transport::MultihopHandle>,
+    pub(crate) multihop: Option<iroh_multihop_transport::MultihopHandle>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_mesh`.
-    pub unicast_rx: mpsc::Receiver<bytes::Bytes>,
+    pub(crate) unicast_rx: mpsc::Receiver<bytes::Bytes>,
     /// When advertising (`create --advertise`), the shared counter the
     /// directory re-broadcast task reads the live peer count
     /// from. `setup_mesh` leaves this `None`; the advertise path sets
     /// it before `run` (same late-assignment pattern as `driver`).
-    pub live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
-    /// Who drives the loop (CLI / in-process) and the channels that
-    /// driver needs. `setup_mesh` leaves this [`DriverMode::Cli`] and
-    /// the in-process sessions reassign it before `run`; folding the
-    /// driver into the `setup_mesh` signature (so it can't be the
-    /// wrong variant for a window) is the remaining follow-up.
-    pub driver: DriverMode,
-    /// Carried from `setup_mesh` to `run` purely so the `ready` event can be
-    /// emitted at the point the daemon can actually serve, rather than in
-    /// setup — where it announced a socket that was not yet bound.
-    pub ready: ReadyAnnounce,
+    pub(crate) live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    /// Who drives the loop (CLI / in-process) and the channels that driver
+    /// needs. Assigned by [`Node::spawn`](super::Node::spawn) for an in-process
+    /// consumer; a config handed straight to [`run`](super::run) keeps the CLI
+    /// default. Crate-private, so it cannot be the wrong variant in a window
+    /// visible to a consumer.
+    pub(crate) driver: DriverMode,
     /// The `meta` channel's per-peer write gate, when the application keeps a
     /// per-peer map there (see [`crate::doc::SelfWriteGate`]). `None` leaves the
     /// channel free-form.
-    pub per_peer_gate: Option<crate::doc::SelfWriteGate>,
+    pub(crate) per_peer_gate: Option<crate::doc::SelfWriteGate>,
 }
 
-/// The `ready` event's payload that only setup knows. Everything else it
-/// needs (mesh id, name, nickname) `run` already holds.
-#[derive(Debug, Default)]
-pub struct ReadyAnnounce {
-    /// A stale skill install, rendered by `agent-gossip`'s `drift_warning`.
-    pub drift: Option<String>,
-    /// The bound localhost HTTP port the application serves, if any.
-    pub http_port: Option<u16>,
+impl EventLoopConfig {
+    /// The resolved mesh id. Available before the loop starts, for a consumer
+    /// that must name the mesh at setup time (a log attach, a directory ad).
+    #[must_use]
+    pub fn mesh_id(&self) -> &MeshId {
+        &self.mesh
+    }
+
+    /// This member's nickname, as resolved by setup.
+    #[must_use]
+    pub fn author(&self) -> &Nickname {
+        &self.author
+    }
 }
 
 impl std::fmt::Debug for EventLoopConfig {

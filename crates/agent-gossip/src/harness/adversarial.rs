@@ -12,12 +12,12 @@
 )]
 
 use crate::a2a::wire;
-use agent_habilis_mesh::protocol::identity::{self, Identity};
-use agent_habilis_mesh::protocol::message::Message;
-use agent_habilis_mesh::protocol::message::PresenceSubtype;
+use agent_habilis_mesh::protocol::Message;
+use agent_habilis_mesh::protocol::PresenceSubtype;
 use agent_habilis_mesh::protocol::{
     AppFrameParams, AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname,
 };
+use agent_habilis_mesh::protocol::{Identity, encode_pubkey};
 
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
@@ -40,7 +40,7 @@ pub fn new_key() -> TestKey {
 /// `pubkey` in the JSON event.
 #[must_use]
 pub fn pubkey_hex(key: &TestKey) -> String {
-    identity::encode_pubkey(&key.0.public())
+    encode_pubkey(&key.0.public())
 }
 
 /// The value cluster for [`CraftedMsg::status_frame`]: the author/target
@@ -91,7 +91,7 @@ impl CraftedMsg {
     /// Unsigned until [`sign`](CraftedMsg::sign).
     pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
-        let body = agent_habilis_mesh::daemon::state_doc::merge_body(merge)
+        let body = agent_habilis_mesh::ops::doc::merge_body(merge)
             .expect("state merge envelope composes from any merge value");
         Self {
             msg: Message::new_state(mesh, &author, body),
@@ -120,17 +120,12 @@ impl CraftedMsg {
         // genesis — hence the same `peers` object id. Built on an *ungated* doc it
         // would be a different map, and whether the victim's gate even fires
         // would come down to which of two conflicting maps automerge keeps.
-        let change = agent_habilis_mesh::daemon::doc::MeshDoc::new_gated(
-            agent_habilis_mesh::doc::SelfWriteGate {
-                map: "peers".to_owned(),
-                field: "card".to_owned(),
-            },
-        )
-        .build_change(&merge, author.as_str().as_bytes())
-        .expect("forge change builds")
-        .expect("forge merge is not a no-op");
-        let body = agent_habilis_mesh::daemon::state_doc::change_body(&change, None)
-            .expect("change body composes");
+        let change = agent_habilis_mesh::ops::doc::MeshDoc::new_gated(crate::a2a::card_gate())
+            .build_change(&merge, author.as_str().as_bytes())
+            .expect("forge change builds")
+            .expect("forge merge is not a no-op");
+        let body =
+            agent_habilis_mesh::ops::doc::change_body(&change, None).expect("change body composes");
         Self {
             msg: Message::new_channel_event(
                 mesh,

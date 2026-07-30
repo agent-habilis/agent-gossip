@@ -1,7 +1,7 @@
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::a2a::TaskId;
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageKind, Nickname};
 
 mod json;
@@ -563,30 +563,28 @@ pub(crate) fn capture_events() -> (Output, mpsc::UnboundedReceiver<OutputEvent>)
 }
 
 /// The app renders the engine's generic
-/// [`NodeEvent`](agent_habilis_mesh::gossip::event::NodeEvent)s by mapping each onto the
+/// [`NodeEvent`](agent_habilis_mesh::embed::NodeEvent)s by mapping each onto the
 /// existing `Output` method, so the stdout JSON and tap forms stay
 /// byte-identical. This seam lets the engine emit surfacings without naming the
 /// concrete `Output`.
-impl agent_habilis_mesh::gossip::event::NodeSink for Output {
-    fn emit(&self, event: agent_habilis_mesh::gossip::event::NodeEvent) {
-        use agent_habilis_mesh::gossip::event::NodeEvent;
+impl agent_habilis_mesh::embed::NodeSink for Output {
+    fn emit(&self, event: agent_habilis_mesh::embed::NodeEvent) {
+        use agent_habilis_mesh::embed::NodeEvent;
         match event {
-            // The engine forwards an opaque localhost HTTP port; naming what is
-            // served there is this layer's job. The `a2a_port` JSON key is a
-            // documented output contract (see `agent-gossip man`), so the
-            // rename stops at this boundary.
+            // Bare identity: startup diagnostics (skill drift, the `--a2a-serve`
+            // port) are ours, not the engine's, and are spliced in by
+            // `StartupSink` for the paths that have them. Reached directly only
+            // by a session with none.
             NodeEvent::Ready {
                 mesh,
                 name,
                 nickname,
-                drift,
-                http_port,
             } => self.ready(ReadyParams {
                 mesh: &mesh,
                 name: &name,
                 nickname: &nickname,
-                drift: drift.as_deref(),
-                a2a_port: http_port,
+                drift: None,
+                a2a_port: None,
             }),
             NodeEvent::Info(message) => self.info(&message),
             NodeEvent::Error(message) => self.error(&message),
@@ -604,10 +602,7 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
             NodeEvent::PingReport { peers, known } => self.ping_report(
                 peers
                     .into_iter()
-                    .map(|peer| PingPeer {
-                        nickname: peer.nickname,
-                        rtt_ms: peer.rtt_ms,
-                    })
+                    .map(|(nickname, rtt_ms)| PingPeer { nickname, rtt_ms })
                     .collect(),
                 known,
             ),

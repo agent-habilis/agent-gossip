@@ -46,7 +46,7 @@ pub enum Reach {
 /// is the lane a directed frame to this peer would take right now (the
 /// live [`crate::transport`] send decision — distinct from `reach`, which
 /// is a gossip-overlay link fact). Serialized directly into the
-/// `agent-gossip peers` response and the MCP `mesh_info` roster.
+/// consumer's roster surfaces.
 #[derive(Debug, Clone, Serialize)]
 pub struct RosterEntry {
     pub nickname: Nickname,
@@ -91,21 +91,21 @@ pub struct EventLoopState {
     /// roster-collapse). Bounded by HyParView's `active_view_capacity`.
     /// Distinct from `peers` — links are asymmetric and node-id
     /// keyed; the roster is symmetric and nickname keyed.
-    pub linked_endpoints: HashSet<EndpointId>,
+    pub(crate) linked_endpoints: HashSet<EndpointId>,
     /// Re-bridge memory: every peer `EndpointId` we've ever linked to,
     /// kept *across* `NeighborDown` (unlike `linked_endpoints`). When a
     /// node loses all links because the rendezvous/relay is unreachable,
     /// the healer re-dials these directly — iroh still holds their cached
     /// addresses — so the re-bridge no longer depends on the rendezvous.
     /// Bounded FIFO (cap `KNOWN_ENDPOINTS_CAP`) so it can't grow without limit.
-    pub known_endpoints: BoundedFifoSet<EndpointId>,
+    pub(crate) known_endpoints: BoundedFifoSet<EndpointId>,
     /// Per-endpoint re-link throttle: caps re-dialing + re-flooding a peer
     /// learned via `PeerInfo` to once per window. Tracked *across*
     /// `NeighborDown` (unlike `linked_endpoints`), so a flapping/unstable peer
     /// is re-linked at most once per `RELINK_COOLDOWN_SECS` — the choke that
     /// stops one bad node's flap from amplifying into a mesh-wide connection
     /// storm. Bounded by construction (see [`Cooldown`]).
-    pub relink: Cooldown<EndpointId>,
+    pub(crate) relink: Cooldown<EndpointId>,
     /// Per-endpoint `PeerInfo` re-flood throttle. `relink` only throttles the
     /// *inbound* re-dial in `handle_peer_info`; this throttles the *outbound*
     /// re-flood every `NeighborUp` would otherwise trigger (`gossip::recv`).
@@ -114,7 +114,7 @@ pub struct EventLoopState {
     /// `neighbor up` storm. Kept separate from `relink` so the two throttles
     /// stay independently reasoned (and a new neighbor still gets exactly one
     /// re-flood).
-    pub peerinfo: Cooldown<EndpointId>,
+    pub(crate) peerinfo: Cooldown<EndpointId>,
     /// Membership layer: the peer roster. Nickname-keyed set of
     /// other peers, feeding the state file's `peer_count`
     /// (`peers.len() + 1`). Excludes self. Driven by
@@ -123,10 +123,10 @@ pub struct EventLoopState {
     /// bootstrap links), by implicit heartbeats from any received
     /// message (self-heal for a missed Joined), and by the sweeper's
     /// eviction of peers gone silent past `ALIVE_TIMEOUT_SECS`.
-    pub peers: HashSet<Nickname>,
+    pub(crate) peers: HashSet<Nickname>,
     /// Implicit-heartbeat tracker: nickname -> last time we heard
     /// anything from that peer. Drives sweep-based eviction.
-    pub last_seen: HashMap<Nickname, Instant>,
+    pub(crate) last_seen: HashMap<Nickname, Instant>,
     /// Bridge from membership back to transport: nickname -> the endpoint id
     /// that nickname last self-advertised in a signed `PeerInfo`. That
     /// signature is the only thing tying a nickname to an endpoint (the
@@ -136,27 +136,27 @@ pub struct EventLoopState {
     /// name). Pruned with `peers`, so it stays bounded by the roster.
     /// Feeds only the derived `reach` boolean in `roster_snapshot` — the node
     /// id never leaves this layer.
-    pub peer_endpoints: HashMap<Nickname, EndpointId>,
+    pub(crate) peer_endpoints: HashMap<Nickname, EndpointId>,
     /// The mesh's rendezvous endpoint id, once known. Paired with
     /// `rendezvous_linked` so `reach_of` can count the rendezvous link as a
     /// live link to the beacon: the beacon gossips *as* the rendezvous, so a
     /// joiner's only link to it is that pseudo-node link (kept out of
     /// `linked_endpoints` by design). `None` until the loop learns it.
-    pub rendezvous_id: Option<EndpointId>,
+    pub(crate) rendezvous_id: Option<EndpointId>,
     /// Heartbeat layer: peers we've evicted as quiet (silent
     /// past `ALIVE_TIMEOUT_SECS`) but who may still reappear. Any
     /// message from a nickname in this set triggers a symmetric
     /// `peer_return` event and re-inclusion in `peers`. Bounded FIFO
     /// (cap `QUIET_CAP`): drained on return, so without the cap a churn /
     /// sybil stream of one-shot nicknames would grow it without bound.
-    pub quiet: BoundedFifoSet<Nickname>,
+    pub(crate) quiet: BoundedFifoSet<Nickname>,
     /// Recency companion to `quiet`: nickname -> the `last_seen` instant a
     /// quiet peer had when it was evicted, so [`roster_snapshot`] can still
     /// report how long ago it was last heard (the eviction drops its
     /// `last_seen` entry). Pruned to `quiet`'s membership on every sweep, so
     /// it stays bounded by `QUIET_CAP`; `roster_snapshot` only reads it for
     /// peers currently in `quiet`, so a stale entry never surfaces.
-    pub quiet_since: HashMap<Nickname, Instant>,
+    pub(crate) quiet_since: HashMap<Nickname, Instant>,
     /// Presentation layer: peers for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a peer whose
@@ -165,19 +165,19 @@ pub struct EventLoopState {
     /// the roster (`peers`) stays complete for
     /// anti-entropy/membership; `surfaced ⊆ peers` only governs
     /// what the operator/agent is shown.
-    pub surfaced: HashSet<Nickname>,
+    pub(crate) surfaced: HashSet<Nickname>,
     /// Last time we broadcast anything. Lets idle daemons suppress
     /// their `Alive` keepalive when they're already chatty.
-    pub last_sent_at: Instant,
+    pub(crate) last_sent_at: Instant,
     /// Wall-clock unix seconds when this daemon started — its join
     /// instant. The node still receives & relays older messages
     /// (anti-entropy keeps the mesh's set uniform), but messages
     /// stamped before this are never *surfaced* (printed / `poll` /
     /// `fetch` / library API): the operator/agent view starts at join.
-    pub joined_at: i64,
+    pub(crate) joined_at: i64,
     /// Goes false when the receiver stream terminally ends; IPC
     /// keeps working for `msg` / `poll` after that.
-    pub gossip_open: bool,
+    pub(crate) gossip_open: bool,
     /// Whether the gossip overlay currently links us to the co-hosted
     /// rendezvous (its `NeighborUp`/`NeighborDown` arms drive it). Gates
     /// the healer's connect-probe: probing the rendezvous while a live
@@ -185,19 +185,19 @@ pub struct EventLoopState {
     /// connection and then mark the peer down when the probe handle
     /// drops — one rendezvous-link flap per heal tick, forever (the
     /// 2026-05-30 soak's residual flap).
-    pub rendezvous_linked: bool,
+    pub(crate) rendezvous_linked: bool,
     /// Set once we've broadcast our arrival (`joined` + `PeerInfo`).
     /// The announce is deferred to the first `NeighborUp` so it isn't
     /// lost into an unconnected overlay; subsequent neighbors only get
     /// a (log-invisible) `PeerInfo` re-send.
-    pub announced: bool,
+    pub(crate) announced: bool,
     /// Set once we have a link to a *real peer* (a non-
     /// rendezvous `NeighborUp`). `announced` flips on any neighbor —
     /// including the rendezvous relay — which is too early to deliver
     /// user content (the relay path may not be converged). Outbound
     /// user messages are buffered until `meshed`, then flushed, so the
     /// first message after a join can't be a lost one-shot.
-    pub meshed: bool,
+    pub(crate) meshed: bool,
     /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
     /// connection to each addressable peer so a directed message goes
     /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
@@ -205,160 +205,160 @@ pub struct EventLoopState {
     /// detached pool; the real loop replaces it with an endpoint-backed one.
     /// Independent of `linked_endpoints` by design (unicast can reach a
     /// non-neighbor). See [`crate::transport`].
-    pub unicast_pool: crate::transport::UnicastPool,
+    pub(crate) unicast_pool: crate::transport::UnicastPool,
     /// The multi-hop transport handle, when the `--multihop` flag registered it
     /// on the peer endpoint. Owns the routing table (fed from received
     /// `LinkState` frames) and the underlay endpoint. `None` when multihop is off
     /// or on a non-peer (beacon/rendezvous) endpoint. See
     /// [`iroh_multihop_transport`].
-    pub multihop: Option<iroh_multihop_transport::MultihopHandle>,
+    pub(crate) multihop: Option<iroh_multihop_transport::MultihopHandle>,
     /// Monotonic sequence for *our own* emitted link-state vectors, so peers keep
     /// the freshest and drop reorders.
-    pub link_state_seq: u64,
+    pub(crate) link_state_seq: u64,
     /// When `Some(deadline)` and not yet elapsed, the event loop runs
     /// a fast `beacon::ensure` burst (event-driven failover). Armed
     /// on `NeighborDown` — the beacon may have just died — so a
     /// survivor claims the freed rendezvous port in ~1s rather than
     /// waiting for the next 15s heal tick.
-    pub reclaim_until: Option<Instant>,
+    pub(crate) reclaim_until: Option<Instant>,
     /// When `Some(deadline)`, the next rival re-check *shed* of an
     /// `EagerProbed` public beacon: at the deadline the holder drops its
     /// co-host and lets probe-before-claim re-arbitrate, so a same-id
     /// rival that claimed inside our probe window is finally found and
     /// yielded to (see `event_loop::shed_rival_beacon_if_due`). `None`
     /// while not holding a shed-eligible beacon.
-    pub next_rival_recheck: Option<Instant>,
+    pub(crate) next_rival_recheck: Option<Instant>,
     /// How many rival re-check sheds have run. Round 0 (the claim made at
     /// startup, before any shed) schedules the *fast first* re-check with
     /// the deterministic endpoint-id tie-break offset — the likeliest
     /// rival started within seconds of us; later rounds run the steady
     /// jittered cadence.
-    pub rival_recheck_rounds: u32,
+    pub(crate) rival_recheck_rounds: u32,
     /// Recently-seen message ids, for duplicate suppression. Gossip
     /// (GRAFT/repair, topology churn, our own re-broadcasts, anti-entropy
     /// re-sends, the rendezvous double-path) can deliver the same message
     /// twice; `mark_seen` drops the repeat before it reaches the log /
     /// inbound push channel / agent. Bounded (`seen_ids_cap`, 2× the message log)
     /// so it always covers the retention window.
-    pub seen: BoundedIdSet,
+    pub(crate) seen: BoundedIdSet,
     /// User messages sent before we had a real-peer link (no gossip
     /// path yet — a bare `broadcast` would be a lost one-shot). Drained in
     /// FIFO order once `meshed` flips, each routed through the send decision;
     /// the parsed frame rides beside its wire bytes so the flush never
     /// re-parses what this node just serialized. A bounded FIFO queue (cap
     /// `PENDING_OUTBOUND_CAP`) so the backlog can't grow without limit.
-    pub pending_outbound: BoundedQueue<(Message, Bytes)>,
-    pub state_file: Option<StateFile>,
+    pub(crate) pending_outbound: BoundedQueue<(Message, Bytes)>,
+    pub(crate) state_file: Option<StateFile>,
     /// Whether the event loop is serving IPC yet. Starts `false` (the
     /// pre-loop state-file write reports "identity up, not yet serving");
     /// flipped `true` once the loop is draining, so a state-file reader
-    /// (`agent-gossip ready`) can gate on a write that means the daemon will answer.
-    pub ready: bool,
+    /// (a readiness gate) can gate on a write that means the daemon will answer.
+    pub(crate) ready: bool,
     /// When advertising (`create --advertise`), the directory's
     /// re-broadcast task reads the live peer count from here.
     /// Mirrors `peer_count` (`peers.len() + 1`), refreshed
     /// alongside every `write_peer_count`. `None` for the common
     /// non-advertising case (no shared counter to maintain).
-    pub live_count: Option<Arc<AtomicUsize>>,
-    pub message_log: MessageLog,
+    pub(crate) live_count: Option<Arc<AtomicUsize>>,
+    pub(crate) message_log: MessageLog,
     /// Shard groups already reassembled + surfaced, so a body is surfaced
     /// once even if a shard is re-fetched (via anti-entropy) after its id aged
     /// out of [`seen`](Self::seen). Bounded — groups are rare and short-lived.
-    pub reassembled_groups: BoundedFifoSet<ShardGroup>,
+    pub(crate) reassembled_groups: BoundedFifoSet<ShardGroup>,
     /// Partial multipart bodies buffering toward reassembly — dedicated and
     /// byte-budgeted, decoupled from the message log so log eviction can
     /// never break reassembly. Swept for stale groups on the prune tick.
-    pub reassembly: super::reassembly::ReassemblyStore,
+    pub(crate) reassembly: super::reassembly::ReassemblyStore,
     /// Serialized frames of our recent big (unlogged) outbound shard groups —
     /// the re-serve source for peers' `shard/repair` requests (big groups
     /// skip the message log, so anti-entropy can't heal them).
-    pub shard_cache: super::reassembly::ShardCache,
+    pub(crate) shard_cache: super::reassembly::ShardCache,
     /// The `state` channel: an automerge CRDT plus the signed change frames that
     /// carried it (the re-serve store). Convergence and card authorization live
     /// in [`super::doc`]; reconciliation is heads-based anti-entropy. This is the
-    /// document `agent-gossip state get` reads.
-    pub state_doc: super::doc::MeshDoc,
+    /// document a consumer's `state get` surface reads.
+    pub(crate) state_doc: super::doc::MeshDoc,
     /// The `meta` channel's document — a second, independent shared-state channel.
     /// Gates foreign-card writes (unlike `state`), since a `meta` card carries a
     /// peer's cryptographic identity.
-    pub meta_doc: super::doc::MeshDoc,
+    pub(crate) meta_doc: super::doc::MeshDoc,
     /// Rolling start index for the **chat** anti-entropy digest window: each
     /// round advertises `message_log[digest_cursor ..]` (up to
     /// `ANTIENTROPY_DIGEST_MAX_IDS`), then advances/wraps so a log larger
     /// than one digest is swept over several rounds. (State/meta reconcile by
     /// automerge heads and need no cursor.)
-    pub digest_cursor: usize,
+    pub(crate) digest_cursor: usize,
     /// This member's signing identity (Ed25519). Shared with the
     /// send path so messages we author are signed before broadcast.
     /// The public key is the durable identity; the nickname is a
     /// non-unique display label (see `docs/history-integrity.md`).
-    pub identity: Arc<Identity>,
+    pub(crate) identity: Arc<Identity>,
     /// Our own per-author log cursor (Phase 2): `self_seq` is the next
     /// `Msg` sequence number to emit, `self_prev` the content hash of our
     /// last sent `Msg` (`None` until the first). Advanced on every send so
     /// our `Msg` stream is a `seq`+`prev` hash chain.
-    pub self_seq: u64,
-    pub self_prev: Option<String>,
+    pub(crate) self_seq: u64,
+    pub(crate) self_prev: Option<String>,
     /// Phase 2 fork detection: per author pubkey (hex), the content hash
     /// seen at each `Msg` `seq`. A *different* hash at an already-seen
     /// `(pubkey, seq)` is cryptographic proof of equivocation → a `fork`
     /// event. Order-independent (gossip delivers out of order).
-    pub author_seqs: HashMap<String, HashMap<u64, String>>,
+    pub(crate) author_seqs: HashMap<String, HashMap<u64, String>>,
     /// Author pubkeys already flagged as forked, so one `fork` event fires
     /// per offending key rather than per message.
-    pub forked: HashSet<String>,
+    pub(crate) forked: HashSet<String>,
     /// Cross-author DAG (Phase 3): `by_hash` maps each known `Msg`'s content
     /// hash to its timestamp (for the `ts ≥ max(parents.ts)` backdating
     /// rule); `dag_heads` is the current tip set (hashes with no observed
     /// child) — the `parents` stamped on the next `Msg` we author. Both are
     /// pruned alongside the message-log eviction.
-    pub by_hash: HashMap<String, i64>,
-    pub dag_heads: HashSet<String>,
+    pub(crate) by_hash: HashMap<String, i64>,
+    pub(crate) dag_heads: HashSet<String>,
     /// When the last *verified* inbound gossip message arrived — the
     /// starvation watchdog's signal. Keyed on messages, not neighbor
     /// events: the roster-collapse showed links can look alive (or flap)
     /// while no traffic flows, and traffic is what membership feeds on.
-    pub last_inbound_at: Instant,
+    pub(crate) last_inbound_at: Instant,
     /// When the watchdog last ran a starvation recovery, if ever.
     /// Paired with `recovery_trips` to back off repeated attempts so a
     /// legitimately-last-survivor node settles into a sparse retry
     /// instead of warning every threshold period.
-    pub last_recovery_at: Option<Instant>,
+    pub(crate) last_recovery_at: Option<Instant>,
     /// Consecutive starvation recoveries without any inbound in between
     /// (drives the backoff; reset by `note_inbound`).
-    pub recovery_trips: u32,
+    pub(crate) recovery_trips: u32,
     /// `meshed` was cleared by a fault path (starvation recovery / hard
     /// resume edge) rather than never having been set. Gates
     /// `note_inbound`'s meshed-restore so a fresh joiner's pre-mesh
     /// inbound never flips `meshed` early; only a degraded node heals
     /// on traffic. See [`Self::note_degraded`].
-    pub degraded: bool,
+    pub(crate) degraded: bool,
     /// Latch for the warn-only resident-memory leak signal: set once this
     /// process's resident memory first crosses `tuning::resident_memory_warn_mb`,
     /// so the `warn` fires exactly once per process rather than every prune
     /// tick. Purely observability — never gates behavior (see
     /// `timers::tick_prune`).
-    pub resident_memory_warned: bool,
-    /// Active `agent-gossip ping` round, if one is in flight. Armed by the
+    pub(crate) resident_memory_warned: bool,
+    /// Active ping round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
     /// a fresh ping replaces any in-flight round. Boxed to keep the
     /// rarely-set round off the hot event-loop future's stack size.
-    pub ping_round: Option<Box<PingRound>>,
+    pub(crate) ping_round: Option<Box<PingRound>>,
     /// The raw mesh password when the mesh is password-protected (`None`
     /// otherwise). Handed to the blob server on its first offload so every
     /// blob ticket inherits the same password — a scraped ticket then can't be
     /// redeemed without it. Kept out of logs (`Password` redacts its `Debug`).
-    pub mesh_password: Option<crate::protocol::crypto::Password>,
+    pub(crate) mesh_password: Option<crate::protocol::crypto::Password>,
     /// The invite-only **creator's** mesh (secrets and all), retained so the
     /// `invite` IPC command can mint. `Some` only on the creator; set from
     /// [`EventLoopConfig`] after construction, so `new` defaults it to `None`
     /// and the many test call sites need no new argument.
-    pub mint_mesh: Option<Mesh>,
+    pub(crate) mint_mesh: Option<Mesh>,
     /// Symmetric key for broadcast-chat app bodies on a passworded
     /// mesh, `derive_secret(mesh_key, "broadcast")` — domain-separated from
     /// the state/meta doc keys. `None` ⇒ chat stays plaintext. Wiped on drop.
-    pub broadcast_key: Option<zeroize::Zeroizing<[u8; 32]>>,
+    pub(crate) broadcast_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 /// An in-flight RTT round. `t1` is when the probe was broadcast;
@@ -373,7 +373,7 @@ pub struct PingRound {
     /// delivered here instead of only emitted as a `ping_report` event — the
     /// in-process driver has no event stream to read the report from. `None`
     /// for the CLI/IPC path, which consumes the event.
-    pub resp: Option<tokio::sync::oneshot::Sender<Vec<crate::gossip::event::PingRtt>>>,
+    pub resp: Option<tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>>,
 }
 
 /// The mesh's secret material, grouped so [`EventLoopState::new`] can take
@@ -389,8 +389,8 @@ pub(crate) struct MeshSecrets {
 /// same reason [`MeshSecrets`] is: the argument budget. `now` stays separate
 /// because tests pin it to a deterministic instant.
 pub(crate) struct StateInit {
-    pub state_file: Option<StateFile>,
-    pub identity: Arc<Identity>,
+    pub(crate) state_file: Option<StateFile>,
+    pub(crate) identity: Arc<Identity>,
     pub secrets: MeshSecrets,
     /// The `meta` channel's per-peer write gate; `None` leaves it free-form.
     pub per_peer_gate: Option<crate::doc::SelfWriteGate>,
@@ -498,7 +498,7 @@ impl EventLoopState {
     }
 
     /// Snapshot the live roster (active peers + quiet evictees),
-    /// sorted most-recently-seen first. Backs `agent-gossip peers`, the MCP
+    /// sorted most-recently-seen first. Backs a consumer's roster surfaces, the MCP
     /// `mesh_info` roster, and the task sender's target picker /
     /// nickname validation.
     pub fn roster_snapshot(&self) -> RosterSnapshot {
@@ -790,6 +790,152 @@ impl EventLoopState {
 /// Max `parents` stamped on a `Msg` — bounds the wire size of the causal
 /// links. A quiet mesh has one head; this only bites under heavy concurrency.
 const MAX_DAG_PARENTS: usize = 16;
+
+// ── Consumer surface ───────────────────────────────────────────────────────
+//
+// The application driver (`NodeApp` / `NodeDriver`) is handed `&mut
+// EventLoopState` on every hook, but it is not a free-for-all: the fields are
+// crate-private and each thing an app legitimately needs is a named method.
+// Two reasons. The types are the smaller one — several fields are
+// `pub(crate)` collections in private modules, so a consumer could touch the
+// field but never name it. The larger one is that a bare field says nothing
+// about the invariant around it, and the doc pair below is the example: every
+// consumer that wanted one wrote the same `match channel` first.
+impl EventLoopState {
+    /// The shared document for `channel`. Replaces a `match` on
+    /// [`Channel`](crate::protocol::Channel) at every call site.
+    #[must_use]
+    pub fn doc(&self, channel: crate::protocol::Channel) -> &crate::doc::MeshDoc {
+        match channel {
+            crate::protocol::Channel::State => &self.state_doc,
+            crate::protocol::Channel::Meta => &self.meta_doc,
+        }
+    }
+
+    /// Mutable [`Self::doc`], for applying a local change before broadcast.
+    pub fn doc_mut(&mut self, channel: crate::protocol::Channel) -> &mut crate::doc::MeshDoc {
+        match channel {
+            crate::protocol::Channel::State => &mut self.state_doc,
+            crate::protocol::Channel::Meta => &mut self.meta_doc,
+        }
+    }
+
+    /// This member's signing identity.
+    #[must_use]
+    pub fn identity(&self) -> &Arc<Identity> {
+        &self.identity
+    }
+
+    /// The roster, as a set of nicknames. See [`Self::roster_snapshot`] for the
+    /// richer per-peer view.
+    #[must_use]
+    pub fn peers(&self) -> &HashSet<Nickname> {
+        &self.peers
+    }
+
+    /// A peer's last known endpoint id, if one has been learned.
+    #[must_use]
+    pub fn peer_endpoint(&self, nickname: &Nickname) -> Option<EndpointId> {
+        self.peer_endpoints.get(nickname.as_str()).copied()
+    }
+
+    /// Whether this member has meshed (has at least one gossip neighbour).
+    #[must_use]
+    pub fn is_meshed(&self) -> bool {
+        self.meshed
+    }
+
+    /// Whether the gossip topic is currently open for broadcast.
+    #[must_use]
+    pub fn is_gossip_open(&self) -> bool {
+        self.gossip_open
+    }
+
+    /// The multi-hop transport handle, when `--multihop` registered one.
+    #[must_use]
+    pub fn multihop(&self) -> Option<&iroh_multihop_transport::MultihopHandle> {
+        self.multihop.as_ref()
+    }
+
+    /// The Argon2id-derived broadcast key, for a password-protected mesh.
+    #[must_use]
+    pub fn broadcast_key(&self) -> Option<&[u8; 32]> {
+        self.broadcast_key.as_deref()
+    }
+
+    /// The raw mesh password, retained for blob-ticket keying.
+    #[must_use]
+    pub fn mesh_password(&self) -> Option<&crate::protocol::crypto::Password> {
+        self.mesh_password.as_ref()
+    }
+
+    /// The creator's invite-minting mesh; `Some` only on the creator of an
+    /// invite-only mesh.
+    #[must_use]
+    pub fn mint_mesh(&self) -> Option<&Mesh> {
+        self.mint_mesh.as_ref()
+    }
+
+    /// Stamp the next position on this author's hash chain, advancing it.
+    /// `prev` is the content hash of the message just authored.
+    pub fn advance_chain(&mut self, prev: String) {
+        self.self_seq += 1;
+        self.self_prev = Some(prev);
+    }
+
+    /// This author's current chain position — the `seq` the next message takes
+    /// and the hash it points back to.
+    #[must_use]
+    pub fn chain_head(&self) -> (u64, Option<&str>) {
+        (self.self_seq, self.self_prev.as_deref())
+    }
+
+    /// Arm a ping round, replacing any already in flight.
+    pub fn arm_ping_round(&mut self, round: PingRound) {
+        self.ping_round = Some(Box::new(round));
+    }
+
+    /// Take the in-flight ping round, if one is armed — the round is finalized
+    /// exactly once, so the caller consumes it.
+    pub fn take_ping_round(&mut self) -> Option<Box<PingRound>> {
+        self.ping_round.take()
+    }
+
+    /// Sender-side cache of serialized shard frames, for answering repair
+    /// requests.
+    pub fn shard_cache_mut(&mut self) -> &mut super::reassembly::ShardCache {
+        &mut self.shard_cache
+    }
+
+    /// Receiver-side partial-body store.
+    pub fn reassembly_mut(&mut self) -> &mut super::reassembly::ReassemblyStore {
+        &mut self.reassembly
+    }
+
+    /// The anti-entropy message log — the retained window a reconnecting peer
+    /// recovers from. Returns any message evicted by the push.
+    pub fn message_log_mut(&mut self) -> &mut MessageLog {
+        &mut self.message_log
+    }
+
+    /// Record a peer's endpoint id, learned from its published card.
+    pub fn note_peer_endpoint(&mut self, nickname: Nickname, endpoint: EndpointId) {
+        self.peer_endpoints.insert(nickname, endpoint);
+    }
+
+    /// Mark the gossip topic closed without a real stream end — how the
+    /// adversarial suite makes the heal arm's resubscribe path observable.
+    /// Feature-gated: no production caller may forge this.
+    #[cfg(feature = "adversarial")]
+    pub fn sever_gossip(&mut self) {
+        self.gossip_open = false;
+    }
+
+    /// Frames queued for send while the topic was closed.
+    pub fn pending_outbound_mut(&mut self) -> &mut BoundedQueue<(Message, Bytes)> {
+        &mut self.pending_outbound
+    }
+}
 
 #[cfg(test)]
 mod tests {

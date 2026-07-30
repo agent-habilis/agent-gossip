@@ -229,8 +229,8 @@ mod tests {
         // The scheme is stripped and the `/`s kept; this URL also exceeds the
         // 32-char name cap, so the tail truncates to `…` (see `MAX_CHARS`).
         assert_eq!(
-            MeshName::from_topic_string("https://github.com/agent-habilis/agent-gossip").as_str(),
-            "github.com/agent-habilis/agent…"
+            MeshName::from_topic_string("https://github.com/example-org/example-project").as_str(),
+            "github.com/example-org/example…"
         );
         assert_eq!(MeshName::from_topic_string("git://h/a").as_str(), "h/a");
         // Only the `scheme://` form is stripped.
@@ -241,10 +241,10 @@ mod tests {
     fn http_url_drops_query_and_fragment() {
         assert_eq!(
             MeshName::from_topic_string(
-                "https://github.com/agent-habilis/agent-gossip?tab=readme#install"
+                "https://github.com/example-org/example-project?tab=readme#install"
             )
             .as_str(),
-            "github.com/agent-habilis/agent…"
+            "github.com/example-org/example…"
         );
         assert_eq!(
             MeshName::from_topic_string("https://x/p?q=1#f").as_str(),

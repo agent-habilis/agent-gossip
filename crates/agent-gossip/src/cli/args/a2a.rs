@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use super::legacy::LegacyOutput;
 use super::lookup::PublicLookupArgs;
 use crate::cli::password::PasswordFlag;
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]

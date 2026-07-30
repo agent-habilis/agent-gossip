@@ -105,7 +105,8 @@ impl LogSink {
         // symlink. A `--log-dir` override outside the base is not gated. (The log
         // is 0600, but a hijacked dir could still swap the file for an
         // attacker-owned one under create-truncate.)
-        let opened = crate::util::ensure_parent_private(&path).and_then(|()| {
+        let base = crate::util::logs::configured_base();
+        let opened = crate::util::ensure_parent_private(base.as_deref(), &path).and_then(|()| {
             use std::os::unix::fs::OpenOptionsExt as _;
             fs::OpenOptions::new()
                 .create(true)
@@ -222,7 +223,8 @@ mod tests {
 
     #[test]
     fn attached_file_rotates_at_cap() {
-        let dir = std::env::temp_dir().join(format!("agent-gossip-logsink-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("agent-habilis-mesh-logsink-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rot.log");
         let file = fs::OpenOptions::new()

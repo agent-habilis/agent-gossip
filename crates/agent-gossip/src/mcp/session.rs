@@ -12,8 +12,8 @@ use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
     TaskArtifactParams, TopicConfig,
 };
-use agent_habilis_mesh::daemon::state::RosterSnapshot;
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::embed::RosterSnapshot;
+use agent_habilis_mesh::protocol::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
@@ -240,8 +240,8 @@ mod tests {
 
     use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};
     use crate::api::{CreateConfig, JoinConfig};
+    use agent_habilis_mesh::protocol::JoinTarget;
     use agent_habilis_mesh::protocol::{MessageKind, PresenceSubtype};
-    use agent_habilis_mesh::resolver::JoinTarget;
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.

@@ -30,15 +30,15 @@ pub(crate) struct TuningOpts {
     pub heal_interval_secs: u64,
 
     /// Task idle-debounce timeout (seconds).
-    #[arg(long, hide = true, default_value_t = consts::TASK_TIMEOUT_SECS)]
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_TIMEOUT_SECS)]
     pub task_timeout_secs: u64,
 
     /// Task keepalive cadence for the ball-owner (seconds).
-    #[arg(long, hide = true, default_value_t = consts::TASK_KEEPALIVE_SECS)]
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_KEEPALIVE_SECS)]
     pub task_keepalive_secs: u64,
 
     /// Longest the daemon auto-covers a silent task without a skill leg (seconds).
-    #[arg(long, hide = true, default_value_t = consts::TASK_KEEPALIVE_MAX_SECS)]
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_KEEPALIVE_MAX_SECS)]
     pub task_keepalive_max_secs: u64,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
@@ -54,7 +54,7 @@ pub(crate) struct TuningOpts {
     pub ppid_watch_interval_ms: u64,
 
     /// How long a `long: true` poll read parks before returning empty (millis).
-    #[arg(long, hide = true, default_value_t = consts::LONGPOLL_MAX_MS)]
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::LONGPOLL_MAX_MS)]
     pub longpoll_max_ms: u64,
 
     /// Heal inter-tick gap above which the process hard re-bootstraps (seconds).
@@ -109,19 +109,15 @@ pub(crate) struct TuningOpts {
 }
 
 impl TuningOpts {
-    /// The process tuning carried by these flags, for [`agent_habilis_mesh::util::tuning::init`].
-    pub(crate) fn tuning(&self) -> agent_habilis_mesh::util::tuning::Tuning {
-        agent_habilis_mesh::util::tuning::Tuning {
+    /// The process tuning carried by these flags, for [`agent_habilis_mesh::runtime::tuning::init`].
+    pub(crate) fn tuning(&self) -> agent_habilis_mesh::runtime::tuning::Tuning {
+        agent_habilis_mesh::runtime::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
             heal_interval_secs: self.heal_interval_secs,
-            task_timeout_secs: self.task_timeout_secs,
-            task_keepalive_secs: self.task_keepalive_secs,
-            task_keepalive_max_secs: self.task_keepalive_max_secs,
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
             ppid_watch_interval_ms: self.ppid_watch_interval_ms,
-            longpoll_max_ms: self.longpoll_max_ms,
             heal_stall_threshold_secs: self.heal_stall_threshold_secs,
             starvation_threshold_secs: self.starvation_threshold_secs,
             advertise_interval_secs: self.advertise_interval_secs,
@@ -133,6 +129,19 @@ impl TuningOpts {
             rival_recheck_secs: self.rival_recheck_secs,
             rival_recheck_meshed_secs: self.rival_recheck_meshed_secs,
             topic_mdns_only: self.topic_mdns_only,
+        }
+    }
+
+    /// The A2A-layer tuning carried by these flags, for
+    /// [`crate::a2a::tuning::init`]. Separate from [`Self::tuning`] because the
+    /// task state machine and the long-poll park are implemented here, not in
+    /// the engine — one flag set, two homes.
+    pub(crate) fn a2a_tuning(&self) -> crate::a2a::tuning::Tuning {
+        crate::a2a::tuning::Tuning {
+            task_timeout_secs: self.task_timeout_secs,
+            task_keepalive_secs: self.task_keepalive_secs,
+            task_keepalive_max_secs: self.task_keepalive_max_secs,
+            longpoll_max_ms: self.longpoll_max_ms,
         }
     }
 }

@@ -14,7 +14,7 @@ use std::collections::{HashSet, VecDeque};
 /// reprocessed and **re-surfaced**, so the dedup window must outlive the
 /// retained messages.
 #[derive(Debug)]
-pub struct BoundedIdSet {
+pub(crate) struct BoundedIdSet {
     capacity: usize,
     ids: HashSet<[u8; 16]>,
     order: VecDeque<[u8; 16]>,

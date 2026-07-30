@@ -2,11 +2,11 @@ use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use crate::output::Output;
-use agent_habilis_mesh::daemon::setup::{SetupParams, setup_mesh};
-use agent_habilis_mesh::daemon::{
+use agent_habilis_mesh::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
+use agent_habilis_mesh::runtime::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams,
 };
-use agent_habilis_mesh::protocol::mesh::{DirectorySelection, MeshConfig, resolve_lookups};
+use agent_habilis_mesh::runtime::{SetupParams, setup_mesh};
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
@@ -53,7 +53,7 @@ pub(super) async fn create_setup(
         advertise,
         password: cfg
             .password
-            .map(agent_habilis_mesh::protocol::crypto::Password::new),
+            .map(agent_habilis_mesh::protocol::Password::new),
         // Invite-only is a CLI-driven feature; the library api does not expose
         // it yet (a documented follow-up).
         invite_only: false,
@@ -62,22 +62,23 @@ pub(super) async fn create_setup(
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
     let io = crate::a2a::app::SurfacedIo::new(output);
     let sink = io.sink();
-    let mut elc = setup_mesh(
+    // See `cli::run_session`: the advertiser's counter predates setup so the
+    // returned config needs no patching.
+    let live_count = advertise_directory
+        .as_ref()
+        .map(|_| std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1)));
+    let elc = setup_mesh(
         kind,
         SetupParams {
             author,
             max_peers,
+            runtime_base: Some(crate::runtime_base()),
             state_file: None,
             sink,
             multihop: false,
-            drift: None,
-            http_serve: None,
-            // The a2a data model keeps a per-peer card in `meta`; the engine only
-            // needs the map/field pair to plant the genesis and refuse a forgery.
-            per_peer_gate: Some(agent_habilis_mesh::doc::SelfWriteGate {
-                map: "peers".to_owned(),
-                field: "card".to_owned(),
-            }),
+            per_peer_gate: Some(crate::a2a::card_gate()),
+            cohost: None,
+            live_count: live_count.clone(),
         },
     )
     .await
@@ -86,7 +87,8 @@ pub(super) async fn create_setup(
     // it reaches the directory over this mesh's own lookups (moved into the
     // at-most-once closure, so no clone).
     let advertiser = advertise_directory
-        .map(|directory| spawn_advertiser(&mut elc, directory, directory_lookups));
+        .zip(live_count)
+        .map(|(directory, counter)| spawn_advertiser(&elc, counter, directory, directory_lookups));
     Ok((elc, io, advertiser))
 }
 
@@ -104,7 +106,7 @@ pub(super) async fn join_setup(
         nickname: cfg.nickname,
         password: cfg
             .password
-            .map(agent_habilis_mesh::protocol::crypto::Password::new),
+            .map(agent_habilis_mesh::protocol::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
@@ -145,17 +147,13 @@ async fn resolved_setup(
         SetupParams {
             author,
             max_peers,
+            runtime_base: Some(crate::runtime_base()),
             state_file: None,
             sink,
             multihop: false,
-            drift: None,
-            http_serve: None,
-            // The a2a data model keeps a per-peer card in `meta`; the engine only
-            // needs the map/field pair to plant the genesis and refuse a forgery.
-            per_peer_gate: Some(agent_habilis_mesh::doc::SelfWriteGate {
-                map: "peers".to_owned(),
-                field: "card".to_owned(),
-            }),
+            per_peer_gate: Some(crate::a2a::card_gate()),
+            cohost: None,
+            live_count: None,
         },
     )
     .await

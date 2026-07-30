@@ -5,12 +5,12 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::invite::InviteTicket;
 use crate::protocol::MeshId;
-use crate::protocol::mesh::Mesh;
+use crate::protocol::mesh::{Mesh, MeshIdError};
 use crate::util::consts::MESH_GLYPH;
 
-/// What `join` accepts: a literal `💬…` mesh id, or a creator-minted `🎟️`
+/// What a join accepts: a literal `💬…` mesh id, or a creator-minted `🎟️`
 /// invite to an invite-only mesh. A shared *string* is not a join target — it
-/// derives its own mesh via `agent-gossip topic`. Classified and validated
+/// derives its own mesh through the topic path. Classified and validated
 /// **once**, at the boundary (clap `FromStr` / MCP entry), so `resolve` matches
 /// the variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,13 +22,30 @@ pub enum JoinTarget {
     Invite(InviteTicket),
 }
 
-/// A join target that isn't a well-formed mesh id.
+/// Why a string is not a join target. A *classification*, not a rendered
+/// remedy: the engine has no commands to point at, so a consumer matches the
+/// variant and appends its own "use … instead" hint. [`Unrecognized`] carries
+/// the trimmed input for exactly that.
+///
+/// [`Unrecognized`]: JoinTargetError::Unrecognized
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JoinTargetError(String);
+pub enum JoinTargetError {
+    /// Branded `💬` but malformed. Wraps the id's own reason, so the rendered
+    /// text is unchanged from parsing a [`MeshId`] directly.
+    MalformedMeshId(MeshIdError),
+    /// Matched neither brand. Carries the trimmed input to echo back.
+    Unrecognized(String),
+}
 
 impl fmt::Display for JoinTargetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        match self {
+            JoinTargetError::MalformedMeshId(error) => error.fmt(formatter),
+            JoinTargetError::Unrecognized(input) => write!(
+                formatter,
+                "`{input}` is not a mesh id or invite (expected a {MESH_GLYPH}… or 🎟️… token)"
+            ),
+        }
     }
 }
 
@@ -43,24 +60,14 @@ impl FromStr for JoinTarget {
             return trimmed
                 .parse::<MeshId>()
                 .map(JoinTarget::Mesh)
-                .map_err(|error| JoinTargetError(error.to_string()));
+                .map_err(JoinTargetError::MalformedMeshId);
         }
         // The two token brands never collide, so only non-mesh input reaches
-        // the invite decoder and topic hint.
+        // the invite decoder.
         if let Ok(invite) = InviteTicket::decode(trimmed) {
             return Ok(JoinTarget::Invite(invite));
         }
-        // Anything else isn't a join token. Point at `topic`, which is what a
-        // plain string is for. The hint is meant to be copy-pasted into a shell,
-        // so the string is single-quoted (with embedded `'` escaped POSIX-style)
-        // — unquoted, whitespace would split into extra args and metacharacters
-        // could expand.
-        let quoted = format!("'{}'", trimmed.replace('\'', "'\\''"));
-        Err(JoinTargetError(format!(
-            "`{trimmed}` is not a mesh id or invite (expected a {MESH_GLYPH}… or 🎟️… \
-             token). To join a public mesh derived from a shared string, use \
-             `agent-gossip topic {quoted}`."
-        )))
+        Err(JoinTargetError::Unrecognized(trimmed.to_owned()))
     }
 }
 
@@ -72,10 +79,7 @@ pub(crate) fn resolve(target: &JoinTarget) -> Result<Mesh> {
                 .parse::<Mesh>()
                 .map_err(|error| anyhow!("invalid mesh id: {error}"))?;
             if mesh.requires_invite() {
-                bail!(
-                    "this mesh is invite-only — redeem a 🎟️ invite \
-                     (`agent-gossip join <🎟️…>`), not the bare hash"
-                );
+                bail!("this mesh is invite-only — join with a 🎟️ invite token, not the bare hash");
             }
             Ok(mesh)
         }
@@ -89,33 +93,22 @@ pub(crate) fn resolve(target: &JoinTarget) -> Result<Mesh> {
 
 #[cfg(test)]
 mod tests {
-    use super::{JoinTarget, resolve};
+    use super::{JoinTarget, JoinTargetError, resolve};
 
+    // The consumer builds its own "use the topic command instead" hint off this
+    // variant, so the trimmed input has to survive classification verbatim.
     #[test]
-    fn non_id_string_points_at_topic() {
-        let err = "github.com/alice/proj".parse::<JoinTarget>().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("agent-gossip topic 'github.com/alice/proj'"),
-            "got: {err}"
+    fn a_non_token_string_is_unrecognized_and_echoes_its_input() {
+        let error = "  github.com/alice/proj "
+            .parse::<JoinTarget>()
+            .unwrap_err();
+        assert_eq!(
+            error,
+            JoinTargetError::Unrecognized("github.com/alice/proj".to_owned())
         );
-    }
-
-    #[test]
-    fn topic_hint_is_shell_safe() {
-        let whitespace_err = "my secret gossip".parse::<JoinTarget>().unwrap_err();
         assert!(
-            whitespace_err
-                .to_string()
-                .contains("agent-gossip topic 'my secret gossip'"),
-            "got: {whitespace_err}"
-        );
-        let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
-        assert!(
-            quote_err
-                .to_string()
-                .contains(r"agent-gossip topic 'it'\''s here'"),
-            "got: {quote_err}"
+            error.to_string().contains("github.com/alice/proj"),
+            "got: {error}"
         );
     }
 

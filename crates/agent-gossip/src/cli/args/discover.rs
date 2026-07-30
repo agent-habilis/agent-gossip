@@ -3,7 +3,7 @@
 
 use clap::Parser;
 
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::MeshName;
 
 use super::legacy::LegacyOutput;
 use super::lookup::PublicLookupArgs;
@@ -48,7 +48,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::args::{Cli, Commands};
-    use agent_habilis_mesh::protocol::mesh::MeshName;
+    use agent_habilis_mesh::protocol::MeshName;
 
     fn discover_opts(args: &[&str]) -> super::DiscoverOpts {
         match Cli::parse_from(args).command {

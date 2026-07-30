@@ -14,11 +14,11 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use agent_habilis_mesh::lookup::build_endpoint;
-use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth, ct_eq};
-use agent_habilis_mesh::protocol::mesh::{
+use agent_habilis_mesh::net::build_endpoint;
+use agent_habilis_mesh::protocol::{
     DirectorySelection, LookupOpts, LookupSet, resolve_lookups, validate_advertise,
 };
+use agent_habilis_mesh::protocol::{Password, TicketAuth, ct_eq};
 
 use super::directory::{TicketAd, spawn_ticket_advertiser};
 use super::ticket::A2aTicket;

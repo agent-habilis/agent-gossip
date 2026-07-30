@@ -137,15 +137,17 @@ mod tests {
 
     /// A throwaway file under the OS temp dir holding `bytes`; the caller drops it.
     fn temp_file(bytes: &[u8]) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("agent-gossip-blob-src-{}", rand::rng().next_u64()));
+        let path = std::env::temp_dir().join(format!(
+            "agent-habilis-mesh-blob-src-{}",
+            rand::rng().next_u64()
+        ));
         fs::write(&path, bytes).expect("write temp file");
         path
     }
 
     fn temp_spool() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-gossip-blob-spool-{}",
+            "agent-habilis-mesh-blob-spool-{}",
             rand::rng().next_u64()
         ))
     }
@@ -186,7 +188,7 @@ mod tests {
     /// this is the shape any consumer writes, whatever its data model.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn offload_to_fetch_needs_no_application_type() {
-        let payload: Vec<u8> = (0..40_000_u32).map(|byte| byte as u8).collect();
+        let payload: Vec<u8> = (0..40_000_u32).map(|byte| byte.to_le_bytes()[0]).collect();
         let src = temp_file(&payload);
         let mut server: Option<BlobServer> = None;
 

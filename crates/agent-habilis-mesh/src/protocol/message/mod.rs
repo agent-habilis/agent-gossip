@@ -57,8 +57,8 @@ const _: () = assert!(
 /// As of `12.0` the domains carry the **engine's** name, not the product's
 /// (`habilis-mesh/…`): the unicast and blob ALPNs, the seal/sym/x25519/invite
 /// seeds, the message signing domain, the directory base seed, and the
-/// shared-document genesis actor. `agent-gossip` is one consumer of this engine;
-/// its own bridge ALPN stays branded because it belongs to the application.
+/// shared-document genesis actor. A consumer's own bridge ALPN stays branded
+/// because it belongs to the application, not to this engine.
 ///
 /// The identity wire key stays **`mesh`**, and so does the internal vocabulary.
 /// The user-facing noun for a session is **gossip**, but that is a CLI/docs/MCP
@@ -71,7 +71,7 @@ const _: () = assert!(
 /// bump below it predates any release, so no peer ever ran them, and they are
 /// *format* history rather than interop history:
 ///
-/// - `11.0` — the agent-gossip rebrand (product name in the byte-domains).
+/// - `11.0` — a product rebrand (the product's name was in the byte-domains).
 /// - `10.0` / `9.0` — the agent-mesh → agent-square and swarm → mesh renames.
 ///   `9.0` also moved the identity wire key to `"mesh"` and the JSON-RPC
 ///   namespace to `mesh:*`.

@@ -1,5 +1,5 @@
 //! A2A-application state owned by the event loop, kept distinct from the
-//! generic mesh state in [`agent_habilis_mesh::daemon::state::EventLoopState`]. Holds the
+//! generic mesh state in [`agent_habilis_mesh::embed::EventLoopState`]. Holds the
 //! in-flight task registry, the outstanding gossip A2A-call waiters, and the
 //! lazily-bound blob server — the pieces that belong to the a2a layer, not the
 //! transport/membership engine. Threaded alongside `EventLoopState` as its own
@@ -22,6 +22,50 @@ use agent_habilis_mesh::protocol::Nickname;
 pub(crate) struct SurfacedIo {
     output: Output,
     surfaced_rx: UnboundedReceiver<OutputEvent>,
+    /// Startup diagnostics this product announces alongside the engine's bare
+    /// `Ready`. Both are ours: a stale skill install, and the port *we* bound.
+    startup: Startup,
+}
+
+/// What [`StartupSink`] splices into the engine's identity-only `Ready`.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Startup {
+    pub(crate) drift: Option<String>,
+    pub(crate) a2a_port: Option<u16>,
+}
+
+/// Renders `Ready` with this product's startup diagnostics attached, and passes
+/// every other engine surfacing straight through.
+///
+/// The engine emits mesh identity and nothing else — it has no notion of a skill
+/// install or of what we serve on localhost. It used to carry both purely to
+/// hand them back, which is why the `http_port` → `a2a_port` rename happened on
+/// the way out.
+struct StartupSink {
+    output: Output,
+    startup: Startup,
+}
+
+impl agent_habilis_mesh::embed::NodeSink for StartupSink {
+    fn emit(&self, event: agent_habilis_mesh::embed::NodeEvent) {
+        use agent_habilis_mesh::embed::NodeEvent;
+        if let NodeEvent::Ready {
+            mesh,
+            name,
+            nickname,
+        } = &event
+        {
+            self.output.ready(crate::output::ReadyParams {
+                mesh,
+                name,
+                nickname,
+                drift: self.startup.drift.as_deref(),
+                a2a_port: self.startup.a2a_port,
+            });
+            return;
+        }
+        self.output.emit(event);
+    }
 }
 
 impl SurfacedIo {
@@ -31,15 +75,26 @@ impl SurfacedIo {
         Self {
             output: base.with_tap(tx),
             surfaced_rx: rx,
+            startup: Startup::default(),
         }
+    }
+
+    /// Attach this product's startup diagnostics to the `ready` announcement.
+    /// The in-process paths skip it — they compute no drift and bind no port.
+    pub(crate) fn with_startup(mut self, startup: Startup) -> Self {
+        self.startup = startup;
+        self
     }
 
     /// The engine sink for this tapped `Output`: a clone shared with the app's
     /// renderer, wrapped as a [`NodeSink`] so the engine emits `NodeEvent`s
     /// through the *same* tap the app's own `Output` writes to. Both feed the
     /// surfaced-events ring in surfacing order.
-    pub(crate) fn sink(&self) -> std::sync::Arc<dyn agent_habilis_mesh::gossip::event::NodeSink> {
-        std::sync::Arc::new(self.output.clone())
+    pub(crate) fn sink(&self) -> std::sync::Arc<dyn agent_habilis_mesh::embed::NodeSink> {
+        std::sync::Arc::new(StartupSink {
+            output: self.output.clone(),
+            startup: self.startup.clone(),
+        })
     }
 }
 
@@ -54,13 +109,13 @@ pub(crate) struct A2aApp {
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
     /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
     /// call's deadline. Fulfilled directly by the matching response frame.
-    /// Bounded by [`POLL_WAITERS_CAP`](agent_habilis_mesh::util::consts::POLL_WAITERS_CAP).
+    /// Bounded by [`POLL_WAITERS_CAP`](crate::a2a::tuning::POLL_WAITERS_CAP).
     pub a2a_waiters: Vec<A2aWaiter>,
     /// The blob channel's serving endpoint + content-addressed store, bound
     /// lazily on the first large-file offload (an `a2a artifact`/`call --file`)
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
-    pub blob_server: Option<agent_habilis_mesh::blob::BlobServer>,
+    pub blob_server: Option<agent_habilis_mesh::ops::blob::BlobServer>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -94,6 +149,8 @@ impl A2aApp {
         let SurfacedIo {
             output,
             surfaced_rx,
+            // Consumed by `sink()`, which the caller already built.
+            startup: _,
         } = io;
         Self {
             tasks: HashMap::new(),
@@ -173,7 +230,7 @@ impl A2aApp {
     /// caller can fail it fast instead of parking silently.
     #[must_use]
     pub(crate) fn register_a2a_waiter(&mut self, waiter: A2aWaiter) -> Option<A2aResponder> {
-        if self.a2a_waiters.len() >= agent_habilis_mesh::util::consts::POLL_WAITERS_CAP {
+        if self.a2a_waiters.len() >= crate::a2a::tuning::POLL_WAITERS_CAP {
             return Some(waiter.responder);
         }
         self.a2a_waiters.push(waiter);

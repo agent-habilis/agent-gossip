@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use agent_habilis_mesh::protocol::mesh::{LookupSet, RelaySelection};
+use agent_habilis_mesh::protocol::{LookupSet, RelaySelection};
 
 /// The lookup allowlist flags: naming any uses *only* those passed (so
 /// `--mdns` alone disables both dht and the relay); naming none falls
@@ -75,7 +75,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::args::{Cli, Commands};
-    use agent_habilis_mesh::protocol::mesh::RelaySelection;
+    use agent_habilis_mesh::protocol::RelaySelection;
 
     /// Parse `agent-gossip create …` and read the resolved relay selection — the
     /// `--relay` allowlist flag lives in [`LookupArgs`], exercised here
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn create_mdns_resolves_to_mdns_only_lookups() {
-        use agent_habilis_mesh::protocol::mesh::{RelayChoice, resolve_lookups};
+        use agent_habilis_mesh::protocol::{RelayChoice, resolve_lookups};
         // `agent-gossip create --mdns` ⇒ the mesh's id encodes mDNS only (naming a
         // lookup flag opts into exactly those; relay and dht stay off).
         let opts = match Cli::parse_from(["agent-gossip", "create", "--mdns"]).command {

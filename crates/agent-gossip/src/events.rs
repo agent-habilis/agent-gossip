@@ -1,5 +1,5 @@
 use crate::a2a::{TaskId, TaskState};
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageId, Nickname};
 
 #[derive(Debug, Clone)]

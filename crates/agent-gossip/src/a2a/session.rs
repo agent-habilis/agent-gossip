@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
-use agent_habilis_mesh::daemon::state::RosterSnapshot;
+use agent_habilis_mesh::embed::RosterSnapshot;
 use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname};
 
 /// A typed in-process request from an in-process session to the event
@@ -46,7 +46,7 @@ pub(crate) enum SessionRequest {
     /// then deliver the per-peer RTT rows. The response arrives only when the
     /// round finalizes (after the window), not immediately.
     Ping {
-        resp: oneshot::Sender<Vec<agent_habilis_mesh::gossip::event::PingRtt>>,
+        resp: oneshot::Sender<Vec<(Nickname, u64)>>,
     },
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: compose the body,
     /// then sign + gossip. `Err` carries a transport/serialize failure only — a

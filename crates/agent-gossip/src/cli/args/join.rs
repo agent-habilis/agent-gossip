@@ -4,14 +4,36 @@ use clap::Parser;
 
 use crate::cli::password::PasswordFlag;
 use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::resolver::JoinTarget;
+use agent_habilis_mesh::protocol::{JoinTarget, JoinTargetError};
 
 use super::shared::SharedServerOpts;
+
+/// Classify a join token, pointing an unrecognized one at `topic` — which is
+/// what a plain shared string is for.
+///
+/// The engine only classifies (`JoinTargetError::Unrecognized`); naming a
+/// command, and shell-quoting an argument for one, are this CLI's business. The
+/// hint is meant to be copy-pasted, so the string is single-quoted with embedded
+/// `'` escaped POSIX-style — unquoted, whitespace would split into extra args
+/// and metacharacters could expand.
+fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
+    input.parse::<JoinTarget>().map_err(|error| match &error {
+        JoinTargetError::Unrecognized(token) => {
+            let quoted = format!("'{}'", token.replace('\'', "'\\''"));
+            format!(
+                "{error}. To join a public gossip derived from a shared string, \
+                 use `agent-gossip topic {quoted}`."
+            )
+        }
+        JoinTargetError::MalformedMeshId(_) => error.to_string(),
+    })
+}
 
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
     /// Gossip identifier (💬...). Validated at parse (clap `FromStr`). For a
     /// public gossip derived from a shared string, use `agent-gossip topic <string>`.
+    #[arg(value_parser = parse_join_target)]
     pub gossip: JoinTarget,
 
     /// Optional nickname (random word-word if not provided). A custom
@@ -46,7 +68,31 @@ pub(crate) struct JoinOpts {
 mod tests {
     use clap::Parser;
 
+    use super::parse_join_target;
     use crate::cli::args::Cli;
+
+    #[test]
+    fn a_non_token_string_points_at_topic() {
+        let error = parse_join_target("github.com/alice/proj").unwrap_err();
+        assert!(
+            error.contains("agent-gossip topic 'github.com/alice/proj'"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn the_topic_hint_is_shell_safe() {
+        let whitespace = parse_join_target("my secret gossip").unwrap_err();
+        assert!(
+            whitespace.contains("agent-gossip topic 'my secret gossip'"),
+            "got: {whitespace}"
+        );
+        let quote = parse_join_target("it's here").unwrap_err();
+        assert!(
+            quote.contains(r"agent-gossip topic 'it'\''s here'"),
+            "got: {quote}"
+        );
+    }
 
     #[test]
     fn mistyped_gossip_hash_fails_during_cli_parsing() {

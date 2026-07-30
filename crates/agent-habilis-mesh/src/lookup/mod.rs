@@ -24,8 +24,9 @@ use iroh_gossip::proto::HyparviewConfig;
 use crate::protocol::mesh::{LookupOpts, RelayChoice};
 
 pub use capability::{NetworkCapability, probe as capability_probe};
-pub use relay::{RungRefresh, probe_ladder, relay_ladder};
+pub(crate) use relay::RungRefresh;
 pub(crate) use relay::{plan_rung_refresh, select_bootstrap_rung, spawn_relay_monitor};
+pub use relay::{probe_ladder, relay_ladder};
 
 /// Build an iroh endpoint for a mesh's lookups.
 ///

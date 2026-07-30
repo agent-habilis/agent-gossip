@@ -10,13 +10,13 @@ use crate::a2a::app::A2aApp;
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
-use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::protocol::identity::Identity;
+use agent_habilis_mesh::embed::EventLoopState;
+use agent_habilis_mesh::ops::MeshSender;
+use agent_habilis_mesh::protocol::Identity;
 use agent_habilis_mesh::protocol::{
     AppFrameParams, AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind,
     Nickname, Shard, ShardGroup,
 };
-use agent_habilis_mesh::transport::MeshSender;
 use agent_habilis_mesh::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
@@ -27,14 +27,14 @@ use agent_habilis_mesh::util::consts::{
 /// echo is the caller's responsibility — it differs by kind
 /// (`print_message_ex` for `Msg`, `print_task` for `Task`).
 fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
-    if let Some(evicted) = state.message_log.push(msg.clone()) {
+    if let Some(evicted) = state.message_log_mut().push(msg.clone()) {
         let evicted_hash = evicted.content_hash_hex();
         state.forget_hash(&evicted_hash);
         if let Some(seq) = evicted.seq {
             state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
         }
     }
-    agent_habilis_mesh::logging::messages::log_out(msg);
+    agent_habilis_mesh::util::logging::log_out(msg);
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
@@ -49,8 +49,7 @@ fn commit_outbound_part(
     echo: bool,
 ) {
     let hash = msg.content_hash_hex();
-    state.self_seq += 1;
-    state.self_prev = Some(hash.clone());
+    state.advance_chain(hash.clone());
     state.note_dag(hash, &msg.parents, msg.timestamp);
     if echo {
         out.print_message_ex(msg, true);
@@ -192,12 +191,15 @@ async fn send_msg_part(
     part: OutboundPart<'_>,
 ) -> anyhow::Result<()> {
     let OutboundPart { msg, bytes, echo } = part;
-    if state.meshed {
+    if state.is_meshed() {
         commit_outbound_part(state, msg, out, echo);
         // Single send decision: a directed message goes point-to-point over
         // unicast, a broadcast over gossip (see `transport::deliver`).
-        agent_habilis_mesh::transport::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push((msg.clone(), bytes.clone())) {
+        agent_habilis_mesh::ops::deliver(msg, bytes, state, sender).await?;
+    } else if state
+        .pending_outbound_mut()
+        .push((msg.clone(), bytes.clone()))
+    {
         // Buffered until the meshed edge flushes it through the send decision.
         commit_outbound_part(state, msg, out, echo);
     } else {
@@ -285,7 +287,7 @@ pub(crate) async fn broadcast_message(
             text.as_str().len()
         ));
     }
-    let signer = state.identity.clone();
+    let signer = state.identity().clone();
     let payload = crate::a2a::gossip::chat_message(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
@@ -294,11 +296,18 @@ pub(crate) async fn broadcast_message(
     // can't read it. Everything downstream (dedup, the per-author chain, the
     // message log, anti-entropy) operates on the sealed frame; only the local
     // echo + the returned Message carry plaintext.
-    let wire_body = match state.broadcast_key.as_deref() {
-        Some(key) => agent_habilis_mesh::daemon::state_doc::encrypt_body(&body, key)?,
+    let wire_body = match state.broadcast_key() {
+        Some(key) => agent_habilis_mesh::ops::doc::encrypt_body(&body, key)?,
         None => body.clone(),
     };
-    let encrypted = state.broadcast_key.is_some();
+    let encrypted = state.broadcast_key().is_some();
+    // Read the chain position once: every frame this call emits — the single
+    // frame, the probe, and each shard — stamps the *same* position, and only
+    // `note_own` advances it afterwards.
+    let (chain_seq, chain_prev) = {
+        let (seq, prev) = state.chain_head();
+        (seq, prev.map(str::to_owned))
+    };
     // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
         ChatFrameParams {
@@ -308,8 +317,8 @@ pub(crate) async fn broadcast_message(
             id: Some(payload_id.clone()),
         },
         ChainStamp {
-            seq: state.self_seq,
-            prev: state.self_prev.clone(),
+            seq: chain_seq,
+            prev: chain_prev.clone(),
             parents: state.dag_parents(),
         },
         None,
@@ -373,7 +382,7 @@ pub(crate) async fn broadcast_message(
             id: None,
         },
         ChainStamp {
-            seq: state.self_seq,
+            seq: chain_seq,
             prev: Some(hash_stub),
             parents: probe_parents,
         },
@@ -405,7 +414,7 @@ pub(crate) async fn broadcast_message(
     let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
     // Atomic admission while unmeshed: all shards or none, so a half-buffered body
     // (which could never reassemble) never reaches peers.
-    if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
+    if !state.is_meshed() && state.pending_outbound_mut().remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; multipart message dropped"
         ));
@@ -429,8 +438,8 @@ pub(crate) async fn broadcast_message(
                 id: None,
             },
             ChainStamp {
-                seq: state.self_seq,
-                prev: state.self_prev.clone(),
+                seq: chain_seq,
+                prev: chain_prev.clone(),
                 parents: state.dag_parents(),
             },
             Some(shard),
@@ -453,7 +462,7 @@ pub(crate) async fn broadcast_message(
         .await?;
     }
     if !cache_frames.is_empty() {
-        state.shard_cache.insert(group.clone(), cache_frames);
+        state.shard_cache_mut().insert(group.clone(), cache_frames);
     }
     let logical = synthesize_logical_msg(mesh, author, body, &group);
     out.print_message_ex(&logical, true);
@@ -501,7 +510,7 @@ async fn broadcast_task_frame(
         content,
         app,
     } = frame;
-    let signer = state.identity.clone();
+    let signer = state.identity().clone();
     // Fast path: the whole leg in one frame.
     let single =
         Message::new_frame(mesh, author, kind.clone(), payload_body.clone()).signed(&signer);
@@ -558,7 +567,7 @@ async fn broadcast_task_frame(
         )
     })?;
     let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
-    if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
+    if !state.is_meshed() && state.pending_outbound_mut().remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; multipart task leg dropped"
         ));
@@ -594,7 +603,7 @@ async fn broadcast_task_frame(
         .await?;
     }
     if !cache_frames.is_empty() {
-        state.shard_cache.insert(group.clone(), cache_frames);
+        state.shard_cache_mut().insert(group.clone(), cache_frames);
     }
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
@@ -735,13 +744,13 @@ pub(crate) fn seal_directed(
     to: &Nickname,
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
-    let doc = state.meta_doc.to_json();
+    let doc = state.doc(Channel::Meta).to_json();
     let key = crate::a2a::card::peer_seal_key(&doc, to).ok_or_else(|| {
         anyhow::anyhow!(
             "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
         )
     })?;
-    agent_habilis_mesh::protocol::seal::seal_to_body(&key, body.as_str())
+    agent_habilis_mesh::protocol::seal_to_body(&key, body.as_str())
 }
 
 /// A worker-emitted status leg's identity, addressee, task, state/note, and
@@ -928,27 +937,27 @@ async fn build_offload_parts(
     };
     let lookups = mesh
         .as_str()
-        .parse::<agent_habilis_mesh::protocol::mesh::Mesh>()
+        .parse::<agent_habilis_mesh::protocol::Mesh>()
         .map_err(|error| anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}"))?
         .lookups()
         .clone();
     // Route through the choke point so the base is validated (0700, ours) before
     // this attachment payload spool is created — bypassing it could birth the
     // shared base at a world-traversable 0755.
-    let spool = agent_habilis_mesh::util::ensure_mesh_runtime_dir(mesh.as_str())
+    let spool = crate::ensure_mesh_runtime_dir(mesh.as_str())
         .map_err(|error| anyhow::anyhow!("cannot prepare blob spool dir: {error}"))?
         .join(format!("{author}.blobs"));
     // Every offloaded blob inherits the mesh password (if any), so a scraped
     // ticket can't be redeemed without it.
-    let password = state.mesh_password.clone();
-    let ticket = agent_habilis_mesh::blob::offload(
+    let password = state.mesh_password();
+    let ticket = agent_habilis_mesh::ops::blob::offload(
         &mut app.blob_server,
         &lookups,
-        agent_habilis_mesh::blob::OffloadRequest {
+        agent_habilis_mesh::ops::blob::OffloadRequest {
             path: file.path,
             spool_dir: spool,
-            content_id: agent_habilis_mesh::blob::ContentId::new(task_id.as_str()),
-            password,
+            content_id: agent_habilis_mesh::ops::blob::ContentId::new(task_id.as_str()),
+            password: password.cloned(),
         },
     )
     .await?;
@@ -992,13 +1001,16 @@ async fn send_task_leg(
         echo,
         content,
     } = part;
-    if state.meshed {
+    if state.is_meshed() {
         // Meshed: retain locally, then hit the wire (a transient send error
         // still leaves a content leg in our log for anti-entropy). Directed
         // legs go unicast, broadcasts gossip (see `transport::deliver`).
         retain_leg(state, out, RetainLegParams { msg, echo, content });
-        agent_habilis_mesh::transport::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push((msg.clone(), bytes.clone())) {
+        agent_habilis_mesh::ops::deliver(msg, bytes, state, sender).await?;
+    } else if state
+        .pending_outbound_mut()
+        .push((msg.clone(), bytes.clone()))
+    {
         // Buffered until the meshed edge flushes it through the send decision.
         retain_leg(state, out, RetainLegParams { msg, echo, content });
     } else {
@@ -1060,7 +1072,7 @@ fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId)
 /// receive path routes into the waiter (`app.fulfill_a2a_waiter`); the
 /// Ask the authors of our stalled big (unlogged) partial groups to re-send the
 /// missing shards — the repair half of big-group reliability (the author half is
-/// `state.shard_cache`, served by `resend_cached_shards`). Runs on the app tick;
+/// `state.shard_cache_mut()`, served by `resend_cached_shards`). Runs on the app tick;
 /// fire-and-forget: no waiter is parked, the repair *is* the retry (the next
 /// tick asks again while the group survives its TTL). A group that can't be
 /// sealed yet (peer card still propagating) or whose send fails just waits for
@@ -1071,7 +1083,7 @@ pub(crate) async fn send_shard_repair_requests(
     state: &mut EventLoopState,
     sender: &MeshSender,
 ) {
-    let tickets = state.reassembly.repair_tickets(Instant::now());
+    let tickets = state.reassembly_mut().repair_tickets(Instant::now());
     for ticket in tickets {
         let envelope = serde_json::json!({
             "method": "shard/repair",
@@ -1098,17 +1110,13 @@ pub(crate) async fn send_shard_repair_requests(
                 body: sealed,
             },
         )
-        .signed(&state.identity);
-        agent_habilis_mesh::logging::messages::log_out(&frame);
+        .signed(state.identity());
+        agent_habilis_mesh::util::logging::log_out(&frame);
         match frame.serialize() {
             Ok(bytes) => {
-                if let Err(error) = agent_habilis_mesh::transport::deliver(
-                    &frame,
-                    Bytes::from(bytes),
-                    state,
-                    sender,
-                )
-                .await
+                if let Err(error) =
+                    agent_habilis_mesh::ops::deliver(&frame, Bytes::from(bytes), state, sender)
+                        .await
                 {
                     tracing::debug!(%error, "shard repair request send failed; next tick retries");
                 }
@@ -1166,7 +1174,7 @@ pub(crate) async fn broadcast_a2a_call(
         .tasks
         .values()
         .any(|rec| rec.peer == peer && !rec.state.is_terminal());
-    if !party_to_a_task && !state.peers.contains(peer.as_str()) {
+    if !party_to_a_task && !state.peers().contains(peer.as_str()) {
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
@@ -1228,7 +1236,7 @@ pub(crate) async fn broadcast_a2a_call(
     )
     .await
     {
-        tracing::warn!(target: "agent_habilis_mesh::gossip", %error, "a2a request send failed");
+        tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
     }
 }
 
@@ -1247,7 +1255,7 @@ pub(crate) struct DirectedRpcParams<'a> {
 /// size-transparent like chat and task legs. RPC
 /// frames are plumbing (never logged for anti-entropy); the shards reassemble
 /// only in the receiver's dedicated store, and a big group is served from the
-/// sender-side [`ShardCache`](agent_habilis_mesh::daemon::reassembly::ShardCache)
+/// sender-side [`ShardCache`](agent_habilis_mesh::reassembly::ShardCache)
 /// through the `shard/repair` RPC.
 ///
 /// # Errors
@@ -1264,12 +1272,12 @@ pub(crate) async fn send_directed_rpc(
         kind,
         body,
     } = params;
-    let signer = state.identity.clone();
+    let signer = state.identity().clone();
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        agent_habilis_mesh::logging::messages::log_out(&single);
+        agent_habilis_mesh::util::logging::log_out(&single);
         let bytes = Bytes::from(single.serialize()?);
-        return agent_habilis_mesh::transport::deliver(&single, bytes, state, sender).await;
+        return agent_habilis_mesh::ops::deliver(&single, bytes, state, sender).await;
     }
     // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
     // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
@@ -1299,7 +1307,7 @@ pub(crate) async fn send_directed_rpc(
         anyhow::anyhow!("rpc body too large: needs more than {MAX_SHARD_TOTAL} shards")
     })?;
     let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
-    if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
+    if !state.is_meshed() && state.pending_outbound_mut().remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; multipart rpc dropped"
         ));
@@ -1314,15 +1322,15 @@ pub(crate) async fn send_directed_rpc(
                 total,
             }))
             .signed(&signer);
-        agent_habilis_mesh::logging::messages::log_out(&msg);
+        agent_habilis_mesh::util::logging::log_out(&msg);
         let bytes = Bytes::from(msg.serialize()?);
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        agent_habilis_mesh::transport::deliver(&msg, bytes, state, sender).await?;
+        agent_habilis_mesh::ops::deliver(&msg, bytes, state, sender).await?;
     }
     if !cache_frames.is_empty() {
-        state.shard_cache.insert(group, cache_frames);
+        state.shard_cache_mut().insert(group, cache_frames);
     }
     Ok(())
 }
@@ -1333,7 +1341,7 @@ pub(crate) async fn send_directed_rpc(
 struct SessionPingParams<'a> {
     mesh: &'a MeshId,
     author: &'a Nickname,
-    resp: tokio::sync::oneshot::Sender<Vec<agent_habilis_mesh::gossip::event::PingRtt>>,
+    resp: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
 }
 
 /// Arm a fresh ping round carrying the responder; the deadline-driven
@@ -1347,16 +1355,18 @@ async fn session_ping(
 ) -> bool {
     let SessionPingParams { mesh, author, resp } = params;
     let now = tokio::time::Instant::now();
-    state.ping_round = Some(Box::new(agent_habilis_mesh::daemon::state::PingRound {
+    state.arm_ping_round(agent_habilis_mesh::embed::PingRound {
         t1: now,
         deadline: now
-            + std::time::Duration::from_secs(agent_habilis_mesh::util::tuning::ping_window_secs()),
+            + std::time::Duration::from_secs(
+                agent_habilis_mesh::runtime::tuning::ping_window_secs(),
+            ),
         pongs: std::collections::HashMap::new(),
         resp: Some(resp),
-    }));
-    agent_habilis_mesh::gossip::broadcast_msg(
+    });
+    agent_habilis_mesh::ops::broadcast_msg(
         sender,
-        &Message::new_ping(mesh, author).signed(&state.identity),
+        &Message::new_ping(mesh, author).signed(state.identity()),
     )
     .await;
     true
@@ -1477,9 +1487,9 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::StateMerge { merge, resp } => {
-            let outcome = agent_habilis_mesh::gossip::broadcast_state_merge(
+            let outcome = agent_habilis_mesh::ops::broadcast_state_merge(
                 state,
-                agent_habilis_mesh::gossip::StateMergeParams {
+                agent_habilis_mesh::ops::StateMergeParams {
                     mesh,
                     author,
                     merge,
@@ -1495,13 +1505,13 @@ pub(crate) async fn handle_session_request(
             sent
         }
         SessionRequest::StateGet { resp } => {
-            let _ = resp.send(state.state_doc.to_json());
+            let _ = resp.send(state.doc(Channel::State).to_json());
             false
         }
         SessionRequest::MetaMerge { merge, resp } => {
-            let outcome = agent_habilis_mesh::gossip::broadcast_state_merge(
+            let outcome = agent_habilis_mesh::ops::broadcast_state_merge(
                 state,
-                agent_habilis_mesh::gossip::StateMergeParams {
+                agent_habilis_mesh::ops::StateMergeParams {
                     mesh,
                     author,
                     merge,
@@ -1517,7 +1527,7 @@ pub(crate) async fn handle_session_request(
             sent
         }
         SessionRequest::MetaGet { resp } => {
-            let _ = resp.send(state.meta_doc.to_json());
+            let _ = resp.send(state.doc(Channel::Meta).to_json());
             false
         }
         SessionRequest::Ping { resp } => {
@@ -1558,7 +1568,7 @@ pub(crate) async fn handle_session_request(
         // the real `None` arm as far as the event loop is concerned.
         #[cfg(feature = "adversarial")]
         SessionRequest::SeverGossip => {
-            state.gossip_open = false;
+            state.sever_gossip();
             tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
             false
         }
@@ -1566,7 +1576,7 @@ pub(crate) async fn handle_session_request(
         // shard-budget tripwires.
         #[cfg(feature = "adversarial")]
         SessionRequest::ReassemblyStats { resp } => {
-            let _ = resp.send(state.reassembly.stats());
+            let _ = resp.send(state.reassembly_mut().stats());
             false
         }
     }

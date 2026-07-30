@@ -1,5 +1,5 @@
-use agent_habilis_mesh::daemon::CoHostPolicy;
-use agent_habilis_mesh::protocol::mesh::{DEFAULT_DIRECTORY, resolve_lookups};
+use agent_habilis_mesh::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
+use agent_habilis_mesh::runtime::CoHostPolicy;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -8,15 +8,15 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
-use agent_habilis_mesh::directory::{Listing, ListingChange, Listings, directory_mesh};
-use agent_habilis_mesh::protocol::mesh::{LookupSet, MeshName};
+use agent_habilis_mesh::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
+use agent_habilis_mesh::protocol::{LookupSet, MeshName};
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
-use agent_habilis_mesh::util::tuning::directory_expiry_secs;
+use agent_habilis_mesh::runtime::tuning::directory_expiry_secs;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
 
 /// One live directory entry handed to embedders — the public, iroh-free
-/// projection of a `agent_habilis_mesh::directory::Listing`.
+/// projection of a `agent_habilis_mesh::ops::directory::Listing`.
 #[derive(Debug, Clone)]
 pub struct MeshListing {
     /// The advertised mesh's id — pass to [`MeshSession::join`] to join.
@@ -112,7 +112,7 @@ impl Directory {
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
         let resolved = resolve_lookups(
-            !agent_habilis_mesh::util::tuning::directory_private_for_test(),
+            !agent_habilis_mesh::runtime::tuning::directory_private_for_test(),
             lookups,
         );
         let mesh = directory_mesh(&directory_name, resolved);

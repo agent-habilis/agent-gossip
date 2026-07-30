@@ -1,5 +1,5 @@
-use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
-use agent_habilis_mesh::daemon::state::RosterSnapshot;
+use agent_habilis_mesh::embed::RosterSnapshot;
+use agent_habilis_mesh::runtime::{SetupKind, SetupParams, setup_mesh};
 use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
@@ -12,10 +12,10 @@ use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::output::OutputEvent;
 use crate::output::PingPeer;
-use agent_habilis_mesh::daemon::{CoHostPolicy, EventLoopConfig};
-use agent_habilis_mesh::protocol::mesh::{Mesh, MeshName};
+use agent_habilis_mesh::protocol::{Mesh, MeshName};
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
-use agent_habilis_mesh::util::tuning::NODE_INBOUND_CAP;
+use agent_habilis_mesh::runtime::tuning::NODE_INBOUND_CAP;
+use agent_habilis_mesh::runtime::{CoHostPolicy, EventLoopConfig};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
@@ -88,7 +88,7 @@ impl MeshSession {
         let (output, events_rx) = crate::output::capture_events();
         let io = crate::a2a::app::SurfacedIo::new(output);
         let sink = io.sink();
-        let mut elc = setup_mesh(
+        let elc = setup_mesh(
             // Directory sessions (advertise/discover) never offload blobs, so no
             // password needs threading here.
             SetupKind::Join {
@@ -98,21 +98,16 @@ impl MeshSession {
             SetupParams {
                 author,
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+                runtime_base: Some(crate::runtime_base()),
                 state_file: None,
                 sink,
-                drift: None,
-                http_serve: None,
-                // The a2a data model keeps a per-peer card in `meta`; the engine only
-                // needs the map/field pair to plant the genesis and refuse a forgery.
-                per_peer_gate: Some(agent_habilis_mesh::doc::SelfWriteGate {
-                    map: "peers".to_owned(),
-                    field: "card".to_owned(),
-                }),
+                per_peer_gate: Some(crate::a2a::card_gate()),
                 multihop: false,
+                cohost: Some(cohost),
+                live_count: None,
             },
         )
         .await?;
-        elc.cohost = cohost;
         Ok(Self::with_events_and_signals(
             elc,
             io,

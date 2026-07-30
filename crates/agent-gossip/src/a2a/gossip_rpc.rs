@@ -30,7 +30,7 @@ pub(crate) enum Served {
     /// The peer is the terminal recipient and never re-broadcasts.
     Ingest(super::Message),
     /// A `shard/repair` ask: re-deliver the named cached shard frames of one
-    /// of our big outbound groups (see `daemon::reassembly::ShardCache`).
+    /// of our big outbound groups (see `reassembly::ShardCache`).
     ShardRepair {
         group: agent_habilis_mesh::protocol::ShardGroup,
         missing: Vec<u32>,

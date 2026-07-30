@@ -1,29 +1,20 @@
 use crate::protocol::mesh::MeshName;
 use crate::protocol::{Channel, MeshId, Message, Nickname};
 
-/// One peer's round-trip time in a [`NodeEvent::PingReport`] — the engine's
-/// chat-agnostic ping datum. The app maps it onto its `output::PingPeer` for
-/// rendering, so the engine never names the app's public ping type.
-#[derive(Debug, Clone)]
-pub struct PingRtt {
-    pub nickname: Nickname,
-    pub rtt_ms: u64,
-}
-
 /// A generic surfacing the engine emits — the chat-agnostic subset of the app's
 /// `OutputEvent`. The app's [`NodeSink`] impl maps each variant onto the
 /// existing `Output` method, so the rendered stdout / `--output json` / library API
 /// forms stay byte-identical.
 #[derive(Debug)]
 pub enum NodeEvent {
+    /// The daemon can serve. Mesh identity only — a consumer that wants to
+    /// announce startup diagnostics of its own (a stale install, a localhost
+    /// port it bound) splices them in on receipt; the engine has no notion of
+    /// either and used to carry them purely to hand them back.
     Ready {
         mesh: MeshId,
         name: MeshName,
         nickname: Nickname,
-        drift: Option<String>,
-        /// The application's localhost HTTP binding port, when it serves one.
-        /// Forwarded verbatim; the engine does not know what runs there.
-        http_port: Option<u16>,
     },
     Info(String),
     Error(String),
@@ -43,7 +34,11 @@ pub enum NodeEvent {
         msg: Box<Message>,
     },
     PingReport {
-        peers: Vec<PingRtt>,
+        /// Each responder and its round-trip time in milliseconds, sorted by
+        /// nickname. A pair rather than a named struct: the only consumer maps
+        /// it straight onto its own public ping type, so a struct here was one
+        /// field-for-field conversion in each direction and nothing else.
+        peers: Vec<(Nickname, u64)>,
         known: usize,
     },
     StateChanged {

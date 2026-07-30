@@ -26,7 +26,7 @@ mod shared;
 mod state;
 mod topic;
 mod topology;
-mod tuning;
+pub(crate) mod tuning;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
@@ -246,7 +246,7 @@ pub(crate) enum Commands {
 
         /// How long a `long: true` fetch parks before returning empty (millis).
         /// Hidden; tests shorten it to hit the timeout path quickly.
-        #[arg(long, hide = true, default_value_t = agent_habilis_mesh::util::consts::LONGPOLL_MAX_MS)]
+        #[arg(long, hide = true, default_value_t = crate::a2a::tuning::LONGPOLL_MAX_MS)]
         longpoll_max_ms: u64,
     },
 

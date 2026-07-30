@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 
-use agent_habilis_mesh::protocol::crypto::Password;
+use agent_habilis_mesh::protocol::Password;
 
 /// The `default_missing_value` a bare `--password` (no `=value`) resolves to.
 /// A lone NUL can't be typed on a command line — the shell terminates the

@@ -19,7 +19,7 @@
 //! cross-transport dedup are identical on both planes.
 
 mod accept;
-pub mod ipc;
+pub(crate) mod ipc;
 mod pool;
 mod send;
 pub(crate) mod sender;
@@ -33,8 +33,9 @@ pub use sender::MeshSender;
 
 /// ALPN for the unicast channel — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from `GOSSIP_ALPN` and the application's own bridge ALPN.
-/// The string predates the module move and is wire-load-bearing: it must stay
-/// `agent-gossip/unicast/1`.
+/// Wire-load-bearing: changing it is a protocol break, so it moves only with
+/// `message::VERSION` (it last changed when the byte-domains dropped the
+/// product's name for the engine's).
 pub(crate) const UNICAST_ALPN: &[u8] = b"habilis-mesh/unicast/1";
 
 /// `tracing` target for the unicast plane (matches the module path so

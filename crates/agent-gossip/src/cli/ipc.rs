@@ -1,0 +1,28 @@
+use anyhow::Result;
+use serde::Serialize;
+
+use agent_habilis_mesh::protocol::Nickname;
+use agent_habilis_mesh::runtime::ipc::{Addressed, NoDaemon};
+use agent_habilis_mesh::util::consts::MESH_GLYPH;
+
+/// [`agent_habilis_mesh::runtime::ipc::send`] with this CLI's remedy appended.
+///
+/// The engine reports only the fact ([`NoDaemon`]) — it has no commands to name
+/// — so the "start one with …" half is composed here, beside the commands it
+/// names. Rebuilt into a single message rather than an `anyhow` context layer:
+/// context prepends, which would invert the fact-then-remedy order the operator
+/// reads (and that `--output json`'s stderr contract pins).
+pub(crate) async fn send<C>(cmd: &C, nickname: &Nickname) -> Result<String>
+where
+    C: Serialize + Addressed,
+{
+    agent_habilis_mesh::runtime::ipc::send(&crate::runtime_base(), cmd, nickname)
+        .await
+        .map_err(|error| match error.downcast::<NoDaemon>() {
+            Ok(no_daemon) => anyhow::anyhow!(
+                "{no_daemon} Start one with `agent-gossip create` or \
+                 `agent-gossip join {{{MESH_GLYPH}...}} --nickname {nickname}`."
+            ),
+            Err(other) => other,
+        })
+}

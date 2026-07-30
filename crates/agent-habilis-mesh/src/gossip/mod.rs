@@ -9,9 +9,9 @@
 //! directly — it calls into `lifecycle::observe` and dispatches by kind.
 
 pub(crate) mod antientropy;
-pub mod app;
+pub(crate) mod app;
 mod broadcast;
-pub mod event;
+pub(crate) mod event;
 pub(crate) mod heal;
 mod recv;
 

@@ -5,11 +5,11 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::a2a::ipc::IpcCommand;
-use agent_habilis_mesh::lookup::{self, NetworkCapability};
+use crate::status as output;
+use agent_habilis_mesh::net::{self, NetworkCapability};
 use agent_habilis_mesh::protocol::MeshId;
-use agent_habilis_mesh::protocol::mesh::{Mesh, RelayChoice};
-use agent_habilis_mesh::transport::ipc;
-use agent_habilis_mesh::util::output;
+use agent_habilis_mesh::protocol::{Mesh, RelayChoice};
+use agent_habilis_mesh::runtime::ipc;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
@@ -152,7 +152,7 @@ fn environment_section() -> Section {
         Check::new(
             "runtime dir",
             Verdict::Ok,
-            output::home_path(&agent_habilis_mesh::util::runtime_base()),
+            output::home_path(&crate::runtime_base()),
         ),
     ];
     Section {
@@ -196,7 +196,7 @@ async fn network_section(no_probe: bool) -> Section {
             Verdict::Warn,
         )]
     } else {
-        match lookup::capability_probe(CAPABILITY_TIMEOUT).await {
+        match net::capability_probe(CAPABILITY_TIMEOUT).await {
             Ok(capability) => capability_checks(&capability),
             Err(error) => vec![Check::new(
                 "local endpoint",
@@ -313,7 +313,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
 
 async fn active_meshes_section() -> Section {
     let mut checks = Vec::new();
-    for path in ipc::active_socket_paths() {
+    for path in ipc::active_socket_paths(&crate::runtime_base()) {
         // `Info` carries no mesh — the daemon answers with its own identity.
         // A dead/stale socket errors and is skipped.
         let Ok(response) = ipc::send_to_path(&path, &IpcCommand::Info).await else {
@@ -415,7 +415,7 @@ fn declared_methods_section(mesh: &Mesh) -> Section {
             checks.push(Check::new("relay", Verdict::Ok, "disabled"));
         }
         RelayChoice::Pinned => {
-            let rungs = lookup::relay_ladder(&lookups.relay)
+            let rungs = net::relay_ladder(&lookups.relay)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
@@ -493,10 +493,10 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     let mut checks = Vec::new();
 
     // Relay rungs — show the whole ladder's health, not just the first pick.
-    let ladder = lookup::relay_ladder(&lookups.relay);
+    let ladder = net::relay_ladder(&lookups.relay);
     let mut first_reachable = None;
     if !ladder.is_empty() {
-        for (rung, reachable) in lookup::probe_ladder(&ladder, RUNG_TIMEOUT).await {
+        for (rung, reachable) in net::probe_ladder(&ladder, RUNG_TIMEOUT).await {
             if reachable && first_reachable.is_none() {
                 first_reachable = Some(rung.clone());
             }
@@ -514,7 +514,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     }
 
     // Rendezvous reachability + the resulting path type (direct vs relay).
-    match lookup::build_peer_endpoint(lookups).await {
+    match net::build_peer_endpoint(lookups).await {
         Ok(endpoint) => {
             let rendezvous_id = mesh.rendezvous_id();
             let mut addr = iroh::EndpointAddr::new(rendezvous_id);
@@ -529,10 +529,9 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
                 addr = addr.with_relay_url(rung);
             }
 
-            let reached = lookup::probe_connect(&endpoint, addr, RENDEZVOUS_TIMEOUT).await;
+            let reached = net::probe_connect(&endpoint, addr, RENDEZVOUS_TIMEOUT).await;
             if reached {
-                let (path, relay) =
-                    agent_habilis_mesh::gossip::conn_path(&endpoint, rendezvous_id).await;
+                let (path, relay) = net::conn_path(&endpoint, rendezvous_id).await;
                 let detail = match relay {
                     Some(url) => format!("reachable — {path} path (relay {url})"),
                     None => format!("reachable — {path} path"),
@@ -603,7 +602,7 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 #[cfg(test)]
 mod tests {
     use super::declared_methods_section;
-    use agent_habilis_mesh::protocol::mesh::{Mesh, MeshConfig, MeshName};
+    use agent_habilis_mesh::protocol::{Mesh, MeshConfig, MeshName};
 
     #[test]
     fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {

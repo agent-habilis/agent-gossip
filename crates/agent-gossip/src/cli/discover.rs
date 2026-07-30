@@ -28,7 +28,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the JSON stream isn't drowned in INFO lines on stderr.
     if let Some((mesh, nickname)) = discoverer.session_identity() {
-        agent_habilis_mesh::logging::attach(mesh, nickname);
+        agent_habilis_mesh::util::logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()

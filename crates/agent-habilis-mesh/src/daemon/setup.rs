@@ -20,7 +20,7 @@ use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 use crate::beacon::RendezvousParams;
 use crate::lifecycle;
 
-use super::{CoHostPolicy, DriverMode, EventLoopConfig, ReadyAnnounce};
+use super::{CoHostPolicy, DriverMode, EventLoopConfig};
 
 /// What kind of mesh we're setting up — either minting a new one
 /// (create) or attaching to an existing one (join).
@@ -205,32 +205,37 @@ async fn build_member_endpoint(
 /// [`SetupKind`]: this member's identity/io/tuning and the localhost
 /// binding request. Bundled so the one-shot assembly stays within the
 /// argument budget.
-pub struct SetupParams<'a> {
+pub struct SetupParams {
     pub author: Nickname,
     pub max_peers: usize,
+    /// The consumer's per-user runtime base (see
+    /// [`runtime_base`](crate::util::runtime_base)) — the root the socket, the
+    /// default state file, and the default log dir live under. Supplied rather
+    /// than derived: the engine is embedded by more than one binary and must not
+    /// claim a `/tmp` path under any single one's name. `None` for an embedder
+    /// that writes no files and binds no control socket.
+    pub runtime_base: Option<PathBuf>,
     pub state_file: Option<PathBuf>,
     pub sink: std::sync::Arc<dyn NodeSink>,
     /// `--multihop`: register the multi-hop custom transport on the peer
     /// endpoint (a second underlay endpoint is stood up for hop-by-hop
     /// forwarding). Off by default on every path.
     pub multihop: bool,
-    /// Skill-drift warning folded into the `ready` event. Computed by the CLI
-    /// (the real `agent-gossip create`/`join` path) from the on-disk install;
-    /// `None` on the in-process paths, which keeps the in-process
-    /// tests hermetic (no dependence on the dev machine's install state).
-    pub drift: Option<&'a str>,
-    /// The application's localhost HTTP binding port (`0` = OS-assigned) — bound
-    /// by the caller before `ready` fires, so the event carries the real port.
-    /// `None` (in-process, and the default) serves nothing. The engine only
-    /// forwards it; what protocol is served there is the application's business.
-    pub http_serve: Option<u16>,
     /// The `meta` channel's per-peer write gate, when the application keeps a
     /// per-peer map there (see [`crate::doc::SelfWriteGate`]). `None` leaves the
     /// channel free-form.
     pub per_peer_gate: Option<crate::doc::SelfWriteGate>,
+    /// Override the co-host policy the [`SetupKind`] would imply. `None` keeps
+    /// the derived one; a directory session passes its own (see
+    /// [`DIRECTORY_ADVERTISER_COHOST`](super::config::DIRECTORY_ADVERTISER_COHOST)).
+    pub cohost: Option<CoHostPolicy>,
+    /// The shared live-peer counter a directory advertiser re-broadcasts from.
+    /// Supplied up front rather than patched onto the returned config, so the
+    /// config is complete the moment it exists.
+    pub live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
-impl std::fmt::Debug for SetupParams<'_> {
+impl std::fmt::Debug for SetupParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SetupParams").finish_non_exhaustive()
     }
@@ -242,8 +247,6 @@ impl std::fmt::Debug for SetupParams<'_> {
 struct SetupBuild<'a> {
     author: &'a Nickname,
     sink: &'a dyn NodeSink,
-    drift: Option<&'a str>,
-    http_port: Option<u16>,
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::transport::UnicastAcceptor,
@@ -280,21 +283,21 @@ struct Assembled {
 
 /// # Errors
 /// Returns an error if the inputs are invalid or the operation fails.
-pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<EventLoopConfig> {
+pub async fn setup_mesh(kind: SetupKind, params: SetupParams) -> Result<EventLoopConfig> {
     let SetupParams {
         author,
         max_peers,
+        runtime_base,
         state_file,
         sink,
+        cohost: cohost_override,
+        live_count,
         multihop,
-        drift,
-        http_serve,
         per_peer_gate,
     } = params;
     // The localhost binding is owned + bound by the caller; the engine only needs
     // the resolved port for the `ready` event. `Some(0)` (ephemeral) is resolved
     // caller-side and passed back in here as the real port.
-    let http_port = http_serve;
     // Create mints the config from the caller's choices; join decodes it
     // from the id — one source of truth either way.
     let lookups = match &kind {
@@ -319,8 +322,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     let build = SetupBuild {
         author: &author,
         sink: sink.as_ref(),
-        drift,
-        http_port,
         max_peers,
         lookups: &lookups,
         unicast_acceptor: &unicast_acceptor,
@@ -368,10 +369,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
 
     // Read out of `build` before anything below moves what it borrows
     // (`author`, `sink`, `rung_tx`).
-    let ready = ReadyAnnounce {
-        drift: build.drift.map(str::to_owned),
-        http_port: build.http_port,
-    };
 
     // Off the critical path: nothing below blocks `ready`, which `run` emits
     // once the IPC socket accepts. Confirm/correct the optimistic rung 0 in the
@@ -396,17 +393,15 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         max_peers,
         rendezvous_params: rdv,
         rung_rx,
-        cohost,
+        cohost: cohost_override.unwrap_or(cohost),
+        runtime_base,
         state_file,
         multihop: multihop_handle,
         unicast_rx,
-        // Set by the advertise path (cli::create / api::create) before
-        // `run`; absent for every non-advertising session.
-        live_count: None,
+        live_count,
         // Default to the CLI driver; the in-process sessions
         // overwrite `cfg.driver` before handing it to `daemon::run`.
         driver: DriverMode::Cli,
-        ready,
     })
 }
 
@@ -480,7 +475,7 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
     }
     if mesh.requires_invite() {
         sink.emit(NodeEvent::Info(
-            "invite-only — mint a 🎟️ invite with `agent-gossip invite` for joiners".to_owned(),
+            "invite-only — joiners need a minted 🎟️ invite".to_owned(),
         ));
     }
     if let Some(directory) = &advertise {

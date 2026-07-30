@@ -15,8 +15,8 @@ use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
 use sha2::{Digest, Sha256};
 
-use agent_habilis_mesh::protocol::mesh::LookupOpts;
-use agent_habilis_mesh::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
+use agent_habilis_mesh::net::{endpoint_addr_from_json, endpoint_addr_to_json};
+use agent_habilis_mesh::protocol::LookupOpts;
 use agent_habilis_mesh::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 
 use super::SECRET_LEN;
@@ -152,7 +152,7 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{A2aTicket, PREFIX, SECRET_LEN};
-    use agent_habilis_mesh::protocol::mesh::LookupOpts;
+    use agent_habilis_mesh::protocol::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn sample_addr(byte: u8) -> EndpointAddr {
@@ -210,10 +210,10 @@ mod tests {
     fn rejects_a_mesh_token() {
         // A mesh id carries the `💬` glyph, not the ticket's `🎟️`, so it fails
         // to decode as an a2a ticket on the prefix alone.
-        let mesh = agent_habilis_mesh::protocol::mesh::Mesh::new(
+        let mesh = agent_habilis_mesh::protocol::Mesh::new(
             [1u8; 32],
-            agent_habilis_mesh::protocol::mesh::MeshName::new("t").unwrap(),
-            agent_habilis_mesh::protocol::mesh::MeshConfig::loopback(),
+            agent_habilis_mesh::protocol::MeshName::new("t").unwrap(),
+            agent_habilis_mesh::protocol::MeshConfig::loopback(),
         )
         .to_string();
         assert!(A2aTicket::decode(&mesh).is_err());
@@ -223,10 +223,10 @@ mod tests {
     fn rejects_a_cross_kind_ticket() {
         // The blob ticket shares the `🎟️` brand but carries a different kind
         // byte, so it must not decode as an a2a ticket — and vice versa.
-        let blob = agent_habilis_mesh::blob::BlobTicket {
+        let blob = agent_habilis_mesh::ops::blob::BlobTicket {
             addr: sample_addr(3),
-            secret: [9u8; agent_habilis_mesh::blob::SECRET_LEN],
-            sha256: [7u8; agent_habilis_mesh::blob::HASH_LEN],
+            secret: [9u8; agent_habilis_mesh::ops::blob::SECRET_LEN],
+            sha256: [7u8; agent_habilis_mesh::ops::blob::HASH_LEN],
             size: 1_234_567,
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -238,7 +238,7 @@ mod tests {
             password: false,
         };
         assert!(A2aTicket::decode(&blob.encode()).is_err());
-        assert!(agent_habilis_mesh::blob::BlobTicket::decode(&a2a.encode()).is_err());
+        assert!(agent_habilis_mesh::ops::blob::BlobTicket::decode(&a2a.encode()).is_err());
     }
 
     #[test]

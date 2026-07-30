@@ -12,8 +12,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
-use agent_habilis_mesh::lookup::{add_peer_addr, build_peer_endpoint};
-use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth};
+use agent_habilis_mesh::net::{add_peer_addr, build_peer_endpoint};
+use agent_habilis_mesh::protocol::{Password, TicketAuth};
 
 use super::card_rewrite::CardRewriter;
 use super::ticket::A2aTicket;

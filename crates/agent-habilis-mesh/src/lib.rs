@@ -3,31 +3,39 @@
 //! This workspace-internal crate holds the transport-and-protocol engine
 //! decoupled from any one application (its data model, its
 //! CLI/MCP bindings, the library `api`). It is never published
-//! (`publish = false`); the `agent-gossip` crate depends on it and re-exports
+//! (`publish = false`); a consumer crate depends on it and re-exports
 //! the curated public surface.
 
-// Re-exported so the app crate can name the multi-hop transport's public types
-// (e.g. `LinkVector`) without a second direct dependency.
-pub use iroh_multihop_transport;
+// ── Role-based public facade ──────────────────────────────────────────────
+//
+// The modules below are grouped by what a consumer needs, not by the engine's
+// internal topology: `protocol` (value types), `embed` (the seams you
+// implement), `runtime` (start/stop a node), `ops` (what a hook may do), `net`
+// (the quarantined iroh corner), `util` (host helpers). The implementation
+// modules they re-export from are crate-private.
+pub mod embed;
+pub mod net;
+pub mod ops;
+pub mod runtime;
 
 pub(crate) mod beacon;
-pub mod blob;
-pub mod daemon;
-pub mod directory;
-pub mod doc;
+pub(crate) mod blob;
+pub(crate) mod daemon;
+pub(crate) mod directory;
+pub(crate) mod doc;
 
-pub mod gossip;
+pub(crate) mod gossip;
 // Creator-minted invites to an invite-only mesh. Engine-level: the redeem +
 // decode primitives back `resolver::JoinTarget::Invite`, and `mint` is `pub`
 // for the application layer's `invite` command.
-pub mod invite;
-pub mod lifecycle;
-pub mod logging;
-pub mod lookup;
+pub(crate) mod invite;
+pub(crate) mod lifecycle;
+pub(crate) mod logging;
+pub(crate) mod lookup;
 pub mod protocol;
-pub mod reassembly;
-pub mod resolver;
-pub mod transport;
+pub(crate) mod reassembly;
+pub(crate) mod resolver;
+pub(crate) mod transport;
 pub mod util;
 
 // Re-exported at the crate root so engine code (and the app's re-export) can

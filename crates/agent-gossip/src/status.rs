@@ -2,6 +2,10 @@
 // `doctor`) and for the `cargo task` dev runner — a right-aligned (12-col) bold
 // verb + message.
 //
+// Lives here, not in the engine: it is pure presentation for *this* product's
+// commands, and the engine renders nothing. `cargo task` shares it rather than
+// forking a copy — both audiences want the same lines.
+//
 // Written through `anstream`, which resolves color support per stream at write
 // time: a terminal gets ANSI, a pipe/file/`NO_COLOR` gets plain bytes. So the
 // color never reaches an agent capturing stdout, and no caller needs a `--color`

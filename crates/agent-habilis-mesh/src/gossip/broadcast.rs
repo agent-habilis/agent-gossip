@@ -139,7 +139,7 @@ pub async fn broadcast_state_merge(
     state: &mut EventLoopState,
     params: StateMergeParams<'_>,
 ) -> anyhow::Result<Option<Bytes>> {
-    use crate::daemon::doc::Ingested;
+    use crate::doc::Ingested;
 
     let StateMergeParams {
         mesh,

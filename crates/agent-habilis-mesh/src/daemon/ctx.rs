@@ -22,7 +22,7 @@ pub struct HandlerCtx<'a> {
     /// the per-message self-echo check is a string compare, not a fresh
     /// key-derivation + allocation on every inbound message.
     pub our_pubkey: &'a str,
-    pub max_peers: usize,
+    pub(crate) max_peers: usize,
     /// Well-known rendezvous endpoint id. Its co-hosted pseudo-node
     /// shows up as a gossip neighbor on peer endpoints; it is
     /// filtered out of peer accounting everywhere it could leak.
@@ -31,7 +31,7 @@ pub struct HandlerCtx<'a> {
     /// (`DriverMode::InProcess::msg_tx`); every inbound message that survives
     /// the self-author filter is forwarded here before kind routing. `None` for
     /// the CLI, and for an in-process consumer that drains frames some other way.
-    pub external_msg_tx: Option<&'a broadcast::Sender<Message>>,
+    pub(crate) external_msg_tx: Option<&'a broadcast::Sender<Message>>,
     /// Per-loop generic event sink: the engine emits
     /// [`NodeEvent`](crate::gossip::event::NodeEvent) through it and never names
     /// the app's concrete `Output`. Borrowed for the loop's lifetime; handlers

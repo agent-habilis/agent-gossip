@@ -4,11 +4,11 @@ use tokio::sync::oneshot;
 use crate::a2a::app::A2aApp;
 use crate::a2a::send::{BroadcastMessageParams, broadcast_message, emit_task_status};
 use crate::output;
-use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::gossip::{StateMergeParams, broadcast_state_merge};
-use agent_habilis_mesh::protocol::mesh::MeshId;
+use agent_habilis_mesh::embed::EventLoopState;
+use agent_habilis_mesh::ops::MeshSender;
+use agent_habilis_mesh::ops::{StateMergeParams, broadcast_state_merge};
+use agent_habilis_mesh::protocol::MeshId;
 use agent_habilis_mesh::protocol::{Channel, MessageBody, Nickname};
-use agent_habilis_mesh::transport::MeshSender;
 
 use super::{TaskId, task::TaskRecord, task::TaskRole};
 
@@ -207,10 +207,6 @@ pub(crate) struct HandleOpParams<'a> {
 /// Execute one op against the live loop state — the JSON-RPC binding's
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
-#[expect(
-    clippy::too_many_lines,
-    reason = "a dispatch match with one arm per A2aOp variant, mirroring handle_ipc_command/handle_session_request"
-)]
 pub(crate) async fn handle_op(
     params: HandleOpParams<'_>,
     state: &mut EventLoopState,
@@ -280,13 +276,7 @@ pub(crate) async fn handle_op(
                 .map(|rec| task_object(&task_id, rec, mesh))
                 .ok_or_else(|| RpcError::task_not_found(&task_id))
         }
-        A2aOp::ChannelGet { channel } => {
-            let document = match channel {
-                Channel::State => state.state_doc.to_json(),
-                Channel::Meta => state.meta_doc.to_json(),
-            };
-            Ok(document)
-        }
+        A2aOp::ChannelGet { channel } => Ok(state.doc(channel).to_json()),
         A2aOp::ChannelMerge { channel, merge } => {
             broadcast_state_merge(
                 state,
@@ -305,7 +295,7 @@ pub(crate) async fn handle_op(
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
-            let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
+            let seal_b58 = bs58::encode(state.identity().seal_public()).into_string();
             let mut card = super::card::own_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
@@ -318,7 +308,7 @@ pub(crate) async fn handle_op(
             serde_json::to_value(&card).map_err(|error| RpcError::internal(error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
-            let doc = state.meta_doc.to_json();
+            let doc = state.doc(Channel::Meta).to_json();
             let mut card = doc
                 .pointer(&format!("/peers/{peer}/card"))
                 .cloned()

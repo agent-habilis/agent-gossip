@@ -12,6 +12,7 @@ pub(crate) mod send;
 pub(crate) mod session;
 pub(crate) mod surfaced;
 pub(crate) mod task;
+pub(crate) mod tuning;
 pub(crate) mod wire;
 
 pub use extensions::{
@@ -28,3 +29,18 @@ pub use model::{
 pub(crate) use crate::bridge::{
     ExposeParams, TicketDirectory, TicketDirectoryEvent, connect, expose, ticket_requires_password,
 };
+
+/// The `meta` channel's per-peer write gate for the A2A data model: each peer
+/// owns `peers.<nick>.card` and no one else may write it.
+///
+/// A function, not a `const`, only because [`SelfWriteGate`] holds `String`s.
+/// One home so the pair cannot drift between the four setup paths that install
+/// it — the engine needs it to plant the genesis entry and to refuse a forgery.
+///
+/// [`SelfWriteGate`]: agent_habilis_mesh::embed::SelfWriteGate
+pub(crate) fn card_gate() -> agent_habilis_mesh::embed::SelfWriteGate {
+    agent_habilis_mesh::embed::SelfWriteGate {
+        map: "peers".to_owned(),
+        field: "card".to_owned(),
+    }
+}

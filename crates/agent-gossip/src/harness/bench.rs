@@ -14,7 +14,7 @@
 
 use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 use agent_habilis_mesh::protocol::crypto;
-use agent_habilis_mesh::protocol::mesh::{LookupOpts, Mesh, MeshConfig, RelayChoice};
+use agent_habilis_mesh::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the

@@ -1,4 +1,4 @@
-use agent_habilis_mesh::transport::MeshSender;
+use agent_habilis_mesh::ops::MeshSender;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -9,17 +9,17 @@ use crate::a2a::app::A2aApp;
 use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState};
 use crate::output;
-use agent_habilis_mesh::daemon::state::{EventLoopState, PingRound};
-use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::embed::{EventLoopState, PingRound};
+use agent_habilis_mesh::protocol::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
-use agent_habilis_mesh::transport::ipc::{Addressed, json_ack, json_error, json_ok_msg};
-use agent_habilis_mesh::util::tuning::ping_window_secs;
+use agent_habilis_mesh::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
+use agent_habilis_mesh::runtime::tuning::ping_window_secs;
 
 use crate::a2a::send::{
     BroadcastMessageParams, TaskArtifactEmitParams, TaskStatusParams, broadcast_message,
     emit_task_artifact, emit_task_status,
 };
-use agent_habilis_mesh::gossip::{StateMergeParams, broadcast_msg, broadcast_state_merge};
+use agent_habilis_mesh::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
 
 /// Command sent from CLI to the running server over IPC. App-side because its
 /// arms carry a2a-typed payloads (task id/state, gossip A2A calls); the engine's
@@ -123,7 +123,7 @@ pub(crate) enum IpcCommand {
     #[serde(rename = "info")]
     Info,
     /// Mint a `🎟️` invite for the mesh this socket serves — creator-only
-    /// (the daemon holds the issuer key in `state.mint_mesh`). `ttl` is the
+    /// (the daemon holds the issuer key in `state.mint_mesh()`). `ttl` is the
     /// invite lifetime in seconds (`0` ⇒ no expiry).
     #[serde(rename = "invite")]
     Invite { mesh: MeshId, ttl: u64 },
@@ -131,7 +131,7 @@ pub(crate) enum IpcCommand {
 
 impl Addressed for IpcCommand {
     /// The mesh a command is addressed to, used to derive the socket path in
-    /// [`agent_habilis_mesh::transport::ipc::send`]. `None` for [`IpcCommand::Info`], which is
+    /// [`agent_habilis_mesh::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
     /// sent by socket path directly (the daemon answers with its own id).
     fn mesh_id(&self) -> Option<&MeshId> {
         match self {
@@ -246,16 +246,16 @@ pub(crate) async fn handle_ipc_command(
             // the probe. Pongs are collected by the gossip receive path;
             // the round's deadline drives the `ping_report` emission.
             let now = tokio::time::Instant::now();
-            state.ping_round = Some(Box::new(PingRound {
+            state.arm_ping_round(PingRound {
                 t1: now,
                 deadline: now + Duration::from_secs(ping_window_secs()),
                 pongs: HashMap::new(),
                 // CLI/IPC consumes the `ping_report` event, not a channel.
                 resp: None,
-            }));
+            });
             broadcast_msg(
                 sender,
-                &Message::new_ping(mesh, author).signed(&state.identity),
+                &Message::new_ping(mesh, author).signed(state.identity()),
             )
             .await;
             tracing::debug!("IPC ping command received; round armed");
@@ -430,17 +430,17 @@ pub(crate) async fn handle_ipc_command(
 }
 
 /// Mint a `🎟️` invite for the mesh this daemon serves — creator-only. The
-/// issuer key lives in `state.mint_mesh` (populated only on the creator of an
+/// issuer key lives in `state.mint_mesh()` (populated only on the creator of an
 /// invite-only mesh); every other session refuses.
 fn invite_response(state: &EventLoopState, ttl: u64) -> String {
-    let Some(mesh) = &state.mint_mesh else {
+    let Some(mesh) = &state.mint_mesh() else {
         return serde_json::json!({
             "ok": false,
             "error": "invites can only be minted by the creator of an invite-only gossip",
         })
         .to_string();
     };
-    match agent_habilis_mesh::invite::mint(mesh, Some(ttl), state.mesh_password.as_ref()) {
+    match agent_habilis_mesh::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
@@ -480,7 +480,7 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
 /// for the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
 /// Empty when the multihop transport is off (no routing table).
 fn topology_response(state: &EventLoopState) -> String {
-    let Some(handle) = state.multihop.as_ref() else {
+    let Some(handle) = state.multihop() else {
         return r#"{"ok":true,"topology":{"self_id":"","edges":[]}}"#.to_owned();
     };
     let topology = handle.topology_view();
@@ -493,10 +493,7 @@ fn state_get_response(
     state: &EventLoopState,
     channel: agent_habilis_mesh::protocol::Channel,
 ) -> String {
-    let document = match channel {
-        agent_habilis_mesh::protocol::Channel::State => state.state_doc.to_json(),
-        agent_habilis_mesh::protocol::Channel::Meta => state.meta_doc.to_json(),
-    };
+    let document = state.doc(channel).to_json();
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
@@ -519,7 +516,7 @@ fn peers_response(state: &EventLoopState) -> String {
 #[cfg(test)]
 mod tests {
     use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
-    use agent_habilis_mesh::transport::ipc::Addressed;
+    use agent_habilis_mesh::runtime::ipc::Addressed;
 
     // ── IpcCommand serialization ───────────────────────────────────
     //
@@ -756,14 +753,14 @@ mod tests {
                 let author = Nickname::new(author).unwrap();
                 let body = MessageBody::new(body).unwrap();
                 let expected_body = body.clone();
-                let identity = agent_habilis_mesh::protocol::identity::Identity::generate();
-                let (bytes, built) = agent_habilis_mesh::protocol::message::build_msg_bytes(
-                    agent_habilis_mesh::protocol::message::BuildMsgParams {
+                let identity = agent_habilis_mesh::protocol::Identity::generate();
+                let (bytes, built) = agent_habilis_mesh::protocol::build_msg_bytes(
+                    agent_habilis_mesh::protocol::BuildMsgParams {
                         tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
                         mesh: &mesh,
                         author: &author,
                         body,
-                        chain: agent_habilis_mesh::protocol::message::ChainCtx::genesis(),
+                        chain: agent_habilis_mesh::protocol::ChainCtx::genesis(),
                     },
                     &identity,
                 )

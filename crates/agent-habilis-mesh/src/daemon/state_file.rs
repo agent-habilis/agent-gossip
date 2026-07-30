@@ -1,4 +1,4 @@
-//! Session state file — the agent-gossip daemon writes its
+//! Session state file — the daemon writes its
 //! view of the mesh into this file so external tools (e.g. a shell
 //! statusline) and the `/gossip-*` skills can render the current mesh,
 //! nickname, and peer count with a plain local file read. No
@@ -13,18 +13,18 @@
 //!
 //! `topic` is the raw string a topic gossip was derived from. The derived
 //! `name` is lossy (URL scheme and query stripped, truncated), so the
-//! string is persisted whole — it is what `agent-gossip leave` and the
+//! string is persisted whole — it is what a consumer's `leave` and its
 //! skills echo for a topic gossip.
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `agent-gossip ready`)
+//! once the event loop is serving IPC, so a reader (e.g. a readiness gate)
 //! can gate on it rather than on the file's mere existence.
 //! `peer_count` is the total number of agents in the mesh,
 //! including self. `last_updated` is a unix timestamp the daemon
 //! refreshes on a fixed heartbeat (see `tuning::STATE_REFRESH_SECS`)
 //! even when membership is unchanged, so a reader can treat a fresh
 //! value as a liveness signal. `pid` is the daemon's own process id —
-//! what lets `agent-gossip leave`/`agent-gossip session` map a state file back to a
+//! what lets a consumer's `leave`/`session` map a state file back to a
 //! running daemon (and, via its ancestry, to the agent session that
 //! spawned it).
 //!
@@ -54,6 +54,10 @@ use crate::util::clock;
 #[derive(Debug)]
 pub struct StateFile {
     path: PathBuf,
+    /// The consumer's runtime base, for the fail-closed squat check before each
+    /// write. `None` when the consumer configured none — there is then no
+    /// protected directory to validate, only a parent to create.
+    base: Option<PathBuf>,
     mesh: String,
     name: String,
     nickname: String,
@@ -68,12 +72,22 @@ impl StateFile {
     pub(crate) fn new(path: PathBuf, mesh: &MeshId, nickname: &Nickname, name: &MeshName) -> Self {
         Self {
             path,
+            base: None,
             mesh: mesh.as_str().to_string(),
             name: name.as_str().to_string(),
             nickname: nickname.as_str().to_string(),
             topic: None,
             discovery: std::sync::Mutex::new(serde_json::Map::new()),
         }
+    }
+
+    /// Attach the consumer's runtime base, so every write can run the
+    /// fail-closed squat check against it. Left `None` by [`Self::new`] — a
+    /// target outside any base (a `--state-file` override, a test temp dir) has
+    /// no base to validate.
+    pub(crate) fn with_base(mut self, base: Option<PathBuf>) -> Self {
+        self.base = base;
+        self
     }
 
     /// Attach the raw topic string a topic gossip was derived from, so every
@@ -88,7 +102,7 @@ impl StateFile {
     /// publishes — how an app advertises a locally-reachable binding to its own
     /// clients.
     ///
-    /// The engine never interprets these. It does not know that `agent-gossip`
+    /// The engine never interprets these. It does not know that a consumer
     /// writes its own port/token keys here, only that whatever an app puts in
     /// may be secret, which is why the file is born 0o600. Keys are merged, not
     /// replaced, so repeated calls accumulate.
@@ -126,9 +140,9 @@ impl StateFile {
         // It is born 0o600 below, but the enclosing directory must
         // also be private. `ensure_parent_private` validates the base and fails
         // closed when the target is under it (the default path, and the plugin's
-        // `--state-file /tmp/agent-gossip-<uid>/sessions/...`), and just creates
+        // `--state-file <base>/sessions/...`), and just creates
         // the parent for an override that points elsewhere.
-        crate::util::ensure_parent_private(&self.path)?;
+        crate::util::ensure_parent_private(self.base.as_deref(), &self.path)?;
         let mut obj = serde_json::Map::new();
         obj.insert("gossip".into(), self.mesh.clone().into());
         obj.insert("name".into(), self.name.clone().into());
@@ -193,7 +207,7 @@ impl Drop for StateFile {
     }
 }
 
-/// What the `agent-gossip ready` gate needs out of a state file on every poll: whether
+/// What a readiness gate needs out of a state file on every poll: whether
 /// the daemon is serving (`ready`) and how fresh that claim is (`last_updated`,
 /// unix seconds — the daemon rewrites it on a fixed heartbeat, so a stale
 /// `ready: true` left by a prior daemon killed with SIGKILL is rejected). The
@@ -205,7 +219,7 @@ pub struct ReadySnapshot {
     pub last_updated: u64,
 }
 
-/// Best-effort session identity for `agent-gossip ready --output json`. Each field is
+/// Best-effort session identity for a consumer's readiness report. Each field is
 /// `None` when the state file is unreadable, not JSON, or predates that field
 /// — so the JSON the gate prints carries only the keys actually present.
 #[derive(Debug)]
@@ -252,8 +266,8 @@ fn mesh_field(doc: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// One running daemon as seen through its state file — what `agent-gossip leave` /
-/// `agent-gossip session` need to map the file back to a live process and decide
+/// One running daemon as seen through its state file — what a consumer's
+/// `leave` / `session` need to map the file back to a live process and decide
 /// whether the calling session owns it. Every field is `Option`: a file
 /// written by an older binary predates `pid`, and discovery must still be
 /// able to *report* such an entry rather than error on it.
@@ -345,7 +359,7 @@ mod tests {
 
     fn unique_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-gossip-state-test-{}-{}-{}.json",
+            "agent-habilis-mesh-state-test-{}-{}-{}.json",
             tag,
             std::process::id(),
             clock::unix_nanos(),
@@ -456,7 +470,7 @@ mod tests {
     fn creates_parent_dir() {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "agent-gossip-state-test-parent-{}",
+            "agent-habilis-mesh-state-test-parent-{}",
             std::process::id()
         ));
         path.push("sessions");

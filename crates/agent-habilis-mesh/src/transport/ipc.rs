@@ -11,19 +11,19 @@ use tokio::sync::mpsc;
 
 use crate::protocol::{MeshId, MessageId, Nickname};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, MESH_GLYPH};
+use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES};
 use crate::util::tuning::{
     IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
 };
-use crate::util::{ensure_mesh_runtime_dir, mesh_runtime_dir, runtime_base};
+use crate::util::{ensure_mesh_runtime_dir, mesh_runtime_dir};
 
 /// Returns the IPC endpoint identifier for a specific agent on a mesh —
 /// a filesystem socket path (the project targets Unix only). Lives in the
 /// mesh's runtime folder beside its `<nick>.tracing.log` / `<nick>.state.json`.
-pub(crate) fn socket_path(mesh: &MeshId, nickname: &Nickname) -> String {
+pub(crate) fn socket_path(base: &std::path::Path, mesh: &MeshId, nickname: &Nickname) -> String {
     format!(
         "{}/{nickname}.ipc.sock",
-        mesh_runtime_dir(mesh.as_str()).display()
+        mesh_runtime_dir(base, mesh.as_str()).display()
     )
 }
 
@@ -90,15 +90,15 @@ pub fn json_error(error: &str) -> String {
 ///
 /// # Errors
 /// An invalid socket name, or the OS refusing the bind.
-pub(crate) fn bind(mesh: &MeshId, nickname: &Nickname) -> Result<Listener> {
-    let path = socket_path(mesh, nickname);
+pub(crate) fn bind(base: &std::path::Path, mesh: &MeshId, nickname: &Nickname) -> Result<Listener> {
+    let path = socket_path(base, mesh, nickname);
 
     // The runtime base must exist and be private (0700) before the socket is
     // created inside it: this control socket has no in-band auth, so the base's
     // permissions are what keep another local user from reaching it. The choke
     // point validates the base (fails closed on a squat/symlink) and creates
     // the mesh folder in one step.
-    ensure_mesh_runtime_dir(mesh.as_str())
+    ensure_mesh_runtime_dir(base, mesh.as_str())
         .map_err(|error| anyhow::anyhow!("failed to prepare runtime dir: {error}"))?;
     // Best-effort cleanup of a stale socket file.
     let _ = std::fs::remove_file(&path);
@@ -232,24 +232,46 @@ where
     .await;
 }
 
+/// Nothing is listening on `nickname`'s control socket. Typed rather than a
+/// finished sentence: the remedy is "start one with …", which names a command,
+/// and only the consumer knows what its commands are called. It appends that
+/// half after matching on this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoDaemon {
+    pub nickname: Nickname,
+}
+
+impl std::fmt::Display for NoDaemon {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "No active gossip server running for nickname '{}'.",
+            self.nickname
+        )
+    }
+}
+
+impl std::error::Error for NoDaemon {}
+
 /// Client-side: send an IPC command to the running server and return the raw JSON response.
 ///
 /// # Panics
 /// If called with a command that carries no mesh id — never: `Info` uses `send_to_path`.
 /// # Errors
-/// Returns an error if the inputs are invalid or the operation fails.
-pub async fn send<C>(cmd: &C, nickname: &Nickname) -> Result<String>
+/// [`NoDaemon`] when no server is listening; otherwise an invalid socket name
+/// or a failed request/response round trip.
+pub async fn send<C>(base: &std::path::Path, cmd: &C, nickname: &Nickname) -> Result<String>
 where
     C: Serialize + Addressed,
 {
     let mesh = cmd
         .mesh_id()
         .expect("send() is only used for mesh-addressed commands; Info uses send_to_path");
-    let path = socket_path(mesh, nickname);
+    let path = socket_path(base, mesh, nickname);
     let name = to_name(&path).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
-    let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
-        "No active gossip server running for nickname '{nickname}'. Start one with `agent-gossip create` or `agent-gossip join {{{MESH_GLYPH}...}} --nickname {nickname}`."
-    ))?;
+    let stream = Stream::connect(name).await.map_err(|_| NoDaemon {
+        nickname: nickname.clone(),
+    })?;
     round_trip(stream, cmd).await
 }
 
@@ -289,12 +311,12 @@ async fn round_trip<C: Serialize>(stream: Stream, cmd: &C) -> Result<String> {
 }
 
 /// Every live daemon's IPC socket on this machine — one `<nick>.ipc.sock`
-/// inside each mesh's folder (`<runtime_base>/<mesh-prefix>/`). Best-effort:
-/// a missing base yields an empty list. Drives `doctor`'s active-mesh
-/// discovery, so it walks the per-mesh subfolders.
+/// inside each mesh's folder (`<base>/<mesh-prefix>/`). Best-effort: a missing
+/// base yields an empty list. Drives the consumer's active-mesh discovery, so it
+/// walks the per-mesh subfolders.
 #[must_use]
-pub fn active_socket_paths() -> Vec<std::path::PathBuf> {
-    let Ok(mesh_dirs) = std::fs::read_dir(runtime_base()) else {
+pub fn active_socket_paths(base: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(mesh_dirs) = std::fs::read_dir(base) else {
         return Vec::new();
     };
     mesh_dirs
@@ -368,11 +390,17 @@ mod tests {
         assert_eq!(parsed["error"], r#"error: "bad input""#);
     }
 
+    /// A base of this suite's own, so a test that binds a real socket can never
+    /// collide with (or be found by) a daemon running under a product's base.
+    fn test_base() -> std::path::PathBuf {
+        crate::util::runtime_base("agent-habilis-mesh-ipc-test")
+    }
+
     #[test]
     fn socket_path_format() {
         let mesh = MeshId::from("💬abcdefghijkmnpqr");
-        let path = socket_path(&mesh, &Nickname::from("my-nick"));
-        let base = crate::util::runtime_base();
+        let base = test_base();
+        let path = socket_path(&base, &mesh, &Nickname::from("my-nick"));
         assert!(path.starts_with(&*base.to_string_lossy()));
         assert!(path.ends_with("/my-nick.ipc.sock"));
         assert!(path.contains(&crate::util::mesh_prefix(mesh.as_str())));
@@ -479,7 +507,7 @@ mod tests {
 
         // Bind synchronously (no sleep needed — the socket is accepting the
         // instant `bind` returns), then spawn the accept loop.
-        let listener = bind(&mesh, &nickname).expect("bind IPC socket");
+        let listener = bind(&test_base(), &mesh, &nickname).expect("bind IPC socket");
         let listener_handle = tokio::spawn(serve(
             listener,
             tx,
@@ -494,7 +522,7 @@ mod tests {
             mesh: mesh.clone(),
             body: "test message".to_owned(),
         };
-        let response = send(&cmd, &nickname).await.unwrap();
+        let response = send(&test_base(), &cmd, &nickname).await.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["id"], "got: test message");
@@ -545,7 +573,7 @@ mod tests {
         let mesh = MeshId::from(format!("ipcquiet{pid_b58}").as_str());
         let nickname = Nickname::from("idle-nick");
         let (tx, rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
-        let listener = bind(&mesh, &nickname).expect("bind IPC socket");
+        let listener = bind(&test_base(), &mesh, &nickname).expect("bind IPC socket");
         let listener_handle = tokio::spawn(serve(
             listener,
             tx,
@@ -556,13 +584,13 @@ mod tests {
         let handler = tokio::spawn(respond_healthy_forever(rx));
 
         // Park a silent connection.
-        let path = socket_path(&mesh, &nickname);
+        let path = socket_path(&test_base(), &mesh, &nickname);
         let name = path.clone().to_fs_name::<GenericFilePath>().unwrap();
         let mut idle = Stream::connect(name).await.unwrap();
 
         // A healthy command still round-trips while the idle one is parked.
         let cmd = TestCommand::Ping { mesh: mesh.clone() };
-        let response = send(&cmd, &nickname).await.unwrap();
+        let response = send(&test_base(), &cmd, &nickname).await.unwrap();
         assert!(response.contains("healthy"), "listener stalled: {response}");
 
         // The parked connection is closed (EOF) at the deadline, with margin.

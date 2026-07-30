@@ -710,10 +710,10 @@ fn surface_view(message: &Message, plain: Option<String>) -> std::borrow::Cow<'_
 /// never our own (`is_self = false`). Both channels share this path verbatim.
 fn ingest_channel_event(
     event: ChannelEvent<'_>,
-    doc: &mut crate::daemon::doc::MeshDoc,
+    doc: &mut crate::doc::MeshDoc,
     ctx: &HandlerCtx<'_>,
 ) {
-    use crate::daemon::doc::Ingested;
+    use crate::doc::Ingested;
 
     let ChannelEvent {
         channel,
@@ -908,8 +908,7 @@ fn decrypt_broadcast(message: &mut Message, state: &EventLoopState) -> Option<Me
     // cleartext or tampered — drop it, but say so (mirroring the directed-drop
     // warn) rather than vanishing silently. A generic `send_app` broadcast that
     // did not mesh-key-seal its body lands here; see `send_app`'s doc.
-    let Some(plain) = crate::daemon::state_doc::decrypt_body(message.body.as_str(), Some(key))
-    else {
+    let Some(plain) = crate::doc::wire::decrypt_body(message.body.as_str(), Some(key)) else {
         tracing::warn!(target: "agent_habilis_mesh::gossip",
             author = %message.author,
             "dropping a broadcast body that failed mesh-key decryption (cleartext on a passworded mesh?)"

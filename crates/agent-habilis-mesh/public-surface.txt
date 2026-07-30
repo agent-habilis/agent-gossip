@@ -1,0 +1,411 @@
+crates/agent-habilis-mesh/src/blob/consume.rs	pub async fn fetch<W>(ticket: &BlobTicket, out: &mut W, password: Option<Password>) -> Result<()>
+crates/agent-habilis-mesh/src/blob/mod.rs	pub async fn offload(
+crates/agent-habilis-mesh/src/blob/mod.rs	pub const HASH_LEN: usize = 32;
+crates/agent-habilis-mesh/src/blob/mod.rs	pub const SECRET_LEN: usize = 32;
+crates/agent-habilis-mesh/src/blob/mod.rs	pub fn new(id: &str) -> Self
+crates/agent-habilis-mesh/src/blob/mod.rs	pub struct ContentId(String);
+crates/agent-habilis-mesh/src/blob/mod.rs	pub struct OffloadRequest
+crates/agent-habilis-mesh/src/blob/mod.rs	pub use consume::fetch;
+crates/agent-habilis-mesh/src/blob/mod.rs	pub use produce::BlobServer;
+crates/agent-habilis-mesh/src/blob/mod.rs	pub use ticket::BlobTicket;
+crates/agent-habilis-mesh/src/blob/produce.rs	pub async fn evict_content(&self, content_id: &ContentId)
+crates/agent-habilis-mesh/src/blob/produce.rs	pub async fn register(&self, path: &Path, content_id: ContentId) -> Result<BlobTicket>
+crates/agent-habilis-mesh/src/blob/produce.rs	pub async fn shutdown(self)
+crates/agent-habilis-mesh/src/blob/produce.rs	pub async fn start(
+crates/agent-habilis-mesh/src/blob/produce.rs	pub struct BlobServer
+crates/agent-habilis-mesh/src/blob/ticket.rs	pub fn decode(ticket: &str) -> Result<Self>
+crates/agent-habilis-mesh/src/blob/ticket.rs	pub fn encode(&self) -> String
+crates/agent-habilis-mesh/src/blob/ticket.rs	pub fn sha256_hex(&self) -> String
+crates/agent-habilis-mesh/src/blob/ticket.rs	pub struct BlobTicket
+crates/agent-habilis-mesh/src/daemon/app.rs	pub struct IpcRequest<'a, C>
+crates/agent-habilis-mesh/src/daemon/app.rs	pub trait NodeDriver: NodeApp
+crates/agent-habilis-mesh/src/daemon/config.rs	pub const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::EagerProbed;
+crates/agent-habilis-mesh/src/daemon/config.rs	pub enum CoHostPolicy
+crates/agent-habilis-mesh/src/daemon/config.rs	pub enum DriverMode
+crates/agent-habilis-mesh/src/daemon/config.rs	pub fn author(&self) -> &Nickname
+crates/agent-habilis-mesh/src/daemon/config.rs	pub fn mesh_id(&self) -> &MeshId
+crates/agent-habilis-mesh/src/daemon/config.rs	pub struct EventLoopConfig
+crates/agent-habilis-mesh/src/daemon/ctx.rs	pub struct HandlerCtx<'a>
+crates/agent-habilis-mesh/src/daemon/event_loop.rs	pub async fn run<A: NodeDriver>(
+crates/agent-habilis-mesh/src/daemon/message_log.rs	pub fn push(&mut self, msg: Message) -> Option<Message>
+crates/agent-habilis-mesh/src/daemon/message_log.rs	pub struct MessageLog
+crates/agent-habilis-mesh/src/daemon/node.rs	pub async fn leave(mut self) -> anyhow::Result<()>
+crates/agent-habilis-mesh/src/daemon/node.rs	pub async fn send(&self, req: A::Session) -> anyhow::Result<()>
+crates/agent-habilis-mesh/src/daemon/node.rs	pub fn mesh_id(&self) -> &MeshId
+crates/agent-habilis-mesh/src/daemon/node.rs	pub fn name(&self) -> &MeshName
+crates/agent-habilis-mesh/src/daemon/node.rs	pub fn nickname(&self) -> &Nickname
+crates/agent-habilis-mesh/src/daemon/node.rs	pub fn spawn(
+crates/agent-habilis-mesh/src/daemon/node.rs	pub struct Node<A: NodeDriver>
+crates/agent-habilis-mesh/src/daemon/params.rs	pub fn derive_topic_mesh(string: &str) -> Result<Mesh>
+crates/agent-habilis-mesh/src/daemon/params.rs	pub fn resolve(self) -> Result<Resolved, AdvertiseRequiresReachable>
+crates/agent-habilis-mesh/src/daemon/params.rs	pub fn resolve(self) -> Result<Resolved>
+crates/agent-habilis-mesh/src/daemon/params.rs	pub fn resolve(self) -> Result<Resolved>
+crates/agent-habilis-mesh/src/daemon/params.rs	pub struct CreateParams
+crates/agent-habilis-mesh/src/daemon/params.rs	pub struct JoinParams
+crates/agent-habilis-mesh/src/daemon/params.rs	pub struct Resolved
+crates/agent-habilis-mesh/src/daemon/params.rs	pub struct TopicParams
+crates/agent-habilis-mesh/src/daemon/setup.rs	pub async fn setup_mesh(kind: SetupKind, params: SetupParams) -> Result<EventLoopConfig>
+crates/agent-habilis-mesh/src/daemon/setup.rs	pub enum SetupKind
+crates/agent-habilis-mesh/src/daemon/setup.rs	pub struct SetupParams
+crates/agent-habilis-mesh/src/daemon/state.rs	pub enum Reach
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn advance_chain(&mut self, prev: String)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn arm_ping_round(&mut self, round: PingRound)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn broadcast_key(&self) -> Option<&[u8; 32]>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn chain_head(&self) -> (u64, Option<&str>)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn dag_parents(&self) -> Vec<String>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn doc(&self, channel: crate::protocol::Channel) -> &crate::doc::MeshDoc
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn doc_mut(&mut self, channel: crate::protocol::Channel) -> &mut crate::doc::MeshDoc
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn forget_hash(&mut self, hash: &str)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn forget_msg_seq(&mut self, pubkey: &str, seq: u64, hash: &str)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn identity(&self) -> &Arc<Identity>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn is_gossip_open(&self) -> bool
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn is_meshed(&self) -> bool
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn mesh_password(&self) -> Option<&crate::protocol::crypto::Password>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn message_log_mut(&mut self) -> &mut MessageLog
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn mint_mesh(&self) -> Option<&Mesh>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn multihop(&self) -> Option<&iroh_multihop_transport::MultihopHandle>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn note_dag(&mut self, hash: String, parents: &[String], ts: i64) -> bool
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn note_peer_endpoint(&mut self, nickname: Nickname, endpoint: EndpointId)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn peer_endpoint(&self, nickname: &Nickname) -> Option<EndpointId>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn peers(&self) -> &HashSet<Nickname>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn pending_outbound_mut(&mut self) -> &mut BoundedQueue<(Message, Bytes)>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn reassembly_mut(&mut self) -> &mut super::reassembly::ReassemblyStore
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn roster_snapshot(&self) -> RosterSnapshot
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn sever_gossip(&mut self)
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn shard_cache_mut(&mut self) -> &mut super::reassembly::ShardCache
+crates/agent-habilis-mesh/src/daemon/state.rs	pub fn take_ping_round(&mut self) -> Option<Box<PingRound>>
+crates/agent-habilis-mesh/src/daemon/state.rs	pub struct EventLoopState
+crates/agent-habilis-mesh/src/daemon/state.rs	pub struct PingRound
+crates/agent-habilis-mesh/src/daemon/state.rs	pub struct RosterEntry
+crates/agent-habilis-mesh/src/daemon/state.rs	pub struct RosterSnapshot
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub fn read_identity(path: &Path) -> SessionIdentity
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub fn read_session_entry(path: &Path) -> Option<SessionEntry>
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub fn read_snapshot(path: &Path) -> Result<Option<ReadySnapshot>>
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub fn set_discovery(&self, fields: serde_json::Map<String, serde_json::Value>)
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub struct ReadySnapshot
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub struct SessionEntry
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub struct SessionIdentity
+crates/agent-habilis-mesh/src/daemon/state_file.rs	pub struct StateFile
+crates/agent-habilis-mesh/src/directory/mod.rs	pub enum ListingChange
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn directory_mesh(directory: &MeshName, lookups: LookupOpts) -> Mesh
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn expire(&mut self, ttl: Duration, now: Instant) -> Vec<MeshId>
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn get(&self, id: &MeshId) -> Option<&Listing>
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn new() -> Self
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn note(&mut self, body: &str, now: Instant) -> Option<ListingChange>
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn snapshot(&self) -> Vec<Listing>
+crates/agent-habilis-mesh/src/directory/mod.rs	pub fn to_body(&self) -> MessageBody
+crates/agent-habilis-mesh/src/directory/mod.rs	pub struct Ad
+crates/agent-habilis-mesh/src/directory/mod.rs	pub struct Listing
+crates/agent-habilis-mesh/src/directory/mod.rs	pub struct Listings
+crates/agent-habilis-mesh/src/doc/mod.rs	pub fn build_change(
+crates/agent-habilis-mesh/src/doc/mod.rs	pub fn new_gated(gate: SelfWriteGate) -> Self
+crates/agent-habilis-mesh/src/doc/mod.rs	pub fn to_json(&self) -> Value
+crates/agent-habilis-mesh/src/doc/mod.rs	pub struct MeshDoc
+crates/agent-habilis-mesh/src/doc/mod.rs	pub struct SelfWriteGate
+crates/agent-habilis-mesh/src/doc/wire.rs	pub fn change_body(change: &[u8], merge: Option<&Value>) -> anyhow::Result<MessageBody>
+crates/agent-habilis-mesh/src/doc/wire.rs	pub fn encrypt_body(plain: &MessageBody, key: &[u8; 32]) -> anyhow::Result<MessageBody>
+crates/agent-habilis-mesh/src/doc/wire.rs	pub fn merge_body(merge: Value) -> anyhow::Result<MessageBody>
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::daemon::app::{IpcRequest, NodeDriver};
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::daemon::ctx::HandlerCtx;
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::daemon::state::{EventLoopState, PingRound, Reach, RosterEntry, RosterSnapshot};
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::doc::SelfWriteGate;
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::gossip::app::{AppClass, InboundApp, NodeApp};
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::gossip::event::{NodeEvent, NodeSink, SilentSink};
+crates/agent-habilis-mesh/src/embed.rs	pub use crate::transport::Lane;
+crates/agent-habilis-mesh/src/gossip/app.rs	pub struct AppClass
+crates/agent-habilis-mesh/src/gossip/app.rs	pub struct InboundApp<'a>
+crates/agent-habilis-mesh/src/gossip/app.rs	pub trait NodeApp: Send
+crates/agent-habilis-mesh/src/gossip/broadcast.rs	pub async fn broadcast_msg(sender: &MeshSender, msg: &Message)
+crates/agent-habilis-mesh/src/gossip/broadcast.rs	pub async fn broadcast_state_merge(
+crates/agent-habilis-mesh/src/gossip/broadcast.rs	pub async fn send_app(
+crates/agent-habilis-mesh/src/gossip/broadcast.rs	pub fn unicast_farewell(state: &EventLoopState, bytes: &Bytes)
+crates/agent-habilis-mesh/src/gossip/broadcast.rs	pub struct StateMergeParams<'a>
+crates/agent-habilis-mesh/src/gossip/event.rs	pub enum NodeEvent
+crates/agent-habilis-mesh/src/gossip/event.rs	pub struct SilentSink;
+crates/agent-habilis-mesh/src/gossip/event.rs	pub trait NodeSink: Send + Sync
+crates/agent-habilis-mesh/src/gossip/mod.rs	pub async fn conn_path(
+crates/agent-habilis-mesh/src/gossip/mod.rs	pub use broadcast::
+crates/agent-habilis-mesh/src/invite/mod.rs	pub use ticket::InviteTicket;
+crates/agent-habilis-mesh/src/invite/mod.rs	pub use ticket::mint;
+crates/agent-habilis-mesh/src/invite/ticket.rs	pub fn mint(mesh: &Mesh, ttl_secs: Option<u64>, password: Option<&Password>) -> Result<String>
+crates/agent-habilis-mesh/src/invite/ticket.rs	pub fn requires_password(&self) -> bool
+crates/agent-habilis-mesh/src/invite/ticket.rs	pub struct InviteTicket
+crates/agent-habilis-mesh/src/lib.rs	pub mod embed;
+crates/agent-habilis-mesh/src/lib.rs	pub mod net;
+crates/agent-habilis-mesh/src/lib.rs	pub mod ops;
+crates/agent-habilis-mesh/src/lib.rs	pub mod protocol;
+crates/agent-habilis-mesh/src/lib.rs	pub mod runtime;
+crates/agent-habilis-mesh/src/lib.rs	pub mod util;
+crates/agent-habilis-mesh/src/lib.rs	pub use async_trait::async_trait;
+crates/agent-habilis-mesh/src/lib.rs	pub use util::version::VERSION;
+crates/agent-habilis-mesh/src/logging/messages.rs	pub fn log_out(msg: &Message)
+crates/agent-habilis-mesh/src/logging/mod.rs	pub fn log_filter(consumer_pins: &str) -> tracing_subscriber::EnvFilter
+crates/agent-habilis-mesh/src/logging/mod.rs	pub use sink::LogSink;
+crates/agent-habilis-mesh/src/logging/mod.rs	pub use sink::{attach, flush_pending_to_stderr, install};
+crates/agent-habilis-mesh/src/logging/sink.rs	pub fn attach(mesh: &MeshId, nickname: &Nickname)
+crates/agent-habilis-mesh/src/logging/sink.rs	pub fn flush_pending_to_stderr()
+crates/agent-habilis-mesh/src/logging/sink.rs	pub fn install() -> LogSink
+crates/agent-habilis-mesh/src/logging/sink.rs	pub struct LogSink(Arc<Mutex<State>>);
+crates/agent-habilis-mesh/src/lookup/capability.rs	pub async fn probe(timeout: Duration) -> Result<NetworkCapability>
+crates/agent-habilis-mesh/src/lookup/capability.rs	pub struct NetworkCapability
+crates/agent-habilis-mesh/src/lookup/mod.rs	pub async fn build_endpoint(
+crates/agent-habilis-mesh/src/lookup/mod.rs	pub async fn build_peer_endpoint(lookups: &LookupOpts) -> Result<Endpoint>
+crates/agent-habilis-mesh/src/lookup/mod.rs	pub async fn probe_connect(
+crates/agent-habilis-mesh/src/lookup/mod.rs	pub fn add_peer_addr(endpoint: &Endpoint, addr: EndpointAddr) -> Result<()>
+crates/agent-habilis-mesh/src/lookup/mod.rs	pub use capability::{NetworkCapability, probe as capability_probe};
+crates/agent-habilis-mesh/src/lookup/mod.rs	pub use relay::{probe_ladder, relay_ladder};
+crates/agent-habilis-mesh/src/lookup/relay.rs	pub async fn probe_ladder(ladder: &[RelayUrl], per_rung: Duration) -> Vec<(RelayUrl, bool)>
+crates/agent-habilis-mesh/src/lookup/relay.rs	pub fn relay_ladder(choice: &RelayChoice) -> Vec<RelayUrl>
+crates/agent-habilis-mesh/src/net.rs	pub use crate::gossip::conn_path;
+crates/agent-habilis-mesh/src/net.rs	pub use crate::lookup::
+crates/agent-habilis-mesh/src/net.rs	pub use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
+crates/agent-habilis-mesh/src/ops.rs	pub mod blob
+crates/agent-habilis-mesh/src/ops.rs	pub mod directory
+crates/agent-habilis-mesh/src/ops.rs	pub mod doc
+crates/agent-habilis-mesh/src/ops.rs	pub mod invite
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::blob::
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::directory::{Ad, Listing, ListingChange, Listings, directory_mesh};
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::doc::MeshDoc;
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::doc::wire::merge_body;
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::doc::wire::{change_body, encrypt_body};
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::gossip::
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::invite::mint;
+crates/agent-habilis-mesh/src/ops.rs	pub use crate::transport::{MeshSender, deliver};
+crates/agent-habilis-mesh/src/protocol/crypto.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/crypto.rs	pub fn ct_eq(left: &[u8; 32], right: &[u8; 32]) -> bool
+crates/agent-habilis-mesh/src/protocol/crypto.rs	pub fn derive(secret: &[u8; 32], password: Option<&Password>, label: &[u8]) -> Self
+crates/agent-habilis-mesh/src/protocol/crypto.rs	pub fn new(value: String) -> Self
+crates/agent-habilis-mesh/src/protocol/crypto.rs	pub struct Password(String);
+crates/agent-habilis-mesh/src/protocol/crypto.rs	pub struct TicketAuth
+crates/agent-habilis-mesh/src/protocol/identity.rs	pub fn encode_pubkey(pubkey: &PublicKey) -> String
+crates/agent-habilis-mesh/src/protocol/identity.rs	pub fn generate() -> Self
+crates/agent-habilis-mesh/src/protocol/identity.rs	pub fn public(&self) -> PublicKey
+crates/agent-habilis-mesh/src/protocol/identity.rs	pub fn seal_public(&self) -> [u8; 32]
+crates/agent-habilis-mesh/src/protocol/identity.rs	pub struct Identity
+crates/agent-habilis-mesh/src/protocol/mesh/id.rs	pub enum MeshIdError
+crates/agent-habilis-mesh/src/protocol/mesh/id.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/mesh/id.rs	pub fn new(value: impl Into<String>) -> Result<Self, MeshIdError>
+crates/agent-habilis-mesh/src/protocol/mesh/id.rs	pub struct MeshId(String);
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub const DEFAULT_DIRECTORY: &str = "global";
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub enum DirectorySelection
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub enum RelayChoice
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub enum RelaySelection
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn decode_from(bytes: &[u8], pos: &mut usize) -> Result<Self>
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn directory(&self) -> Option<MeshName>
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn encode_into(&self, buf: &mut Vec<u8>)
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn from_bytes(bytes: &[u8]) -> Result<Self>
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn from_flag(flag: Option<MeshName>) -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn is_empty(&self) -> bool
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn is_loopback(&self) -> bool
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn len(&self) -> usize
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn loopback() -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn loopback() -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn public_preset() -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn public_preset() -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn to_bytes(&self) -> Vec<u8>
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub fn validate_advertise(
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub struct AdvertiseRequiresReachable;
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub struct LookupOpts
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub struct LookupSet
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub struct MeshConfig
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub struct RelayLadder(Vec<RelayUrl>);
+crates/agent-habilis-mesh/src/protocol/mesh/lookup.rs	pub struct RelayLadderError(String);
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn from_topic(topic: &str, config: MeshConfig) -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn is_loopback(&self) -> bool
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn lookups(&self) -> &LookupOpts
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn network_label(&self) -> &'static str
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn new(seed: [u8; SEED_LEN], name: MeshName, config: MeshConfig) -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn rendezvous_id(&self) -> EndpointId
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn rendezvous_ports(&self) -> [u16; crypto::RENDEZVOUS_LADDER]
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn requires_invite(&self) -> bool
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn requires_password(&self) -> bool
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub fn set_invite(&mut self)
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub struct Mesh
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub use id::{MeshId, MeshIdError};
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub use lookup::
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
+crates/agent-habilis-mesh/src/protocol/mesh/mod.rs	pub use name::{MeshName, NameError};
+crates/agent-habilis-mesh/src/protocol/mesh/name.rs	pub enum NameError
+crates/agent-habilis-mesh/src/protocol/mesh/name.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/mesh/name.rs	pub fn new(value: impl Into<String>) -> Result<Self, NameError>
+crates/agent-habilis-mesh/src/protocol/mesh/name.rs	pub fn random() -> Self
+crates/agent-habilis-mesh/src/protocol/mesh/name.rs	pub struct MeshName(String);
+crates/agent-habilis-mesh/src/protocol/message/body.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/message/body.rs	pub fn new(value: impl Into<String>) -> Result<Self, BodyError>
+crates/agent-habilis-mesh/src/protocol/message/body.rs	pub struct BodyError(String);
+crates/agent-habilis-mesh/src/protocol/message/body.rs	pub struct MessageBody(String);
+crates/agent-habilis-mesh/src/protocol/message/id.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/message/id.rs	pub fn new(value: impl Into<String>) -> Result<Self, IdError>
+crates/agent-habilis-mesh/src/protocol/message/id.rs	pub struct IdError(String);
+crates/agent-habilis-mesh/src/protocol/message/id.rs	pub struct MessageId(String);
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub enum Channel
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub enum MessageKind
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub enum PresenceSubtype
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn app_broadcast(tag: &str) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn app_tag(&self) -> Option<&AppTag>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn app_to(tag: &str, to: Nickname, corr: Option<CorrId>) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn build_msg_bytes(
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn content_hash_hex(&self) -> String
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn fixture(kind: MessageKind, body: &str) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn genesis() -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn is_app(&self, tag: &str) -> bool
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn label(self) -> &'static str
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new(raw: impl Into<String>) -> Result<Self, &'static str>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new(raw: impl Into<String>) -> Result<Self, &'static str>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_app(mesh: &MeshId, author: &Nickname, params: AppFrameParams) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_channel_event(
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_frame(
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_joined(mesh: &MeshId, author: &Nickname) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_left(mesh: &MeshId, author: &Nickname) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_peer_info(mesh: &MeshId, author: &Nickname, addr_data: MessageBody) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_ping(mesh: &MeshId, author: &Nickname) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn new_state(mesh: &MeshId, author: &Nickname, body: MessageBody) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn parse(data: &[u8]) -> Result<Self>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn serialize(&self) -> Result<Vec<u8>>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn signed(mut self, identity: &Identity) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn sole_addressee(kind: &MessageKind) -> Option<&Nickname>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn wire_len(&self) -> usize
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn with_chain(mut self, seq: u64, prev: Option<String>) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn with_id(mut self, id: MessageId) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn with_parents(mut self, parents: Vec<String>) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub fn with_shard(mut self, shard: Option<Shard>) -> Self
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub struct AppFrameParams
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub struct AppTag(String);
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub struct BuildMsgParams<'a>
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub struct ChainCtx
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub struct CorrId(String);
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub struct Message
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub use body::{BodyError, MessageBody};
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub use id::{IdError, MessageId};
+crates/agent-habilis-mesh/src/protocol/message/mod.rs	pub use shard::{Shard, ShardGroup};
+crates/agent-habilis-mesh/src/protocol/message/shard.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/message/shard.rs	pub fn from_uuid_str(raw: &str) -> Option<Self>
+crates/agent-habilis-mesh/src/protocol/message/shard.rs	pub struct Shard
+crates/agent-habilis-mesh/src/protocol/message/shard.rs	pub struct ShardGroup(String);
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use crate::invite::InviteTicket;
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use crate::resolver::{JoinTarget, JoinTargetError};
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use crypto::{Password, TicketAuth, ct_eq};
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use identity::{Identity, encode_pubkey};
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use mesh::
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use message::
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use message::{BuildMsgParams, ChainCtx, build_msg_bytes};
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use nickname::{Nickname, NicknameError};
+crates/agent-habilis-mesh/src/protocol/mod.rs	pub use seal::seal_to_body;
+crates/agent-habilis-mesh/src/protocol/nickname.rs	pub enum NicknameError
+crates/agent-habilis-mesh/src/protocol/nickname.rs	pub fn as_str(&self) -> &str
+crates/agent-habilis-mesh/src/protocol/nickname.rs	pub fn new(value: impl Into<String>) -> Result<Self, NicknameError>
+crates/agent-habilis-mesh/src/protocol/nickname.rs	pub fn random() -> Self
+crates/agent-habilis-mesh/src/protocol/nickname.rs	pub struct Nickname(String);
+crates/agent-habilis-mesh/src/protocol/peer_addr.rs	pub fn endpoint_addr_from_json(json: &serde_json::Value) -> Result<(EndpointId, EndpointAddr)>
+crates/agent-habilis-mesh/src/protocol/peer_addr.rs	pub fn endpoint_addr_to_json(addr: &EndpointAddr) -> serde_json::Value
+crates/agent-habilis-mesh/src/protocol/seal.rs	pub fn seal_to_body(recipient_pub: &[u8; 32], plaintext: &str) -> Result<MessageBody>
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub fn frames(&self, group: &ShardGroup, idxs: &[u32]) -> Vec<bytes::Bytes>
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub fn insert(&mut self, group: ShardGroup, frames: Vec<bytes::Bytes>)
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub fn repair_tickets(&mut self, now: Instant) -> Vec<RepairTicket>
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub fn stats(&self) -> (usize, usize, usize)
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub struct ReassemblyStore
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub struct RepairTicket
+crates/agent-habilis-mesh/src/reassembly/mod.rs	pub struct ShardCache
+crates/agent-habilis-mesh/src/resolver/mod.rs	pub enum JoinTarget
+crates/agent-habilis-mesh/src/resolver/mod.rs	pub enum JoinTargetError
+crates/agent-habilis-mesh/src/runtime.rs	pub mod ipc
+crates/agent-habilis-mesh/src/runtime.rs	pub mod state_file
+crates/agent-habilis-mesh/src/runtime.rs	pub mod tuning
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::daemon::config::
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::daemon::event_loop::run;
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::daemon::node::Node;
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::daemon::params::
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::daemon::setup::{SetupKind, SetupParams, setup_mesh};
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::daemon::state_file::
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::transport::ipc::
+crates/agent-habilis-mesh/src/runtime.rs	pub use crate::util::tuning::
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub async fn send<C>(base: &std::path::Path, cmd: &C, nickname: &Nickname) -> Result<String>
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub async fn send_to_path<C: Serialize>(path: &std::path::Path, cmd: &C) -> Result<String>
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub fn active_socket_paths(base: &std::path::Path) -> Vec<std::path::PathBuf>
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub fn json_ack() -> String
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub fn json_error(error: &str) -> String
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub fn json_ok_msg(id: &MessageId, msg: &crate::protocol::Message) -> String
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub struct NoDaemon
+crates/agent-habilis-mesh/src/transport/ipc.rs	pub trait Addressed
+crates/agent-habilis-mesh/src/transport/mod.rs	pub use send::Lane;
+crates/agent-habilis-mesh/src/transport/mod.rs	pub use send::deliver;
+crates/agent-habilis-mesh/src/transport/mod.rs	pub use sender::MeshSender;
+crates/agent-habilis-mesh/src/transport/send.rs	pub async fn deliver(
+crates/agent-habilis-mesh/src/transport/send.rs	pub enum Lane
+crates/agent-habilis-mesh/src/transport/sender.rs	pub async fn broadcast(&self, message: Bytes) -> Result<(), ApiError>
+crates/agent-habilis-mesh/src/transport/sender.rs	pub struct MeshSender
+crates/agent-habilis-mesh/src/util/bounded_queue.rs	pub fn push(&mut self, item: T) -> bool
+crates/agent-habilis-mesh/src/util/bounded_queue.rs	pub fn remaining(&self) -> usize
+crates/agent-habilis-mesh/src/util/bounded_queue.rs	pub struct BoundedQueue<T>
+crates/agent-habilis-mesh/src/util/clock.rs	pub fn unix_secs() -> i64
+crates/agent-habilis-mesh/src/util/consts.rs	pub const ADVERTISE_INTERVAL_SECS: u64 = 20;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const ALIVE_TIMEOUT_SECS: u64 = 90;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const ANTIENTROPY_MAX_RESEND: usize = 64;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const BEACON_COHOST_GRACE_SECS: u64 = 10;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const DIRECTORY_EXPIRY_SECS: u64 = 60;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 64;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const HEAL_INTERVAL_SECS: u64 = 15;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const INVITE_DEFAULT_TTL_SECS: u64 = 24 * 60 * 60;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const LOGGED_SHARD_GROUP_MAX_TOTAL: u32 = 16;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_LOGICAL_BODY_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_MESSAGE_SIZE: usize = 3840;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_SEALED_BODY_BYTES: usize = MAX_LOGICAL_BODY_BYTES + MAX_LOGICAL_BODY_BYTES / 2;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_SHARD_TOTAL: u32 = 65_536;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const MESH_GLYPH: &str = "💬";
+crates/agent-habilis-mesh/src/util/consts.rs	pub const MESH_URI_SEPARATOR: &str = "://";
+crates/agent-habilis-mesh/src/util/consts.rs	pub const PING_WINDOW_SECS: u64 = 10;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const PPID_WATCH_INTERVAL_MS: u64 = 1500;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const REASSEMBLY_AUTHOR_BUDGET_BYTES: usize = 3 * MAX_LOGICAL_BODY_BYTES;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const REASSEMBLY_GROUP_MAX_BYTES: usize = 2 * MAX_LOGICAL_BODY_BYTES;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const REASSEMBLY_REPAIR_MAX_IDXS: usize = 64;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const REASSEMBLY_TOTAL_BUDGET_BYTES: usize = 6 * MAX_LOGICAL_BODY_BYTES;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const RIVAL_RECHECK_FIRST_SECS: u64 = 12;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const RIVAL_RECHECK_MESHED_SECS: u64 = 300;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const RIVAL_RECHECK_OFFSET_SPAN_SECS: u64 = 8;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const RIVAL_RECHECK_SECS: u64 = 30;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const STARVATION_THRESHOLD_SECS: u64 = 2 * ALIVE_TIMEOUT_SECS;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const SWEEP_INTERVAL_SECS: u64 = 10;
+crates/agent-habilis-mesh/src/util/consts.rs	pub const TICKET_GLYPH: &str = "🎟\u{FE0F}";
+crates/agent-habilis-mesh/src/util/logs.rs	pub fn configure(config: LogConfig)
+crates/agent-habilis-mesh/src/util/logs.rs	pub fn log_dir() -> PathBuf
+crates/agent-habilis-mesh/src/util/logs.rs	pub struct LogConfig
+crates/agent-habilis-mesh/src/util/mod.rs	pub fn ensure_mesh_runtime_dir(
+crates/agent-habilis-mesh/src/util/mod.rs	pub fn ensure_runtime_base(base: &std::path::Path) -> std::io::Result<()>
+crates/agent-habilis-mesh/src/util/mod.rs	pub fn mesh_prefix(mesh_id: &str) -> String
+crates/agent-habilis-mesh/src/util/mod.rs	pub fn runtime_base(product: &str) -> std::path::PathBuf
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod clock;
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod consts;
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod logging
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod logs;
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod process;
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod tuning;
+crates/agent-habilis-mesh/src/util/mod.rs	pub mod version;
+crates/agent-habilis-mesh/src/util/mod.rs	pub use crate::logging::messages::log_out;
+crates/agent-habilis-mesh/src/util/mod.rs	pub use crate::logging::{LogSink, attach, flush_pending_to_stderr, install, log_filter};
+crates/agent-habilis-mesh/src/util/process.rs	pub fn ancestry_contains(pid: u32, ancestor: u32) -> bool
+crates/agent-habilis-mesh/src/util/process.rs	pub fn comm_of(pid: u32) -> Option<String>
+crates/agent-habilis-mesh/src/util/process.rs	pub fn comm_of(pid: u32) -> Option<String>
+crates/agent-habilis-mesh/src/util/process.rs	pub fn is_alive(pid: u32) -> bool
+crates/agent-habilis-mesh/src/util/process.rs	pub fn parent_of(pid: u32) -> Option<u32>
+crates/agent-habilis-mesh/src/util/process.rs	pub fn parent_of(pid: u32) -> Option<u32>
+crates/agent-habilis-mesh/src/util/process.rs	pub fn terminate(pid: u32) -> std::io::Result<()>
+crates/agent-habilis-mesh/src/util/tuning.rs	pub const DEFAULTS: Self = Self
+crates/agent-habilis-mesh/src/util/tuning.rs	pub const NODE_INBOUND_CAP: usize = 1024;
+crates/agent-habilis-mesh/src/util/tuning.rs	pub const POLL_LONG_MIN_CYCLE_MS: u64 = 1_000;
+crates/agent-habilis-mesh/src/util/tuning.rs	pub const READY_FRESH_SECS: u64 = 2 * STATE_REFRESH_SECS;
+crates/agent-habilis-mesh/src/util/tuning.rs	pub const READY_MAX_SECS: u64 = 30;
+crates/agent-habilis-mesh/src/util/tuning.rs	pub const READY_POLL_INTERVAL_MS: u64 = 100;
+crates/agent-habilis-mesh/src/util/tuning.rs	pub fn advertise_interval_secs() -> u64
+crates/agent-habilis-mesh/src/util/tuning.rs	pub fn directory_expiry_secs() -> u64
+crates/agent-habilis-mesh/src/util/tuning.rs	pub fn directory_private_for_test() -> bool
+crates/agent-habilis-mesh/src/util/tuning.rs	pub fn init(tuning: Tuning)
+crates/agent-habilis-mesh/src/util/tuning.rs	pub fn ping_window_secs() -> u64
+crates/agent-habilis-mesh/src/util/tuning.rs	pub struct Tuning
+crates/agent-habilis-mesh/src/util/version.rs	pub const GIT_STAMP: &str = concat!(
+crates/agent-habilis-mesh/src/util/version.rs	pub const VERSION: &str = concat!(
+crates/agent-habilis-mesh/src/util/version.rs	pub fn set_build_version(version: &'static str)

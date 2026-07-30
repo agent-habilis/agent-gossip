@@ -5,7 +5,7 @@
 
 // The runtime base for per-mesh files is per-user and computed at runtime —
 // see [`crate::util::runtime_base`] / [`crate::util::ensure_runtime_base`].
-// It used to be a hardcoded shared `/tmp/agent-gossip` const; that let other
+// It used to be a hardcoded shared product-named const; that let other
 // local users traverse it and read per-member logs, so it moved to a
 // uid-scoped, `0700` directory.
 
@@ -20,12 +20,6 @@
 /// of `--help` — `mesh-pipe` advertised the previous glyph long after this line
 /// moved. Change this, then sweep the literals.
 pub const MESH_GLYPH: &str = "💬";
-
-/// The peer sigil — brands a peer's address in its published card interface
-/// url (`🤖://<pubkey>`). A robot for the AI agent behind the pubkey; distinct
-/// from the mesh `💬` and the ticket `🎟️` so the three token families never
-/// collide. Emoji-presentation by default, so no variation selector.
-pub const PEER_GLYPH: &str = "🤖";
 
 /// The ticket sigil — brands a bearer capability (`🎟️://<base58check>`),
 /// shared by the blob, invite, and application-bridge tickets and told apart by a kind
@@ -175,47 +169,10 @@ pub(crate) const MAX_BLOB_STORE_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
 /// log (anti-entropy recovery source + poll/fetch history). A fixed value
 /// (see `tuning::message_log_size`); edit + commit here to change it. A
 /// bigger log lets a reconnecting peer recover a
-/// longer gap. Not coupled to the IPC response cap — that is the separate,
-/// fixed [`POLL_RESPONSE_MAX_MSGS`] (the log can exceed it; `poll` then
-/// surfaces the most-recent window and anti-entropy carries the rest).
+/// longer gap. Not coupled to the consumer's own IPC response cap, which is a
+/// separate fixed window (the log can exceed it; a read then surfaces the
+/// most-recent window and anti-entropy carries the rest).
 pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
-
-/// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
-/// IPC contract (the `agent-gossip poll` client can't know the daemon's configured
-/// log size, so the read cap can't depend on it). At the default log size
-/// this equals the log, so `poll` returns everything; a larger configured
-/// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
-pub const POLL_RESPONSE_MAX_MSGS: usize = 1000;
-
-/// Capacity of the daemon-local **surfaced-events** ring — the seq-ordered
-/// history `poll` / `fetch_messages` drain. Distinct from the message log:
-/// that is the cross-node anti-entropy buffer (evicted by a deterministic
-/// `eviction_key`); this is a *local* record of what was surfaced to the
-/// operator/agent (msg + presence + task legs **and** the transient
-/// events — `ping_report`, `peer_timeout`/`return`, `task_timeout`,
-/// `fork` — that never entered the message log). Oldest-drop on overflow.
-///
-/// Sized **equal to** the poll response window so the ring never holds more
-/// than a single `poll` returns: ring eviction and the response cap coincide,
-/// so the response cap is a no-op in the steady state and no surfaced event is
-/// ever dropped *after* `since()` selected it but *before* the client could
-/// read it (a larger ring would silently lose the oldest events on a full
-/// first poll, with the client's cursor advancing past them).
-pub const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
-
-/// Byte budget of the surfaced-events ring, alongside its count cap: with
-/// multipart bodies up to [`MAX_LOGICAL_BODY_BYTES`], a run of large messages
-/// would otherwise hold `SURFACED_EVENTS_CAP × body` in memory. 3× the body
-/// ceiling holds at least **two** max-size bodies plus a tail — two ordinary
-/// back-to-back sends must never evict the first before a normally-paced
-/// poll client reads it; older events oldest-drop exactly like the count cap.
-pub const SURFACED_RING_BUDGET_BYTES: usize = 3 * MAX_LOGICAL_BODY_BYTES;
-
-/// Max concurrent parked long-poll waiters per daemon. A blocking `poll` /
-/// `fetch_messages` registers a waiter when the buffer is empty; over this cap
-/// the read degrades to an immediate (empty) return rather than parking, so the
-/// registry can never grow without bound (the bounded-everything discipline).
-pub const POLL_WAITERS_CAP: usize = 64;
 
 /// Capacity of the unicast inbound channel — frames the `UNICAST_ALPN` acceptor
 /// forwards to the event loop for `gossip::ingest`. Bounded so a peer flooding a
@@ -276,32 +233,6 @@ pub const ALIVE_TIMEOUT_SECS: u64 = 90;
 /// Flag: `--sweep-interval-secs`.
 pub const SWEEP_INTERVAL_SECS: u64 = 10;
 
-/// Idle-debounce timeout for a task: a task with no leg (content
-/// or keepalive) for this long is evicted (`task_timeout` + a `Cancel`
-/// broadcast). 2 minutes — the timeout doubles as the pickup deadline (a
-/// SUBMITTED task whose worker never drives a leg gets no keepalive cover,
-/// so it is reaped this long after dispatch) and stays comfortably above
-/// the keepalive cadence so a genuinely-active task is never falsely
-/// evicted. Flag: `--task-timeout-secs` (tests shorten it to seconds).
-pub const TASK_TIMEOUT_SECS: u64 = 120;
-
-/// How often the current ball-owner's daemon emits a `Progress` keepalive
-/// for a live task. 30 seconds, ≈4× under the debounce, so ~3 missed beats
-/// of slack absorb gossip drops. Flag: `--task-keepalive-secs`.
-pub const TASK_KEEPALIVE_SECS: u64 = 30;
-
-/// The longest the ball-owner's daemon keeps auto-covering a **silent** task
-/// since its last real leg. The keepalive must not read the same clock the
-/// idle-timeout reads, or it feeds the timeout it is subject to and a crashed
-/// skill holds the peer forever. So the daemon auto-covers a quiet ball-owner
-/// for at most this long; past it, the *skill* must send its own `progress`
-/// beat to prove liveness (which refreshes the window), else the keepalive
-/// stops and the peer's debounce reaps the task. 2 minutes — the skills'
-/// beat contract is one beat per minute of work, so a live worker refreshes
-/// the window with margin while a dead one is detected within this window
-/// plus one debounce (≈2–4 minutes). Flag: `--task-keepalive-max-secs`.
-pub const TASK_KEEPALIVE_MAX_SECS: u64 = 120;
-
 /// Grace before an unmeshed joiner co-hosts the rendezvous anyway (empty
 /// mesh ⇒ become the beacon for the next joiner). Flag:
 /// `--beacon-cohost-grace-secs`.
@@ -337,7 +268,7 @@ pub const RIVAL_RECHECK_MESHED_SECS: u64 = 300;
 /// and yields — a tie-break, not a delay knob, so no flag.
 pub const RIVAL_RECHECK_OFFSET_SPAN_SECS: u64 = 8;
 
-/// How long an `agent-gossip ping` round collects pongs before the daemon emits its
+/// How long a ping round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub const PING_WINDOW_SECS: u64 = 10;
 
@@ -383,15 +314,6 @@ pub const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 /// far-behind peer can't trigger an unbounded backfill burst. Flag:
 /// `--antientropy-max-resend`.
 pub const ANTIENTROPY_MAX_RESEND: usize = 64;
-
-/// How long the daemon parks a `long: true` `poll` / `fetch_messages` read
-/// before returning an empty batch — the single long-poll park length. Kept
-/// under typical MCP-host per-request timeouts so a held call returns before
-/// the host gives up; the daemon itself never blocks (the waiter parks in a
-/// registry). Infinite waiting is a *client* concern: `agent-gossip poll --long`
-/// re-issues the read on each empty return. Flag: `--longpoll-max-ms`
-/// (tests shorten it to force the timeout path).
-pub const LONGPOLL_MAX_MS: u64 = 60_000;
 
 /// How often the CLI daemon checks whether its spawning agent is still alive
 /// by re-reading its parent pid. When the parent dies (hard-kill / reinstall),

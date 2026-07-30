@@ -6,17 +6,19 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::util::consts::LOG_FILE_MAX_BYTES;
-use crate::util::{mesh_prefix, runtime_base};
+use crate::util::mesh_prefix;
 
 /// Log config, installed **once** at startup from the `--log-dir` /
-/// `--log-max-bytes` / `--log-raw` flags. The `cli` layer parses the flags and
+/// `--log-max-bytes` / `--log-raw` flags. The consumer parses the flags and
 /// calls [`configure`]; if it never does (a path that doesn't log to files)
-/// the defaults apply. Replaces the former `AHS_LOG_DIR` /
-/// `AHS_LOG_MAX_BYTES` env reads.
+/// the defaults apply.
 #[derive(Clone, Debug, Default)]
 pub struct LogConfig {
-    /// `--log-dir` override; `None` ⇒ the per-mesh folder under
-    /// [`runtime_base`].
+    /// The consumer's runtime base (see
+    /// [`runtime_base`](crate::util::runtime_base)) — the default log root when
+    /// `dir` is unset. `None` only on a path that never opens a log file.
+    pub base: Option<PathBuf>,
+    /// `--log-dir` override; `None` ⇒ the per-mesh folder under `base`.
     pub dir: Option<PathBuf>,
     /// `--log-max-bytes` override; `None` ⇒ [`LOG_FILE_MAX_BYTES`].
     pub max_bytes: Option<u64>,
@@ -37,18 +39,30 @@ fn config() -> LogConfig {
     LOG_CONFIG.get().cloned().unwrap_or_default()
 }
 
-/// Log base dir. The `--log-dir` flag overrides; default is [`runtime_base`]
-/// (the per-user, `0700` base sockets + state files also use). The per-mesh
-/// subfolder is added by [`log_file_path`].
+/// Log base dir. The `--log-dir` flag overrides; default is the configured
+/// runtime base (the per-user, `0700` base sockets + state files also use). The
+/// per-mesh subfolder is added by [`log_file_path`].
+///
+/// Falls back to the temp dir only when a consumer configured neither — a path
+/// that never opens a log file, so the value is unobservable.
 #[must_use]
 pub fn log_dir() -> PathBuf {
-    resolve_log_dir(config().dir)
+    let config = config();
+    resolve_log_dir(config.dir, config.base)
+}
+
+/// The consumer's runtime base, for the fail-closed parent check the log sink
+/// runs before it opens a file (see
+/// [`ensure_parent_private`](crate::util::ensure_parent_private)). `None` when
+/// no consumer configured one.
+pub(crate) fn configured_base() -> Option<PathBuf> {
+    config().base
 }
 
 /// Resolver split out of [`log_dir`] so the policy is testable: the override
-/// wins verbatim, else the [`runtime_base`] default.
-fn resolve_log_dir(override_dir: Option<PathBuf>) -> PathBuf {
-    override_dir.unwrap_or_else(runtime_base)
+/// wins verbatim, else the consumer's runtime base.
+fn resolve_log_dir(override_dir: Option<PathBuf>, base: Option<PathBuf>) -> PathBuf {
+    override_dir.or(base).unwrap_or_else(std::env::temp_dir)
 }
 
 /// Per-member log file — `<mesh_prefix>/<nick>.tracing.log`, inside the
@@ -86,14 +100,17 @@ mod tests {
     use super::resolve_log_dir;
 
     #[test]
-    fn default_is_runtime_base() {
-        let dir = resolve_log_dir(None);
-        assert_eq!(dir, crate::util::runtime_base());
+    fn default_is_the_configured_runtime_base() {
+        let base = crate::util::runtime_base("demo");
+        assert_eq!(resolve_log_dir(None, Some(base.clone())), base);
     }
 
     #[test]
     fn override_wins_verbatim() {
-        let dir = resolve_log_dir(Some(PathBuf::from("/custom/x")));
+        let dir = resolve_log_dir(
+            Some(PathBuf::from("/custom/x")),
+            Some(PathBuf::from("/base")),
+        );
         assert_eq!(dir, PathBuf::from("/custom/x"));
     }
 }

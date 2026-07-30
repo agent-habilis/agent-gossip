@@ -24,7 +24,7 @@
 //! held in `pending` and drained — through the same gate — once their deps land,
 //! so the gate is never bypassed by dependency buffering.
 
-pub mod wire;
+pub(crate) mod wire;
 
 use std::collections::{HashMap, HashSet};
 
@@ -110,7 +110,7 @@ impl MeshDoc {
     /// A channel with no per-peer gate: free-form, every author may write
     /// anywhere. This is the `state` channel.
     #[must_use]
-    pub fn new_ungated() -> Self {
+    pub(crate) fn new_ungated() -> Self {
         Self::from_parts(Automerge::new(), HashSet::new(), None)
     }
 
@@ -205,10 +205,10 @@ impl MeshDoc {
     fn change_bytes(&self, frame: &Message) -> Option<Vec<u8>> {
         match self.key.as_deref() {
             // Passwordless: parse directly — no decrypt indirection, no clone.
-            None => crate::daemon::state_doc::parse_change_body(frame.body.as_str()),
+            None => wire::parse_change_body(frame.body.as_str()),
             Some(key) => {
-                let plain = crate::daemon::state_doc::decrypt_body(frame.body.as_str(), Some(key))?;
-                crate::daemon::state_doc::parse_change_body(&plain)
+                let plain = wire::decrypt_body(frame.body.as_str(), Some(key))?;
+                wire::parse_change_body(&plain)
             }
         }
     }
@@ -225,9 +225,9 @@ impl MeshDoc {
         change: &[u8],
         merge: Option<&Value>,
     ) -> anyhow::Result<(crate::protocol::MessageBody, crate::protocol::MessageBody)> {
-        let plain = crate::daemon::state_doc::change_body(change, merge)?;
+        let plain = wire::change_body(change, merge)?;
         let wire = match self.key.as_deref() {
-            Some(key) => crate::daemon::state_doc::encrypt_body(&plain, key)?,
+            Some(key) => wire::encrypt_body(&plain, key)?,
             None => plain.clone(),
         };
         Ok((wire, plain))
@@ -237,7 +237,7 @@ impl MeshDoc {
     /// body so the `m` delta renders. `None` when it can't be opened; the caller
     /// then surfaces the original (opaque) frame.
     pub(crate) fn surface_body(&self, frame: &Message) -> Option<String> {
-        crate::daemon::state_doc::decrypt_body(frame.body.as_str(), self.key.as_deref())
+        wire::decrypt_body(frame.body.as_str(), self.key.as_deref())
     }
 
     /// This channel's automerge heads, Base58-encoded — the compact frontier a
@@ -263,7 +263,7 @@ impl MeshDoc {
             .collect()
     }
 
-    /// The derived document as JSON — the shape `agent-gossip state|meta get` returns.
+    /// The derived document as JSON — the shape a consumer's `state`/`meta` read returns.
     #[must_use]
     pub fn to_json(&self) -> Value {
         doc_json(&self.doc)
@@ -600,8 +600,8 @@ fn put_number(
 
 #[cfg(test)]
 mod tests {
+    use super::wire::change_body;
     use super::{Ingested, MeshDoc, SelfWriteGate};
-    use crate::daemon::state_doc::change_body;
     use crate::protocol::{Channel, MeshId, Message, Nickname};
     use serde_json::{Value, json};
 

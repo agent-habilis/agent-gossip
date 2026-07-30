@@ -17,7 +17,7 @@ use iroh_gossip::api::{GossipReceiver, GossipSender};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::daemon::state_file::StateFile;
-use crate::gossip::event::{NodeEvent, NodeSink, PingRtt};
+use crate::gossip::event::{NodeEvent, NodeSink};
 use crate::protocol::mesh::MeshName;
 use crate::protocol::{MeshId, Message, Nickname};
 use crate::transport::MeshSender;
@@ -74,12 +74,12 @@ pub async fn run<A: NodeDriver>(
         rendezvous_params,
         rung_rx,
         cohost,
+        runtime_base,
         state_file,
         multihop,
         unicast_rx,
         live_count,
         driver,
-        ready,
         per_peer_gate,
     } = cfg;
 
@@ -104,13 +104,16 @@ pub async fn run<A: NodeDriver>(
     // (`!exit_on_quit`) keep writing nothing.
     let state_file = state_file
         .or_else(|| {
+            let base = runtime_base.as_deref()?;
             exit_on_quit.then(|| {
-                crate::util::mesh_runtime_dir(mesh_str.as_str())
+                crate::util::mesh_runtime_dir(base, mesh_str.as_str())
                     .join(format!("{author}.state.json"))
             })
         })
         .map(|path| {
-            StateFile::new(path, &mesh_str, &author, &mesh_name).with_topic(topic_string.as_deref())
+            StateFile::new(path, &mesh_str, &author, &mesh_name)
+                .with_base(runtime_base.clone())
+                .with_topic(topic_string.as_deref())
         });
     // The departure line's label: a topic gossip shows `topic` plus the raw
     // string it was derived from (the name is lossy, and the wording mirrors
@@ -170,7 +173,15 @@ pub async fn run<A: NodeDriver>(
 
     let sender = MeshSender::new(gossip_sender);
 
-    let ipc_rx = spawn_ipc_rx::<A::Ipc>(ipc_listener_disabled, &mesh_str, &author, &sink);
+    let ipc_rx = spawn_ipc_rx::<A::Ipc>(
+        &IpcBinding {
+            disabled: ipc_listener_disabled,
+            runtime_base: runtime_base.as_deref(),
+            mesh: &mesh_str,
+            author: &author,
+        },
+        &sink,
+    );
 
     // Arrival announce is deferred to the first `NeighborUp` — see
     // `gossip::handle_gossip_event`.
@@ -205,7 +216,7 @@ pub async fn run<A: NodeDriver>(
     // The event is emitted *here*, beside the flag, rather than in `setup`:
     // there it announced a socket that had not been bound, so a client acting
     // on `ready` could race the listener. The two readiness signals — the
-    // stdout event and the state-file flag `agent-gossip ready` polls — now
+    // stdout event and the state-file flag a readiness gate polls — now
     // have one source and cannot disagree.
     if ipc_listener_disabled || ipc_rx.is_some() {
         state.ready = true;
@@ -214,8 +225,6 @@ pub async fn run<A: NodeDriver>(
             mesh: mesh_str.clone(),
             name: mesh_name.clone(),
             nickname: author.clone(),
-            drift: ready.drift,
-            http_port: ready.http_port,
         });
     }
 
@@ -799,29 +808,49 @@ fn parent_lost(original_ppid: i32, current_ppid: i32) -> bool {
     original_ppid != current_ppid
 }
 
+/// Where [`spawn_ipc_rx`] would bind the control socket, and whether to at all.
+/// Grouped rather than passed loose: the three are only ever used together, to
+/// build one path.
+#[derive(Clone, Copy)]
+struct IpcBinding<'a> {
+    /// In-process drivers (library API / MCP) use the typed `session_rx` and
+    /// bind no socket.
+    disabled: bool,
+    runtime_base: Option<&'a std::path::Path>,
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+}
+
 /// Resolve the IPC receiver: reuse a pre-wired channel (MCP / library API) or,
 /// for the CLI, spawn the unix-socket listener and own the channel.
 /// Returning `Option` keeps the loop's `select!` arm uniform.
 fn spawn_ipc_rx<C: serde::de::DeserializeOwned + Send + 'static>(
-    disable_ipc_listener: bool,
-    mesh: &MeshId,
-    author: &Nickname,
+    binding: &IpcBinding<'_>,
     sink: &std::sync::Arc<dyn NodeSink>,
 ) -> Option<mpsc::Receiver<IpcMessage<C>>> {
+    let &IpcBinding {
+        disabled,
+        runtime_base,
+        mesh,
+        author,
+    } = binding;
     // In-process mode (in-process: library API or MCP): no socket. Returning `None` leaves
     // the loop's IPC `select!` arm inert (it pends forever), so the
     // unix-socket listener is never bound — those drivers use the typed
     // `session_rx` instead.
-    if disable_ipc_listener {
+    if disabled {
         return None;
     }
+    // No base, no socket: an embedder that configured no runtime root has
+    // nowhere to put one. Same inert `select!` arm as the in-process drivers.
+    let base = runtime_base?;
     // Bind synchronously here, *before* the caller marks the session ready,
     // so an accepting socket always exists by the time the readiness flag
     // flips. Only the (always-running) accept loop is spawned. A bind
     // failure is non-fatal — the daemon still gossips; it just can't take
     // IPC — matching the prior best-effort behavior, only now observed
     // before readiness rather than racing it.
-    let listener = match crate::transport::ipc::bind(mesh, author) {
+    let listener = match crate::transport::ipc::bind(base, mesh, author) {
         Ok(listener) => listener,
         Err(error) => {
             sink.emit(NodeEvent::Error(format!("IPC: {error}")));
@@ -859,15 +888,16 @@ fn finalize_ping_round(state: &mut EventLoopState, sink: &dyn NodeSink) {
     // multihop transport currently advertises a flat link cost, so the ping round
     // only produces the user-facing report below. Re-wiring telemetry into the
     // multihop metric is a future enhancement.)
-    let mut peers: Vec<PingRtt> = round
+    let mut peers: Vec<(Nickname, u64)> = round
         .pongs
         .iter()
-        .map(|(nickname, arrival)| PingRtt {
-            nickname: nickname.clone(),
-            rtt_ms: u64::try_from(arrival.duration_since(round.t1).as_millis()).unwrap_or(u64::MAX),
+        .map(|(nickname, arrival)| {
+            let rtt_ms =
+                u64::try_from(arrival.duration_since(round.t1).as_millis()).unwrap_or(u64::MAX);
+            (nickname.clone(), rtt_ms)
         })
         .collect();
-    peers.sort_by(|left, right| left.nickname.as_str().cmp(right.nickname.as_str()));
+    peers.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
     // The in-process `ping` request waits on this channel (no event stream to
     // read the report from); the CLI/IPC path leaves it unset and consumes the
     // `ping_report` event below instead.

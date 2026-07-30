@@ -70,7 +70,7 @@ pub(crate) fn topic_seed(topic: &str) -> [u8; 32] {
 /// # Panics
 /// If `label` exceeds 255 bytes; labels are short internal constants.
 #[must_use]
-pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
+pub(crate) fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(DOMAIN);
     hasher.update([
@@ -96,7 +96,7 @@ pub(crate) fn rendezvous_secret(seed: &[u8; 32]) -> SecretKey {
 /// The well-known rendezvous `EndpointId` (public key of
 /// [`rendezvous_secret`]). Bootstrap target for every joiner.
 #[must_use]
-pub fn rendezvous_id(seed: &[u8; 32]) -> EndpointId {
+pub(crate) fn rendezvous_id(seed: &[u8; 32]) -> EndpointId {
     rendezvous_secret(seed).public()
 }
 
@@ -106,7 +106,7 @@ pub fn rendezvous_id(seed: &[u8; 32]) -> EndpointId {
 /// foreign-squatted rung instead of hanging. Claim/probe semantics:
 /// see `crate::beacon` module docs. A full collision needs all
 /// `RENDEZVOUS_LADDER` rungs simultaneously foreign-held — negligible.
-pub const RENDEZVOUS_LADDER: usize = 8;
+pub(crate) const RENDEZVOUS_LADDER: usize = 8;
 
 /// The deterministic loopback port ladder for a private mesh, in
 /// preference order. Mapped into the unprivileged range
@@ -117,7 +117,7 @@ pub const RENDEZVOUS_LADDER: usize = 8;
 /// # Panics
 /// Never in practice: the derived port stays within `u16` by construction.
 #[must_use]
-pub fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
+pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
     const LOW: u32 = 1024;
     const SPAN: u32 = 65535 - LOW + 1; // 64512
     let digest = derive_secret(seed, b"port");
@@ -309,7 +309,7 @@ pub fn ct_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
 /// # Panics
 /// If `config_bytes` exceeds 65535 bytes; a mesh config encodes well within that.
 #[must_use]
-pub fn derive_topic_id(seed: &[u8; 32], name: &MeshName, config_bytes: &[u8]) -> TopicId {
+pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &MeshName, config_bytes: &[u8]) -> TopicId {
     let mut hasher = Sha256::new();
     hasher.update(derive_secret(seed, b"topic"));
     hasher.update([name.len_u8()]);

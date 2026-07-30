@@ -23,13 +23,11 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 
 use crate::a2a::app::A2aApp;
+use crate::a2a::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
 use crate::output;
-use agent_habilis_mesh::daemon::ctx::HandlerCtx;
-use agent_habilis_mesh::daemon::state::EventLoopState;
+use agent_habilis_mesh::embed::EventLoopState;
+use agent_habilis_mesh::embed::HandlerCtx;
 use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname};
-use agent_habilis_mesh::util::tuning::{
-    task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs,
-};
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
 
@@ -406,7 +404,7 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
 /// metadata) so the peer converges; the GC pass keeps `state.tasks` bounded
 /// (a terminal record older than the timeout is past the dedup window — no
 /// further leg for that task will arrive, so it is safe to drop). The task
-/// analogue of [`agent_habilis_mesh::lifecycle::heartbeat::tick_sweep`].
+/// analogue of the engine's own lifecycle silence sweep.
 pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
     app: &mut A2aApp,
@@ -466,7 +464,9 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_content(&agent_habilis_mesh::blob::ContentId::new(task_id.as_str()))
+                .evict_content(&agent_habilis_mesh::ops::blob::ContentId::new(
+                    task_id.as_str(),
+                ))
                 .await;
         }
     }
@@ -501,7 +501,7 @@ pub(crate) fn fail_tasks_for_departed_peer(
 /// has driven a leg recently — so a silent owner (deciding, executing,
 /// reviewing) does not wrongly time out, while a *crashed* skill's task is
 /// no longer covered and the peer's debounce reaps it. The task analogue of
-/// [`agent_habilis_mesh::lifecycle::heartbeat::tick_alive`]. See
+/// the engine's own lifecycle keepalive tick. See
 /// [`TaskRecord::should_keepalive`].
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
@@ -602,7 +602,7 @@ async fn broadcast_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(&state.identity);
+    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(state.identity());
     if let Ok(bytes) = msg.serialize() {
         let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
     }
