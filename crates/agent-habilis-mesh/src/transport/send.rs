@@ -149,7 +149,7 @@ mod tests {
     use iroh::{EndpointId, SecretKey};
 
     use super::{Lane, Route, lane_for, route};
-    use crate::daemon::state::{EventLoopState, MeshSecrets};
+    use crate::daemon::state::{EventLoopState, MeshSecrets, StateInit};
     use crate::protocol::identity::Identity;
     use crate::protocol::message::AppFrameParams;
     use crate::protocol::{AppTag, CorrId, MeshId, Message, MessageBody, Nickname};
@@ -172,10 +172,13 @@ mod tests {
 
     fn empty_state() -> EventLoopState {
         EventLoopState::new(
-            None,
+            StateInit {
+                state_file: None,
+                identity: Arc::new(Identity::generate()),
+                secrets: MeshSecrets::default(),
+                per_peer_gate: None,
+            },
             Instant::now(),
-            Arc::new(Identity::generate()),
-            MeshSecrets::default(),
         )
     }
 
@@ -198,7 +201,7 @@ mod tests {
             &mesh(),
             &nick("alice"),
             AppFrameParams {
-                tag: AppTag::from("a2a_msg"),
+                tag: AppTag::from("app_msg"),
                 to: None,
                 corr: None,
                 body: body(),
@@ -221,7 +224,7 @@ mod tests {
             &mesh(),
             &nick("alice"),
             AppFrameParams {
-                tag: AppTag::from("a2a_req"),
+                tag: AppTag::from("app_req"),
                 to: Some(nick("bob")),
                 corr: Some(CorrId::from("00000000-0000-0000-0000-0000000000aa")),
                 body: body(),

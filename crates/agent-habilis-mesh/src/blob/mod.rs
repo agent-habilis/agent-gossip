@@ -1,15 +1,24 @@
-//! The blob channel — direct point-to-point transfer of large task
-//! artifacts/attachments, off the gossip plane. A file too big to inline in a
-//! gossip frame is offloaded here: the producer's daemon serves the content,
-//! content-addressed by SHA-256, over a dedicated QUIC endpoint, and hands the
-//! consumer a `💬` [`ticket::BlobTicket`] reference (placed in an A2A
-//! `Part.url`). The consumer dials the producer, presents the ticket's bearer
-//! secret, and streams the bytes — verified against the advertised hash.
+//! The blob channel — direct point-to-point transfer of payloads too large for a
+//! gossip frame, off the gossip plane entirely. The producer serves the content,
+//! content-addressed by SHA-256, over a dedicated QUIC endpoint and mints a `💬`
+//! [`ticket::BlobTicket`] referencing it. The consumer dials the producer,
+//! presents the ticket's bearer secret, and streams the bytes — verified against
+//! the advertised hash.
 //!
-//! Layering: this is a *transport* under the A2A layer, parallel to the gossip
-//! binding, mirroring the a2a bridge (its expose/connect endpoints) — its own
-//! ALPN, its own bearer-secret handshake, its own emoji-namespaced ticket. The
-//! bytes never touch gossip; only the small reference does.
+//! Layering: a *transport* parallel to the gossip binding — its own ALPN, its own
+//! bearer-secret handshake, its own emoji-namespaced ticket. The bytes never touch
+//! gossip; only the small reference does, and getting that reference to the
+//! consumer is the application's job (it is a short string, so a single
+//! [`crate::gossip::send_app`] frame carries it).
+//!
+//! Raw bytes, not text: unlike a frame body, nothing here is UTF-8-constrained or
+//! re-encoded, and the transfer streams in bounded chunks so memory stays flat
+//! regardless of size.
+//!
+//! Producing is path-based — [`BlobServer::register`] stream-hashes a file and
+//! snapshots it into a spool dir — so an in-memory payload has to be written to a
+//! temp file first. A streaming produce path would have to rework hashing and the
+//! `MAX_BLOB_BYTES` check, which cannot run before the length is known.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -28,8 +37,11 @@ pub use consume::fetch;
 pub use produce::BlobServer;
 pub use ticket::BlobTicket;
 
-/// An opaque content-group id the blob layer keys evictable blobs by. The a2a
-/// layer maps its `TaskId` into this; the blob layer never names the a2a type.
+/// An opaque content-group id the blob layer keys evictable blobs by.
+///
+/// Whatever the application groups content by — a task, a job, a conversation —
+/// it maps into this; the blob layer never names that type. `evict_content` then
+/// drops a whole group at once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContentId(String);
 
@@ -40,50 +52,39 @@ impl ContentId {
     }
 }
 
-/// A blob offload's reference fields, for the a2a layer to wrap into an A2A `Part`.
+/// One offload: which file, where to spool it, which content group it belongs to,
+/// and the mesh password it inherits (so a scraped ticket cannot be redeemed
+/// without it).
 #[derive(Debug)]
-pub struct BlobPart {
-    pub url: String,
-    pub filename: Option<String>,
-    pub media_type: Option<String>,
-}
-
-/// A file to offload onto an A2A part: the path plus the optional
-/// `filename`/`mediaType` to advertise (the `--file` / `--file-name` /
-/// `--file-mime` surface).
-#[derive(Debug)]
-pub struct FileRef {
+pub struct OffloadRequest {
     pub path: PathBuf,
-    pub name: Option<String>,
-    pub mime: Option<String>,
-}
-
-/// Parameters for [`url_part`]'s one-shot blob offload.
-#[derive(Debug)]
-pub struct OffloadParams {
-    pub file: FileRef,
     pub spool_dir: PathBuf,
     pub content_id: ContentId,
     pub password: Option<crate::protocol::crypto::Password>,
 }
 
-/// Offload `request.file` over the blob channel and return an A2A `Part` that
-/// references it by `url` (a `💬` ticket) — for an output `Artifact.parts` or
-/// an input `Message.parts`. Lazily binds the daemon's blob server on the
-/// first offload (into `request.spool_dir`), reusing it thereafter.
+/// Offload a file over the blob channel and return the [`BlobTicket`] that
+/// fetches it back. Lazily binds `server` on the first call (into
+/// `request.spool_dir`), reusing it thereafter — so a caller holds one
+/// `Option<BlobServer>` for its lifetime and passes it here each time.
+///
+/// The ticket is the whole result: `encode()` it into whatever reference the
+/// application uses, ship that string over gossip, and the peer calls
+/// [`fetch`]. Content-addressed dedup means offloading identical bytes twice
+/// returns the first ticket without re-paying the hash or the Argon2 stretch.
 ///
 /// # Errors
 /// Binding the blob server, hashing, or snapshotting the file fails (e.g. the
 /// file is unreadable or exceeds `MAX_BLOB_BYTES`).
 /// # Panics
 /// Panics if an internal invariant is violated.
-pub async fn url_part(
+pub async fn offload(
     server: &mut Option<BlobServer>,
     lookups: &LookupOpts,
-    request: OffloadParams,
-) -> Result<BlobPart> {
-    let OffloadParams {
-        file,
+    request: OffloadRequest,
+) -> Result<BlobTicket> {
+    let OffloadRequest {
+        path,
         spool_dir,
         content_id,
         password,
@@ -91,22 +92,17 @@ pub async fn url_part(
     if server.is_none() {
         *server = Some(BlobServer::start(lookups.clone(), spool_dir, password).await?);
     }
-    let ticket = server
+    server
         .as_ref()
         .expect("server set above")
-        .register(&file.path, content_id)
-        .await?;
-    Ok(BlobPart {
-        url: ticket.encode(),
-        filename: file.name,
-        media_type: file.mime,
-    })
+        .register(&path, content_id)
+        .await
 }
 
 /// ALPN for the blob channel — a raw bidirectional QUIC stream with its own
-/// protocol identity, distinct from `GOSSIP_ALPN` and the a2a bridge's
-/// `A2A_ALPN`, so a mismatched dial is rejected at the QUIC handshake.
-pub(crate) const BLOB_ALPN: &[u8] = b"agent-gossip/blob/1";
+/// protocol identity, distinct from `GOSSIP_ALPN` and the application's own bridge
+/// ALPN, so a mismatched dial is rejected at the QUIC handshake.
+pub(crate) const BLOB_ALPN: &[u8] = b"habilis-mesh/blob/1";
 
 /// Length of the bearer-capability secret carried in a blob ticket, and of the
 /// auth token opening the fetch stream (the raw secret, or its Argon2id stretch
@@ -181,6 +177,61 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn round_trips_an_empty_blob() {
         assert_eq!(round_trip(b"").await, b"");
+    }
+
+    /// The whole produce → reference → consume path through the **public** surface
+    /// only: [`offload`] mints a ticket, `encode`/`decode` round-trips it as the
+    /// string an application would ship over gossip, and [`fetch`] streams the
+    /// bytes back. Nothing here names an application type, which is the point —
+    /// this is the shape any consumer writes, whatever its data model.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn offload_to_fetch_needs_no_application_type() {
+        let payload: Vec<u8> = (0..40_000_u32).map(|byte| byte as u8).collect();
+        let src = temp_file(&payload);
+        let mut server: Option<BlobServer> = None;
+
+        let ticket = super::offload(
+            &mut server,
+            &LookupOpts::loopback(),
+            super::OffloadRequest {
+                path: src.clone(),
+                spool_dir: temp_spool(),
+                content_id: ContentId::new("generic-consumer-group"),
+                password: None,
+            },
+        )
+        .await
+        .expect("offload");
+
+        // Raw bytes, so no base64/UTF-8 detour: the payload cycles 0..=255,
+        // which a frame body would reject outright.
+        let wire = ticket.encode();
+        let decoded = super::BlobTicket::decode(&wire).expect("ticket round-trips as a string");
+
+        let mut out = Vec::new();
+        fetch(&decoded, &mut out, None).await.expect("fetch");
+        assert_eq!(out, payload, "bytes must survive byte-for-byte");
+
+        // Content-addressed dedup: the same bytes offload to the same ticket
+        // without re-hashing.
+        let again = super::offload(
+            &mut server,
+            &LookupOpts::loopback(),
+            super::OffloadRequest {
+                path: src.clone(),
+                spool_dir: temp_spool(),
+                content_id: ContentId::new("generic-consumer-group"),
+                password: None,
+            },
+        )
+        .await
+        .expect("second offload");
+        assert_eq!(again.sha256_hex(), ticket.sha256_hex());
+
+        fs::remove_file(&src).ok();
+        if let Some(server) = server {
+            server.shutdown().await;
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

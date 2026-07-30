@@ -303,7 +303,7 @@ pub(crate) async fn handle_ipc_command(
             file_mime,
         } => {
             tracing::debug!(%task_id, "IPC a2a artifact command received");
-            let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
+            let file = file.map(|path| crate::a2a::send::FileRef {
                 path,
                 name: file_name,
                 mime: file_mime,
@@ -759,6 +759,7 @@ mod tests {
                 let identity = agent_habilis_mesh::protocol::identity::Identity::generate();
                 let (bytes, built) = agent_habilis_mesh::protocol::message::build_msg_bytes(
                     agent_habilis_mesh::protocol::message::BuildMsgParams {
+                        tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
                         mesh: &mesh,
                         author: &author,
                         body,

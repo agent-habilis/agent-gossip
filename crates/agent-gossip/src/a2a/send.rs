@@ -62,6 +62,13 @@ fn commit_outbound_part(
 /// envelope still covers later shards, whose `seq` may have grown a digit or two.
 const PART_BUDGET_MARGIN: usize = 16;
 
+/// Upper bound on a client-supplied A2A-call `timeout_secs`. Clamped before it is
+/// added to a `tokio::time::Instant` (an unbounded value would overflow the
+/// platform `Instant` and panic the event loop). Generous — any real RPC round
+/// trip answers well inside an hour. App policy, so it lives here rather than in
+/// the engine's `util::consts`.
+pub(crate) const A2A_CALL_MAX_TIMEOUT_SECS: u64 = 3600;
+
 /// JSON-escaped byte length of one char inside a `"…"` string. `serde_json` keeps
 /// non-ASCII as UTF-8; only the quote, backslash, and `\n`/`\t`/`\r` expand.
 /// Used to split a body so each shard's *serialized* size fits the wire cap.
@@ -671,7 +678,7 @@ pub(crate) struct TaskArtifactEmitParams<'a> {
     pub(crate) author: &'a Nickname,
     pub(crate) task_id: &'a crate::a2a::TaskId,
     pub(crate) text: &'a str,
-    pub(crate) file: Option<agent_habilis_mesh::blob::FileRef>,
+    pub(crate) file: Option<FileRef>,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -815,7 +822,7 @@ pub(crate) struct BroadcastTaskArtifactParams<'a> {
     pub(crate) peer: &'a Nickname,
     pub(crate) task_id: &'a crate::a2a::TaskId,
     pub(crate) text: &'a str,
-    pub(crate) file: Option<agent_habilis_mesh::blob::FileRef>,
+    pub(crate) file: Option<FileRef>,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -885,14 +892,25 @@ struct OffloadTextParams<'a> {
     author: &'a Nickname,
     task_id: &'a crate::a2a::TaskId,
     text: &'a str,
-    file: Option<agent_habilis_mesh::blob::FileRef>,
+    file: Option<FileRef>,
+}
+
+/// A file to offload onto an A2A part: the path plus the optional
+/// `filename`/`mediaType` to advertise (the `--file` / `--file-name` /
+/// `--file-mime` surface). The engine's blob channel takes only the path — the
+/// A2A part shape is this layer's business.
+#[derive(Debug)]
+pub(crate) struct FileRef {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) name: Option<String>,
+    pub(crate) mime: Option<String>,
 }
 
 /// Resolve the parts of a `--file`-bearing leg: with no file, a single text
 /// part (today's behavior); with a file, offload it over the blob channel into a
 /// `Part.url` reference (+ the text part when non-empty). Lazily binds this
 /// peer's blob server on the first offload. The heavy read+hash runs off the
-/// event loop inside `blob::url_part`.
+/// event loop inside `blob::offload`.
 async fn build_offload_parts(
     params: OffloadTextParams<'_>,
     state: &EventLoopState,
@@ -923,21 +941,22 @@ async fn build_offload_parts(
     // Every offloaded blob inherits the mesh password (if any), so a scraped
     // ticket can't be redeemed without it.
     let password = state.mesh_password.clone();
-    let offload = agent_habilis_mesh::blob::url_part(
+    let ticket = agent_habilis_mesh::blob::offload(
         &mut app.blob_server,
         &lookups,
-        agent_habilis_mesh::blob::OffloadParams {
-            file,
+        agent_habilis_mesh::blob::OffloadRequest {
+            path: file.path,
             spool_dir: spool,
             content_id: agent_habilis_mesh::blob::ContentId::new(task_id.as_str()),
             password,
         },
     )
     .await?;
+    // The engine hands back a ticket; turning it into a `Part.url` is A2A's shape.
     let part = crate::a2a::Part {
-        url: Some(offload.url),
-        filename: offload.filename,
-        media_type: offload.media_type,
+        url: Some(ticket.encode()),
+        filename: file.name,
+        media_type: file.mime,
         ..crate::a2a::Part::default()
     };
     let mut parts = vec![part];
@@ -1177,12 +1196,11 @@ pub(crate) async fn broadcast_a2a_call(
     };
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
     // overflow the platform `Instant` and panic the event loop.
-    let max_timeout =
-        std::time::Duration::from_secs(agent_habilis_mesh::util::consts::A2A_CALL_MAX_TIMEOUT_SECS);
+    let max_timeout = std::time::Duration::from_secs(A2A_CALL_MAX_TIMEOUT_SECS);
     if timeout > max_timeout {
         tracing::warn!(
             requested_secs = timeout.as_secs(),
-            capped_secs = agent_habilis_mesh::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
+            capped_secs = A2A_CALL_MAX_TIMEOUT_SECS,
             "a2a call timeout clamped to the maximum"
         );
     }
@@ -1210,7 +1228,7 @@ pub(crate) async fn broadcast_a2a_call(
     )
     .await
     {
-        tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
+        tracing::warn!(target: "agent_habilis_mesh::gossip", %error, "a2a request send failed");
     }
 }
 

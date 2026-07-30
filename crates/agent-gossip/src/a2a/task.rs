@@ -466,7 +466,7 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_task(&agent_habilis_mesh::blob::ContentId::new(task_id.as_str()))
+                .evict_content(&agent_habilis_mesh::blob::ContentId::new(task_id.as_str()))
                 .await;
         }
     }

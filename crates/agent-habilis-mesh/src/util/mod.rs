@@ -71,7 +71,7 @@ fn current_uid() -> u32 {
 /// Every writer that creates a file under the base must call this (directly, or
 /// via [`ensure_mesh_runtime_dir`] / [`ensure_parent_private`]) **and honour
 /// its error** first: skipping it lets an attacker who pre-creates the base as a
-/// symlink redirect a `0600` state file (which carries the mesh id + A2A bearer
+/// symlink redirect a `0600` state file (which carries the mesh id + an app bearer
 /// token) into an attacker-readable location. Callers whose target may be a
 /// `--state-file` / `--log-dir` override (outside the base) should go through
 /// [`ensure_parent_private`], which gates on [`is_under_runtime_base`].

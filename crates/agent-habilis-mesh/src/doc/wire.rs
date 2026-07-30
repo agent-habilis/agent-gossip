@@ -80,7 +80,7 @@ pub(crate) fn parse_change_body(body: &str) -> Option<Vec<u8>> {
 
 /// Encrypt a plaintext body under `key`, producing an `enc` envelope. Seals the
 /// whole plaintext body — used for the `state`/`meta` change bodies (both the
-/// automerge change and the `m` delta) and for broadcast chat (`A2aMsg`) bodies.
+/// automerge change and the `m` delta) and for broadcast chat (broadcast chat) bodies.
 ///
 /// # Errors
 /// Serialization or `MessageBody` validation of the envelope fails.

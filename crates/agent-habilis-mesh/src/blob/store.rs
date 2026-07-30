@@ -153,7 +153,7 @@ impl BlobStore {
 
     /// Drop every blob owned by `content_id` (called from the task idle-timeout
     /// sweep), unlinking its spool file.
-    pub(crate) fn evict_task(&mut self, content_id: &ContentId) {
+    pub(crate) fn evict_content(&mut self, content_id: &ContentId) {
         let doomed: Vec<[u8; HASH_LEN]> = self
             .map
             .iter()
@@ -337,7 +337,7 @@ mod tests {
         let path = store.get(&hash).unwrap().path.clone();
         assert!(path.exists());
 
-        store.evict_task(&task);
+        store.evict_content(&task);
         assert!(store.get(&hash).is_none());
         assert!(!path.exists(), "spool file must be unlinked on evict");
 

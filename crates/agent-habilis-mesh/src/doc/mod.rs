@@ -1,19 +1,24 @@
 //! The shared-document engine backing the `state` and `meta` channels.
 //!
 //! Each channel is an [`automerge`] CRDT. A local write is expressed as an
-//! RFC 7386-style JSON merge (the unchanged `agent-gossip state|meta merge` surface),
+//! RFC 7386-style JSON merge (the unchanged `state|meta merge` surface),
 //! translated into one automerge change; peers exchange those changes and
 //! automerge merges them conflict-free — so we no longer own an ordered-log
 //! fold. Convergence is automerge's job; ours is authenticity.
 //!
-//! Every change is still carried inside a signed [`Message`](crate::protocol::Message),
-//! and every change is authorized before it touches the live doc:
-//! [`MeshDoc::ingest`] applies the change to a throwaway fork first and rejects
-//! it if it would alter any peer's `/peers/<nick>/card` other than the author's
-//! own — the card carries the peer's cryptographic identity, so this is the
-//! automerge analogue of the old `meta_merge_forges_foreign_card` gate. Because
-//! every honest member runs the same gate before applying, a forged card
-//! converges nowhere.
+//! Every change is carried inside a signed [`Message`](crate::protocol::Message),
+//! and every change is authorized before it touches the live doc. A channel
+//! configured with a [`SelfWriteGate`] holds a per-peer map keyed by nickname in
+//! which one field belongs to the peer it names: [`MeshDoc::ingest`] applies the
+//! change to a throwaway fork first and rejects it if it would alter any *other*
+//! peer's field. That field carries the peer's cryptographic identity, so a
+//! forgery must converge nowhere — and because every honest member runs the same
+//! gate before applying, it does.
+//!
+//! The engine needs the gate's *shape* and *rule*, never its meaning: it plants a
+//! byte-identical genesis change so every replica agrees on the map's object
+//! identity, and it compares before/after. What the guarded field represents is
+//! the application's business.
 //!
 //! Changes arriving before their causal dependencies (out-of-order backfill) are
 //! held in `pending` and drained — through the same gate — once their deps land,
@@ -42,11 +47,36 @@ pub(crate) enum Ingested {
     Duplicate,
     /// Held pending its causal dependencies; not yet applied.
     Buffered,
-    /// Refused: it would forge another peer's card. Never applied.
+    /// Refused: it would write another peer's gated field. Never applied.
     Rejected,
     /// The frame body is not a decodable automerge change (a legacy/foreign
     /// body) — a no-op.
     Ignored,
+}
+
+/// Declares that a channel holds a **per-peer map** at the document root — one
+/// entry per nickname — in which a single field belongs to the peer that entry
+/// names, and may be written by no one else.
+///
+/// The engine needs two things from this and nothing more: the map's key, so it
+/// can plant a shared genesis change and every replica agrees on that map's
+/// object identity; and the field's key, so [`MeshDoc::ingest`] can refuse a
+/// change that touches somebody else's. What the field *means* — an agent card,
+/// a public key, a capability set — is the application's business.
+///
+/// # Compatibility
+///
+/// Both keys reach the wire: `map` determines the genesis change's bytes (hence
+/// the map's object id), so **every replica of a channel must configure the same
+/// gate**. Two peers with different `map` values vivify different maps, automerge
+/// discards one, and a peer's entry is silently erased. Changing either key on a
+/// live mesh is a format break.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfWriteGate {
+    /// Root key of the per-peer map, keyed by nickname.
+    pub map: String,
+    /// The field inside `<map>/<nick>/` that only `<nick>` may write.
+    pub field: String,
 }
 
 /// One channel's automerge document plus the bookkeeping to apply changes in
@@ -66,9 +96,9 @@ pub struct MeshDoc {
     frames: HashMap<ChangeHash, Message>,
     /// Orphan frames awaiting their change's deps, keyed by change hash.
     pending: HashMap<ChangeHash, Message>,
-    /// Whether this channel gates foreign-card writes (`meta` does; `state`
-    /// carries no identity so it does not).
-    gate_cards: bool,
+    /// This channel's per-peer write gate, when it has one (`meta` does; `state`
+    /// is free-form and carries no per-peer identity, so it does not).
+    gate: Option<SelfWriteGate>,
     /// This channel's symmetric encryption key, on a password-protected mesh.
     /// `Some` ⇒ change bodies are sealed on the wire (`enc` envelope) and
     /// decrypted here before applying; `None` ⇒ plaintext, exactly as before.
@@ -77,30 +107,87 @@ pub struct MeshDoc {
 }
 
 impl MeshDoc {
+    /// A channel with no per-peer gate: free-form, every author may write
+    /// anywhere. This is the `state` channel.
     #[must_use]
-    pub fn new(gate_cards: bool) -> Self {
+    pub fn new_ungated() -> Self {
+        Self::from_parts(Automerge::new(), HashSet::new(), None)
+    }
+
+    /// A channel whose per-peer map is gated by `gate` — the `meta` channel.
+    ///
+    /// The gated map must have ONE object identity across every replica, or two
+    /// peers each vivifying it would create conflicting maps and automerge would
+    /// discard one, silently erasing a peer's entry (its identity). A
+    /// byte-identical genesis change (fixed actor, fixed time) gives the map a
+    /// shared id everywhere; per-peer writes then land in the same map as
+    /// distinct keys and merge cleanly.
+    ///
+    /// That is also why the genesis is planted by the *gate* config rather than
+    /// unconditionally: an ungated channel has no per-peer map, so planting one
+    /// would put an empty map on its wire for no reason.
+    #[must_use]
+    pub fn new_gated(gate: SelfWriteGate) -> Self {
         let mut doc = Automerge::new();
         let mut applied = HashSet::new();
-        // The `meta` channel's `/peers` map must have ONE object identity across
-        // every replica, or two peers each vivifying `/peers` would create
-        // conflicting maps and automerge would discard one — silently erasing a
-        // peer's card (its identity). A byte-identical genesis change (fixed
-        // actor, fixed time) gives that map a shared id everywhere; per-peer
-        // writes then land in the same map as distinct keys and merge cleanly.
-        if gate_cards {
-            let genesis = peers_genesis();
-            let hash = genesis.hash();
-            let _ = doc.apply_changes([genesis]);
-            applied.insert(hash);
-        }
+        let genesis = peers_genesis(&gate.map);
+        let hash = genesis.hash();
+        let _ = doc.apply_changes([genesis]);
+        applied.insert(hash);
+        Self::from_parts(doc, applied, Some(gate))
+    }
+
+    fn from_parts(
+        doc: Automerge,
+        applied: HashSet<ChangeHash>,
+        gate: Option<SelfWriteGate>,
+    ) -> Self {
         Self {
             doc: Box::new(doc),
             applied,
             frames: HashMap::new(),
             pending: HashMap::new(),
-            gate_cards,
+            gate,
             key: None,
         }
+    }
+
+    /// Drop the gate but keep the document shape — the state of a replica that
+    /// has **synced** a gated channel but enforces no policy of its own.
+    ///
+    /// Test-only, and the honest way to model an attacker: a forge has to be
+    /// authored somewhere, and authoring it on a genuinely gated replica is
+    /// impossible by construction. Building it on a bare [`Self::new_ungated`]
+    /// would be a *different* document — no genesis, so a different map object
+    /// id — and then whether the victim's gate fires at all depends on which of
+    /// the two conflicting maps automerge happens to keep. Two of these tests
+    /// passed on exactly that coincidence until the genesis actor was rebranded
+    /// and the hash ordering flipped.
+    #[cfg(test)]
+    #[must_use]
+    fn synced_but_ungated(mut self) -> Self {
+        self.gate = None;
+        self
+    }
+
+    /// Would applying `change` (authored by `author`) write any peer's gated
+    /// field other than the author's own? Applied to a throwaway fork so the live
+    /// doc is never touched by an unauthorized change. Always `false` on an
+    /// ungated channel — there is no field to guard.
+    fn forges_foreign_entry(&self, change: &Change, author: &Nickname) -> bool {
+        let Some(gate) = self.gate.as_ref() else {
+            return false;
+        };
+        let mut fork = self.doc.fork();
+        if fork.apply_changes([change.clone()]).is_err() {
+            return true;
+        }
+        let before = peer_entries(&self.doc, gate);
+        let after = peer_entries(&fork, gate);
+        before
+            .keys()
+            .chain(after.keys())
+            .any(|nick| nick.as_str() != author.as_str() && before.get(nick) != after.get(nick))
     }
 
     /// Set this channel's encryption key (the daemon's per-channel
@@ -232,7 +319,7 @@ impl MeshDoc {
             self.pending.insert(hash, frame.clone());
             return Ingested::Buffered;
         }
-        if self.gate_cards && forges_foreign_card(&self.doc, &change, &frame.author) {
+        if self.forges_foreign_entry(&change, &frame.author) {
             return Ingested::Rejected;
         }
         let before = self.to_json();
@@ -294,7 +381,7 @@ impl MeshDoc {
         let Ok(change) = Change::from_bytes(bytes) else {
             return;
         };
-        if self.gate_cards && forges_foreign_card(&self.doc, &change, &frame.author) {
+        if self.forges_foreign_entry(&change, &frame.author) {
             return; // dropped, same as a directly-rejected change
         }
         self.apply(change, hash, frame);
@@ -312,51 +399,34 @@ fn decode_hash(encoded: &str) -> Option<ChangeHash> {
     <[u8; 32]>::try_from(bytes.as_slice()).ok().map(ChangeHash)
 }
 
-/// Would applying `change` (authored by `author`) alter any peer's card other
-/// than the author's own? Applied to a throwaway fork so the live doc is never
-/// touched by an unauthorized change.
-fn forges_foreign_card(base: &Automerge, change: &Change, author: &Nickname) -> bool {
-    let mut fork = base.fork();
-    if fork.apply_changes([change.clone()]).is_err() {
-        return true;
-    }
-    let before = peer_cards(base);
-    let after = peer_cards(&fork);
-    before
-        .keys()
-        .chain(after.keys())
-        .any(|nick| nick.as_str() != author.as_str() && before.get(nick) != after.get(nick))
-}
-
-/// Each peer's `/peers/<nick>/card` subtree, keyed by nick (absent → not in the
-/// map). Derived from the hydrated JSON so it captures the card whatever its
-/// shape.
-fn peer_cards(doc: &Automerge) -> Map<String, Value> {
+/// Each peer's gated field, keyed by nick (absent → no entry). Derived from the
+/// hydrated JSON so it captures the field whatever its shape.
+fn peer_entries(doc: &Automerge, gate: &SelfWriteGate) -> Map<String, Value> {
     let json = doc_json(doc);
-    let mut cards = Map::new();
-    if let Some(peers) = json.get("peers").and_then(Value::as_object) {
+    let mut entries = Map::new();
+    if let Some(peers) = json.get(&gate.map).and_then(Value::as_object) {
         for (nick, entry) in peers {
-            if let Some(card) = entry.get("card") {
-                cards.insert(nick.clone(), card.clone());
+            if let Some(guarded) = entry.get(&gate.field) {
+                entries.insert(nick.clone(), guarded.clone());
             }
         }
     }
-    cards
+    entries
 }
 
 fn doc_json(doc: &Automerge) -> Value {
     serde_json::to_value(AutoSerde::from(doc)).unwrap_or(Value::Null)
 }
 
-/// The deterministic genesis change that creates the shared `/peers` map. Built
+/// The deterministic genesis change that creates the shared per-peer `map`. Built
 /// from constants (fixed actor, `time = 0`) so its hash — and thus the map's
-/// object id — is identical on every replica.
-fn peers_genesis() -> Change {
+/// object id — is identical on every replica configured with the same gate.
+fn peers_genesis(map: &str) -> Change {
     let mut doc = Automerge::new();
-    doc.set_actor(automerge::ActorId::from(b"agent-gossip/genesis".as_slice()));
+    doc.set_actor(automerge::ActorId::from(b"habilis-mesh/genesis".as_slice()));
     {
         let mut tx = doc.transaction();
-        tx.put_object(&ROOT, "peers", ObjType::Map)
+        tx.put_object(&ROOT, map, ObjType::Map)
             .expect("root is a map");
         tx.commit_with(automerge::transaction::CommitOptions::default().with_time(0));
     }
@@ -530,7 +600,7 @@ fn put_number(
 
 #[cfg(test)]
 mod tests {
-    use super::{Ingested, MeshDoc};
+    use super::{Ingested, MeshDoc, SelfWriteGate};
     use crate::daemon::state_doc::change_body;
     use crate::protocol::{Channel, MeshId, Message, Nickname};
     use serde_json::{Value, json};
@@ -554,6 +624,32 @@ mod tests {
     /// the signed frame to hand to a peer. The actor seed is the nickname —
     /// fine for single-session tests; a test spanning two sessions of one
     /// nickname must use [`author_as`] with distinct seeds.
+    /// The genesis change is what makes every replica agree on the gated map's
+    /// object identity, so its bytes are a compatibility surface: if this hash
+    /// moves, replicas built from different versions vivify different maps,
+    /// automerge discards one, and a peer's entry is silently erased. Pinned so
+    /// that can only ever happen on purpose.
+    ///
+    /// It last moved when the byte-domains dropped the product name for the
+    /// engine's, which is why `message::VERSION` is `12.0`.
+    #[test]
+    fn genesis_bytes_are_pinned() {
+        let genesis = super::peers_genesis("peers");
+        assert_eq!(
+            format!("{:?}", genesis.hash()),
+            "ChangeHash(\"faf84e310070f1127948a680064551304e36a70d14ccff86f7ece64caf82908b\")"
+        );
+    }
+
+    /// The gate the application configures on its `meta` channel. Any
+    /// per-peer map/field pair would do; this one is what production uses.
+    fn card_gate() -> SelfWriteGate {
+        SelfWriteGate {
+            map: "peers".to_owned(),
+            field: "card".to_owned(),
+        }
+    }
+
     fn author(doc: &mut MeshDoc, who: &Nickname, merge: &Value) -> Message {
         author_as(doc, who, who.as_str().as_bytes(), merge)
     }
@@ -578,8 +674,8 @@ mod tests {
     fn distinct_top_level_keys_converge_either_order() {
         // Distinct keys at the always-shared document root merge with no genesis.
         let (alice, bob) = (nick("alice"), nick("bob"));
-        let mut left = MeshDoc::new(false);
-        let mut right = MeshDoc::new(false);
+        let mut left = MeshDoc::new_ungated();
+        let mut right = MeshDoc::new_ungated();
 
         let alice_frame = author(&mut left, &alice, &json!({"a": 1}));
         let bob_frame = author(&mut right, &bob, &json!({"b": 2}));
@@ -598,8 +694,8 @@ mod tests {
         // shared `/peers` genesis makes these distinct keys in one map, so both
         // survive — the case that erased a card before the genesis existed.
         let (alice, bob) = (nick("alice"), nick("bob"));
-        let mut left = MeshDoc::new(true);
-        let mut right = MeshDoc::new(true);
+        let mut left = MeshDoc::new_gated(card_gate());
+        let mut right = MeshDoc::new_gated(card_gate());
 
         let alice_frame = author(&mut left, &alice, &json!({"peers": {"alice": {"m": 1}}}));
         let bob_frame = author(&mut right, &bob, &json!({"peers": {"bob": {"m": 2}}}));
@@ -615,7 +711,7 @@ mod tests {
     #[test]
     fn null_deletes_key_and_preserves_siblings() {
         let alice = nick("alice");
-        let mut doc = MeshDoc::new(false);
+        let mut doc = MeshDoc::new_ungated();
         author(
             &mut doc,
             &alice,
@@ -640,12 +736,12 @@ mod tests {
     #[test]
     fn out_of_order_change_is_buffered_then_drains() {
         let alice = nick("alice");
-        let mut source = MeshDoc::new(false);
+        let mut source = MeshDoc::new_ungated();
         let first = author(&mut source, &alice, &json!({"a": 1}));
         let second = author(&mut source, &alice, &json!({"b": 2}));
 
         // Deliver the second change first: it depends on the first, so it buffers.
-        let mut sink = MeshDoc::new(false);
+        let mut sink = MeshDoc::new_ungated();
         assert!(matches!(sink.ingest(&second), Ingested::Buffered));
         assert_eq!(sink.to_json(), json!({}));
         // The first change unblocks the buffered second in one ingest.
@@ -658,11 +754,11 @@ mod tests {
         // A source authors two changes; a fresh joiner advertises its (empty)
         // heads and pulls exactly the frames it lacks, then converges.
         let alice = nick("alice");
-        let mut source = MeshDoc::new(false);
+        let mut source = MeshDoc::new_ungated();
         author(&mut source, &alice, &json!({"a": 1}));
         author(&mut source, &alice, &json!({"b": 2}));
 
-        let mut joiner = MeshDoc::new(false);
+        let mut joiner = MeshDoc::new_ungated();
         let missing = source.changes_since(&joiner.heads(), 100);
         assert_eq!(missing.len(), 2, "joiner lacks both changes");
         for carrier in &missing {
@@ -679,7 +775,7 @@ mod tests {
         let key = [42u8; 32];
         // Author builds the change and seals the wire body, as the daemon does.
         let merge = json!({"secret": "value"});
-        let author_doc = MeshDoc::new(false).with_key(Some(zeroize::Zeroizing::new(key)));
+        let author_doc = MeshDoc::new_ungated().with_key(Some(zeroize::Zeroizing::new(key)));
         let bytes = author_doc
             .build_change(&merge, alice.as_str().as_bytes())
             .expect("builds")
@@ -696,7 +792,7 @@ mod tests {
 
         // A peer holding the key applies it and converges; surface_body recovers
         // the plaintext for the delta.
-        let mut with_key = MeshDoc::new(false).with_key(Some(zeroize::Zeroizing::new(key)));
+        let mut with_key = MeshDoc::new_ungated().with_key(Some(zeroize::Zeroizing::new(key)));
         assert!(matches!(
             with_key.ingest(&carrier),
             Ingested::Applied { .. }
@@ -706,10 +802,11 @@ mod tests {
 
         // A peer without the key (or with the wrong key) cannot read it — the
         // body is an opaque no-op, never applied.
-        let mut no_key = MeshDoc::new(false);
+        let mut no_key = MeshDoc::new_ungated();
         assert!(matches!(no_key.ingest(&carrier), Ingested::Ignored));
         assert_eq!(no_key.to_json(), json!({}));
-        let mut wrong_key = MeshDoc::new(false).with_key(Some(zeroize::Zeroizing::new([7u8; 32])));
+        let mut wrong_key =
+            MeshDoc::new_ungated().with_key(Some(zeroize::Zeroizing::new([7u8; 32])));
         assert!(matches!(wrong_key.ingest(&carrier), Ingested::Ignored));
         assert_eq!(wrong_key.to_json(), json!({}));
     }
@@ -720,7 +817,7 @@ mod tests {
 
         // Craft both changes on one ungated replica so the forge is built atop
         // Bob's card (deps satisfied) — what an attacker who has synced holds.
-        let mut attacker = MeshDoc::new(false);
+        let mut attacker = MeshDoc::new_gated(card_gate()).synced_but_ungated();
         let bob_card = author(
             &mut attacker,
             &bob,
@@ -733,7 +830,7 @@ mod tests {
         );
 
         // A gated victim accepts Bob's real card, then refuses Alice's forge.
-        let mut victim = MeshDoc::new(true);
+        let mut victim = MeshDoc::new_gated(card_gate());
         assert!(matches!(victim.ingest(&bob_card), Ingested::Applied { .. }));
         assert!(matches!(victim.ingest(&forged), Ingested::Rejected));
         assert_eq!(
@@ -742,7 +839,7 @@ mod tests {
         );
 
         // Alice writing her OWN card through the gate is allowed.
-        let mut alice_doc = MeshDoc::new(true);
+        let mut alice_doc = MeshDoc::new_gated(card_gate());
         let own_bytes = alice_doc
             .build_change(
                 &json!({"peers": {"alice": {"card": {"name": "alice"}}}}),
@@ -765,7 +862,7 @@ mod tests {
 
         // Craft on one ungated replica so deps are satisfied: alice's card,
         // then alice's own retraction.
-        let mut source = MeshDoc::new(false);
+        let mut source = MeshDoc::new_ungated();
         let alice_card = author(
             &mut source,
             &alice,
@@ -773,7 +870,7 @@ mod tests {
         );
         let self_delete = author(&mut source, &alice, &json!({"peers": {"alice": null}}));
 
-        let mut victim = MeshDoc::new(true);
+        let mut victim = MeshDoc::new_gated(card_gate());
         assert!(matches!(
             victim.ingest(&alice_card),
             Ingested::Applied { .. }
@@ -790,7 +887,7 @@ mod tests {
 
         // The same delete authored by bob alters alice's card → rejected, and
         // alice's entry survives on the gated replica.
-        let mut foreign_source = MeshDoc::new(false);
+        let mut foreign_source = MeshDoc::new_gated(card_gate()).synced_but_ungated();
         let card_frame = author(
             &mut foreign_source,
             &alice,
@@ -801,7 +898,7 @@ mod tests {
             &bob,
             &json!({"peers": {"alice": null}}),
         );
-        let mut gated = MeshDoc::new(true);
+        let mut gated = MeshDoc::new_gated(card_gate());
         assert!(matches!(
             gated.ingest(&card_frame),
             Ingested::Applied { .. }
@@ -826,7 +923,7 @@ mod tests {
         let alice = nick("alice");
 
         // Old session: card, then the leave-time retraction.
-        let mut old_session = MeshDoc::new(true);
+        let mut old_session = MeshDoc::new_gated(card_gate());
         let old_card = author_as(
             &mut old_session,
             &alice,
@@ -841,13 +938,13 @@ mod tests {
         );
 
         // A staying peer applied both.
-        let mut host = MeshDoc::new(true);
+        let mut host = MeshDoc::new_gated(card_gate());
         assert!(matches!(host.ingest(&old_card), Ingested::Applied { .. }));
         assert!(matches!(host.ingest(&retraction), Ingested::Applied { .. }));
         assert_eq!(host.to_json().pointer("/peers/alice"), None);
 
         // New session: fresh doc, fresh key, deps = genesis only.
-        let mut new_session = MeshDoc::new(true);
+        let mut new_session = MeshDoc::new_gated(card_gate());
         let new_card = author_as(
             &mut new_session,
             &alice,

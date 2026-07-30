@@ -1,7 +1,7 @@
 //! Gossip **outbound/send plane** (engine primitives): fire-and-forget
 //! broadcast, the shared-state merge write, and presence / `PeerInfo`
 //! announcements. The application payload send path (broadcast chat, task
-//! legs, directed RPC) lives app-side in the a2a send plane; this layer only
+//! legs, directed RPC) lives app-side in the application's send plane; this layer only
 //! carries the generic transport primitives the app rides. Inbound dispatch
 //! lives in [`super::recv`].
 
@@ -16,10 +16,10 @@ use crate::protocol::{Channel, MeshId, Message, MessageBody, Nickname};
 use crate::util::consts::MAX_MESSAGE_SIZE;
 
 /// Build → sign → deliver one outbound `App` frame — the payload-generic
-/// counterpart to the a2a layer's own (chain-stamping, sharding, sealing) chat /
-/// task builders. A non-a2a consumer emits its `App`-tagged payloads through
+/// counterpart to the application's own (chain-stamping, sharding, sealing) chat /
+/// task builders. A consumer with its own data model emits its `App`-tagged payloads through
 /// this one primitive: it stamps the frame with `tag`/`to`/`corr`, signs it with
-/// the loop identity, and routes it with the same single-send decision the a2a
+/// the loop identity, and routes it with the same single-send decision the application
 /// path uses ([`crate::transport::deliver`]) — unicast to a sole addressee,
 /// gossip for a broadcast (`to == None`).
 ///
@@ -29,13 +29,13 @@ use crate::util::consts::MAX_MESSAGE_SIZE;
 /// flush is re-buffered and retried as `PeerInfo`s arrive (dropped only when
 /// the bounded buffer overflows).
 ///
-/// This is a **single-frame** send: unlike the a2a chat path it does not split a
-/// large body across shards (that logic is entangled with a2a's per-author hash
+/// This is a **single-frame** send: unlike the application's chat path it does not split a
+/// large body across shards (that logic is entangled with the application's per-author hash
 /// chain), so `body` must fit one wire frame. A body whose signed frame would
 /// exceed [`MAX_MESSAGE_SIZE`] is refused rather than silently dropped by the
 /// gossip actor; a bytes-carrying consumer chunks its stream below that bound.
 /// It also does **not** seal a directed frame — the recipient's encryption key
-/// is discovered through an app-level convention (a2a publishes cards to the
+/// is discovered through an app-level convention (the application publishes cards to the
 /// meta channel) the engine does not own; a directed `App` frame sent here rides
 /// in plaintext (authenticated by the Ed25519 frame signature).
 ///
@@ -44,7 +44,7 @@ use crate::util::consts::MAX_MESSAGE_SIZE;
 /// mesh-key-sealed and drop a plaintext one on decrypt (see
 /// `gossip::recv::decrypt_broadcast`). A generic consumer that needs passworded
 /// broadcast must therefore seal its body under the mesh key before calling
-/// this; a2a already does so on its broadcast chat path.
+/// this; the shipped application does so on its broadcast chat path.
 ///
 /// # Errors
 /// Refuses a body too large for one frame, propagates a serialize/deliver
@@ -65,7 +65,7 @@ pub async fn send_app(
     crate::logging::messages::log_out(&frame);
     if state.meshed {
         // Directed vs. broadcast is decided inside `deliver` from the frame's
-        // `to` — the same routing the a2a send path rides.
+        // `to` — the same routing the application's send path rides.
         crate::transport::deliver(&frame, bytes, state, ctx.sender).await
     } else if state.pending_outbound.push((frame, bytes)) {
         // Buffered until the meshed edge flushes it through the same send
@@ -87,7 +87,7 @@ pub async fn broadcast_msg(sender: &MeshSender, msg: &Message) {
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
     {
         tracing::warn!(
-            target: "agent_gossip::gossip",
+            target: "agent_habilis_mesh::gossip",
             %error,
             "presence/plumbing broadcast failed"
         );
@@ -255,7 +255,7 @@ pub fn unicast_farewell(state: &EventLoopState, bytes: &Bytes) {
         let bytes = bytes.clone();
         tokio::spawn(async move {
             if let Err(error) = pool.dial_and_send(endpoint_id, bytes).await {
-                tracing::debug!(target: "agent_gossip::gossip", %error, "unicast farewell mirror failed");
+                tracing::debug!(target: "agent_habilis_mesh::gossip", %error, "unicast farewell mirror failed");
             }
         });
     }

@@ -39,9 +39,9 @@ use crate::gossip::app::NodeApp;
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
 ///
 /// The engine loop is generic over the application: `app` implements
-/// [`NodeDriver`] (the a2a layer's `A2aApp` is the only current impl), and its
+/// [`NodeDriver`] (the shipped application supplies the only production impl), and its
 /// two typed driver inputs — the in-process `session_rx` (in-process) and the
-/// localhost binding's `http_rx` (`--a2a-serve`) — are threaded here so the
+/// localhost binding's `http_rx` — are threaded here so the
 /// loop never names an application payload type.
 ///
 /// # Errors
@@ -80,6 +80,7 @@ pub async fn run<A: NodeDriver>(
         live_count,
         driver,
         ready,
+        per_peer_gate,
     } = cfg;
 
     // Every driver-derived fact in one place. Only the CLI exits the
@@ -118,18 +119,21 @@ pub async fn run<A: NodeDriver>(
         || format!("#{mesh_name}"),
         |raw_topic| format!("topic {raw_topic}"),
     );
-    // Seed the state file with the app's discovery fields (the a2a bind port +
-    // bearer token) before readiness is advertised — the local client reads them
-    // from this mode-600 file.
+    // Seed the state file with the application's own discovery fields before
+    // readiness is advertised — the local client reads them from this mode-600
+    // file. What those fields are is the app's business; the engine only writes.
     app.init_state_file(state_file.as_ref());
     let mut state = EventLoopState::new(
-        state_file,
-        started,
-        identity,
-        MeshSecrets {
-            password: mesh_password,
-            key: mesh_key,
+        crate::daemon::state::StateInit {
+            state_file,
+            identity,
+            secrets: MeshSecrets {
+                password: mesh_password,
+                key: mesh_key,
+            },
+            per_peer_gate,
         },
+        started,
     );
     state.mint_mesh = mint_mesh; // creator-only: backs the `invite` command
     state.multihop = multihop; // `--multihop`: the registered transport's handle
@@ -211,7 +215,7 @@ pub async fn run<A: NodeDriver>(
             name: mesh_name.clone(),
             nickname: author.clone(),
             drift: ready.drift,
-            a2a_port: ready.http_port,
+            http_port: ready.http_port,
         });
     }
 
@@ -398,7 +402,7 @@ struct EventLoop<A: NodeDriver> {
     external_msg_tx: Option<broadcast::Sender<Message>>,
     quit_rx: mpsc::Receiver<()>,
     exit_on_quit: bool,
-    /// The localhost A2A binding's request channel (`--a2a-serve`); `None` off.
+    /// The application's localhost HTTP binding request channel; `None` off.
     http_rx: Option<mpsc::Receiver<A::Http>>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor, drained into
     /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
@@ -415,7 +419,7 @@ struct EventLoop<A: NodeDriver> {
 /// survives a release build's `error` base.
 fn log_daemon_start(author: &Nickname) {
     tracing::info!(
-        target: "agent_gossip::lifecycle",
+        target: "agent_habilis_mesh::lifecycle",
         version = crate::util::version::build_version(),
         nickname = %author,
         "daemon starting"
@@ -424,7 +428,7 @@ fn log_daemon_start(author: &Nickname) {
 
 #[expect(
     clippy::too_many_lines,
-    reason = "the daemon's central select! loop: one arm per event source (ipc, a2a, gossip, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
+    reason = "the daemon's central select! loop: one arm per event source (ipc, http, gossip, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
 )]
 async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
     let EventLoop {
@@ -678,7 +682,7 @@ struct QuitParams<'a> {
 ///
 /// `exit_on_quit` is the CLI hard-exit: the CLI process exits immediately on
 /// quit rather than tearing down its background tasks (advertiser,
-/// `--a2a-serve` server, iroh) and unwinding. In-process quits pass `false`
+/// localhost HTTP server, iroh) and unwinding. In-process quits pass `false`
 /// and unwind cleanly instead. Under the `dhat-heap` profiling build we
 /// *never* `process::exit` regardless — it skips destructors, so the heap
 /// profiler would never flush `dhat-heap.json`; we fall through so `main`
@@ -692,7 +696,7 @@ async fn announce_and_maybe_exit<A: NodeDriver>(
     // Empty out any parked long-poll waiters first, so a held call returns a
     // clean timeout (empty) rather than a dropped-channel error — and before
     // the `exit_on_quit` path below may `std::process::exit`. Other app-owned
-    // waiters (A2A calls) are failed in `on_shutdown` (inside `shutdown`).
+    // waiters (app RPC calls) are failed in `on_shutdown` (inside `shutdown`).
     app.close_poll_waiters();
     shutdown(state, app, ctx, &quit).await;
     #[cfg(not(feature = "dhat-heap"))]
@@ -957,7 +961,7 @@ async fn run_heal(
     let hard_edge = is_resume(gap.mono, threshold) || is_wall_resume(gap.wall, gap.mono, threshold);
     if hard_edge {
         tracing::warn!(
-            target: "agent_gossip::gossip",
+            target: "agent_habilis_mesh::gossip",
             mono_gap_ms = u64::try_from(gap.mono.as_millis()).unwrap_or(u64::MAX),
             wall_gap_ms = u64::try_from(gap.wall.as_millis()).unwrap_or(u64::MAX),
             "heal: hard re-bootstrap edge"
@@ -988,7 +992,7 @@ async fn run_heal(
         // the healthy link; see `tick_heal`). `NeighborDown` re-arms
         // this gate instantly.
         tracing::debug!(
-            target: "agent_gossip::gossip",
+            target: "agent_habilis_mesh::gossip",
             "heal tick: rendezvous linked; idle"
         );
     } else {
@@ -1219,7 +1223,7 @@ async fn try_resubscribe(
         Ok(topic) => {
             *attempts = 0;
             tracing::warn!(
-                target: "agent_gossip::gossip",
+                target: "agent_habilis_mesh::gossip",
                 "gossip stream restored (resubscribed)"
             );
             env.parts.sink.emit(NodeEvent::Info(
@@ -1231,7 +1235,7 @@ async fn try_resubscribe(
         Err(error) => {
             *attempts += 1;
             tracing::warn!(
-                target: "agent_gossip::gossip",
+                target: "agent_habilis_mesh::gossip",
                 %error,
                 attempts = *attempts,
                 "gossip resubscribe failed"
@@ -1263,7 +1267,7 @@ fn apply_rung_change(
         lookup::plan_rung_refresh(params.bootstrap_relay.as_ref(), selected)
     {
         tracing::info!(
-            target: "agent_gossip::beacon",
+            target: "agent_habilis_mesh::beacon",
             old = ?params.bootstrap_relay,
             new = ?new,
             "bootstrap relay rung changed; re-registering rendezvous and re-homing the beacon"
@@ -1429,7 +1433,7 @@ fn shed_rival_beacon_if_due(
         return false;
     }
     tracing::info!(
-        target: "agent_gossip::gossip",
+        target: "agent_habilis_mesh::gossip",
         "beacon rival re-check: releasing the rendezvous to re-probe for a same-id co-host"
     );
     // `shed`, not a plain drop: the graceful endpoint close turns the

@@ -171,6 +171,10 @@ pub struct EventLoopConfig {
     /// emitted at the point the daemon can actually serve, rather than in
     /// setup — where it announced a socket that was not yet bound.
     pub ready: ReadyAnnounce,
+    /// The `meta` channel's per-peer write gate, when the application keeps a
+    /// per-peer map there (see [`crate::doc::SelfWriteGate`]). `None` leaves the
+    /// channel free-form.
+    pub per_peer_gate: Option<crate::doc::SelfWriteGate>,
 }
 
 /// The `ready` event's payload that only setup knows. Everything else it
@@ -179,7 +183,7 @@ pub struct EventLoopConfig {
 pub struct ReadyAnnounce {
     /// A stale skill install, rendered by `agent-gossip`'s `drift_warning`.
     pub drift: Option<String>,
-    /// The bound A2A HTTP port under `--a2a-serve`.
+    /// The bound localhost HTTP port the application serves, if any.
     pub http_port: Option<u16>,
 }
 

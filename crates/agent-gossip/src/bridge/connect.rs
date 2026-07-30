@@ -15,9 +15,9 @@ use tokio::sync::Mutex;
 use agent_habilis_mesh::lookup::{add_peer_addr, build_peer_endpoint};
 use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth};
 
-use super::A2A_ALPN;
 use super::card_rewrite::CardRewriter;
 use super::ticket::A2aTicket;
+use super::{A2A_ALPN, A2A_TICKET_LABEL};
 
 /// How long the first dial keeps retrying while the exposer's address
 /// propagates through the lookups.
@@ -39,7 +39,7 @@ pub(crate) async fn connect(
     let auth = match (&password, ticket.password) {
         (None, true) => bail!("this ticket is password-protected — pass --password"),
         (Some(_), false) => bail!("this ticket has no password — drop --password"),
-        _ => TicketAuth::a2a(&ticket.secret, password.as_ref()),
+        _ => TicketAuth::derive(&ticket.secret, password.as_ref(), A2A_TICKET_LABEL),
     };
     let endpoint = build_peer_endpoint(&ticket.lookups).await?;
     add_peer_addr(&endpoint, ticket.addr.clone())?;

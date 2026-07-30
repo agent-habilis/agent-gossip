@@ -101,7 +101,13 @@ impl MeshSession {
                 state_file: None,
                 sink,
                 drift: None,
-                a2a_serve: None,
+                http_serve: None,
+                // The a2a data model keeps a per-peer card in `meta`; the engine only
+                // needs the map/field pair to plant the genesis and refuse a forgery.
+                per_peer_gate: Some(agent_habilis_mesh::doc::SelfWriteGate {
+                    map: "peers".to_owned(),
+                    field: "card".to_owned(),
+                }),
                 multihop: false,
             },
         )
@@ -291,7 +297,7 @@ impl MeshSession {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
+        let file = file.map(|path| crate::a2a::send::FileRef {
             path,
             name: file_name,
             mime: file_mime,

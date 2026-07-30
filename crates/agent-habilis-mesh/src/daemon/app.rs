@@ -18,16 +18,16 @@ pub trait NodeDriver: NodeApp {
     /// The typed in-process request an in-process session pushes (the shared
     /// alternative to the CLI's IPC-over-socket path). Opaque to the engine.
     type Session: Send;
-    /// One request from the localhost A2A JSON-RPC binding's HTTP task
-    /// (`--a2a-serve`). Opaque to the engine.
+    /// One request from the application's localhost JSON-RPC binding's HTTP task
+    /// binding. Opaque to the engine.
     type Http: Send;
     /// One parsed IPC command off the unix-socket binding. The engine's generic
     /// `transport::ipc` socket server deserializes it (hence `DeserializeOwned`)
-    /// and forwards it here; its variants are the app's a2a-typed command set,
+    /// and forwards it here; its variants are the app's own typed command set,
     /// opaque to the engine.
     type Ipc: DeserializeOwned + Send + 'static;
 
-    /// Seed the session state file with the app's discovery fields (the a2a
+    /// Seed the session state file with the app's discovery fields (the application
     /// bind port + bearer token). No-op when the app serves no local binding.
     ///
     /// Defaults to a no-op — an app that serves no local binding writes no
@@ -126,7 +126,7 @@ pub trait NodeDriver: NodeApp {
         false
     }
 
-    /// Dispatch one localhost A2A JSON-RPC binding request against the live
+    /// Dispatch one application's localhost JSON-RPC binding request against the live
     /// loop state, answering on its oneshot.
     ///
     /// Defaults to a no-op — an app whose [`Self::Http`] is a trivial type

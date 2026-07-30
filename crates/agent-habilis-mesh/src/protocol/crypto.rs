@@ -32,13 +32,13 @@ use crate::util::consts::{PASSWORD_KDF_M_COST_KIB, PASSWORD_KDF_P_COST, PASSWORD
 /// Domain-separation prefix mixed into every seed derivation. Bumping
 /// this is a wire-incompatible change (peers derive a different
 /// topic/identity and never meet).
-const DOMAIN: &[u8] = b"agent-gossip/v2";
+const DOMAIN: &[u8] = b"habilis-mesh/v2";
 
 /// Domain-separation prefix for the topic-string → seed derivation
 /// ([`topic_seed`]). Distinct from [`DOMAIN`] so an arbitrary user string can
 /// never reproduce a [`derive_secret`] output. Versioned independently:
 /// bumping it makes every string derive a fresh mesh.
-const TOPIC_DOMAIN: &[u8] = b"agent-gossip/topic-seed/v1";
+const TOPIC_DOMAIN: &[u8] = b"habilis-mesh/topic-seed/v1";
 
 /// Deterministically derive a mesh `seed` from an arbitrary string:
 /// `SHA256(TOPIC_DOMAIN ‖ topic.trim())`. Two callers passing the same string
@@ -241,20 +241,22 @@ pub struct TicketAuth {
 }
 
 impl TicketAuth {
-    /// The token for an **a2a bridge** ticket (pipe/port).
-    #[must_use]
-    pub fn a2a(secret: &[u8; 32], password: Option<&Password>) -> Self {
-        Self::derive(secret, password, b"a2a-ticket")
-    }
-
-    /// The token for a **blob** ticket. Domain-separated from the a2a bridge so
-    /// the two ticket kinds never derive the same passworded token even from a
-    /// shared secret.
+    /// The token for a **blob** ticket. `label` is what keeps ticket kinds apart:
+    /// two kinds sharing a secret must never derive the same passworded token, so
+    /// an application minting its own ticket kind passes its own label through
+    /// [`Self::derive`] rather than reusing this one.
     pub(crate) fn blob(secret: &[u8; 32], password: Option<&Password>) -> Self {
         Self::derive(secret, password, b"blob-ticket")
     }
 
-    fn derive(secret: &[u8; 32], password: Option<&Password>, label: &[u8]) -> Self {
+    /// Derive a ticket token under a caller-chosen `label`.
+    ///
+    /// The label is a **byte-domain**: it is stretched into the token, so it
+    /// reaches the wire and is fixed for the life of that ticket kind. Pick one
+    /// distinct per kind; reusing another kind's label collapses the separation
+    /// [`Self::blob`] documents.
+    #[must_use]
+    pub fn derive(secret: &[u8; 32], password: Option<&Password>, label: &[u8]) -> Self {
         match password {
             Some(password) => Self {
                 token: stretch_password(password, secret, label),
@@ -482,19 +484,24 @@ mod password_tests {
     }
 
     #[test]
-    fn blob_and_a2a_ticket_tokens_are_domain_separated() {
+    fn ticket_tokens_are_domain_separated_by_label() {
         use super::TicketAuth;
         let secret = [3u8; 32];
         let password = pw("hunter2");
         let blob = TicketAuth::blob(&secret, Some(&password)).token;
-        let a2a = TicketAuth::a2a(&secret, Some(&password)).token;
+        // Stands in for any application-minted kind (the application's bridge passes
+        // its own label); only the label differs.
+        let other = TicketAuth::derive(&secret, Some(&password), b"other-ticket").token;
         assert_ne!(
-            blob, a2a,
+            blob, other,
             "the same password+secret must yield different tokens per ticket kind"
         );
         // Without a password both are the raw secret (no stretch, no label).
         assert_eq!(TicketAuth::blob(&secret, None).token, secret);
-        assert_eq!(TicketAuth::a2a(&secret, None).token, secret);
+        assert_eq!(
+            TicketAuth::derive(&secret, None, b"other-ticket").token,
+            secret
+        );
     }
 }
 

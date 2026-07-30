@@ -21,7 +21,9 @@ pub enum NodeEvent {
         name: MeshName,
         nickname: Nickname,
         drift: Option<String>,
-        a2a_port: Option<u16>,
+        /// The application's localhost HTTP binding port, when it serves one.
+        /// Forwarded verbatim; the engine does not know what runs there.
+        http_port: Option<u16>,
     },
     Info(String),
     Error(String),

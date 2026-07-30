@@ -2,7 +2,7 @@
 
 agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
-A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 11.0) carried over
+A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding — see [`docs/a2a-binding.md`](docs/a2a-binding.md). This file is guidance for working **on**
 the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
@@ -73,6 +73,38 @@ dropping any of them changes the build silently:
 for them: `build.rs` renders `../../skills`, and the embedded manual is an
 `include_str!("../../../../docs/manual.txt")` from `src/{cli,mcp}/mod.rs`.
 
+### The engine knows nothing about A2A
+
+> The engine may know it carries *an application payload*. It may not know which
+> application, what that payload means, or what identity the product stamps on
+> the wire.
+
+`cargo task layering` enforces this (and runs first in `cargo task ci`): no file
+under `crates/agent-habilis-mesh/src` may contain `a2a`, `agent_gossip::`, or a
+`b"agent-gossip…"` byte-domain. It fails with the offending lines and this
+rationale. `examples/mesh-pipe` is the live proof — it consumes the engine and
+never the app.
+
+Practical consequences when adding to the engine:
+
+- Name the **mechanism**, not the consumer: `http_serve`, not `a2a_serve`;
+  `NodeEvent::Ready.http_port`, not `a2a_port`. The app renames at its own
+  boundary (`output/mod.rs`) because `a2a_port` is a documented JSON key.
+- Push app vocabulary into config. The `meta` channel's per-peer write gate is a
+  `doc::SelfWriteGate { map, field }` the app fills in with `peers`/`card`; the
+  engine only plants the genesis and compares before/after.
+- Push app fields into data. `StateFile::set_discovery` takes an opaque JSON map;
+  the app puts `a2a_port`/`a2a_token` in it.
+- Ticket kinds pass their own byte-domain to `TicketAuth::derive`.
+- Engine tests use neutral tags (`app_msg`, `app_req`) and model-neutral bodies.
+  A snapshot pinning a *real* A2A payload belongs in the app crate — see
+  `a2a::model`'s `snap_a2a_req_frame_wire`.
+
+Two deliberate exclusions, both load-bearing: the `/tmp/agent-gossip-<uid>`
+runtime base (`skills/shared/daemon-session.md` hardcodes that path, so renaming
+it orphans running daemons) and user-facing error text naming the CLI. Neither
+puts A2A in the engine and neither reaches the wire.
+
 ### Testing
 
 `cargo task test` / `cargo task ci` run the suite. **Always run tests in the
@@ -141,21 +173,30 @@ for local debugging only. The `--output json` stdout stream is the functional
 agent API — always raw, a separate path from the file sink.
 
 Every log line carries an explicit `target:`, one per subsystem:
-`agent_gossip::{lookup,gossip,lifecycle,beacon,directory,messages}`
+`agent_habilis_mesh::{lookup,gossip,lifecycle,beacon,directory,messages}`
 (`EnvFilter` prefix-matches). Override at runtime, e.g.
-`RUST_LOG=agent_gossip::gossip=trace cargo run -- create`.
+`RUST_LOG=agent_habilis_mesh::gossip=trace cargo run -- create`.
 
-**Write `target: "agent_gossip::<subsystem>"` on every new `tracing` call in
-`agent-habilis-mesh`.** It is not inferred: the default target is the *module
-path*, which in the engine crate is `agent_habilis_mesh::…` and matches none of
-the directives `logging::log_filter` pins. Those pins are what keep the
-connectivity story at `info` in a release build, whose base level is `error` —
-so an untargeted `info!`/`warn!` compiles, passes review, works in a debug
-build, and is silently dropped from every optimized one. Not hypothetical: the
-beacon and gossip-neighbour lines lost their targets, which made
+**Write `target: "agent_habilis_mesh::<subsystem>"` on every new `tracing` call
+in `agent-habilis-mesh`.** The targets deliberately match the engine's own
+crate path, so a call sitting in the module that owns its subsystem is covered
+by the default target too — belt and braces rather than a single point of
+failure. Cross-module calls still need it written out: `reassembly` logs to the
+`gossip` target, and `messages` lives at `logging::messages`, so neither is
+covered by its module path.
+
+Those directives are pinned by `logging::log_filter`, and the pins are what keep
+the connectivity story at `info` in a release build, whose base level is
+`error`. A line whose target matches no pin compiles, passes review, works in a
+debug build, and is silently dropped from every optimized one. Not hypothetical:
+the beacon and gossip-neighbour lines once lost their targets, which made
 `test_join_after_creator_departed_with_surviving_member` (it asserts on those
 lines) fail 100% under `--profile ci` while passing locally in dev, and left
-shipped release binaries with no beacon diagnostics at all.
+shipped release binaries with no beacon diagnostics at all. Aligning the targets
+with the module path is what turned that from a live footgun into a backstop.
+
+Note `transport` has a `LOG_TARGET` but no pin, so its lines only appear when
+`RUST_LOG` names them — deliberate, it is verbose.
 
 In-process tests install no subscriber of their own; call
 `agent_gossip_test_fixtures::init_test_tracing()` (every `InProcNode`

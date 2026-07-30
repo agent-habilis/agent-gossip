@@ -150,13 +150,13 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
         }
         // Explicit target: needs RendezvousParams, so can't live in lookups.
         tracing::info!(
-            target: "agent_gossip::lookup",
+            target: "agent_habilis_mesh::lookup",
             rungs = params.bind_ports.len(),
             "pre-registered rendezvous on the loopback port ladder"
         );
     } else if let Some(relay) = params.bootstrap_relay.clone() {
         tracing::info!(
-            target: "agent_gossip::lookup",
+            target: "agent_habilis_mesh::lookup",
             relay = %relay,
             "pre-registered rendezvous at the relay rung for zero-lookup dial"
         );
@@ -219,11 +219,15 @@ pub struct SetupParams<'a> {
     /// `None` on the in-process paths, which keeps the in-process
     /// tests hermetic (no dependence on the dev machine's install state).
     pub drift: Option<&'a str>,
-    /// `--a2a-serve`: bind the localhost JSON-RPC binding on this port
-    /// (`0` = OS-assigned) — bound here, before `ready` fires, so the event
-    /// carries the real port. `None` (in-process and the flag's default)
-    /// serves nothing.
-    pub a2a_serve: Option<u16>,
+    /// The application's localhost HTTP binding port (`0` = OS-assigned) — bound
+    /// by the caller before `ready` fires, so the event carries the real port.
+    /// `None` (in-process, and the default) serves nothing. The engine only
+    /// forwards it; what protocol is served there is the application's business.
+    pub http_serve: Option<u16>,
+    /// The `meta` channel's per-peer write gate, when the application keeps a
+    /// per-peer map there (see [`crate::doc::SelfWriteGate`]). `None` leaves the
+    /// channel free-form.
+    pub per_peer_gate: Option<crate::doc::SelfWriteGate>,
 }
 
 impl std::fmt::Debug for SetupParams<'_> {
@@ -284,13 +288,13 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         sink,
         multihop,
         drift,
-        a2a_serve,
+        http_serve,
+        per_peer_gate,
     } = params;
-    // The a2a localhost binding is owned + bound by the CLI caller (which holds
-    // `A2aApp`); the engine only needs the resolved port for the `ready` event
-    // and the published card. `Some(0)` (ephemeral) is resolved caller-side and
-    // passed back in here as the real port.
-    let http_port = a2a_serve;
+    // The localhost binding is owned + bound by the caller; the engine only needs
+    // the resolved port for the `ready` event. `Some(0)` (ephemeral) is resolved
+    // caller-side and passed back in here as the real port.
+    let http_port = http_serve;
     // Create mints the config from the caller's choices; join decodes it
     // from the id — one source of truth either way.
     let lookups = match &kind {
@@ -375,6 +379,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     spawn_startup_rung_confirmation(ladder, rung_tx);
 
     Ok(EventLoopConfig {
+        per_peer_gate,
         topic,
         gossip,
         author,

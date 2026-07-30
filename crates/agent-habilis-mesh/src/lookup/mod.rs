@@ -136,7 +136,7 @@ pub async fn build_endpoint(
     if lookups.dht {
         dht::wire(&endpoint)?;
     }
-    tracing::info!(target: "agent_gossip::lookup",
+    tracing::info!(target: "agent_habilis_mesh::lookup",
         network,
         mdns = lookups.mdns,
         dht = lookups.dht,
@@ -191,7 +191,7 @@ pub fn add_peer_addr(endpoint: &Endpoint, addr: EndpointAddr) -> Result<()> {
     let lookup = MemoryLookup::new();
     lookup.add_endpoint_info(addr);
     endpoint.address_lookup()?.add(lookup);
-    tracing::debug!(target: "agent_gossip::lookup", "registered a direct peer address with the endpoint");
+    tracing::debug!(target: "agent_habilis_mesh::lookup", "registered a direct peer address with the endpoint");
     Ok(())
 }
 
@@ -232,9 +232,9 @@ pub async fn probe_connect(
     // firehose, so it stays `debug`.
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     if connected {
-        tracing::debug!(target: "agent_gossip::lookup", connected, elapsed_ms, addr = ?addr, "rendezvous connect-probe finished");
+        tracing::debug!(target: "agent_habilis_mesh::lookup", connected, elapsed_ms, addr = ?addr, "rendezvous connect-probe finished");
     } else {
-        tracing::info!(target: "agent_gossip::lookup", connected, elapsed_ms, addr = ?addr, "rendezvous connect-probe finished");
+        tracing::info!(target: "agent_habilis_mesh::lookup", connected, elapsed_ms, addr = ?addr, "rendezvous connect-probe finished");
     }
     connected
 }

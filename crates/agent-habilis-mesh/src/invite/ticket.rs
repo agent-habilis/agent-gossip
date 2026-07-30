@@ -1,5 +1,5 @@
 //! Wire: the `🎟️` ticket brand + Base58Check(`version ‖ kind ‖ payload`) with a
-//! `SHA256d` checksum. The `🎟️` brand is shared with the a2a-bridge and blob
+//! `SHA256d` checksum. The `🎟️` brand is shared with the blob and application-bridge
 //! tickets and told apart by the `kind` byte; the mesh id's `💬` is a different
 //! glyph, so a mesh id fails invite decode on the prefix alone.
 //!
@@ -23,14 +23,14 @@ use crate::util::clock;
 use crate::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 
 /// Branding prefix on every ticket — the `🎟️` ticket glyph; the remainder of
-/// the string is ASCII Base58Check. Shared with the a2a and blob tickets and
+/// the string is ASCII Base58Check. Shared with the blob and application-bridge tickets and
 /// told apart by [`KIND`]; the mesh id's `💬` is a different glyph entirely.
 const PREFIX: &str = TICKET_GLYPH;
 
 /// Framing version. Bumped only on a breaking framing change.
 const VERSION: u8 = 1;
 
-/// Ticket-kind discriminant. Distinct from the a2a bridge ticket (`2`) and the
+/// Ticket-kind discriminant. Distinct from the application's bridge ticket (`2`) and the
 /// blob ticket (`1`) so a wrong-kind token is rejected on decode.
 const KIND: u8 = 3;
 
@@ -39,7 +39,7 @@ const PASSWORD_BIT: u8 = 0b0000_0001;
 
 /// Domain-separation prefix on the issuer-signed bytes, so an invite signature
 /// can never be replayed as any other Ed25519 signature in the system.
-const SIG_DOMAIN: &[u8] = b"agent-gossip/invite/v1";
+const SIG_DOMAIN: &[u8] = b"habilis-mesh/invite/v1";
 
 /// A decoded invite ticket. Parsing (`decode`) is structural only — verifying
 /// the issuer signature, checking expiry, and unwrapping the root all happen in

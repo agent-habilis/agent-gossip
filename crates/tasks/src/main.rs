@@ -10,6 +10,7 @@ mod clean;
 mod coverage;
 mod fmt;
 mod install;
+mod layering;
 mod lint;
 mod logs;
 mod man;
@@ -84,6 +85,8 @@ enum Task {
     Fmt,
     /// Run clippy lints.
     Lint,
+    /// Check that the engine crate names neither A2A nor the application.
+    Layering,
     /// Remove build artifacts.
     Clean,
     /// Print the logs directory (creating it if missing).
@@ -134,6 +137,7 @@ fn main() -> ExitCode {
         Task::Ci => ci::run(&sh),
         Task::Fmt => fmt::run(&sh),
         Task::Lint => lint::run(&sh),
+        Task::Layering => layering::run(),
         Task::Clean => clean::run(&sh),
         Task::Logs => logs::run(),
         Task::Man => man::run(),

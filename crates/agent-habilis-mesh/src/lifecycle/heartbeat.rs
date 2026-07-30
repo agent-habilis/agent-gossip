@@ -108,10 +108,13 @@ mod tests {
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(
-            None,
+            crate::daemon::state::StateInit {
+                state_file: None,
+                identity: std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+                secrets: crate::daemon::state::MeshSecrets::default(),
+                per_peer_gate: None,
+            },
             Instant::now(),
-            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
-            crate::daemon::state::MeshSecrets::default(),
         )
     }
 

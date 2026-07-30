@@ -30,7 +30,7 @@ async fn heal(
     // The 11h roster-collapse soak ran 2,596 of these with zero log signal.
     if let Err(error) = sender.join_peers(vec![rendezvous_id]).await {
         tracing::warn!(
-            target: "agent_gossip::gossip",
+            target: "agent_habilis_mesh::gossip",
             %error,
             "heal: rendezvous re-graft request failed"
         );
@@ -55,12 +55,12 @@ async fn heal(
 /// [`tick_heal_hard`] (resume edge) and the beacon's own probes.
 pub(crate) async fn tick_heal(rendezvous_id: EndpointId, sender: &MeshSender) {
     tracing::info!(
-        target: "agent_gossip::gossip",
+        target: "agent_habilis_mesh::gossip",
         "heal tick: re-graft the rendezvous"
     );
     if let Err(error) = sender.join_peers(vec![rendezvous_id]).await {
         tracing::warn!(
-            target: "agent_gossip::gossip",
+            target: "agent_habilis_mesh::gossip",
             %error,
             "heal: rendezvous re-graft request failed"
         );
@@ -97,13 +97,13 @@ pub(crate) async fn rebridge_known(sender: &MeshSender, known: &BoundedFifoSet<E
     // connectivity story we keep at `info` for post-incident diagnosis —
     // same rationale as the hard-edge `warn` and beacon-migration logs.
     tracing::info!(
-        target: "agent_gossip::gossip",
+        target: "agent_habilis_mesh::gossip",
         count = peers.len(),
         "heal: rendezvous-independent re-bridge (re-dialing known peers)"
     );
     if let Err(error) = sender.join_peers(peers).await {
         tracing::warn!(
-            target: "agent_gossip::gossip",
+            target: "agent_habilis_mesh::gossip",
             %error,
             "heal: re-bridge graft request failed"
         );
@@ -123,7 +123,7 @@ pub(crate) async fn rebridge_known(sender: &MeshSender, known: &BoundedFifoSet<E
 pub(crate) async fn recover_from_starvation(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let starved_secs = state.last_inbound_at.elapsed().as_secs();
     tracing::warn!(
-        target: "agent_gossip::gossip",
+        target: "agent_habilis_mesh::gossip",
         starved_secs,
         trips = state.recovery_trips,
         "mesh starvation: no inbound traffic; re-bridging known peers and re-announcing"

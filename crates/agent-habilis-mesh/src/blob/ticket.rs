@@ -8,9 +8,9 @@
 //! Wire: the `🎟️` ticket brand + Base58Check(`version ‖ kind ‖ payload`) with a
 //! `SHA256d` checksum — the emoji is the brand, the remainder after `://` ASCII
 //! Base58. The `🎟️` glyph is distinct from the mesh id's `💬`, so a mesh id
-//! fails ticket decode on the prefix alone. The brand *is* shared with the a2a
+//! fails ticket decode on the prefix alone. The brand *is* shared with the application
 //! bridge ticket, so the `kind` byte marks this as a *blob* ticket and makes a
-//! wrong-kind token (an a2a ticket) fail cleanly on decode. Mirrors the a2a
+//! wrong-kind token (a bridge ticket) fail cleanly on decode. Mirrors the application
 //! bridge ticket.
 
 use anyhow::{Context, Result, bail};
@@ -24,7 +24,7 @@ use crate::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 use super::{HASH_LEN, SECRET_LEN};
 
 /// Branding prefix on every ticket — the `🎟️` ticket glyph; the remainder of the
-/// string is ASCII Base58Check. Blob and a2a tickets share this brand and are
+/// string is ASCII Base58Check. Blob and application-bridge tickets share this brand and are
 /// told apart by [`KIND`]; the mesh id's `💬` is a different glyph entirely.
 pub(crate) const PREFIX: &str = TICKET_GLYPH;
 
@@ -32,7 +32,7 @@ pub(crate) const PREFIX: &str = TICKET_GLYPH;
 /// version is rejected on decode.
 const VERSION: u8 = 1;
 
-/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from the a2a
+/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from the application's
 /// bridge ticket's kind so a token of the wrong kind is rejected on decode now
 /// that both share the `🎟️` brand.
 const KIND: u8 = 1;
@@ -147,7 +147,7 @@ fn take_array<const N: usize>(bytes: &[u8], pos: &mut usize) -> Option<[u8; N]> 
 
 /// Strip the ticket brand and optional `://` off a token, returning the
 /// Base58Check body. Accepts the canonical `🎟️://` and, defensively, a paste
-/// that dropped the VS-16 (`🎟://`) or the separator. Mirrors the a2a bridge
+/// that dropped the VS-16 (`🎟://`) or the separator. Mirrors the application's bridge ticket
 /// ticket. `None` if the token doesn't carry the ticket glyph.
 fn strip_ticket_prefix(token: &str) -> Option<&str> {
     let base = TICKET_GLYPH

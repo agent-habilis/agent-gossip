@@ -22,7 +22,7 @@ use agent_habilis_mesh::protocol::mesh::{
 
 use super::directory::{TicketAd, spawn_ticket_advertiser};
 use super::ticket::A2aTicket;
-use super::{A2A_ALPN, SECRET_LEN, wait_online};
+use super::{A2A_ALPN, A2A_TICKET_LABEL, SECRET_LEN, wait_online};
 
 /// Close code for a consumer refused because the 1:1 bridge is already paired.
 const BRIDGE_BUSY: u32 = 4;
@@ -114,7 +114,7 @@ pub(super) async fn bind(
     }
     let mut secret = [0u8; SECRET_LEN];
     rand::rng().fill_bytes(&mut secret);
-    let auth = TicketAuth::a2a(&secret, password);
+    let auth = TicketAuth::derive(&secret, password, A2A_TICKET_LABEL);
     let ticket = A2aTicket {
         addr: endpoint.addr(),
         secret,

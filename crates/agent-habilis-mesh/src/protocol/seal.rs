@@ -26,12 +26,12 @@ use super::crypto::derive_secret;
 
 /// KDF label separating the seal key from every other seed-derived secret, and
 /// the AEAD associated data (bound into the tag).
-const SEAL_LABEL: &[u8] = b"agent-gossip/seal/v1";
+const SEAL_LABEL: &[u8] = b"habilis-mesh/seal/v1";
 
 /// AEAD associated data (construction tag) for the symmetric channel seal. The
 /// key is already domain-separated by the caller (a `derive_secret` channel
 /// label), so this only pins the construction version.
-const SYM_AAD: &[u8] = b"agent-gossip/sym/v1";
+const SYM_AAD: &[u8] = b"habilis-mesh/sym/v1";
 
 /// Envelope construction tag — bumped only on a breaking crypto change.
 const ENVELOPE_VERSION: &str = "x25519-chacha20poly1305/1";
@@ -105,7 +105,7 @@ fn unseal(our_secret: &StaticSecret, sealed: &Sealed) -> Result<Vec<u8>> {
         .map_err(|_| anyhow!("unseal failed: wrong recipient key or tampered ciphertext"))
 }
 
-/// Seal `plaintext` (a serialized A2A payload) to `recipient_pub`, returning the
+/// Seal `plaintext` (a serialized application payload) to `recipient_pub`, returning the
 /// envelope as a [`MessageBody`] ready to drop into a directed frame.
 ///
 /// # Errors
@@ -125,7 +125,7 @@ pub fn seal_to_body(recipient_pub: &[u8; 32], plaintext: &str) -> Result<Message
 }
 
 /// Open a sealed directed `body` with our static X25519 secret, recovering the
-/// plaintext A2A payload string.
+/// plaintext application payload string.
 ///
 /// # Errors
 /// The body is not a sealed envelope, has an unknown version, carries malformed

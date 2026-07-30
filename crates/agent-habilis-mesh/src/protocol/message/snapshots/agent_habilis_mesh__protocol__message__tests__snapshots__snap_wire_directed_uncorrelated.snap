@@ -1,0 +1,5 @@
+---
+source: crates/agent-habilis-mesh/src/protocol/message/mod.rs
+expression: wire
+---
+{"v":"12.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"app_status","to":"addressed-nick","mesh":"💬://3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"body":"{\"ref\":\"00000000-0000-0000-0000-000000000001\",\"scope\":\"💬://test\",\"progress\":{\"phase\":\"running\"}}","ext":{}}

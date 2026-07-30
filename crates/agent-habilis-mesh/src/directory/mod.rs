@@ -34,7 +34,7 @@ use crate::protocol::{MeshId, MessageBody};
 /// orphans every existing directory (a wire-incompatible directory change).
 /// The literal must be exactly 32 bytes to fit `[u8; 32]` (the `derive_secret`
 /// seed width) — keep any future rename to that length.
-const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-gossip/directory/domain/v1";
+const DIRECTORY_BASE_SEED: [u8; 32] = *b"habilis-mesh/directory/domain/v1";
 
 /// The well-known [`Mesh`] for a directory, reached over `lookups`. Both
 /// `--advertise <name>` and `agent-gossip discover --directory <name>` call this; the

@@ -635,7 +635,7 @@ fn test_mesh_name(name: &str) -> MeshName {
 
 /// Route the daemon's `tracing` to the test's captured stdout when `RUST_LOG`
 /// is set, so an in-process failure can be debugged the same way a subprocess
-/// one can (`RUST_LOG=agent_gossip::gossip=debug cargo test …`). Without this
+/// one can (`RUST_LOG=agent_habilis_mesh::gossip=debug cargo test …`). Without this
 /// the in-process tests install no subscriber at all and every diagnostic the
 /// engine emits is discarded — the reason a flake here had to be chased by
 /// bisecting asserts rather than reading a log.

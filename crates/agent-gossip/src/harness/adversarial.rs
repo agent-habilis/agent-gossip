@@ -116,10 +116,19 @@ impl CraftedMsg {
         // `build_change` composes the change without the gate (the gate lives in
         // `ingest`), exactly as a malicious peer bypassing our write path would.
         // The attacker picks its own actor seed; the nickname bytes serve.
-        let change = agent_habilis_mesh::daemon::doc::MeshDoc::new(true)
-            .build_change(&merge, author.as_str().as_bytes())
-            .expect("forge change builds")
-            .expect("forge merge is not a no-op");
+        // Gated, so the forge is built on a replica that shares the victim's
+        // genesis — hence the same `peers` object id. Built on an *ungated* doc it
+        // would be a different map, and whether the victim's gate even fires
+        // would come down to which of two conflicting maps automerge keeps.
+        let change = agent_habilis_mesh::daemon::doc::MeshDoc::new_gated(
+            agent_habilis_mesh::doc::SelfWriteGate {
+                map: "peers".to_owned(),
+                field: "card".to_owned(),
+            },
+        )
+        .build_change(&merge, author.as_str().as_bytes())
+        .expect("forge change builds")
+        .expect("forge merge is not a no-op");
         let body = agent_habilis_mesh::daemon::state_doc::change_body(&change, None)
             .expect("change body composes");
         Self {

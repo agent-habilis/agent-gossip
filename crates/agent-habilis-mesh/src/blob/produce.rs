@@ -56,7 +56,7 @@ impl BlobServer {
     ///
     /// # Errors
     /// Endpoint bind or spool-directory creation fails.
-    pub(crate) async fn start(
+    pub async fn start(
         lookups: LookupOpts,
         spool_dir: PathBuf,
         password: Option<Password>,
@@ -78,14 +78,14 @@ impl BlobServer {
 
     /// Offload `path` under `content_id`: stream-hash it off the event loop,
     /// snapshot it into the spool, mint the per-blob capability, and return the
-    /// fetch ticket to embed in a `Part.url`. On a password-protected mesh the
+    /// fetch ticket for the application to reference however it likes. On a password-protected mesh the
     /// ticket inherits the password: it carries a public salt, and the producer
     /// stores the Argon2id stretch (precomputed here, off the event loop) as the
     /// compare token so serving stays a cheap constant-time equality.
     ///
     /// # Errors
     /// The file is unreadable, exceeds `MAX_BLOB_BYTES`, or snapshotting fails.
-    pub(crate) async fn register(&self, path: &Path, content_id: ContentId) -> Result<BlobTicket> {
+    pub async fn register(&self, path: &Path, content_id: ContentId) -> Result<BlobTicket> {
         let (sha256, size) = hash_file(path.to_path_buf()).await?;
         if size > MAX_BLOB_BYTES {
             bail!("file too large to offload ({size} bytes > {MAX_BLOB_BYTES})");
@@ -132,9 +132,10 @@ impl BlobServer {
         Ok(ticket(registered))
     }
 
-    /// Drop every blob owned by `content_id` (the task idle-timeout sweep).
-    pub async fn evict_task(&self, content_id: &ContentId) {
-        self.store.lock().await.evict_task(content_id);
+    /// Drop every blob owned by `content_id` — whatever sweep the application
+    /// runs when a content group is done with.
+    pub async fn evict_content(&self, content_id: &ContentId) {
+        self.store.lock().await.evict_content(content_id);
     }
 
     /// Close the endpoint on `leave`/shutdown; dropping `self` drops the store,

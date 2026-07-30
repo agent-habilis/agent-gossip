@@ -32,11 +32,11 @@ pub(crate) use send::lane_for;
 pub use sender::MeshSender;
 
 /// ALPN for the unicast channel — a raw bidirectional QUIC stream with its own
-/// protocol identity, distinct from `GOSSIP_ALPN` and the a2a bridge's ALPN.
+/// protocol identity, distinct from `GOSSIP_ALPN` and the application's own bridge ALPN.
 /// The string predates the module move and is wire-load-bearing: it must stay
 /// `agent-gossip/unicast/1`.
-pub(crate) const UNICAST_ALPN: &[u8] = b"agent-gossip/unicast/1";
+pub(crate) const UNICAST_ALPN: &[u8] = b"habilis-mesh/unicast/1";
 
 /// `tracing` target for the unicast plane (matches the module path so
-/// `EnvFilter` prefix-matching works, e.g. `RUST_LOG=agent_gossip::transport=debug`).
-pub(crate) const LOG_TARGET: &str = "agent_gossip::transport";
+/// `EnvFilter` prefix-matching works, e.g. `RUST_LOG=agent_habilis_mesh::transport=debug`).
+pub(crate) const LOG_TARGET: &str = "agent_habilis_mesh::transport";

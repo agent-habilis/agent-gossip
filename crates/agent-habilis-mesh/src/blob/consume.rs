@@ -20,14 +20,14 @@ use super::ticket::BlobTicket;
 use super::{BLOB_ALPN, HASH_LEN, SECRET_LEN};
 
 /// How long the first dial keeps retrying while the producer's address
-/// propagates through the lookups (mirrors the a2a bridge).
+/// propagates through the lookups (mirrors the application's bridge ticket).
 const DISCOVERY_DEADLINE: Duration = Duration::from_secs(90);
 const RETRY_DELAY: Duration = Duration::from_secs(3);
 const CHUNK: usize = 64 * 1024;
 
 /// Fetch the blob named by `ticket`, streaming its bytes to `out` and verifying
 /// the SHA-256 as they arrive. On a hash mismatch this returns an error *after*
-/// bytes have already been written — the caller (e.g. `agent-gossip a2a fetch`) must
+/// bytes have already been written — the caller (e.g. a `fetch` command) must
 /// treat a non-zero result as "discard what landed".
 ///
 /// # Errors

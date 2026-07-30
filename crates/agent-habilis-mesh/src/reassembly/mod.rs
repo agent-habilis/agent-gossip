@@ -17,7 +17,7 @@ pub(crate) fn slot_charge(body_len: usize) -> usize {
 }
 
 /// `tracing` target for reassembly (matches the owning gossip plane).
-const LOG_TARGET: &str = "agent_gossip::gossip";
+const LOG_TARGET: &str = "agent_habilis_mesh::gossip";
 
 /// What became of one ingested shard.
 pub(crate) enum ShardIngest {
@@ -401,7 +401,7 @@ mod tests {
             &MeshId::from("💬test"),
             &Nickname::from("author"),
             AppFrameParams {
-                tag: crate::protocol::AppTag::from("a2a_msg"),
+                tag: crate::protocol::AppTag::from("app_msg"),
                 to: None,
                 corr: None,
                 body: MessageBody::from(body),

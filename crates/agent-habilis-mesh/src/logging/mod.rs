@@ -1,6 +1,6 @@
 //! Developer-log plumbing: the tracing directive filter ([`log_filter`]),
 //! the deferred per-member file sink ([`sink`]), and the per-message
-//! [`messages`] logger on the `agent_gossip::messages` target.
+//! [`messages`] logger on the `agent_habilis_mesh::messages` target.
 //! `--output json` (stdout) is a separate path and is unaffected by
 //! anything here.
 
@@ -25,12 +25,12 @@ pub use sink::{attach, flush_pending_to_stderr, install};
 #[must_use]
 pub fn log_filter() -> tracing_subscriber::EnvFilter {
     use tracing_subscriber::EnvFilter;
-    const SUBSYSTEMS: &str = "agent_gossip::gossip=info,\
-        agent_gossip::lookup=info,\
-        agent_gossip::beacon=info,\
-        agent_gossip::lifecycle=info,\
-        agent_gossip::directory=info,\
-        agent_gossip::messages=info";
+    const SUBSYSTEMS: &str = "agent_habilis_mesh::gossip=info,\
+        agent_habilis_mesh::lookup=info,\
+        agent_habilis_mesh::beacon=info,\
+        agent_habilis_mesh::lifecycle=info,\
+        agent_habilis_mesh::directory=info,\
+        agent_habilis_mesh::messages=info";
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
             format!("info,noq_proto::connection=off,{SUBSYSTEMS}")

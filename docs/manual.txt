@@ -842,7 +842,7 @@ A2A
 
               iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
               all members inside the signed wire frame (gossip wire version
-              11.0). The frame — signing, dedup, anti-entropy, presence,
+              12.0). The frame — signing, dedup, anti-entropy, presence,
               sharding — is replication machinery below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
               bindings. Broadcast chat declares the mesh-broadcast extension

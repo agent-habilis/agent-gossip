@@ -96,10 +96,13 @@ mod tests {
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(
-            None,
+            crate::daemon::state::StateInit {
+                state_file: None,
+                identity: std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+                secrets: crate::daemon::state::MeshSecrets::default(),
+                per_peer_gate: None,
+            },
             Instant::now(),
-            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
-            crate::daemon::state::MeshSecrets::default(),
         )
     }
 
@@ -111,7 +114,7 @@ mod tests {
     fn first_time_seeing_author_is_joined_new() {
         let state = fresh_state();
         let update = compute(
-            &MessageKind::app_broadcast("a2a_msg"),
+            &MessageKind::app_broadcast("app_msg"),
             &nick("swift-cedar"),
             &state,
         );
@@ -124,7 +127,7 @@ mod tests {
         let mut state = fresh_state();
         state.peers.insert(nick("swift-cedar"));
         let update = compute(
-            &MessageKind::app_broadcast("a2a_msg"),
+            &MessageKind::app_broadcast("app_msg"),
             &nick("swift-cedar"),
             &state,
         );
@@ -150,7 +153,7 @@ mod tests {
         let mut state = fresh_state();
         state.quiet.insert(nick("swift-cedar"));
         let update = compute(
-            &MessageKind::app_broadcast("a2a_msg"),
+            &MessageKind::app_broadcast("app_msg"),
             &nick("swift-cedar"),
             &state,
         );

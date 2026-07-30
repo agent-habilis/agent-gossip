@@ -61,7 +61,7 @@ pub(crate) fn spawn_advertiser(
             Ok(session) => session,
             Err(error) => {
                 tracing::warn!(
-                    target: "agent_gossip::directory",
+                    target: "agent_habilis_mesh::directory",
                     %error,
                     directory = %directory,
                     "directory advertise: could not join the directory; gossip stays unlisted"
@@ -78,7 +78,7 @@ pub(crate) fn spawn_advertiser(
             };
             if let Err(error) = session.send(ad.to_body()).await {
                 tracing::debug!(
-                    target: "agent_gossip::directory",
+                    target: "agent_habilis_mesh::directory",
                     %error,
                     "directory advertise: re-broadcast failed (will retry next tick)"
                 );

@@ -52,8 +52,8 @@ impl<'de> Deserialize<'de> for ShardGroup {
 
 impl ShardGroup {
     /// Adopt an existing UUID string as the group id — the chat path names a
-    /// split body's group by its payload's A2A `messageId`, so the reassembled
-    /// logical id *is* the A2A id. `None` for a non-UUID.
+    /// split body's group by its payload's own logical id, so the reassembled
+    /// logical id *is* the payload's own id. `None` for a non-UUID.
     #[must_use]
     pub fn from_uuid_str(raw: &str) -> Option<Self> {
         Uuid::parse_str(raw).ok().map(|_| Self(raw.to_string()))

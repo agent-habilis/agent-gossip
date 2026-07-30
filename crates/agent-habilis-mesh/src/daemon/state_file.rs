@@ -58,9 +58,10 @@ pub struct StateFile {
     name: String,
     nickname: String,
     topic: Option<String>,
-    /// The `--a2a-serve` port + bearer token, when the binding is on. The
-    /// token is why every write chmods the file to 0o600.
-    http: std::sync::Mutex<Option<(u16, String)>>,
+    /// Extra fields the application publishes for its local clients to discover
+    /// (see [`Self::set_discovery`]). Opaque to the engine, and the reason every
+    /// write is 0o600: an app may put a bearer token in here.
+    discovery: std::sync::Mutex<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl StateFile {
@@ -71,7 +72,7 @@ impl StateFile {
             name: name.as_str().to_string(),
             nickname: nickname.as_str().to_string(),
             topic: None,
-            http: std::sync::Mutex::new(None),
+            discovery: std::sync::Mutex::new(serde_json::Map::new()),
         }
     }
 
@@ -83,15 +84,25 @@ impl StateFile {
         self
     }
 
-    /// Note the bound `--a2a-serve` port + bearer token so subsequent writes
-    /// publish them (`a2a_port` / `a2a_token`) for local A2A clients.
+    /// Merge application-owned fields into the document every subsequent write
+    /// publishes — how an app advertises a locally-reachable binding to its own
+    /// clients.
+    ///
+    /// The engine never interprets these. It does not know that `agent-gossip`
+    /// writes its own port/token keys here, only that whatever an app puts in
+    /// may be secret, which is why the file is born 0o600. Keys are merged, not
+    /// replaced, so repeated calls accumulate.
+    ///
     /// # Panics
     /// Panics if an internal invariant is violated.
-    pub fn set_a2a(&self, port: u16, token: String) {
-        *self
-            .http
+    pub fn set_discovery(&self, fields: serde_json::Map<String, serde_json::Value>) {
+        let mut held = self
+            .discovery
             .lock()
-            .expect("state-file http mutex not poisoned") = Some((port, token));
+            .expect("state-file discovery mutex not poisoned");
+        for (key, value) in fields {
+            held.insert(key, value);
+        }
     }
 
     /// Write a fresh, complete state document — `gossip`, `name`,
@@ -110,8 +121,9 @@ impl StateFile {
     }
 
     fn try_write(&self, peer_count: usize, ready: bool) -> std::io::Result<()> {
-        // The state file carries the full mesh id (and, with `--a2a-serve`, the
-        // bearer token). It is born 0o600 below, but the enclosing directory must
+        // The state file carries the full mesh id, and whatever the application
+        // published as discovery fields (possibly a bearer token).
+        // It is born 0o600 below, but the enclosing directory must
         // also be private. `ensure_parent_private` validates the base and fails
         // closed when the target is under it (the default path, and the plugin's
         // `--state-file /tmp/agent-gossip-<uid>/sessions/...`), and just creates
@@ -127,14 +139,13 @@ impl StateFile {
         obj.insert("pid".into(), std::process::id().into());
         obj.insert("ready".into(), ready.into());
         obj.insert("peer_count".into(), peer_count.into());
-        if let Some((port, token)) = self
-            .http
+        for (key, value) in self
+            .discovery
             .lock()
-            .expect("state-file http mutex not poisoned")
-            .clone()
+            .expect("state-file discovery mutex not poisoned")
+            .iter()
         {
-            obj.insert("a2a_port".into(), port.into());
-            obj.insert("a2a_token".into(), token.into());
+            obj.insert(key.clone(), value.clone());
         }
         obj.insert("last_updated".into(), clock::unix_secs().into());
         let mut json = serde_json::to_vec(&obj).map_err(std::io::Error::other)?;
@@ -143,8 +154,8 @@ impl StateFile {
         // No fsync: statusline is best-effort; kernel buffer-writeback
         // is plenty. Atomic rename still gives readers a consistent view.
         let tmp = tmp_sibling(&self.path);
-        // 0o600 at create, not chmod-after: with `--a2a-serve` the file
-        // carries the bearer token, and a create-then-chmod sequence leaves a
+        // 0o600 at create, not chmod-after: an app's discovery fields may carry
+        // a bearer token, and a create-then-chmod sequence leaves a
         // window where the token is written at the umask-default mode (often
         // world-readable) — a local co-tenant polling the predictable tmp
         // path could open an fd during that window (POSIX checks perms at

@@ -117,7 +117,7 @@ impl Session {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
+        let file = file.map(|path| crate::a2a::send::FileRef {
             path,
             name: file_name,
             mime: file_mime,

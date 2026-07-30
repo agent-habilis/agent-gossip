@@ -355,7 +355,7 @@ pub struct EventLoopState {
     /// [`EventLoopConfig`] after construction, so `new` defaults it to `None`
     /// and the many test call sites need no new argument.
     pub mint_mesh: Option<Mesh>,
-    /// Symmetric key for broadcast-chat (`A2aMsg`) bodies on a passworded
+    /// Symmetric key for broadcast-chat app bodies on a passworded
     /// mesh, `derive_secret(mesh_key, "broadcast")` — domain-separated from
     /// the state/meta doc keys. `None` ⇒ chat stays plaintext. Wiped on drop.
     pub broadcast_key: Option<zeroize::Zeroizing<[u8; 32]>>,
@@ -385,17 +385,29 @@ pub(crate) struct MeshSecrets {
     pub key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
+/// Everything [`EventLoopState::new`] needs beyond the clock, grouped for the
+/// same reason [`MeshSecrets`] is: the argument budget. `now` stays separate
+/// because tests pin it to a deterministic instant.
+pub(crate) struct StateInit {
+    pub state_file: Option<StateFile>,
+    pub identity: Arc<Identity>,
+    pub secrets: MeshSecrets,
+    /// The `meta` channel's per-peer write gate; `None` leaves it free-form.
+    pub per_peer_gate: Option<crate::doc::SelfWriteGate>,
+}
+
 impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
     /// tests can pin a deterministic instant. `secrets` is taken by value (not
     /// `&MeshSecrets`) so its `key` is dropped (zeroized) here once the
     /// per-channel keys are derived, rather than lingering in the caller.
-    pub(crate) fn new(
-        state_file: Option<StateFile>,
-        now: Instant,
-        identity: Arc<Identity>,
-        secrets: MeshSecrets,
-    ) -> Self {
+    pub(crate) fn new(init: StateInit, now: Instant) -> Self {
+        let StateInit {
+            state_file,
+            identity,
+            secrets,
+            per_peer_gate,
+        } = init;
         let MeshSecrets {
             password: mesh_password,
             key: mesh_key,
@@ -445,8 +457,12 @@ impl EventLoopState {
             reassembled_groups: BoundedFifoSet::new(message_log_size()),
             reassembly: super::reassembly::ReassemblyStore::default(),
             shard_cache: super::reassembly::ShardCache::default(),
-            state_doc: super::doc::MeshDoc::new(false).with_key(state_key),
-            meta_doc: super::doc::MeshDoc::new(true).with_key(meta_key),
+            state_doc: super::doc::MeshDoc::new_ungated().with_key(state_key),
+            meta_doc: match per_peer_gate {
+                Some(gate) => super::doc::MeshDoc::new_gated(gate),
+                None => super::doc::MeshDoc::new_ungated(),
+            }
+            .with_key(meta_key),
             digest_cursor: 0,
             identity,
             self_seq: 0,
@@ -794,7 +810,7 @@ mod tests {
             &MeshId::from("💬test"),
             &nick("author-nick"),
             AppFrameParams {
-                tag: crate::protocol::AppTag::from("a2a_msg"),
+                tag: crate::protocol::AppTag::from("app_msg"),
                 to: None,
                 corr: None,
                 body: MessageBody::from("body"),
@@ -806,10 +822,13 @@ mod tests {
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(
-            None,
+            crate::daemon::state::StateInit {
+                state_file: None,
+                identity: std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+                secrets: MeshSecrets::default(),
+                per_peer_gate: None,
+            },
             Instant::now(),
-            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
-            MeshSecrets::default(),
         )
     }
 

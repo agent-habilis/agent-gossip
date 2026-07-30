@@ -555,6 +555,45 @@ mod tests {
             insta::assert_snapshot!(serde_json::to_string(&fixture_message()).unwrap());
         }
 
+        /// The full **wire bytes** of a gossip frame carrying an A2A JSON-RPC
+        /// request: `a2a_req` tag, directed `to`, correlated `corr`, body = the
+        /// `{method, params}` envelope.
+        ///
+        /// This pair lives here rather than in the engine because it is an *A2A*
+        /// contract. The engine pins the frame envelope with model-neutral bodies
+        /// — it must not know this shape — so the concatenation (real A2A payload
+        /// inside a real frame) is pinned by the layer that owns the payload.
+        #[test]
+        fn snap_a2a_req_frame_wire() {
+            let msg = agent_habilis_mesh::protocol::Message::fixture(
+                agent_habilis_mesh::protocol::MessageKind::app_to(
+                    crate::a2a::wire::REQ,
+                    agent_habilis_mesh::protocol::Nickname::from("addressed-nick"),
+                    Some(agent_habilis_mesh::protocol::CorrId::from(
+                        "00000000-0000-0000-0000-0000000000aa",
+                    )),
+                ),
+                r#"{"method":"tasks/list","params":{}}"#,
+            );
+            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
+        }
+
+        /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
+        #[test]
+        fn snap_a2a_resp_frame_wire() {
+            let msg = agent_habilis_mesh::protocol::Message::fixture(
+                agent_habilis_mesh::protocol::MessageKind::app_to(
+                    crate::a2a::wire::RESP,
+                    agent_habilis_mesh::protocol::Nickname::from("addressed-nick"),
+                    Some(agent_habilis_mesh::protocol::CorrId::from(
+                        "00000000-0000-0000-0000-0000000000aa",
+                    )),
+                ),
+                r#"{"result":{"tasks":[]}}"#,
+            );
+            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
+        }
+
         #[test]
         fn snap_a2a_task() {
             let task = Task {

@@ -593,8 +593,13 @@ mod mesh_tests {
         // a rename should ever reach it — if the id changes, something leaked
         // into the encoding that does not belong there. The topic mixes
         // `crypto::DOMAIN`, so it moves whenever that domain is rebranded; it
-        // last moved for the agent-gossip rebrand, which is why
-        // `message::VERSION` is `11.0`.
+        // last moved when the domains dropped the product name for the
+        // engine's (`agent-gossip/…` → `habilis-mesh/…`), which is why
+        // `message::VERSION` is `12.0`.
+        //
+        // That split is the point: this pair is what proved the de-branding
+        // reached the key-derivation transcript (topic moved) without leaking
+        // into the id encoding (id held).
         let mesh = Mesh::new(dummy_seed(), dummy_name(), MeshConfig::public_preset());
         assert_eq!(
             mesh.to_string(),
@@ -603,7 +608,7 @@ mod mesh_tests {
         let topic = super::crypto::derive_topic_id(mesh.seed(), &mesh.name, &mesh.config_bytes());
         assert_eq!(
             format!("{topic:?}"),
-            "TopicId(a9de3aea27630a0a362a8c3dad39c66d73de4241f8914b61cd3b1e307a67e126)"
+            "TopicId(05fe8948f1b086f29f24c6b1b2092f86209d290956e25f84451fadd688aef8c1)"
         );
     }
 

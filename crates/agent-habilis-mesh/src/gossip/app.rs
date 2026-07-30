@@ -26,9 +26,9 @@ pub struct AppClass {
     pub chained: bool,
     /// Does this frame's directed body arrive **sealed** (encrypted) to the
     /// addressee? When `true`, a directed frame addressed to us must unseal
-    /// (decrypt) or be dropped — the a2a convention for its directed tags. When
+    /// (decrypt) or be dropped — the convention an app picks for its directed tags. When
     /// `false`, the directed body is plaintext and passes through unchanged (a
-    /// non-a2a consumer's explicit choice). Only consulted on the addressee's
+    /// consumer with its own data model's explicit choice). Only consulted on the addressee's
     /// directed path; ignored for broadcast/infra frames, which are never
     /// sealed.
     pub sealed: bool,

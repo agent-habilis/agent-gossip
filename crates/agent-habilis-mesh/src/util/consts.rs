@@ -21,14 +21,14 @@
 /// moved. Change this, then sweep the literals.
 pub const MESH_GLYPH: &str = "💬";
 
-/// The peer sigil — brands a peer's address in its A2A card interface
+/// The peer sigil — brands a peer's address in its published card interface
 /// url (`🤖://<pubkey>`). A robot for the AI agent behind the pubkey; distinct
 /// from the mesh `💬` and the ticket `🎟️` so the three token families never
 /// collide. Emoji-presentation by default, so no variation selector.
 pub const PEER_GLYPH: &str = "🤖";
 
 /// The ticket sigil — brands a bearer capability (`🎟️://<base58check>`),
-/// shared by the a2a-bridge, blob, and invite tickets and told apart by a kind
+/// shared by the blob, invite, and application-bridge tickets and told apart by a kind
 /// byte in the payload. The base `🎟` (`U+1F39F`) defaults to *text*
 /// presentation, so the canonical form carries the `\u{FE0F}` selector that
 /// makes it render as the colorful emoji users copy; decoders also accept the
@@ -223,12 +223,6 @@ pub const POLL_WAITERS_CAP: usize = 64;
 /// (non-blocking `try_send`) and recovered via anti-entropy.
 pub(crate) const UNICAST_INBOX_CAP: usize = 256;
 
-/// Upper bound on a client-supplied A2A-call `timeout_secs`. Clamped before it
-/// is added to a `tokio::time::Instant` (an unbounded value would overflow the
-/// platform `Instant` and panic the event loop). Generous — any real RPC round
-/// trip answers well inside an hour.
-pub const A2A_CALL_MAX_TIMEOUT_SECS: u64 = 3600;
-
 /// Max bytes for one IPC command line: a full logical body in a JSON envelope
 /// (mesh id, nickname, keys). The body travels JSON-escaped inside the line
 /// — worst case every char doubles (quotes/backslashes/newlines) — so budget
@@ -271,7 +265,7 @@ pub(crate) const PASSWORD_KDF_P_COST: u32 = 1;
 // control, with history), never an ephemeral shell var. Each is the default
 // for the matching hidden CLI flag (`--alive-timeout-secs`, …) that the
 // subprocess test suite passes to run with short timings; production reads the
-// const. See `agent_gossip::util::tuning`.
+// const. See `agent_habilis_mesh::util::tuning`.
 
 /// How long a peer can go unheard before the sweeper evicts it. Must exceed
 /// the alive-keepalive interval comfortably (3× absorbs one or two lost

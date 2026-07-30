@@ -190,7 +190,7 @@ impl InProcessSession {
         &self,
         task_id: TaskId,
         text: String,
-        file: Option<agent_habilis_mesh::blob::FileRef>,
+        file: Option<crate::a2a::send::FileRef>,
     ) -> anyhow::Result<Message> {
         self.call(|resp| SessionRequest::TaskArtifact {
             task_id,

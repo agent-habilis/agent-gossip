@@ -14,10 +14,10 @@ use agent_habilis_mesh::lookup::{add_peer_addr, build_peer_endpoint};
 use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth};
 use agent_habilis_mesh::protocol::mesh::LookupOpts;
 
-use super::A2A_ALPN;
 use super::connect::{SharedConnection, forward_one};
 use super::expose::{bind, serve_connection};
 use super::ticket::A2aTicket;
+use super::{A2A_ALPN, A2A_TICKET_LABEL};
 
 /// A local HTTP origin that answers every connection with the same
 /// `Content-Length`-framed response. Returns its `host:port`.
@@ -111,7 +111,7 @@ async fn bridge_rewrites_the_agent_card_url_to_the_local_base() {
     let origin = spawn_origin(card_response("http://origin.internal:9999/a2a")).await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::a2a(&ticket.secret, None);
+    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
     let response = drive(
         &shared,
@@ -139,7 +139,7 @@ async fn bridge_forwards_a_non_card_exchange_byte_for_byte() {
     let origin = spawn_origin(response.clone()).await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::a2a(&ticket.secret, None);
+    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
     let got = drive(
         &shared,
@@ -192,7 +192,7 @@ async fn a_second_consumer_is_refused_while_the_bridge_is_paired() {
     // Consumer A drives a request — that guarantees the exposer accepted and
     // claimed the 1:1 slot. Keeping A's endpoint + connection alive holds it.
     let (endpoint_a, shared_a) = consumer(&ticket).await;
-    let auth = TicketAuth::a2a(&ticket.secret, None);
+    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
     let _ = drive(
         &shared_a,
         &auth,

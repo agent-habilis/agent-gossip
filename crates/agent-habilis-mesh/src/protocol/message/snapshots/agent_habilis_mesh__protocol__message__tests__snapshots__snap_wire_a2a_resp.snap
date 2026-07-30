@@ -1,5 +1,0 @@
----
-source: crates/agent-habilis-mesh/src/protocol/message/mod.rs
-expression: wire
----
-{"v":"11.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"a2a_resp","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"💬://2vrDs9ekzS2VUy9R6UwuSiQ2DtvPGQ7MLpzdio4wj37b3k7ycAhTQVpfiPpYu","author":"alice-bot","ts":1700000000,"body":"{\"result\":{\"tasks\":[]}}","ext":{}}

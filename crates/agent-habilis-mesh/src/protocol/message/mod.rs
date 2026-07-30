@@ -47,22 +47,31 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little headroom under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message, `11.0` for the agent-gossip
-/// rebrand. The crypto byte-domains carry the product name (the
-/// message/unicast/a2a/blob ALPNs, the seal/sym/x25519/invite seeds, the
-/// directory base seed), and they are mixed into signature and key-derivation
-/// transcripts — so any rebrand changes the bytes an older build derives and its
-/// signature verification fails *silently*. The exact-match gate in `parse`
-/// exists to turn that into a loud rejection rather than a frame that folds to a
-/// no-op and diverges. Rebrand the domains, bump this.
+/// Protocol version embedded in every message, `12.0` for the engine's
+/// de-branding. The crypto byte-domains are mixed into signature and
+/// key-derivation transcripts, so any rebrand changes the bytes an older build
+/// derives and its signature verification fails *silently*. The exact-match gate
+/// in `parse` exists to turn that into a loud rejection rather than a frame that
+/// folds to a no-op and diverges. Rebrand the domains, bump this.
+///
+/// As of `12.0` the domains carry the **engine's** name, not the product's
+/// (`habilis-mesh/…`): the unicast and blob ALPNs, the seal/sym/x25519/invite
+/// seeds, the message signing domain, the directory base seed, and the
+/// shared-document genesis actor. `agent-gossip` is one consumer of this engine;
+/// its own bridge ALPN stays branded because it belongs to the application.
 ///
 /// The identity wire key stays **`mesh`**, and so does the internal vocabulary.
-/// The user-facing noun for a session became **gossip** at the same time, but that
-/// is a CLI/docs/MCP surface word and never reaches the wire.
+/// The user-facing noun for a session is **gossip**, but that is a CLI/docs/MCP
+/// surface word and never reaches the wire.
 ///
-/// Earlier versions are *format* history, not interop history — nothing shipped,
-/// so no peer ever ran them:
+/// **`12.0` is the first version bump that breaks real interop.** `11.0` shipped
+/// (v0.7.4, on the Homebrew tap), so an `11.0` peer and a `12.0` peer cannot form
+/// a mesh at all — not merely fail on one frame kind. That is the designed
+/// behavior of the `parse` gate: a loud rejection beats silent divergence. Every
+/// bump below it predates any release, so no peer ever ran them, and they are
+/// *format* history rather than interop history:
 ///
+/// - `11.0` — the agent-gossip rebrand (product name in the byte-domains).
 /// - `10.0` / `9.0` — the agent-mesh → agent-square and swarm → mesh renames.
 ///   `9.0` also moved the identity wire key to `"mesh"` and the JSON-RPC
 ///   namespace to `mesh:*`.
@@ -73,11 +82,11 @@ const _: () = assert!(
 /// - `7.0` — the automerge `state`/`meta` channels: Base58 change bodies,
 ///   heads-based digests.
 /// - `6.0` — directed sealing.
-/// - `5.0` — the A2A v1.0 / `ProtoJSON` migration.
-/// - `4.0` — the native-A2A port.
-/// - `3.0` — the A2A migration.
+/// - `5.0` — the application's v1.0 / `ProtoJSON` payload migration.
+/// - `4.0` — the native application-payload port.
+/// - `3.0` — the application-payload migration.
 /// - `2.0` — RFC 6902 → RFC 7386 shared state.
-pub(crate) const VERSION: &str = "11.0";
+pub(crate) const VERSION: &str = "12.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -102,7 +111,7 @@ impl fmt::Display for PresenceSubtype {
 
 /// The single addressee of a directed frame — the routing mirror of
 /// `gossip::recv::addressed_to_us`. `Some(nick)` for a frame that targets
-/// exactly one peer (`Pong`, the A2A task-push legs, the A2A RPC
+/// exactly one peer (`Pong`, an application's directed push legs, its RPC
 /// request/response); `None` for a broadcast or infrastructure kind. The
 /// [`crate::transport`] send router uses this to decide point-to-point vs gossip.
 ///
@@ -128,8 +137,8 @@ pub fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
 
 /// An opaque application-payload tag — the wire discriminant for a
 /// [`MessageKind::App`] frame (serialized in the `tag` field). The engine never
-/// interprets it; the consuming application owns the taxonomy (e.g. the a2a
-/// layer's `a2a_msg` / `a2a_status` / `a2a_req` tags) and dispatches on it.
+/// interprets it; the consuming application owns the taxonomy (e.g. an application
+/// layer's `app_msg` / `app_status` / `app_req` tags) and dispatches on it.
 /// Validated as a short non-empty ASCII slug so a crafted value can't smuggle
 /// structure into the routing layer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -187,7 +196,7 @@ impl fmt::Display for AppTag {
 /// An opaque request/response correlation id carried on a directed
 /// [`MessageKind::App`] frame (the `corr` field). Matched by the engine's
 /// pending-call registry to pair a reply with its outstanding call; the app
-/// mints and interprets its value (the a2a layer uses a UUID). Kept generic so
+/// mints and interprets its value (the application layer uses a UUID). Kept generic so
 /// the engine correlates without knowing the payload model.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
@@ -372,7 +381,7 @@ impl fmt::Display for MessageKind {
 impl MessageKind {
     /// The app-payload tag if this is an [`App`](MessageKind::App) frame, else
     /// `None`. The one accessor app code uses to dispatch on payload type
-    /// without destructuring, now that the a2a kinds share one variant.
+    /// without destructuring, now that the app-frame kinds share one variant.
     #[must_use]
     pub fn app_tag(&self) -> Option<&AppTag> {
         match self {
@@ -398,7 +407,7 @@ impl MessageKind {
 
     /// A broadcast [`App`](MessageKind::App) kind (no addressee, no correlation)
     /// with tag `tag` — the test/fixture ergonomic for what used to be a bare
-    /// unit variant like `A2aMsg`.
+    /// unit variant per app tag.
     #[cfg(any(test, feature = "test-fixtures"))]
     #[must_use]
     pub fn app_broadcast(tag: &str) -> Self {
@@ -411,7 +420,7 @@ impl MessageKind {
 
     /// A directed [`App`](MessageKind::App) kind addressed to `to`, tag `tag`,
     /// with an optional correlation id — the test ergonomic for the former
-    /// directed a2a variants.
+    /// directed app variants.
     #[cfg(any(test, feature = "test-fixtures"))]
     #[must_use]
     pub fn app_to(tag: &str, to: Nickname, corr: Option<CorrId>) -> Self {
@@ -432,14 +441,14 @@ fn empty_body() -> MessageBody {
 }
 
 /// A protocol frame — serialized as JSON on the wire. The transport
-/// envelope beneath the app layer: for an app frame (e.g. chat, `a2a_msg`),
+/// envelope beneath the app layer: for an app frame (e.g. chat, `app_msg`),
 /// `body` carries a whole serialized app payload opaque to this layer;
 /// plumbing kinds (presence, digests, ping/pong, state/meta) carry their own
 /// opaque bodies.
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"11.0","id":"<uuid>","type":"app","tag":"a2a_msg","mesh":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"12.0","id":"<uuid>","type":"app","tag":"app_msg","mesh":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for a directed app frame.
@@ -534,7 +543,7 @@ impl Message {
     }
 
     /// A frame of an explicit `kind` — the generic constructor the task
-    /// send path uses to build A2A message/status/artifact frames through
+    /// send path uses to build the application's directed frames through
     /// one shard-splitting flow.
     #[must_use]
     pub fn new_frame(
@@ -733,7 +742,7 @@ impl Message {
     /// (deterministic, sorted-key) `serde_json` encodings.
     #[must_use]
     pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
-        const DOMAIN: &[u8] = b"agent-gossip/msg";
+        const DOMAIN: &[u8] = b"habilis-mesh/msg";
         let mut buf = Vec::new();
         let mut field = |bytes: &[u8]| {
             buf.extend_from_slice(
@@ -819,8 +828,8 @@ impl Message {
     }
 
     /// Replace the minted random id before signing. The chat path pins the
-    /// frame id to the payload's A2A `messageId` so every consumer-visible id
-    /// (dedup, poll cursor, echo) *is* the A2A id; receive validates the two
+    /// frame id to the payload's own logical id so every consumer-visible id
+    /// (dedup, poll cursor, echo) *is* the payload's own id; receive validates the two
     /// agree.
     #[must_use]
     pub fn with_id(mut self, id: MessageId) -> Self {
@@ -923,6 +932,10 @@ pub struct BuildMsgParams<'a> {
     pub author: &'a Nickname,
     pub body: MessageBody,
     pub chain: ChainCtx,
+    /// The app tag to stamp. A parameter, not a constant: this fixture is used
+    /// across crates, and hardcoding one consumer's tag made it build a frame
+    /// that consumer would then fail to recognise.
+    pub tag: AppTag,
 }
 
 #[cfg(any(test, feature = "test-fixtures"))]
@@ -936,7 +949,7 @@ pub fn build_msg_bytes(
         params.mesh,
         params.author,
         AppFrameParams {
-            tag: AppTag::from("a2a_msg"),
+            tag: params.tag,
             to: None,
             corr: None,
             body: params.body,
@@ -993,7 +1006,7 @@ mod tests {
             &sid(),
             &nick("word-word"),
             AppFrameParams {
-                tag: AppTag::from("a2a_msg"),
+                tag: AppTag::from("app_msg"),
                 to: None,
                 corr: None,
                 body: MessageBody::from("Hello, world!"),
@@ -1002,7 +1015,7 @@ mod tests {
         let bytes = msg.serialize().unwrap();
         let parsed = Message::parse(&bytes).unwrap();
         assert_eq!(parsed.id, msg.id);
-        assert_eq!(parsed.kind, MessageKind::app_broadcast("a2a_msg"));
+        assert_eq!(parsed.kind, MessageKind::app_broadcast("app_msg"));
         assert_eq!(parsed.body, msg.body);
     }
 
@@ -1059,7 +1072,7 @@ mod tests {
             &sid(),
             &nick("word-word"),
             AppFrameParams {
-                tag: AppTag::from("a2a_status"),
+                tag: AppTag::from("app_status"),
                 to: Some(target.clone()),
                 corr: None,
                 body: MessageBody::from(r#"{"kind":"status-update"}"#),
@@ -1068,9 +1081,9 @@ mod tests {
         let bytes = msg.serialize().unwrap();
         let wire = String::from_utf8_lossy(&bytes);
         assert!(wire.contains("\"type\":\"app\""));
-        assert!(wire.contains("\"tag\":\"a2a_status\""));
+        assert!(wire.contains("\"tag\":\"app_status\""));
         let parsed = Message::parse(&bytes).unwrap();
-        assert_eq!(parsed.kind, MessageKind::app_to("a2a_status", target, None));
+        assert_eq!(parsed.kind, MessageKind::app_to("app_status", target, None));
         assert_eq!(parsed.body, msg.body);
     }
 
@@ -1080,15 +1093,15 @@ mod tests {
         let msg = Message::new_frame(
             &sid(),
             &nick("word-word"),
-            MessageKind::app_to("a2a_artifact", target.clone(), None),
+            MessageKind::app_to("app_artifact", target.clone(), None),
             MessageBody::from(r#"{"kind":"artifact-update"}"#),
         );
         let bytes = msg.serialize().unwrap();
-        assert!(String::from_utf8_lossy(&bytes).contains("\"tag\":\"a2a_artifact\""));
+        assert!(String::from_utf8_lossy(&bytes).contains("\"tag\":\"app_artifact\""));
         let parsed = Message::parse(&bytes).unwrap();
         assert_eq!(
             parsed.kind,
-            MessageKind::app_to("a2a_artifact", target, None)
+            MessageKind::app_to("app_artifact", target, None)
         );
     }
 
@@ -1098,7 +1111,7 @@ mod tests {
             &sid(),
             &nick("word-word"),
             AppFrameParams {
-                tag: AppTag::from("a2a_msg"),
+                tag: AppTag::from("app_msg"),
                 to: None,
                 corr: None,
                 body: MessageBody::from("With ext."),
@@ -1119,7 +1132,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -1129,7 +1142,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -1151,14 +1164,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#mesh` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"11.0","id":"not-a-uuid","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"12.0","id":"not-a-uuid","type":"app","tag":"app_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1166,7 +1179,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1178,7 +1191,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"11.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.
@@ -1206,6 +1219,7 @@ mod tests {
         let identity = crate::protocol::identity::Identity::generate();
         let (bytes, built) = build_msg_bytes(
             BuildMsgParams {
+                tag: AppTag::from("app_msg"),
                 mesh: &sid(),
                 author: &alice,
                 body: MessageBody::from("hello"),
@@ -1231,7 +1245,7 @@ mod tests {
 
         #[test]
         fn signed_message_verifies() {
-            let msg = Message::fixture(MessageKind::app_broadcast("a2a_msg"), "hello")
+            let msg = Message::fixture(MessageKind::app_broadcast("app_msg"), "hello")
                 .signed(&identity());
             assert!(!msg.pubkey.is_empty() && !msg.sig.is_empty());
             assert!(msg.verify_signature());
@@ -1239,13 +1253,13 @@ mod tests {
 
         #[test]
         fn unsigned_message_does_not_verify() {
-            let msg = Message::fixture(MessageKind::app_broadcast("a2a_msg"), "hello");
+            let msg = Message::fixture(MessageKind::app_broadcast("app_msg"), "hello");
             assert!(!msg.verify_signature(), "empty pubkey/sig must not verify");
         }
 
         #[test]
         fn tampered_body_breaks_signature() {
-            let mut msg = Message::fixture(MessageKind::app_broadcast("a2a_msg"), "hello")
+            let mut msg = Message::fixture(MessageKind::app_broadcast("app_msg"), "hello")
                 .signed(&identity());
             msg.body = "tampered".into();
             assert!(!msg.verify_signature());
@@ -1253,7 +1267,7 @@ mod tests {
 
         #[test]
         fn tampered_author_breaks_signature() {
-            let mut msg = Message::fixture(MessageKind::app_broadcast("a2a_msg"), "hello")
+            let mut msg = Message::fixture(MessageKind::app_broadcast("app_msg"), "hello")
                 .signed(&identity());
             msg.author = "impostor-bot".into();
             assert!(!msg.verify_signature());
@@ -1262,31 +1276,31 @@ mod tests {
         #[test]
         fn tampered_task_target_breaks_signature() {
             let mut msg = Message::fixture(
-                MessageKind::app_to("a2a_status", "calm-otter".into(), None),
+                MessageKind::app_to("app_status", "calm-otter".into(), None),
                 "{}",
             )
             .signed(&identity());
             assert!(msg.verify_signature());
-            msg.kind = MessageKind::app_to("a2a_status", "evil-otter".into(), None);
+            msg.kind = MessageKind::app_to("app_status", "evil-otter".into(), None);
             assert!(!msg.verify_signature(), "directed `to` is a signed field");
         }
 
         #[test]
         fn tampered_corr_breaks_signature() {
             let mut msg = Message::fixture(
-                MessageKind::app_to("a2a_req", "calm-otter".into(), Some(CorrId::from("aaaa"))),
+                MessageKind::app_to("app_req", "calm-otter".into(), Some(CorrId::from("aaaa"))),
                 "{}",
             )
             .signed(&identity());
             msg.kind =
-                MessageKind::app_to("a2a_req", "calm-otter".into(), Some(CorrId::from("bbbb")));
+                MessageKind::app_to("app_req", "calm-otter".into(), Some(CorrId::from("bbbb")));
             assert!(!msg.verify_signature(), "`corr` is a signed field");
         }
 
         #[test]
         fn signature_survives_wire_round_trip() {
             let msg =
-                Message::fixture(MessageKind::app_broadcast("a2a_msg"), "hi").signed(&identity());
+                Message::fixture(MessageKind::app_broadcast("app_msg"), "hi").signed(&identity());
             let parsed = Message::parse(&msg.serialize().unwrap()).unwrap();
             assert!(parsed.verify_signature());
             assert_eq!(parsed.pubkey, msg.pubkey);
@@ -1296,7 +1310,7 @@ mod tests {
         fn unsigned_wire_omits_signature_fields() {
             // The skip-if-empty fields keep an unsigned message byte-identical
             // to the v1 wire, so existing snapshots are unaffected.
-            let bytes = Message::fixture(MessageKind::app_broadcast("a2a_msg"), "hi")
+            let bytes = Message::fixture(MessageKind::app_broadcast("app_msg"), "hi")
                 .serialize()
                 .unwrap();
             let wire = String::from_utf8(bytes).unwrap();
@@ -1310,7 +1324,7 @@ mod tests {
         use crate::protocol::identity::Identity;
 
         fn msg(body: &str) -> Message {
-            Message::fixture(MessageKind::app_broadcast("a2a_msg"), body)
+            Message::fixture(MessageKind::app_broadcast("app_msg"), body)
         }
 
         #[test]
@@ -1374,19 +1388,24 @@ mod tests {
         use super::super::CorrId;
         use super::{Message, MessageKind, Nickname, PresenceSubtype};
 
-        /// A deterministic chat frame whose body is the exact serialized a2a
-        /// chat payload (`messageId` pinned to the fixture id). Hardcoded so the
-        /// protocol layer names no a2a type; the snapshot pins the
-        /// payload-in-body wire form, not a placeholder.
+        /// A deterministic broadcast app frame. The body is a JSON payload shaped
+        /// like a real consumer's — nested object, unicode, an embedded mesh id —
+        /// but belonging to no actual data model, because what this snapshot pins
+        /// is the **envelope**: field order, the `tag`/`type` discriminators, and
+        /// that a JSON body survives as an opaque string rather than being
+        /// re-encoded.
+        ///
+        /// Pinning a real payload here would make the engine's test suite the
+        /// keeper of an application's wire contract. That contract belongs to the
+        /// application, whose own suite owns it.
         fn chat_fixture(text: &str) -> Message {
             assert_eq!(text, "What is Rust?", "chat_fixture body is pinned");
             let body = concat!(
-                "{\"messageId\":\"00000000-0000-0000-0000-000000000001\",",
-                "\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"What is Rust?\"}],",
-                "\"contextId\":\"💬://test\",",
-                "\"extensions\":[\"https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1\"]}"
+                "{\"id\":\"00000000-0000-0000-0000-000000000001\",",
+                "\"role\":\"sender\",\"parts\":[{\"text\":\"What is Rust?\"}],",
+                "\"scope\":\"💬://test\"}"
             );
-            Message::fixture(MessageKind::app_broadcast("a2a_msg"), body)
+            Message::fixture(MessageKind::app_broadcast("app_msg"), body)
         }
 
         #[test]
@@ -1397,17 +1416,17 @@ mod tests {
             insta::assert_snapshot!(wire);
         }
 
-        /// The status-frame wire shape: a worker's `working` (accept) status.
-        /// The body is the exact serialized a2a status payload, hardcoded so the
-        /// protocol layer names no a2a type.
+        /// A **directed** app frame with no correlation id: pins that `to` is
+        /// present and `corr` is absent. The body is a nested-object placeholder
+        /// for the same reason as [`chat_fixture`]'s — the envelope is the subject.
         #[test]
-        fn snap_wire_task_status() {
+        fn snap_wire_directed_uncorrelated() {
             let body = concat!(
-                "{\"taskId\":\"00000000-0000-0000-0000-000000000001\",",
-                "\"contextId\":\"💬://test\",\"status\":{\"state\":\"TASK_STATE_WORKING\"}}"
+                "{\"ref\":\"00000000-0000-0000-0000-000000000001\",",
+                "\"scope\":\"💬://test\",\"progress\":{\"phase\":\"running\"}}"
             );
             let msg = Message::fixture(
-                MessageKind::app_to("a2a_status", Nickname::from("addressed-nick"), None),
+                MessageKind::app_to("app_status", Nickname::from("addressed-nick"), None),
                 body,
             );
             let bytes = msg.serialize().unwrap();
@@ -1439,32 +1458,32 @@ mod tests {
             insta::assert_snapshot!(wire);
         }
 
-        /// The gossip A2A **request** frame: directed, correlated by `rpc_id`,
+        /// A directed **request** frame: correlated by `rpc_id`,
         /// body = a JSON-RPC `{method, params}` envelope.
         #[test]
-        fn snap_wire_a2a_req() {
+        fn snap_wire_app_directed_corr_req() {
             let msg = Message::fixture(
                 MessageKind::app_to(
-                    "a2a_req",
+                    "app_req",
                     Nickname::from("addressed-nick"),
                     Some(CorrId::from("00000000-0000-0000-0000-0000000000aa")),
                 ),
-                r#"{"method":"tasks/list","params":{}}"#,
+                r#"{"op":"list","args":{}}"#,
             );
             let wire = String::from_utf8(msg.serialize().unwrap()).unwrap();
             insta::assert_snapshot!(wire);
         }
 
-        /// The gossip A2A **response** frame, echoing the request's `rpc_id`.
+        /// A directed **response** frame, echoing the request's `rpc_id`.
         #[test]
-        fn snap_wire_a2a_resp() {
+        fn snap_wire_app_directed_corr_resp() {
             let msg = Message::fixture(
                 MessageKind::app_to(
-                    "a2a_resp",
+                    "app_resp",
                     Nickname::from("addressed-nick"),
                     Some(CorrId::from("00000000-0000-0000-0000-0000000000aa")),
                 ),
-                r#"{"result":{"tasks":[]}}"#,
+                r#"{"result":{"items":[]}}"#,
             );
             let wire = String::from_utf8(msg.serialize().unwrap()).unwrap();
             insta::assert_snapshot!(wire);
@@ -1499,13 +1518,13 @@ mod tests {
                 author in arb_nickname(),
             ) {
                 let body = MessageBody::new(body).unwrap();
-                let msg = Message::new_app(&sid(), &author, AppFrameParams { tag: AppTag::from("a2a_msg"), to: None, corr: None, body });
+                let msg = Message::new_app(&sid(), &author, AppFrameParams { tag: AppTag::from("app_msg"), to: None, corr: None, body });
                 let bytes = msg.serialize().unwrap();
                 let parsed = Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.body, &msg.body);
                 prop_assert_eq!(&parsed.author, &msg.author);
                 prop_assert_eq!(&parsed.version, VERSION);
-                prop_assert_eq!(parsed.kind, MessageKind::app_broadcast("a2a_msg"));
+                prop_assert_eq!(parsed.kind, MessageKind::app_broadcast("app_msg"));
             }
 
             #[test]
@@ -1539,7 +1558,7 @@ mod tests {
             ) {
                 let body = MessageBody::new(body).unwrap();
                 let expected = body.clone();
-                let msg = Message::new_app(&sid(), &author, AppFrameParams { tag: AppTag::from("a2a_msg"), to: None, corr: None, body });
+                let msg = Message::new_app(&sid(), &author, AppFrameParams { tag: AppTag::from("app_msg"), to: None, corr: None, body });
                 let bytes = msg.serialize().unwrap();
                 let parsed = Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.body, &expected);
@@ -1553,7 +1572,7 @@ mod tests {
                     &sid(),
                     &Nickname::from("nick-name"),
                     AppFrameParams {
-                        tag: AppTag::from("a2a_msg"),
+                        tag: AppTag::from("app_msg"),
                         to: None,
                         corr: None,
                         body: MessageBody::new(body).unwrap(),

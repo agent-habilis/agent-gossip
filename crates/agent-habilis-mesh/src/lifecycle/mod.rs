@@ -35,12 +35,12 @@ pub(crate) fn log_ready(
     nickname: &str,
     network: &str,
 ) {
-    tracing::info!(target: "agent_gossip::lifecycle", ?topic, name, nickname, network, "mesh ready");
+    tracing::info!(target: "agent_habilis_mesh::lifecycle", ?topic, name, nickname, network, "mesh ready");
 }
 
 /// Developer log for graceful departure (mirrors the operator `left`).
 pub(crate) fn log_leaving(name: &str) {
-    tracing::info!(target: "agent_gossip::lifecycle", name, "leaving mesh");
+    tracing::info!(target: "agent_habilis_mesh::lifecycle", name, "leaving mesh");
 }
 
 /// What [`observe`] computed for one received message: whether it is
@@ -86,7 +86,7 @@ pub(crate) fn observe(
         ctx.sink.emit(NodeEvent::PeerReturn {
             nickname: message.author.clone(),
         });
-        tracing::info!(target: "agent_gossip::lifecycle", nickname = %message.author, "peer returned");
+        tracing::info!(target: "agent_habilis_mesh::lifecycle", nickname = %message.author, "peer returned");
     }
 
     // Make `joined` as reliable as membership. A peer's own `joined`
@@ -113,7 +113,7 @@ pub(crate) fn observe(
         ctx.sink.emit(NodeEvent::Presence {
             msg: Box::new(Message::new_joined(ctx.mesh, &message.author)),
         });
-        tracing::info!(target: "agent_gossip::lifecycle", nickname = %message.author, "peer joined");
+        tracing::info!(target: "agent_habilis_mesh::lifecycle", nickname = %message.author, "peer joined");
     }
 
     Observed {
@@ -167,7 +167,7 @@ pub(crate) async fn handle_presence(
             ctx.sink.emit(NodeEvent::Presence {
                 msg: Box::new(message.clone()),
             });
-            tracing::info!(target: "agent_gossip::lifecycle", nickname = %message.author, "peer left");
+            tracing::info!(target: "agent_habilis_mesh::lifecycle", nickname = %message.author, "peer left");
         }
         // App cleanup last, with the roster already consistent. Gated on
         // `surfaceable`: a relayed pre-join `Left` must never cancel live
@@ -191,7 +191,7 @@ pub(crate) async fn handle_presence(
             ctx.sink.emit(NodeEvent::Presence {
                 msg: Box::new(message.clone()),
             });
-            tracing::info!(target: "agent_gossip::lifecycle", nickname = %message.author, "peer joined (announced)");
+            tracing::info!(target: "agent_habilis_mesh::lifecycle", nickname = %message.author, "peer joined (announced)");
         }
     }
 }

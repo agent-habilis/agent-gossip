@@ -356,7 +356,9 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
             sink: std::sync::Arc::new(SilentSink),
             multihop: false,
             drift: None,
-            a2a_serve: None,
+            http_serve: None,
+            // A byte pipe publishes no per-peer identity, so `meta` stays free-form.
+            per_peer_gate: None,
         },
     )
     .await

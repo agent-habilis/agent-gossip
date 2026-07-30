@@ -296,7 +296,7 @@ mod tests {
                 &MeshId::from("💬test"),
                 &Nickname::from("author"),
                 crate::protocol::message::AppFrameParams {
-                    tag: crate::protocol::AppTag::from("a2a_msg"),
+                    tag: crate::protocol::AppTag::from("app_msg"),
                     to: None,
                     corr: None,
                     body: MessageBody::from(format!("m{index}").as_str()),

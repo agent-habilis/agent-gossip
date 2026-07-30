@@ -184,7 +184,13 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             sink,
             multihop: shared.tuning.multihop,
             drift: drift.as_deref(),
-            a2a_serve: a2a_serve_port,
+            http_serve: a2a_serve_port,
+            // The a2a data model keeps a per-peer card in `meta`; the engine only
+            // needs the map/field pair to plant the genesis and refuse a forgery.
+            per_peer_gate: Some(agent_habilis_mesh::doc::SelfWriteGate {
+                map: "peers".to_owned(),
+                field: "card".to_owned(),
+            }),
         },
     )
     .await?;

@@ -571,18 +571,22 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
     fn emit(&self, event: agent_habilis_mesh::gossip::event::NodeEvent) {
         use agent_habilis_mesh::gossip::event::NodeEvent;
         match event {
+            // The engine forwards an opaque localhost HTTP port; naming what is
+            // served there is this layer's job. The `a2a_port` JSON key is a
+            // documented output contract (see `agent-gossip man`), so the
+            // rename stops at this boundary.
             NodeEvent::Ready {
                 mesh,
                 name,
                 nickname,
                 drift,
-                a2a_port,
+                http_port,
             } => self.ready(ReadyParams {
                 mesh: &mesh,
                 name: &name,
                 nickname: &nickname,
                 drift: drift.as_deref(),
-                a2a_port,
+                a2a_port: http_port,
             }),
             NodeEvent::Info(message) => self.info(&message),
             NodeEvent::Error(message) => self.error(&message),

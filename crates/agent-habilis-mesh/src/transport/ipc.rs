@@ -109,7 +109,7 @@ pub(crate) fn bind(mesh: &MeshId, nickname: &Nickname) -> Result<Listener> {
         .create_tokio()
         .map_err(|error| anyhow::anyhow!("failed to bind IPC socket {path}: {error}"))?;
     // The socket is a full control plane — inject broadcasts, read and merge
-    // mesh/meta state — with no bearer token (unlike the `--a2a-serve` TCP
+    // mesh/meta state — with no bearer token (unlike the localhost HTTP TCP
     // binding). Restrict it to the owner. The 0700 base already blocks other
     // users; this is defense in depth against a permissive umask on the socket.
     {
@@ -318,7 +318,7 @@ mod tests {
 
     /// A minimal mesh-addressed command standing in for the app's real
     /// `IpcCommand` (which lives app-side): exercises the engine's generic
-    /// socket framing without naming any a2a type.
+    /// socket framing without naming any application type.
     #[derive(Debug, Serialize, Deserialize)]
     #[serde(tag = "command")]
     enum TestCommand {

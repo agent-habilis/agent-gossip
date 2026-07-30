@@ -1,6 +1,6 @@
 //! The dial side of the unicast plane: a per-peer connection pool that dials
 //! lazily, reuses a warm QUIC connection across messages, and re-dials after a
-//! close. Modeled on `a2a::connect::SharedConnection`, but keyed per endpoint
+//! close. Modeled on the application bridge's shared connection, but keyed per endpoint
 //! and with a short dial budget so a send to an unreachable peer fails fast
 //! rather than stalling the event loop.
 
@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use super::{LOG_TARGET, UNICAST_ALPN};
 
 /// How long an inline dial keeps trying before giving up. Deliberately short —
-/// far under a2a's 90s discovery deadline — because the dial blocks the send,
+/// far under the application's 90s discovery deadline — because the dial blocks the send,
 /// and an unreachable peer should surface as an error now, not stall the
 /// caller. The addressee's `EndpointAddr` is already registered with the
 /// endpoint (`add_peer_addr`), so a reachable peer resolves well inside this.

@@ -42,7 +42,7 @@ pub(crate) async fn handle_gossip_event(
         }
         Some(Ok(Event::NeighborUp(node_id))) => {
             let (conn, relay) = conn_path(ctx.endpoint, node_id).await;
-            tracing::info!(target: "agent_gossip::gossip",
+            tracing::info!(target: "agent_habilis_mesh::gossip",
                 endpoint_id = %node_id,
                 is_rendezvous = node_id == ctx.rendezvous_id,
                 conn,
@@ -59,7 +59,7 @@ pub(crate) async fn handle_gossip_event(
             let now = Instant::now();
             if state.announced {
                 if state.peerinfo_on_cooldown(node_id, now) {
-                    tracing::debug!(target: "agent_gossip::gossip", endpoint_id = %node_id, "skipped PeerInfo re-flood (cooldown)");
+                    tracing::debug!(target: "agent_habilis_mesh::gossip", endpoint_id = %node_id, "skipped PeerInfo re-flood (cooldown)");
                 } else {
                     broadcast_peer_info(ctx).await;
                     state.note_peerinfo(node_id, now);
@@ -70,7 +70,7 @@ pub(crate) async fn handle_gossip_event(
                 state.announced = true;
                 state.note_peerinfo(node_id, now);
                 state.last_sent_at = now;
-                tracing::info!(target: "agent_gossip::gossip", "announced arrival on first gossip link");
+                tracing::info!(target: "agent_habilis_mesh::gossip", "announced arrival on first gossip link");
             }
             // The co-hosted rendezvous is overlay plumbing, not a
             // peer — never cache its pseudo-node in the
@@ -106,7 +106,7 @@ pub(crate) async fn handle_gossip_event(
         }
         Some(Ok(Event::NeighborDown(node_id))) => {
             let is_rendezvous = node_id == ctx.rendezvous_id;
-            tracing::info!(target: "agent_gossip::gossip", endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
+            tracing::info!(target: "agent_habilis_mesh::gossip", endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
             if is_rendezvous {
                 state.rendezvous_linked = false;
             } else {
@@ -121,7 +121,7 @@ pub(crate) async fn handle_gossip_event(
             if is_rendezvous || state.linked_endpoints.is_empty() {
                 state.reclaim_until =
                     Some(Instant::now() + Duration::from_secs(RECLAIM_WINDOW_SECS));
-                tracing::info!(target: "agent_gossip::gossip",
+                tracing::info!(target: "agent_habilis_mesh::gossip",
                     reason = if is_rendezvous {
                         "rendezvous-loss"
                     } else {
@@ -138,12 +138,12 @@ pub(crate) async fn handle_gossip_event(
             ctx.sink.emit(NodeEvent::Info(
                 "Event stream lagged, some messages may have been missed".to_owned(),
             ));
-            tracing::warn!(target: "agent_gossip::gossip", "gossip event stream lagged; some messages missed");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", "gossip event stream lagged; some messages missed");
         }
         Some(Err(error)) => {
             ctx.sink
                 .emit(NodeEvent::Error(format!("Gossip error: {error}")));
-            tracing::warn!(target: "agent_gossip::gossip", %error, "gossip error");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", %error, "gossip error");
         }
         None => {
             // Terminal: the actor closed this subscription (lag
@@ -153,7 +153,7 @@ pub(crate) async fn handle_gossip_event(
             ctx.sink.emit(NodeEvent::Error(
                 "gossip stream ended; resubscribing".to_owned(),
             ));
-            tracing::error!(target: "agent_gossip::gossip", "gossip stream ended; heal arm will resubscribe");
+            tracing::error!(target: "agent_habilis_mesh::gossip", "gossip stream ended; heal arm will resubscribe");
         }
     }
 }
@@ -186,7 +186,7 @@ pub(crate) async fn drain_dead_receiver(
             Some(None) | None => break,
         }
     }
-    tracing::info!(target: "agent_gossip::gossip",
+    tracing::info!(target: "agent_habilis_mesh::gossip",
         recovered,
         "drained buffered messages from the dead gossip subscription"
     );
@@ -213,12 +213,12 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
         };
         if state.pending_outbound.push((msg, bytes)) {
             requeued += 1;
-            tracing::debug!(target: "agent_gossip::gossip", %error, "buffered outbound message not deliverable yet; requeued");
+            tracing::debug!(target: "agent_habilis_mesh::gossip", %error, "buffered outbound message not deliverable yet; requeued");
         } else {
-            tracing::warn!(target: "agent_gossip::gossip", %error, "buffered outbound message undeliverable and the buffer is full; dropped");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", %error, "buffered outbound message undeliverable and the buffer is full; dropped");
         }
     }
-    tracing::info!(target: "agent_gossip::gossip",
+    tracing::info!(target: "agent_habilis_mesh::gossip",
         delivered,
         requeued,
         edge,
@@ -245,7 +245,7 @@ pub(crate) async fn ingest(
     let Ok(mut message) = Message::parse(&content) else {
         ctx.sink
             .emit(NodeEvent::Error("Failed to parse message".to_owned()));
-        tracing::warn!(target: "agent_gossip::gossip", "failed to parse inbound gossip message");
+        tracing::warn!(target: "agent_habilis_mesh::gossip", "failed to parse inbound gossip message");
         return;
     };
     // Self-echo drop: keyed on our **public key**, not the nickname. With
@@ -256,7 +256,7 @@ pub(crate) async fn ingest(
     if message.pubkey == ctx.our_pubkey {
         return;
     }
-    tracing::trace!(target: "agent_gossip::gossip", author = %message.author, "gossip message received");
+    tracing::trace!(target: "agent_habilis_mesh::gossip", author = %message.author, "gossip message received");
     // Authenticity gate, **before** dedup: every inbound message must carry a
     // valid signature over its canonical bytes. Verifying before `mark_seen`
     // stops a forged/unsigned message from poisoning the dedup window with a
@@ -266,7 +266,7 @@ pub(crate) async fn ingest(
     // content hash at the log site, so a Msg is not re-serialized twice.
     let canonical = message.canonical_bytes();
     if !message.verify_signature_with(&canonical) {
-        tracing::warn!(target: "agent_gossip::gossip", author = %message.author, "dropping message with missing/invalid signature");
+        tracing::warn!(target: "agent_habilis_mesh::gossip", author = %message.author, "dropping message with missing/invalid signature");
         return;
     }
     // Mesh gate: the gossip topic already isolates honest meshes, but a peer
@@ -274,7 +274,7 @@ pub(crate) async fn ingest(
     // that would otherwise flow unchecked into the `--output json` agent API.
     // Drop anything not stamped with our own mesh id.
     if message.mesh != *ctx.mesh {
-        tracing::warn!(target: "agent_gossip::gossip", author = %message.author, "dropping message stamped with a foreign mesh id");
+        tracing::warn!(target: "agent_habilis_mesh::gossip", author = %message.author, "dropping message stamped with a foreign mesh id");
         return;
     }
     // Starvation watchdog signal, *before* dedup: even a duplicate
@@ -330,7 +330,7 @@ pub(crate) async fn ingest(
     // retains the opaque frame but never validates or surfaces its content (it
     // can't read it, and `maybe_push_inbound`/dispatch below are already gated to
     // the addressee). The **addressee** decrypts the body in place, then the
-    // recovered plaintext passes the A2A boundary gate exactly as a broadcast
+    // recovered plaintext passes the app boundary gate exactly as a broadcast
     // does. A frame sealed to us that fails to open (tampered / wrong key) is
     // dropped.
     // Classify the (now-decrypted) App payload **once** here — inside the gate,
@@ -366,7 +366,7 @@ pub(crate) async fn ingest(
                 && let Err(error) =
                     crate::transport::deliver(&pong, Bytes::from(bytes), state, ctx.sender).await
             {
-                tracing::debug!(target: "agent_gossip::gossip", %error, pinger = %message.author, "auto-pong not delivered");
+                tracing::debug!(target: "agent_habilis_mesh::gossip", %error, pinger = %message.author, "auto-pong not delivered");
             }
             return;
         }
@@ -485,14 +485,14 @@ fn handle_link_state(message: &Message, state: &mut EventLoopState) {
     match serde_json::from_str::<iroh_multihop_transport::LinkVector>(message.body.as_str()) {
         Ok(vector) => {
             let updated = handle.feed_topology(vector);
-            tracing::debug!(target: "agent_gossip::gossip",
+            tracing::debug!(target: "agent_habilis_mesh::gossip",
                 author = %message.author,
                 updated,
                 "multihop link-state received"
             );
         }
         Err(error) => {
-            tracing::debug!(target: "agent_gossip::gossip",
+            tracing::debug!(target: "agent_habilis_mesh::gossip",
                 author = %message.author,
                 %error,
                 "dropping malformed multihop link-state"
@@ -509,7 +509,7 @@ struct InboundFrame<'a> {
 
 /// One shard of a split body: retain it for anti-entropy (so a missing shard
 /// heals like any message) and, when its group completes, gate the
-/// reassembled logical message through the A2A boundary and surface it once —
+/// reassembled logical message through the application boundary and surface it once —
 /// pushed and dispatched exactly like an ordinary inbound message.
 async fn handle_shard(
     frame: InboundFrame<'_>,
@@ -552,7 +552,7 @@ async fn handle_shard(
     if let Some(mut logical) = state.reassemble(message) {
         // Only the addressee reaches here (non-addressed directed shards returned
         // above), so decrypt the reassembled directed body before validating it —
-        // but only when the app marks this tag sealed (a2a's convention). A
+        // but only when the app marks this tag sealed (its own convention). A
         // plaintext-directed consumer's body is already final.
         if app.classify(&logical).sealed && !decrypt_directed(&mut logical, state, ctx) {
             return;
@@ -569,7 +569,7 @@ async fn handle_shard(
         // Classify the reassembled body once; thread it to the push step.
         let logical_class = logical.kind.app_tag().map(|_| app.classify(&logical));
         if logical_class.as_ref().is_some_and(|cls| !cls.valid) {
-            tracing::warn!(target: "agent_gossip::gossip",
+            tracing::warn!(target: "agent_habilis_mesh::gossip",
                 author = %logical.author,
                 "dropping reassembled app frame with an invalid payload"
             );
@@ -598,8 +598,8 @@ async fn handle_shard(
 /// actually **retain** is folded into the indexes, so `by_hash`/`dag_heads`/
 /// `author_seqs` stay bounded by the log window (pruned on eviction). A
 /// rate-dropped chat frame, one addressed to another peer, or a `State` event
-/// returned earlier and never reaches here. Only a **broadcast chat** `a2a_msg`
-/// carries `seq`/parents; task-related `a2a_msg` frames (offer/context/change)
+/// returned earlier and never reaches here. Only a **broadcast chat** `app_msg`
+/// carries `seq`/parents; task-related `app_msg` frames (offer/context/change)
 /// are presence-like — `broadcast_task` stamps them without a chain, so they
 /// must stay out of the fork/DAG indexes (see the `task` glossary invariant).
 /// Presence is loggable but not indexed.
@@ -637,11 +637,11 @@ fn retain_and_index(
                 pubkey: message.pubkey.clone(),
                 seq,
             });
-            tracing::warn!(target: "agent_gossip::gossip", author = %message.author, seq, "fork detected: conflicting messages at same seq");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", author = %message.author, seq, "fork detected: conflicting messages at same seq");
         }
         // Fold into the DAG tip set; flag a backdated timestamp.
         if state.note_dag(hash, &message.parents, message.timestamp) {
-            tracing::warn!(target: "agent_gossip::gossip", author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
         }
     }
     if let Some(evicted) = state.message_log.push(message) {
@@ -741,7 +741,7 @@ fn ingest_channel_event(
             });
         }
         Ingested::Rejected => {
-            tracing::warn!(target: "agent_gossip::gossip",
+            tracing::warn!(target: "agent_habilis_mesh::gossip",
                 author = %message.author,
                 "dropping a {} change that forges another peer's agent card",
                 channel.label()
@@ -752,7 +752,7 @@ fn ingest_channel_event(
     }
 }
 
-/// A directed leg (a directed `a2a_msg` or a `Task`) is surfaced **only by
+/// A directed leg (a directed `app_msg` or a `Task`) is surfaced **only by
 /// its addressee** — a third party relays it without ever seeing it
 /// (glossary: "a third party never sees it"). Broadcast (`to: None`) and
 /// non-directed kinds are for everyone. Our own echoes never reach the
@@ -761,7 +761,7 @@ fn ingest_channel_event(
 /// applies in `lifecycle::{handle_msg, handle_task}`.
 /// A structurally **directed** app frame — one with an addressee (`to:
 /// Some(_)`). Whether its body is *sealed* (encrypted to that addressee) is a
-/// separate, app-driven decision ([`super::app::AppClass::sealed`]): a2a's
+/// separate, app-driven decision ([`super::app::AppClass::sealed`]): an app's
 /// directed tags arrive sealed, a plaintext-directed consumer's do not. `Pong`
 /// is directed for routing but a distinct infra kind, so it is not covered here.
 fn is_directed_content(kind: &MessageKind) -> bool {
@@ -788,7 +788,7 @@ enum Gated {
     },
 }
 
-/// Classify an App frame and enforce the A2A boundary gate in one parse:
+/// Classify an App frame and enforce the app boundary gate in one parse:
 /// returns the [`AppClass`] on a valid payload, `None` (logging the drop) when
 /// the payload fails its frame's contract. Callers reuse the returned class
 /// rather than re-classifying.
@@ -797,7 +797,7 @@ fn gate_app_payload(message: &Message, app: &dyn NodeApp) -> Option<AppClass> {
     if class.valid {
         Some(class)
     } else {
-        tracing::warn!(target: "agent_gossip::gossip",
+        tracing::warn!(target: "agent_habilis_mesh::gossip",
             author = %message.author,
             "dropping app frame with an invalid payload"
         );
@@ -870,8 +870,8 @@ fn gate_directed_to_us(
     app: &dyn NodeApp,
 ) -> Gated {
     // Whether the directed body is sealed is the app's call, not a
-    // structural given: a2a's directed tags arrive encrypted, but a
-    // non-a2a consumer may send plaintext directed bytes. The frame is
+    // structural given: an app's directed tags may arrive encrypted, but a
+    // consumer with its own data model may send plaintext directed bytes. The frame is
     // signature-authenticated either way; `sealed=false` only means "not
     // additionally encrypted".
     if !app.classify(message).sealed {
@@ -910,7 +910,7 @@ fn decrypt_broadcast(message: &mut Message, state: &EventLoopState) -> Option<Me
     // did not mesh-key-seal its body lands here; see `send_app`'s doc.
     let Some(plain) = crate::daemon::state_doc::decrypt_body(message.body.as_str(), Some(key))
     else {
-        tracing::warn!(target: "agent_gossip::gossip",
+        tracing::warn!(target: "agent_habilis_mesh::gossip",
             author = %message.author,
             "dropping a broadcast body that failed mesh-key decryption (cleartext on a passworded mesh?)"
         );
@@ -933,7 +933,7 @@ fn decrypt_directed(message: &mut Message, state: &EventLoopState, ctx: &Handler
             Err(_) => false,
         },
         Err(error) => {
-            tracing::warn!(target: "agent_gossip::gossip", %error, author = %message.author, "dropping a directed frame sealed to us that failed to open");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", %error, author = %message.author, "dropping a directed frame sealed to us that failed to open");
             false
         }
     }
@@ -1074,7 +1074,7 @@ async fn handle_peer_info(
     // the bootstrap link is never subject to this.
     let defer_first_dial = first_sighting && ctx.endpoint.id() > peer_id;
     if defer_first_dial {
-        tracing::debug!(target: "agent_gossip::gossip",
+        tracing::debug!(target: "agent_habilis_mesh::gossip",
             endpoint_id = %peer_id,
             "deferring first dial to the lower endpoint id (simultaneous-open tie-break)"
         );
@@ -1093,11 +1093,11 @@ async fn handle_peer_info(
         state.note_relink(peer_id, now);
         let _ = add_peer_addr(ctx.endpoint, peer_addr);
         if let Err(error) = ctx.sender.join_peers(vec![peer_id]).await {
-            tracing::warn!(target: "agent_gossip::gossip", endpoint_id = %peer_id, %error, "PeerInfo graft request failed");
+            tracing::warn!(target: "agent_habilis_mesh::gossip", endpoint_id = %peer_id, %error, "PeerInfo graft request failed");
         }
         let _ = ctx.sender.broadcast(content).await;
         state.last_sent_at = Instant::now();
-        tracing::debug!(target: "agent_gossip::gossip",
+        tracing::debug!(target: "agent_habilis_mesh::gossip",
             endpoint_id = %peer_id,
             linked = state.linked_endpoints.len(),
             "dialing peer from PeerInfo"

@@ -35,7 +35,7 @@ pub(crate) enum SessionRequest {
     TaskArtifact {
         task_id: TaskId,
         text: String,
-        file: Option<agent_habilis_mesh::blob::FileRef>,
+        file: Option<crate::a2a::send::FileRef>,
         resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).
