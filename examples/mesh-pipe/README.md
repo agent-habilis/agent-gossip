@@ -58,6 +58,25 @@ pass that id to `mesh-pipe connect 💬…`. Discovery flags mirror the CLI:
 `--public` / `--mdns` / `--dht` / `--relay` on `listen` create a reachable
 mesh.
 
+### Waiting for a peer
+
+`listen` prints the mesh id and then waits — up to `--wait-for-peer <SECS>`,
+default 120 — for someone to join before it reads a byte of stdin. That wait is
+load-bearing rather than polite. Without it `mesh-pipe listen < file` is over in
+about a second: the read returns the whole file at once, the frames go out to an
+empty mesh, and the process leaves before a human can paste the id it just
+printed. The payload is lost and nothing reports an error.
+
+Lingering *after* sending would not have helped. `pipe_data` / `pipe_eof` are
+classified `loggable: false, chained: false` and `on_app_frame` returns `false`,
+so the engine never retains them — anti-entropy has nothing to backfill a late
+joiner with. The only place the wait can go is before the send.
+
+If nobody arrives inside the window, `listen` exits **non-zero**: nothing was
+delivered, and a pipe that exits 0 while dropping its input is precisely the
+failure this guards. `--wait-for-peer 0` restores the old send-immediately
+behaviour for a script whose peer is already there.
+
 ### Sizing
 
 - `--max-peers <N>` — cap on active-view neighbours (default: the engine's full

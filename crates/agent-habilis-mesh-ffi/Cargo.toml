@@ -1,0 +1,30 @@
+[package]
+name = "agent-habilis-mesh-ffi"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "A C-ABI shim over the agent-habilis-mesh engine — lets a non-Rust process join a gossip mesh in-process"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "agent_habilis_mesh_ffi"
+path = "src/lib.rs"
+# `cdylib` is the artifact C links against (libagent_habilis_mesh_ffi.dylib /
+# .so); `rlib` is what `tests/ffi_smoke.rs` links, so the C ABI is exercised from
+# Rust on a host with no C compiler.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The ONLY mesh dependency — this crate never touches agent-gossip / a2a, the
+# same constraint examples/mesh-pipe holds itself to.
+agent-habilis-mesh = { path = "../agent-habilis-mesh" }
+tokio.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# Mirrors examples/mesh-pipe: MessageBody is text-shaped (rejects control
+# bytes), so a raw byte stream rides base64-encoded in the frame body.
+base64 = "0.22"

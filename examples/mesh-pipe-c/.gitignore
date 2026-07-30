@@ -1,0 +1,4 @@
+# Built by the Makefile.
+mesh-pipe-c
+ffi_test
+*.dSYM/

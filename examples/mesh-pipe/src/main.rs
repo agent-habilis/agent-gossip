@@ -109,9 +109,23 @@ struct ListenArgs {
     /// Local nickname (default: a random one).
     #[arg(long, value_name = "NAME")]
     nick: Option<String>,
+    /// Seconds to wait for a peer to join before streaming stdin (0 = send
+    /// immediately). Frames are never retained, so a peer that arrives after
+    /// they were sent cannot be given them — without this wait, `listen` with a
+    /// file on stdin is over before anyone can join.
+    #[arg(long, value_name = "SECS", default_value_t = DEFAULT_WAIT_FOR_PEER_SECS)]
+    wait_for_peer: u64,
     #[command(flatten)]
     sizing: MeshArgs,
 }
+
+/// How long `listen` waits for company by default. A human needs time to copy
+/// the printed id into another terminal; two minutes is generous without
+/// hanging a script forever.
+const DEFAULT_WAIT_FOR_PEER_SECS: u64 = 120;
+
+/// How often the wait polls the roster.
+const PEER_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Args)]
 struct ConnectArgs {
@@ -154,13 +168,18 @@ impl PipeApp {
     }
 }
 
-/// The typed in-process request the `listen` loop pushes: one outbound frame.
+/// The typed in-process request the `listen` loop pushes: one outbound frame,
+/// or a peek at the roster.
 enum PipeRequest {
     Send {
         tag: AppTag,
         to: Option<Nickname>,
         body: MessageBody,
     },
+    /// How many peers other than us are in the mesh. `Node` exposes no roster
+    /// accessor, so this request/oneshot seam is how `listen` reaches
+    /// [`EventLoopState`] to decide whether anyone is there to send to.
+    PeerCount { reply: oneshot::Sender<usize> },
 }
 
 #[async_trait]
@@ -232,22 +251,32 @@ impl NodeDriver for PipeApp {
         state: &mut EventLoopState,
         ctx: &HandlerCtx<'_>,
     ) -> bool {
-        let PipeRequest::Send { tag, to, body } = req;
-        if let Err(error) = agent_habilis_mesh::ops::send_app(
-            state,
-            ctx,
-            AppFrameParams {
-                tag,
-                to,
-                corr: None,
-                body,
-            },
-        )
-        .await
-        {
-            eprintln!("mesh-pipe: send failed: {error}");
+        match req {
+            PipeRequest::Send { tag, to, body } => {
+                if let Err(error) = agent_habilis_mesh::ops::send_app(
+                    state,
+                    ctx,
+                    AppFrameParams {
+                        tag,
+                        to,
+                        corr: None,
+                        body,
+                    },
+                )
+                .await
+                {
+                    eprintln!("mesh-pipe: send failed: {error}");
+                }
+                true
+            }
+            PipeRequest::PeerCount { reply } => {
+                // `peers.len()`, not the snapshot's `count` — that one includes
+                // self, and the caller wants zero when it is alone.
+                let _ = reply.send(state.roster_snapshot().peers.len());
+                // Broadcast nothing, so the heartbeat-suppression clock stands.
+                false
+            }
         }
-        true
     }
 }
 
@@ -392,6 +421,44 @@ fn default_chunk() -> usize {
     (raw / 3) * 3
 }
 
+/// Block until at least one peer is in the mesh, or `secs` elapse (`0` skips the
+/// wait entirely).
+///
+/// Without this, the mesh's whole life is one read of stdin: with a file there,
+/// `listen` has sent, said goodbye and exited under two seconds after printing
+/// the id nobody has had time to use. Waiting is the only fix available, because
+/// pipe frames are never retained by the engine — a peer that joins after they
+/// were sent cannot be backfilled.
+async fn wait_for_peer(node: &Node<PipeApp>, secs: u64) -> Result<()> {
+    if secs == 0 {
+        return Ok(());
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let mut announced = false;
+    loop {
+        let (reply, answer) = oneshot::channel();
+        node.send(PipeRequest::PeerCount { reply }).await?;
+        let peers = answer
+            .await
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the roster request"))?;
+        if peers > 0 {
+            if announced {
+                eprintln!("mesh-pipe: peer joined; streaming stdin");
+            }
+            return Ok(());
+        }
+        if !announced {
+            eprintln!("mesh-pipe: waiting for a peer to join ({secs}s)…");
+            announced = true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            // Nothing was sent, so this is a failure, not a quiet success.
+            anyhow::bail!("no peer joined in {secs}s; nothing was sent");
+        }
+        tokio::time::sleep(PEER_POLL_INTERVAL).await;
+    }
+}
+
 async fn run_listen(args: ListenArgs) -> Result<()> {
     let select = listen_select(&args)?;
     let nickname = args
@@ -418,6 +485,8 @@ async fn run_listen(args: ListenArgs) -> Result<()> {
         },
     )
     .await?;
+
+    wait_for_peer(&node, args.wait_for_peer).await?;
 
     let mut stdin = tokio::io::stdin();
     let mut buf = vec![0u8; chunk];
