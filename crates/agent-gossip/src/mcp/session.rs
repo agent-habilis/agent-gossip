@@ -83,8 +83,23 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_message(&self, body: MessageBody) -> Result<(MessageId, Message)> {
-        let msg = self.inner.send(body).await?;
+    pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Message)> {
+        let msg = self.inner.broadcast(body).await?;
+        Ok((msg.id.clone(), msg))
+    }
+
+    /// Send a chat message to one peer. Returns `(id, echo)`, like
+    /// [`Self::send_broadcast`].
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped, or if the peer's seal key has not
+    /// replicated yet (a msg is never sent in plaintext).
+    pub(super) async fn send_msg(
+        &self,
+        to: Nickname,
+        body: MessageBody,
+    ) -> Result<(MessageId, Message)> {
+        let msg = self.inner.msg(to, body).await?;
         Ok((msg.id.clone(), msg))
     }
 
@@ -390,9 +405,9 @@ mod tests {
 
         // Send from creator → joiner should see it.
         let (sent_id, _) = creator
-            .send_message(MessageBody::from("hi bob"))
+            .send_broadcast(MessageBody::from("hi bob"))
             .await
-            .expect("send_message");
+            .expect("send_broadcast");
 
         let observed = wait_for_gossip(&joiner, "alice-two", "hi bob").await;
         assert_eq!(
@@ -403,9 +418,9 @@ mod tests {
 
         // And the reverse direction.
         let (reply_id, _) = joiner
-            .send_message(MessageBody::from("hi alice"))
+            .send_broadcast(MessageBody::from("hi alice"))
             .await
-            .expect("send_message reply");
+            .expect("send_broadcast");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
         assert_eq!(observed2, Some(reply_id));
 
@@ -426,7 +441,7 @@ mod tests {
         // Mesh first (a delivered message proves the link) so the long-poll
         // below is waiting on a *fresh* event, not racing initial bootstrap.
         creator
-            .send_message(MessageBody::from("warmup"))
+            .send_broadcast(MessageBody::from("warmup"))
             .await
             .expect("send warmup");
         assert!(
@@ -452,7 +467,7 @@ mod tests {
         let delayed_send = async {
             tokio::time::sleep(Duration::from_millis(300)).await;
             creator
-                .send_message(MessageBody::from("after warmup"))
+                .send_broadcast(MessageBody::from("after warmup"))
                 .await
                 .expect("send");
         };
@@ -491,8 +506,8 @@ mod tests {
     // subprocess test, which shortens the cap via `--longpoll-max-ms`.
 
     #[tokio::test]
-    async fn send_message_returns_full_echo_and_surfaces_self() {
-        // send_message returns an authoritative echo (id, author, ts, body)
+    async fn send_broadcast_returns_full_echo_and_surfaces_self() {
+        // send_broadcast returns an authoritative echo (id, author, ts, body)
         // so callers don't need to re-fetch to see their own send. With
         // stream-parity, the self-echo also surfaces once in a later fetch
         // tagged `self:true` — the same as the live `--output json` stream.
@@ -501,9 +516,9 @@ mod tests {
             .expect("create");
 
         let (sent, echo) = alice
-            .send_message(MessageBody::from("self-echo"))
+            .send_broadcast(MessageBody::from("self-echo"))
             .await
-            .expect("send_message");
+            .expect("send_broadcast");
         assert_eq!(echo.id, sent);
         assert_eq!(echo.author.as_str(), "alice-replay");
         assert_eq!(
@@ -580,7 +595,7 @@ mod tests {
 
         // Bob sends — alice's next cursor-less fetch must surface bob's
         // message, nothing older.
-        bob.send_message(MessageBody::from("hi via cursor"))
+        bob.send_broadcast(MessageBody::from("hi via cursor"))
             .await
             .expect("send");
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);

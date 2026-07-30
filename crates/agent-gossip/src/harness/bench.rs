@@ -119,7 +119,7 @@ impl BenchMessage {
             &mesh,
             &author,
             agent_habilis_mesh::protocol::AppFrameParams {
-                tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
+                tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                 to: None,
                 corr: None,
                 body: MessageBody::new(body).expect("valid body"),

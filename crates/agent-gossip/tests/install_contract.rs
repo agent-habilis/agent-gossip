@@ -219,12 +219,12 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
         .filter(|name| name.starts_with("gossip-"))
         .collect();
 
-    // The doc names four skills and claims "eleven more"; that arithmetic is
+    // The doc names four skills and claims "twelve more"; that arithmetic is
     // only true while this count holds.
     assert_eq!(
         installed.len(),
-        15,
-        "expected 15 gossip skills, found {installed:?}"
+        16,
+        "expected 16 gossip skills, found {installed:?}"
     );
     for named in ["gossip-create", "gossip-join", "gossip-msg", "gossip-task"] {
         assert!(

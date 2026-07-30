@@ -16,8 +16,8 @@ use agent_habilis_mesh::runtime::ipc::{Addressed, json_ack, json_error, json_ok_
 use agent_habilis_mesh::runtime::tuning::ping_window_secs;
 
 use crate::a2a::send::{
-    BroadcastMessageParams, TaskArtifactEmitParams, TaskStatusParams, broadcast_message,
-    emit_task_artifact, emit_task_status,
+    BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
+    emit_task_status, send_broadcast, send_msg,
 };
 use agent_habilis_mesh::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
 
@@ -28,8 +28,17 @@ use agent_habilis_mesh::ops::{StateMergeParams, broadcast_msg, broadcast_state_m
 #[serde(tag = "command")]
 pub(crate) enum IpcCommand {
     /// Broadcast a mesh chat message (A2A `message/send` with no addressee).
+    #[serde(rename = "broadcast")]
+    Broadcast { mesh: MeshId, body: MessageBody },
+    /// Send a chat message to one peer (A2A `message/send` addressed to it).
+    /// Distinct from `a2a_call` with `SendMessage`, which opens a *task*; this
+    /// is a chat line that happens to be private.
     #[serde(rename = "msg")]
-    Msg { mesh: MeshId, body: MessageBody },
+    Msg {
+        mesh: MeshId,
+        to: Nickname,
+        body: MessageBody,
+    },
     #[serde(rename = "poll")]
     Poll {
         mesh: MeshId,
@@ -135,7 +144,8 @@ impl Addressed for IpcCommand {
     /// sent by socket path directly (the daemon answers with its own id).
     fn mesh_id(&self) -> Option<&MeshId> {
         match self {
-            IpcCommand::Msg { mesh, .. }
+            IpcCommand::Broadcast { mesh, .. }
+            | IpcCommand::Msg { mesh, .. }
             | IpcCommand::Poll { mesh, .. }
             | IpcCommand::Ping { mesh }
             | IpcCommand::A2aStatus { mesh, .. }
@@ -197,13 +207,39 @@ pub(crate) async fn handle_ipc_command(
         return false;
     }
     match cmd {
-        IpcCommand::Msg { mesh: _, body } => {
-            tracing::debug!("IPC msg command received");
-            match broadcast_message(
-                BroadcastMessageParams {
+        IpcCommand::Broadcast { mesh: _, body } => {
+            tracing::debug!("IPC broadcast command received");
+            match send_broadcast(
+                BroadcastParams {
                     mesh,
                     author,
                     text: body,
+                },
+                state,
+                sender,
+                output,
+            )
+            .await
+            {
+                Ok((msg_id, msg)) => {
+                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                    true
+                }
+                Err(error) => {
+                    let _ = resp_tx.send(json_error(&error.to_string()));
+                    false
+                }
+            }
+        }
+        IpcCommand::Msg { mesh: _, to, body } => {
+            tracing::debug!("IPC msg command received");
+            match send_msg(
+                MsgParams {
+                    mesh,
+                    author,
+                    peer: &to,
+                    text: body,
+                    app,
                 },
                 state,
                 sender,
@@ -527,7 +563,7 @@ mod tests {
     #[test]
     fn ipc_command_msg_round_trip() {
         let expected = MeshId::from("💬://test");
-        let cmd = IpcCommand::Msg {
+        let cmd = IpcCommand::Broadcast {
             mesh: expected.clone(),
             body: MessageBody::from("hello"),
         };
@@ -563,7 +599,8 @@ mod tests {
                 assert_eq!(mesh, expected);
                 assert_eq!(merge, serde_json::json!({"turn": "b"}));
             }
-            IpcCommand::Msg { .. }
+            IpcCommand::Broadcast { .. }
+            | IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::A2aStatus { .. }
@@ -596,7 +633,8 @@ mod tests {
                 assert_eq!(after, Some(42));
                 assert!(!long, "absent long deserializes to false");
             }
-            IpcCommand::Msg { .. }
+            IpcCommand::Broadcast { .. }
+            | IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::A2aStatus { .. }
             | IpcCommand::A2aArtifact { .. }
@@ -623,7 +661,8 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::Ping { mesh } => assert_eq!(mesh, expected),
-            IpcCommand::Msg { .. }
+            IpcCommand::Broadcast { .. }
+            | IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::A2aStatus { .. }
             | IpcCommand::A2aArtifact { .. }
@@ -656,7 +695,8 @@ mod tests {
                 assert_eq!(state, TaskState::Working);
                 assert_eq!(note.as_deref(), Some("on it"));
             }
-            IpcCommand::Msg { .. }
+            IpcCommand::Broadcast { .. }
+            | IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::A2aArtifact { .. }
@@ -683,7 +723,8 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::Peers { mesh } => assert_eq!(mesh, expected),
-            IpcCommand::Msg { .. }
+            IpcCommand::Broadcast { .. }
+            | IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::A2aStatus { .. }
@@ -756,7 +797,7 @@ mod tests {
                 let identity = agent_habilis_mesh::protocol::Identity::generate();
                 let (bytes, built) = agent_habilis_mesh::protocol::build_msg_bytes(
                     agent_habilis_mesh::protocol::BuildMsgParams {
-                        tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
+                        tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                         mesh: &mesh,
                         author: &author,
                         body,
@@ -772,7 +813,7 @@ mod tests {
                 prop_assert_eq!(&parsed.mesh, &mesh);
                 prop_assert_eq!(
                     parsed.kind,
-                    agent_habilis_mesh::protocol::MessageKind::app_broadcast(crate::a2a::wire::MSG)
+                    agent_habilis_mesh::protocol::MessageKind::app_broadcast(crate::a2a::wire::BROADCAST)
                 );
             }
         }

@@ -1,4 +1,4 @@
-//! [`broadcast_message`] is the single source of truth for the chat send path —
+//! [`send_broadcast`] is the single source of truth for the chat send path —
 //! the IPC `Msg` command and the typed in-process `SessionRequest` both funnel
 //! through it so they cannot drift.
 
@@ -157,7 +157,7 @@ fn build_msg(
         mesh,
         author,
         AppFrameParams {
-            tag: AppTag::from(wire::MSG),
+            tag: AppTag::from(wire::BROADCAST),
             to: None,
             corr: None,
             body,
@@ -228,7 +228,7 @@ fn synthesize_logical_msg(
         mesh,
         author,
         AppFrameParams {
-            tag: AppTag::from(wire::MSG),
+            tag: AppTag::from(wire::BROADCAST),
             to: None,
             corr: None,
             body,
@@ -239,9 +239,9 @@ fn synthesize_logical_msg(
 }
 
 /// The identity + text of one outbound chat broadcast — grouped so
-/// `broadcast_message` stays within the argument budget alongside its
+/// `send_broadcast` stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct BroadcastMessageParams<'a> {
+pub(crate) struct BroadcastParams<'a> {
     pub(crate) mesh: &'a MeshId,
     pub(crate) author: &'a Nickname,
     pub(crate) text: MessageBody,
@@ -249,10 +249,10 @@ pub(crate) struct BroadcastMessageParams<'a> {
 
 /// Build, sign, log and gossip-broadcast one outbound chat message. The
 /// single source of truth for the send path: the CLI socket's IPC `Msg`
-/// command and the typed in-process `SessionRequest::Send` both funnel
+/// command and the typed in-process `SessionRequest::Broadcast` both funnel
 /// through here so they cannot drift. `text` is the operator/agent input; it
 /// is wrapped here — and only here — into the A2A payload the wire carries
-/// (see [`crate::a2a::gossip::chat_message`]), so role/context/extension
+/// (see [`crate::a2a::gossip::compose_broadcast`]), so role/context/extension
 /// stamping cannot drift between callers. A payload too large for one frame
 /// is transparently split into `shard`-tagged messages the receiver
 /// reassembles; the returned [`Message`] is the whole logical frame either
@@ -267,13 +267,13 @@ pub(crate) struct BroadcastMessageParams<'a> {
     clippy::too_many_lines,
     reason = "one straight-line compose/sign/split/broadcast pipeline shared by every caller; splitting would scatter a single sequential path across helpers"
 )]
-pub(crate) async fn broadcast_message(
-    params: BroadcastMessageParams<'_>,
+pub(crate) async fn send_broadcast(
+    params: BroadcastParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let BroadcastMessageParams { mesh, author, text } = params;
+    let BroadcastParams { mesh, author, text } = params;
     // Gate the caller's *logical* body up front. Downstream only ever sees the
     // composed, sealed, shard-split wire body, so without this an oversized
     // input does not get refused — it gets split into ~18k frames and dies as an
@@ -288,7 +288,7 @@ pub(crate) async fn broadcast_message(
         ));
     }
     let signer = state.identity().clone();
-    let payload = crate::a2a::gossip::chat_message(mesh, text.as_str());
+    let payload = crate::a2a::gossip::compose_broadcast(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload)?;
@@ -471,36 +471,57 @@ pub(crate) async fn broadcast_message(
 
 /// One worker-pushed task frame's identity, target-kind, payload/echo bodies,
 /// and cap-tracking flag, plus the in-flight task registry it's ingested
-/// into — grouped so `broadcast_task_frame` stays within the argument budget
+/// into — grouped so `broadcast_directed_frame` stays within the argument budget
 /// alongside its state/sender/out handles.
-struct TaskFrameParams<'a> {
+struct DirectedFrameParams<'a> {
     mesh: &'a MeshId,
     author: &'a Nickname,
-    task_id: &'a crate::a2a::TaskId,
+    /// `None` for a leg that belongs to no task — a msg. Its
+    /// presence is also what decides whether the coarse task machine is
+    /// advanced for our own leg.
+    task_id: Option<&'a crate::a2a::TaskId>,
     kind: MessageKind,
     payload_body: MessageBody,
     echo_body: MessageBody,
     content: bool,
+    echo_as: EchoAs,
+    /// Pins the logical frame's id instead of keeping the minted one. Chat
+    /// requires it: `chat_common` rejects a payload whose `messageId` does not
+    /// equal its frame id, so a msg must carry the A2A id on the frame. Task
+    /// legs pin nothing — their payloads carry the task id instead.
+    id: Option<MessageId>,
     app: &'a mut A2aApp,
 }
 
-/// Broadcast one already-composed task frame (a worker's `TaskStatusUpdate`
-/// or `TaskArtifactUpdate`), sharding a large body, retaining **content**
-/// legs for anti-entropy, echoing the operator line, and advancing our own
-/// coarse task machine. `content` is false for a liveness beat (never
-/// retained/reassembled). Fire-and-forget worker→initiator push — the A2A
-/// streaming plane over gossip.
+/// How a directed leg's self-echo renders. A task leg drives the task widget
+/// (`event: "task"`); a msg is an ordinary chat line, so it must
+/// take the chat path or the sender would never see its own msg.
+#[derive(Clone, Copy)]
+enum EchoAs {
+    Task,
+    Chat,
+}
+
+/// Send one already-composed **directed** frame — a worker's
+/// `TaskStatusUpdate`/`TaskArtifactUpdate`, or a msg — sharding a
+/// large body, retaining **content** legs for anti-entropy, echoing the sender's
+/// own line, and (for a task leg) advancing our own coarse task machine.
+/// `content` is false for a liveness beat (never retained/reassembled).
+/// Fire-and-forget push — the A2A streaming plane over gossip.
+///
+/// The body arrives already sealed to the addressee; `echo_body` is its
+/// plaintext twin, because we cannot decrypt what we sealed to someone else.
 ///
 /// # Errors
 /// Propagates a [`Message::serialize`] failure, a gossip broadcast error, and
 /// a full unmeshed pending-outbound buffer.
-async fn broadcast_task_frame(
-    frame: TaskFrameParams<'_>,
+async fn broadcast_directed_frame(
+    frame: DirectedFrameParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let TaskFrameParams {
+    let DirectedFrameParams {
         mesh,
         author,
         task_id,
@@ -508,12 +529,18 @@ async fn broadcast_task_frame(
         payload_body,
         echo_body,
         content,
+        echo_as,
+        id: pinned_id,
         app,
     } = frame;
     let signer = state.identity().clone();
-    // Fast path: the whole leg in one frame.
-    let single =
-        Message::new_frame(mesh, author, kind.clone(), payload_body.clone()).signed(&signer);
+    // Fast path: the whole leg in one frame. The id is pinned before signing —
+    // the signature covers it.
+    let mut single = Message::new_frame(mesh, author, kind.clone(), payload_body.clone());
+    if let Some(pinned_id) = pinned_id {
+        single = single.with_id(pinned_id);
+    }
+    let single = single.signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
@@ -521,19 +548,22 @@ async fn broadcast_task_frame(
         // cannot decrypt; surface *and ingest* the self-echo from a plaintext
         // twin instead (same id, never signed or sent).
         let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(id.clone());
-        send_task_leg(
+        send_directed_leg(
             state,
             sender,
             out,
-            TaskLegPart {
+            DirectedLegPart {
                 msg: &single,
                 bytes,
                 echo: Some(&echo),
                 content,
+                echo_as,
             },
         )
         .await?;
-        ingest_own_leg(app, &echo, task_id);
+        if let Some(task_id) = task_id {
+            ingest_own_leg(app, &echo, task_id);
+        }
         return Ok((id, single));
     }
     // Only content legs are ever large enough to split; the beat is a tiny
@@ -589,15 +619,16 @@ async fn broadcast_task_frame(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        send_task_leg(
+        send_directed_leg(
             state,
             sender,
             out,
-            TaskLegPart {
+            DirectedLegPart {
                 msg: &msg,
                 bytes,
                 echo: None,
                 content,
+                echo_as,
             },
         )
         .await?;
@@ -610,9 +641,19 @@ async fn broadcast_task_frame(
     let logical =
         Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
     let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
-    out.print_task(&echo, true);
-    ingest_own_leg(app, &echo, task_id);
+    print_echo(out, &echo, echo_as);
+    if let Some(task_id) = task_id {
+        ingest_own_leg(app, &echo, task_id);
+    }
     Ok((logical.id.clone(), logical))
+}
+
+/// Print a directed leg's self-echo down the surface its kind belongs to.
+fn print_echo(out: &output::Output, echo: &Message, echo_as: EchoAs) {
+    match echo_as {
+        EchoAs::Task => out.print_task(echo, true),
+        EchoAs::Chat => out.print_message_ex(echo, true),
+    }
 }
 
 /// A worker-emitted status leg's identity, task, state/note, and the task
@@ -803,15 +844,102 @@ pub(crate) async fn broadcast_task_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    broadcast_task_frame(
-        TaskFrameParams {
+    broadcast_directed_frame(
+        DirectedFrameParams {
             mesh,
             author,
-            task_id,
+            task_id: Some(task_id),
             kind,
             payload_body: sealed,
             echo_body: plain,
             content: true,
+            echo_as: EchoAs::Task,
+            id: None,
+            app,
+        },
+        state,
+        sender,
+        out,
+    )
+    .await
+}
+
+/// The identity, addressee and text of one outbound msg — grouped
+/// so [`send_msg`] stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct MsgParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) peer: &'a Nickname,
+    pub(crate) text: MessageBody,
+    pub(crate) app: &'a mut A2aApp,
+}
+
+/// Send one msg: a chat line addressed to a single peer. The
+/// counterpart of [`send_broadcast`], and the single source of truth for the
+/// msg send path.
+///
+/// Three properties, each load-bearing and none of them incidental:
+///
+/// - **Directed**, so [`agent_habilis_mesh::ops::deliver`] routes it unicast —
+///   a `to: Some(..)` frame structurally cannot ride gossip, so no other peer
+///   receives the bytes at all.
+/// - **Sealed** to the addressee, so the multihop relays that *do* carry it
+///   cannot read the body.
+/// - **Unchained.** It never touches [`build_msg`]/`commit_outbound_part`, the
+///   paths that stamp `seq`/`prev` and advance the DAG. A msg reaches only its
+///   addressee, so a chain entry for it would be an unfillable gap in this
+///   author's chain for every other peer — which fork detection reads as a
+///   fork.
+///
+/// # Errors
+/// Refuses a body past the [`MAX_LOGICAL_BODY_BYTES`] input ceiling, errors if
+/// the addressee's seal key has not replicated yet (rather than sending in
+/// plaintext), and propagates a serialize/deliver failure or a full unmeshed
+/// pending-outbound buffer.
+pub(crate) async fn send_msg(
+    params: MsgParams<'_>,
+    state: &mut EventLoopState,
+    sender: &MeshSender,
+    out: &output::Output,
+) -> anyhow::Result<(MessageId, Message)> {
+    let MsgParams {
+        mesh,
+        author,
+        peer,
+        text,
+        app,
+    } = params;
+    // Same ceiling as the broadcast and RPC paths, so the caller-facing limit is
+    // one number regardless of which path a body takes.
+    if text.as_str().len() > MAX_LOGICAL_BODY_BYTES {
+        return Err(anyhow::anyhow!(
+            "message body too large: {} bytes exceeds the input ceiling \
+             ({MAX_LOGICAL_BODY_BYTES} bytes); use the blob channel for files",
+            text.as_str().len()
+        ));
+    }
+    let payload = crate::a2a::gossip::compose_msg(mesh, text.as_str());
+    let payload_id =
+        MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
+    let plain = crate::a2a::gossip::payload_body(&payload)?;
+    let sealed = seal_directed(state, peer, &plain)?;
+    let kind = MessageKind::App {
+        tag: AppTag::from(wire::MSG),
+        to: Some(peer.clone()),
+        corr: None,
+    };
+    broadcast_directed_frame(
+        DirectedFrameParams {
+            mesh,
+            author,
+            task_id: None,
+            kind,
+            payload_body: sealed,
+            echo_body: plain,
+            content: true,
+            echo_as: EchoAs::Chat,
+            id: Some(payload_id),
             app,
         },
         state,
@@ -875,15 +1003,17 @@ pub(crate) async fn broadcast_task_artifact(
         to: Some(peer.clone()),
         corr: None,
     };
-    broadcast_task_frame(
-        TaskFrameParams {
+    broadcast_directed_frame(
+        DirectedFrameParams {
             mesh,
             author,
-            task_id,
+            task_id: Some(task_id),
             kind,
             payload_body: sealed,
             echo_body: plain,
             content: true,
+            echo_as: EchoAs::Task,
+            id: None,
             app,
         },
         state,
@@ -975,10 +1105,11 @@ async fn build_offload_parts(
     Ok(parts)
 }
 
-/// One outbound task leg's wire frame/bytes plus its echo twin and
-/// cap-tracking flag — the part [`send_task_leg`] retains/delivers, grouped so
-/// the state/sender/out handles stay their own leading params.
-struct TaskLegPart<'a> {
+/// One outbound directed leg's wire frame/bytes plus its echo twin and
+/// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
+/// so the state/sender/out handles stay their own leading params.
+struct DirectedLegPart<'a> {
+    echo_as: EchoAs,
     msg: &'a Message,
     bytes: Bytes,
     echo: Option<&'a Message>,
@@ -989,30 +1120,49 @@ struct TaskLegPart<'a> {
 /// **content** legs for anti-entropy. `echo` carries the plaintext twin whose
 /// operator line surfaces (`None` for the raw shards of a split leg, which
 /// commit silently). Errors if the unmeshed buffer is full.
-async fn send_task_leg(
+async fn send_directed_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-    part: TaskLegPart<'_>,
+    part: DirectedLegPart<'_>,
 ) -> anyhow::Result<()> {
-    let TaskLegPart {
+    let DirectedLegPart {
         msg,
         bytes,
         echo,
         content,
+        echo_as,
     } = part;
     if state.is_meshed() {
         // Meshed: retain locally, then hit the wire (a transient send error
         // still leaves a content leg in our log for anti-entropy). Directed
         // legs go unicast, broadcasts gossip (see `transport::deliver`).
-        retain_leg(state, out, RetainLegParams { msg, echo, content });
+        retain_leg(
+            state,
+            out,
+            RetainLegParams {
+                msg,
+                echo,
+                content,
+                echo_as,
+            },
+        );
         agent_habilis_mesh::ops::deliver(msg, bytes, state, sender).await?;
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
     {
         // Buffered until the meshed edge flushes it through the send decision.
-        retain_leg(state, out, RetainLegParams { msg, echo, content });
+        retain_leg(
+            state,
+            out,
+            RetainLegParams {
+                msg,
+                echo,
+                content,
+                echo_as,
+            },
+        );
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
@@ -1029,6 +1179,7 @@ struct RetainLegParams<'a> {
     msg: &'a Message,
     echo: Option<&'a Message>,
     content: bool,
+    echo_as: EchoAs,
 }
 
 /// Retain a task leg locally, echoing the operator line from the plaintext
@@ -1036,9 +1187,14 @@ struct RetainLegParams<'a> {
 /// frame's directed body is sealed, so it cannot be surfaced). Content legs
 /// retain; the beat doesn't.
 fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLegParams<'_>) {
-    let RetainLegParams { msg, echo, content } = params;
+    let RetainLegParams {
+        msg,
+        echo,
+        content,
+        echo_as,
+    } = params;
     if let Some(echo) = echo {
-        out.print_task(echo, true);
+        print_echo(out, echo, echo_as);
     }
     if content {
         retain_outbound(state, msg);
@@ -1404,12 +1560,31 @@ pub(crate) async fn handle_session_request(
         app,
     } = params;
     match req {
-        SessionRequest::Send { body, resp } => {
-            let outcome = broadcast_message(
-                BroadcastMessageParams {
+        SessionRequest::Broadcast { body, resp } => {
+            let outcome = send_broadcast(
+                BroadcastParams {
                     mesh,
                     author,
                     text: body,
+                },
+                state,
+                sender,
+                output,
+            )
+            .await
+            .map(|(_id, msg)| msg);
+            let sent_ok = outcome.is_ok();
+            let _ = resp.send(outcome);
+            sent_ok
+        }
+        SessionRequest::Msg { to, body, resp } => {
+            let outcome = send_msg(
+                MsgParams {
+                    mesh,
+                    author,
+                    peer: &to,
+                    text: body,
+                    app,
                 },
                 state,
                 sender,

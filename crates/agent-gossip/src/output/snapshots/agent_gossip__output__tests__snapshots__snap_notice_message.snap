@@ -1,6 +1,0 @@
----
-source: src/output/tests.rs
-assertion_line: 448
-expression: "format_msg_json(&msg, false)"
----
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"notice","swarm":"💬://test","author":"alice-bot","ts":1700000000,"body":"build green","reply":null,"display":"💬️ `<alice-bot>` (notice): build green","self":false}

@@ -316,7 +316,7 @@ fn poll_returns_a_long_body_byte_for_byte() {
         if let Ok(events) = serde_json::from_str::<serde_json::Value>(&polled)
             && let Some(got) = events
                 .as_array()
-                .and_then(|list| list.iter().find(|event| event["type"] == "msg"))
+                .and_then(|list| list.iter().find(|event| event["type"] == "broadcast"))
                 .and_then(|event| event["body"].as_str())
         {
             assert_eq!(got, body, "poll truncated or altered a 5000-char body");

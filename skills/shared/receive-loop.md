@@ -55,7 +55,7 @@ early is not fired by the content poll consuming the backlog.
 
 ### Print last, act first — one batch per turn
 
-Within one batch, order the work so every tool call — a reply broadcast, a
+Within one batch, order the work so every tool call — an answer you send, a
 task-widget update, the re-armed bell — happens **before** you print, and the
 batch's visible `display` lines are the **final output of the turn**, with no
 tool call after them. Harnesses reliably render only the last text of a turn;

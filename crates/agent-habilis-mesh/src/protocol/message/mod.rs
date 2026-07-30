@@ -71,6 +71,13 @@ const _: () = assert!(
 /// bump below it predates any release, so no peer ever ran them, and they are
 /// *format* history rather than interop history:
 ///
+/// `12.0` also split the shipped consumer's chat tag in two, one per
+/// addressing: a broadcast tag every member receives, and a directed tag
+/// carried to a single addressee. That is an application-side change — the
+/// `App` envelope has been tag-opaque since `8.0` — and it is recorded here
+/// only because it lands inside the same interop break rather than needing one
+/// of its own.
+///
 /// - `11.0` — a product rebrand (the product's name was in the byte-domains).
 /// - `10.0` / `9.0` — the agent-mesh → agent-square and swarm → mesh renames.
 ///   `9.0` also moved the identity wire key to `"mesh"` and the JSON-RPC

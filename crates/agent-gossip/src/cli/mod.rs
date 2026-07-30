@@ -386,6 +386,31 @@ async fn a2a(action: A2aAction) -> Result<()> {
             }))
             .await
         }
+        A2aAction::Broadcast {
+            gossip: mesh,
+            nickname,
+            text,
+        } => {
+            let body = agent_habilis_mesh::protocol::MessageBody::new(text)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            let resp = ipc::send(&IpcCommand::Broadcast { mesh, body }, &nickname).await?;
+            let id = finish_send(&resp, "message")?;
+            println!("{id}");
+            Ok(())
+        }
+        A2aAction::Msg {
+            gossip: mesh,
+            nickname,
+            to,
+            text,
+        } => {
+            let body = agent_habilis_mesh::protocol::MessageBody::new(text)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            let resp = ipc::send(&IpcCommand::Msg { mesh, to, body }, &nickname).await?;
+            let id = finish_send(&resp, "message")?;
+            println!("{id}");
+            Ok(())
+        }
         A2aAction::Call {
             gossip: mesh,
             nickname,
@@ -396,23 +421,6 @@ async fn a2a(action: A2aAction) -> Result<()> {
             params,
             timeout_secs,
         } => {
-            // No peer + SendMessage = mesh broadcast chat (fire-and-forget).
-            if to.is_none() && method == "SendMessage" {
-                let text = text.ok_or_else(|| {
-                    anyhow::anyhow!("broadcast SendMessage needs --text (or a --to peer)")
-                })?;
-                let body = agent_habilis_mesh::protocol::MessageBody::new(text)
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-                let resp = ipc::send(&IpcCommand::Msg { mesh, body }, &nickname).await?;
-                let id = finish_send(&resp, "message")?;
-                println!("{id}");
-                return Ok(());
-            }
-            let to = to.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--to <peer> is required for an RPC call (only broadcast SendMessage omits it)"
-                )
-            })?;
             // Compose params from --text/--task-id sugar, unless raw --params given.
             let params: serde_json::Value = match params {
                 Some(raw) => serde_json::from_str(&raw)

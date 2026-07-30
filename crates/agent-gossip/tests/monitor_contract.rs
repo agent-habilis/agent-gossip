@@ -167,11 +167,12 @@ impl JsonNode {
             .collect()
     }
 
-    /// Filter to message events that are actual messages (type=msg), not presence.
-    fn msg_events(&self) -> Vec<serde_json::Value> {
+    /// Filter to gossip-wide chat (type=broadcast), not presence and not the
+    /// peer-addressed `msg`.
+    fn broadcast_events(&self) -> Vec<serde_json::Value> {
         self.message_events()
             .into_iter()
-            .filter(|value| value["type"] == "msg")
+            .filter(|value| value["type"] == "broadcast")
             .collect()
     }
 
@@ -291,7 +292,7 @@ async fn test_peer_discovery_three_peers() {
 async fn test_cross_peer_message_delivery() {
     let (mut creator, joiner_a, mut joiner_b) = common::three_peers("xpeer").await;
 
-    joiner_a.send("hello from A").await;
+    joiner_a.broadcast("hello from A").await;
 
     assert!(
         creator.wait_inbound(1, MSG_TIMEOUT).await,
@@ -302,8 +303,8 @@ async fn test_cross_peer_message_delivery() {
         "joiner_b never received joiner_a's message"
     );
 
-    let creator_msgs = creator.msg_events();
-    let joiner_b_msgs = joiner_b.msg_events();
+    let creator_msgs = creator.broadcast_events();
+    let joiner_b_msgs = joiner_b.broadcast_events();
     let msg = creator_msgs
         .iter()
         .chain(joiner_b_msgs.iter())
@@ -311,7 +312,7 @@ async fn test_cross_peer_message_delivery() {
         .expect("no message with body 'hello from A' found");
 
     assert_eq!(msg["event"], "message");
-    assert_eq!(msg["type"], "msg");
+    assert_eq!(msg["type"], "broadcast");
     assert!(msg["id"].is_string(), "missing id field");
     assert_eq!(msg["author"], "mon-xpeer-a");
     assert!(msg["ts"].is_number(), "ts should be a number");
@@ -329,8 +330,8 @@ async fn test_cross_peer_message_delivery() {
 async fn test_bidirectional_multi_peer() {
     let (mut creator, joiner_a, joiner_b) = common::three_peers("bidir").await;
 
-    joiner_a.send("msg from A").await;
-    joiner_b.send("msg from B").await;
+    joiner_a.broadcast("msg from A").await;
+    joiner_b.broadcast("msg from B").await;
 
     assert!(
         creator.wait_inbound(2, MSG_TIMEOUT).await,
@@ -338,7 +339,7 @@ async fn test_bidirectional_multi_peer() {
     );
 
     let bodies: Vec<String> = creator
-        .msg_events()
+        .broadcast_events()
         .iter()
         .filter_map(|value| value["body"].as_str().map(str::to_owned))
         .collect();
@@ -354,7 +355,7 @@ async fn test_self_echo_suppression() {
     let mut creator = InProcNode::create("monecho").await;
     let mut joiner = InProcNode::join(&creator.mesh, "mon-echo").await;
 
-    joiner.send("echo test").await;
+    joiner.broadcast("echo test").await;
 
     assert!(
         creator.wait_inbound(1, MSG_TIMEOUT).await,
@@ -365,14 +366,14 @@ async fn test_self_echo_suppression() {
         "joiner did not see its own IPC echo"
     );
 
-    let creator_msgs = creator.msg_events();
+    let creator_msgs = creator.broadcast_events();
     let message = creator_msgs
         .iter()
         .find(|entry| entry["body"] == "echo test")
         .expect("creator did not receive message");
     assert_eq!(message["self"], false);
 
-    let joiner_msgs = joiner.msg_events();
+    let joiner_msgs = joiner.broadcast_events();
     assert!(
         joiner_msgs
             .iter()
@@ -484,7 +485,7 @@ async fn test_all_lines_are_valid_json() {
     let mut creator = InProcNode::create("monvalid").await;
     let joiner = InProcNode::join(&creator.mesh, "mon-valid-json").await;
 
-    joiner.send("json validity test").await;
+    joiner.broadcast("json validity test").await;
     assert!(
         creator.wait_inbound(1, MSG_TIMEOUT).await,
         "message never arrived"
@@ -508,13 +509,13 @@ async fn test_message_event_has_all_required_fields() {
     let mut creator = InProcNode::create("monfields").await;
     let joiner = InProcNode::join(&creator.mesh, "mon-fields").await;
 
-    joiner.send("field check").await;
+    joiner.broadcast("field check").await;
     assert!(
         creator.wait_inbound(1, MSG_TIMEOUT).await,
         "message never arrived"
     );
 
-    let msgs = creator.msg_events();
+    let msgs = creator.broadcast_events();
     for msg in &msgs {
         assert!(msg["event"].is_string(), "missing event field: {msg}");
         assert!(msg["id"].is_string(), "missing id field: {msg}");
@@ -574,13 +575,13 @@ fn test_creator_departure_peers_survive() {
     // between the two joiners, so re-meshing waits on the heal cadence —
     // budget it with `RECOVERY_TIMEOUT`, not the steady-state `MSG_TIMEOUT`.
     cli_send(&mesh, "survive-alpha", "still-here");
-    let delivered = wait_until(|| joiner_b.msg_events().len(), 1, RECOVERY_TIMEOUT);
+    let delivered = wait_until(|| joiner_b.broadcast_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         delivered >= 1,
         "joiner_b did not receive message from joiner_a after creator left"
     );
 
-    let msg = &joiner_b.msg_events()[0];
+    let msg = &joiner_b.broadcast_events()[0];
     assert_eq!(msg["author"], "survive-alpha");
     assert_eq!(msg["body"], "still-here");
 }
@@ -653,7 +654,7 @@ fn test_creator_departure_four_peers_survive() {
     let mesh_count = wait_until(
         || {
             joiner_c
-                .msg_events()
+                .broadcast_events()
                 .iter()
                 .filter(|value| value["body"] == "mesh-check")
                 .count()
@@ -679,7 +680,7 @@ fn test_creator_departure_four_peers_survive() {
     // (the creator just left) re-mesh on the heal cadence, so they get
     // `RECOVERY_TIMEOUT` rather than the steady-state `MSG_TIMEOUT`.
     cli_send(&mesh, "four-alpha", "post-creator-msg");
-    let post_count = wait_until(|| joiner_b.msg_events().len(), 1, RECOVERY_TIMEOUT);
+    let post_count = wait_until(|| joiner_b.broadcast_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         post_count >= 1,
         "joiner_b did not receive message after creator left"
@@ -689,7 +690,7 @@ fn test_creator_departure_four_peers_survive() {
     let relay_count = wait_until(
         || {
             joiner_c
-                .msg_events()
+                .broadcast_events()
                 .iter()
                 .filter(|value| value["body"] == "post-creator-relay")
                 .count()
@@ -863,7 +864,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     assert!(
         wait_until(
             || creator
-                .msg_events()
+                .broadcast_events()
                 .iter()
                 .filter(|value| value["author"] == "jh-ghost" && value["body"] == "ghost-hist")
                 .count(),
@@ -890,7 +891,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     assert!(
         wait_until(
             || late
-                .msg_events()
+                .broadcast_events()
                 .iter()
                 .filter(|value| value["author"] == creator.nickname.as_str()
                     && value["body"] == "live-after")
@@ -917,7 +918,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
         .filter(|value| value["event"] == "peer_timeout" && value["nickname"] == "jh-ghost")
         .count();
     let ghost_msgs = late
-        .msg_events()
+        .broadcast_events()
         .into_iter()
         .filter(|value| value["author"] == "jh-ghost")
         .count();
@@ -1441,7 +1442,7 @@ async fn test_poll_record_matches_stream_line() {
     let mut stream_msg = None;
     while Instant::now() < deadline {
         stream_msg = creator
-            .msg_events()
+            .broadcast_events()
             .into_iter()
             .find(|value| value["body"] == "parity body");
         if stream_msg.is_some() {

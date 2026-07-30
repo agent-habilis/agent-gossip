@@ -79,7 +79,7 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
     let mut received = false;
     while !received && tokio::time::Instant::now() < deadline {
         alice
-            .send(MessageBody::from("hello topic"))
+            .broadcast(MessageBody::from("hello topic"))
             .await
             .expect("alice send");
         let seen =

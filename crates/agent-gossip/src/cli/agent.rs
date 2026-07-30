@@ -13,6 +13,7 @@ use include_dir::{Dir, include_dir};
 pub(crate) static SKILLS: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
 const OWNED_SKILL_DIRS: &[&str] = &[
+    "gossip-broadcast",
     "gossip-create",
     "gossip-discover",
     "gossip-doctor",

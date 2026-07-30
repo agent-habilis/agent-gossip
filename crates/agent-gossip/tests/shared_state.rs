@@ -105,7 +105,7 @@ async fn wait_doc(
 async fn meta_and_state_channels_are_independent() {
     let alice = InProcNode::create("ch-indep").await;
     let mut bob = InProcNode::join(&alice.mesh, "ch-bob").await;
-    alice.send("link").await;
+    alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     // A meta write propagates to bob's meta doc; both state docs stay empty.
@@ -162,7 +162,7 @@ async fn patches_converge_for(channel: Channel) {
     let mut carol = InProcNode::join(&alice.mesh, "conv-carol").await;
 
     // Mesh first (a delivered message proves the links).
-    alice.send("link").await;
+    alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     assert!(carol.wait_body("link", MSG_TIMEOUT).await, "carol meshed");
 
@@ -204,7 +204,7 @@ async fn peer_change_wakes_for(channel: Channel) {
     let mut alice = InProcNode::create(&mesh_name(channel, "ss-wake")).await;
     let mut bob = InProcNode::join(&alice.mesh, "wake-bob").await;
 
-    alice.send("link").await;
+    alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     alice.merge(channel, json!({"turn": "bob"})).await;
@@ -260,7 +260,7 @@ async fn late_joiner_backfills_for(channel: Channel) {
     let early = InProcNode::join(&alice.mesh, "bf-early").await;
     // Mesh so the appends go out live (the creator's outbound buffer stays
     // empty) — the late joiner can then only be served by anti-entropy.
-    alice.send("link").await;
+    alice.broadcast("link").await;
 
     for index in 0..PATCHES {
         alice
@@ -336,7 +336,7 @@ async fn ping_pong_for(channel: Channel) {
     let mut alice = InProcNode::create(&mesh_name(channel, "ss-pp")).await;
     let mut bob = InProcNode::join(&alice.mesh, "pp-bob").await;
 
-    alice.send("link").await;
+    alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     // alice opens with move 1 under its own key — no container to seed first.
@@ -411,7 +411,7 @@ async fn meta_two_agents_ping_pong_via_shared_state() {
 async fn foreign_card_forgery_is_rejected() {
     let alice = InProcNode::create("ss-forge").await;
     let mut bob = InProcNode::join(&alice.mesh, "forge-bob").await;
-    alice.send("link").await;
+    alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     // Both cards publish on join; wait until alice sees bob's genuine card.
@@ -484,7 +484,7 @@ async fn foreign_card_forgery_is_rejected() {
 async fn agent_cards_publish_to_meta_on_join() {
     let alice = InProcNode::create("ss-cards").await;
     let mut bob = InProcNode::join(&alice.mesh, "cards-bob").await;
-    alice.send("link").await;
+    alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     let has_card = |doc: &Value, nick: &str| {
@@ -545,7 +545,7 @@ async fn agent_cards_publish_to_meta_on_join() {
 async fn graceful_leave_retracts_meta_entry() {
     let mut host = InProcNode::create_with_nick("ss-retract", "retract-host").await;
     let mut leaver = InProcNode::join(&host.mesh, "retract-leaver").await;
-    host.send("link").await;
+    host.broadcast("link").await;
     assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "leaver meshed");
 
     // Before the leave the entry holds both writers' data: the daemon's card
@@ -565,7 +565,7 @@ async fn graceful_leave_retracts_meta_entry() {
 
     // Prove the leaver→host overlay path is live *now*, so the farewell
     // frames that follow ride a link that demonstrably works.
-    leaver.send("goodbye-imminent").await;
+    leaver.broadcast("goodbye-imminent").await;
     assert!(
         host.wait_body("goodbye-imminent", MSG_TIMEOUT).await,
         "leaver→host path was not live before the leave"
@@ -593,7 +593,7 @@ async fn graceful_leave_retracts_meta_entry() {
     let mut late = InProcNode::join(&host.mesh, "retract-late").await;
     let mut meshed = false;
     for attempt in 0..3 {
-        host.send(&format!("relink-{attempt}")).await;
+        host.broadcast(&format!("relink-{attempt}")).await;
         if late
             .wait_body(&format!("relink-{attempt}"), MSG_TIMEOUT)
             .await
@@ -624,7 +624,7 @@ async fn graceful_leave_retracts_meta_entry() {
 async fn meta_entry_returns_after_rejoin() {
     let mut host = InProcNode::create_with_nick("ss-rejoin", "rejoin-host").await;
     let mut leaver = InProcNode::join(&host.mesh, "rejoin-peer").await;
-    host.send("link").await;
+    host.broadcast("link").await;
     assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "peer meshed");
 
     assert!(
@@ -635,7 +635,7 @@ async fn meta_entry_returns_after_rejoin() {
         "the host never derived the peer's card"
     );
     // Same live-path proof as `graceful_leave_retracts_meta_entry`.
-    leaver.send("goodbye-imminent").await;
+    leaver.broadcast("goodbye-imminent").await;
     assert!(
         host.wait_body("goodbye-imminent", MSG_TIMEOUT).await,
         "leaver→host path was not live before the leave"
@@ -658,7 +658,7 @@ async fn meta_entry_returns_after_rejoin() {
     let mut returned = InProcNode::join(&host.mesh, "rejoin-peer").await;
     let mut meshed = false;
     for attempt in 0..3 {
-        host.send(&format!("welcome-back-{attempt}")).await;
+        host.broadcast(&format!("welcome-back-{attempt}")).await;
         if returned
             .wait_body(&format!("welcome-back-{attempt}"), MSG_TIMEOUT)
             .await

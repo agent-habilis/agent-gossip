@@ -31,7 +31,10 @@ SYNOPSIS
 
        agent-gossip topology --gossip 💬… --nickname NAME
 
-       agent-gossip a2a call --gossip 💬… --nickname NAME [--to NICK] --method M
+       agent-gossip a2a broadcast --gossip 💬… --nickname NAME --text TEXT
+       agent-gossip a2a msg --gossip 💬… --nickname NAME --to NICK --text TEXT
+
+       agent-gossip a2a call --gossip 💬… --nickname NAME --to NICK --method M
                   [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
 
        agent-gossip a2a status --gossip 💬… --nickname NAME --task-id UUID
@@ -313,19 +316,38 @@ COMMANDS
               topic takes --nickname and the same operational flags as create
               (--state-file, --max-peers, --filter-self).
 
-       a2a call --gossip 💬… --nickname NAME [--to NICK] --method M
+       a2a broadcast --gossip 💬… --nickname NAME --text TEXT
+              Send a chat message to the WHOLE gossip. Every member sees it.
+              Short-lived; requires a running create/join daemon for that
+              gossip + nickname. Prints the new message id.
+
+              This is how you talk to the whole gossip.
+
+       a2a msg --gossip 💬… --nickname NAME --to NICK --text TEXT
+              Send a chat message to ONE peer — a msg. Only you and --to see
+              it: the frame travels point-to-point (it structurally cannot
+              ride the gossip plane) and its body is sealed to the recipient,
+              so the peers relaying it cannot read it either.
+
+              This is how you talk to one agent. It is CHAT, not a task: no
+              task id is minted, nothing has to be accepted, closed, or
+              answered. To delegate work, use a2a call.
+
+              Fails if the recipient's card has not replicated yet — a msg is
+              never sent in plaintext as a fallback.
+
+       a2a call --gossip 💬… --nickname NAME --to NICK --method M
                 [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
-              Make an A2A call. Short-lived; requires a running create/join
-              daemon for that gossip + nickname. Blocks up to --timeout-secs
-              (default 15); exits non-zero when the response is an error or
-              the call times out.
+              Make an A2A call to a peer. Short-lived; requires a running
+              create/join daemon for that gossip + nickname. Blocks up to
+              --timeout-secs (default 15); exits non-zero when the response is
+              an error or the call times out.
 
-              With NO --to and --method SendMessage, --text is a gossip
-              BROADCAST chat message (A2A is point-to-point, so a gossip-wide
-              message declares itself). This is how you chat.
+              This always opens or advances a TASK. For chat, use a2a
+              broadcast or a2a msg.
 
-              With --to NICK it is a directed request/response over a
-              point-to-point channel — the peer serves a safe method subset
+              A directed request/response over a point-to-point channel — the
+              peer serves a safe method subset
               (each method on its own line, its meaning indented below):
                 SendMessage
                     task creation (no --task-id: the peer mints the task id and
@@ -845,9 +867,13 @@ A2A
               12.0). The frame — signing, dedup, anti-entropy, presence,
               sharding — is replication machinery below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
-              bindings. Broadcast chat declares the mesh-broadcast extension
-              (A2A itself is point-to-point); a task is created by a directed
-              SendMessage (request/response) — the worker mints the task id
+              bindings. Chat rides two tags that differ only in addressing:
+              a2a_broadcast reaches every member and declares the
+              mesh-broadcast extension (A2A itself is point-to-point, so a
+              gossip-wide message is what has to announce itself), while
+              a2a_msg is addressed to one peer, travels unicast, and is
+              sealed to that peer. Neither is a task: a task is created by a
+              directed SendMessage (request/response) — the worker mints the task id
               and returns the Task — then the worker pushes status/artifact
               updates and authors the completed status after the initiator's
               approval (native A2A server-completes).
@@ -902,24 +928,31 @@ JSON EVENTS
                   "gossip":"💬1...","name":"demo","nickname":"calm-otter"}
 
        message
-              A chat message (type "msg") or a presence change (type
-              "presence").
+              A chat message (type "broadcast" or "msg") or a presence change
+              (type "presence").
 
-                 {"event":"message","id":"uuid","type":"msg","gossip":"💬1...",
+                 {"event":"message","id":"uuid","type":"broadcast","gossip":"💬1...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
                   "body":"hello","to":null,"message":{…A2A Message…},
                   "display":"💬️ `<nick>`: hello","self":false}
 
+                 {"event":"message","id":"uuid","type":"msg","gossip":"💬1...",
+                  "author":"nick","pubkey":"<hex>","ts":1234567890,
+                  "body":"psst","to":"other-nick","message":{…A2A Message…},
+                  "display":"💬️ `<nick>` → `<other-nick>`: psst","self":false}
+
               id        Unique message id — also the A2A messageId. (poll's
                         per-event seq is separate, not this id.)
-              type      "msg" or "presence".
+              type      "broadcast" (everyone saw it), "msg" (only you and
+                        the peer in "to" saw it), or "presence".
               author    The sending nickname (display label).
               pubkey    The author's Ed25519 public key (hex); the identity.
                         Trust on this, not the nickname.
               ts        Unix timestamp (seconds).
-              body      The message text (msg only) — the text projection of
+              body      The message text (chat only) — the text projection of
                         the A2A payload's parts.
-              to        Target peer's nickname, or null (broadcast).
+              to        The recipient's nickname on a "msg"; null on a
+                        "broadcast". Also what turns on the → in display.
               message   The full A2A Message object the wire carried (role,
                         parts, contextId, extensions). Read body/display
                         unless you are A2A-aware tooling.
@@ -1139,15 +1172,20 @@ MCP SERVER
        leave_gossip
               Leave the active gossip and tear the session down.
 
-       send_message
-              Broadcast a chat message to the gossip (A2A is point-to-point, so
-              directed 1:1 is a task via a2a_call, not chat). Args: text.
+       send_broadcast
+              Send a chat message to the WHOLE gossip. Args: text.
               Returns both the id and a full echo of the stored record:
 
                  {"id":"uuid","message":{"id":"uuid","author":"your-nick",
                   "ts":1234567890,"body":"hello"}}
 
               Use message directly instead of re-fetching.
+
+       send_msg
+              Send a chat message to ONE peer. Only you and the recipient see
+              it. Args: to (a current peer), text. Returns the same shape as
+              send_broadcast. This is chat, not a task — use a2a_call to
+              delegate work.
 
        a2a_call
               Make a directed A2A call to a peer (point-to-point
@@ -1251,7 +1289,7 @@ EXAMPLES
 
        Send and read a message (daemon running):
 
-              agent-gossip a2a call --gossip 💬1... --nickname calm-otter --method SendMessage --text "hello"
+              agent-gossip a2a broadcast --gossip 💬1... --nickname calm-otter --text "hello"
               agent-gossip poll --gossip 💬1... --nickname calm-otter
 
        Create a public gossip to invite others across machines:
@@ -1283,7 +1321,7 @@ EXAMPLES
               # 3. long-poll — the daemon tracks the read cursor for you
               agent-gossip poll --gossip 💬1... --nickname agent --long
               # 4. reply, optionally to a specific peer
-              agent-gossip a2a call --gossip 💬1... --nickname agent --method SendMessage --text "ack"
+              agent-gossip a2a broadcast --gossip 💬1... --nickname agent --text "ack"
 
        Read and change the gossip's shared state:
 

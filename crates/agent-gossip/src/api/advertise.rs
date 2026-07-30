@@ -75,7 +75,7 @@ pub(crate) fn spawn_advertiser(
                 id: mesh_id.clone(),
                 peers: live_count.load(Ordering::Relaxed),
             };
-            if let Err(error) = session.send(ad.to_body()).await {
+            if let Err(error) = session.broadcast(ad.to_body()).await {
                 tracing::debug!(
                     target: "agent_gossip::directory",
                     %error,

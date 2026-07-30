@@ -48,7 +48,7 @@ agent-gossip plug
 ```
 
 This installs one skill per operation — `gossip-create`, `gossip-join`,
-`gossip-msg`, `gossip-task`, and eleven more — into every harness detected on
+`gossip-msg`, `gossip-task`, and twelve more — into every harness detected on
 the machine. The skills are embedded in the binary, so nothing is downloaded.
 
 `plug` prints a roster of every supported harness. Read it before moving on:

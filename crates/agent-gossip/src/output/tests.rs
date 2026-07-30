@@ -22,7 +22,7 @@ fn sid() -> agent_habilis_mesh::protocol::MeshId {
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn chat_frame(author: &str, text: &str) -> Message {
-    let payload = crate::a2a::gossip::chat_message(&sid(), text);
+    let payload = crate::a2a::gossip::compose_broadcast(&sid(), text);
     let frame_id = agent_habilis_mesh::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
@@ -30,7 +30,7 @@ fn chat_frame(author: &str, text: &str) -> Message {
         &sid(),
         &nick(author),
         agent_habilis_mesh::protocol::AppFrameParams {
-            tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
+            tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
             to: None,
             corr: None,
             body,
@@ -45,7 +45,7 @@ fn json_message_has_all_fields() {
     let json = format_msg_json(&msg, false);
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
-    assert_eq!(parsed["type"], "msg");
+    assert_eq!(parsed["type"], "broadcast");
     assert_eq!(parsed["gossip"], sid().as_str());
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
@@ -459,21 +459,49 @@ mod snapshots {
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame(text: &str) -> Message {
-        let mut payload = crate::a2a::gossip::chat_message(
+        let mut payload = crate::a2a::gossip::compose_broadcast(
             &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
             text,
         );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
         Message::fixture(
-            MessageKind::app_broadcast(crate::a2a::wire::MSG),
+            MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
+            body.as_str(),
+        )
+    }
+
+    /// The directed twin of [`snap_chat_frame`].
+    fn snap_msg_frame(text: &str) -> Message {
+        let mut payload = crate::a2a::gossip::compose_msg(
+            &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
+            text,
+        );
+        payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
+        let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
+        Message::fixture(
+            MessageKind::app_to(
+                crate::a2a::wire::MSG,
+                agent_habilis_mesh::protocol::Nickname::from("addressed-nick"),
+                None,
+            ),
             body.as_str(),
         )
     }
 
     #[test]
-    fn snap_msg_message() {
+    fn snap_broadcast_message() {
         insta::assert_snapshot!(format_msg_json(&snap_chat_frame("What is Rust?"), false));
+    }
+
+    /// Pins the two fields that separate a private line from a public one:
+    /// `type: "msg"` with a non-null `to`, and the `→` in `display`.
+    #[test]
+    fn snap_msg_message() {
+        insta::assert_snapshot!(format_msg_json(
+            &snap_msg_frame("Rust is a systems language."),
+            false
+        ));
     }
 
     #[test]

@@ -22,8 +22,19 @@ Print the lines **last in the turn** — after every tool call the batch
 triggers, per the Receive loop's *Print last, act first* rule. A line followed
 by another tool call may never render in the user's chat.
 
-Your own `msg` echo (`self: true`) is visible by design — it is the send
+Your own chat echo (`self: true`) is visible by design — it is the send
 confirmation.
+
+Chat arrives as two `type`s, and the difference is who else saw it:
+
+- `type: "broadcast"` — everyone in the gossip received it.
+- `type: "msg"` — seen only by its author and the peer named in `to`. Its
+  `display` carries the `→ <nick>` arrow; a line without the arrow went to the
+  whole gossip.
+
+Print both the same way — `display`, verbatim. The distinction is not about
+rendering, it is about what you may repeat: a `msg` was sent to you privately,
+so do not quote it into a broadcast.
 
 ### Gap markers
 
@@ -37,16 +48,24 @@ This is not an event. It says every event below that `seq` aged out of the
 daemon's ring before you read it, and is gone. Tell the user plainly that
 events were dropped, then continue with the returned window.
 
-### Replies
+### Answering
 
-Reply only when you can add useful information and are at least 90% confident.
-A reply is a broadcast to the gossip:
+Answer only when you can add useful information and are at least 90% confident.
+
+Choose the channel by **audience**, not by how the message reached you:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --method SendMessage --text "<reply>"
+# useful to the whole gossip
+agent-gossip a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "<answer>"
+
+# for one peer only
+agent-gossip a2a msg --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --text "<answer>"
 ```
 
-Do not reply to ping messages. The daemon handles ping/pong and emits
+Answering a `type: "msg"` with a broadcast republishes to everyone something
+that was sent to you privately. When in doubt, answer a msg with a msg.
+
+Do not answer ping messages. The daemon handles ping/pong and emits
 `ping_report`.
 
 ### Task events

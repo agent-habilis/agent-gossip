@@ -37,7 +37,7 @@ fn task_id_of(resp: &serde_json::Value) -> TaskId {
 async fn creation_mints_server_id_and_returns_submitted_task() {
     let alice = InProcNode::create("t-create").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-create-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
     let resp = alice.create_task("t-create-bob", "review src/net").await;
@@ -68,7 +68,7 @@ async fn creation_mints_server_id_and_returns_submitted_task() {
 async fn full_lifecycle_worker_completes_after_approval() {
     let mut alice = InProcNode::create("t-life").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-life-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
     let resp = alice.create_task("t-life-bob", "port the parser").await;
@@ -134,7 +134,7 @@ async fn full_lifecycle_worker_completes_after_approval() {
 async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
     let mut alice = InProcNode::create("t-left").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-left-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
     let resp = alice.create_task("t-left-bob", "doomed work").await;
@@ -220,7 +220,7 @@ async fn served_state(initiator: &InProcNode, worker: &str, task_id: &TaskId) ->
 async fn own_sharded_status_leg_completes_the_workers_own_record() {
     let alice = InProcNode::create("t-shard").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-shard-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
     let task_id = task_id_of(&alice.create_task("t-shard-bob", "big note").await);
@@ -251,7 +251,7 @@ async fn own_sharded_status_leg_completes_the_workers_own_record() {
 async fn cancel_advances_the_cancellers_own_record_and_response() {
     let alice = InProcNode::create("t-cancel").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-cancel-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
     let task_id = task_id_of(&alice.create_task("t-cancel-bob", "never mind").await);
@@ -290,7 +290,7 @@ async fn cancel_advances_the_cancellers_own_record_and_response() {
 async fn two_tasks_get_distinct_ids() {
     let alice = InProcNode::create("t-two").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-two-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
     let first = task_id_of(&alice.create_task("t-two-bob", "task one").await);
@@ -306,7 +306,7 @@ async fn two_tasks_get_distinct_ids() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn not_surfaced_to_third_party() {
     let (alice, mut bob, mut gamma) = three_peers("t-priv").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(
         bob.wait_body("warmup", MSG_TIMEOUT).await && gamma.wait_body("warmup", MSG_TIMEOUT).await,
         "mesh formed"
@@ -323,7 +323,7 @@ async fn not_surfaced_to_third_party() {
     );
 
     // Give gamma a delivery barrier: a later broadcast it *does* see.
-    alice.send("barrier").await;
+    alice.broadcast("barrier").await;
     assert!(
         gamma.wait_body("barrier", MSG_TIMEOUT).await,
         "gamma meshed"

@@ -244,18 +244,49 @@ pub fn cli_message_raw(mesh: &str, nickname: &str, body: &str) -> Output {
     test_cmd()
         .args([
             "a2a",
-            "call",
+            "broadcast",
             "--gossip",
             mesh,
             "--nickname",
             nickname,
-            "--method",
-            "SendMessage",
             "--text",
             body,
         ])
         .output()
-        .expect("a2a call command failed to spawn")
+        .expect("a2a broadcast command failed to spawn")
+}
+
+/// Spawn `agent-gossip a2a msg …` — chat addressed to one peer. Returns the
+/// raw [`Output`] so a caller can assert on failure (a msg legitimately fails
+/// until the recipient's card has replicated).
+#[must_use]
+pub fn cli_msg_raw(mesh: &str, nickname: &str, to: &str, body: &str) -> Output {
+    test_cmd()
+        .args([
+            "a2a",
+            "msg",
+            "--gossip",
+            mesh,
+            "--nickname",
+            nickname,
+            "--to",
+            to,
+            "--text",
+            body,
+        ])
+        .output()
+        .expect("a2a msg command failed to spawn")
+}
+
+/// [`cli_msg_raw`] + assert success + trim stdout.
+pub fn cli_msg_checked(mesh: &str, nickname: &str, to: &str, body: &str) -> String {
+    let out = cli_msg_raw(mesh, nickname, to, body);
+    assert!(
+        out.status.success(),
+        "a2a msg failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 /// [`cli_message_raw`] + trim stdout. No success assertion.
@@ -269,7 +300,7 @@ pub fn cli_message_checked(mesh: &str, nickname: &str, body: &str) -> String {
     let out = cli_message_raw(mesh, nickname, body);
     assert!(
         out.status.success(),
-        "a2a call (broadcast) failed: {}",
+        "a2a broadcast failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -782,13 +813,37 @@ impl InProcNode {
         Ok(Self::from_session(MeshSession::join(cfg).await?))
     }
 
-    /// Broadcast a plain message; returns the new message id.
-    pub async fn send(&self, text: &str) -> MessageId {
+    /// Broadcast a plain message to everyone; returns the new message id.
+    pub async fn broadcast(&self, text: &str) -> MessageId {
         self.session
-            .send(MessageBody::new(text).expect("valid body"))
+            .broadcast(MessageBody::new(text).expect("valid body"))
             .await
-            .expect("in-process send failed")
+            .expect("in-process broadcast failed")
             .id
+    }
+
+    /// Send a msg to one peer; returns the new message id.
+    pub async fn msg(&self, to: &str, text: &str) -> MessageId {
+        self.try_msg(to, text)
+            .await
+            .expect("in-process msg failed")
+            .id
+    }
+
+    /// [`Self::msg`] without the panic — a msg is sealed to the recipient, so
+    /// it legitimately fails until that peer's card has replicated, and a test
+    /// that races the card needs to see the error rather than die on it.
+    ///
+    /// # Errors
+    /// Propagates the send failure (loop stopped, or the recipient's seal key
+    /// is not known yet).
+    pub async fn try_msg(&self, to: &str, text: &str) -> anyhow::Result<Message> {
+        self.session
+            .msg(
+                Nickname::new(to).expect("valid test nickname"),
+                MessageBody::new(text).expect("valid body"),
+            )
+            .await
     }
 
     /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
@@ -1143,11 +1198,22 @@ impl InProcNode {
             .collect()
     }
 
-    /// `{"event":"message","type":"msg"}` lines only (excludes presence).
+    /// `{"event":"message","type":"broadcast"}` lines only — gossip-wide chat,
+    /// excluding presence and msgs.
+    pub fn broadcast_events(&mut self) -> Vec<serde_json::Value> {
+        self.chat_events("broadcast")
+    }
+
+    /// `{"event":"message","type":"msg"}` lines only — chat addressed to one
+    /// peer.
     pub fn msg_events(&mut self) -> Vec<serde_json::Value> {
+        self.chat_events("msg")
+    }
+
+    fn chat_events(&mut self, ty: &str) -> Vec<serde_json::Value> {
         self.json_events()
             .into_iter()
-            .filter(|value| value["event"] == "message" && value["type"] == "msg")
+            .filter(|value| value["event"] == "message" && value["type"] == ty)
             .collect()
     }
 
@@ -1600,17 +1666,21 @@ pub fn chat_text(msg: &Message) -> String {
 pub struct Msg {
     pub author: String,
     pub body: String,
+    /// The recipient on a `type:"msg"`; `None` on a `type:"broadcast"`.
+    pub to: Option<String>,
 }
 
-/// Parse the daemon's JSON `message` events (chat only — `type:"msg"`,
-/// skipping `presence`), pulling out `(author, body)`.
+/// Parse the daemon's JSON `message` events — **both** chat types, skipping
+/// `presence`. Broadcast and msg are both chat and both carry `author`/`body`;
+/// `Msg::to` is what separates them, so a test that cares asserts on it rather
+/// than on which of the two arrived.
 fn parse_messages(output: &str) -> Vec<Msg> {
     let mut msgs = Vec::new();
     for line in output.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
-        if value["event"] != "message" || value["type"] != "msg" {
+        if value["event"] != "message" || (value["type"] != "broadcast" && value["type"] != "msg") {
             continue;
         }
         let (Some(author), Some(body)) = (value["author"].as_str(), value["body"].as_str()) else {
@@ -1620,6 +1690,7 @@ fn parse_messages(output: &str) -> Vec<Msg> {
             msgs.push(Msg {
                 author: author.to_string(),
                 body: body.to_string(),
+                to: value["to"].as_str().map(str::to_owned),
             });
         }
     }

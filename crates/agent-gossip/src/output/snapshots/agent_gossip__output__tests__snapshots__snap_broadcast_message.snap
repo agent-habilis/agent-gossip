@@ -1,0 +1,6 @@
+---
+source: crates/agent-gossip/src/output/tests.rs
+assertion_line: 476
+expression: "format_msg_json(&snap_chat_frame(\"What is Rust?\"), false)"
+---
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"broadcast","gossip":"💬://3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"body":"What is Rust?","to":null,"message":{"messageId":"00000000-0000-0000-0000-000000000001","role":"ROLE_USER","parts":[{"text":"What is Rust?"}],"contextId":"💬://3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","extensions":["https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1"]},"display":"💬️ `<alice-bot>`: What is Rust?","self":false,"is_visible":true}

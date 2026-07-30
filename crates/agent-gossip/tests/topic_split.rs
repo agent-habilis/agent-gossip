@@ -158,12 +158,12 @@ async fn two_simultaneous_topic_joiners_converge() {
     await_cards_bounded(&alice, &bob, MERGE_BUDGET).await;
 
     // And traffic flows across the merged overlay, both directions.
-    alice.send("after-merge-a").await;
+    alice.broadcast("after-merge-a").await;
     assert!(
         bob.wait_body("after-merge-a", MSG_TIMEOUT).await,
         "bob never saw alice's post-merge broadcast"
     );
-    bob.send("after-merge-b").await;
+    bob.broadcast("after-merge-b").await;
     assert!(
         alice.wait_body("after-merge-b", MSG_TIMEOUT).await,
         "alice never saw bob's post-merge broadcast"

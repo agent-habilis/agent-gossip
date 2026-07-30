@@ -75,13 +75,69 @@ impl CraftedMsg {
                 mesh,
                 &author,
                 AppFrameParams {
-                    tag: AppTag::from(wire::MSG),
+                    tag: AppTag::from(wire::BROADCAST),
                     to: None,
                     corr: None,
                     body,
                 },
             ),
         }
+    }
+
+    /// Re-address this chat frame, producing one of the two shapes a correct
+    /// client cannot emit — the pair that together form the chat privacy
+    /// boundary:
+    ///
+    /// - `Some(nick)` on a `a2a_broadcast` frame: a private line dressed as
+    ///   gossip-wide.
+    /// - `None` on an `a2a_msg` frame: a msg handed to every peer.
+    ///
+    /// The payload is left as-is, so what is under test is the addressing
+    /// rather than a malformed body. Call before `sign` — `to` is part of the
+    /// canonical bytes.
+    pub fn address_to(mut self, to: Option<&str>) -> Self {
+        let MessageKind::App { tag, corr, .. } = self.msg.kind.clone() else {
+            panic!("address_to takes an app frame");
+        };
+        self.msg.kind = MessageKind::App {
+            tag,
+            to: to.map(|nick| {
+                Nickname::new(nick.to_owned()).expect("test addressee is a valid nickname")
+            }),
+            corr,
+        };
+        self
+    }
+
+    /// Retag this chat frame as a `a2a_msg` (chat addressed to one peer),
+    /// keeping the body. Pair with [`address_to`](CraftedMsg::address_to) to
+    /// build either a well-formed msg or the broadcast-shaped forgery.
+    pub fn as_msg(mut self) -> Self {
+        let MessageKind::App { to, corr, .. } = self.msg.kind.clone() else {
+            panic!("as_msg takes an app frame");
+        };
+        self.msg.kind = MessageKind::App {
+            tag: AppTag::from(wire::MSG),
+            to,
+            corr,
+        };
+        self
+    }
+
+    /// Wrap the body as a valid **msg** A2A payload (no broadcast extension),
+    /// the directed counterpart of [`wrap_a2a`](CraftedMsg::wrap_a2a). Call
+    /// after any `id` mutation and before `sign`.
+    pub fn wrap_msg(mut self) -> Self {
+        assert!(
+            self.msg.kind.is_app(wire::MSG),
+            "wrap_msg applies to msg frames only"
+        );
+        let mut payload = crate::a2a::gossip::compose_msg(&self.msg.mesh, self.msg.body.as_str());
+        payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
+            .expect("frame id is a valid uuid");
+        self.msg.body =
+            crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        self
     }
 
     /// A crafted shared-state merge (`MessageKind::State`) from `author`, whose
@@ -198,10 +254,11 @@ impl CraftedMsg {
     /// verbatim and is dropped at the boundary.
     pub fn wrap_a2a(mut self) -> Self {
         assert!(
-            self.msg.kind.is_app(wire::MSG),
+            self.msg.kind.is_app(wire::BROADCAST),
             "wrap_a2a applies to chat frames only"
         );
-        let mut payload = crate::a2a::gossip::chat_message(&self.msg.mesh, self.msg.body.as_str());
+        let mut payload =
+            crate::a2a::gossip::compose_broadcast(&self.msg.mesh, self.msg.body.as_str());
         payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
             .expect("frame id is a valid uuid");
         self.msg.body =
@@ -259,11 +316,13 @@ impl CraftedMsg {
     /// signature and the victim must drop it.
     pub fn flip_chat_kind(mut self) -> Self {
         self.msg.kind = match self.msg.kind.clone() {
-            MessageKind::App { tag, .. } if tag.as_str() == wire::MSG => MessageKind::Presence {
-                subtype: PresenceSubtype::Alive,
-            },
+            MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => {
+                MessageKind::Presence {
+                    subtype: PresenceSubtype::Alive,
+                }
+            }
             MessageKind::Presence { .. } => MessageKind::App {
-                tag: AppTag::from(wire::MSG),
+                tag: AppTag::from(wire::BROADCAST),
                 to: None,
                 corr: None,
             },

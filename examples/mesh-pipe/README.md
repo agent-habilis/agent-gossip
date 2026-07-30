@@ -17,7 +17,7 @@ independent second one:
 
 - **Its own `AppTag` taxonomy.** Two tags in the pipe's own namespace —
   `pipe_data` (one ordered slice of the byte stream) and `pipe_eof` (the source
-  ended). The a2a layer's `a2a_msg` / `a2a_status` / … never appear.
+  ended). The a2a layer's `a2a_broadcast` / `a2a_msg` / `a2a_status` / … never appear.
 - **~40 lines of app logic.** `classify` marks pipe frames ephemeral
   (`loggable: false`, not a beat, always valid, unchained); `on_app_frame`
   base64-decodes a `pipe_data` body to stdout and exits on `pipe_eof`. Every

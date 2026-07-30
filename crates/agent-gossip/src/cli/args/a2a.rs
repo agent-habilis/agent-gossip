@@ -108,18 +108,56 @@ pub(crate) enum A2aAction {
         legacy_output: LegacyOutput,
     },
 
-    /// Make an A2A `SendMessage` (or `tasks/*`) call.
+    /// Send a chat message to the whole gossip.
     ///
-    /// With `--to <peer>` this is a directed request/response over gossip: the
-    /// peer serves a **safe method subset** — `GetTask`, `ListTasks`,
-    /// `CancelTask` (a task you're a party to), `mesh/state.get`,
-    /// `mesh/meta.get`, and `SendMessage` (task creation: no `--task-id`
-    /// opens a task the peer mints and returns; `--task-id` is a follow-up).
-    /// Mutating global ops are refused.
+    /// Every member sees it. Use `a2a msg` to reach one peer privately.
+    Broadcast {
+        /// Gossip identifier (💬...)
+        #[arg(long, alias = "room")]
+        gossip: MeshId,
+
+        /// Nickname of the local agent (must have a running join/create session)
+        #[arg(long)]
+        nickname: Nickname,
+
+        /// Message text.
+        #[arg(long)]
+        text: String,
+    },
+
+    /// Send a msg: a chat message to one peer.
     ///
-    /// **Without `--to`** and `--method SendMessage`, `--text` is broadcast to
-    /// the whole gossip (A2A is point-to-point, so a gossip-wide message declares
-    /// itself). Exits non-zero when the response is an error or times out.
+    /// Only you and `--to` see it: the frame is delivered point-to-point and
+    /// sealed to the recipient, so the peers relaying it cannot read the body.
+    /// This is chat, not a task — use `a2a call --to <peer>` to delegate work.
+    Msg {
+        /// Gossip identifier (💬...)
+        #[arg(long, alias = "room")]
+        gossip: MeshId,
+
+        /// Nickname of the local agent (must have a running join/create session)
+        #[arg(long)]
+        nickname: Nickname,
+
+        /// The peer to message.
+        #[arg(long)]
+        to: Nickname,
+
+        /// Message text.
+        #[arg(long)]
+        text: String,
+    },
+
+    /// Make an A2A `SendMessage` (or `tasks/*`) call to a peer.
+    ///
+    /// A directed request/response over gossip: the peer serves a **safe method
+    /// subset** — `GetTask`, `ListTasks`, `CancelTask` (a task you're a party
+    /// to), `mesh/state.get`, `mesh/meta.get`, and `SendMessage` (task
+    /// creation: no `--task-id` opens a task the peer mints and returns;
+    /// `--task-id` is a follow-up). Mutating global ops are refused.
+    ///
+    /// This always opens or advances a **task**. For chat, use `a2a broadcast`
+    /// or `a2a msg`. Exits non-zero when the response is an error or times out.
     Call {
         /// Gossip identifier (💬...)
         #[arg(long, alias = "room")]
@@ -129,9 +167,9 @@ pub(crate) enum A2aAction {
         #[arg(long)]
         nickname: Nickname,
 
-        /// The peer to call. Omit for a gossip broadcast `SendMessage`.
+        /// The peer to call.
         #[arg(long)]
-        to: Option<Nickname>,
+        to: Nickname,
 
         /// The A2A JSON-RPC method (e.g. `SendMessage`, `GetTask`,
         /// `ListTasks`, `CancelTask`).

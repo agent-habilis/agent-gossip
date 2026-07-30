@@ -1,10 +1,10 @@
 ---
-name: gossip-msg
-description: Send a msg to one peer in the current gossip.
-when_to_use: The user invokes the gossip-msg command or asks to msg, message, or privately reach a specific gossip peer.
+name: gossip-broadcast
+description: Broadcast a text message to everyone in the current gossip.
+when_to_use: The user invokes the gossip-broadcast command or asks to send a message to all gossip peers at once.
 ---
 
-# gossip-msg
+# gossip-broadcast
 
 This file is self-contained: every section it needs is below. Read nothing
 else. The **Reattach** section applies only if `$GOSSIP` or `$NICKNAME` is

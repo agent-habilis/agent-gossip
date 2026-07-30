@@ -14,10 +14,22 @@ use super::{
 /// context), and the `mesh-broadcast` extension — A2A messaging is
 /// point-to-point, so a mesh-wide message declares itself.
 #[must_use]
-pub fn chat_message(mesh: &MeshId, text: &str) -> Message {
+pub fn compose_broadcast(mesh: &MeshId, text: &str) -> Message {
     let mut message = Message::text(Role::User, text);
     message.context_id = Some(mesh.as_str().to_string());
     message.extensions = vec![EXT_MESH_BROADCAST.to_string()];
+    message
+}
+
+/// Compose a direct chat payload — the same shape as [`compose_broadcast`] minus the
+/// broadcast extension. A msg claims no extension because point-to-point *is*
+/// plain A2A messaging; it is the broadcast that has something to declare. The
+/// absent extension is also what [`msg_payload`] checks, so a msg cannot be
+/// replayed into the broadcast validator.
+#[must_use]
+pub fn compose_msg(mesh: &MeshId, text: &str) -> Message {
+    let mut message = Message::text(Role::User, text);
+    message.context_id = Some(mesh.as_str().to_string());
     message
 }
 
@@ -59,25 +71,17 @@ pub(crate) fn payload_body<T: serde::Serialize>(payload: &T) -> Result<MessageBo
     MessageBody::new(json).map_err(|error| anyhow::anyhow!("{error}"))
 }
 
-/// Parse + validate the chat payload of a **logical** `A2aMsg` frame (a single
-/// wire message, or the reassembled view of a sharded body — never a raw
-/// shard). `A2aMsg` is mesh broadcast chat; the frame is transport, the
-/// payload is the A2A layer, and a mismatch is a crafted message:
+/// The checks both chat tags share, on a **logical** frame (a single wire
+/// message, or the reassembled view of a sharded body — never a raw shard).
+/// The frame is transport, the payload is the A2A layer, and a mismatch is a
+/// crafted message:
 ///
 /// - `messageId` must equal the frame's logical id, so the id every consumer
 ///   sees (dedup, poll cursor, echo) *is* the A2A id.
 /// - `contextId` must name the frame's mesh (the receive path already gates
 ///   the frame's mesh against ours).
-/// - it must declare the `mesh-broadcast` extension (every `A2aMsg` is
-///   broadcast).
-/// - chat is `role: user` by construction (see [`chat_message`]).
-///
-/// # Errors
-/// A payload that fails to parse or any frame/payload mismatch above.
-pub fn chat_payload(frame: &Frame) -> Result<Message> {
-    if !frame.kind.is_app(wire::MSG) {
-        bail!("not an a2a_msg frame");
-    }
+/// - chat is `role: user` by construction (see [`compose_broadcast`]).
+fn chat_common(frame: &Frame) -> Result<Message> {
     let payload: Message =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a message payload")?;
     if payload.message_id.as_str() != frame.id.as_str() {
@@ -86,25 +90,69 @@ pub fn chat_payload(frame: &Frame) -> Result<Message> {
     if payload.context_id.as_deref() != Some(frame.mesh.as_str()) {
         bail!("a2a contextId does not name the frame's gossip");
     }
-    if !payload
-        .extensions
-        .iter()
-        .any(|uri| uri == EXT_MESH_BROADCAST)
-    {
-        bail!("a2a_msg without the mesh-broadcast extension");
-    }
     if payload.role != Role::User {
         bail!("chat carries role user; got agent");
     }
     Ok(payload)
 }
 
+/// Parse + validate the payload of a logical `a2a_broadcast` frame: the shared
+/// checks plus the `mesh-broadcast` extension every broadcast declares.
+///
+/// # Errors
+/// A payload that fails to parse or any frame/payload mismatch above.
+pub fn broadcast_payload(frame: &Frame) -> Result<Message> {
+    if !frame.kind.is_app(wire::BROADCAST) {
+        bail!("not an a2a_broadcast frame");
+    }
+    let payload = chat_common(frame)?;
+    if !payload
+        .extensions
+        .iter()
+        .any(|uri| uri == EXT_MESH_BROADCAST)
+    {
+        bail!("a2a_broadcast without the mesh-broadcast extension");
+    }
+    Ok(payload)
+}
+
+/// Parse + validate the payload of a logical `a2a_msg` frame (a direct
+/// message). Two checks beyond the shared ones, both about keeping the msg
+/// distinct from its neighbours rather than about the msg itself:
+///
+/// - it must **not** declare `mesh-broadcast`. A msg carrying it is a broadcast
+///   payload replayed under the directed tag, and refusing it here is what
+///   stops the two chat shapes from being interchangeable on the wire.
+/// - it must carry no `taskId`. That is the only thing separating a msg from a
+///   task's `message/send` leg, which is a different lifecycle entirely.
+///
+/// # Errors
+/// A payload that fails to parse or any frame/payload mismatch above.
+pub fn msg_payload(frame: &Frame) -> Result<Message> {
+    if !frame.kind.is_app(wire::MSG) {
+        bail!("not an a2a_msg frame");
+    }
+    let payload = chat_common(frame)?;
+    if payload
+        .extensions
+        .iter()
+        .any(|uri| uri == EXT_MESH_BROADCAST)
+    {
+        bail!("a2a_msg carrying the mesh-broadcast extension");
+    }
+    if payload.task_id.is_some() {
+        bail!("a2a_msg carrying a taskId is a task leg, not a msg");
+    }
+    Ok(payload)
+}
+
 /// The text projection of a chat frame's payload — the api-consumer
 /// convenience for reading a received frame without unpacking the A2A object.
-/// `None` for a non-chat frame or an unparseable payload.
+/// Covers both chat tags. `None` for a non-chat frame or an unparseable
+/// payload.
 #[must_use]
 pub fn chat_text(frame: &Frame) -> Option<String> {
-    if !frame.kind.is_app(wire::MSG) {
+    if !frame.kind.is_app(wire::BROADCAST) && !frame.kind.is_app(wire::MSG) {
         return None;
     }
     serde_json::from_str::<Message>(frame.body.as_str())
@@ -273,9 +321,10 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
 }
 
 /// The task a **logical** frame belongs to, if any: a worker-pushed status or
-/// artifact frame (the frame correlation field). `A2aMsg` is broadcast chat —
-/// never a task — and task `message/send` legs ride `A2aReq`/`A2aResp`
-/// (plumbing), so `None` for everything else.
+/// artifact frame (the frame correlation field). Neither chat tag is ever a
+/// task — a payload carrying a `taskId` is refused by [`msg_payload`] — and task
+/// `message/send` legs ride `A2aReq`/`A2aResp` (plumbing), so `None` for
+/// everything else.
 #[must_use]
 pub fn frame_task_id(frame: &Frame) -> Option<TaskId> {
     // `task_id` is no longer an envelope field (8.0); it rides inside the body it
@@ -340,7 +389,10 @@ pub fn task_text(frame: &Frame) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Frame, chat_message, chat_payload, display_text, payload_body};
+    use super::{
+        Frame, broadcast_payload, compose_broadcast, compose_msg, display_text, msg_payload,
+        payload_body,
+    };
     use agent_habilis_mesh::protocol::MeshId;
     use agent_habilis_mesh::protocol::MessageId;
     use agent_habilis_mesh::protocol::MessageKind;
@@ -354,7 +406,18 @@ mod tests {
     fn frame_for(payload: &super::Message) -> Frame {
         let body = payload_body(payload).expect("payload serializes");
         let mut frame = Frame::fixture(
-            MessageKind::app_broadcast(crate::a2a::wire::MSG),
+            MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
+            body.as_str(),
+        );
+        frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
+        frame
+    }
+
+    /// The directed twin of [`frame_for`].
+    fn msg_frame_for(payload: &super::Message) -> Frame {
+        let body = payload_body(payload).expect("payload serializes");
+        let mut frame = Frame::fixture(
+            MessageKind::app_to(crate::a2a::wire::MSG, "addressed-nick".into(), None),
             body.as_str(),
         );
         frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
@@ -363,43 +426,72 @@ mod tests {
 
     #[test]
     fn broadcast_round_trips() {
-        let payload = chat_message(&mesh(), "What is Rust?");
+        let payload = compose_broadcast(&mesh(), "What is Rust?");
         let frame = frame_for(&payload);
-        let parsed = chat_payload(&frame).expect("valid broadcast payload");
+        let parsed = broadcast_payload(&frame).expect("valid broadcast payload");
         assert_eq!(parsed, payload);
         assert_eq!(display_text(&parsed), "What is Rust?");
     }
 
     #[test]
+    fn msg_round_trips() {
+        let payload = compose_msg(&mesh(), "just between us");
+        let frame = msg_frame_for(&payload);
+        let parsed = msg_payload(&frame).expect("valid dm payload");
+        assert_eq!(parsed, payload);
+        assert_eq!(display_text(&parsed), "just between us");
+    }
+
+    #[test]
     fn frame_id_mismatch_is_rejected() {
-        let payload = chat_message(&mesh(), "hi");
+        let payload = compose_broadcast(&mesh(), "hi");
         let mut frame = frame_for(&payload);
         frame.id = "00000000-0000-0000-0000-0000000000ff".into();
-        assert!(chat_payload(&frame).is_err());
+        assert!(broadcast_payload(&frame).is_err());
     }
 
     #[test]
     fn foreign_context_is_rejected() {
-        let mut payload = chat_message(&mesh(), "hi");
+        let mut payload = compose_broadcast(&mesh(), "hi");
         payload.context_id = Some("💬other".to_string());
         let frame = frame_for(&payload);
-        assert!(chat_payload(&frame).is_err());
+        assert!(broadcast_payload(&frame).is_err());
     }
 
     #[test]
     fn missing_broadcast_extension_is_rejected() {
-        let mut payload = chat_message(&mesh(), "hi");
+        let mut payload = compose_broadcast(&mesh(), "hi");
         payload.extensions.clear();
         let frame = frame_for(&payload);
-        assert!(chat_payload(&frame).is_err());
+        assert!(broadcast_payload(&frame).is_err());
+    }
+
+    /// The two chat shapes must not be interchangeable: a broadcast payload
+    /// under the directed tag is refused, and vice versa. Without this the
+    /// `mesh-broadcast` extension would be decoration rather than a gate.
+    #[test]
+    fn chat_payloads_do_not_cross_tags() {
+        let broadcast = compose_broadcast(&mesh(), "hi");
+        assert!(msg_payload(&msg_frame_for(&broadcast)).is_err());
+
+        let dm = compose_msg(&mesh(), "hi");
+        assert!(broadcast_payload(&frame_for(&dm)).is_err());
+    }
+
+    #[test]
+    fn dm_carrying_a_task_id_is_rejected() {
+        let mut payload = compose_msg(&mesh(), "hi");
+        payload.task_id = Some(crate::a2a::TaskId::random());
+        let frame = msg_frame_for(&payload);
+        assert!(msg_payload(&frame).is_err());
     }
 
     #[test]
     fn non_json_body_is_rejected() {
         let frame = Frame::fixture(
-            MessageKind::app_broadcast(crate::a2a::wire::MSG),
+            MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
             "plain text",
         );
-        assert!(chat_payload(&frame).is_err());
+        assert!(broadcast_payload(&frame).is_err());
     }
 }

@@ -82,7 +82,7 @@ async fn mesh_stays_meshed_no_spurious_flaps() {
 
     // The overlay must still deliver after the hold — durable proof the
     // mesh did not silently degrade.
-    let _ = creator.send("steady-probe").await;
+    let _ = creator.broadcast("steady-probe").await;
     assert!(
         joiner_a.wait_body("steady-probe", FANOUT_WAIT).await,
         "stab-a never received the late broadcast — mesh degraded silently"
@@ -117,7 +117,7 @@ async fn concurrent_joins_all_mesh_and_receive() {
         "creator did not surface all 5 concurrent joiners as `joined`"
     );
 
-    let _ = creator.send("concurrent-probe").await;
+    let _ = creator.broadcast("concurrent-probe").await;
     for joiner in &mut joiners {
         let nick = joiner.nickname.clone();
         assert!(
@@ -151,10 +151,10 @@ async fn fanout_complete_from_each_origin() {
         );
     }
 
-    let _ = creator.send("from-creator").await;
-    let _ = j1.send("from-j1").await;
-    let _ = j2.send("from-j2").await;
-    let _ = j3.send("from-j3").await;
+    let _ = creator.broadcast("from-creator").await;
+    let _ = j1.broadcast("from-j1").await;
+    let _ = j2.broadcast("from-j2").await;
+    let _ = j3.broadcast("from-j3").await;
 
     // Each node receives every body authored by another node.
     for (label, node, expect) in [
@@ -254,7 +254,7 @@ async fn above_old_cap_mesh_stays_full_mesh() {
     }
 
     // Overlay still delivers to every peer after the hold.
-    let _ = creator.send("cap-probe").await;
+    let _ = creator.broadcast("cap-probe").await;
     for joiner in &mut joiners {
         let nick = joiner.nickname.clone();
         assert!(

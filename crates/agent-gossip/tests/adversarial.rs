@@ -40,7 +40,7 @@ const T: Duration = MSG_TIMEOUT;
 async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
     let mut victim = InProcNode::create(&format!("adv-{tag}")).await;
     let attacker = InProcNode::join(&victim.mesh, &format!("adv-{tag}-atk")).await;
-    attacker.send("warmup").await;
+    attacker.broadcast("warmup").await;
     assert!(
         victim.wait_body("warmup", T).await,
         "victim/attacker never meshed"
@@ -63,7 +63,7 @@ async fn unsigned_message_is_dropped() {
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed message from the same sender, sent *after* the
     // injection. When it arrives, the unsigned one (sent first) had its turn.
-    attacker.send("barrier-unsigned").await;
+    attacker.broadcast("barrier-unsigned").await;
     assert!(
         victim.wait_body("barrier-unsigned", T).await,
         "barrier lost"
@@ -86,7 +86,7 @@ async fn tampered_message_is_dropped() {
         .tamper_body("tampered-after-sign")
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
-    attacker.send("barrier-tampered").await;
+    attacker.broadcast("barrier-tampered").await;
     assert!(
         victim.wait_body("barrier-tampered", T).await,
         "barrier lost"
@@ -112,7 +112,7 @@ async fn kind_flipped_after_signing_is_dropped() {
         .flip_chat_kind()
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
-    attacker.send("barrier-kindflip").await;
+    attacker.broadcast("barrier-kindflip").await;
     assert!(
         victim.wait_body("barrier-kindflip", T).await,
         "barrier lost"
@@ -181,7 +181,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
         .expect("inject forged");
     // Barrier (same link, in order) so the victim has processed the forged copy
     // before the genuine one arrives — makes the regression deterministic.
-    attacker.send("after-forged").await;
+    attacker.broadcast("after-forged").await;
     assert!(victim.wait_body("after-forged", T).await, "barrier lost");
 
     // 2) A genuine SIGNED message reusing that id must still be delivered.
@@ -226,7 +226,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         .inject_raw(forged)
         .await
         .expect("inject signed forgery");
-    injector.send("after-forged").await;
+    injector.broadcast("after-forged").await;
     assert!(receiver.wait_body("after-forged", T).await, "barrier lost");
 
     // 2) The victim's genuine message reusing that id must still be delivered —
@@ -258,7 +258,7 @@ async fn junk_payload_chat_is_dropped() {
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
-    attacker.send("barrier-junk").await;
+    attacker.broadcast("barrier-junk").await;
     assert!(victim.wait_body("barrier-junk", T).await, "barrier lost");
     assert!(
         !surfaced(&mut victim, "raw-not-a2a"),
@@ -281,7 +281,7 @@ async fn payload_frame_id_mismatch_is_dropped() {
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
-    attacker.send("barrier-mismatch").await;
+    attacker.broadcast("barrier-mismatch").await;
     assert!(
         victim.wait_body("barrier-mismatch", T).await,
         "barrier lost"
@@ -314,7 +314,7 @@ async fn status_task_id_mismatch_is_dropped() {
     .sign(&key)
     .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
-    attacker.send("barrier-status").await;
+    attacker.broadcast("barrier-status").await;
     assert!(victim.wait_body("barrier-status", T).await, "barrier lost");
     let surfaced_status = victim
         .events()
@@ -323,6 +323,122 @@ async fn status_task_id_mismatch_is_dropped() {
     assert!(
         !surfaced_status,
         "a status whose payload taskId contradicts the frame must be dropped"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+// ── Chat addressing: the privacy boundary between the two chat tags ────
+//
+// Each chat tag is pinned to one addressing, and the pinning is what keeps a
+// private line private and a public one public. Both forgeries below are
+// signed and well-formed apart from their addressing, so what is under test
+// is the `classify` gate itself rather than a signature or a parse.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn directed_broadcast_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("dirbcast").await;
+    let key = adversarial::new_key();
+    // `a2a_broadcast` addressed to the victim: a private line wearing the
+    // gossip-wide tag. Were it surfaced, a peer could make a 1:1 remark look
+    // like something the whole gossip had seen.
+    let evil = CraftedMsg::new(
+        attacker.session.mesh_id(),
+        "ghost",
+        "evil-directed-broadcast",
+    )
+    .wrap_a2a()
+    .address_to(Some(victim.nickname.as_str()))
+    .sign(&key)
+    .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.broadcast("barrier-dirbcast").await;
+    assert!(
+        victim.wait_body("barrier-dirbcast", T).await,
+        "barrier lost"
+    );
+    assert!(
+        !surfaced(&mut victim, "evil-directed-broadcast"),
+        "a2a_broadcast is broadcast-only; a directed one must be dropped"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn broadcast_shaped_msg_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("bcastmsg").await;
+    let key = adversarial::new_key();
+    // `a2a_msg` with no addressee: a msg on the broadcast plane. This is the
+    // leak direction — it would hand every peer a line meant for one.
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
+        .as_msg()
+        .wrap_msg()
+        .address_to(None)
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.broadcast("barrier-bcastmsg").await;
+    assert!(
+        victim.wait_body("barrier-bcastmsg", T).await,
+        "barrier lost"
+    );
+    assert!(
+        !surfaced(&mut victim, "evil-broadcast-msg"),
+        "a2a_msg is directed-only; a `to: None` msg must be dropped before it \
+         reaches every peer"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn msg_declaring_the_broadcast_extension_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("msgext").await;
+    let key = adversarial::new_key();
+    // A msg carrying a broadcast payload: correctly addressed, but its A2A
+    // body declares `mesh-broadcast`. `wrap_a2a` composes the broadcast
+    // payload; retagging afterwards leaves the extension in place.
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
+        .wrap_a2a()
+        .as_msg()
+        .address_to(Some(victim.nickname.as_str()))
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.broadcast("barrier-msgext").await;
+    assert!(victim.wait_body("barrier-msgext", T).await, "barrier lost");
+    assert!(
+        !surfaced(&mut victim, "evil-msg-ext"),
+        "the mesh-broadcast extension is a gate, not decoration: a msg \
+         declaring it must be dropped"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
+    let (mut victim, attacker) = meshed_pair("msgrelay").await;
+    let key = adversarial::new_key();
+    // A well-formed msg for someone else entirely, injected at the victim —
+    // the shape a multihop relay legitimately carries. It must forward it
+    // without ever surfacing it.
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
+        .as_msg()
+        .wrap_msg()
+        .address_to(Some("someone-else"))
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.broadcast("barrier-msgrelay").await;
+    assert!(
+        victim.wait_body("barrier-msgrelay", T).await,
+        "barrier lost"
+    );
+    assert!(
+        !surfaced(&mut victim, "evil-msg-elsewhere"),
+        "a relay must not surface a msg addressed to a third party"
     );
     victim.leave().await;
     attacker.leave().await;
@@ -440,7 +556,7 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
 
     // Broadcast while the victim's subscription is down: it must arrive
     // later via anti-entropy over the fresh subscription, not be lost.
-    attacker.send("during-outage").await;
+    attacker.broadcast("during-outage").await;
 
     // Recovery budget: one heal tick (fixed 15s) to resubscribe, the
     // re-announce/re-graft round-trip, then an anti-entropy cycle (10s)
@@ -454,7 +570,7 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
     );
 
     // Live traffic flows again on the new subscription.
-    attacker.send("after-recovery").await;
+    attacker.broadcast("after-recovery").await;
     assert!(
         victim.wait_body("after-recovery", T).await,
         "victim deaf to live traffic after resubscribe"
@@ -593,7 +709,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .await
         .expect("inject");
 
-    attacker.send("barrier-shard-hdr").await;
+    attacker.broadcast("barrier-shard-hdr").await;
     assert!(
         victim.wait_body("barrier-shard-hdr", T).await,
         "barrier lost"
@@ -639,7 +755,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
         }
     }
 
-    attacker.send("barrier-shard-sybil").await;
+    attacker.broadcast("barrier-shard-sybil").await;
     assert!(
         victim.wait_body("barrier-shard-sybil", T).await,
         "barrier lost"
@@ -683,7 +799,7 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
     // group id — the A2A messageId — differs, but even a collision would be
     // keyed apart). It must arrive intact, with no poisoned slice.
     let big = "clean ".repeat(4 * 1024); // ~24 KB, several shards
-    attacker.send(&big).await;
+    attacker.broadcast(&big).await;
     assert!(
         victim.wait_body(&big, T).await,
         "the genuine multipart body never reassembled"

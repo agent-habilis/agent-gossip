@@ -140,9 +140,20 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn send(&self, body: MessageBody) -> anyhow::Result<Message> {
+    pub(crate) async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Message> {
         // Two Results: the outer `?` is the channel, the inner is the loop's answer.
-        self.call(|resp| SessionRequest::Send { body, resp })
+        self.call(|resp| SessionRequest::Broadcast { body, resp })
+            .await?
+    }
+
+    /// Send a chat message to one peer; returns the canonical [`Message`] the
+    /// loop built.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response, or if the
+    /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
+    pub(crate) async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Message> {
+        self.call(|resp| SessionRequest::Msg { to, body, resp })
             .await?
     }
 

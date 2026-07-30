@@ -68,6 +68,10 @@ fn log(direction: &'static str, msg: &Message) {
         //   broadcast          -> a body line (redacted)
         //   directed, no corr  -> a directed line (redacted) + addressee
         //   directed + corr    -> plumbing (an RPC leg reaching a parked waiter)
+        // The `"msg"` event name below is this log's own word for the
+        // broadcast shape and predates consumers having more than one chat
+        // tag; it is not a tag name, and a consumer that addresses chat to one
+        // peer lands in the directed arm.
         MessageKind::App { to, corr, .. } => match (to, corr) {
             (None, _) => {
                 if log_raw() {

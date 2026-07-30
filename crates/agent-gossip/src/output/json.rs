@@ -14,7 +14,7 @@ use serde::Serialize;
 use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
-use agent_habilis_mesh::protocol::{Message, MessageKind, PresenceSubtype};
+use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -209,7 +209,7 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
     }
 }
 
-/// The pre-formatted, markdown-safe `display` line for a `msg` event —
+/// The pre-formatted, markdown-safe `display` line for a chat event —
 /// the single source of truth the `/mesh` skill echoes verbatim, so the
 /// model never composes or re-types a body. Nicks are wrapped in literal
 /// backticks: the skill renders into markdown, where a bare `<nick>` is
@@ -217,8 +217,11 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
 /// embedded **raw** (never trimmed, escaped, or re-spaced). This is
 /// JSON-only — the Human/terminal sink renders separately (ANSI, no
 /// backticks).
-fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
-    match reply {
+///
+/// `to` is the msg addressee, and the `→` it renders is the only
+/// thing distinguishing a private line from a gossip-wide one on screen.
+fn msg_display(author: &str, body: &str, to: Option<&str>) -> String {
+    match to {
         Some(target) => format!("{MESH_GLYPH}\u{FE0F} `<{author}>` → `<{target}>`: {body}"),
         None => format!("{MESH_GLYPH}\u{FE0F} `<{author}>`: {body}"),
     }
@@ -375,34 +378,53 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
     )
 }
 
-/// Format a chat frame as a JSON string. Presence uses
+/// Format a chat frame as a JSON string — either tag. Presence uses
 /// `format_presence_json`; `PeerInfo` is never printed.
+///
+/// The two tags differ in exactly two rendered fields, and both are how a
+/// consumer tells a private line from a public one: `type` (`"broadcast"` vs
+/// `"msg"`) and `to` (`null` vs the addressee, which also turns on the `→` in
+/// `display`).
 pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
-    if msg.kind.is_app(crate::a2a::wire::MSG) {
-        // Inbound frames were validated at the receive boundary and our
-        // own echoes are built by `broadcast_message`, so the parse
-        // succeeds in practice; the fallback keeps a display path from
-        // ever panicking on a crafted body.
-        let payload = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).ok();
-        let body = payload.as_ref().map_or_else(
-            || msg.body.as_str().to_owned(),
-            crate::a2a::gossip::display_text,
-        );
-        stamp_visibility(
-            serde_json::to_string(&MsgLine {
-                header: message_header(msg, "msg"),
-                display: msg_display(msg.author.as_str(), &body, None),
-                body,
-                to: None,
-                message: payload,
-                is_self,
-            })
-            .expect("message event serialization should never fail"),
-            true,
-        )
-    } else {
-        unreachable!("format_msg_json only handles chat frames")
-    }
+    let to = match &msg.kind {
+        MessageKind::App { tag, to, .. } if tag.as_str() == crate::a2a::wire::MSG => to.as_ref(),
+        MessageKind::App { tag, .. } if tag.as_str() == crate::a2a::wire::BROADCAST => None,
+        MessageKind::App { .. }
+        | MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::State
+        | MessageKind::Meta
+        | MessageKind::LinkState => {
+            unreachable!("format_msg_json only handles chat frames")
+        }
+    };
+    // Inbound frames were validated at the receive boundary and our own echoes
+    // are built by `send_broadcast`/`send_msg`, so the parse succeeds in
+    // practice; the fallback keeps a display path from ever panicking on a
+    // crafted body.
+    let payload = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).ok();
+    let body = payload.as_ref().map_or_else(
+        || msg.body.as_str().to_owned(),
+        crate::a2a::gossip::display_text,
+    );
+    let to = to.map(Nickname::as_str);
+    stamp_visibility(
+        serde_json::to_string(&MsgLine {
+            header: message_header(msg, if to.is_some() { "msg" } else { "broadcast" }),
+            display: msg_display(msg.author.as_str(), &body, to),
+            body,
+            to,
+            message: payload,
+            is_self,
+        })
+        .expect("message event serialization should never fail"),
+        true,
+    )
 }
 
 pub(super) fn print_message_json(msg: &Message, is_self: bool) {

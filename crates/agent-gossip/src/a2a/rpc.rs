@@ -2,7 +2,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::a2a::app::A2aApp;
-use crate::a2a::send::{BroadcastMessageParams, broadcast_message, emit_task_status};
+use crate::a2a::send::{BroadcastParams, emit_task_status, send_broadcast};
 use crate::output;
 use agent_habilis_mesh::embed::EventLoopState;
 use agent_habilis_mesh::ops::MeshSender;
@@ -375,8 +375,8 @@ async fn send_message(
     let text = super::gossip::display_text(&message);
     let body = MessageBody::new(text)
         .map_err(|error| RpcError::invalid_params(format!("message text: {error}")))?;
-    let (_id, frame) = broadcast_message(
-        BroadcastMessageParams {
+    let (_id, frame) = send_broadcast(
+        BroadcastParams {
             mesh,
             author,
             text: body,

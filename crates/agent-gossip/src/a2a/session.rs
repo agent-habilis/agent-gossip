@@ -11,7 +11,13 @@ use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname};
 /// canonical [`Message`]; `Poll` reads the buffered history after a cursor.
 pub(crate) enum SessionRequest {
     /// Broadcast a mesh chat message; echoes back the canonical [`Message`].
-    Send {
+    Broadcast {
+        body: MessageBody,
+        resp: oneshot::Sender<Result<Message>>,
+    },
+    /// Send a chat message to one peer; echoes back the canonical [`Message`].
+    Msg {
+        to: Nickname,
         body: MessageBody,
         resp: oneshot::Sender<Result<Message>>,
     },

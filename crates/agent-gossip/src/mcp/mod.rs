@@ -2,13 +2,14 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes fifteen tools that wrap the existing mesh lifecycle:
+//! Exposes eighteen tools that wrap the existing mesh lifecycle:
 //!
 //! - `create_gossip`
 //! - `join_gossip`
 //! - `discover_gossips`
 //! - `leave_gossip`
-//! - `send_message`
+//! - `send_broadcast`
+//! - `send_msg`
 //! - `a2a_call`
 //! - `task_status`
 //! - `task_artifact`
@@ -190,10 +191,19 @@ struct DiscoverMeshesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct SendMessageArgs {
+struct SendBroadcastArgs {
     /// Message body. UTF-8; newlines/tabs allowed, other control
-    /// characters rejected. Broadcast to the whole gossip (A2A is
-    /// point-to-point, so directed 1:1 is a task via `a2a_call`, not chat).
+    /// characters rejected. Broadcast to the whole gossip — use
+    /// `send_msg` to reach one peer privately.
+    text: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SendMsgArgs {
+    /// The peer's nickname.
+    to: String,
+    /// Message body. UTF-8; newlines/tabs allowed, other control
+    /// characters rejected. Seen only by you and `to`.
     text: String,
 }
 
@@ -368,7 +378,7 @@ struct PingResult {
 }
 
 #[derive(Debug, Serialize)]
-struct SendMessageResult {
+struct SendResult {
     id: MessageId,
     /// Full authoritative record of the frame just sent (id, author, ts,
     /// `to`, and `body` carrying the serialized A2A Message payload).
@@ -619,16 +629,33 @@ impl AgentGossipServer {
     #[tool(
         description = "Broadcast a message to the current gossip. Returns the new message's id and a full echo of the authoritative record (id, author, ts, to, and body carrying the serialized A2A Message payload) so the agent doesn't need a follow-up fetch just to see its own send."
     )]
-    async fn send_message(
+    async fn send_broadcast(
         &self,
-        Parameters(args): Parameters<SendMessageArgs>,
+        Parameters(args): Parameters<SendBroadcastArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session.send_message(body).await.map_err(to_mcp_error)?;
-        ok_json(SendMessageResult { id, message })
+        let (id, message) = session.send_broadcast(body).await.map_err(to_mcp_error)?;
+        ok_json(SendResult { id, message })
+    }
+
+    #[tool(
+        description = "Send a msg — a chat message to ONE peer. Only you and the recipient see it: the frame is delivered point-to-point and sealed to them, so the peers relaying it cannot read the body. This is chat, not a task — use `a2a_call` to delegate work. Returns the new message's id and a full echo of the authoritative record, like `send_broadcast`."
+    )]
+    async fn send_msg(
+        &self,
+        Parameters(args): Parameters<SendMsgArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
+        let body = MessageBody::new(args.text)
+            .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
+        let to = Nickname::new(&args.to)
+            .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
+        let (id, message) = session.send_msg(to, body).await.map_err(to_mcp_error)?;
+        ok_json(SendResult { id, message })
     }
 
     #[tool(
@@ -744,7 +771,7 @@ impl AgentGossipServer {
         let task_id = parse_task_id(&args.task_id)?;
         let state = parse_task_state(&args.state)?;
         match session.task_status(task_id, state, args.note).await {
-            Ok((id, message)) => ok_json(SendMessageResult { id, message }),
+            Ok((id, message)) => ok_json(SendResult { id, message }),
             Err(error) => Err(to_mcp_error(error)),
         }
     }
@@ -776,7 +803,7 @@ impl AgentGossipServer {
             })
             .await
         {
-            Ok((id, message)) => ok_json(SendMessageResult { id, message }),
+            Ok((id, message)) => ok_json(SendResult { id, message }),
             Err(error) => Err(to_mcp_error(error)),
         }
     }
@@ -895,7 +922,9 @@ never for a one-shot check.
 
 EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
-(`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
+(`type:\"broadcast\"` for gossip-wide chat, `type:\"msg\"` for a msg — chat sent to one peer \
+addressed to one peer — its `to` names the recipient — or `type:\"presence\"`, \
+with `subtype:\"joined\"/\"left\"/\"alive\"` \
 on presence). Everything else is discriminated by `event` directly \
 (`state`, `task`, `task_progress`, `ping_report`, `peer_timeout`, \
 `peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
@@ -907,22 +936,27 @@ ONE EVENT IN, ONE LINE OUT. For anything you surface, emit its `display` value \
 VERBATIM as exactly one line — never recompose it from the raw fields, never \
 summarize, paraphrase, tabulate, batch into a digest, or add a \
 preamble/postamble. `display` already carries the `💬️` prefix, the nicks, the \
-`→` arrow, and the body byte-for-byte.
+`→` arrow (present only on a msg, naming its recipient), and the body \
+byte-for-byte.
 
 WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \
 `msg_posted`, `ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
-and any entry with `self:true` EXCEPT your own `type:\"msg\"` (a `msg` with \
-`self:true` is your outbound message echoed back — emit its `display`; that echo \
-is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"`, \
+and any entry with `self:true` EXCEPT your own chat (a `type:\"broadcast\"` or \
+`type:\"msg\"` with `self:true` is your outbound message echoed back — emit its \
+`display`; that echo is the send confirmation). Show (emit `display` verbatim): \
+a peer's `type:\"broadcast\"` or `type:\"msg\"`, \
 a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, `event:\"peer_return\"`, \
 and `event:\"ping_report\"` (its `display` is the full RTT table). Drive, do not \
 print: an `event:\"task\"` (see TASKS); `event:\"task_progress\"` is a \
 widget beat, never a chat line.
 
-REPLY to a peer's `msg` (no `reply`, not directed elsewhere) when you can add \
-real information or are asked a direct question, and only at >=90% confidence (a \
-wrong answer is worse than silence) — `send_message` with `reply` set to the \
-asker's nickname. Keep answers concise first, expand only if asked.
+ANSWER a peer's chat when you can add real information or are asked a direct \
+question, and only at >=90% confidence (a wrong answer is worse than silence). \
+Pick the channel by audience, not by how the question arrived: `send_broadcast` \
+when the answer is useful to the whole gossip, `send_msg` when it is \
+for that peer alone. A `type:\"msg\"` you received is already private, so \
+answering it with `send_broadcast` republishes the topic to everyone. Keep answers \
+concise first, expand only if asked.
 
 PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping and \
 emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \

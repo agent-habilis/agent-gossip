@@ -382,39 +382,53 @@ fn classify(message: &Message) -> AppClass {
     // are plumbing: the result reaches the requester via its parked waiter,
     // never the chat log / poll-fetch buffer. A tag outside the a2a taxonomy is
     // not loggable (see `valid` — it never surfaces at all).
-    let loggable = matches!(tag, Some(wire::MSG | wire::STATUS | wire::ARTIFACT));
+    let loggable = matches!(
+        tag,
+        Some(wire::BROADCAST | wire::MSG | wire::STATUS | wire::ARTIFACT)
+    );
     // A task liveness beat: a status update marked `mesh:beat`.
     let beat = message.kind.is_app(wire::STATUS)
         && crate::a2a::gossip::status_payload(message)
             .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload));
     // The A2A boundary gate for a logical frame: a chat/task Message, status, or
     // artifact must parse and agree with its frame *and* carry the addressing its
-    // tag mandates. `a2a_msg` is broadcast-only (`to: None`); status/artifact and
-    // RPC req/resp are directed-only (`to: Some`). Enforcing the addressing here
-    // is what stops a forged broadcast status/artifact (`to: None`) — which would
-    // otherwise pass, then retain + inbound-push on every peer — and a directed
-    // `a2a_msg` from crossing the gate. A tag outside the a2a taxonomy is invalid:
-    // a signed frame with an arbitrary tag must not cross to api consumers, so
-    // drop it whole. `None` is a non-App frame the engine gates itself.
+    // tag mandates. `a2a_broadcast` is broadcast-only (`to: None`); `a2a_msg`,
+    // status/artifact and RPC req/resp are directed-only (`to: Some`). Enforcing
+    // the addressing here is what stops a forged broadcast status/artifact
+    // (`to: None`) — which would otherwise pass, then retain + inbound-push on
+    // every peer — and, for the two chat tags, it is the whole privacy boundary:
+    // a directed `a2a_broadcast` would be a private line dressed as gossip-wide,
+    // and a broadcast `a2a_msg` would be a msg delivered to everyone. A tag
+    // outside the a2a taxonomy is invalid: a signed frame with an arbitrary tag
+    // must not cross to api consumers, so drop it whole. `None` is a non-App
+    // frame the engine gates itself.
     let directed = matches!(message.kind, MessageKind::App { to: Some(_), .. });
     let valid = match tag {
-        Some(wire::MSG) => !directed && crate::a2a::gossip::chat_payload(message).is_ok(),
+        Some(wire::BROADCAST) => {
+            !directed && crate::a2a::gossip::broadcast_payload(message).is_ok()
+        }
+        Some(wire::MSG) => directed && crate::a2a::gossip::msg_payload(message).is_ok(),
         Some(wire::STATUS) => directed && crate::a2a::gossip::status_payload(message).is_ok(),
         Some(wire::ARTIFACT) => directed && crate::a2a::gossip::artifact_payload(message).is_ok(),
         Some(wire::REQ | wire::RESP) => directed,
         None => true,
         Some(_) => false,
     };
-    // Only a broadcast chat `a2a_msg` carries `seq`/parents and so participates
-    // in fork-detection + the cross-author DAG.
-    let chained = message.kind.is_app(wire::MSG);
-    // a2a's directed tags — worker status/artifact push and RPC request/response —
-    // arrive sealed (encrypted) to their addressee, so a directed frame addressed
-    // to us must unseal-or-drop. `a2a_msg` is broadcast chat (never
-    // directed/sealed), and an unknown tag is never sealed.
+    // Only broadcast chat carries `seq`/parents and so participates in
+    // fork-detection + the cross-author DAG. A msg must NOT be chained, and not
+    // merely because the chain is for broadcast: a directed frame reaches only
+    // its addressee, so a chain carried on msgs is unobservable to everyone else
+    // and every non-addressee would see permanent gaps in that author's chain —
+    // which is precisely what fork detection reads as a fork.
+    let chained = message.kind.is_app(wire::BROADCAST);
+    // Every directed tag — msg, worker status/artifact push, RPC
+    // request/response — arrives sealed (encrypted) to its addressee, so a
+    // directed frame addressed to us must unseal-or-drop. Sealing is what keeps
+    // a relayed msg unreadable by the peers forwarding it. Broadcast chat is
+    // public by definition, and an unknown tag is never sealed.
     let sealed = matches!(
         tag,
-        Some(wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP)
+        Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP)
     );
     AppClass {
         loggable,
@@ -435,12 +449,23 @@ fn route_content(
     ctx: &HandlerCtx<'_>,
 ) -> bool {
     match &message.kind {
-        // `a2a_msg` is broadcast-only chat: a directed (`to: Some`) MSG is
-        // malformed and must never be surfaced/logged by a relay, so require
-        // `to: None` here — a directed MSG falls through to the no-op arm.
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::MSG => {
-            handle_msg(&app.output, message, surfaceable)
+        // Each chat tag is pinned to its addressing here as well as in
+        // `classify`: a directed BROADCAST or a broadcast MSG falls through to
+        // the no-op arm rather than being surfaced/logged by a relay.
+        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
+            handle_broadcast(&app.output, message, surfaceable)
         }
+        MessageKind::App {
+            tag, to: Some(to), ..
+        } if tag.as_str() == wire::MSG => handle_msg(
+            &app.output,
+            MsgParams {
+                message,
+                to,
+                surfaceable,
+                self_author: ctx.author,
+            },
+        ),
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => handle_task_leg(
@@ -511,11 +536,11 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
 }
 
 /// Returns whether the message should be logged (pushed to the poll buffer).
-/// `a2a_msg` is mesh broadcast chat — always loggable. `surfaceable` gates
-/// only the *display*: a pre-join message is still logged/relayed but not
+/// `a2a_broadcast` is mesh broadcast chat — always loggable. `surfaceable`
+/// gates only the *display*: a pre-join message is still logged/relayed but not
 /// printed.
-fn handle_msg(out: &output::Output, message: &Message, surfaceable: bool) -> bool {
-    if message.kind.is_app(wire::MSG) {
+fn handle_broadcast(out: &output::Output, message: &Message, surfaceable: bool) -> bool {
+    if message.kind.is_app(wire::BROADCAST) {
         if surfaceable {
             out.print_message(message);
         }
@@ -523,6 +548,41 @@ fn handle_msg(out: &output::Output, message: &Message, surfaceable: bool) -> boo
     } else {
         false
     }
+}
+
+/// The value cluster [`handle_msg`] needs beyond its `out` sink handle.
+#[derive(Clone, Copy)]
+struct MsgParams<'a> {
+    message: &'a Message,
+    to: &'a Nickname,
+    surfaceable: bool,
+    self_author: &'a Nickname,
+}
+
+/// A msg: printed and logged **only by its two parties**, the
+/// addressee (`to == self_author`) and — via the sender's echo path — the
+/// sender. Anyone else is a relay: it forwards the frame and returns `false`
+/// here, so the msg never reaches that peer's transcript or poll buffer.
+///
+/// The party check is not redundant with unicast routing or sealing. Unicast
+/// decides who receives the bytes and sealing decides who can read them, but a
+/// multihop relay legitimately holds a msg it is not party to; this is the gate
+/// that stops it surfacing there. `surfaceable` gates only the *display*
+/// (join-horizon), never the relay/log.
+fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
+    let MsgParams {
+        message,
+        to,
+        surfaceable,
+        self_author,
+    } = params;
+    if to != self_author && message.author != *self_author {
+        return false;
+    }
+    if surfaceable {
+        out.print_message(message);
+    }
+    true
 }
 
 /// The value cluster [`handle_task`] needs beyond its `out` sink handle.
@@ -565,10 +625,23 @@ fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
 /// does **not** re-retain or re-index.
 fn surface_logical(logical: &Message, surfaceable: bool, app: &mut A2aApp, ctx: &HandlerCtx<'_>) {
     match &logical.kind {
-        // `a2a_msg` is broadcast-only chat (task legs never shard through here —
-        // `message/send` rides RPC, status/artifact are small).
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::MSG => {
-            handle_msg(&app.output, logical, surfaceable);
+        // Both chat tags shard (a long msg as readily as a long broadcast); task
+        // legs never do — `message/send` rides RPC, status/artifact are small.
+        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
+            handle_broadcast(&app.output, logical, surfaceable);
+        }
+        MessageKind::App {
+            tag, to: Some(to), ..
+        } if tag.as_str() == wire::MSG => {
+            handle_msg(
+                &app.output,
+                MsgParams {
+                    message: logical,
+                    to,
+                    surfaceable,
+                    self_author: ctx.author,
+                },
+            );
         }
         MessageKind::App {
             tag, to: Some(to), ..
@@ -929,10 +1002,30 @@ mod classify_tests {
     }
 
     // A well-formed broadcast chat frame: its frame id equals the payload's
-    // messageId, so `chat_payload` accepts it — the `to` is the only variable.
+    // messageId, so `broadcast_payload` accepts it — the `to` is the only
+    // variable.
     fn chat_frame(to: Option<Nickname>) -> Message {
         let sw = mesh();
-        let payload = crate::a2a::gossip::chat_message(&sw, "hi");
+        let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
+        let id = MessageId::new(payload.message_id.as_str()).unwrap();
+        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        Message::new_app(
+            &sw,
+            &Nickname::from("author"),
+            AppFrameParams {
+                tag: AppTag::from(wire::BROADCAST),
+                to,
+                corr: None,
+                body,
+            },
+        )
+        .with_id(id)
+    }
+
+    // The directed twin of [`chat_frame`]: a well-formed msg, `to` the variable.
+    fn msg_frame(to: Option<Nickname>) -> Message {
+        let sw = mesh();
+        let payload = crate::a2a::gossip::compose_msg(&sw, "hi");
         let id = MessageId::new(payload.message_id.as_str()).unwrap();
         let body = crate::a2a::gossip::payload_body(&payload).unwrap();
         Message::new_app(
@@ -974,14 +1067,28 @@ mod classify_tests {
         )
     }
 
+    // These assertions are deliberately worded "broadcast"/"directed" rather
+    // than "chat": both tags are chat, so a `chained` that silently followed the
+    // wrong one would still satisfy a test phrased in terms of chat.
     #[test]
     fn msg_is_loggable_but_rpc_is_not() {
-        let msg = classify(&app_frame(wire::MSG));
-        assert!(msg.loggable, "chat is loggable");
-        assert!(msg.chained, "chat carries the per-author chain");
+        let msg = classify(&app_frame(wire::BROADCAST));
+        assert!(msg.loggable, "broadcast chat is loggable");
+        assert!(msg.chained, "broadcast chat carries the per-author chain");
         let req = classify(&app_frame(wire::REQ));
         assert!(!req.loggable, "an RPC request is plumbing, not logged");
-        assert!(!req.chained, "only chat is chained");
+        assert!(!req.chained, "only broadcast chat is chained");
+    }
+
+    // A msg is retained like broadcast chat but must stay out of the hash chain:
+    // it reaches only its addressee, so every other peer would see permanent
+    // gaps in the author's chain — which fork detection reads as a fork.
+    #[test]
+    fn dm_is_loggable_and_sealed_but_never_chained() {
+        let dm = classify(&msg_frame(Some(Nickname::from("bob"))));
+        assert!(dm.loggable, "a msg is retained");
+        assert!(dm.sealed, "a msg is sealed to its addressee");
+        assert!(!dm.chained, "a msg must not join the cross-author chain");
     }
 
     #[test]
@@ -1016,14 +1123,48 @@ mod classify_tests {
         );
     }
 
-    // ② A directed `a2a_msg` (`to: Some`) is malformed — chat is broadcast-only.
+    // ② Each chat tag is pinned to one addressing, and together these two are
+    // the privacy boundary: a directed `a2a_broadcast` would be a private line
+    // dressed as gossip-wide, and a broadcast `a2a_msg` would be a msg handed to
+    // every peer.
     #[test]
-    fn directed_msg_is_invalid() {
+    fn directed_broadcast_is_invalid() {
         let cls = classify(&chat_frame(Some(Nickname::from("bob"))));
         assert!(
             !cls.valid,
-            "a2a_msg is broadcast-only; a directed one must not cross the gate"
+            "a2a_broadcast is broadcast-only; a directed one must not cross the gate"
         );
+    }
+
+    #[test]
+    fn broadcast_dm_is_invalid() {
+        let cls = classify(&msg_frame(None));
+        assert!(
+            !cls.valid,
+            "a2a_msg is directed-only; a `to: None` msg would reach every peer"
+        );
+    }
+
+    // A msg whose payload declares `mesh-broadcast` is a broadcast replayed under
+    // the directed tag — the extension is a gate, not decoration.
+    #[test]
+    fn dm_declaring_the_broadcast_extension_is_invalid() {
+        let sw = mesh();
+        let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
+        let id = MessageId::new(payload.message_id.as_str()).unwrap();
+        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let frame = Message::new_app(
+            &sw,
+            &Nickname::from("author"),
+            AppFrameParams {
+                tag: AppTag::from(wire::MSG),
+                to: Some(Nickname::from("bob")),
+                corr: None,
+                body,
+            },
+        )
+        .with_id(id);
+        assert!(!classify(&frame).valid);
     }
 
     // No regression: legitimate addressing still classifies valid.
@@ -1036,6 +1177,10 @@ mod classify_tests {
         assert!(
             classify(&chat_frame(None)).valid,
             "a broadcast chat message is valid"
+        );
+        assert!(
+            classify(&msg_frame(Some(Nickname::from("bob")))).valid,
+            "a directed chat message is valid"
         );
     }
 }

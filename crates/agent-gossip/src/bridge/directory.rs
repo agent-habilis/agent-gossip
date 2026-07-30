@@ -198,7 +198,7 @@ pub(crate) fn spawn_ticket_advertiser(
         let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
         loop {
             ticker.tick().await;
-            if let Err(error) = session.send(body.clone()).await {
+            if let Err(error) = session.broadcast(body.clone()).await {
                 tracing::debug!(
                     target: "agent_gossip::directory",
                     %error,

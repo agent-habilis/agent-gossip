@@ -568,7 +568,7 @@ struct BroadcastStatusParams<'a> {
 /// keepalive beat and the timeout cancel). A serialize error is swallowed
 /// like any other plumbing broadcast — the payloads are small literals.
 ///
-/// **Do not fold this into `send::broadcast_task_frame`.** It looks like a
+/// **Do not fold this into `send::broadcast_directed_frame`.** It looks like a
 /// duplicate of it and it is not: that path self-ingests through
 /// `send::ingest_own_leg`, and a beat routed through `apply` would refresh
 /// `last_skill_activity` (see [`TaskRecord::should_keepalive`]) — the one clock
@@ -807,7 +807,7 @@ mod tests {
     /// state out of the body, which is why only they were affected — the artifact
     /// leg needs nothing from it and always self-echoed correctly.
     ///
-    /// Pre-fix, `broadcast_task_frame` handed `ingest_own_leg` the **sealed** wire
+    /// Pre-fix, `broadcast_directed_frame` handed `ingest_own_leg` the **sealed** wire
     /// frame, so the parse failed, `ingest` returned before `apply`, and a
     /// worker's own `completed` never reached its own record. The worker is the
     /// A2A *server*, so `GetTask` — served from that record — kept answering
@@ -818,7 +818,7 @@ mod tests {
     /// `TASK_KEEPALIVE_MAX_SECS` ran out and the timeout ran from there.
     ///
     /// This pins `ingest`, **not** its callers: it calls `ingest` directly. The
-    /// caller contract — `broadcast_task_frame` passing the plaintext twin it
+    /// caller contract — `broadcast_directed_frame` passing the plaintext twin it
     /// already builds — is pinned at integration level, where a caller regression
     /// is actually observable.
     #[test]

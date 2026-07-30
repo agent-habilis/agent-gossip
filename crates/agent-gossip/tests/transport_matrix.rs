@@ -60,14 +60,14 @@ async fn converged(node: &InProcNode, channel: Channel, pointer: &str, expected:
 async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
     // Warmup: a broadcast (always gossip) meshes the peers and exchanges the
     // `PeerInfo`/cards the directed paths resolve on.
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(
         bob.wait_body("warmup", MSG_TIMEOUT).await,
         "mesh never formed (warmup broadcast not received)"
     );
 
     // 1. Broadcast chat.
-    alice.send("hello over the transport").await;
+    alice.broadcast("hello over the transport").await;
     assert!(
         bob.wait_body("hello over the transport", MSG_TIMEOUT).await,
         "broadcast chat was not delivered"

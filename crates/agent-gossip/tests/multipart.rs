@@ -17,7 +17,7 @@ async fn multishard_message_reassembles_into_one() {
 
     // Several times the single-message cap, so the daemon must split it.
     let big = "abcd ".repeat(MAX_MESSAGE_SIZE); // ~19 KB
-    let id = alice.send(&big).await;
+    let id = alice.broadcast(&big).await;
 
     assert!(
         bob.wait_body(&big, MSG_TIMEOUT).await,
@@ -52,14 +52,14 @@ async fn multishard_message_past_the_old_cap_reassembles() {
     let mut bob = InProcNode::join(&alice.mesh, "mp-big-bob").await;
     // Mesh first: an unmeshed multipart send buffers whole in the (64-slot)
     // pending-outbound queue, and ~55 shards would overflow it.
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
-    bob.send("warmup-back").await;
+    bob.broadcast("warmup-back").await;
     assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
 
     // ~200 KB needs ~55 shards — well past the old 16-shard refusal.
     let big = "0123456789".repeat(20 * 1024);
-    let id = alice.send(&big).await;
+    let id = alice.broadcast(&big).await;
 
     // `BIG_BODY_TIMEOUT`, not `MSG_TIMEOUT`: past 16 shards the group skips the
     // message log, so a dropped shard heals only through the (deliberately lazy)
@@ -87,14 +87,14 @@ async fn multishard_message_past_the_old_cap_reassembles() {
 async fn shard_repair_reserves_cached_big_group_frames() {
     let mut alice = InProcNode::create("mp-rep").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-rep-bob").await;
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
-    bob.send("warmup-back").await;
+    bob.broadcast("warmup-back").await;
     assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
 
     // A >16-shard body: alice caches its frames for repair.
     let big = "0123456789".repeat(20 * 1024); // ~200 KB, ~55 shards
-    let id = alice.send(&big).await;
+    let id = alice.broadcast(&big).await;
     // Unlogged group: a lost shard heals only via `shard/repair`, which needs
     // longer than `MSG_TIMEOUT` to even fire. See `BIG_BODY_TIMEOUT`.
     assert!(
@@ -147,7 +147,7 @@ async fn multishard_message_reassembles_on_a_passworded_mesh() {
         .expect("the right password joins");
 
     let big = "abcd ".repeat(MAX_MESSAGE_SIZE); // ~19 KB, forces sharding
-    alice.send(&big).await;
+    alice.broadcast(&big).await;
 
     assert!(
         bob.wait_body(&big, MSG_TIMEOUT).await,
@@ -173,7 +173,7 @@ async fn body_past_the_input_ceiling_is_refused() {
     let body = MessageBody::new("x".repeat(MAX_LOGICAL_BODY_BYTES + 1)).expect("valid body");
     let error = alice
         .session
-        .send(body)
+        .broadcast(body)
         .await
         .expect_err("a body past the input ceiling must be refused");
     assert!(
@@ -190,7 +190,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     let mut alice = InProcNode::create("mp-ex").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-ex-bob").await;
     // Mesh first so the RPC + push are actually delivered.
-    alice.send("warmup").await;
+    alice.broadcast("warmup").await;
     assert!(
         bob.wait_body("warmup", MSG_TIMEOUT).await,
         "mesh never formed"

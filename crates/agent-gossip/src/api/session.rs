@@ -199,8 +199,19 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn send(&self, body: MessageBody) -> anyhow::Result<Message> {
-        self.core.send(body).await
+    pub async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Message> {
+        self.core.broadcast(body).await
+    }
+
+    /// Send a msg: a chat message to one peer. Only you and `to`
+    /// see it: the frame is delivered point-to-point and sealed to the
+    /// recipient, so the peers relaying it cannot read the body.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response, or if the
+    /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
+    pub async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Message> {
+        self.core.msg(to, body).await
     }
 
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges

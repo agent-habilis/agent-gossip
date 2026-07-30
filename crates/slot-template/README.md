@@ -14,8 +14,8 @@ An agent invoking a skill must get the whole procedure in the file it was
 already handed: zero extra read round-trips. That makes one self-contained
 `SKILL.md` per skill the runtime contract.
 
-But the fifteen skills share a great deal — the reattach procedure, the
-receive-loop contract, the bell guard, the event catalogue. Keeping fifteen
+But the sixteen skills share a great deal — the reattach procedure, the
+receive-loop contract, the bell guard, the event catalogue. Keeping sixteen
 copies in sync by hand is how the bell-guard rules drifted between skills
 before. So the sources stay multi-file (`skills/<name>/SKILL.md` +
 `workflow.md`, splicing `skills/shared/*.md` partials) and

@@ -225,7 +225,7 @@ async fn test_two_node_message_delivery() {
     let creator = InProcNode::create("net2node").await;
     let mut joiner = InProcNode::join(&creator.mesh, "joiner-2node").await;
 
-    creator.send("hello from the network").await;
+    creator.broadcast("hello from the network").await;
 
     assert!(
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
@@ -266,7 +266,7 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
     let mut joiner = InProcNode::try_join_with_password(&creator.mesh, "joiner-good", "hunter2")
         .await
         .expect("the right password joins");
-    creator.send("hello behind the password").await;
+    creator.broadcast("hello behind the password").await;
     assert!(
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "passworded joiner never received the creator's message"
@@ -331,7 +331,7 @@ async fn test_state_log_propagates_to_a_peer() {
 
     // Mesh first (a delivered message proves the link), so the state events
     // broadcast onto a live overlay rather than the unmeshed buffer.
-    creator.send("link").await;
+    creator.broadcast("link").await;
 
     creator.state_merge(json!({"alpha": 1})).await;
     creator.state_merge(json!({"beta": 2})).await;
@@ -361,7 +361,7 @@ async fn test_state_log_backfills_a_late_joiner() {
     let creator = InProcNode::create("netstatelate").await;
     let early = InProcNode::join(&creator.mesh, "early-state").await;
     // Mesh so appends go out live, leaving the creator's outbound buffer empty.
-    creator.send("link").await;
+    creator.broadcast("link").await;
 
     creator.state_merge(json!({"alpha": 1})).await;
     creator.state_merge(json!({"beta": 2})).await;
@@ -400,7 +400,7 @@ async fn test_three_node_full_delivery() {
     let mut beta = InProcNode::join(&alpha.mesh, "beta-3node").await;
     let mut gamma = InProcNode::join(&alpha.mesh, "gamma-3node").await;
 
-    alpha.send("broadcast to all three nodes").await;
+    alpha.broadcast("broadcast to all three nodes").await;
 
     // The sender never receives its own broadcast; the other two
     // should (>=2 deliveries across beta+gamma).
@@ -421,8 +421,8 @@ async fn test_bidirectional_messaging() {
 
     // Each side posts as itself — creator receives joiner's message
     // and vice versa.
-    creator.send("first message").await;
-    joiner.send("second message").await;
+    creator.broadcast("first message").await;
+    joiner.broadcast("second message").await;
 
     assert!(
         joiner.wait_body("first message", MSG_TIMEOUT).await,
@@ -577,7 +577,7 @@ async fn test_concurrent_asks() {
     let mut ids = std::collections::HashSet::new();
     for index in 0..ASK_COUNT {
         let id = joiner
-            .send(&format!("concurrent message {index}"))
+            .broadcast(&format!("concurrent message {index}"))
             .await
             .to_string();
         ids.insert(id);
@@ -611,7 +611,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
     // session owns its own nickname, so authorship can't be swapped —
     // the in-process analogue of the old find_socket bug).
     let alpha_nick = alpha.nickname.clone();
-    alpha.send("tag-from-alpha").await;
+    alpha.broadcast("tag-from-alpha").await;
     for node in [&mut beta, &mut gamma] {
         assert!(
             node.wait_body("tag-from-alpha", MSG_TIMEOUT).await,
@@ -629,8 +629,8 @@ async fn test_ask_targets_specific_agent_three_peers() {
         );
     }
 
-    beta.send("tag-from-beta").await;
-    gamma.send("tag-from-gamma").await;
+    beta.broadcast("tag-from-beta").await;
+    gamma.broadcast("tag-from-gamma").await;
     assert!(
         beta.wait_body("tag-from-gamma", MSG_TIMEOUT).await,
         "gamma's message not delivered to beta"
@@ -1080,7 +1080,7 @@ fn test_poll_returns_messages() {
         "poll record must carry a seq: {first}"
     );
     assert_eq!(first["event"], "message");
-    assert_eq!(first["type"], "msg");
+    assert_eq!(first["type"], "broadcast");
     assert_eq!(first["display"], "💬️ `<joiner-poll>`: hello from poll test");
     assert_eq!(first["self"], true, "joiner authored it → self:true");
 
@@ -1110,6 +1110,96 @@ fn test_poll_returns_messages() {
             "--after must only return events with seq > cursor: {event}"
         );
     }
+}
+
+/// The two chat commands over the real Unix socket, through the shipped
+/// binary: `a2a broadcast` reaches everyone, `a2a msg` reaches exactly one
+/// peer. The in-process suite already proves the routing; this pins the
+/// **wire contract** an agent parses — the `type`/`to`/`display` an
+/// `--output json` consumer branches on.
+#[test]
+fn test_cli_broadcast_and_msg_wire_contract() {
+    let (creator, mesh) = Node::create();
+    let bob = Node::join(&mesh, "wire-bob");
+    let carol = Node::join(&mesh, "wire-carol");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(bob.wait_ready(&mesh), "bob socket never appeared");
+    assert!(carol.wait_ready(&mesh), "carol socket never appeared");
+    std::thread::sleep(Duration::from_secs(2));
+
+    common::cli_message_checked(&mesh, &creator.nickname, "to-everyone");
+    // A msg is sealed to its recipient, so its card must have replicated.
+    common::await_peer_card_cli(&mesh, &creator.nickname, &bob.nickname);
+    common::cli_msg_checked(&mesh, &creator.nickname, &bob.nickname, "to-bob-only");
+    std::thread::sleep(Duration::from_secs(1));
+
+    let events = |nickname: &str| -> Vec<serde_json::Value> {
+        serde_json::from_str(&cli_poll(&mesh, nickname, None)).expect("poll returns a JSON array")
+    };
+    let find = |batch: &[serde_json::Value], body: &str| -> Option<serde_json::Value> {
+        batch.iter().find(|event| event["body"] == body).cloned()
+    };
+
+    // Broadcast: `type` says everyone, `to` is null, no arrow.
+    let bob_events = events(&bob.nickname);
+    let broadcast = find(&bob_events, "to-everyone").expect("bob received the broadcast");
+    assert_eq!(broadcast["type"], "broadcast");
+    assert!(broadcast["to"].is_null());
+    assert_eq!(
+        broadcast["display"],
+        format!("💬️ `<{}>`: to-everyone", creator.nickname)
+    );
+
+    // Msg: `type` says one peer, `to` names them, and the arrow marks it.
+    let msg = find(&bob_events, "to-bob-only").expect("bob received the msg");
+    assert_eq!(msg["type"], "msg");
+    assert_eq!(msg["to"], bob.nickname);
+    assert_eq!(msg["is_visible"], true);
+    assert_eq!(
+        msg["display"],
+        format!(
+            "💬️ `<{}>` → `<{}>`: to-bob-only",
+            creator.nickname, bob.nickname
+        )
+    );
+
+    // Carol got the broadcast and not the msg — over real sockets, real
+    // processes. Asserted on content, not on an empty window.
+    let carol_events = events(&carol.nickname);
+    assert!(
+        find(&carol_events, "to-everyone").is_some(),
+        "carol is a live member — she must receive the broadcast"
+    );
+    assert!(
+        find(&carol_events, "to-bob-only").is_none(),
+        "a msg must never reach a peer it is not addressed to"
+    );
+}
+
+/// `a2a call` is the task surface and always needs a peer; chat moved to its
+/// own two commands. Without `--to` it must fail rather than quietly
+/// broadcasting, which is what the old overload did.
+#[test]
+fn test_cli_a2a_call_requires_a_peer() {
+    let out = common::test_cmd()
+        .args([
+            "a2a",
+            "call",
+            "--gossip",
+            "💬deadbeef",
+            "--nickname",
+            "calm-otter",
+            "--method",
+            "SendMessage",
+            "--text",
+            "orphan",
+        ])
+        .output()
+        .expect("a2a call spawns");
+    assert!(
+        !out.status.success(),
+        "a2a call without --to must fail, not broadcast"
+    );
 }
 
 /// Baseline a node's poll cursor to "now": a first full poll, then advance
@@ -2240,12 +2330,12 @@ async fn same_nickname_peers_communicate() {
     let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
     let mut beta = InProcNode::join(&alpha.mesh, "dup").await;
 
-    alpha.send("from-alpha").await;
+    alpha.broadcast("from-alpha").await;
     assert!(
         beta.wait_body("from-alpha", MSG_TIMEOUT).await,
         "beta never saw alpha's message despite the shared nickname"
     );
-    beta.send("from-beta").await;
+    beta.broadcast("from-beta").await;
     assert!(
         alpha.wait_body("from-beta", MSG_TIMEOUT).await,
         "alpha never saw beta's message despite the shared nickname"
@@ -2276,7 +2366,7 @@ async fn message_event_carries_full_pubkey() {
     let alpha = InProcNode::create("pubkeyjson").await;
     let mut beta = InProcNode::join(&alpha.mesh, "pk-beta").await;
 
-    alpha.send("hi").await;
+    alpha.broadcast("hi").await;
     assert!(
         beta.wait_body("hi", MSG_TIMEOUT).await,
         "message never arrived"
@@ -2304,7 +2394,7 @@ async fn nickname_reusable_after_peer_leaves() {
     let mut observer = InProcNode::create("reuse").await;
     let first = InProcNode::join(&observer.mesh, "ditto").await;
 
-    first.send("first-here").await;
+    first.broadcast("first-here").await;
     assert!(
         observer.wait_body("first-here", MSG_TIMEOUT).await,
         "observer never saw the first member"
@@ -2313,7 +2403,7 @@ async fn nickname_reusable_after_peer_leaves() {
 
     // A brand-new member reuses the departed nickname.
     let second = InProcNode::join(&observer.mesh, "ditto").await;
-    second.send("second-here").await;
+    second.broadcast("second-here").await;
     assert!(
         observer.wait_body("second-here", MSG_TIMEOUT).await,
         "a reused nickname could not communicate after the prior holder left"

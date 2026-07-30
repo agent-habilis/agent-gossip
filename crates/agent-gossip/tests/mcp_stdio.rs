@@ -368,7 +368,7 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_gossip","arguments":{"name":"mcptest"}}}"#,
-        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_message","arguments":{"text":"sanity"}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_broadcast","arguments":{"text":"sanity"}}}"#,
         r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_gossip","arguments":{}}}"#,
     ] {
         writeln!(stdin, "{line}").unwrap();
@@ -406,11 +406,11 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
 fn tools_require_session_and_error_when_absent() {
     let mut client = McpClient::spawn();
     for (id, tool) in [
-        (10, "send_message"),
+        (10, "send_broadcast"),
         (11, "fetch_messages"),
         (12, "gossip_info"),
     ] {
-        let args = if tool == "send_message" {
+        let args = if tool == "send_broadcast" {
             serde_json::json!({ "text": "hi" })
         } else {
             serde_json::json!({})
@@ -577,10 +577,14 @@ fn leave_then_create_cycle_works_within_one_server() {
 }
 
 #[test]
-fn send_message_without_session_errors() {
+fn send_broadcast_without_session_errors() {
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(70, "send_message", serde_json::json!({ "text": "orphan" }));
-    let err = tool_error(&resp).expect("send_message without session should error");
+    let resp = client.tool_call(
+        70,
+        "send_broadcast",
+        serde_json::json!({ "text": "orphan" }),
+    );
+    let err = tool_error(&resp).expect("send_broadcast without session should error");
     assert!(err.contains("not in a gossip"));
 }
 
@@ -653,15 +657,15 @@ fn send_empty_body_works() {
     let mut client = McpClient::spawn();
     let (_mesh, _) = client.create_and_get_mesh(100);
 
-    let sent = client.tool_call(101, "send_message", serde_json::json!({ "text": "" }));
+    let sent = client.tool_call(101, "send_broadcast", serde_json::json!({ "text": "" }));
     let sent_json = tool_result_json(&sent).expect("empty-body send should succeed");
     let id = sent_json["id"].as_str().unwrap().to_string();
     assert!(!id.is_empty());
-    // send_message now returns the full echo inline — the agent
+    // send_broadcast now returns the full echo inline — the agent
     // should never need a follow-up fetch for its own send.
     let echo = sent_json
         .get("message")
-        .expect("send_message must return an echo");
+        .expect("send_broadcast must return an echo");
     assert_eq!(echo["id"].as_str(), Some(id.as_str()));
     // The frame body carries the serialized A2A payload; the sent text
     // (empty here) is its first text part, and the payload's messageId is
@@ -694,7 +698,7 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
     // well-formed arrays.
     let mut client = McpClient::spawn();
     client.create_and_get_mesh(110);
-    let _ = client.tool_call(111, "send_message", serde_json::json!({ "text": "a" }));
+    let _ = client.tool_call(111, "send_broadcast", serde_json::json!({ "text": "a" }));
 
     let far_future = tool_result_json(&client.tool_call(
         112,
@@ -758,14 +762,14 @@ fn fetch_messages_long_parks_then_times_out_empty() {
 }
 
 #[test]
-fn send_message_broadcasts_to_the_mesh() {
-    // `send_message` is a mesh broadcast (A2A is point-to-point, so directed
-    // 1:1 is a task via `a2a_call`, not chat). Confirm a plain send succeeds.
+fn send_broadcast_reaches_the_mesh() {
+    // `send_broadcast` reaches every member; `send_msg` reaches one. Confirm
+    // the broadcast path succeeds.
     let mut client = McpClient::spawn();
     client.create_and_get_mesh(120);
     let resp = client.tool_call(
         121,
-        "send_message",
+        "send_broadcast",
         serde_json::json!({ "text": "hello mesh" }),
     );
     let json = tool_result_json(&resp).expect("broadcast send should succeed");
@@ -796,7 +800,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     for (i, body) in ["one", "two", "three"].iter().enumerate() {
         client.tool_call(
             201 + i as u64,
-            "send_message",
+            "send_broadcast",
             serde_json::json!({ "text": body }),
         );
     }
@@ -831,7 +835,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     );
 
     // Send one more, then fetch with the cursor → only the new message.
-    let _ = client.tool_call(220, "send_message", serde_json::json!({ "text": "four" }));
+    let _ = client.tool_call(220, "send_broadcast", serde_json::json!({ "text": "four" }));
     let cursor2 = {
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         loop {
