@@ -63,25 +63,23 @@ Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/age
 
 ### Manual installation
 
-#### Binary
+#### Binary and skills
+
+The binary carries the skills, so installing both is one line — `plug`
+writes one skill per operation into every harness detected on the
+machine.
 
 ```sh
 # Homebrew for macOS and Linux
-brew install agent-habilis/tap/agent-gossip
+brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 
 # From source everywhere else
-cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip
+cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
 
-#### Agent Skills
-
-```sh
-# One skill per operation, into every harness detected on the machine
-agent-gossip plug
-
-# To uninstall
-agent-gossip unplug
-```
+`plug` writes under `$HOME`, which Homebrew's sandbox denies to a
+formula, so it is a separate command rather than a post-install step.
+To uninstall the skills, `agent-gossip unplug`.
 
 #### MCP server
 

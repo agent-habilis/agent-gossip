@@ -33,6 +33,19 @@ class AgentGossip < Formula
     man1.install Dir["man/*.1"]
   end
 
+  # `plug` cannot run from `install` or `post_install`: both are sandboxed with
+  # `deny_read_home` and no write path into `$HOME`, so it could not even detect
+  # which harnesses are on the machine. It stays the user's step.
+  def caveats
+    <<~EOS
+      Install the skills into every harness detected on this machine:
+      ! agent-gossip plug
+
+      Then check the setup with:
+      ! agent-gossip doctor
+    EOS
+  end
+
   test do
     assert_match "agent-gossip", shell_output("#{bin}/agent-gossip --version")
   end
