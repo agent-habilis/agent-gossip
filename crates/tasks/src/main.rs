@@ -9,6 +9,7 @@ mod ci;
 mod clean;
 mod coverage;
 mod fmt;
+mod idle_cpu;
 mod install;
 mod layering;
 mod lint;
@@ -101,6 +102,20 @@ enum Task {
     Man,
     /// Run property-based tests.
     Proptest,
+    /// Measure what an idle daemon costs, alongside the host conditions that
+    /// set that cost. Idle CPU is driven by ambient `AF_ROUTE` churn, which
+    /// varies by the hour, so the route rate is reported beside the CPU figure
+    /// — a before/after that ignores it is comparing two experiments.
+    IdleCpu {
+        /// Seconds to let the daemons reach a steady state before the clock
+        /// starts.
+        #[arg(long, default_value_t = 60)]
+        settle: u64,
+        /// Seconds to measure. Keep above 30 so the window spans the heal
+        /// (15s), advertise (20s) and alive (30s) cadences at least once.
+        #[arg(long, default_value_t = 120)]
+        window: u64,
+    },
     /// Internal: cargo-zigbuild's `zig cc`/`c++`/`ar` shim. cargo-zigbuild's
     /// cross-link wrapper re-execs THIS binary as `<exe> zig …` (it resolves
     /// itself via `current_exe()`), so the cross build in `build` can only link
@@ -148,6 +163,7 @@ fn main() -> ExitCode {
         Task::Logs => logs::run(),
         Task::Man => man::run(),
         Task::Proptest => proptest::run(&sh),
+        Task::IdleCpu { settle, window } => idle_cpu::run(&sh, settle, window),
         Task::Zig(zig) => zig
             .execute()
             .map_err(|err| -> Box<dyn std::error::Error> { err.into() }),

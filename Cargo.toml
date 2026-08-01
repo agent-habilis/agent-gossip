@@ -202,3 +202,19 @@ iroh-dns = { git = "https://github.com/agent-habilis/iroh", rev = "dcbdc1521caf6
 # Branch fix/superseded-conn-leak-0.101 (rebased onto v0.101.0): the
 # connection-churn leak fix (upstream PR n0-computer/iroh-gossip#147).
 iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", rev = "c779c0661fc9429e86852570be9bdc00fb47fdd9" }
+# Branch fix/rtm-miss-storm-0.19.1, cut from the netwatch-v0.19.1 tag (verified
+# byte-identical to the published crate) rather than from main, so the fork
+# carries this fix and no unrelated upstream drift.
+#
+# netwatch treated RTM_MISS — "a route lookup failed" — as a topology change and
+# rebuilt the whole interface state for each one. That rebuild is `getifaddrs`
+# per address (Darwin's `if_nametoindex` calls it again, so it is quadratic)
+# plus a synchronous CoreWLAN XPC round-trip. But RTM_MISS reports the fate of a
+# packet, not a change to the table, so every rebuild concluded "no changes
+# detected" — measured, all 276 of them. A host whose IPv6 default sits behind a
+# VPN emits these continuously and the kernel broadcasts each to every AF_ROUTE
+# listener, so an idle daemon paid ~1.15 enumerations/sec for other processes'
+# failed connects. Paired A/B under one identical route stream: 2.01% -> 0.06%
+# of a core, 36x. Upstream PR: n0-computer/net-tools#203 — drop this pin once it
+# merges and ships.
+netwatch = { git = "https://github.com/fofoca-network/net-tools", rev = "e02960255ef2f5b2ba4aa3d4cf195e0b8673f370" }

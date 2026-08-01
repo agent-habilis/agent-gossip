@@ -89,6 +89,7 @@ dependencies = [
  "insta",
  "iroh",
  "mimalloc",
+ "netwatch",
  "proptest",
  "rand 0.9.4",
  "rmcp",
@@ -2925,8 +2926,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d9cbe01741347ef750d743d6690603f5eed8341e679fb51c8e629337aa11976"
+source = "git+https://github.com/fofoca-network/net-tools?rev=e02960255ef2f5b2ba4aa3d4cf195e0b8673f370#e02960255ef2f5b2ba4aa3d4cf195e0b8673f370"
 dependencies = [
  "atomic-waker",
  "bytes",

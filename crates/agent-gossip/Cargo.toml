@@ -113,6 +113,12 @@ tokio.workspace = true
 # Offline microbenchmarks (`benches/hot_paths.rs`). No html/plotting deps;
 # prints a summary table to stdout.
 divan.workspace = true
+# `benches/idle_cost.rs` only. iroh pulls netwatch transitively and never
+# exposes it, but the idle-CPU bench has to time `interfaces::State::new()`
+# directly — that call is what an AF_ROUTE message costs us, and pricing it is
+# the whole point. Pinned to the version iroh already resolves so the bench
+# measures the code we actually ship, not a second copy.
+netwatch = "0.19.1"
 
 # Offline microbenchmarks of the pure hot paths. Needs `bench` for the
 # `harness::bench` shim that reaches `pub(crate)` internals.
@@ -125,6 +131,14 @@ required-features = ["bench"]
 # public `api` surface — no `bench` feature.
 [[bench]]
 name = "transfer"
+harness = false
+
+# What one AF_ROUTE message costs an idle daemon. Unlike `hot_paths`, this is
+# deliberately *not* pure: it measures host syscalls (`getifaddrs`, CoreWLAN
+# XPC), so its result is a property of the machine — interface count above all —
+# not of our code. Reported alongside that count for exactly that reason.
+[[bench]]
+name = "idle_cost"
 harness = false
 
 # Adversarial / malicious-peer integration suite. Needs `adversarial` for the
