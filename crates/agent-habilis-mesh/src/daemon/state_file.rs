@@ -31,7 +31,7 @@
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","peer_count":3,"pid":34299,"ready":true,"gossip":"💬..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","peer_count":3,"pid":34299,"ready":true,"gossip":"..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn writes_expected_shape() {
         let path = unique_path("shape");
-        let mesh = MeshId::from("💬abcd");
+        let mesh = MeshId::from("abcd");
         let state_file = StateFile::new(
             path.clone(),
             &mesh,
@@ -401,7 +401,7 @@ mod tests {
         let path = unique_path("topic");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬topic"),
+            &MeshId::from("topic"),
             &Nickname::from("treat-empire"),
             &name("www.youtube.com/watch"),
         )
@@ -421,7 +421,7 @@ mod tests {
         let path = unique_path("overwrite");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬xyzw"),
+            &MeshId::from("xyzw"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
@@ -440,7 +440,7 @@ mod tests {
         let path = unique_path("remove");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬test"),
+            &MeshId::from("test"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -456,7 +456,7 @@ mod tests {
         {
             let state_file = StateFile::new(
                 path.clone(),
-                &MeshId::from("💬test"),
+                &MeshId::from("test"),
                 &Nickname::from("n"),
                 &name("cool-team"),
             );
@@ -478,7 +478,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬test"),
+            &MeshId::from("test"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -495,7 +495,7 @@ mod tests {
         // A pre-existing file with stale/foreign keys is fully replaced —
         // the daemon is the sole writer, so nothing is merged or preserved.
         std::fs::write(&path, br#"{"name":"stale","auto_reply":false,"junk":1}"#).unwrap();
-        let mesh = MeshId::from("💬fresh");
+        let mesh = MeshId::from("fresh");
         let state_file = StateFile::new(
             path.clone(),
             &mesh,
@@ -520,7 +520,7 @@ mod tests {
         let path = unique_path("snapshot");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬round"),
+            &MeshId::from("round"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn read_identity_carries_session_fields() {
         let path = unique_path("identity");
-        let mesh = MeshId::from("💬round");
+        let mesh = MeshId::from("round");
         let state_file = StateFile::new(
             path.clone(),
             &mesh,
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn read_session_entry_round_trips_write() {
         let path = unique_path("session-entry");
-        let mesh = MeshId::from("💬round");
+        let mesh = MeshId::from("round");
         let state_file = StateFile::new(
             path.clone(),
             &mesh,
@@ -583,11 +583,11 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"last_updated":1,"name":"old","nickname":"n-n","peer_count":1,"ready":true,"gossip":"💬old"}"#,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","peer_count":1,"ready":true,"gossip":"old"}"#,
         )
         .unwrap();
         let entry = super::read_session_entry(&path).expect("present");
-        assert_eq!(entry.mesh.as_deref(), Some("💬old"));
+        assert_eq!(entry.mesh.as_deref(), Some("old"));
         assert_eq!(entry.pid, None);
         let _ = std::fs::remove_file(&path);
     }
@@ -602,13 +602,13 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"pid":7,"ready":true,"room":"💬legacy"}"#,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"pid":7,"ready":true,"room":"legacy"}"#,
         )
         .unwrap();
         let entry = super::read_session_entry(&path).expect("present");
-        assert_eq!(entry.mesh.as_deref(), Some("💬legacy"));
+        assert_eq!(entry.mesh.as_deref(), Some("legacy"));
         let identity = super::read_identity(&path);
-        assert_eq!(identity.mesh.as_deref(), Some("💬legacy"));
+        assert_eq!(identity.mesh.as_deref(), Some("legacy"));
         let _ = std::fs::remove_file(&path);
     }
 
@@ -642,10 +642,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, r#"{"gossip":"💬x","name":"n"}"#).unwrap();
+        std::fs::write(&path, r#"{"gossip":"x","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, r#"{"ready":true,"gossip":"💬round"}"#).unwrap();
+        std::fs::write(&path, r#"{"ready":true,"gossip":"round"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

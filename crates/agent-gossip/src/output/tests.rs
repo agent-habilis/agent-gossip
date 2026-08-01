@@ -16,7 +16,7 @@ fn nick(name: &str) -> agent_habilis_mesh::protocol::Nickname {
 }
 
 fn sid() -> agent_habilis_mesh::protocol::MeshId {
-    agent_habilis_mesh::protocol::MeshId::from("💬://test")
+    agent_habilis_mesh::protocol::MeshId::from("test")
 }
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
@@ -391,7 +391,7 @@ mod snapshots {
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::status_update(
-            &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
+            &agent_habilis_mesh::protocol::MeshId::from("test"),
             crate::a2a::gossip::StatusUpdateParams {
                 task_id: &tid,
                 state,
@@ -438,7 +438,7 @@ mod snapshots {
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::artifact_update(
-            &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
+            &agent_habilis_mesh::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
@@ -460,7 +460,7 @@ mod snapshots {
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame(text: &str) -> Message {
         let mut payload = crate::a2a::gossip::compose_broadcast(
-            &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
+            &agent_habilis_mesh::protocol::MeshId::from("test"),
             text,
         );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
@@ -474,7 +474,7 @@ mod snapshots {
     /// The directed twin of [`snap_chat_frame`].
     fn snap_msg_frame(text: &str) -> Message {
         let mut payload = crate::a2a::gossip::compose_msg(
-            &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
+            &agent_habilis_mesh::protocol::MeshId::from("test"),
             text,
         );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");

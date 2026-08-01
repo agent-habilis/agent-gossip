@@ -243,7 +243,7 @@ async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
     let mesh = creator.mesh.clone();
     let nick = creator.nickname.clone();
-    assert!(mesh.starts_with("💬"));
+    assert!(agent_gossip::MeshId::new(&mesh).is_ok());
     assert!(!nick.is_empty());
 
     assert!(

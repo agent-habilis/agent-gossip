@@ -6,7 +6,7 @@
 //! serving the rendezvous — the **beacon** — lives in
 //! [`crate::beacon`].
 //!
-//! The `💬…` token carries a random 32-byte `seed` (see
+//! The mesh id token carries a random 32-byte `seed` (see
 //! [`crate::protocol::mesh`]). Every value the mesh needs is derived
 //! from it in memory — no stored address, no file:
 //!
@@ -193,7 +193,7 @@ fn stretch_password(password: &Password, salt_seed: &[u8; 32], label: &[u8]) -> 
 
 /// The stretched key for a passworded mesh: every derivation (topic,
 /// rendezvous, port ladder) switches from the wire seed onto this value, so
-/// holding the `💬…` id without the password computes nothing reachable.
+/// holding the mesh id without the password computes nothing reachable.
 #[must_use]
 pub(crate) fn stretch_mesh_password(password: &Password, seed: &[u8; 32]) -> [u8; 32] {
     stretch_password(password, seed, b"password")
@@ -214,7 +214,7 @@ pub(crate) fn invite_wrap_key(password: &Password, salt: &[u8; 32]) -> [u8; 32] 
 
 /// Length of the password verifier carried in a passworded mesh hash.
 /// 16 bytes: only guess-checking matters (collisions are irrelevant), and
-/// every extra byte grows the shared `💬…` string.
+/// every extra byte grows the shared mesh id string.
 pub(crate) const PASSWORD_VERIFIER_LEN: usize = 16;
 
 /// The one-way check value a passworded mesh hash carries so `join` can
@@ -293,7 +293,7 @@ pub fn ct_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
 }
 
 /// Derive the gossip TopicId from the mesh `seed` + name + config. The
-/// seed is the random 32 bytes carried in the `💬…` token, so the topic
+/// seed is the random 32 bytes carried in the mesh id token, so the topic
 /// is **creator-independent**: it never depends on any node's ephemeral
 /// key and survives the creator's death. The name and the canonical
 /// config bytes are each length-prefixed before hashing so distinct

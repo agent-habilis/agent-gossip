@@ -71,7 +71,14 @@ async function waitForUrl(url: string, tries = 100): Promise<void> {
   throw new Error(`timed out waiting for ${url}`);
 }
 
-/** Read a spawned process's stdout until the `📡…` ticket appears. */
+/**
+ * Read a spawned process's stdout until `expose` announces its ticket.
+ *
+ * Anchored on the `a2a connect <ticket>` line `expose` prints rather than on
+ * the ticket's own shape: tickets are bare Base58Check with no sigil, so there
+ * is nothing in the token itself to match. An earlier version scanned for a
+ * `📡` brand and silently rotted when the brand changed, then vanished.
+ */
 async function readTicket(
   stream: ReadableStream<Uint8Array>,
   timeoutMs = 20_000,
@@ -88,13 +95,13 @@ async function readTicket(
       ]);
       if (chunk.done) break;
       buffer += decoder.decode(chunk.value, { stream: true });
-      const match = buffer.match(/📡[^\s]+/u);
-      if (match) return match[0];
+      const match = buffer.match(/a2a connect (\S+)/);
+      if (match) return match[1];
     }
   } finally {
     reader.releaseLock();
   }
-  throw new Error("never got a 📡 ticket from expose");
+  throw new Error("never got a ticket from expose");
 }
 
 function run(label: string): void {

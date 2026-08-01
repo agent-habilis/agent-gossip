@@ -459,7 +459,7 @@ fn declared_methods_section(mesh: &Mesh) -> Section {
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
-                "invite-derived — need a 🎟️ invite to compute",
+                "invite-derived — need an invite to compute",
             ));
         } else if mesh.requires_password() {
             checks.push(Check::new(

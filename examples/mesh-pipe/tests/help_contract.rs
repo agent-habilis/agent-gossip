@@ -1,15 +1,14 @@
-//! `--help` must name the *current* mesh sigil.
+//! `--help` must describe ids the way the binary prints them: bare Base58.
 //!
-//! mesh-pipe spells the glyph literally in its clap `value_name`s and doc
-//! comments — `--help` text cannot interpolate a const — so a re-glyph has to be
-//! swept by hand here. It was not, once: this crate advertised the previous
-//! sigil in `--help` while the binary printed the new one, and nothing failed,
-//! because the glyph is display text no code path parses. This test is the
-//! failure that was missing.
+//! mesh-pipe spells the id format literally in its clap `value_name`s and doc
+//! comments — `--help` text cannot interpolate a const — so a format change has
+//! to be swept by hand here. It was not, once: this crate advertised a stale
+//! mesh sigil in `--help` while the binary printed a different one, and nothing
+//! failed, because the sigil was display text no code path parses. Ids carry no
+//! sigil at all now, so the guard is inverted: help must name no glyph and no
+//! `://`.
 
 use std::process::Command;
-
-use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 fn help_for(subcommand: &str) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_mesh-pipe"))
@@ -25,14 +24,19 @@ fn help_for(subcommand: &str) -> String {
 }
 
 #[test]
-fn help_names_the_current_mesh_glyph() {
+fn help_advertises_bare_ids() {
     for subcommand in ["listen", "connect"] {
         let help = help_for(subcommand);
         assert!(
-            help.contains(MESH_GLYPH),
-            "`mesh-pipe {subcommand} --help` never names the mesh sigil \
-             {MESH_GLYPH:?} — the glyph moved and this crate's help text did \
-             not follow:\n{help}"
+            !help.contains("://"),
+            "`mesh-pipe {subcommand} --help` still shows a `://` id form:\n{help}"
         );
+        for glyph in ['💬', '🎟', '🤖'] {
+            assert!(
+                !help.contains(glyph),
+                "`mesh-pipe {subcommand} --help` still names the {glyph:?} sigil — \
+                 ids are bare Base58 and this crate's help text did not follow:\n{help}"
+            );
+        }
     }
 }

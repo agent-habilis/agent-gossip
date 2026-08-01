@@ -985,7 +985,7 @@ mod classify_tests {
     };
 
     fn mesh() -> MeshId {
-        MeshId::from("💬test")
+        MeshId::from("test")
     }
 
     fn app_frame(tag: &str) -> Message {

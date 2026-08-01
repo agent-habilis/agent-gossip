@@ -45,7 +45,7 @@ directly**.
 - [ ] an advertised mesh shows that it is advertised, into the expected directory
 - [ ] public/relay rounds may connect a bit slower than localhost but still join
 - [ ] the mesh id differs per network mode (the mode is encoded in the id)
-- [ ] two peers running `agent-gossip topic <same string>` converge on the same 💬… id
+- [ ] two peers running `agent-gossip topic <same string>` converge on the same id
       and exchange messages
 - [ ] the version check reports the binary version and whether the integration is
       current; if it is behind, a drift warning is surfaced with its fix intact

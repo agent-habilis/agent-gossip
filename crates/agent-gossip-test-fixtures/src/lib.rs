@@ -698,7 +698,7 @@ pub fn mdns_multicast_available() -> bool {
 }
 
 impl InProcNode {
-    /// Create a new private mesh. `self.mesh` holds the `💬…` id.
+    /// Create a new private mesh. `self.mesh` holds the id.
     pub async fn create(name: &str) -> Self {
         init_test_tracing();
         Self::from_session(
@@ -773,7 +773,7 @@ impl InProcNode {
         }
     }
 
-    /// Join `mesh` (a `💬…` id) with an explicit nickname.
+    /// Join `mesh` (a mesh id) with an explicit nickname.
     pub async fn join(mesh: &str, nickname: &str) -> Self {
         init_test_tracing();
         let target = mesh.parse().expect("valid test join target");
@@ -1097,7 +1097,7 @@ impl InProcNode {
 
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
-    /// so a test can read the minted `💬…` reference.
+    /// so a test can read the minted ticket reference.
     pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
         self.session
             .task_artifact(TaskArtifactParams {
@@ -1458,7 +1458,7 @@ pub struct Node {
 }
 
 impl Node {
-    /// Spawn `agent-gossip create`, wait for 💬... and the assigned nickname.
+    /// Spawn `agent-gossip create`, wait for the minted id and the assigned nickname.
     pub fn create() -> (Self, String) {
         Self::create_named("itest")
     }

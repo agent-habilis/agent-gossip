@@ -7,7 +7,7 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopologyOpts {
-    /// Gossip identifier (💬...)
+    /// Gossip identifier
     #[arg(long, alias = "room")]
     pub gossip: MeshId,
 

@@ -34,7 +34,7 @@ sources so `cargo test` covers them.
 ./mesh-pipe-c listen < some-file
 
 # terminal 2 — receive
-./mesh-pipe-c connect '💬…' > copy
+./mesh-pipe-c connect <hash> > copy
 ```
 
 Mix the languages freely; the frames are identical, so either side can be the
@@ -42,13 +42,13 @@ Rust binary:
 
 ```bash
 ./mesh-pipe-c listen < some-file            # C sends
-cargo run -p mesh-pipe -- connect '💬…'      # Rust receives
+cargo run -p mesh-pipe -- connect <hash>      # Rust receives
 
 cargo run -p mesh-pipe -- listen < some-file # Rust sends
-./mesh-pipe-c connect '💬…'                  # C receives
+./mesh-pipe-c connect <hash>                  # C receives
 ```
 
-Both print the minted id as `mesh-pipe: mesh 💬…` — the same prefix from both
+Both print the minted id as `mesh-pipe: mesh <id>` — the same prefix from both
 binaries, deliberately, because that line is the machine-readable handoff the
 test harness parses. Diagnostics are prefixed `mesh-pipe-c:` so you can still
 tell which one is talking.

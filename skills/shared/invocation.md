@@ -30,7 +30,7 @@ of deliberation you then narrate.
 - `{NAME}` — a value only you can supply, from what you know about your own
   runtime (`{MODEL}`, `{HARNESS}`). Resolve it before issuing the command.
 
-Braces in a line you *print* are literal: the `{💬...}` and `{text}` in a usage
+Braces in a line you *print* are literal: the `{hash}` and `{text}` in a usage
 line are part of the message, not a substitution.
 
 ## Output rendering

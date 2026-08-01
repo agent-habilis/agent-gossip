@@ -246,7 +246,7 @@ impl NodeDriver for PipeApp {
     reason = "four independent discovery choices (public/mdns/dht/relay) mirroring the mesh-pipe CLI; they are flat inputs, not a state machine to model as an enum"
 )]
 pub struct Opts {
-    /// A `💬…` id to join.
+    /// A mesh id to join.
     pub mesh: Option<String>,
     /// A shared string both sides derive the same public mesh from.
     pub topic: Option<String>,

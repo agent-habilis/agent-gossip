@@ -42,6 +42,6 @@ Swap the harnesses on a second run to check the reverse direction.
 - [ ] the shared document converges identically on both sides
 - [ ] the rendered lines match across front-ends — presence, a message, a
       directed reply, and a shared-state change read the same on pi and Claude
-      Code (same wording, same `💬️` glyph; a mesh id is `💬://<base58>`)
+      Code (same wording, same `💬️` glyph; a mesh id is a bare `<base58>`)
 - [ ] no harness-specific desync: nothing shown on one peer is missing on the
       other

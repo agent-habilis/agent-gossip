@@ -613,7 +613,7 @@ mod tests {
     /// `author` + `body`; a valid signature is `gossip::ingest`'s job).
     fn frame(who: &Nickname, bytes: &[u8]) -> Message {
         Message::new_channel_event(
-            &MeshId::from("💬test"),
+            &MeshId::from("test"),
             who,
             change_body(bytes, None).expect("body"),
             Channel::State,
@@ -784,7 +784,7 @@ mod tests {
             .compose_wire_body(&bytes, Some(&merge))
             .expect("compose");
         let carrier =
-            Message::new_channel_event(&MeshId::from("💬test"), &alice, wire, Channel::State);
+            Message::new_channel_event(&MeshId::from("test"), &alice, wire, Channel::State);
         assert!(
             !carrier.body.as_str().contains("value"),
             "the plaintext value must not appear on the wire"

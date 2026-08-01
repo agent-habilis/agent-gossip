@@ -10,7 +10,7 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {
-    /// Gossip identifier (💬...)
+    /// Gossip identifier
     #[arg(long, alias = "room")]
     pub gossip: MeshId,
 
@@ -34,7 +34,7 @@ mod tests {
             "agent-gossip",
             "peers",
             "--gossip",
-            "💬AbCdEf1234",
+            "AbCdEf1234",
             "--nickname",
             "my-nick",
         ]);
@@ -54,7 +54,7 @@ mod tests {
             "agent-gossip",
             "peers",
             "--room",
-            "💬AbCdEf1234",
+            "AbCdEf1234",
             "--nickname",
             "my-nick",
         ]);
@@ -62,7 +62,7 @@ mod tests {
             "agent-gossip",
             "peers",
             "--gossip",
-            "💬AbCdEf1234",
+            "AbCdEf1234",
             "--nickname",
             "my-nick",
         ]);

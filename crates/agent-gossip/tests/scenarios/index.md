@@ -81,7 +81,7 @@ Expected UI strings reference the canonical `display` lines the daemon emits
 `skills/` source partials (`skills/gossip-*/workflow.md` and
 `skills/shared/events.md` — installed skills are the single-file renders of
 these). The display prefix is `💬️` (U+FE0F); a mesh id is canonically
-`💬://<base58>` (no U+FE0F).
+a bare `<base58>` (no glyph, no U+FE0F).
 
 ## Capability reference (for the human, not the agents)
 

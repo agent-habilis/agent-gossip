@@ -2,4 +2,4 @@
 source: crates/agent-gossip/src/output/tests.rs
 expression: "format_presence_json(&msg, PresenceSubtype::Left)"
 ---
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","gossip":"💬://3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"subtype":"left","display":"💬️ `<alice-bot>` has left","is_visible":true}
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","gossip":"3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"subtype":"left","display":"💬️ `<alice-bot>` has left","is_visible":true}

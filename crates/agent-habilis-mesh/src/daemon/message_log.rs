@@ -193,7 +193,7 @@ mod tests {
 
     fn msg(id: &str) -> Message {
         Message::new_app(
-            &crate::protocol::MeshId::from("💬test"),
+            &crate::protocol::MeshId::from("test"),
             &crate::protocol::Nickname::from("author"),
             crate::protocol::AppFrameParams {
                 tag: crate::protocol::AppTag::from("app_msg"),

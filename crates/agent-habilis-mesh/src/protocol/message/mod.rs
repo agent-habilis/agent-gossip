@@ -455,7 +455,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"12.0","id":"<uuid>","type":"app","tag":"app_msg","mesh":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"12.0","id":"<uuid>","type":"app","tag":"app_msg","mesh":"...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for a directed app frame.
@@ -977,7 +977,7 @@ impl Message {
             version: VERSION.to_string(),
             id: "00000000-0000-0000-0000-000000000001".into(),
             kind,
-            mesh: MeshId::from("💬test"),
+            mesh: MeshId::from("test"),
             author: "alice-bot".into(),
             timestamp: 1_700_000_000,
             body: body.into(),
@@ -1004,7 +1004,7 @@ mod tests {
     }
 
     fn sid() -> MeshId {
-        MeshId::from("💬test")
+        MeshId::from("test")
     }
 
     #[test]
@@ -1134,7 +1134,7 @@ mod tests {
     /// A valid UUID for the hand-written wire-JSON fixtures below (the
     /// validating `MessageId` deserialize rejects non-UUID ids).
     const FIXTURE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
-    const FIXTURE_MESH: &str = "💬://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1";
+    const FIXTURE_MESH: &str = "2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1";
 
     #[test]
     fn test_unknown_ext_fields_ignored() {
@@ -1160,7 +1160,7 @@ mod tests {
         // A `1.0` (pre-merge) message must be rejected by this `2.0` binary — the
         // rolling-upgrade guard: cross-version state never silently folds.
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","mesh":"test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1171,14 +1171,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#mesh` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"12.0","id":"not-a-uuid","type":"app","tag":"app_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"12.0","id":"not-a-uuid","type":"app","tag":"app_msg","mesh":"test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1186,7 +1186,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"12.0","id":"{FIXTURE_ID}","type":"app","tag":"app_msg","mesh":"test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1410,7 +1410,7 @@ mod tests {
             let body = concat!(
                 "{\"id\":\"00000000-0000-0000-0000-000000000001\",",
                 "\"role\":\"sender\",\"parts\":[{\"text\":\"What is Rust?\"}],",
-                "\"scope\":\"💬://test\"}"
+                "\"scope\":\"test\"}"
             );
             Message::fixture(MessageKind::app_broadcast("app_msg"), body)
         }
@@ -1430,7 +1430,7 @@ mod tests {
         fn snap_wire_directed_uncorrelated() {
             let body = concat!(
                 "{\"ref\":\"00000000-0000-0000-0000-000000000001\",",
-                "\"scope\":\"💬://test\",\"progress\":{\"phase\":\"running\"}}"
+                "\"scope\":\"test\",\"progress\":{\"phase\":\"running\"}}"
             );
             let msg = Message::fixture(
                 MessageKind::app_to("app_status", Nickname::from("addressed-nick"), None),

@@ -16,7 +16,7 @@ pub(crate) use agent_habilis_mesh::runtime::DIRECTORY_ADVERTISER_COHOST;
 
 /// Spawn the directory re-broadcast task for `cfg`'s mesh: wire a fresh
 /// live-peer counter into `cfg.live_count`, then re-send the
-/// mesh's `💬…` id (with that count) into `directory` every
+/// mesh's id (with that count) into `directory` every
 /// `ADVERTISE_INTERVAL_SECS` over the mesh's own `lookups`. Returns the
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join

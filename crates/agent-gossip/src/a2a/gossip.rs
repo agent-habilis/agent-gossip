@@ -398,7 +398,7 @@ mod tests {
     use agent_habilis_mesh::protocol::MessageKind;
 
     fn mesh() -> MeshId {
-        MeshId::from("💬test")
+        MeshId::from("test")
     }
 
     /// A logical broadcast frame carrying `payload` — id already aligned to the
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn foreign_context_is_rejected() {
         let mut payload = compose_broadcast(&mesh(), "hi");
-        payload.context_id = Some("💬other".to_string());
+        payload.context_id = Some("other".to_string());
         let frame = frame_for(&payload);
         assert!(broadcast_payload(&frame).is_err());
     }

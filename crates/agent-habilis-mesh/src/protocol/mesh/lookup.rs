@@ -1,4 +1,4 @@
-//! The mesh-wide config carried in the `💬…` id — the lookup
+//! The mesh-wide config carried in the mesh id — the lookup
 //! allowlist (`mdns`/`dht`/`relay`) — plus its byte codec and the
 //! `--advertise` directory selection. A mesh's network reach is fully
 //! described by its lookups: no lookups means loopback-only; any lookup
@@ -181,7 +181,7 @@ pub(super) fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16> {
 const FEATURE_PASSWORD: u8 = 0b0001;
 
 /// Feature bit marking an invite-only mesh: joining needs a creator-minted
-/// `🎟️` invite, not the bare hash. The issuer public key (below) follows the
+/// invite ticket, not the bare hash. The issuer public key (below) follows the
 /// password verifier when both bits are set.
 const FEATURE_INVITE_ONLY: u8 = 0b0010;
 

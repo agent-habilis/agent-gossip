@@ -156,7 +156,7 @@ async fn main() {
         .mesh_id()
         .as_str()
         .parse()
-        .expect("a freshly minted 💬 id parses");
+        .expect("a freshly minted id parses");
     let node_b = MeshSession::join(JoinConfig::new(target))
         .await
         .expect("join");

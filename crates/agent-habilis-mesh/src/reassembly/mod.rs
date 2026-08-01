@@ -398,7 +398,7 @@ mod tests {
     /// A shard frame notionally signed by `pubkey`.
     fn shard_msg(body: &str, pubkey: &str, shard: Shard) -> Message {
         let mut message = Message::new_app(
-            &MeshId::from("💬test"),
+            &MeshId::from("test"),
             &Nickname::from("author"),
             AppFrameParams {
                 tag: crate::protocol::AppTag::from("app_msg"),

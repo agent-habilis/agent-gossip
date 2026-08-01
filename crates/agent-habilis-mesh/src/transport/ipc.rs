@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn socket_path_format() {
-        let mesh = MeshId::from("💬abcdefghijkmnpqr");
+        let mesh = MeshId::from("abcdefghijkmnpqr");
         let base = test_base();
         let path = socket_path(&base, &mesh, &Nickname::from("my-nick"));
         assert!(path.starts_with(&*base.to_string_lossy()));
@@ -470,9 +470,7 @@ mod tests {
             #[test]
             fn prop_mesh_prefix_is_prefix_of_input(mesh in arb_mesh()) {
                 let prefix = mesh_prefix(mesh.as_str());
-                // `mesh_prefix` strips the `://` scheme separator before taking
-                // 16 chars, so it prefixes the scheme-stripped id.
-                prop_assert!(mesh.as_str().replace("://", "").starts_with(&prefix));
+                prop_assert!(mesh.as_str().starts_with(&prefix));
             }
         }
     }

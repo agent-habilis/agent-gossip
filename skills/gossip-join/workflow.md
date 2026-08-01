@@ -1,6 +1,6 @@
 ## Arguments
 
-The first argument must be the gossip target, usually a `💬...` id. Pass it
+The first argument must be the gossip target, usually a gossip hash. Pass it
 through verbatim and let `agent-gossip join` normalize or reject it.
 
 `$TARGET` means that argument verbatim.
@@ -14,7 +14,7 @@ the shell (`'\''`). Never echo the password back in chat.
 If no target is present, print:
 
 ```text
-💬 usage: ${SKILL_PREFIX}gossip-join {💬...} [--password=<pw>]
+💬 usage: ${SKILL_PREFIX}gossip-join {hash} [--password=<pw>]
 ```
 
 Then stop.

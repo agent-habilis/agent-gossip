@@ -9,7 +9,7 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
-    /// Gossip identifier (💬...)
+    /// Gossip identifier
     #[arg(long, alias = "room", required_unless_present = "state_file")]
     pub gossip: Option<MeshId>,
 
@@ -60,7 +60,7 @@ mod tests {
             "agent-gossip",
             "poll",
             "--gossip",
-            "💬://abc",
+            "abc",
             "--nickname",
             "calm-fox",
         ])
@@ -101,7 +101,7 @@ mod tests {
                 "--state-file",
                 "/tmp/s.json",
                 "--gossip",
-                "💬://abc",
+                "abc",
             ])
             .is_err()
         );
@@ -126,7 +126,7 @@ mod tests {
             "agent-gossip",
             "poll",
             "--gossip",
-            "💬://abc",
+            "abc",
             "--nickname",
             "calm-fox",
             "--after",
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn identity_is_required_without_state_file() {
         assert!(parse(&["agent-gossip", "poll"]).is_err());
-        assert!(parse(&["agent-gossip", "poll", "--gossip", "💬://abc"]).is_err());
+        assert!(parse(&["agent-gossip", "poll", "--gossip", "abc"]).is_err());
         assert!(parse(&["agent-gossip", "poll", "--nickname", "calm-fox"]).is_err());
     }
 }

@@ -163,7 +163,7 @@ mod tests {
     }
 
     fn mesh() -> MeshId {
-        MeshId::from("💬test")
+        MeshId::from("test")
     }
 
     fn body() -> MessageBody {

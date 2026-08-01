@@ -2,4 +2,4 @@
 source: crates/agent-habilis-mesh/src/protocol/message/mod.rs
 expression: wire
 ---
-{"v":"12.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"app_req","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"💬://3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"body":"{\"op\":\"list\",\"args\":{}}","ext":{}}
+{"v":"12.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"app_req","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"body":"{\"op\":\"list\",\"args\":{}}","ext":{}}

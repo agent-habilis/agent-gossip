@@ -239,8 +239,8 @@ mod tests {
     #[test]
     fn split_owned_partitions_by_pid() {
         let live = vec![
-            target("💬aaaa", "one-two", 10),
-            target("💬bbbb", "three-four", 20),
+            target("aaaa", "one-two", 10),
+            target("bbbb", "three-four", 20),
         ];
         let (owned, other_sessions) = split_owned(live, |pid| pid == 10);
         assert_eq!(owned.len(), 1);
@@ -251,13 +251,13 @@ mod tests {
     #[test]
     fn select_explicit_matches_full_id_and_prefix() {
         let live = vec![
-            target("💬aaaabbbbccccdddd1111", "one-two", 10),
-            target("💬zzzzyyyyxxxxwwww2222", "three-four", 20),
+            target("aaaabbbbccccdddd1111", "one-two", 10),
+            target("zzzzyyyyxxxxwwww2222", "three-four", 20),
         ];
-        let full = select_explicit(live.clone(), "💬aaaabbbbccccdddd1111", None);
+        let full = select_explicit(live.clone(), "aaaabbbbccccdddd1111", None);
         assert_eq!(full.len(), 1);
         assert_eq!(full[0].pid, 10);
-        let prefix = select_explicit(live, "💬aaaabbbbccccddd", None);
+        let prefix = select_explicit(live, "aaaabbbbccccddd", None);
         assert_eq!(prefix.len(), 1);
         assert_eq!(prefix[0].pid, 10);
     }
@@ -265,17 +265,17 @@ mod tests {
     #[test]
     fn select_explicit_narrows_by_nickname() {
         let live = vec![
-            target("💬aaaa", "one-two", 10),
-            target("💬aaaa", "three-four", 20),
+            target("aaaa", "one-two", 10),
+            target("aaaa", "three-four", 20),
         ];
-        let matched = select_explicit(live, "💬aaaa", Some("three-four"));
+        let matched = select_explicit(live, "aaaa", Some("three-four"));
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].pid, 20);
     }
 
     #[test]
     fn select_explicit_no_match_is_empty() {
-        let live = vec![target("💬aaaa", "one-two", 10)];
-        assert!(select_explicit(live, "💬none", None).is_empty());
+        let live = vec![target("aaaa", "one-two", 10)];
+        assert!(select_explicit(live, "none", None).is_empty());
     }
 }

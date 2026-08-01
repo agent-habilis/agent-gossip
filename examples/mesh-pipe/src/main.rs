@@ -82,8 +82,8 @@ struct MeshArgs {
     reason = "four independent CLI discovery flags (--public/--mdns/--dht/--relay) mirroring the agent-gossip CLI; they are flat clap flags, not a state machine to model as an enum"
 )]
 struct ListenArgs {
-    /// Join an existing mesh by its 💬… id.
-    #[arg(long, value_name = "💬…")]
+    /// Join an existing mesh by its id.
+    #[arg(long, value_name = "HASH")]
     mesh: Option<String>,
     /// Derive a public mesh from a shared string (both sides pass the same).
     #[arg(long, value_name = "STRING")]
@@ -129,8 +129,8 @@ const PEER_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Args)]
 struct ConnectArgs {
-    /// The mesh 💬… id to join (omit when using `--topic`).
-    #[arg(value_name = "💬…")]
+    /// The mesh id to join (omit when using `--topic`).
+    #[arg(value_name = "HASH")]
     id: Option<String>,
     /// Derive the same public mesh from a shared string as the sender.
     #[arg(long, value_name = "STRING")]
@@ -282,7 +282,7 @@ impl NodeDriver for PipeApp {
 
 /// How the two subcommands select a mesh, resolved into a [`SetupKind`].
 enum Select {
-    /// Join a 💬… id.
+    /// Join a mesh id.
     Mesh(String),
     /// Derive a public mesh from a shared string.
     Topic(String),
@@ -521,10 +521,10 @@ async fn run_listen(args: ListenArgs) -> Result<()> {
 
 async fn run_connect(args: ConnectArgs) -> Result<()> {
     let select = match (args.id, args.topic) {
-        (Some(_), Some(_)) => anyhow::bail!("pass either a 💬… id or --topic, not both"),
+        (Some(_), Some(_)) => anyhow::bail!("pass either a mesh id or --topic, not both"),
         (Some(id), None) => Select::Mesh(id),
         (None, Some(string)) => Select::Topic(string),
-        (None, None) => anyhow::bail!("connect needs a 💬… id or --topic <string>"),
+        (None, None) => anyhow::bail!("connect needs a mesh id or --topic <string>"),
     };
     let nickname = args
         .nick

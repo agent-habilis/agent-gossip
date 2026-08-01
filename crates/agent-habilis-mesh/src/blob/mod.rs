@@ -1,12 +1,12 @@
 //! The blob channel — direct point-to-point transfer of payloads too large for a
 //! gossip frame, off the gossip plane entirely. The producer serves the content,
-//! content-addressed by SHA-256, over a dedicated QUIC endpoint and mints a `💬`
+//! content-addressed by SHA-256, over a dedicated QUIC endpoint and mints a bare
 //! [`ticket::BlobTicket`] referencing it. The consumer dials the producer,
 //! presents the ticket's bearer secret, and streams the bytes — verified against
 //! the advertised hash.
 //!
 //! Layering: a *transport* parallel to the gossip binding — its own ALPN, its own
-//! bearer-secret handshake, its own emoji-namespaced ticket. The bytes never touch
+//! bearer-secret handshake, its own bare-base58 ticket. The bytes never touch
 //! gossip; only the small reference does, and getting that reference to the
 //! consumer is the application's job (it is a short string, so a single
 //! [`crate::gossip::send_app`] frame carries it).

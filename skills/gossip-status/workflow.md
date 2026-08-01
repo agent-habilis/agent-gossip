@@ -23,19 +23,20 @@ Identify the gossip on one line, then the roster. The label depends on `$TOPIC`:
 
 `$LABEL` means whichever of the two applies.
 
-`$GOSSIP` always closes the line. It carries its own `💬` prefix, so it needs no
-`join id:` label and no line of its own.
+`$GOSSIP` always closes the line, labelled `join`, so it needs no line of its
+own. The hash is bare base58 with no prefix, so the label is what tells a
+reader what the trailing token is.
 
 If there are no peers, print:
 
 ```text
-💬 `$LABEL` · no peers yet · `$GOSSIP`
+💬 `$LABEL` · no peers yet · join `$GOSSIP`
 ```
 
 Otherwise print a markdown table:
 
 ```text
-💬 `$LABEL` · $PEER_COUNT peers · `$GOSSIP`
+💬 `$LABEL` · $PEER_COUNT peers · join `$GOSSIP`
 
 | peer | transport | model | harness | host | status | last seen |
 | ---- | --------- | ----- | ------- | ---- | ------ | --------- |

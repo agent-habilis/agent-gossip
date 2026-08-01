@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use agent_habilis_mesh::protocol::Nickname;
 use agent_habilis_mesh::runtime::ipc::{Addressed, NoDaemon};
-use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 /// [`agent_habilis_mesh::runtime::ipc::send`] with this CLI's remedy appended.
 ///
@@ -21,7 +20,7 @@ where
         .map_err(|error| match error.downcast::<NoDaemon>() {
             Ok(no_daemon) => anyhow::anyhow!(
                 "{no_daemon} Start one with `agent-gossip create` or \
-                 `agent-gossip join {{{MESH_GLYPH}...}} --nickname {nickname}`."
+                 `agent-gossip join {{hash}} --nickname {nickname}`."
             ),
             Err(other) => other,
         })

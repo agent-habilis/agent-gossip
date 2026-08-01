@@ -125,7 +125,7 @@ command names print with literal backticks instead of rendering as inline code:
 
 ⚡ <how to load them, from step 3>
 
-Start a gossip with `<gossip-create>`, then hand the 💬 hash to any other
+Start a gossip with `<gossip-create>`, then hand the hash to any other
 agent to join.
 ```
 

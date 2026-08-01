@@ -18,7 +18,7 @@
 //! use agent_gossip::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let session = MeshSession::join(JoinConfig::new("💬...".parse()?)).await?;
+//! let session = MeshSession::join(JoinConfig::new("<hash>".parse()?)).await?;
 //! let mut rx = session.messages();
 //! session.broadcast(MessageBody::new("hello")?).await?;
 //! while let Ok(msg) = rx.recv().await {
@@ -76,7 +76,7 @@ pub use events::{OutputEvent, PingPeer, TaskGoneReason};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
 pub use agent_habilis_mesh::util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, MESH_GLYPH,
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL,
 };
 pub use agent_habilis_mesh::util::mesh_prefix;
 pub use output::{event_json, surfaced_event_json};

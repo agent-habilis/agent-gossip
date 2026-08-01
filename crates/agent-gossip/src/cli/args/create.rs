@@ -44,7 +44,7 @@ pub(crate) struct CreateOpts {
     pub nickname: Option<Nickname>,
 
     /// List this gossip in a directory so others can find it with
-    /// `agent-gossip discover` — no `💬…` id to share. Optional-value, like
+    /// `agent-gossip discover` — no id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
@@ -63,8 +63,8 @@ pub(crate) struct CreateOpts {
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
 
-    /// Make the gossip invite-only: the bare `💬…` id can no longer join —
-    /// only a creator-minted `🎟️` invite can. The id carries the issuer public
+    /// Make the gossip invite-only: the bare id can no longer join —
+    /// only a creator-minted invite can. The id carries the issuer public
     /// key (the mint authority), never the join secret; mint invites with
     /// `agent-gossip invite`. Combine with `--password` to also password-protect
     /// every minted invite.

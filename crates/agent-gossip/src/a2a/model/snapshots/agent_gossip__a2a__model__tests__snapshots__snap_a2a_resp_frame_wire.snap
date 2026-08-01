@@ -2,4 +2,4 @@
 source: crates/agent-gossip/src/a2a/model/mod.rs
 expression: "String::from_utf8(msg.serialize().unwrap()).unwrap()"
 ---
-{"v":"12.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"a2a_resp","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"💬://3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"body":"{\"result\":{\"tasks\":[]}}","ext":{}}
+{"v":"12.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"a2a_resp","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM","author":"alice-bot","ts":1700000000,"body":"{\"result\":{\"tasks\":[]}}","ext":{}}

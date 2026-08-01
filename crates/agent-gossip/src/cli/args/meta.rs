@@ -25,7 +25,7 @@ pub(crate) enum MetaAction {
     /// — merge means your entry never clobbers another peer's. The `meta` and
     /// `state` channels are fully independent.
     Merge {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
 
@@ -40,7 +40,7 @@ pub(crate) enum MetaAction {
 
     /// Read the current derived `meta`-channel document.
     Get {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
 

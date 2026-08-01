@@ -44,7 +44,7 @@ fn install_tuning(opts: &args::tuning::TuningOpts) {
     crate::a2a::tuning::init(opts.a2a_tuning());
 }
 
-/// `join` has no `--public`/`--name`: both are encoded in the `💬…`
+/// `join` has no `--public`/`--name`: both are encoded in the id
 /// identifier and auto-detected. Without this, clap rejects them with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
@@ -261,7 +261,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
     Box::pin(run_session(resolved, opts.shared)).await
 }
 
-/// Join an existing mesh by its identifier (💬...), a domain, or a
+/// Join an existing mesh by its identifier, a domain, or a
 /// supported git repo URL. The mesh's config (lookups) is decoded from
 /// the id — `join` takes no lookup flags.
 async fn join(
@@ -273,7 +273,7 @@ async fn join(
     let mut password = password::resolve_password(password_flag)?;
     // A protected id/invite with the flag absent is a hard error naming the
     // requirement (there is no interactive prompt). Both join-target variants
-    // can be password-protected (a `💬` id or a `🎟️` invite), so classify
+    // can be password-protected (a mesh id or an invite), so classify
     // either before erroring.
     if password.is_none() {
         let requires = match &target {
@@ -700,7 +700,7 @@ fn parse_ttl(raw: Option<&str>) -> Result<u64> {
     Ok(value.saturating_mul(multiplier))
 }
 
-/// Mint a 🎟️ invite via the creating session's daemon (only it holds the issuer
+/// Mint an invite via the creating session's daemon (only it holds the issuer
 /// key). Human mode prints just the copyable token; `--output json` prints the
 /// raw `{ok,invite}` line. Exits non-zero on refusal (e.g. not the creator).
 async fn invite(opts: InviteOpts) -> Result<()> {

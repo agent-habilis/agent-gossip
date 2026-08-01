@@ -167,9 +167,10 @@ fn a_handle_serves_identity_state_and_roster() {
     assert!(!id.is_null() && !mine.is_null());
     // SAFETY: both are non-NULL NUL-terminated strings owned by the handle.
     let (id, mine) = unsafe { (CStr::from_ptr(id), CStr::from_ptr(mine)) };
+    let id_str = id.to_str().expect("the id is UTF-8");
     assert!(
-        id.to_str().expect("the id is UTF-8").contains("://"),
-        "expected a 💬://… id, got {id:?}"
+        !id_str.contains("://") && id_str.is_ascii(),
+        "expected a bare base58 id, got {id_str:?}"
     );
     assert_eq!(
         mine.to_bytes(),

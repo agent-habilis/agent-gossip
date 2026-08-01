@@ -2,25 +2,19 @@ use iroh::{Endpoint, EndpointAddr, EndpointId};
 
 use agent_habilis_mesh::protocol::Nickname;
 
-use agent_habilis_mesh::util::consts::MESH_URI_SEPARATOR;
-
-/// URI sigil for a peer identity in an A2A card. An application-layer display
-/// prefix, not a wire format the engine parses.
-pub(crate) const PEER_GLYPH: &str = "🤖";
-
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
     EXT_MESH_BLOB, EXT_MESH_BROADCAST, EXT_MESH_SEAL, EXT_MESH_STATE, GOSSIP_BINDING,
     PROTOCOL_VERSION,
 };
 
-/// The `🤖://<pubkey>` peer-address scheme that carries a member's Ed25519
-/// identity in its `AgentInterface`. A2A v1.0 requires every card to declare
-/// ≥1 reachable interface with a `url`; a mesh peer has no HTTP endpoint, so
-/// its gossip interface is addressed by public key.
+/// The bare-`<pubkey>` peer address that carries a member's Ed25519 identity in
+/// its `AgentInterface`. A2A v1.0 requires every card to declare ≥1 reachable
+/// interface with a `url`; a mesh peer has no HTTP endpoint, so its gossip
+/// interface is addressed by public key alone.
 #[must_use]
 pub(crate) fn peer_url(pubkey_hex: &str) -> String {
-    format!("{PEER_GLYPH}{MESH_URI_SEPARATOR}{pubkey_hex}")
+    pubkey_hex.to_owned()
 }
 
 /// This peer's `AgentCard` — the canonical A2A self-description every
@@ -31,7 +25,7 @@ pub(crate) fn peer_url(pubkey_hex: &str) -> String {
 /// extra `JSONRPC` interface).
 ///
 /// The identity is the Ed25519 **public key**, carried in the gossip
-/// `AgentInterface.url` (`🤖://<pubkey>`), not the display nickname;
+/// `AgentInterface.url` (the bare `<pubkey>`), not the display nickname;
 /// `capabilities.extensions` declares the mesh's protocol extensions so a
 /// strict A2A client can gate on them. Agent-side facts the daemon cannot know
 /// (model, harness, host, extra skills) are merged by the agent as sibling keys
@@ -78,7 +72,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
                 ),
                 extension(
                     EXT_MESH_BLOB,
-                    "large files on a Part travel as a url reference (a 💬 ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
+                    "large files on a Part travel as a url reference (a ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
                 ),
                 AgentExtension {
                     uri: EXT_MESH_SEAL.to_string(),
@@ -234,10 +228,7 @@ mod tests {
         // The mesh card's only interface is the gossip binding, whose url
         // carries the cryptographic identity (no HTTP url).
         assert_eq!(card.supported_interfaces.len(), 1);
-        assert_eq!(
-            card.supported_interfaces[0].url,
-            format!("🤖://{}", "ab".repeat(32)),
-        );
+        assert_eq!(card.supported_interfaces[0].url, "ab".repeat(32));
     }
 
     #[test]

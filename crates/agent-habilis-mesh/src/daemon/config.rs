@@ -101,7 +101,7 @@ pub struct EventLoopConfig {
     /// In-process / ephemeral for now (see [`crate::protocol::identity`]).
     pub(crate) identity: std::sync::Arc<crate::protocol::identity::Identity>,
     pub(crate) mesh: MeshId,
-    /// Decoded mesh name (from the `💬…` id). Carried so the
+    /// Decoded mesh name (from the mesh id). Carried so the
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub(crate) name: MeshName,

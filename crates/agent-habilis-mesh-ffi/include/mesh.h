@@ -37,7 +37,7 @@ typedef struct mesh_pipe mesh_pipe;
 /*
  * How to reach a mesh. Zero-initialize, then set at most one selector:
  *
- *   - `mesh`  — join this 💬… id.
+ *   - `mesh`  — join this mesh id.
  *   - `topic` — derive a public mesh from a shared string (all peers passing the
  *               same string land in the same mesh).
  *   - neither — create a fresh mesh; the discovery flags below say how far it

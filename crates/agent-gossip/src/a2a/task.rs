@@ -730,7 +730,7 @@ mod tests {
         let mut tasks = HashMap::new();
         let now = Instant::now();
         let task_id = tid();
-        let mesh = MeshId::from("💬test");
+        let mesh = MeshId::from("test");
 
         // Worker receives the offer (⇒ Receiver) and commits to `working`.
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
@@ -825,7 +825,7 @@ mod tests {
     fn own_status_echo_completes_the_workers_own_record() {
         use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
-        let mesh = MeshId::from("💬test");
+        let mesh = MeshId::from("test");
         let task_id = tid();
         let now = Instant::now();
 

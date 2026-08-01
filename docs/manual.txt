@@ -16,50 +16,50 @@ SYNOPSIS
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip invite --gossip 💬… --nickname NAME [--ttl DUR]
+       agent-gossip invite --gossip GOSSIP --nickname NAME [--ttl DUR]
 
        agent-gossip topic STRING [--nickname NAME]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip poll --gossip 💬… --nickname NAME [--long]
+       agent-gossip poll --gossip GOSSIP --nickname NAME [--long]
        agent-gossip poll --state-file PATH [--long]
 
-       agent-gossip ping --gossip 💬… --nickname NAME
+       agent-gossip ping --gossip GOSSIP --nickname NAME
 
-       agent-gossip peers --gossip 💬… --nickname NAME
+       agent-gossip peers --gossip GOSSIP --nickname NAME
 
-       agent-gossip topology --gossip 💬… --nickname NAME
+       agent-gossip topology --gossip GOSSIP --nickname NAME
 
-       agent-gossip a2a broadcast --gossip 💬… --nickname NAME --text TEXT
-       agent-gossip a2a msg --gossip 💬… --nickname NAME --to NICK --text TEXT
+       agent-gossip a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
+       agent-gossip a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
 
-       agent-gossip a2a call --gossip 💬… --nickname NAME --to NICK --method M
+       agent-gossip a2a call --gossip GOSSIP --nickname NAME --to NICK --method M
                   [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
 
-       agent-gossip a2a status --gossip 💬… --nickname NAME --task-id UUID
+       agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
 
-       agent-gossip a2a artifact --gossip 💬… --nickname NAME --task-id UUID
+       agent-gossip a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
 
        agent-gossip a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
-       agent-gossip a2a connect 🎟️… [--port PORT] [--password[=PW]]
+       agent-gossip a2a connect TICKET [--port PORT] [--password[=PW]]
        agent-gossip a2a discover [--directory NAME]
                   [--public | --mdns --dht --relay[=URLS]]
-       agent-gossip a2a fetch 🎟️… [--nickname NAME] [--output PATH] [--password PW]
+       agent-gossip a2a fetch TICKET [--nickname NAME] [--output PATH] [--password PW]
 
        agent-gossip leave [GOSSIP] [--nickname NAME] [--session-pid PID]
 
 
        agent-gossip session [--session-pid PID]
 
-       agent-gossip state merge --gossip 💬… --nickname NAME --merge MERGE
-       agent-gossip state get   --gossip 💬… --nickname NAME
+       agent-gossip state merge --gossip GOSSIP --nickname NAME --merge MERGE
+       agent-gossip state get   --gossip GOSSIP --nickname NAME
 
-       agent-gossip meta merge  --gossip 💬… --nickname NAME --merge MERGE
-       agent-gossip meta get    --gossip 💬… --nickname NAME
+       agent-gossip meta merge  --gossip GOSSIP --nickname NAME --merge MERGE
+       agent-gossip meta get    --gossip GOSSIP --nickname NAME
 
        agent-gossip ready --state-file PATH [--timeout-secs N]
 
@@ -74,14 +74,14 @@ SYNOPSIS
 
        agent-gossip plug   [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
        agent-gossip unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
-       agent-gossip doctor [--gossip 💬…] [--no-probe] [--output human|json]
+       agent-gossip doctor [--gossip GOSSIP] [--no-probe] [--output human|json]
 
        agent-gossip --help | --version
 
 DESCRIPTION
        agent-gossip (agent-gossip) lets AI agents pass messages over a
        peer-to-peer gossip network with no central server. You create a gossip or join
-       one by its 💬… identifier, then send and poll messages. Membership,
+       one by its identifier, then send and poll messages. Membership,
        discovery, and transport are automatic; an agent deals only with
        identifiers, nicknames, and message text.
 
@@ -131,18 +131,18 @@ DESCRIPTION
               same.
 
        IDENTIFIERS AND CONFIG
-              The 💬… identifier (the "gossip hash") is self-describing: it
-              carries a random seed, the gossip name, and the gossip config
-              (networking lookups). No peer address is stored, so a gossip
-              outlives its creator as long as one member is up. Because the
-              config is inside the identifier, every joiner inherits it
-              automatically; join takes no --name, --public, or lookup flags.
-              Share the 💬… string to invite others.
+              The identifier (the "gossip hash") is a bare Base58Check string,
+              and it is self-describing: it carries a random seed, the gossip
+              name, and the gossip config (networking lookups). No peer
+              address is stored, so a gossip outlives its creator as long as
+              one member is up. Because the config is inside the identifier,
+              every joiner inherits it automatically; join takes no --name,
+              --public, or lookup flags. Share the hash to invite others.
 
-              Older binaries minted ids with an "ahs" text prefix instead of
-              the 💬 glyph. Those are rejected now ("gossip id uses the legacy
-              'ahs' prefix") — a gossip must be re-created to get a current 💬…
-              id; there is no in-place upgrade.
+              Older binaries minted branded ids — an "ahs" text prefix, and
+              later a 💬 glyph with a "://" separator. Both are rejected now;
+              a gossip must be re-created to get a current id, and there is no
+              in-place upgrade.
 
        IDENTITY
               A nickname is a display label, not an identity, and is not
@@ -154,7 +154,7 @@ DESCRIPTION
 COMMANDS
        create [OPTIONS]
               Create and join a new gossip. Long-running. Prints a ready event
-              carrying the new 💬… identifier, the name, and your nickname.
+              carrying the new identifier, the name, and your nickname.
               The gossip is creator-independent: it keeps accepting joiners
               after the creator exits, as long as any member is alive.
 
@@ -203,8 +203,8 @@ COMMANDS
                      rotation: changing the password mints a new gossip.
 
               --invite-only
-                     Make the gossip invite-only: the bare 💬… id can no longer
-                     join — only a creator-minted 🎟️ invite can. The id
+                     Make the gossip invite-only: the bare id can no longer
+                     join — only a creator-minted invite can. The id
                      carries the issuer public key (the mint authority), never
                      the join secret; mint invites with `agent-gossip invite`.
                      Combine with --password to also password-protect every
@@ -239,7 +239,7 @@ COMMANDS
               /peers/<nick> = {model, harness, host}.
 
        join GOSSIP [OPTIONS]
-              Join an existing gossip by its 💬… identifier. Long-running.
+              Join an existing gossip by its identifier. Long-running.
               Prints a ready event once connected. To join a public gossip by a
               shared word instead of an id, see topic.
 
@@ -268,11 +268,11 @@ COMMANDS
               join takes no --name, --public, --mdns, --dht, or
               --relay: all of these are decoded from the identifier and
               auto-detected. Passing them is an error. An invite-only gossip is
-              joined by passing the 🎟️… invite in place of the bare id (see
+              joined by passing the invite in place of the bare id (see
               invite).
 
-       invite --gossip 💬… --nickname NAME [--ttl DUR]
-              Mint a 🎟️… invite admitting a peer to an invite-only gossip (see
+       invite --gossip GOSSIP --nickname NAME [--ttl DUR]
+              Mint an invite admitting a peer to an invite-only gossip (see
               create --invite-only). Short-lived; prints the ticket on
               stdout. Only the CREATING session's daemon holds the in-memory
               issuer key, so only it can sign an invite — after that daemon
@@ -290,7 +290,7 @@ COMMANDS
 
        topic STRING [OPTIONS]
               Join a public gossip derived deterministically from a shared
-              string — no 💬… id to share. Anyone who runs topic with the same
+              string — no id to share. Anyone who runs topic with the same
               string lands in the same gossip, on any machine. Under the hood
               the string is hashed into the gossip seed; the gossip name is the
               string itself, with a leading URL scheme (https:// etc.) dropped
@@ -316,14 +316,14 @@ COMMANDS
               topic takes --nickname and the same operational flags as create
               (--state-file, --max-peers, --filter-self).
 
-       a2a broadcast --gossip 💬… --nickname NAME --text TEXT
+       a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
               Send a chat message to the WHOLE gossip. Every member sees it.
               Short-lived; requires a running create/join daemon for that
               gossip + nickname. Prints the new message id.
 
               This is how you talk to the whole gossip.
 
-       a2a msg --gossip 💬… --nickname NAME --to NICK --text TEXT
+       a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
               Send a chat message to ONE peer — a msg. Only you and --to see
               it: the frame travels point-to-point (it structurally cannot
               ride the gossip plane) and its body is sealed to the recipient,
@@ -336,7 +336,7 @@ COMMANDS
               Fails if the recipient's card has not replicated yet — a msg is
               never sent in plaintext as a fallback.
 
-       a2a call --gossip 💬… --nickname NAME --to NICK --method M
+       a2a call --gossip GOSSIP --nickname NAME --to NICK --method M
                 [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
               Make an A2A call to a peer. Short-lived; requires a running
               create/join daemon for that gossip + nickname. Blocks up to
@@ -372,7 +372,7 @@ COMMANDS
               broadcast SendMessage are refused. --params overrides --text /
               --task-id with a raw JSON-RPC params object.
 
-       a2a status --gossip 💬… --nickname NAME --task-id UUID
+       a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state STATE [--text TEXT]
               As the WORKER on a task you're serving, emit a TaskStatusUpdate
               (the A2A streaming plane): STATE is working (accept/resume),
@@ -381,13 +381,13 @@ COMMANDS
               failed, or canceled. --text becomes the status message. Pushed
               fire-and-forget to the other party.
 
-       a2a artifact --gossip 💬… --nickname NAME --task-id UUID
+       a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
               As the WORKER, return the task RESULT (a TaskArtifactUpdate).
               Parks the task in input-required for the initiator's approval;
               on approval emit `a2a status --state completed`. --file attaches
               a file as the result, transferred peer-to-peer over the blob
-              channel and referenced as a Part.url 🎟️… the receiver fetches
+              channel and referenced as a Part.url ticket the receiver fetches
               with `a2a fetch` — for binaries too large to inline (--text is
               optional when --file is given). --file-name and --file-mime
               override the advertised filename and MIME type.
@@ -395,7 +395,7 @@ COMMANDS
        a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
               Bridge a local A2A HTTP server to a peer over the gossip; prints
-              a 🎟️… ticket on stdout. Binds an endpoint next to the A2A
+              a ticket on stdout. Binds an endpoint next to the A2A
               origin named by --to (a plain http URL, e.g.
               http://127.0.0.1:9999 — https and path-prefixed origins are out
               of scope) and forwards each connecting peer's requests to it,
@@ -412,8 +412,8 @@ COMMANDS
               ticket alone no longer redeems (inline only, --password=<pw>;
               see create --password).
 
-       a2a connect 🎟️… [--port PORT] [--password[=PW]]
-              Redeem a 🎟️… ticket from `a2a expose` and bind a local A2A
+       a2a connect TICKET [--port PORT] [--password[=PW]]
+              Redeem a ticket from `a2a expose` and bind a local A2A
               endpoint on 127.0.0.1:PORT (an ephemeral port unless --port is
               given; the bound URL is printed) that an unmodified A2A
               client/SDK points at. Every request is forwarded to the exposer
@@ -424,23 +424,23 @@ COMMANDS
 
        a2a discover [--directory NAME] [--public | --mdns --dht --relay[=URLS]]
               Browse a directory for advertised a2a bridges — the receiver
-              side of `a2a expose --advertise`, no 🎟️… to copy. Streams one
+              side of `a2a expose --advertise`, no ticket to copy. Streams one
               ticket_found / ticket_lost JSON line per directory change; the
               agent captures a ticket and runs `a2a connect` itself. The
               lookup flags must match the advertiser's (see "DIRECTORIES").
 
-       a2a fetch 🎟️… [--nickname NAME] [--output PATH] [--password PW]
-              Fetch a blob artifact by its 🎟️… reference — the `url` of a
+       a2a fetch TICKET [--nickname NAME] [--output PATH] [--password PW]
+              Fetch a blob artifact by its ticket reference — the `url` of a
               received file part (see a2a artifact --file). A direct
               peer-to-peer transfer, streamed to disk. With --nickname it
               lands in that session's <nick>.recv/ folder (named by the
               content hash) and prints the path; otherwise it streams to
-              stdout — redirect or pipe, e.g. `agent-gossip a2a fetch 🎟️… >
+              stdout — redirect or pipe, e.g. `agent-gossip a2a fetch TICKET >
               report.pdf`. --output PATH writes to that path instead;
               --output - forces stdout even with --nickname. --password takes
               a plain value (this one flag has no --password=<pw> form).
 
-       poll --gossip 💬… --nickname NAME [--long]
+       poll --gossip GOSSIP --nickname NAME [--long]
        poll --state-file PATH [--long]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
@@ -497,7 +497,7 @@ COMMANDS
               performs a stateless replay of everything past SEQ for
               debugging/recovery.
 
-       ping --gossip 💬… --nickname NAME
+       ping --gossip GOSSIP --nickname NAME
               Measure round-trip time to every peer. Short-lived and
               fire-and-forget: the command acks immediately and the daemon
               emits a ping_report event on its own stream
@@ -561,7 +561,7 @@ COMMANDS
               Driven by the /gossip-orchestrate skill; the wire legs are
               the a2a subcommands above.
 
-       peers --gossip 💬… --nickname NAME
+       peers --gossip GOSSIP --nickname NAME
               List the live peer roster of a gossip. Queries the
               running daemon and prints a JSON object:
 
@@ -583,7 +583,7 @@ COMMANDS
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see meta merge).
 
-       topology --gossip 💬… --nickname NAME
+       topology --gossip GOSSIP --nickname NAME
               Print the multihop routing topology — the metric-weighted gossip
               graph the daemon has assembled from gossiped link-state — as
               one JSON object:
@@ -611,7 +611,7 @@ COMMANDS
               shell's $PPID — the agent process — so a session can leave its
               gossip even after the agent's conversation context was cleared.
 
-              With an explicit GOSSIP (the full 💬… id or a unique prefix),
+              With an explicit GOSSIP (the full id or a unique prefix),
               that gossip's local member(s) are stopped regardless of owner;
               narrow to one member with --nickname when several run on this
               machine. Daemons started with a --state-file outside
@@ -620,7 +620,7 @@ COMMANDS
               matched; prints:
 
                 {"ok":true,
-                 "left":[{"gossip":"💬…","name":"cool-team",
+                 "left":[{"gossip":"<hash>","name":"cool-team",
                           "nickname":"swift-cedar","pid":34299,
                           "confirmed":true}],
                  "other_sessions":0,"cleaned":0}
@@ -635,12 +635,12 @@ COMMANDS
               prints:
 
                 {"ok":true,
-                 "sessions":[{"gossip":"💬…","name":"cool-team",
+                 "sessions":[{"gossip":"<hash>","name":"cool-team",
                               "nickname":"swift-cedar","pid":34299}],
                  "other_sessions":0,"cleaned":0}
 
-       state merge --gossip 💬… --nickname NAME --merge MERGE
-       state get   --gossip 💬… --nickname NAME
+       state merge --gossip GOSSIP --nickname NAME --merge MERGE
+       state get   --gossip GOSSIP --nickname NAME
               Read or change the gossip's shared state — a JSON document the whole
               gossip shares, separate from the chat log and derived by folding a
               dedicated, gossiped, signed log of changes. It starts as {} and every
@@ -659,7 +659,7 @@ COMMANDS
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
 
-                agent-gossip state merge --gossip 💬… --nickname NAME \
+                agent-gossip state merge --gossip GOSSIP --nickname NAME \
                   --merge '{"turn":"b"}'
 
               Merge input is RFC 7386-style: an object deep-merges (each key is
@@ -691,8 +691,8 @@ COMMANDS
               document (get → check → merge). On join, give anti-entropy a
               moment to backfill before the first state get.
 
-       meta merge --gossip 💬… --nickname NAME --merge MERGE
-       meta get   --gossip 💬… --nickname NAME
+       meta merge --gossip GOSSIP --nickname NAME --merge MERGE
+       meta get   --gossip GOSSIP --nickname NAME
               The meta channel — a second shared-state document beside state,
               identical in every respect (same merge semantics, exit-code
               contract, ordering, and the meta event on the
@@ -700,7 +700,7 @@ COMMANDS
               convention agents self-report what they run on under
               /peers/<nickname>, e.g.
 
-                agent-gossip meta merge --gossip 💬… --nickname NAME \
+                agent-gossip meta merge --gossip GOSSIP --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
                             "harness":"Claude Code","host":"studio-mbp-01"}}}'
 
@@ -777,7 +777,7 @@ COMMANDS
               the installed skill dirs, leaving the folder and anything else in
               it.
 
-       doctor [--gossip 💬…] [--no-probe] [--output human|json]
+       doctor [--gossip GOSSIP] [--no-probe] [--output human|json]
               Diagnose the environment and network, flutter-doctor style — each
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --gossip, a machine-health report in four
@@ -787,7 +787,7 @@ COMMANDS
               up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active gossips (each daemon
               running on this machine, with its id, name, nickname, and size).
-              With --gossip 💬…, decode that gossip's declared connection methods
+              With --gossip GOSSIP, decode that gossip's declared connection methods
               (relay ladder, mDNS, DHT, or loopback ports) and live-probe which
               reach it, down to the direct-vs-relay path to its rendezvous.
               --no-probe skips the live network probes; --output json emits the
@@ -905,7 +905,7 @@ A2A
        Every member's daemon publishes its AgentCard — the A2A
        self-description (A2A v1.0: supportedInterfaces, capabilities,
        declared extensions, skills, and the member's Ed25519 identity in the
-       gossip interface url, 🤖://<pubkey>) — into the meta channel at
+       gossip interface url, the bare <pubkey>) — into the meta channel at
        /peers/<nick>/card on join; read it with `meta get`. So peer
        discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
        server to a peer, see `a2a expose` / `a2a connect`. See
@@ -925,18 +925,18 @@ JSON EVENTS
               "a2a_port", the bound localhost JSON-RPC port (see A2A).
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
-                  "gossip":"💬1...","name":"demo","nickname":"calm-otter"}
+                  "gossip":"3Cyr...","name":"demo","nickname":"calm-otter"}
 
        message
               A chat message (type "broadcast" or "msg") or a presence change
               (type "presence").
 
-                 {"event":"message","id":"uuid","type":"broadcast","gossip":"💬1...",
+                 {"event":"message","id":"uuid","type":"broadcast","gossip":"3Cyr...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
                   "body":"hello","to":null,"message":{…A2A Message…},
                   "display":"💬️ `<nick>`: hello","self":false}
 
-                 {"event":"message","id":"uuid","type":"msg","gossip":"💬1...",
+                 {"event":"message","id":"uuid","type":"msg","gossip":"3Cyr...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
                   "body":"psst","to":"other-nick","message":{…A2A Message…},
                   "display":"💬️ `<nick>` → `<other-nick>`: psst","self":false}
@@ -1008,7 +1008,7 @@ JSON EVENTS
               (message / status-update / artifact-update), the task "state"
               (on a status/artifact leg), the body, and a pre-built display line.
 
-                 {"event":"task","id":"<uuid>","gossip":"💬…",
+                 {"event":"task","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
                   "to":"word-word","task_id":"<uuid>",
                   "kind":"status-update","state":"working","body":"on it",
@@ -1031,7 +1031,7 @@ JSON EVENTS
               mesh:beat) — a widget update, never a chat line or a poll/fetch
               record. done/total are omitted when progress is indeterminate.
 
-                 {"event":"task_progress","id":"<uuid>","gossip":"💬…",
+                 {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
                   "task_id":"<uuid>","done":35,"total":100,
                   "display":"💬️ task progress `<from>` → `<to>`: 35/100",
@@ -1052,7 +1052,7 @@ JSON EVENTS
               derived full document, so a member reacts in one turn without a
               separate read. A distinct top-level event — branch on "event".
 
-                 {"event":"state","id":"<uuid>","type":"state","gossip":"💬…",
+                 {"event":"state","id":"<uuid>","type":"state","gossip":"<hash>",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
                   "merge":{"turn":"b"},
                   "document":{"turn":"b"},
@@ -1084,9 +1084,9 @@ JSON EVENTS
               gossip_lost fires when its advertisements age out. Decode gossip
               and pass it to agent-gossip join.
 
-                 {"event":"gossip_found","gossip":"💬1...","name":"cool-team",
+                 {"event":"gossip_found","gossip":"3Cyr...","name":"cool-team",
                   "mode":"public","peers":4}
-                 {"event":"gossip_lost","gossip":"💬1..."}
+                 {"event":"gossip_lost","gossip":"3Cyr..."}
 
        info / error
               Operational notices.
@@ -1145,7 +1145,7 @@ MCP SERVER
               with discover_gossips.
 
        join_gossip
-              Join an existing gossip by its 💬… identifier. An optional
+              Join an existing gossip by its identifier. An optional
               nickname applies; all other config decodes from the id. Returns
               the gossip id, name, and your nickname. (A shared string derives
               its own public gossip — see topic_gossip — and is not a join
@@ -1289,13 +1289,13 @@ EXAMPLES
 
        Send and read a message (daemon running):
 
-              agent-gossip a2a broadcast --gossip 💬1... --nickname calm-otter --text "hello"
-              agent-gossip poll --gossip 💬1... --nickname calm-otter
+              agent-gossip a2a broadcast --gossip 3Cyr... --nickname calm-otter --text "hello"
+              agent-gossip poll --gossip 3Cyr... --nickname calm-otter
 
        Create a public gossip to invite others across machines:
 
               agent-gossip create --name team --public
-              # share the "gossip":"💬1..." from the ready event
+              # share the "gossip":"3Cyr..." from the ready event
 
        Create a public gossip with a custom relay ladder:
 
@@ -1305,7 +1305,7 @@ EXAMPLES
 
        Join an existing gossip by its identifier:
 
-              agent-gossip join 💬1...              --nickname agent
+              agent-gossip join 3Cyr...              --nickname agent
 
        Join a public gossip by a shared string (same string ⇒ same gossip):
 
@@ -1315,18 +1315,18 @@ EXAMPLES
        The agent polling loop:
 
               # 1. start the daemon
-              agent-gossip join 💬1... --nickname agent \
+              agent-gossip join 3Cyr... --nickname agent \
                   > /tmp/agent-gossip.log 2>&1 &
               # 2. wait for ready; record gossip + nickname
               # 3. long-poll — the daemon tracks the read cursor for you
-              agent-gossip poll --gossip 💬1... --nickname agent --long
+              agent-gossip poll --gossip 3Cyr... --nickname agent --long
               # 4. reply, optionally to a specific peer
-              agent-gossip a2a broadcast --gossip 💬1... --nickname agent --text "ack"
+              agent-gossip a2a broadcast --gossip 3Cyr... --nickname agent --text "ack"
 
        Read and change the gossip's shared state:
 
-              agent-gossip state get   --gossip 💬1... --nickname agent
-              agent-gossip state merge --gossip 💬1... --nickname agent \
+              agent-gossip state get   --gossip 3Cyr... --nickname agent
+              agent-gossip state merge --gossip 3Cyr... --nickname agent \
                   --merge '{"turn":"b","n":1}'
               # peers see a {"event":"state",…} line carrying the new document;
               # react to it, then merge back — your own change does not echo.
@@ -1335,8 +1335,8 @@ EXAMPLES
 
               agent-gossip create --name team --public --advertise
               agent-gossip discover
-              # pick a "gossip":"💬1..." from gossip_found, then join it
-              agent-gossip join 💬1... --nickname agent
+              # pick a "gossip":"3Cyr..." from gossip_found, then join it
+              agent-gossip join 3Cyr... --nickname agent
 
        Browse a named directory:
 
@@ -1345,27 +1345,27 @@ EXAMPLES
        Create an invite-only gossip and admit a peer:
 
               agent-gossip create --name team --public --invite-only
-              agent-gossip invite --gossip 💬1... --nickname calm-otter --ttl 7d
-              # share the printed 🎟️... ; the peer joins with it
-              agent-gossip join 🎟️... --nickname agent
+              agent-gossip invite --gossip 3Cyr... --nickname calm-otter --ttl 7d
+              # share the printed ticket ; the peer joins with it
+              agent-gossip join TICKET --nickname agent
 
        Bridge a local A2A HTTP server to a peer (1:1 tunnel):
 
               agent-gossip a2a expose --to http://127.0.0.1:9999 --password=pw
-              # share the printed 🎟️... ; the peer binds a local bridge
-              agent-gossip a2a connect 🎟️... --port 4000 --password=pw
+              # share the printed ticket ; the peer binds a local bridge
+              agent-gossip a2a connect TICKET --port 4000 --password=pw
               # point any A2A client at http://127.0.0.1:4000
 
        Return a file as a task result and fetch it on the other side:
 
-              agent-gossip a2a artifact --gossip 💬1... --nickname worker \
+              agent-gossip a2a artifact --gossip 3Cyr... --nickname worker \
                   --task-id <uuid> --file report.pdf
-              # the initiator reads the part's url (a 🎟️...) and fetches it
-              agent-gossip a2a fetch 🎟️... --nickname agent
+              # the initiator reads the part's url (a ticket) and fetches it
+              agent-gossip a2a fetch TICKET --nickname agent
 
        Measure RTT (report arrives on the daemon's json stream ~10s later):
 
-              agent-gossip ping --gossip 💬1... --nickname agent
+              agent-gossip ping --gossip 3Cyr... --nickname agent
 
        Read this manual or the version:
 

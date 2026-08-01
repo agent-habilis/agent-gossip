@@ -8,7 +8,7 @@
  * to the other:
  *
  *     ./mesh-pipe-c listen < file          # prints the mesh id on stderr
- *     cargo run -p mesh-pipe -- connect '💬…' > copy
+ *     cargo run -p mesh-pipe -- connect <hash> > copy
  *
  * Everything mesh-related happens through <mesh.h>; this file holds no protocol
  * knowledge beyond "bytes in, bytes out".
@@ -62,12 +62,12 @@ static void usage(void) {
           "mesh-pipe-c — a Unix pipe over the gossip mesh (C consumer of "
           "agent-habilis-mesh %s)\n\n"
           "Usage:\n"
-          "  mesh-pipe-c listen  [--mesh 💬…] [--topic STRING] [--public] "
+          "  mesh-pipe-c listen  [--mesh HASH] [--topic STRING] [--public] "
           "[--mdns] [--dht] [--relay]\n"
           "                      [--to NICK] [--chunk N] [--nick NAME] "
           "[--max-peers N]\n"
           "                      [--wait-for-peer SECS]\n"
-          "  mesh-pipe-c connect [💬…] [--topic STRING] [--nick NAME] "
+          "  mesh-pipe-c connect [HASH] [--topic STRING] [--nick NAME] "
           "[--max-peers N]\n"
           "                      [--idle-timeout SECS]\n\n"
           "listen reads stdin and streams it over the mesh; with no selector it\n"
@@ -96,7 +96,7 @@ static long now_ms(void) {
 
 /*
  * Parse `argv[from..argc)`. A bare argument is taken as the mesh id (so
- * `connect 💬…` works positionally, like the Rust binary). Returns 0 on success.
+ * `connect <hash>` works positionally, like the Rust binary). Returns 0 on success.
  */
 static int parse_args(int argc, char **argv, int from, struct args *out) {
   for (int index = from; index < argc; index++) {
@@ -255,7 +255,7 @@ static int run_listen(struct args *args) {
 
 static int run_connect(struct args *args) {
   if (is_create(args)) {
-    fprintf(stderr, "mesh-pipe-c: connect needs a 💬… id or --topic STRING\n");
+    fprintf(stderr, "mesh-pipe-c: connect needs a mesh id or --topic STRING\n");
     return 1;
   }
 
@@ -332,7 +332,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (args.opts.mesh && args.opts.topic) {
-    fprintf(stderr, "mesh-pipe-c: pass only one of a 💬… id / --topic\n");
+    fprintf(stderr, "mesh-pipe-c: pass only one of a mesh id / --topic\n");
     return 1;
   }
 

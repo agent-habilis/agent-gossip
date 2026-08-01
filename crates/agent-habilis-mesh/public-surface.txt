@@ -356,8 +356,6 @@ crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_LOGICAL_BODY_BYTES: u
 crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_MESSAGE_SIZE: usize = 3840;
 crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_SEALED_BODY_BYTES: usize = MAX_LOGICAL_BODY_BYTES + MAX_LOGICAL_BODY_BYTES / 2;
 crates/agent-habilis-mesh/src/util/consts.rs	pub const MAX_SHARD_TOTAL: u32 = 65_536;
-crates/agent-habilis-mesh/src/util/consts.rs	pub const MESH_GLYPH: &str = "💬";
-crates/agent-habilis-mesh/src/util/consts.rs	pub const MESH_URI_SEPARATOR: &str = "://";
 crates/agent-habilis-mesh/src/util/consts.rs	pub const PING_WINDOW_SECS: u64 = 10;
 crates/agent-habilis-mesh/src/util/consts.rs	pub const PPID_WATCH_INTERVAL_MS: u64 = 1500;
 crates/agent-habilis-mesh/src/util/consts.rs	pub const REASSEMBLY_AUTHOR_BUDGET_BYTES: usize = 3 * MAX_LOGICAL_BODY_BYTES;
@@ -370,7 +368,6 @@ crates/agent-habilis-mesh/src/util/consts.rs	pub const RIVAL_RECHECK_OFFSET_SPAN
 crates/agent-habilis-mesh/src/util/consts.rs	pub const RIVAL_RECHECK_SECS: u64 = 30;
 crates/agent-habilis-mesh/src/util/consts.rs	pub const STARVATION_THRESHOLD_SECS: u64 = 2 * ALIVE_TIMEOUT_SECS;
 crates/agent-habilis-mesh/src/util/consts.rs	pub const SWEEP_INTERVAL_SECS: u64 = 10;
-crates/agent-habilis-mesh/src/util/consts.rs	pub const TICKET_GLYPH: &str = "🎟\u{FE0F}";
 crates/agent-habilis-mesh/src/util/logs.rs	pub fn configure(config: LogConfig)
 crates/agent-habilis-mesh/src/util/logs.rs	pub fn log_dir() -> PathBuf
 crates/agent-habilis-mesh/src/util/logs.rs	pub struct LogConfig

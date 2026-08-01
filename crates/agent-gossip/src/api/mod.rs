@@ -5,7 +5,7 @@
 //! **inside the caller's process** — no subprocess, no Unix-socket IPC. Inbound
 //! traffic is pushed over a bounded broadcast channel; outbound sends go through
 //! a dedicated channel into the same shared broadcast path the CLI/IPC uses. No
-//! `iroh` type crosses this boundary: a join target is a `💬…` id parsed from a
+//! `iroh` type crosses this boundary: a join target is a mesh id parsed from a
 //! string.
 
 mod advertise;

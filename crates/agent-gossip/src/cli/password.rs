@@ -45,7 +45,7 @@ pub(crate) fn resolve_password(flag: Option<PasswordFlag>) -> Result<Option<Pass
     }
 }
 
-/// The target (a `💬…` id or `🎟️…` ticket) is password-protected but the flag
+/// The target (a mesh id or ticket) is password-protected but the flag
 /// was absent. `what` names the artifact for the error ("gossip", "ticket").
 ///
 /// # Errors

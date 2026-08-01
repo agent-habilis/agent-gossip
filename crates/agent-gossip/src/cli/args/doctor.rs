@@ -1,6 +1,6 @@
 //! `doctor` command args: the environment + network diagnostic. With no
 //! `--gossip` it reports machine health (environment, integrations, network
-//! capability, active gossips); with `--gossip <💬…>` it analyzes the connection
+//! capability, active gossips); with `--gossip <hash>` it analyzes the connection
 //! methods to a specific gossip.
 
 use clap::{Parser, ValueEnum};
@@ -19,7 +19,7 @@ pub(crate) enum OutputFormat {
 
 #[derive(Parser, Debug)]
 pub(crate) struct DoctorOpts {
-    /// Analyze a specific gossip (💬...): decode its declared connection
+    /// Analyze a specific gossip: decode its declared connection
     /// methods and live-probe which actually reach it. Omit for the
     /// machine-health report.
     #[arg(long, alias = "room")]
@@ -58,7 +58,7 @@ mod tests {
             "agent-gossip",
             "doctor",
             "--gossip",
-            "💬AbCdEf1234",
+            "AbCdEf1234",
             "--no-probe",
             "--output",
             "json",

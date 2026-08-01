@@ -465,7 +465,7 @@ fn test_stdout_format_parseable() {
 #[test]
 fn test_no_server_error() {
     // All-`1` Base58 payload — valid charset, can't match a real mesh.
-    let fake_mesh = "💬1111111111111111111111111111111111111111111111111111111111111";
+    let fake_mesh = "1111111111111111111111111111111111111111111111111111111111111";
     let out = cli_message_raw(fake_mesh, "ghost-nick", "hello");
     assert!(
         !out.status.success(),
@@ -875,7 +875,7 @@ fn test_ready_gate_succeeds_when_serving() {
     assert!(
         parsed["gossip"]
             .as_str()
-            .is_some_and(|mesh| mesh.starts_with("💬"))
+            .is_some_and(|mesh| agent_gossip::MeshId::new(mesh).is_ok())
     );
     assert!(parsed["nickname"].as_str().is_some());
 
@@ -972,7 +972,7 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
-        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","peer_count":1,"ready":true,"gossip":"💬deadbeef"}"#,
+        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","peer_count":1,"ready":true,"gossip":"deadbeef"}"#,
     )
     .unwrap();
 
@@ -1007,7 +1007,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     fs::write(
         &state_file,
         format!(
-            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"ready":true,"gossip":"💬deadbeef"}}"#
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"ready":true,"gossip":"deadbeef"}}"#
         ),
     )
     .unwrap();
@@ -1025,7 +1025,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
-    assert_eq!(parsed["gossip"], "💬deadbeef");
+    assert_eq!(parsed["gossip"], "deadbeef");
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
@@ -1186,7 +1186,7 @@ fn test_cli_a2a_call_requires_a_peer() {
             "a2a",
             "call",
             "--gossip",
-            "💬deadbeef",
+            "deadbeef",
             "--nickname",
             "calm-otter",
             "--method",
@@ -2627,7 +2627,7 @@ fn state_file_carries_daemon_pid() {
     let _ = fs::remove_file(&log);
 }
 
-/// `agent-gossip leave <💬id>` (explicit target) stops exactly that mesh's local
+/// `agent-gossip leave <id>` (explicit target) stops exactly that mesh's local
 /// daemon — the state file disappears (proof of the graceful shutdown path)
 /// — and leaves an unrelated daemon untouched.
 #[test]

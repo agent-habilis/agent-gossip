@@ -480,7 +480,7 @@ fn create_mesh_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
     let first = client.tool_call(20, "create_gossip", serde_json::json!({ "name": "twice1" }));
     let first_json = tool_result_json(&first).expect("first create_gossip should succeed");
-    assert!(first_json["gossip"].as_str().unwrap().starts_with("💬"));
+    assert!(agent_gossip::MeshId::new(first_json["gossip"].as_str().unwrap()).is_ok());
     assert_eq!(first_json["name"].as_str(), Some("twice1"));
 
     let second = client.tool_call(21, "create_gossip", serde_json::json!({ "name": "twice2" }));
@@ -601,10 +601,7 @@ fn create_mesh_with_granular_relay_succeeds() {
     );
     let result = tool_result_json(&resp).expect("granular relay create should succeed");
     assert!(
-        result["gossip"]
-            .as_str()
-            .unwrap_or_default()
-            .starts_with("💬"),
+        agent_gossip::MeshId::new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
         "expected a mesh id, got: {result}"
     );
 }
@@ -617,10 +614,7 @@ fn create_mesh_without_name_mints_random() {
     let resp = client.tool_call(100, "create_gossip", serde_json::json!({}));
     let result = tool_result_json(&resp).expect("nameless create should succeed");
     assert!(
-        result["gossip"]
-            .as_str()
-            .unwrap_or_default()
-            .starts_with("💬"),
+        agent_gossip::MeshId::new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
         "expected a mesh id, got: {result}"
     );
     assert!(

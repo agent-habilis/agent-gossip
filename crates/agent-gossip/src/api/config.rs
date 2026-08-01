@@ -6,7 +6,7 @@ use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 /// How to join a mesh.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
-    /// What to join: an `💬…` id, classified into a [`JoinTarget`] at the
+    /// What to join: a mesh id, classified into a [`JoinTarget`] at the
     /// boundary (parse a string with [`str::parse`]). The network mode and
     /// name are decoded from the id. (A shared *string* derives its own
     /// mesh — see the `topic` command — and is not a join target.)
@@ -24,7 +24,7 @@ impl JoinConfig {
     /// A config for `target` with a random nickname and the default
     /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_peers`]
     /// afterwards to override. Build the [`JoinTarget`] by parsing a
-    /// string (`"💬…".parse()?`).
+    /// string (`"<hash>".parse()?`).
     #[must_use]
     pub fn new(target: JoinTarget) -> Self {
         Self {
@@ -85,7 +85,7 @@ pub struct CreateConfig {
     /// CLI `--mdns`/`--dht`/`--relay` flags.
     pub lookups: LookupSet,
     /// List this mesh in a directory so discoverers can find it
-    /// without its `💬…` id. Requires `public`. Default `false`.
+    /// without its id. Requires `public`. Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.

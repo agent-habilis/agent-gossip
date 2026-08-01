@@ -1,4 +1,4 @@
-//! `invite` command args: mint a `🎟️` invite to an invite-only gossip. Only the
+//! `invite` command args: mint an invite to an invite-only gossip. Only the
 //! creating session's daemon holds the in-memory issuer key, so only it can
 //! sign one — after its restart, no new invites can be minted.
 
@@ -10,7 +10,7 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct InviteOpts {
-    /// The invite-only gossip to mint for (its 💬… id).
+    /// The invite-only gossip to mint for (its … id).
     #[arg(long, alias = "room")]
     pub gossip: MeshId,
 
@@ -41,7 +41,7 @@ mod tests {
             "agent-gossip",
             "invite",
             "--gossip",
-            "💬AbCdEf1234",
+            "AbCdEf1234",
             "--nickname",
             "my-nick",
             "--ttl",
@@ -59,7 +59,7 @@ mod tests {
             "agent-gossip",
             "invite",
             "--gossip",
-            "💬AbCdEf1234",
+            "AbCdEf1234",
             "--nickname",
             "my-nick",
         ]);

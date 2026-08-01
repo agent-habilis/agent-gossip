@@ -31,7 +31,7 @@ fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
 
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
-    /// Gossip identifier (💬...). Validated at parse (clap `FromStr`). For a
+    /// Gossip identifier. Validated at parse (clap `FromStr`). For a
     /// public gossip derived from a shared string, use `agent-gossip topic <string>`.
     #[arg(value_parser = parse_join_target)]
     pub gossip: JoinTarget,

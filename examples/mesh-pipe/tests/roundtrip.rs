@@ -9,8 +9,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// Pull the minted `💬…` id out of the sender's stderr line
-/// (`mesh-pipe: mesh 💬…`).
+/// Pull the minted id out of the sender's stderr line
+/// (`mesh-pipe: mesh <id>`).
 async fn read_mesh_id(reader: &mut BufReader<tokio::process::ChildStderr>) -> Option<String> {
     let mut line = String::new();
     loop {

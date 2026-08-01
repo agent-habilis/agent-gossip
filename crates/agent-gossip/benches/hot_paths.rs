@@ -1,5 +1,5 @@
 //! Offline microbenchmarks for the pure, deterministic hot paths run on
-//! every create/join/broadcast: crypto/identity derivation, the `💬…`
+//! every create/join/broadcast: crypto/identity derivation, the id
 //! token + config codec, parsing/validation, and message
 //! (de)serialization. No network, no async — divan prints a summary
 //! table at the end.
@@ -99,7 +99,7 @@ mod token {
 mod parsing {
     use super::{Bencher, MAX_NAME, MeshName, Nickname, api, black_box};
 
-    // A valid `💬…` token to exercise the accept path of `MeshId::new`.
+    // A valid token to exercise the accept path of `MeshId::new`.
     fn valid_token() -> String {
         api::mesh_token(
             &MeshName::new("bench").unwrap(),

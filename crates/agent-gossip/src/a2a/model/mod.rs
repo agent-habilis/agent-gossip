@@ -480,7 +480,7 @@ mod tests {
             message_id: MessageId::from("00000000-0000-0000-0000-000000000001"),
             role: Role::User,
             parts: vec![Part::text("What is Rust?")],
-            context_id: Some("💬test".to_string()),
+            context_id: Some("test".to_string()),
             task_id: None,
             reference_task_ids: Vec::new(),
             extensions: vec![crate::a2a::EXT_MESH_BROADCAST.to_string()],
@@ -598,7 +598,7 @@ mod tests {
         fn snap_a2a_task() {
             let task = Task {
                 id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                context_id: "💬test".to_string(),
+                context_id: "test".to_string(),
                 status: TaskStatus {
                     state: TaskState::Working,
                     message: None,
@@ -615,7 +615,7 @@ mod tests {
         fn snap_a2a_status_update() {
             let update = TaskStatusUpdate {
                 task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                context_id: "💬test".to_string(),
+                context_id: "test".to_string(),
                 status: TaskStatus {
                     state: TaskState::InputRequired,
                     message: None,
@@ -630,7 +630,7 @@ mod tests {
         fn snap_a2a_artifact_update() {
             let update = TaskArtifactUpdate {
                 task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                context_id: "💬test".to_string(),
+                context_id: "test".to_string(),
                 artifact: Artifact {
                     artifact_id: "00000000-0000-0000-0000-00000000000a".to_string(),
                     parts: vec![Part::text("the parser now handles multiline")],

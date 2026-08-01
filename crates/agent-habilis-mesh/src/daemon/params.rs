@@ -36,7 +36,7 @@ pub struct CreateParams {
     /// id at setup (the salt is the seed, minted there).
     pub password: Option<Password>,
     /// `--invite-only`: the mesh's issuer keypair + invite root are minted at
-    /// setup and only creator-signed `🎟️` invites can join.
+    /// setup and only creator-signed invite tickets can join.
     pub invite_only: bool,
 }
 
@@ -109,7 +109,7 @@ impl CreateParams {
 }
 
 impl JoinParams {
-    /// Resolve the `💬…` id target into a [`Mesh`], verify the password
+    /// Resolve the mesh id target into a [`Mesh`], verify the password
     /// against the id's verifier (locally — a wrong password fails here,
     /// before any network), and default the nickname. `join` never
     /// advertises.

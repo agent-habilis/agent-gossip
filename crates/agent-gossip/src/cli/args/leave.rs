@@ -6,7 +6,7 @@ use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
-    /// The `💬…` id of the gossip to leave — the full id or a unique prefix
+    /// The id of the gossip to leave — the full id or a unique prefix
     /// of it. Omitted: every gossip owned by the calling session.
     pub gossip: Option<MeshId>,
 

@@ -129,7 +129,7 @@ fn mesh_pipe_bin() -> Option<PathBuf> {
 }
 
 /// Pull the minted id out of a sender's stderr. Both binaries print the same
-/// `mesh-pipe: mesh 💬…` line — that shared prefix is what makes them
+/// `mesh-pipe: mesh <id>` line — that shared prefix is what makes them
 /// interchangeable here.
 async fn read_mesh_id(reader: &mut BufReader<tokio::process::ChildStderr>) -> Option<String> {
     let mut line = String::new();

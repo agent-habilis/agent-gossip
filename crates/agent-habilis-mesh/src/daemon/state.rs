@@ -953,7 +953,7 @@ mod tests {
     /// `mark_seen`, which keys on `dedup_key()` (`SHA-256(pubkey ‖ id)`).
     fn msg_with_id(id: &MessageId) -> Message {
         let mut message = Message::new_app(
-            &MeshId::from("💬test"),
+            &MeshId::from("test"),
             &nick("author-nick"),
             AppFrameParams {
                 tag: crate::protocol::AppTag::from("app_msg"),

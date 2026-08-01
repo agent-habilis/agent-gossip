@@ -53,8 +53,8 @@ mesh-pipe connect --topic demo
 
 `--to <nick>` on `listen` sends **directed** frames to one peer instead of
 broadcasting to every `connect`. You can also rendezvous by id: bare
-`mesh-pipe listen` mints a loopback mesh and prints its `💬…` id on stderr;
-pass that id to `mesh-pipe connect 💬…`. Discovery flags mirror the CLI:
+`mesh-pipe listen` mints a loopback mesh and prints its id on stderr;
+pass that id to `mesh-pipe connect <hash>`. Discovery flags mirror the CLI:
 `--public` / `--mdns` / `--dht` / `--relay` on `listen` create a reachable
 mesh.
 

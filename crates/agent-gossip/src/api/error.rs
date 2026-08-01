@@ -41,7 +41,7 @@ impl std::error::Error for CreateError {
 }
 
 /// Why [`MeshSession::join`](super::MeshSession::join) failed — the symmetric counterpart to
-/// [`CreateError`]. `Resolve` is a malformed `💬…` id; `Setup` is an
+/// [`CreateError`]. `Resolve` is a malformed id; `Setup` is an
 /// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
 pub enum JoinError {

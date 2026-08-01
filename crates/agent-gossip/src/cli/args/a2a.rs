@@ -2,7 +2,7 @@
 //! - **native A2A messaging** (`a2a call` / `status` / `artifact`) — the
 //!   gossip request/response + worker-push surface for gossip tasks; and
 //! - **the A2A HTTP tunnel** (`a2a expose` / `connect` / `discover`) — bridge a
-//!   local A2A HTTP server to a peer over the gossip (a `🎟️…` ticket, 1:1).
+//!   local A2A HTTP server to a peer over the gossip (a ticket, 1:1).
 
 use clap::{Parser, Subcommand};
 
@@ -20,7 +20,7 @@ pub(crate) struct A2aOpts {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum A2aAction {
-    /// Bridge a local A2A server to a peer; prints a `🎟️…` ticket on stdout.
+    /// Bridge a local A2A server to a peer; prints a ticket on stdout.
     ///
     /// Binds an endpoint next to the A2A server named by `--to` and forwards
     /// each connecting peer's requests to it, rewriting the Agent Card's URLs so
@@ -40,7 +40,7 @@ pub(crate) enum A2aAction {
         lookups: PublicLookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
-        /// with `agent-gossip a2a discover` — no `🎟️…` to copy. Bare `--advertise` ⇒ the
+        /// with `agent-gossip a2a discover` — no ticket to copy. Bare `--advertise` ⇒ the
         /// default `global` directory; `--advertise <name>` ⇒ that named
         /// directory (share the name with the peer). The ad carries the full
         /// bearer ticket, so pair it with `--password`.
@@ -63,14 +63,14 @@ pub(crate) enum A2aAction {
         legacy_output: LegacyOutput,
     },
 
-    /// Redeem a `🎟️…` ticket and bind a local A2A endpoint for a client.
+    /// Redeem a ticket and bind a local A2A endpoint for a client.
     ///
     /// Binds `127.0.0.1:PORT` (an ephemeral port unless `--port` is given) that
     /// an unmodified A2A client/SDK points at; forwards every request to the
     /// exposer over the gossip and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
-        /// The `🎟️…` ticket printed by `agent-gossip a2a expose`.
+        /// The ticket printed by `agent-gossip a2a expose`.
         ticket: String,
 
         /// Local port to bind the bridge on (default: an ephemeral port — the
@@ -88,7 +88,7 @@ pub(crate) enum A2aAction {
     },
 
     /// Browse a directory for advertised a2a bridges — the receiver side of
-    /// `a2a expose --advertise`, no `🎟️…` to copy.
+    /// `a2a expose --advertise`, no ticket to copy.
     ///
     /// Streams one `ticket_found`/`ticket_lost` JSON line per directory change;
     /// the agent captures a ticket and runs `a2a connect` itself.
@@ -112,7 +112,7 @@ pub(crate) enum A2aAction {
     ///
     /// Every member sees it. Use `a2a msg` to reach one peer privately.
     Broadcast {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
 
@@ -131,7 +131,7 @@ pub(crate) enum A2aAction {
     /// sealed to the recipient, so the peers relaying it cannot read the body.
     /// This is chat, not a task — use `a2a call --to <peer>` to delegate work.
     Msg {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
 
@@ -159,7 +159,7 @@ pub(crate) enum A2aAction {
     /// This always opens or advances a **task**. For chat, use `a2a broadcast`
     /// or `a2a msg`. Exits non-zero when the response is an error or times out.
     Call {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
 
@@ -199,7 +199,7 @@ pub(crate) enum A2aAction {
     /// task you're serving to `working` / `input-required` / `completed` /
     /// `failed`. Pushed fire-and-forget to the other party.
     Status {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
@@ -220,7 +220,7 @@ pub(crate) enum A2aAction {
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
     /// serving. Parks the task in `input-required` for the initiator's approval.
     Artifact {
-        /// Gossip identifier (💬...)
+        /// Gossip identifier
         #[arg(long, alias = "room")]
         gossip: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
@@ -234,7 +234,7 @@ pub(crate) enum A2aAction {
         text: Option<String>,
         /// Attach a file as the result, transferred peer-to-peer over the blob
         /// channel and referenced as a Part.url. For binaries too large to
-        /// inline; the receiver fetches it with `agent-gossip a2a fetch <🎟️…>`.
+        /// inline; the receiver fetches it with `agent-gossip a2a fetch <ticket>`.
         #[arg(long)]
         file: Option<std::path::PathBuf>,
         /// Filename to advertise for --file (defaults to the file's own name).
@@ -245,13 +245,13 @@ pub(crate) enum A2aAction {
         file_mime: Option<String>,
     },
 
-    /// Fetch a blob artifact by its `🎟️…` reference (the `url` of a received
+    /// Fetch a blob artifact by its ticket reference (the `url` of a received
     /// file part). A direct peer-to-peer transfer, streamed to disk. With
     /// `--nickname` it lands in that session's `<nick>.recv/` folder (named by
     /// the content hash) and prints the path; otherwise it streams to stdout —
-    /// redirect or pipe, e.g. `agent-gossip a2a fetch 🎟️… > report.pdf`.
+    /// redirect or pipe, e.g. `agent-gossip a2a fetch <ticket> > report.pdf`.
     Fetch {
-        /// The `🎟️…` blob ticket copied from a received file part's `url`.
+        /// The blob ticket copied from a received file part's `url`.
         ticket: String,
         /// Land the file under this session's `<nick>.recv/` folder instead of
         /// streaming to stdout. Resolves the session's temp dir by nickname.

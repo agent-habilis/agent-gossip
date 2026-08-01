@@ -79,8 +79,8 @@ layer never borrows another layer's term.
 | `lifecycle` | A peer's presence over time: heartbeat, membership transitions, and the join-horizon `joined`/`left`/`peer_return`/`peer_timeout` decisions |
 | `beacon` | The beacon role: co-hosting the rendezvous endpoint so bootstrap outlives the creator |
 | `lookup` | Building the iroh endpoint per mesh mode and wiring the selected mechanisms: `mdns` (LAN), `dht` (mainline), `relay` (the ladder + failover) |
-| `resolver` | Classifies what `join` accepts, once, at the boundary: `JoinTarget::Mesh` (a `💬…` id, no I/O) or `JoinTarget::Invite` (a `🎟️` ticket) |
-| `invite` | Minting and redeeming `🎟️` bearer tickets to an invite-only mesh — signed, TTL'd, carrying the derivation root a bare hash withholds |
+| `resolver` | Classifies what `join` accepts, once, at the boundary: `JoinTarget::Mesh` (a bare base58 mesh id, no I/O) or `JoinTarget::Invite` (a bare base58 invite ticket) |
+| `invite` | Minting and redeeming bare base58 bearer tickets to an invite-only mesh — signed, TTL'd, carrying the derivation root a bare hash withholds |
 | `doc` | The CRDT engine ([`automerge`](https://automerge.org)) behind the `state` and `meta` channels; a local write is an RFC 7386 JSON merge |
 | `blob` | Direct point-to-point transfer of artifacts too large to inline, content-addressed by SHA-256 over a dedicated QUIC endpoint, off the gossip plane |
 | `reassembly` | Splitting and rebuilding bodies past `MAX_MESSAGE_SIZE`, with repair tickets and byte budgets on every buffer so a crafted shard cannot exhaust memory |

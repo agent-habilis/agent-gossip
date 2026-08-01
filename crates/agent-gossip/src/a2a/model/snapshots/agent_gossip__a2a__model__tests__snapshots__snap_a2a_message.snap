@@ -1,5 +1,5 @@
 ---
-source: src/a2a/model/mod.rs
+source: crates/agent-gossip/src/a2a/model/mod.rs
 expression: "serde_json::to_string(&fixture_message()).unwrap()"
 ---
-{"messageId":"00000000-0000-0000-0000-000000000001","role":"ROLE_USER","parts":[{"text":"What is Rust?"}],"contextId":"💬test","extensions":["https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1"]}
+{"messageId":"00000000-0000-0000-0000-000000000001","role":"ROLE_USER","parts":[{"text":"What is Rust?"}],"contextId":"test","extensions":["https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1"]}

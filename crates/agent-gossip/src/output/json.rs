@@ -11,10 +11,14 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use agent_habilis_mesh::util::consts::MESH_GLYPH;
-
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
 use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+
+/// The sigil that opens every human-readable `display` line. An
+/// application-layer output convention, not an identifier prefix — mesh ids and
+/// tickets are bare Base58Check. Carries the `\u{FE0F}` selector so terminals
+/// render the colorful emoji rather than the monochrome text form.
+const DISPLAY_GLYPH: &str = "💬\u{FE0F}";
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -222,8 +226,8 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
 /// thing distinguishing a private line from a gossip-wide one on screen.
 fn msg_display(author: &str, body: &str, to: Option<&str>) -> String {
     match to {
-        Some(target) => format!("{MESH_GLYPH}\u{FE0F} `<{author}>` → `<{target}>`: {body}"),
-        None => format!("{MESH_GLYPH}\u{FE0F} `<{author}>`: {body}"),
+        Some(target) => format!("{DISPLAY_GLYPH} `<{author}>` → `<{target}>`: {body}"),
+        None => format!("{DISPLAY_GLYPH} `<{author}>`: {body}"),
     }
 }
 
@@ -253,7 +257,7 @@ fn task_display(params: TaskDisplayParams<'_>) -> String {
         body,
     } = params;
     let label = state.map_or_else(|| kind.to_owned(), |state| format!("{kind} {state}"));
-    format!("{MESH_GLYPH}\u{FE0F} task {label} `<{author}>` → `<{to}>`: {body}")
+    format!("{DISPLAY_GLYPH} task {label} `<{author}>` → `<{to}>`: {body}")
 }
 
 /// `display` line for a `task_progress` event:
@@ -262,9 +266,9 @@ fn task_display(params: TaskDisplayParams<'_>) -> String {
 fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Option<u64>) -> String {
     match (done, total) {
         (Some(done), Some(total)) => {
-            format!("{MESH_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: {done}/{total}")
+            format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: {done}/{total}")
         }
-        _ => format!("{MESH_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: working"),
+        _ => format!("{DISPLAY_GLYPH} task progress `<{author}>` → `<{to}>`: working"),
     }
 }
 
@@ -272,26 +276,26 @@ fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Optio
 /// `` 💬️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
 /// backtick rationale.
 fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
-    format!("{MESH_GLYPH}\u{FE0F} `<{author}>` has {subtype}")
+    format!("{DISPLAY_GLYPH} `<{author}>` has {subtype}")
 }
 
 /// `display` line for a `peer_timeout` event.
 pub(super) fn peer_timeout_display(nickname: &str) -> String {
-    format!("{MESH_GLYPH}\u{FE0F} `<{nickname}>` went quiet")
+    format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
-    format!("{MESH_GLYPH}\u{FE0F} `<{nickname}>` came back")
+    format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
 }
 
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
 pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
     if peers.is_empty() {
-        return format!("{MESH_GLYPH}\u{FE0F} ping: no peers responded");
+        return format!("{DISPLAY_GLYPH} ping: no peers responded");
     }
-    let mut out = format!("{MESH_GLYPH}\u{FE0F} ping\n| peer | RTT |\n|---|---|\n");
+    let mut out = format!("{DISPLAY_GLYPH} ping\n| peer | RTT |\n|---|---|\n");
     for peer in peers {
         let _ = writeln!(out, "| `<{}>` | {}ms |", peer.nickname, peer.rtt_ms);
     }
@@ -637,9 +641,9 @@ fn body_merge(body: &str) -> Option<serde_json::Value> {
 /// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
 fn state_display(author: &str, is_self: bool, what: &str) -> String {
     if is_self {
-        format!("{MESH_GLYPH}\u{FE0F} you changed {what}")
+        format!("{DISPLAY_GLYPH} you changed {what}")
     } else {
-        format!("{MESH_GLYPH}\u{FE0F} `<{author}>` changed {what}")
+        format!("{DISPLAY_GLYPH} `<{author}>` changed {what}")
     }
 }
 

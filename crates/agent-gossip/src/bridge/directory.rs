@@ -1,7 +1,7 @@
 //! Advertising an a2a ticket into a directory and discovering it there — the
 //! `--advertise` / `a2a discover` path. A directory is itself a well-known
 //! mesh (derived from a name + lookups); the exposer joins it and re-broadcasts
-//! a `{"ticket": "💬…", "label": "…"}` body on a timer, and a discoverer joins
+//! a `{"ticket": "…", "label": "…"}` body on a timer, and a discoverer joins
 //! the same directory, collects those ads, ages out silent ones, and hands the
 //! chosen ticket back to `a2a connect`.
 //!
@@ -37,7 +37,7 @@ const MAX_LISTINGS: usize = 256;
 /// unbounded picker row).
 const MAX_LABEL_CHARS: usize = 64;
 
-/// A directory ad: the exposer's full `💬…` ticket plus an optional human label.
+/// A directory ad: the exposer's full ticket plus an optional human label.
 /// Serialized as a JSON object; its `ticket` key is what tells it apart from a
 /// mesh ad's `id` key, so the two never cross-parse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn mesh_ads_and_ticket_ads_never_cross_parse() {
         // A mesh ad has `id`; a ticket ad `ticket`.
-        assert!(TicketAd::parse(r#"{"id":"💬abc","peers":2}"#).is_none());
+        assert!(TicketAd::parse(r#"{"id":"abc","peers":2}"#).is_none());
     }
 
     #[test]
@@ -424,7 +424,7 @@ mod tests {
         assert!(dir.note("", Instant::now()).is_none());
         assert!(dir.note("not json", Instant::now()).is_none());
         assert!(
-            dir.note(r#"{"ticket":"💬not-a-real-token"}"#, Instant::now())
+            dir.note(r#"{"ticket":"not-a-real-token"}"#, Instant::now())
                 .is_none(),
             "a ticket that fails the checksum decode is dropped"
         );

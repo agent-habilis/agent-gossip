@@ -157,7 +157,7 @@ struct CreateMeshArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinMeshArgs {
-    /// Gossip identifier (💬…). A shared string derives its own public
+    /// Gossip identifier (…). A shared string derives its own public
     /// gossip — use the `topic` command — and is not a valid join target.
     gossip: String,
     /// Optional nickname in `word-word` form. Random if omitted.
@@ -497,7 +497,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Join an existing gossip by its 💬… identifier. (A shared string derives its own public gossip — that is the `topic` command — and is not a join target.) Idempotent when called for the same gossip id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing gossip by its … identifier. (A shared string derives its own public gossip — that is the `topic` command — and is not a join target.) Idempotent when called for the same gossip id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_gossip(
         &self,

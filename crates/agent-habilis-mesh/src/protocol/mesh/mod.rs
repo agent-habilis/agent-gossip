@@ -1,7 +1,7 @@
 //! The mesh identifier, at two levels:
 //!
-//! - [`MeshId`] — the validated `💬…` string. Possession proves the checksum,
-//!   version, and full payload structure. Code: [`id`].
+//! - [`MeshId`] — the validated bare Base58Check string. Possession proves
+//!   the checksum, version, and full payload structure. Code: [`id`].
 //! - [`Mesh`] — the *decoded* structure (32-byte seed + name +
 //!   [`MeshConfig`]), with the Base58Check codec (this file). `MeshId`
 //!   is what flows through the wire/CLI; `Mesh` is what `setup_mesh`
@@ -34,14 +34,6 @@ pub use lookup::{
 pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
 pub use name::{MeshName, NameError};
 
-const PREFIX: &str = crate::util::consts::MESH_GLYPH;
-
-/// The URI separator that follows the `💬` sigil in the canonical id
-/// (`💬://<base58>`). Optional on input — a legacy bare `💬<base58>` id
-/// still parses. Never appears in a filesystem path (see
-/// [`crate::util::mesh_prefix`]).
-pub(crate) const SEPARATOR: &str = crate::util::consts::MESH_URI_SEPARATOR;
-
 /// Id format version. A single byte reserved so the encoding can evolve;
 /// an unknown version is rejected.
 const VERSION: u8 = 1;
@@ -52,7 +44,7 @@ const SEED_LEN: usize = 32;
 /// 1-byte length field).
 const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 
-/// A mesh identifier — Base58Check payload with a `💬` prefix.
+/// A mesh identifier — bare Base58Check payload.
 ///
 /// The token carries the random `seed` plus the mesh's [`MeshConfig`]
 /// (lookups); **no peer address is ever stored**. The
@@ -390,8 +382,7 @@ impl Mesh {
 impl fmt::Display for Mesh {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes = self.encode_bytes();
-        let encoded = base58check_encode(&bytes);
-        write!(f, "{PREFIX}{SEPARATOR}{encoded}")
+        write!(f, "{}", base58check_encode(&bytes))
     }
 }
 
@@ -428,11 +419,7 @@ impl FromStr for Mesh {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let rest = s
-            .strip_prefix(PREFIX)
-            .with_context(|| format!("Invalid mesh prefix: expected '{PREFIX}'"))?;
-        let payload = rest.strip_prefix(SEPARATOR).unwrap_or(rest);
-        let bytes = base58check_decode(payload)?;
+        let bytes = base58check_decode(s)?;
         Self::decode_bytes(&bytes)
     }
 }
@@ -468,7 +455,8 @@ mod mesh_tests {
     fn round_trip_loopback() {
         let mesh = Mesh::new(dummy_seed(), dummy_name(), MeshConfig::loopback());
         let encoded = mesh.to_string();
-        assert!(encoded.starts_with("💬"));
+        assert!(!encoded.contains("://"));
+        assert!(encoded.is_ascii());
         let decoded: Mesh = encoded.parse().unwrap();
         assert_eq!(decoded.seed(), mesh.seed());
         assert_eq!(decoded.name, mesh.name);
@@ -603,7 +591,7 @@ mod mesh_tests {
         let mesh = Mesh::new(dummy_seed(), dummy_name(), MeshConfig::public_preset());
         assert_eq!(
             mesh.to_string(),
-            "💬://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
+            "2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
         );
         let topic = super::crypto::derive_topic_id(mesh.seed(), &mesh.name, &mesh.config_bytes());
         assert_eq!(
@@ -647,22 +635,10 @@ mod mesh_tests {
     }
 
     #[test]
-    fn invalid_prefix_rejected() {
+    fn garbage_prefix_rejected() {
         let encoded = Mesh::new(dummy_seed(), dummy_name(), MeshConfig::loopback()).to_string();
-        let bad = format!("xxx{}", &encoded[super::PREFIX.len()..]);
+        let bad = format!("xxx{encoded}");
         assert!(bad.parse::<Mesh>().is_err());
-    }
-
-    #[test]
-    fn non_bee_prefix_rejected() {
-        let encoded = Mesh::new(dummy_seed(), dummy_name(), MeshConfig::loopback()).to_string();
-        for bad_prefix in ["sw1", "xyz", "ahs"] {
-            let bad = format!("{}{}", bad_prefix, &encoded[super::PREFIX.len()..]);
-            assert!(
-                bad.parse::<Mesh>().is_err(),
-                "expected reject for prefix {bad_prefix}",
-            );
-        }
     }
 
     #[test]
@@ -755,9 +731,11 @@ mod mesh_tests {
             }
 
             #[test]
-            fn prop_prefix(seed in arb_seed(), name in arb_name()) {
-                let mesh = Mesh::new(seed, name, MeshConfig::loopback());
-                prop_assert!(mesh.to_string().starts_with("💬"));
+            fn prop_bare_base58(seed in arb_seed(), name in arb_name()) {
+                let id = Mesh::new(seed, name, MeshConfig::loopback()).to_string();
+                prop_assert!(!id.contains("://"));
+                prop_assert!(id.is_ascii());
+                prop_assert!(!id.is_empty());
             }
 
             #[test]

@@ -16,7 +16,7 @@ the CRDT documents — lives in the engine crate, and this crate is one of its t
 consumers ([`examples/mesh-pipe`](../../examples/mesh-pipe) is the other, and
 depends on the engine *only*). The split keeps the payload opaque to the
 transport, and keeps `iroh` off this crate's public surface entirely: a join
-target is a `💬…` id parsed from a string, so iroh version bumps never reach a
+target is a mesh id parsed from a string, so iroh version bumps never reach a
 library consumer.
 
 This crate re-exports the curated engine surface — `MeshId`, `Message`,
@@ -39,7 +39,7 @@ per binding.
 use agent_gossip::api::{JoinConfig, MeshSession};
 use agent_gossip::MessageBody;
 
-let session = MeshSession::join(JoinConfig::new("💬...".parse()?)).await?;
+let session = MeshSession::join(JoinConfig::new("<hash>".parse()?)).await?;
 let mut rx = session.messages();
 session.send(MessageBody::new("hello")?).await?;
 while let Ok(msg) = rx.recv().await {
@@ -70,7 +70,7 @@ Public: `a2a`, `api`, `events`. Everything else is `pub(crate)`.
   outbound paths, `surfaced` the surfacing rules, `gossip_rpc`/`rpc` the
   request/response plane, and `ipc` the Unix-socket command set.
 - **`bridge`** — the A2A HTTP tunnel behind `a2a expose` / `a2a connect`:
-  `🎟️…` tickets, Agent Card URL rewriting so discovery resolves through the
+  tickets, Agent Card URL rewriting so discovery resolves through the
   bridge, and its own ALPN. A bridge subsystem, not A2A core.
 - **`output`** — the stdout event stream. `events::OutputEvent` is the typed
   event; `output::json` serializes it.
@@ -85,7 +85,7 @@ Public: `a2a`, `api`, `events`. Everything else is `pub(crate)`.
 re-learns its gossip id and nickname). `poll` reads messages, `ping` measures
 RTT, `peers` lists the roster, `topology` and `ready` report mesh shape and
 readiness. `state` and `meta` read and merge the shared CRDT documents.
-`invite` mints `🎟️…` tickets; `discover` browses advertised gossips. `a2a` is
+`invite` mints tickets; `discover` browses advertised gossips. `a2a` is
 the A2A surface — `call` (a `SendMessage` with `--to` is a directed
 request/response, without `--to` it broadcasts), `status` and `artifact`
 (worker-emitted task updates), `fetch` (blob artifacts), and

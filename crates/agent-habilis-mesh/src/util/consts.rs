@@ -9,29 +9,6 @@
 // local users traverse it and read per-member logs, so it moved to a
 // uid-scoped, `0700` directory.
 
-/// The mesh sigil — the single definition of the glyph *in code*. It prefixes
-/// every mesh id (`💬://<base58>`) and marks every human/operator output line.
-/// Display code that wants the emoji-presentation selector appends `\u{FE0F}`
-/// itself (see the output sink).
-///
-/// Re-glyphing is not one line. Help text, doc comments, snapshots and test
-/// fixtures spell the glyph literally in ~200 places and cannot interpolate a
-/// const, and a stale one is invisible until a user reads the wrong sigil out
-/// of `--help` — `mesh-pipe` advertised the previous glyph long after this line
-/// moved. Change this, then sweep the literals.
-pub const MESH_GLYPH: &str = "💬";
-
-/// The ticket sigil — brands a bearer capability (`🎟️://<base58check>`),
-/// shared by the blob, invite, and application-bridge tickets and told apart by a kind
-/// byte in the payload. The base `🎟` (`U+1F39F`) defaults to *text*
-/// presentation, so the canonical form carries the `\u{FE0F}` selector that
-/// makes it render as the colorful emoji users copy; decoders also accept the
-/// bare form.
-pub const TICKET_GLYPH: &str = "🎟\u{FE0F}";
-
-/// The `://` that follows every token glyph in its canonical form.
-pub const MESH_URI_SEPARATOR: &str = "://";
-
 /// Default lifetime of a minted invite ticket when `--ttl` is omitted (24h).
 /// A finite window by default so a forgotten invite stops admitting; the
 /// creator can override, and `--ttl none`/`0` mints a no-expiry invite.
@@ -296,7 +273,7 @@ pub const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
 /// Flag: `--starvation-threshold-secs`.
 pub const STARVATION_THRESHOLD_SECS: u64 = 2 * ALIVE_TIMEOUT_SECS;
 
-/// How often an advertising `create` re-broadcasts its `💬…` id into the
+/// How often an advertising `create` re-broadcasts its mesh id into the
 /// directory. Flag: `--advertise-interval-secs`.
 pub const ADVERTISE_INTERVAL_SECS: u64 = 20;
 

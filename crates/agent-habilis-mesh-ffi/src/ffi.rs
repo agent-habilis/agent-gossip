@@ -205,7 +205,7 @@ pub unsafe extern "C" fn mesh_open(opts: *const MeshOpts) -> *mut MeshPipe {
     })
 }
 
-/// The `💬…` id of this mesh, borrowed for the handle's lifetime.
+/// The mesh id of this mesh, borrowed for the handle's lifetime.
 ///
 /// # Safety
 /// `handle` must be a live handle from [`mesh_open`], or NULL.

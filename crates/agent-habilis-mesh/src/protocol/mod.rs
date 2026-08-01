@@ -2,7 +2,7 @@
 //! speaks.
 //!
 //! **Flat by design.** The implementation is split across submodules (message
-//! envelope, `💬…` identifier, nickname, crypto, sealing, address codec), but
+//! envelope, mesh identifier, nickname, crypto, sealing, address codec), but
 //! they are crate-private and everything lands here: a consumer that needed a
 //! `Message` and a `MeshName` and a `Password` used to write three import paths
 //! into the engine's file layout, which then could not be rearranged without
@@ -32,10 +32,10 @@ pub use message::{
 pub use nickname::{Nickname, NicknameError};
 pub use seal::seal_to_body;
 
-/// The `🎟️` invite token itself. Minting lives in
+/// The invite token itself. Minting lives in
 /// [`ops::invite`](crate::ops::invite); decoding is part of the join vocabulary.
 pub use crate::invite::InviteTicket;
-/// A join token: a literal `💬…` id, or a creator-minted `🎟️` invite.
+/// A join token: a literal mesh id, or a creator-minted invite ticket.
 pub use crate::resolver::{JoinTarget, JoinTargetError};
 
 // Gate matches the definitions' (`any(test, feature)`): a narrower gate here

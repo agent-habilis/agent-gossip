@@ -1,15 +1,12 @@
-//! The a2a bridge ticket — a `🎟️` token carrying everything a consumer needs
-//! to dial the exposer: the bearer secret, the mesh's discovery config, and
-//! the exposer's address. Payload layout: `secret(32) ‖ flags(1) ‖ lookups ‖
-//! address-json` (lookups is self-delimiting, so the address occupies the
-//! remainder). Bit 0 of the flags byte marks a password-protected ticket.
+//! The a2a bridge ticket — a bare Base58Check token carrying everything a
+//! consumer needs to dial the exposer: the bearer secret, the mesh's discovery
+//! config, and the exposer's address. Payload layout: `secret(32) ‖ flags(1) ‖
+//! lookups ‖ address-json` (lookups is self-delimiting, so the address occupies
+//! the remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
-//! Wire: the `🎟️` ticket brand + Base58Check(`version ‖ kind ‖ payload`) with a
-//! `SHA256d` checksum; the emoji is the brand, everything after the `://` ASCII
-//! Base58. The `🎟️` glyph is distinct from the mesh id's `💬`, so a mesh id
-//! fails ticket decode on the prefix alone. The brand *is* shared with the blob
-//! ticket, so the `kind` byte marks this as an *a2a bridge* ticket and makes a
-//! wrong-kind token (a blob ticket) fail cleanly on decode.
+//! Wire: bare Base58Check(`version ‖ kind ‖ payload`) with a `SHA256d`
+//! checksum. The `kind` byte marks this as an *a2a bridge* ticket so a
+//! wrong-kind token (blob / invite) fails cleanly on decode.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -17,22 +14,15 @@ use sha2::{Digest, Sha256};
 
 use agent_habilis_mesh::net::{endpoint_addr_from_json, endpoint_addr_to_json};
 use agent_habilis_mesh::protocol::LookupOpts;
-use agent_habilis_mesh::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 
 use super::SECRET_LEN;
-
-/// Branding prefix on every ticket — the `🎟️` ticket glyph; the remainder of the
-/// string is ASCII Base58Check. Blob and a2a tickets share this brand and are
-/// told apart by [`KIND`]; the mesh id's `💬` is a different glyph entirely.
-pub(crate) const PREFIX: &str = TICKET_GLYPH;
 
 /// Framing version. Bumped only on a breaking framing change; an unknown
 /// version is rejected on decode.
 const VERSION: u8 = 1;
 
-/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from the blob
-/// ticket's kind so a token of the wrong kind is rejected on decode now that
-/// both share the `🎟️` brand.
+/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from blob (`1`)
+/// and invite (`3`) tickets so a wrong-kind token is rejected on decode.
 const KIND: u8 = 2;
 
 /// Bit 0 of the flags byte: the password flag.
@@ -51,7 +41,7 @@ pub(crate) struct A2aTicket {
 }
 
 impl A2aTicket {
-    /// Encode as a `🎟️` a2a bridge token.
+    /// Encode as a bare base58 a2a bridge token.
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
         payload.extend_from_slice(&self.secret);
@@ -64,21 +54,16 @@ impl A2aTicket {
         framed.push(VERSION);
         framed.push(KIND);
         framed.extend_from_slice(&payload);
-        format!(
-            "{PREFIX}{MESH_URI_SEPARATOR}{}",
-            base58check_encode(&framed)
-        )
+        base58check_encode(&framed)
     }
 
-    /// Decode a `🎟️` a2a ticket.
+    /// Decode a bare base58 a2a ticket.
     ///
     /// # Errors
-    /// Not a `🎟️` token, the wrong ticket kind, a bad checksum/version, or a
+    /// Bad Base58/checksum, the wrong ticket kind, a bad version, or a
     /// malformed payload.
     pub(crate) fn decode(ticket: &str) -> Result<Self> {
-        let body = strip_ticket_prefix(ticket.trim())
-            .with_context(|| format!("not an a2a ticket: must start with {PREFIX}"))?;
-        let framed = base58check_decode(body)?;
+        let framed = base58check_decode(ticket.trim())?;
         let version = *framed.first().context("ticket too short")?;
         if version != VERSION {
             bail!("unsupported a2a ticket version: {version}");
@@ -106,19 +91,6 @@ impl A2aTicket {
             password,
         })
     }
-}
-
-/// Strip the ticket brand and optional `://` off a token, returning the
-/// Base58Check body. Accepts the canonical `🎟️://` and, defensively, a paste
-/// that dropped the VS-16 (`🎟://`) or the separator — mirroring the mesh id's
-/// optional-`://` tolerance. `None` if the token doesn't carry the ticket glyph.
-fn strip_ticket_prefix(token: &str) -> Option<&str> {
-    let base = TICKET_GLYPH
-        .strip_suffix('\u{FE0F}')
-        .unwrap_or(TICKET_GLYPH);
-    let rest = token.strip_prefix(base)?;
-    let rest = rest.strip_prefix('\u{FE0F}').unwrap_or(rest);
-    Some(rest.strip_prefix(MESH_URI_SEPARATOR).unwrap_or(rest))
 }
 
 fn checksum(bytes: &[u8]) -> [u8; 4] {
@@ -151,7 +123,7 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{A2aTicket, PREFIX, SECRET_LEN};
+    use super::{A2aTicket, SECRET_LEN};
     use agent_habilis_mesh::protocol::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
@@ -170,7 +142,8 @@ mod tests {
             password: false,
         };
         let encoded = ticket.encode();
-        assert!(encoded.starts_with(PREFIX));
+        assert!(encoded.is_ascii());
+        assert!(!encoded.contains("://"));
         let decoded = A2aTicket::decode(&encoded).expect("decode");
         assert_eq!(decoded.addr.id, addr.id);
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
@@ -191,25 +164,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_tolerates_missing_variation_selector() {
-        // A paste may drop the VS-16 that follows the base `🎟` glyph; the
-        // VS-stripped form must still decode.
-        let ticket = A2aTicket {
-            addr: sample_addr(7),
-            secret: [9u8; SECRET_LEN],
-            lookups: LookupOpts::public_preset(),
-            password: false,
-        };
-        let encoded = ticket.encode();
-        let bare = encoded.replacen('\u{FE0F}', "", 1);
-        assert_ne!(bare, encoded, "encode should emit the VS-16");
-        assert!(A2aTicket::decode(&bare).is_ok());
-    }
-
-    #[test]
     fn rejects_a_mesh_token() {
-        // A mesh id carries the `💬` glyph, not the ticket's `🎟️`, so it fails
-        // to decode as an a2a ticket on the prefix alone.
+        // A bare mesh id shares the base58 shape but frames a different
+        // payload, so it fails ticket decode on the checksum/kind check.
         let mesh = agent_habilis_mesh::protocol::Mesh::new(
             [1u8; 32],
             agent_habilis_mesh::protocol::MeshName::new("t").unwrap(),
@@ -221,8 +178,8 @@ mod tests {
 
     #[test]
     fn rejects_a_cross_kind_ticket() {
-        // The blob ticket shares the `🎟️` brand but carries a different kind
-        // byte, so it must not decode as an a2a ticket — and vice versa.
+        // The blob ticket shares the bare-base58 shape but carries a different
+        // kind byte, so it must not decode as an a2a ticket — and vice versa.
         let blob = agent_habilis_mesh::ops::blob::BlobTicket {
             addr: sample_addr(3),
             secret: [9u8; agent_habilis_mesh::ops::blob::SECRET_LEN],

@@ -359,7 +359,7 @@ impl Output {
         );
     }
 
-    /// Surface a shared-state change: the human `💬 … changed shared state`
+    /// Surface a shared-state change: the human ` … changed shared state`
     /// line, the structured `state` event for the agent API (poll / `--output
     /// json` / api `events()`), and the surfaced-ring mirror. F5: a *self*
     /// change goes to poll/UI but is **never** delivered to the api `events()`

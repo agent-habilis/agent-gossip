@@ -131,7 +131,7 @@ pub(crate) enum IpcCommand {
     /// addresses the daemon by socket path, not by id.
     #[serde(rename = "info")]
     Info,
-    /// Mint a `🎟️` invite for the mesh this socket serves — creator-only
+    /// Mint an invite for the mesh this socket serves — creator-only
     /// (the daemon holds the issuer key in `state.mint_mesh()`). `ttl` is the
     /// invite lifetime in seconds (`0` ⇒ no expiry).
     #[serde(rename = "invite")]
@@ -465,7 +465,7 @@ pub(crate) async fn handle_ipc_command(
     }
 }
 
-/// Mint a `🎟️` invite for the mesh this daemon serves — creator-only. The
+/// Mint an invite for the mesh this daemon serves — creator-only. The
 /// issuer key lives in `state.mint_mesh()` (populated only on the creator of an
 /// invite-only mesh); every other session refuses.
 fn invite_response(state: &EventLoopState, ttl: u64) -> String {
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn ipc_command_msg_round_trip() {
-        let expected = MeshId::from("💬://test");
+        let expected = MeshId::from("test");
         let cmd = IpcCommand::Broadcast {
             mesh: expected.clone(),
             body: MessageBody::from("hello"),
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn ipc_command_state_merge_round_trip() {
-        let expected = MeshId::from("💬://test");
+        let expected = MeshId::from("test");
         let cmd = IpcCommand::StateMerge {
             mesh: expected.clone(),
             merge: serde_json::json!({"turn": "b"}),
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_round_trip() {
         let cmd = IpcCommand::Poll {
-            mesh: MeshId::from("💬://test"),
+            mesh: MeshId::from("test"),
             after: Some(42),
             long: false,
         };
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn ipc_command_ping_round_trip() {
-        let expected = MeshId::from("💬://test");
+        let expected = MeshId::from("test");
         let cmd = IpcCommand::Ping {
             mesh: expected.clone(),
         };
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn ipc_command_a2a_status_round_trip() {
         let cmd = IpcCommand::A2aStatus {
-            mesh: MeshId::from("💬://test"),
+            mesh: MeshId::from("test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
@@ -714,7 +714,7 @@ mod tests {
 
     #[test]
     fn ipc_command_peers_round_trip() {
-        let expected = MeshId::from("💬://test");
+        let expected = MeshId::from("test");
         let cmd = IpcCommand::Peers {
             mesh: expected.clone(),
         };
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_no_after_skips_field() {
         let cmd = IpcCommand::Poll {
-            mesh: MeshId::from("💬://test"),
+            mesh: MeshId::from("test"),
             after: None,
             long: false,
         };
@@ -755,7 +755,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_long_serializes_true() {
         let cmd = IpcCommand::Poll {
-            mesh: MeshId::from("💬://test"),
+            mesh: MeshId::from("test"),
             after: None,
             long: true,
         };
