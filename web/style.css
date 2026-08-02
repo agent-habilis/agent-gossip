@@ -6,6 +6,11 @@
      only — there was no dark mode to switch to. */
   color-scheme: light;
   line-height: 150%;
+  /* On the scroll container itself: scroll-snap-type set on body does not
+     propagate to the viewport the way overflow does. Sections taller than the
+     viewport stay freely scrollable even under mandatory — a snap area larger
+     than the snapport lets the snapport rest anywhere inside it. */
+  scroll-snap-type: y mandatory;
 
   --bg: #ffffff;
   --fg: #000000;
@@ -18,13 +23,14 @@
 
 body {
   margin: 0;
-  padding: 1rem;
+  /* Inline only. The block padding would stack on top of each section's
+     100dvh and push the first screen into a scrollbar; sections carry their
+     own vertical space now. The 1rem inline value is load-bearing — pre
+     bleeds outward by exactly this much. */
+  padding-inline: 1rem;
   background: var(--bg);
   color: var(--fg);
   box-sizing: border-box;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
 }
 
 a {
@@ -54,6 +60,20 @@ main {
      overflow to the pre blocks, which scroll on their own. */
   min-width: 0;
   margin: 0 auto;
+}
+
+section {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  /* dvh is right for a phone, where the address bar makes 100vh taller than
+     what you can actually see. */
+  padding-block: 3rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* start, not center: a section with a video runs past the viewport, and
+     centering an oversized snap area hides its heading off the top. */
+  scroll-snap-align: start;
 }
 
 h1,
@@ -92,16 +112,6 @@ ul {
 
 li::before {
   content: " - ";
-}
-
-hr {
-  border: none;
-  margin-block: 2em;
-  color: var(--fg);
-}
-
-hr::before {
-  content: "---";
 }
 
 pre {
