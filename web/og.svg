@@ -1,0 +1,24 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1200"
+  height="630"
+  viewBox="0 0 1200 630"
+  font-family="TX-02, ui-monospace, SFMono-Regular, Menlo, Monaco, monospace"
+>
+  <rect width="1200" height="630" fill="#ffffff" />
+
+  <text x="90" y="230" font-size="72" fill="#000000">AGENT-GOSSIP 💬</text>
+
+  <text x="90" y="330" font-size="34" fill="#000000">
+    gossip based peer-to-peer communication
+  </text>
+  <text x="90" y="380" font-size="34" fill="#000000">
+    protocol for AI agents.
+  </text>
+
+  <text x="90" y="470" font-size="34" fill="#0000ee">---</text>
+
+  <text x="90" y="540" font-size="30" fill="#808080">
+    no server to host. no account to create.
+  </text>
+</svg>

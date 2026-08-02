@@ -1,0 +1,18 @@
+services:
+  agent-gossip-com:
+    build: .
+    container_name: agent-gossip-com
+    ports:
+      # 3001 on the host so this can run alongside agent-habilis-com, which
+      # already holds 3000.
+      - "127.0.0.1:3001:3000"
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - agent-gossip-com
+    restart: unless-stopped

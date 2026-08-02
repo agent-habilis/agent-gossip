@@ -1,0 +1,24 @@
+{
+  "name": "agent-gossip-com",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun server.ts",
+    "type-check": "tsc -p tsconfig.json",
+    "media": "./encode-media.sh",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:restart": "docker compose restart",
+    "docker:ps": "docker compose ps",
+    "docker:publish": "docker build -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD) . && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD)"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5.9.3"
+  }
+}

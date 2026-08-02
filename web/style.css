@@ -1,0 +1,142 @@
+:root {
+  font: menu;
+  font-family:
+    "TX-02", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* The classic HTML palette, straight off the 1994 browser defaults. Light
+     only — there was no dark mode to switch to. */
+  color-scheme: light;
+  line-height: 150%;
+
+  --bg: #ffffff;
+  --fg: #000000;
+  --link: #0000ee;
+  --visited: #551a8b;
+  --active: #ff0000;
+  --dim: #666666;
+  --code-bg: #f0f0f0;
+}
+
+body {
+  margin: 0;
+  padding: 1rem;
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+}
+
+a {
+  color: var(--link);
+}
+
+a:visited {
+  color: var(--visited);
+}
+
+a:active {
+  color: var(--active);
+}
+
+h1 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+main {
+  /* Wider than the 66ch measure the sibling site uses: the transcripts are
+     real 80-column terminal output and must not wrap. */
+  max-width: 80ch;
+  /* As a flex item main defaults to min-width:auto, which is the min-content
+     width of the widest transcript — so on a phone it refuses to shrink and
+     the whole page scrolls sideways. Zero lets it shrink and hands the
+     overflow to the pre blocks, which scroll on their own. */
+  min-width: 0;
+  margin: 0 auto;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+li {
+  font-size: 1em;
+  font-weight: normal;
+  margin: 0;
+}
+
+h1,
+h2,
+p,
+ul {
+  margin-block: 1em;
+}
+
+h1,
+h2 {
+  text-transform: uppercase;
+  font-weight: bold;
+}
+
+h2 {
+  margin-bottom: 0;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin-top: 0;
+}
+
+li::before {
+  content: " - ";
+}
+
+hr {
+  border: none;
+  margin-block: 2em;
+  color: var(--fg);
+}
+
+hr::before {
+  content: "---";
+}
+
+pre {
+  /* The browser default shrinks pre below the OS UI size `font: menu` sets. */
+  font: inherit;
+  margin-block: 1em;
+  /* The padding is paid for by an equal negative margin, so the content box
+     stays exactly 80ch — these are real 80-column transcripts, and eating into
+     that would set every line scrolling. rem, not em: this has to match body's
+     1rem padding exactly or the bleed pushes past the viewport on a phone, and
+     `font: menu` means 1em is whatever the OS UI size happens to be. */
+  margin-inline: -1rem;
+  padding: 1rem;
+  background: var(--code-bg);
+  overflow-x: auto;
+}
+
+code {
+  background: var(--code-bg);
+  /* Horizontal only: vertical padding on an inline box does not grow the line
+     box, so it would run under the lines above and below. */
+  padding: 0 0.3em;
+  /* A span that wraps mid-sentence would otherwise be padded on its first and
+     last fragment only; clone repaints the box on every line. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.dim {
+  color: var(--dim);
+}
+
+video {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-block: 1em;
+}
