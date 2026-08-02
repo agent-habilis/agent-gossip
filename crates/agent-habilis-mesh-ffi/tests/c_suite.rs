@@ -53,16 +53,37 @@ fn cdylib_path() -> PathBuf {
     artifact_dir().join(name)
 }
 
-/// Make sure the cdylib the C programs link against exists. `cargo test` builds
-/// the lib target (both crate types in one rustc invocation), so this is a
-/// fallback for a stale or partial target dir — e.g. a run right after
-/// `cargo clean` of just this artifact.
+/// Make sure the cdylib the C programs link against exists.
+///
+/// `cargo test` does **not** build it: it needs this crate only as an rlib to
+/// link the Rust tests, and never asks rustc for the second crate type. So a
+/// plain `cargo test -p agent-habilis-mesh-ffi` reaches here with no library on
+/// disk, and this is the path that produces one — not the rare-stale-target
+/// fallback an earlier comment here claimed. `cargo task test` and CI both run
+/// `cargo build --workspace` first so it is already present.
+///
+/// The rebuild has to name the profile the *test binary* was built under.
+/// Without it cargo builds under `dev` into `target/debug/` while
+/// [`cdylib_path`] looks in `target/<profile>/`, so the build succeeds and the
+/// assert below fires anyway — which is how CI failed for five commits.
 fn ensure_cdylib() {
     if cdylib_path().exists() {
         return;
     }
+    // `target/debug/` is the `dev` profile's directory; every other profile's
+    // directory is its own name.
+    let profile = match artifact_dir().file_name().and_then(|name| name.to_str()) {
+        Some("debug") | None => "dev".to_owned(),
+        Some(name) => name.to_owned(),
+    };
     let built = std::process::Command::new("cargo")
-        .args(["build", "-p", "agent-habilis-mesh-ffi"])
+        .args([
+            "build",
+            "-p",
+            "agent-habilis-mesh-ffi",
+            "--profile",
+            &profile,
+        ])
         .current_dir(repo_root())
         .status();
     assert!(
@@ -78,8 +99,21 @@ fn ensure_cdylib() {
 /// Each caller passes a distinct `out_name`: cargo runs these tests in parallel,
 /// and two compilers writing one output path would race.
 fn compile(source: &str, out_name: &str) -> Option<PathBuf> {
-    ensure_cdylib();
     let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".to_owned());
+    // Probe the compiler *before* demanding the cdylib. The link step needs the
+    // library, so it cannot be built lazily after this point — but a host with
+    // no `cc` is meant to skip, and asking for the library first turned that
+    // skip into a panic nobody could reach around.
+    if let Err(error) = std::process::Command::new(&compiler)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        eprintln!("skipping: no usable C compiler ({compiler}): {error}");
+        return None;
+    }
+    ensure_cdylib();
     let source_path = repo_root().join("examples/mesh-pipe-c").join(source);
     let include = repo_root().join("crates/agent-habilis-mesh-ffi/include");
     let libdir = artifact_dir();

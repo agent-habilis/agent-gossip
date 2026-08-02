@@ -191,7 +191,7 @@ pub(crate) enum A2aAction {
         params: Option<String>,
 
         /// How long to wait for the peer's response, in seconds.
-        #[arg(long, default_value_t = 15)]
+        #[arg(long, default_value_t = crate::a2a::tuning::CALL_TIMEOUT_SECS)]
         timeout_secs: u64,
     },
 

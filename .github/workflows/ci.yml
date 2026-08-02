@@ -79,7 +79,22 @@ jobs:
       # `--exclude tasks`: the dev-only `cargo task` crate has no tests at
       # all, so under `--workspace` CI paid to build it — and its
       # `clap_mangen` line — under an optimizing profile purely to run
-      # nothing. `cargo task lint`/`ci` still cover it locally.
+      # nothing. `cargo task lint`/`ci` still cover it locally. Both steps
+      # below take that same flag set.
+      #
+      # `cargo test --no-run` builds `agent-habilis-mesh-ffi` as an rlib
+      # (what its Rust tests link) and stops there — it never emits the cdylib,
+      # which is the artifact the C programs in `tests/c_suite.rs` link against
+      # out of `target/ci/`. Without this step those five tests fail on a
+      # missing library, which is exactly what CI did from `0203e35` onward.
+      # `cargo task test` has carried the same line for the same reason
+      # (crates/tasks/src/test.rs); keep the two in step.
+      #
+      # `--workspace` is load-bearing: root `Cargo.toml` sets
+      # `default-members = ["crates/agent-gossip"]`, so a bare `cargo build`
+      # here would build the app alone and produce no cdylib at all.
+      - name: Build workspace artifacts
+        run: cargo build --workspace --exclude tasks --profile ci
       - name: Build test binaries
         run: |
           cargo test --workspace --exclude tasks --profile ci --no-run \

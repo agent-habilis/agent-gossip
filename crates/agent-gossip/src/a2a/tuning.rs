@@ -19,6 +19,23 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 /// How often the ball-owner's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 
+/// How long `a2a call` waits for a directed peer response (seconds), and the
+/// `--timeout-secs` default.
+///
+/// **Must stay above the engine's heal interval**, currently 15s
+/// (`agent_habilis_mesh::util::consts::HEAL_INTERVAL_SECS`). A directed request
+/// rides the gossip overlay unlogged, so one sent while the overlay holds no
+/// live peer link is dropped outright and anti-entropy never heals it; the
+/// sender is rescued only when the next heal tick re-bridges the pair. This sat
+/// at 15 — exactly one heal interval — which made the rescue arrive at the same
+/// moment the caller gave up, so a call issued while the overlay was still
+/// converging was a coin flip. It lost every time on a 2-vCPU CI runner.
+///
+/// The cost of the larger value is that a genuinely unreachable peer takes
+/// longer to report as such. That is the right way round: a false failure
+/// against a healthy peer is worse than a slow answer about a dead one.
+pub(crate) const CALL_TIMEOUT_SECS: u64 = 45;
+
 /// Longest the daemon auto-covers a silent task with keepalives before it stops
 /// and lets [`TASK_TIMEOUT_SECS`] run (seconds). Bounds how long a wedged skill
 /// can be kept alive by plumbing alone.

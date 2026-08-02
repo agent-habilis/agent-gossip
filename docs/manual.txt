@@ -340,7 +340,7 @@ COMMANDS
                 [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
               Make an A2A call to a peer. Short-lived; requires a running
               create/join daemon for that gossip + nickname. Blocks up to
-              --timeout-secs (default 15); exits non-zero when the response is
+              --timeout-secs (default 45); exits non-zero when the response is
               an error or the call times out.
 
               This always opens or advances a TASK. For chat, use a2a
