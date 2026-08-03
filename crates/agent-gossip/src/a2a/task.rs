@@ -604,7 +604,12 @@ async fn broadcast_status(
     };
     let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(state.identity());
     if let Ok(bytes) = msg.serialize() {
-        let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
+        // Through `deliver`, not `sender.broadcast`: the frame is directed, so
+        // it takes unicast to `peer` like every other directed frame. Straight
+        // onto gossip it would flood `author`/`to` in the clear on a timer, and
+        // every bystander would run `lifecycle::observe` on a beat meant for
+        // one peer — waking a parked bell off someone else's task.
+        let _ = agent_habilis_mesh::ops::deliver(&msg, Bytes::from(bytes), state, ctx.sender).await;
     }
 }
 

@@ -325,6 +325,55 @@ pub fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Spawn a bell (`poll --long`) against a live daemon and prove it parked.
+///
+/// Unlike [`cli_poll_long`], the bell is a live child, so a test can go on to
+/// assert it is *still* parked ([`assert_bell_parked`]) or that something rang
+/// it ([`wait_bell_output`]). The grace period must clear the CLI's own
+/// re-issue cycle, or a bell that fired immediately would still look parked.
+///
+/// Drain the daemon with a foreground [`cli_poll`] first: `--long` fires on any
+/// waking event past `last_served`, which only a foreground poll advances, so
+/// an undrained backlog (a join, a presence line) rings the bell at once.
+pub fn park_bell(mesh: &str, nickname: &str) -> Child {
+    let mut bell = test_cmd()
+        .args(["poll", "--gossip", mesh, "--nickname", nickname, "--long"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("bell spawns");
+    std::thread::sleep(BELL_GRACE);
+    assert_bell_parked(&mut bell, "bell must park on a drained daemon");
+    bell
+}
+
+/// How long to let a bell run before concluding it did not fire — comfortably
+/// over the CLI's `POLL_LONG_MIN_CYCLE_MS` re-issue cycle, so a bell that fired
+/// on the very first round has exited by the time we look.
+pub const BELL_GRACE: Duration = Duration::from_secs(3);
+
+pub fn assert_bell_parked(bell: &mut Child, why: &str) {
+    assert!(bell.try_wait().expect("try_wait").is_none(), "{why}");
+}
+
+/// Wait for a bell to ring within [`MSG_TIMEOUT`] and return its stdout.
+pub fn wait_bell_output(bell: &mut Child) -> String {
+    use std::io::Read as _;
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    while bell.try_wait().expect("try_wait").is_none() {
+        assert!(Instant::now() < deadline, "bell never rang");
+        std::thread::sleep(POLL);
+    }
+    let mut body = String::new();
+    bell.stdout
+        .take()
+        .expect("bell stdout is piped")
+        .read_to_string(&mut body)
+        .expect("read bell output");
+    body
+}
+
 /// `agent-gossip poll --long` (long-poll; blocks until events arrive), returning the
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.

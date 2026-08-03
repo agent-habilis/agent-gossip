@@ -421,7 +421,8 @@ pub(crate) async fn send_broadcast(
     }
     // A big group's shards skip the message log (`shard_fits_log`), so peers
     // can only heal a lost shard via the `shard/repair` RPC — served from this
-    // sender-side frame cache. Small groups heal through anti-entropy instead.
+    // sender-side frame cache. Small groups heal through anti-entropy instead,
+    // which re-sends a directed shard point-to-point to its addressee.
     let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {

@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::protocol::Message;
+use crate::protocol::message::sole_addressee;
+use crate::protocol::{Message, Nickname};
 
 /// One anti-entropy digest window: the inclusive `[lo, hi]` timestamp
 /// range it covers and the compact (raw 16-byte UUID) ids the sender holds
@@ -21,6 +22,18 @@ pub(crate) struct DigestWindow {
 pub(crate) struct WindowRange {
     pub lo: i64,
     pub hi: i64,
+}
+
+/// One gap query against the log: the window to search, the ids the requester
+/// already advertised, the resend budget left for this round, and **who** is
+/// asking — the last because entitlement is per-peer, not global (see
+/// [`resendable_to`]).
+#[derive(Clone, Copy)]
+pub(crate) struct MissingQuery<'a> {
+    pub range: WindowRange,
+    pub have: &'a HashSet<[u8; 16]>,
+    pub max: usize,
+    pub requester: &'a Nickname,
 }
 
 /// A bounded buffer of the recent messages a member retains — the
@@ -152,15 +165,17 @@ impl MessageLog {
     }
 
     /// Up to `max` of our messages (newest first) within the `[lo, hi]`
-    /// timestamp window whose compact id is **not** in `have` — the
-    /// in-window gap to re-broadcast so a peer that advertised that window
-    /// recovers what it missed. Out-of-window messages are never re-sent.
-    pub(crate) fn missing_in_window(
-        &self,
-        range: WindowRange,
-        have: &HashSet<[u8; 16]>,
-        max: usize,
-    ) -> Vec<Message> {
+    /// timestamp window whose compact id is **not** in `have`, and which
+    /// `requester` is entitled to — the in-window gap to re-send so a peer that
+    /// advertised that window recovers what it missed. Out-of-window messages
+    /// are never re-sent.
+    pub(crate) fn missing_in_window(&self, query: MissingQuery<'_>) -> Vec<Message> {
+        let MissingQuery {
+            range,
+            have,
+            max,
+            requester,
+        } = query;
         self.messages
             .iter()
             .rev()
@@ -168,11 +183,34 @@ impl MessageLog {
                 msg.timestamp >= range.lo
                     && msg.timestamp <= range.hi
                     && !have.contains(&msg.dedup_key())
+                    && resendable_to(msg, requester)
             })
             .take(max)
             .cloned()
             .collect()
     }
+}
+
+/// Whether `msg` is an anti-entropy subject **for `requester`**.
+///
+/// A frame with a sole addressee is unicast-only by construction (see
+/// [`crate::transport::deliver`]) — gossip never carries it, so it is not a
+/// subject of the gossip-wide anti-entropy plane either. Only its own addressee
+/// is entitled to a re-send, and only when that addressee is the peer whose
+/// digest advertised the gap. Everything else — broadcast content, presence —
+/// is everyone's.
+///
+/// The gate belongs here rather than at the call site because the caller's
+/// `.take(max)` spends a *shared* resend budget: a directed frame filtered
+/// afterwards would still consume a slot and truncate the genuinely-missing
+/// tail.
+///
+/// Note the advertise side ([`MessageLog::window_at`] and friends) deliberately
+/// does **not** filter: a directed frame the addressee holds must keep
+/// appearing in its digest ids, or the author would see it as perpetually
+/// missing and re-send it every round forever.
+fn resendable_to(msg: &Message, requester: &Nickname) -> bool {
+    sole_addressee(&msg.kind).is_none_or(|to| to == requester)
 }
 
 /// Total order deciding which message is evicted on overflow (smallest is
@@ -189,12 +227,30 @@ fn eviction_key(msg: &Message) -> (i64, &str, Option<u64>, &str) {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{Message, MessageLog, WindowRange};
+    use super::{Message, MessageLog, MissingQuery, Nickname, WindowRange};
+
+    /// A whole-log gap query for `requester` with nothing already held — the
+    /// shape every gate test wants.
+    fn all_missing_for<'a>(
+        have: &'a HashSet<[u8; 16]>,
+        max: usize,
+        requester: &'a Nickname,
+    ) -> MissingQuery<'a> {
+        MissingQuery {
+            range: WindowRange {
+                lo: 0,
+                hi: i64::MAX,
+            },
+            have,
+            max,
+            requester,
+        }
+    }
 
     fn msg(id: &str) -> Message {
         Message::new_app(
             &crate::protocol::MeshId::from("test"),
-            &crate::protocol::Nickname::from("author"),
+            &Nickname::from("author"),
             crate::protocol::AppFrameParams {
                 tag: crate::protocol::AppTag::from("app_msg"),
                 to: None,
@@ -210,6 +266,29 @@ mod tests {
         message.timestamp = ts;
         message
     }
+
+    /// A message directed at `to` — the frames that ride unicast only.
+    fn msg_to(body: &str, ts: i64, to: &str) -> Message {
+        let mut message = Message::new_app(
+            &crate::protocol::MeshId::from("test"),
+            &Nickname::from("author"),
+            crate::protocol::AppFrameParams {
+                tag: crate::protocol::AppTag::from("app_msg"),
+                to: Some(Nickname::from(to)),
+                corr: None,
+                body: crate::protocol::MessageBody::from(body),
+            },
+        );
+        message.timestamp = ts;
+        message
+    }
+
+    fn nick(name: &str) -> Nickname {
+        Nickname::from(name)
+    }
+
+    /// Everything, for a requester with no directed frames in play.
+    const ANYONE: &str = "requester";
 
     // ── windowed digest ────────────────────────────────────────────
 
@@ -267,11 +346,72 @@ mod tests {
             .ids
             .into_iter()
             .collect();
-        let gap = log.missing_in_window(WindowRange { lo: 20, hi: 40 }, &have, 10);
+        let gap = log.missing_in_window(MissingQuery {
+            range: WindowRange { lo: 20, hi: 40 },
+            have: &have,
+            max: 10,
+            requester: &nick(ANYONE),
+        });
         let bodies: HashSet<&str> = gap.iter().map(|msg| msg.body.as_str()).collect();
         // ts 20 and 40 are in-window and missing; 30 is in `have`; 10 and 50
         // are out of window — never re-sent.
         assert_eq!(bodies, HashSet::from(["20", "40"]));
+    }
+
+    // ── the addressee gate ─────────────────────────────────────────
+
+    #[test]
+    fn directed_frame_is_never_offered_to_a_third_party() {
+        let mut log = MessageLog::new(10);
+        log.push(msg_at("public", 10));
+        log.push(msg_to("private", 20, "bob"));
+        let gap = log.missing_in_window(all_missing_for(&HashSet::new(), 10, &nick("carol")));
+        let bodies: HashSet<&str> = gap.iter().map(|msg| msg.body.as_str()).collect();
+        assert_eq!(
+            bodies,
+            HashSet::from(["public"]),
+            "a bystander must never be offered a frame directed elsewhere"
+        );
+    }
+
+    #[test]
+    fn directed_frame_is_offered_to_its_own_addressee() {
+        // The recovery property the gate must preserve: a small multipart body
+        // has no repair path other than anti-entropy (see `repair_tickets`), so
+        // dropping the addressee's own backfill would lose the message whole.
+        let mut log = MessageLog::new(10);
+        log.push(msg_at("public", 10));
+        log.push(msg_to("private", 20, "bob"));
+        let gap = log.missing_in_window(all_missing_for(&HashSet::new(), 10, &nick("bob")));
+        let bodies: HashSet<&str> = gap.iter().map(|msg| msg.body.as_str()).collect();
+        assert_eq!(bodies, HashSet::from(["public", "private"]));
+    }
+
+    #[test]
+    fn directed_frame_does_not_consume_a_third_party_resend_budget() {
+        // Why the gate lives inside the filter rather than at the call site:
+        // iteration is newest-first and `max` is a shared budget, so a directed
+        // frame filtered *after* the take would spend the only slot and starve
+        // the broadcast the requester actually needs.
+        let mut log = MessageLog::new(10);
+        log.push(msg_at("public", 10));
+        log.push(msg_to("private", 20, "bob")); // newest → seen first
+        let gap = log.missing_in_window(all_missing_for(&HashSet::new(), 1, &nick("carol")));
+        let bodies: Vec<&str> = gap.iter().map(|msg| msg.body.as_str()).collect();
+        assert_eq!(bodies, vec!["public"], "the budget went to a usable frame");
+    }
+
+    #[test]
+    fn digest_windows_still_advertise_directed_ids() {
+        // The other half of the both-sides-agree invariant. If the advertise
+        // side ever filtered too, the addressee would stop listing a directed
+        // frame it holds, the author would read that as a permanent gap, and
+        // every round would re-send it forever.
+        let mut log = MessageLog::new(10);
+        log.push(msg_at("public", 10));
+        log.push(msg_to("private", 20, "bob"));
+        assert_eq!(log.window_at(0, 10).expect("non-empty").ids.len(), 2);
+        assert_eq!(log.recent_window(10).expect("non-empty").ids.len(), 2);
     }
 
     #[test]
@@ -296,14 +436,15 @@ mod tests {
         assert_eq!(window.hi, i64::MAX, "newest window must be open-ended");
         let have: HashSet<[u8; 16]> = window.ids.into_iter().collect();
         let offered: HashSet<String> = holder
-            .missing_in_window(
-                WindowRange {
+            .missing_in_window(MissingQuery {
+                range: WindowRange {
                     lo: window.lo,
                     hi: window.hi,
                 },
-                &have,
-                100,
-            )
+                have: &have,
+                max: 100,
+                requester: &nick(ANYONE),
+            })
             .iter()
             .map(|msg| msg.body.as_str().to_string())
             .collect();

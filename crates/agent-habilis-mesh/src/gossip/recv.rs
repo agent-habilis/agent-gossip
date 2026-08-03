@@ -533,7 +533,8 @@ async fn handle_shard(
     // fragment body, matching the pre-thread behavior of the internal classify.
     let shard_class = message.kind.app_tag().map(|_| app.classify(message));
     // Only a small group's shards enter the message log (anti-entropy heals
-    // them like any message); a big group would evict the mesh's whole
+    // them like any message — point-to-point when the shard is directed, so
+    // the addressee still recovers); a big group would evict the mesh's whole
     // anti-entropy history, so its shards stay out of the log — on the send
     // side too (`shard_fits_log`) — and the group heals via shard repair.
     // (RPC shards are plumbing — `retain_and_index` skips them by kind

@@ -1176,6 +1176,84 @@ fn test_cli_broadcast_and_msg_wire_contract() {
     );
 }
 
+/// Poll `nickname` until its stream goes quiet — two consecutive empty batches
+/// a beat apart. A bell fires on any waking event past `last_served`, and only a
+/// foreground poll advances that cursor, so a bell armed over an undrained
+/// convergence backlog (`joined`, `peer_return`) rings on the backlog rather
+/// than on whatever the test is about.
+fn drain_until_quiet(mesh: &str, nickname: &str) {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut quiet = 0;
+    while quiet < 2 {
+        if cli_poll(mesh, nickname, None) == "[]" {
+            quiet += 1;
+        } else {
+            quiet = 0;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{nickname}'s event stream never went quiet"
+        );
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// The bell's privacy contract, and the reason it matters: an agent parks a
+/// `poll --long` and does nothing until it rings, so ringing it is spending
+/// someone's turn. A msg between two other peers must not do that.
+///
+/// The three gates that make it true are each pinned elsewhere — routing
+/// (`transport::send`'s unit tests), sealing and non-surfacing (`seal.rs`) — but
+/// nothing pinned the bell itself, which is a further inference: no surfaced
+/// event ⇒ no ring entry ⇒ `latest_waking_seq` never moves ⇒ the parked waiter
+/// stays parked. A change to `is_visible`/`wakes` could break that link without
+/// failing any of them.
+///
+/// Anti-entropy runs at a test cadence here so several backfill rounds land
+/// inside the quiet window: a directed frame re-sent onto gossip would reach
+/// carol, and `lifecycle::observe` runs before any addressee gate — it would
+/// ring her bell with a `peer_return`/`joined` for the *author* even though the
+/// body stays sealed and unsurfaced.
+#[test]
+fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
+    let ae = TEST_AE_SECS.to_string();
+    let flags = [("--antientropy-interval-secs", ae.as_str())];
+    let (alice, mesh) = Node::create_flags("bell-priv", &flags);
+    let bob = Node::join_flags(&mesh, "bellpriv-bob", &flags);
+    let carol = Node::join_flags(&mesh, "bellpriv-carol", &flags);
+    assert!(alice.wait_ready(&mesh), "alice socket never appeared");
+    assert!(bob.wait_ready(&mesh), "bob socket never appeared");
+    assert!(carol.wait_ready(&mesh), "carol socket never appeared");
+
+    // A msg is sealed to its recipient, so its card must have replicated.
+    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
+    drain_until_quiet(&mesh, &carol.nickname);
+
+    let mut bell = common::park_bell(&mesh, &carol.nickname);
+    common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "to-bob-only");
+
+    // Long enough for several anti-entropy rounds on top of the bell grace.
+    std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
+    common::assert_bell_parked(
+        &mut bell,
+        "a msg addressed to bob rang a bystander's bell — an agent lost a turn \
+         to a message it will never be shown",
+    );
+
+    // The negative only means something if the bell was live: a broadcast must
+    // ring the very same parked poll, and carry only the public body.
+    cli_message(&mesh, &alice.nickname, "to-everyone");
+    let rung = common::wait_bell_output(&mut bell);
+    assert!(
+        rung.contains("to-everyone"),
+        "the bell must still ring on a broadcast: {rung}"
+    );
+    assert!(
+        !rung.contains("to-bob-only"),
+        "the msg must not even ride along in the batch: {rung}"
+    );
+}
+
 /// `a2a call` is the task surface and always needs a peer; chat moved to its
 /// own two commands. Without `--to` it must fail rather than quietly
 /// broadcasting, which is what the old overload did.
@@ -2027,6 +2105,85 @@ fn test_anti_entropy_set_convergence() {
     // Post-join message, so the horizon does not hide it: anti-entropy
     // must backfill it to the still-member peer.
     assert_received(&alpha, &creator.nickname, "ae-gap", reconcile);
+}
+
+/// A directed frame is unicast-only on the send path, and backfill must not be
+/// the hole in that. Both parties retain the frame in their message log, so a
+/// resend loop that just re-broadcasts every missing log entry puts on the
+/// gossip flood exactly what `transport::deliver` structurally kept off it.
+///
+/// The oracle is the receiver's *wire*, not its screen: the engine's redaction
+/// log records every ingested frame at `recv::ingest` — before any addressee
+/// gate — so a `directed` line naming bob in carol's log means the bytes
+/// reached her, whether or not she could read or surface them. That is the
+/// leak, and it is also how a private msg would ring her bell:
+/// `lifecycle::observe` runs on the frame first and can emit a waking
+/// `peer_return`/`joined` for its author.
+#[test]
+fn test_directed_msg_never_reaches_a_bystander() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
+
+    let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
+    let bob = Node::join_flags(&mesh, "leak-bob", &FAST_AE);
+    let carol = Node::join_flags(&mesh, "leak-carol", &FAST_AE);
+    assert!(alice.wait_ready(&mesh), "alice never ready");
+    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(carol.wait_ready(&mesh), "carol never ready");
+
+    // A msg is sealed to its recipient, so its card must have replicated.
+    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
+    common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "leak-secret");
+    assert_received(&bob, &alice.nickname, "leak-secret", MSG_TIMEOUT);
+
+    // Carol never held the frame, so her digest advertises a gap over it every
+    // round — the exact condition that made backfill re-broadcast it. Wait out
+    // several rounds. Inherent blind wait (negative assertion), derived from
+    // the injected cadence.
+    std::thread::sleep(Duration::from_secs(5 * TEST_AE_SECS));
+
+    // NOTE: greps the `directed` line emitted by `logging::messages::log`.
+    // Keep the two in sync — if that event name is reworded, update this match.
+    let leaked: Vec<String> = trace_log(&mesh, &carol.nickname)
+        .lines()
+        .filter(|line| line.contains("directed") && line.contains(&bob.nickname))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "a frame directed at bob reached a bystander's wire:\n{}",
+        leaked.join("\n")
+    );
+}
+
+/// The other half of the addressee gate: it must not cost the *addressee* its
+/// backfill. A directed frame's only recovery path is anti-entropy — small
+/// multipart groups are deliberately excluded from `shard/repair` because
+/// "their shards live in the message log and heal via anti-entropy" — so a
+/// blanket "never resend directed frames" would lose a msg whose unicast leg
+/// died, silently and with no repair.
+#[test]
+fn test_directed_msg_backfills_to_its_addressee() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
+    let reconcile = Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS);
+
+    let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
+    let bob = Node::join_flags(&mesh, "backfill-bob", &FAST_AE);
+    assert!(alice.wait_ready(&mesh), "alice never ready");
+    assert!(bob.wait_ready(&mesh), "bob never ready");
+    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
+
+    // Freeze bob, then msg him: QUIC buffers the unicast leg locally, and the
+    // freeze outlasts iroh's direct-path idle timeout, so the leg dies with the
+    // frame still in flight. `commit_outbound_part` retained it before
+    // `deliver`, so alice can still serve it — through anti-entropy only.
+    bob.stop();
+    let _ = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "backfill-secret");
+    std::thread::sleep(LINK_DEATH_FREEZE);
+    bob.cont();
+
+    assert_received(&bob, &alice.nickname, "backfill-secret", reconcile);
 }
 
 /// Large-gap reconnect replication: with a shared history larger than the

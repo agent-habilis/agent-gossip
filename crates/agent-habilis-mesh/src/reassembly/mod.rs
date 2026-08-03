@@ -244,7 +244,8 @@ impl ReassemblyStore {
     /// The big (unlogged) groups that stalled long enough to ask their author
     /// for the missing shards, each at most once per
     /// [`REASSEMBLY_REPAIR_IDLE_SECS`] window. Small groups are excluded —
-    /// their shards live in the message log and heal via anti-entropy.
+    /// their shards live in the message log and heal via anti-entropy, which
+    /// re-sends a directed shard point-to-point to its addressee.
     #[must_use]
     pub fn repair_tickets(&mut self, now: Instant) -> Vec<RepairTicket> {
         let mut tickets = Vec::new();

@@ -8,6 +8,11 @@
 //! across rounds via a rolling cursor; the `[lo, hi]` bounds let a receiver
 //! re-send only **in-window** gaps, so advertising a sub-window never makes
 //! peers perpetually re-broadcast the out-of-window remainder.
+//!
+//! A resend rides the same plane the original send chose: broadcast content
+//! goes back on gossip, and a directed frame goes point-to-point to its
+//! addressee — never to the peer that merely asked. Both follow from routing
+//! every resend through [`crate::transport::deliver`].
 
 use std::collections::HashSet;
 
@@ -16,7 +21,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::ctx::HandlerCtx;
-use crate::daemon::message_log::{DigestWindow, WindowRange};
+use crate::daemon::message_log::{DigestWindow, MissingQuery, WindowRange};
 use crate::daemon::state::EventLoopState;
 use crate::protocol::{Channel, MeshId, Message, MessageBody, Nickname};
 use crate::util::tuning::{ANTIENTROPY_DIGEST_WINDOW_IDS, antientropy_max_resend};
@@ -129,12 +134,19 @@ pub(crate) async fn broadcast_digest(
     .await;
 }
 
-/// Handle a received anti-entropy digest: for each advertised window,
-/// re-broadcast our logged messages the sender lacks **within that
-/// window** (open-ended newest ⇒ everything newer; closed older ⇒ that
-/// slice only), newest-first, up to `antientropy_max_resend()` total.
-/// Receivers that already have them drop the repeat (dedup); the sender
-/// (and anyone else who missed them) recovers. Never logged.
+/// Handle a received anti-entropy digest: for each advertised window, re-send
+/// our logged messages the sender lacks **within that window** (open-ended
+/// newest ⇒ everything newer; closed older ⇒ that slice only), newest-first, up
+/// to `antientropy_max_resend()` total. Receivers that already have them drop
+/// the repeat (dedup); the sender (and anyone else who missed them) recovers.
+/// Never logged.
+///
+/// Each resend goes through [`crate::transport::deliver`] rather than straight
+/// onto gossip, so it takes the plane its addressing dictates — the same
+/// decision the original send made. Paired with `missing_in_window`'s own
+/// addressee gate, a directed frame is re-sent point-to-point to its addressee
+/// and to nobody else, so backfill can't put on the gossip flood what the send
+/// path structurally kept off it.
 ///
 /// The windows' `have` sets are **unioned** before the diff (as in
 /// [`handle_state_digest`]): the open-ended newest (`[lo, MAX]`) and closed
@@ -158,27 +170,44 @@ pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx
         if budget == 0 {
             break;
         }
-        for msg in state.message_log.missing_in_window(
-            WindowRange {
+        for msg in state.message_log.missing_in_window(MissingQuery {
+            range: WindowRange {
                 lo: window.lo,
                 hi: window.hi,
             },
-            &have,
-            budget,
-        ) {
-            if let Ok(bytes) = msg.serialize() {
-                let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
-                // Mark it sent so the next (overlapping) window doesn't re-send
-                // it and waste budget — equal-timestamp ranges overlap heavily.
-                have.insert(msg.dedup_key());
-                resent += 1;
-                budget -= 1;
+            have: &have,
+            max: budget,
+            requester: &message.author,
+        }) {
+            if !resend_one(&msg, state, ctx).await {
+                continue;
             }
+            // Mark it sent so the next (overlapping) window doesn't re-send it
+            // and waste budget — equal-timestamp ranges overlap heavily.
+            // Charged even when the send failed: an addressee with no endpoint
+            // yet must not be retried inside this digest; it retries next round.
+            have.insert(msg.dedup_key());
+            resent += 1;
+            budget -= 1;
         }
     }
     if resent > 0 {
         tracing::debug!(resent, "anti-entropy: resent messages a peer was missing");
     }
+}
+
+/// Re-send one message on the plane its addressing dictates. Returns whether it
+/// was attempted at all — `false` only for the unserializable frame we somehow
+/// hold, which must not be charged to the round's budget.
+async fn resend_one(msg: &Message, state: &EventLoopState, ctx: &HandlerCtx<'_>) -> bool {
+    let Ok(bytes) = msg.serialize() else {
+        return false;
+    };
+    if let Err(error) = crate::transport::deliver(msg, Bytes::from(bytes), state, ctx.sender).await
+    {
+        tracing::debug!(target: "agent_habilis_mesh::gossip", %error, "anti-entropy resend failed");
+    }
+    true
 }
 
 /// Broadcast a **state** anti-entropy digest. The state log is unbounded, so —

@@ -14,7 +14,7 @@ use std::process::{Child, Stdio};
 use std::time::Instant;
 
 use common::{
-    CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, cli_message_checked, cli_poll, test_cmd, tmp_log,
+    CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, cli_message_checked, cli_poll, park_bell, test_cmd, tmp_log,
 };
 
 /// Long enough to exceed any plausible notification cap, and to make a partial
@@ -224,23 +224,6 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
         body.contains("wake up") && body.contains(r#""is_visible":true"#),
         "the waking message is printable: {body}"
     );
-}
-
-/// Spawn a parked bell (`poll --long`) against a live daemon and prove it is
-/// still parked after a grace period.
-fn park_bell(mesh: &str, nick: &str) -> Child {
-    let mut bell = test_cmd()
-        .args(["poll", "--gossip", mesh, "--nickname", nick, "--long"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("bell spawns");
-    std::thread::sleep(std::time::Duration::from_secs(1));
-    assert!(
-        bell.try_wait().expect("try_wait").is_none(),
-        "bell must be parked before the daemon goes away"
-    );
-    bell
 }
 
 /// Wait for `child` to exit within `MSG_TIMEOUT`, returning its status.
