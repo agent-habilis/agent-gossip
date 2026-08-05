@@ -9,7 +9,7 @@
 //! wrong-kind token (blob / invite) fails cleanly on decode.
 
 use anyhow::{Context, Result, bail};
-use iroh::EndpointAddr;
+use fofoca::iroh::EndpointAddr;
 use sha2::{Digest, Sha256};
 
 use fofoca::net::{endpoint_addr_from_json, endpoint_addr_to_json};
@@ -124,8 +124,8 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{A2aTicket, SECRET_LEN};
+    use fofoca::iroh::{EndpointAddr, SecretKey};
     use fofoca::protocol::LookupOpts;
-    use iroh::{EndpointAddr, SecretKey};
 
     fn sample_addr(byte: u8) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[byte; 32]).public();

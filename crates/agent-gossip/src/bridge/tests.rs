@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use iroh::endpoint::ConnectionError;
+use fofoca::iroh::endpoint::ConnectionError;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -52,7 +52,10 @@ fn card_response(url: &str) -> Vec<u8> {
 
 /// Stand up a loopback exposer forwarding to `origin`, serving with the shared
 /// 1:1 slot. Returns the exposer endpoint and its ticket.
-async fn spawn_exposer(origin: String, password: Option<Password>) -> (iroh::Endpoint, A2aTicket) {
+async fn spawn_exposer(
+    origin: String,
+    password: Option<Password>,
+) -> (fofoca::iroh::Endpoint, A2aTicket) {
     let (endpoint, ticket, auth) = bind(LookupOpts::loopback(), password.as_ref())
         .await
         .expect("bind exposer");
@@ -97,7 +100,7 @@ async fn drive(
     client.await.expect("client task")
 }
 
-async fn consumer(ticket: &A2aTicket) -> (iroh::Endpoint, SharedConnection) {
+async fn consumer(ticket: &A2aTicket) -> (fofoca::iroh::Endpoint, SharedConnection) {
     let endpoint = build_peer_endpoint(&ticket.lookups)
         .await
         .expect("consumer endpoint");

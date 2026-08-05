@@ -64,9 +64,10 @@ clap = { version = "4", features = ["derive"] }
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-gossip plug` is self-contained.
 include_dir = "0.7"
-# `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
-# capability probe (`lookup::capability`) reads the report directly.
-iroh.workspace = true
+# NOTE: no `iroh` dependency. The bridge and the A2A card name iroh types, but
+# they take them from `fofoca::iroh` — the engine owns which fork and revision
+# that is, and a second declaration here would resolve the published crate
+# beside it. See the root manifest.
 anyhow.workspace = true
 uuid.workspace = true
 sha2.workspace = true

@@ -1,4 +1,4 @@
-use iroh::{Endpoint, EndpointAddr, EndpointId};
+use fofoca::iroh::{Endpoint, EndpointAddr, EndpointId};
 
 use fofoca::protocol::Nickname;
 

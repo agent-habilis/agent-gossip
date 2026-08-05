@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use iroh::Endpoint;
-use iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
+use fofoca::iroh::Endpoint;
+use fofoca::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;

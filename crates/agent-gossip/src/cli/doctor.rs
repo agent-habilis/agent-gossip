@@ -517,7 +517,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     match net::build_peer_endpoint(lookups).await {
         Ok(endpoint) => {
             let rendezvous_id = mesh.rendezvous_id();
-            let mut addr = iroh::EndpointAddr::new(rendezvous_id);
+            let mut addr = fofoca::iroh::EndpointAddr::new(rendezvous_id);
             if mesh.is_loopback() {
                 for port in mesh.rendezvous_ports() {
                     addr = addr.with_ip_addr(std::net::SocketAddr::from((

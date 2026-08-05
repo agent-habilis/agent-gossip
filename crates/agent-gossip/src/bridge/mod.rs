@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use iroh::Endpoint;
+use fofoca::iroh::Endpoint;
 
 mod card_rewrite;
 mod connect;

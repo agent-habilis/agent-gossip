@@ -56,9 +56,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
 async-trait = "0.1.89"
 uuid = { version = "1", features = ["v4"] }
-# `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
-# capability probe (`lookup::capability`) reads the report directly.
-iroh = { version = "1.0.2", features = ["tls-ring", "unstable-net-report", "unstable-custom-transports"] }
+# NOTE: no `iroh` entry, deliberately. This workspace names nothing from the
+# iroh family; `fofoca::iroh` is the only door, and `fofoca` owns which fork and
+# revision that is. Declaring iroh here would resolve the *published* crate
+# alongside the engine's fork — two `iroh` crates in one graph, surfacing as an
+# E0308 between types that look identical, and it would put this repo back in
+# the business of tracking revs it has no reason to know.
 bs58 = "0.5"
 # The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
 # merge without a bespoke ordered-log fold. `default-features` stays on (the
@@ -184,51 +187,11 @@ lto = false
 codegen-units = 256
 strip = false
 
-# Local, uncommitted patch consuming the leak fixes from our GitHub forks
-# (kept out of `main` until the upstream PRs merge, then dropped for the released
-# versions). The former noq patch (abandoned_paths bound, #683) is gone — noq
-# v1.0.1 bounds the set upstream via ArrayRangeSet (noq#691); the former netdev
-# patch (CoreWLAN autorelease leak) merged upstream (netdev#165, shipped in
-# 0.44.0, pulled as 0.45.x via netwatch 0.19.1).
+# NOTE: no `[patch.crates-io]` block, deliberately, and there must not be one.
+# Every iroh-family fork rides a dependency edge inside `fofoca` now, so we
+# inherit them and state nothing. Re-introducing a patch here would mean this
+# repo owns a copy of the engine's pins that can silently drift out of step --
+# and a drifted pin is not a build error, it is two `iroh` crates in one graph
+# surfacing later as an E0308 on types that look identical.
 #
-# **This table must stay byte-identical to `fofoca`'s.** `[patch.crates-io]` is
-# honoured only in a workspace root and is *not* inherited across workspaces, so
-# the engine's own patches do not reach us through the path dep. A skew here
-# does not fail to link — it puts two `iroh` crates in one graph, and the
-# mismatch surfaces as E0308 on types that look identical.
-[patch.crates-io]
-# Pinned by `rev`, not `branch`: a branch ref is mutable, so a force-push (or
-# any later commit) on the fork would silently change what the next
-# `cargo update` builds. The rev is the tip of the named fix branch at pin
-# time; bumping a fork is an explicit rev edit here.
-#
-# Two fixes, stacked on the fofoca-network fork's branch
-# fix/join-all-panics-on-cancel (itself off fix/mapped-addrs-eviction-1.0.2,
-# rebased onto v1.0.2):
-#
-#  1. iroh#4294 mapped_addrs eviction (drlukeangel's).
-#  2. `RelayActor::close_all_active_relays` drains its `JoinSet` with
-#     `join_next` instead of `join_all`. `join_all` resolves a `JoinError` by
-#     panicking and does not distinguish a *cancelled* task from a panicked
-#     one, so an embedder dropping the tokio runtime mid-shutdown takes a
-#     runtime worker down with it.
-#
-# iroh-base/iroh-dns are patched to the SAME repo+rev as `iroh` because the
-# forked `iroh` pulls its workspace-local copies of them — without these the
-# graph carries two `iroh_base`/`iroh_dns` versions (fork vs crates.io) and
-# types from iroh-gossip/lookups clash (E0308).
-#
-# Branch fix/netwatch-fork-pin: the fork names the net-tools fork for its own
-# `netwatch`/`portmapper` deps, so that pin arrives transitively rather than
-# being restated here. Keep this rev in lockstep with `fofoca`'s.
-iroh = { git = "https://github.com/fofoca-network/iroh", rev = "a1c166834f5c16fd266089bb8516a5a577b48c74" }
-iroh-base = { git = "https://github.com/fofoca-network/iroh", rev = "a1c166834f5c16fd266089bb8516a5a577b48c74" }
-iroh-dns = { git = "https://github.com/fofoca-network/iroh", rev = "a1c166834f5c16fd266089bb8516a5a577b48c74" }
-# No `iroh-gossip` entry: nothing here names it, and `fofoca` takes the fork as
-# a direct git dependency of its own, so we inherit it. A pin belongs in this
-# table only when a crate we do not control names it from crates.io.
-# No `netwatch` entry either: the `iroh` fork names the net-tools fork directly
-# now (both `netwatch` and `portmapper`, which have to move together), so the
-# RTM_MISS fix arrives transitively. The `benches/idle_cost.rs` dev-dependency
-# still names netwatch — it times `interfaces::State::new()` directly — and
-# points at the same fork by `git` so the bench measures what we ship.
+# Reach iroh through `fofoca::iroh`, never as a dependency of this workspace.

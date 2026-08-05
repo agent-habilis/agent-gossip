@@ -337,8 +337,8 @@ mod tests {
 
     use super::{TicketAd, TicketChange, TicketListings};
     use crate::bridge::ticket::A2aTicket;
+    use fofoca::iroh::{EndpointAddr, SecretKey};
     use fofoca::protocol::LookupOpts;
-    use iroh::{EndpointAddr, SecretKey};
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
         let addr = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())

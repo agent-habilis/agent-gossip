@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use iroh::endpoint::{Connection, RecvStream, SendStream};
-use iroh::{Endpoint, EndpointAddr};
+use fofoca::iroh::endpoint::{Connection, RecvStream, SendStream};
+use fofoca::iroh::{Endpoint, EndpointAddr};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;

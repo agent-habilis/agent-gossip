@@ -87,7 +87,6 @@ dependencies = [
  "hyper-util",
  "include_dir",
  "insta",
- "iroh",
  "mimalloc",
  "netwatch",
  "proptest",
@@ -1593,6 +1592,7 @@ dependencies = [
  "chacha20poly1305",
  "fofoca-directory",
  "fofoca-doc",
+ "fofoca-iroh-multihop-transport",
  "fofoca-iroh-webrtc-transport",
  "fofoca-logging",
  "fofoca-protocol",
@@ -1604,7 +1604,6 @@ dependencies = [
  "iroh-gossip",
  "iroh-mainline-address-lookup",
  "iroh-mdns-address-lookup",
- "iroh-multihop-transport",
  "libc",
  "n0-future",
  "rand 0.9.4",
@@ -1645,6 +1644,23 @@ dependencies = [
  "serde_json",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "fofoca-iroh-multihop-transport"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "iroh",
+ "iroh-base",
+ "n0-future",
+ "n0-watcher",
+ "noq-udp",
+ "postcard",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2610,7 +2626,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.101.0"
-source = "git+https://github.com/fofoca-network/iroh-gossip?rev=c779c0661fc9429e86852570be9bdc00fb47fdd9#c779c0661fc9429e86852570be9bdc00fb47fdd9"
+source = "git+https://github.com/fofoca-network/iroh-gossip?rev=46efd641d55ebe3a606e11c6d6800519ea643be5#46efd641d55ebe3a606e11c6d6800519ea643be5"
 dependencies = [
  "blake3",
  "bytes",
@@ -2636,8 +2652,7 @@ dependencies = [
 [[package]]
 name = "iroh-mainline-address-lookup"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1fd07cb8b4af54ccf367fe79516484c544ea3e4b1984cdd2b9aaf3bacaa80f2"
+source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=890b65407594f55105e438154ce4a41a62431c09#890b65407594f55105e438154ce4a41a62431c09"
 dependencies = [
  "derive_more",
  "iroh",
@@ -2654,8 +2669,7 @@ dependencies = [
 [[package]]
 name = "iroh-mdns-address-lookup"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c1f941695731bc3999d8c13d7e94d50e229427da81ac957eec3818264f17559"
+source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=890b65407594f55105e438154ce4a41a62431c09#890b65407594f55105e438154ce4a41a62431c09"
 dependencies = [
  "data-encoding",
  "derive_more",
@@ -2696,23 +2710,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "iroh-multihop-transport"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "bytes",
- "iroh",
- "iroh-base",
- "n0-future",
- "n0-watcher",
- "noq-udp",
- "postcard",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
