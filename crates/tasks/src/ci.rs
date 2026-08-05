@@ -7,9 +7,9 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Checking", "formatting");
     cmd!(sh, "cargo fmt --all --check").quiet().run()?;
 
-    // Cheap and first: a layering leak is a design regression, and finding it
-    // before the multi-minute clippy+test legs keeps the feedback fast.
-    crate::layering::run(false)?;
+    // No layering gate any more: it checked that the engine crate named neither
+    // A2A nor the app, and the engine now lives in its own repo (`fofoca`), so
+    // the boundary is enforced by the repo edge rather than by a grep.
 
     output::status("Running", "clippy");
     // `--features adversarial` so the adversarial suite + shim are linted

@@ -2,11 +2,9 @@ use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use crate::output::Output;
-use agent_habilis_mesh::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
-use agent_habilis_mesh::runtime::{
-    CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams,
-};
-use agent_habilis_mesh::runtime::{SetupParams, setup_mesh};
+use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
+use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
+use fofoca::runtime::{SetupParams, setup_mesh};
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
@@ -51,9 +49,7 @@ pub(super) async fn create_setup(
         nickname: cfg.nickname,
         config,
         advertise,
-        password: cfg
-            .password
-            .map(agent_habilis_mesh::protocol::Password::new),
+        password: cfg.password.map(fofoca::protocol::Password::new),
         // Invite-only is a CLI-driven feature; the library api does not expose
         // it yet (a documented follow-up).
         invite_only: false,
@@ -75,6 +71,12 @@ pub(super) async fn create_setup(
             runtime_base: Some(crate::runtime_base()),
             state_file: None,
             sink,
+            // The mesh mints its own endpoint and serves no extra ALPNs on its
+            // Router: the A2A binding stands up a separate endpoint of its own
+            // (see `bridge::expose`), so there is no accept() loop to share.
+            endpoint: None,
+            protocols: Vec::new(),
+            transports: fofoca::net::TransportOpts::default(),
             multihop: false,
             per_peer_gate: Some(crate::a2a::card_gate()),
             cohost: None,
@@ -104,9 +106,7 @@ pub(super) async fn join_setup(
     let resolved = JoinParams {
         target: cfg.target,
         nickname: cfg.nickname,
-        password: cfg
-            .password
-            .map(agent_habilis_mesh::protocol::Password::new),
+        password: cfg.password.map(fofoca::protocol::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
@@ -150,6 +150,12 @@ async fn resolved_setup(
             runtime_base: Some(crate::runtime_base()),
             state_file: None,
             sink,
+            // The mesh mints its own endpoint and serves no extra ALPNs on its
+            // Router: the A2A binding stands up a separate endpoint of its own
+            // (see `bridge::expose`), so there is no accept() loop to share.
+            endpoint: None,
+            protocols: Vec::new(),
+            transports: fofoca::net::TransportOpts::default(),
             multihop: false,
             per_peer_gate: Some(crate::a2a::card_gate()),
             cohost: None,

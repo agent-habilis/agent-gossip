@@ -84,7 +84,7 @@ Nothing here asks the developer to `cargo install` a toolchain first.
   tree via `agent_gossip::cli_command()` and emits one page per subcommand. This
   is why the task runner depends on [`agent-gossip`](../agent-gossip) — and why
   the mangen dependency lives *here* and never in the shipped binary.
-- **`agent-habilis-mesh`** is a dependency for one reason: `util::output`, the
+- **`fofoca`** is a dependency for one reason: `util::output`, the
   engine's cargo-style status helpers, reused rather than forked. Both audiences
   want the same colored lines, and `anstream` already strips the color for
   whichever of them is piping.

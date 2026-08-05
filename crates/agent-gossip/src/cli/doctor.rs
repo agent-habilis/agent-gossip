@@ -6,10 +6,10 @@ use serde::Serialize;
 
 use crate::a2a::ipc::IpcCommand;
 use crate::status as output;
-use agent_habilis_mesh::net::{self, NetworkCapability};
-use agent_habilis_mesh::protocol::MeshId;
-use agent_habilis_mesh::protocol::{Mesh, RelayChoice};
-use agent_habilis_mesh::runtime::ipc;
+use fofoca::net::{self, NetworkCapability};
+use fofoca::protocol::MeshId;
+use fofoca::protocol::{Mesh, RelayChoice};
+use fofoca::runtime::ipc;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
@@ -147,7 +147,7 @@ fn environment_section() -> Section {
         Check::new(
             "log dir",
             Verdict::Ok,
-            output::home_path(&agent_habilis_mesh::util::logs::log_dir()),
+            output::home_path(&fofoca::util::logs::log_dir()),
         ),
         Check::new(
             "runtime dir",
@@ -602,7 +602,7 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 #[cfg(test)]
 mod tests {
     use super::declared_methods_section;
-    use agent_habilis_mesh::protocol::{Mesh, MeshConfig, MeshName};
+    use fofoca::protocol::{Mesh, MeshConfig, MeshName};
 
     #[test]
     fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {

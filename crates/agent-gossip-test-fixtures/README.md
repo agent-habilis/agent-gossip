@@ -81,7 +81,7 @@ the test's captured stdout when `RUST_LOG` is set — so an in-process failure i
 debuggable exactly like a subprocess one:
 
 ```sh
-RUST_LOG=agent_habilis_mesh::gossip=debug cargo test -p agent-gossip <test-name>
+RUST_LOG=fofoca::gossip=debug cargo test -p agent-gossip <test-name>
 ```
 
 It is idempotent and silent when `RUST_LOG` is unset. Without it, every

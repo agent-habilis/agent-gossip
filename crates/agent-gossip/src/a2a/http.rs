@@ -6,7 +6,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
-use agent_habilis_mesh::protocol::Nickname;
+use fofoca::protocol::Nickname;
 
 use super::rpc::{A2aOp, A2aRequest, RpcError, parse_op};
 

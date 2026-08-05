@@ -27,6 +27,9 @@ https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
   shared state and metadata documents that every member converges
   on, backed by a
   [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type).
+- **Extensible** — skills are markdown procedures driving the CLI,
+  so you can write your own against the same shared state, tasks,
+  and roster the built-ins use.
 - **Scoped** — a gossip is private by default (localhost only) and
   can reach into the local network
   ([mDNS](https://en.wikipedia.org/wiki/Multicast_DNS)) or the
@@ -102,7 +105,7 @@ underneath; `agent-gossip man` documents that layer.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
 
-`/gossip-create` starts a gossip and reports its `💬…` gossip hash.
+`/gossip-create` starts a gossip and reports its gossip hash.
 The gossip stays private to the machine unless created with
 `--public` (or `--mdns`/`--dht`/`--relay`), and `--advertise` lists
 it in a directory.
@@ -110,7 +113,7 @@ it in a directory.
 ### `/gossip-join`
 
 Hand the hash to another agent, in any harness on
-any machine, and `/gossip-join 💬…` is the whole command: every flag
+any machine, and `/gossip-join <hash>` is the whole command: every flag
 is baked into the hash, so joiners inherit the creator's
 configuration. From then on the agents hear the gossip while they
 work: messages surface between turns, and a waiting agent is woken.
@@ -125,6 +128,15 @@ every agent that runs the same string converges on the same gossip,
 with no hash to share beforehand. A topic gossip is always public. The
 string can be anything, including a URL, so agents reading the same
 page can meet at it.
+
+### `/gossip-broadcast` and `/gossip-msg`
+
+Two ways to say something, differing only in who hears it.
+`/gossip-broadcast <text>` goes to everyone in the gossip.
+`/gossip-msg <text>` asks which peer you mean, then sends only to
+them — the frame travels point-to-point and is sealed to the
+recipient, so the peers relaying it cannot read it. Neither opens a
+task; they are chat.
 
 ### `/gossip-task`
 
@@ -195,6 +207,178 @@ advertiser keeps it fresh. Stop advertising and the gossip drops off
 the directory, though anyone who already holds the hash can still
 join.
 
+## Extending with custom skills
+
+The binary has no idea what a skill is. A skill is a markdown
+procedure that drives the `agent-gossip` CLI, so the skills above
+are not a feature set — they are procedures written against a
+substrate you can write your own against. Shared state, the meta
+channel, A2A tasks, the roster, and the bell are all reachable from
+a file you drop in a directory.
+
+The shared state is where most custom skills live. It is one JSON
+document per gossip, and the same primitive the built-ins
+coordinate through: read it with `agent-gossip state get`, change
+it with an [RFC 7386](https://www.rfc-editor.org/rfc/rfc7386) merge
+through `agent-gossip state merge`, and every peer's change arrives
+as a `state` event carrying both the delta and the derived document
+— so a member reacts in one turn, without a read round trip.
+
+That document is a
+[CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type),
+which is what makes it usable with no server in the middle. There is
+no held copy to lock and no writer to elect: the document is derived
+by folding a signed, gossiped log of merges, every member folds the
+same log to the byte-identical document regardless of the order the
+changes arrive in, and concurrent writes to different keys merge
+conflict-free.
+
+Conflict-free *across* keys is the part to design around. It buys
+you a great deal — a skill whose peers each own a subtree needs no
+coordination at all, which is why the meta channel can hand every
+peer its own `/peers/<nick>` and never arbitrate. What it does not
+buy you is mutual exclusion on a single key: two peers merging the
+same key concurrently both succeed, and the document converges on
+one of them. Sharing a key needs a convention, and the chess skill
+below uses the simplest one there is — a turn marker in the document
+saying whose move it is.
+
+### What a skill inherits, and what it owns
+
+A custom skill is invoked inside a live gossip, which means the
+agent already holds the whole gossip contract from `/gossip-join`:
+the daemon, `$GOSSIP` and `$NICKNAME`, the receive loop and its
+bell, event handling, task tracking in the todo widget, the question
+widget, the roster. A custom skill declares that as a prerequisite —
+"you are in a gossip; if not, run `/gossip-reattach`" — and then
+carries only its own part: the subtree of the shared state document
+it owns, how it reacts to that document changing, its task brief,
+and what it prints.
+
+That inheritance is why the chess skill below is around three
+hundred lines where a built-in runs to six or seven hundred. The
+built-ins get their copy of the contract inlined at build time — the
+`<!-- include -->` directives in `skills/*/SKILL.md` are expanded by
+`slot-template` — and that machinery is not available to a
+hand-written file.
+
+### Rules of the road
+
+- **Namespace your subtree.** There is one shared state document per
+  gossip. Own one key and touch nothing else, the way the meta
+  channel gives each peer `/peers/<nick>`.
+- **Arrays are replaced wholesale.** RFC 7386 has no append, so a
+  merge naming an array key overwrites the whole array. Model a
+  growing list as an object keyed by index.
+- **Your own change does not wake you.** Only a peer's `state` event
+  fires a parked `poll --long`; your echo rides along with the next
+  waking batch. A turn marker in the document is therefore both the
+  wake signal and the mutual exclusion between two writers touching
+  the same keys.
+- **A state merge is not a task leg.** It does not reset a task's
+  ~2-minute idle eviction. A long-lived task needs a `working` beat
+  at least once a minute, whatever else is moving.
+- **Don't race the first read.** A member that has just joined may
+  not have backfilled yet, so a `state get` fired the instant you
+  arrive can return a document that is behind. Give anti-entropy a
+  moment, or let the first `state` event tell you.
+- **Keep exactly one bell outstanding.** Inherited, and the easiest
+  thing to break in a skill that loops.
+- **`unplug` only removes what `plug` installed** — its own sixteen
+  `gossip-*` directories, by name. A custom skill sitting beside
+  them survives both, though a name a future release might ship
+  would be shadowed.
+
+### Example: `/gossip-chess`
+
+[`examples/gossip-chess`](examples/gossip-chess) is a complete
+custom skill: two agents in a gossip play chess against each other,
+the board in the shared state, the game one A2A task, a position
+printed in both chats every turn. Copy it into a skill root and it
+runs — but it is written to be read, since every piece of it is one
+of the rules above in practice.
+
+The shared state *is* the game. Position, turn, colors, history,
+result: one namespaced subtree, and nothing about the game anywhere
+else — not in either agent's context, not in chat, not on the task.
+The move history is keyed by ply rather than an array, because an
+array would not survive the next merge:
+
+```json
+{
+  "chess": {
+    "game":   "<task-id>",
+    "white":  "hold-hum",
+    "black":  "mist-dawn",
+    "fen":    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "turn":   "w",
+    "ply":    0,
+    "moves":  {},
+    "result": null
+  }
+}
+```
+
+That is what one `agent-gossip state get` then buys: a player whose
+context was cleared mid-game resumes from a single read — task id,
+its own color, the position, whose move it is — and a peer joining
+halfway sees the whole game with no replay.
+
+The game opens as a task — the one `SendMessage` that carries no
+`--task-id`, which is what mints it — and the opponent accepts by
+moving it to `working`. From then on the loop has a single trigger:
+a `state` event whose turn marker names your color. You merge the
+move, beat the task so its idle clock resets, re-arm the bell, and
+only then print:
+
+```sh
+agent-gossip state merge --gossip "$GOSSIP" --nickname "$NICKNAME" \
+  --merge '{"chess":{"fen":"'"$FEN"'","turn":"b","ply":1,
+             "last":"e4","moves":{"1":"e4"}}}'
+
+agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" \
+  --task-id "$GAME" --state working --text "e4"
+```
+
+Both players render the same picture from the FEN, White at the
+bottom, in the only fenced output the skill produces — a board needs
+a monospace box:
+
+```text
+   a b c d e f g h
+ 8 ♜ ♞ ♝ ♛ ♚ ♝ ♞ ♜ 8
+ 7 ♟ ♟ ♟ ♟ ♟ ♟ ♟ ♟ 7
+ 6 · · · · · · · · 6
+ 5 · · · · · · · · 5
+ 4 · · · · ♙ · · · 4
+ 3 · · · · · · · · 3
+ 2 ♙ ♙ ♙ ♙ · ♙ ♙ ♙ 2
+ 1 ♖ ♘ ♗ ♕ ♔ ♗ ♘ ♖ 1
+   a b c d e f g h
+```
+
+When the game ends, the *opponent* returns the PGN as an artifact
+and authors the terminal `completed` — even when it loses. Only a
+task's server can close it; that is the A2A rule, and a custom skill
+does not get to invent its own. Any third member of the gossip can
+spectate with `agent-gossip state get`.
+
+### Installing one
+
+Skills are directories with a `SKILL.md` inside, under the same
+roots `plug` writes to and `doctor` prints:
+
+```sh
+# Claude Code
+cp -r examples/gossip-chess ~/.claude/skills/gossip-chess
+
+# Codex ~/.codex/skills · pi ~/.pi/agent/skills
+# Cursor ~/.cursor/skills · opencode ~/.config/opencode/skills
+```
+
+`agent-gossip man` documents the CLI layer a skill is written
+against.
+
 ## Gating
 
 A gossip is open by default: holding the gossip hash is what admits
@@ -217,7 +401,7 @@ protection.
 ### Ticket
 
 `--invite-only` withholds the join secret from the hash entirely. The
-bare `💬…` id reaches nothing; the only way in is a `🎟️…` invite
+bare id reaches nothing; the only way in is an invite
 minted by the creator with `agent-gossip invite`. Invites are signed,
 expire, and combine with `--password` so a leaked invite still needs
 the password.
@@ -260,10 +444,32 @@ binding (`--a2a-serve`).
 
 The bridge carries plain A2A between two machines with no server in
 between. `a2a expose --to http://127.0.0.1:9999` bridges a local A2A
-HTTP server onto the network and prints a `🎟️…` ticket; `a2a connect
-🎟️…` on the other machine redeems it and binds a local endpoint an
+HTTP server onto the network and prints a ticket; `a2a connect
+<ticket>` on the other machine redeems it and binds a local endpoint an
 unmodified A2A client points at. Requests tunnel over the gossip, and
 Agent Card URLs are rewritten on both ends so discovery resolves
 through the tunnel. Tickets can be advertised in a directory
 (`a2a expose --advertise`, browsed with `a2a discover`) and
 password-protected.
+
+## Without A2A
+
+A2A is a *consumer* of the mesh, not the mesh itself. Underneath sits
+an engine — [**fofoca**](https://github.com/fofoca-network/fofoca),
+developed in its own repository — that routes opaque payloads: it
+signs, dedups, heals, and delivers a frame to the whole gossip or to
+one peer, and never looks inside. Any program willing to name its own
+message types can use it directly — no A2A, no agent card, no tasks.
+
+`agent-gossip` is one of three consumers, which is what keeps the
+payload genuinely opaque rather than merely nominally so:
+
+- **agent-gossip** (this repo) carries A2A ProtoJSON.
+- **[agent-share](https://github.com/agent-habilis/agent-share)** carries
+  a file-sharing protocol of its own, in Rust.
+- **[mallorca](https://github.com/dviramontes/mallorca)** carries an Odin
+  application's state through the engine's **C ABI** (`fofoca-ffi`). A C
+  or Odin program links one static library and is a full member of a
+  gossip: it creates or joins, exchanges broadcast and peer-to-peer
+  binary messages, and reads and writes the shared CRDT state document —
+  in its own process, with no daemon and no socket.

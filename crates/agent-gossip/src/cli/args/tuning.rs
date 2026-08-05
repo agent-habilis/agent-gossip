@@ -6,14 +6,14 @@
 //! flattening the full server group would list `--state-file` / `--max-peers` /
 //! `--filter-self` / `--a2a-serve` in its `--help` as silent no-ops.
 //!
-//! Not in `--help`. Production runs on the `agent_habilis_mesh::util::consts`
+//! Not in `--help`. Production runs on the `fofoca::util::consts`
 //! defaults; the subprocess test suite passes these to run with short timings.
 //! These replace the former env-var overrides — see
-//! `agent_habilis_mesh::util::tuning`.
+//! `fofoca::util::tuning`.
 
 use clap::Parser;
 
-use agent_habilis_mesh::util::consts;
+use fofoca::util::consts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct TuningOpts {
@@ -109,9 +109,9 @@ pub(crate) struct TuningOpts {
 }
 
 impl TuningOpts {
-    /// The process tuning carried by these flags, for [`agent_habilis_mesh::runtime::tuning::init`].
-    pub(crate) fn tuning(&self) -> agent_habilis_mesh::runtime::tuning::Tuning {
-        agent_habilis_mesh::runtime::tuning::Tuning {
+    /// The process tuning carried by these flags, for [`fofoca::runtime::tuning::init`].
+    pub(crate) fn tuning(&self) -> fofoca::runtime::tuning::Tuning {
+        fofoca::runtime::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
             heal_interval_secs: self.heal_interval_secs,

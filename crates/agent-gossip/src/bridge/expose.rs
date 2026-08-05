@@ -14,11 +14,11 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use agent_habilis_mesh::net::build_endpoint;
-use agent_habilis_mesh::protocol::{
+use fofoca::net::build_endpoint;
+use fofoca::protocol::{
     DirectorySelection, LookupOpts, LookupSet, resolve_lookups, validate_advertise,
 };
-use agent_habilis_mesh::protocol::{Password, TicketAuth, ct_eq};
+use fofoca::protocol::{Password, TicketAuth, ct_eq};
 
 use super::directory::{TicketAd, spawn_ticket_advertiser};
 use super::ticket::A2aTicket;
@@ -108,7 +108,17 @@ pub(super) async fn bind(
     lookups: LookupOpts,
     password: Option<&Password>,
 ) -> Result<(Endpoint, A2aTicket, TicketAuth)> {
-    let endpoint = build_endpoint(&lookups, None, None, vec![A2A_ALPN.to_vec()], None).await?;
+    // `TransportHandles::default()` — IP and relay only. This is the A2A
+    // binding's own endpoint, separate from the mesh's; the mesh's custom
+    // transports belong to that one.
+    let endpoint = build_endpoint(
+        &lookups,
+        None,
+        None,
+        vec![A2A_ALPN.to_vec()],
+        fofoca::net::TransportHandles::default(),
+    )
+    .await?;
     if !lookups.is_loopback() {
         wait_online(&endpoint).await;
     }

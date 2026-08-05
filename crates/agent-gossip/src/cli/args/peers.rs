@@ -6,7 +6,7 @@ use clap::Parser;
 
 use super::legacy::LegacyOutput;
 
-use agent_habilis_mesh::protocol::{MeshId, Nickname};
+use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {

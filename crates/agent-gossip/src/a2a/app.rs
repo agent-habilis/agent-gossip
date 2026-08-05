@@ -1,5 +1,5 @@
 //! A2A-application state owned by the event loop, kept distinct from the
-//! generic mesh state in [`agent_habilis_mesh::embed::EventLoopState`]. Holds the
+//! generic mesh state in [`fofoca::embed::EventLoopState`]. Holds the
 //! in-flight task registry, the outstanding gossip A2A-call waiters, and the
 //! lazily-bound blob server — the pieces that belong to the a2a layer, not the
 //! transport/membership engine. Threaded alongside `EventLoopState` as its own
@@ -14,7 +14,7 @@ use tokio::time::Instant as TokioInstant;
 use crate::a2a::TaskId;
 use crate::a2a::surfaced::SurfacedState;
 use crate::output::{Output, OutputEvent};
-use agent_habilis_mesh::protocol::Nickname;
+use fofoca::protocol::Nickname;
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
@@ -46,9 +46,9 @@ struct StartupSink {
     startup: Startup,
 }
 
-impl agent_habilis_mesh::embed::NodeSink for StartupSink {
-    fn emit(&self, event: agent_habilis_mesh::embed::NodeEvent) {
-        use agent_habilis_mesh::embed::NodeEvent;
+impl fofoca::embed::NodeSink for StartupSink {
+    fn emit(&self, event: fofoca::embed::NodeEvent) {
+        use fofoca::embed::NodeEvent;
         if let NodeEvent::Ready {
             mesh,
             name,
@@ -90,7 +90,7 @@ impl SurfacedIo {
     /// renderer, wrapped as a [`NodeSink`] so the engine emits `NodeEvent`s
     /// through the *same* tap the app's own `Output` writes to. Both feed the
     /// surfaced-events ring in surfacing order.
-    pub(crate) fn sink(&self) -> std::sync::Arc<dyn agent_habilis_mesh::embed::NodeSink> {
+    pub(crate) fn sink(&self) -> std::sync::Arc<dyn fofoca::embed::NodeSink> {
         std::sync::Arc::new(StartupSink {
             output: self.output.clone(),
             startup: self.startup.clone(),
@@ -115,7 +115,7 @@ pub(crate) struct A2aApp {
     /// lazily on the first large-file offload (an `a2a artifact`/`call --file`)
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
-    pub blob_server: Option<agent_habilis_mesh::ops::blob::BlobServer>,
+    pub blob_server: Option<fofoca::ops::blob::BlobServer>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -243,7 +243,7 @@ impl A2aApp {
     /// *different* peer (a forged reply with a guessed `corr`), is a no-op.
     pub(crate) fn fulfill_a2a_waiter(
         &mut self,
-        corr: &agent_habilis_mesh::protocol::CorrId,
+        corr: &fofoca::protocol::CorrId,
         from: &Nickname,
         body: &str,
     ) {
@@ -259,11 +259,7 @@ impl A2aApp {
 
     /// Whether we have an outstanding A2A call to `peer` correlated by `corr`
     /// — the gate that keeps an unsolicited/forged response from being acted on.
-    pub(crate) fn has_a2a_waiter(
-        &self,
-        corr: &agent_habilis_mesh::protocol::CorrId,
-        peer: &Nickname,
-    ) -> bool {
+    pub(crate) fn has_a2a_waiter(&self, corr: &fofoca::protocol::CorrId, peer: &Nickname) -> bool {
         self.a2a_waiters
             .iter()
             .any(|waiter| waiter.corr == *corr && waiter.peer == *peer)
@@ -444,7 +440,7 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc
 /// An outstanding gossip A2A call, waiting for a response frame with a matching
 /// correlation id `corr` from `peer`, or for `deadline` to elapse.
 pub(crate) struct A2aWaiter {
-    pub(crate) corr: agent_habilis_mesh::protocol::CorrId,
+    pub(crate) corr: fofoca::protocol::CorrId,
     pub(crate) peer: Nickname,
     pub(crate) deadline: TokioInstant,
     pub(crate) responder: A2aResponder,
@@ -453,7 +449,7 @@ pub(crate) struct A2aWaiter {
 #[cfg(test)]
 mod tests {
     use super::{A2aResponder, rpc_result_from_body};
-    use agent_habilis_mesh::protocol::Nickname;
+    use fofoca::protocol::Nickname;
 
     /// The localhost binding's `A2aResponder::Rpc` unwraps a peer's JSON-RPC
     /// response body into the `Result<Value, RpcError>` its HTTP handler
@@ -506,13 +502,13 @@ mod tests {
         let (bob_tx, bob_rx) = tokio::sync::oneshot::channel();
         let (carol_tx, carol_rx) = tokio::sync::oneshot::channel();
         app.a2a_waiters.push(super::A2aWaiter {
-            corr: agent_habilis_mesh::protocol::CorrId::from("corr-bob"),
+            corr: fofoca::protocol::CorrId::from("corr-bob"),
             peer: Nickname::from("bob"),
             deadline: far,
             responder: A2aResponder::Typed(bob_tx),
         });
         app.a2a_waiters.push(super::A2aWaiter {
-            corr: agent_habilis_mesh::protocol::CorrId::from("corr-carol"),
+            corr: fofoca::protocol::CorrId::from("corr-carol"),
             peer: Nickname::from("carol"),
             deadline: far,
             responder: A2aResponder::Typed(carol_tx),

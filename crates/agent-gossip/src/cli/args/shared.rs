@@ -7,7 +7,7 @@
 
 use clap::Parser;
 
-use agent_habilis_mesh::util::consts;
+use fofoca::util::consts;
 
 use super::legacy::LegacyOutput;
 use super::tuning::TuningOpts;

@@ -12,7 +12,7 @@ use std::io::Write;
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
-use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use fofoca::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
@@ -536,7 +536,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             gossip: leg.mesh,
             author: leg.author,
             pubkey: None,
-            ts: agent_habilis_mesh::util::clock::unix_secs(),
+            ts: fofoca::util::clock::unix_secs(),
             to: leg.peer,
             task_id: leg.task_id.to_owned(),
             kind: "message",
@@ -651,7 +651,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
-    channel: agent_habilis_mesh::protocol::Channel,
+    channel: fofoca::protocol::Channel,
     event: &Message,
     document: &serde_json::Value,
     is_self: bool,

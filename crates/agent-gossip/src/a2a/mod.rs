@@ -37,9 +37,9 @@ pub(crate) use crate::bridge::{
 /// One home so the pair cannot drift between the four setup paths that install
 /// it — the engine needs it to plant the genesis entry and to refuse a forgery.
 ///
-/// [`SelfWriteGate`]: agent_habilis_mesh::embed::SelfWriteGate
-pub(crate) fn card_gate() -> agent_habilis_mesh::embed::SelfWriteGate {
-    agent_habilis_mesh::embed::SelfWriteGate {
+/// [`SelfWriteGate`]: fofoca::embed::SelfWriteGate
+pub(crate) fn card_gate() -> fofoca::embed::SelfWriteGate {
+    fofoca::embed::SelfWriteGate {
         map: "peers".to_owned(),
         field: "card".to_owned(),
     }

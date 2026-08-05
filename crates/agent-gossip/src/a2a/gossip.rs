@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 
-use agent_habilis_mesh::protocol::MeshId;
-use agent_habilis_mesh::protocol::Message as Frame;
-use agent_habilis_mesh::protocol::MessageBody;
+use fofoca::protocol::MeshId;
+use fofoca::protocol::Message as Frame;
+use fofoca::protocol::MessageBody;
 
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_TOTAL, Message, Part, Role, TaskArtifactUpdate,
@@ -370,11 +370,7 @@ pub fn frame_task_state(frame: &Frame) -> Option<TaskState> {
 /// or an artifact's parts.
 #[must_use]
 pub fn task_text(frame: &Frame) -> String {
-    match frame
-        .kind
-        .app_tag()
-        .map(agent_habilis_mesh::protocol::AppTag::as_str)
-    {
+    match frame.kind.app_tag().map(fofoca::protocol::AppTag::as_str) {
         Some(wire::STATUS) => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
             .ok()
             .and_then(|payload| payload.status.message.map(|msg| display_text(&msg)))
@@ -393,9 +389,9 @@ mod tests {
         Frame, broadcast_payload, compose_broadcast, compose_msg, display_text, msg_payload,
         payload_body,
     };
-    use agent_habilis_mesh::protocol::MeshId;
-    use agent_habilis_mesh::protocol::MessageId;
-    use agent_habilis_mesh::protocol::MessageKind;
+    use fofoca::protocol::MeshId;
+    use fofoca::protocol::MessageId;
+    use fofoca::protocol::MessageKind;
 
     fn mesh() -> MeshId {
         MeshId::from("test")

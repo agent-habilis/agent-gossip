@@ -1,6 +1,6 @@
-use agent_habilis_mesh::embed::RosterSnapshot;
-use agent_habilis_mesh::runtime::{SetupKind, SetupParams, setup_mesh};
-use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use fofoca::embed::RosterSnapshot;
+use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
+use fofoca::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
 use super::advertise::Advertiser;
@@ -12,10 +12,10 @@ use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::output::OutputEvent;
 use crate::output::PingPeer;
-use agent_habilis_mesh::protocol::{Mesh, MeshName};
-use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
-use agent_habilis_mesh::runtime::tuning::NODE_INBOUND_CAP;
-use agent_habilis_mesh::runtime::{CoHostPolicy, EventLoopConfig};
+use fofoca::protocol::{Mesh, MeshName};
+use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
+use fofoca::runtime::tuning::NODE_INBOUND_CAP;
+use fofoca::runtime::{CoHostPolicy, EventLoopConfig};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
@@ -102,6 +102,12 @@ impl MeshSession {
                 state_file: None,
                 sink,
                 per_peer_gate: Some(crate::a2a::card_gate()),
+                // The mesh mints its own endpoint and serves no extra ALPNs on its
+                // Router: the A2A binding stands up a separate endpoint of its own
+                // (see `bridge::expose`), so there is no accept() loop to share.
+                endpoint: None,
+                protocols: Vec::new(),
+                transports: fofoca::net::TransportOpts::default(),
                 multihop: false,
                 cohost: Some(cohost),
                 live_count: None,

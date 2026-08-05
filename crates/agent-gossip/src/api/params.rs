@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::a2a::TaskId;
-use agent_habilis_mesh::protocol::Nickname;
+use fofoca::protocol::Nickname;
 
 /// The call describing a directed [`MeshSession::a2a_call`](super::MeshSession::a2a_call) /
 /// `InProcessSession::a2a_call` — which peer, which JSON-RPC method, its

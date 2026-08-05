@@ -4,11 +4,11 @@ use tokio::sync::oneshot;
 use crate::a2a::app::A2aApp;
 use crate::a2a::send::{BroadcastParams, emit_task_status, send_broadcast};
 use crate::output;
-use agent_habilis_mesh::embed::EventLoopState;
-use agent_habilis_mesh::ops::MeshSender;
-use agent_habilis_mesh::ops::{StateMergeParams, broadcast_state_merge};
-use agent_habilis_mesh::protocol::MeshId;
-use agent_habilis_mesh::protocol::{Channel, MessageBody, Nickname};
+use fofoca::embed::EventLoopState;
+use fofoca::ops::MeshSender;
+use fofoca::ops::{StateMergeParams, broadcast_state_merge};
+use fofoca::protocol::MeshId;
+use fofoca::protocol::{Channel, MessageBody, Nickname};
 
 use super::{TaskId, task::TaskRecord, task::TaskRole};
 

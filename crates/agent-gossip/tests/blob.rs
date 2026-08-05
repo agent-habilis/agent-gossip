@@ -67,7 +67,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     let part = &payload["artifact"]["parts"][0];
     let url = part["url"].as_str().expect("the file part carries a url");
     assert!(
-        agent_habilis_mesh::ops::blob::BlobTicket::decode(url).is_ok(),
+        fofoca::ops::blob::BlobTicket::decode(url).is_ok(),
         "the result must be a blob ticket, got: {url}"
     );
     assert!(

@@ -2365,7 +2365,7 @@ fn test_steady_state_no_resend_churn() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("RUST_LOG", "agent_habilis_mesh::gossip=debug"),
+        ("RUST_LOG", "fofoca::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
         ("--antientropy-interval-secs", "2"),
     ];

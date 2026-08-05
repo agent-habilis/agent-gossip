@@ -2,7 +2,7 @@ use clap::Parser;
 
 use super::legacy::LegacyOutput;
 
-use agent_habilis_mesh::protocol::{MeshId, Nickname};
+use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn leave_accepts_explicit_target() {
-        let expected = agent_habilis_mesh::protocol::MeshId::from("AbCdEf1234");
+        let expected = fofoca::protocol::MeshId::from("AbCdEf1234");
         let cli = Cli::parse_from([
             "agent-gossip",
             "leave",

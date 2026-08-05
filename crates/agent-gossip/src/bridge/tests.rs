@@ -10,9 +10,9 @@ use iroh::endpoint::ConnectionError;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use agent_habilis_mesh::net::{add_peer_addr, build_peer_endpoint};
-use agent_habilis_mesh::protocol::LookupOpts;
-use agent_habilis_mesh::protocol::{Password, TicketAuth};
+use fofoca::net::{add_peer_addr, build_peer_endpoint};
+use fofoca::protocol::LookupOpts;
+use fofoca::protocol::{Password, TicketAuth};
 
 use super::connect::{SharedConnection, forward_one};
 use super::expose::{bind, serve_connection};

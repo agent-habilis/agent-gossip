@@ -565,11 +565,11 @@ mod tests {
         /// inside a real frame) is pinned by the layer that owns the payload.
         #[test]
         fn snap_a2a_req_frame_wire() {
-            let msg = agent_habilis_mesh::protocol::Message::fixture(
-                agent_habilis_mesh::protocol::MessageKind::app_to(
+            let msg = fofoca::protocol::Message::fixture(
+                fofoca::protocol::MessageKind::app_to(
                     crate::a2a::wire::REQ,
-                    agent_habilis_mesh::protocol::Nickname::from("addressed-nick"),
-                    Some(agent_habilis_mesh::protocol::CorrId::from(
+                    fofoca::protocol::Nickname::from("addressed-nick"),
+                    Some(fofoca::protocol::CorrId::from(
                         "00000000-0000-0000-0000-0000000000aa",
                     )),
                 ),
@@ -581,11 +581,11 @@ mod tests {
         /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
         #[test]
         fn snap_a2a_resp_frame_wire() {
-            let msg = agent_habilis_mesh::protocol::Message::fixture(
-                agent_habilis_mesh::protocol::MessageKind::app_to(
+            let msg = fofoca::protocol::Message::fixture(
+                fofoca::protocol::MessageKind::app_to(
                     crate::a2a::wire::RESP,
-                    agent_habilis_mesh::protocol::Nickname::from("addressed-nick"),
-                    Some(agent_habilis_mesh::protocol::CorrId::from(
+                    fofoca::protocol::Nickname::from("addressed-nick"),
+                    Some(fofoca::protocol::CorrId::from(
                         "00000000-0000-0000-0000-0000000000aa",
                     )),
                 ),

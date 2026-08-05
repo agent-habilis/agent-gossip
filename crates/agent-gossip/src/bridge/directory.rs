@@ -19,11 +19,11 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
-use agent_habilis_mesh::ops::directory::directory_mesh;
-use agent_habilis_mesh::protocol::{LookupOpts, LookupSet, MeshName, resolve_lookups};
-use agent_habilis_mesh::protocol::{MeshId, MessageBody, Nickname};
-use agent_habilis_mesh::runtime::CoHostPolicy;
-use agent_habilis_mesh::runtime::tuning::{
+use fofoca::ops::directory::directory_mesh;
+use fofoca::protocol::{LookupOpts, LookupSet, MeshName, resolve_lookups};
+use fofoca::protocol::{MeshId, MessageBody, Nickname};
+use fofoca::runtime::CoHostPolicy;
+use fofoca::runtime::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
 
@@ -337,7 +337,7 @@ mod tests {
 
     use super::{TicketAd, TicketChange, TicketListings};
     use crate::bridge::ticket::A2aTicket;
-    use agent_habilis_mesh::protocol::LookupOpts;
+    use fofoca::protocol::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn a2a_ticket(secret: u8, password: bool) -> String {

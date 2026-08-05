@@ -13,8 +13,8 @@
 )]
 
 use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
-use agent_habilis_mesh::protocol::crypto;
-use agent_habilis_mesh::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
+use fofoca::protocol::crypto;
+use fofoca::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the
@@ -118,8 +118,8 @@ impl BenchMessage {
         Self(Message::new_app(
             &mesh,
             &author,
-            agent_habilis_mesh::protocol::AppFrameParams {
-                tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+            fofoca::protocol::AppFrameParams {
+                tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                 to: None,
                 corr: None,
                 body: MessageBody::new(body).expect("valid body"),

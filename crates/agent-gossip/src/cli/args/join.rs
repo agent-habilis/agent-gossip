@@ -3,8 +3,8 @@
 use clap::Parser;
 
 use crate::cli::password::PasswordFlag;
-use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::protocol::{JoinTarget, JoinTargetError};
+use fofoca::protocol::Nickname;
+use fofoca::protocol::{JoinTarget, JoinTargetError};
 
 use super::shared::SharedServerOpts;
 
@@ -96,7 +96,7 @@ mod tests {
 
     #[test]
     fn mistyped_gossip_hash_fails_during_cli_parsing() {
-        let mut mistyped = agent_habilis_mesh::protocol::MeshId::from("join-cli-test").to_string();
+        let mut mistyped = fofoca::protocol::MeshId::from("join-cli-test").to_string();
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
 

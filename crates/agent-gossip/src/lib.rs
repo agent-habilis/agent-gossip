@@ -30,7 +30,7 @@
 //! ```
 
 // Application-layer modules. The engine modules (protocol, gossip, daemon,
-// …) live in the `agent_habilis_mesh` crate; this crate re-exports the
+// …) live in the `fofoca` crate; this crate re-exports the
 // curated public protocol surface from there below. `a2a` is public on
 // purpose — it is the agent-communication data model both bindings (gossip,
 // local JSON-RPC) share, and embedders speak it directly.
@@ -51,38 +51,36 @@ pub mod status;
 pub mod harness;
 
 // Curated public protocol surface. These types live in the engine crate
-// (`agent_habilis_mesh`); re-exporting them from this crate root keeps the
+// (`fofoca`); re-exporting them from this crate root keeps the
 // externally-visible `agent_gossip::` API stable across the engine split.
 pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting
 // them keeps the roster readable without widening the surface.
-pub use agent_habilis_mesh::embed::Lane;
-pub use agent_habilis_mesh::embed::{Reach, RosterEntry, RosterSnapshot};
-pub use agent_habilis_mesh::protocol::InviteTicket;
-pub use agent_habilis_mesh::protocol::JoinTarget;
-pub use agent_habilis_mesh::protocol::{
+pub use events::{OutputEvent, PingPeer, TaskGoneReason};
+pub use fofoca::embed::Lane;
+pub use fofoca::embed::{Reach, RosterEntry, RosterSnapshot};
+pub use fofoca::protocol::InviteTicket;
+pub use fofoca::protocol::JoinTarget;
+pub use fofoca::protocol::{
     BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
     Shard, ShardGroup,
 };
-pub use agent_habilis_mesh::protocol::{
+pub use fofoca::protocol::{
     LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
     RelaySelection,
 };
-pub use agent_habilis_mesh::protocol::{Nickname, NicknameError};
-pub use agent_habilis_mesh::util::logging::LogSink;
-pub use events::{OutputEvent, PingPeer, TaskGoneReason};
+pub use fofoca::protocol::{Nickname, NicknameError};
+pub use fofoca::util::logging::LogSink;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
-pub use agent_habilis_mesh::util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL,
-};
-pub use agent_habilis_mesh::util::mesh_prefix;
+pub use fofoca::util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL};
+pub use fofoca::util::mesh_prefix;
 pub use output::{event_json, surfaced_event_json};
 
 /// This binary's name — the single place it is spelled for path purposes. The
-/// engine takes it as a parameter (see [`agent_habilis_mesh::util::runtime_base`])
+/// engine takes it as a parameter (see [`fofoca::util::runtime_base`])
 /// rather than assuming it, because it is embedded by more than one binary.
 pub(crate) const PRODUCT: &str = "agent-gossip";
 
@@ -93,7 +91,7 @@ pub(crate) const PRODUCT: &str = "agent-gossip";
 /// bytes must not change. Only [`PRODUCT`] feeds it.
 #[must_use]
 pub fn runtime_base() -> std::path::PathBuf {
-    agent_habilis_mesh::util::runtime_base(PRODUCT)
+    fofoca::util::runtime_base(PRODUCT)
 }
 
 /// [`runtime_base`], created and validated as a private (`0700`) directory this
@@ -101,10 +99,10 @@ pub fn runtime_base() -> std::path::PathBuf {
 ///
 /// # Errors
 /// The base is a symlink, is not a directory, is owned by another user, or the
-/// create/chmod syscalls failed. See [`agent_habilis_mesh::util::ensure_runtime_base`].
+/// create/chmod syscalls failed. See [`fofoca::util::ensure_runtime_base`].
 pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
     let base = runtime_base();
-    agent_habilis_mesh::util::ensure_runtime_base(&base)?;
+    fofoca::util::ensure_runtime_base(&base)?;
     Ok(base)
 }
 
@@ -113,7 +111,7 @@ pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
 /// # Errors
 /// As [`ensure_runtime_base`], or the subdir create failed.
 pub fn ensure_mesh_runtime_dir(mesh_id: &str) -> std::io::Result<std::path::PathBuf> {
-    agent_habilis_mesh::util::ensure_mesh_runtime_dir(&runtime_base(), mesh_id)
+    fofoca::util::ensure_mesh_runtime_dir(&runtime_base(), mesh_id)
 }
 
 use anyhow::Result;
@@ -125,27 +123,29 @@ use cli::Cli;
 /// `--version`, `doctor`, the `ready` event, MCP `gossip_version`, and the A2A
 /// card peers see — so they can never disagree.
 ///
-/// Not the engine's ready-made `VERSION`: that leads with the *engine* crate's
-/// number, which shipped as a stale-looking `0.5.0` on a `0.7.2` binary. Built
-/// at runtime because `concat!` cannot splice a cross-crate const, and parked
-/// in a `OnceLock` for the `&'static str` clap's `version` requires.
+/// Not the engine's ready-made `VERSION`, and not its `GIT_STAMP` either. Its
+/// version leads with the *engine* crate's number, which shipped as a
+/// stale-looking `0.5.0` on a `0.7.2` binary; and since the engine moved to the
+/// separate `fofoca` repo, its stamp names a commit that does not exist in this
+/// history. Both halves are this crate's own: the number from `CARGO_PKG_VERSION`,
+/// the stamp from `build.rs` (see `emit_git_stamp`).
 #[must_use]
-pub fn version() -> &'static str {
-    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    VERSION.get_or_init(|| {
-        format!(
-            "{} {}",
-            env!("CARGO_PKG_VERSION"),
-            agent_habilis_mesh::util::version::GIT_STAMP
-        )
-    })
+pub const fn version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (",
+        env!("VERGEN_GIT_SHA"),
+        " dirty:",
+        env!("VERGEN_GIT_DIRTY"),
+        ")"
+    )
 }
 
 /// Hand [`version`] to the engine so its daemon-start log line reports the
 /// app's number instead of the engine's own. Idempotent; call before any
 /// daemon spawns.
 pub(crate) fn register_build_version() {
-    agent_habilis_mesh::util::version::set_build_version(version());
+    fofoca::util::version::set_build_version(version());
 }
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
@@ -195,7 +195,7 @@ pub fn cli_command() -> clap::Command {
 /// until `cli` resolves the mesh id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
-    agent_habilis_mesh::util::logging::install()
+    fofoca::util::logging::install()
 }
 
 /// The default tracing directive filter; pass to
@@ -203,7 +203,7 @@ pub fn install_log_sink() -> LogSink {
 /// it. See `logging`.
 #[must_use]
 pub fn log_filter() -> tracing_subscriber::EnvFilter {
-    agent_habilis_mesh::util::logging::log_filter(APP_LOG_PINS)
+    fofoca::util::logging::log_filter(APP_LOG_PINS)
 }
 
 /// This crate's own `tracing` targets, pinned to `info`.
@@ -213,9 +213,9 @@ pub fn log_filter() -> tracing_subscriber::EnvFilter {
 /// every optimized one — the exact failure that once made a reliability test go
 /// red only under `--profile ci`. Any new `target:` in this crate belongs here.
 ///
-/// The engine cannot hold these: `cargo task layering` forbids the string
-/// `agent_gossip::` in engine sources, and rightly — the pins for a consumer's
-/// targets are the consumer's business.
+/// The engine cannot hold these: it lives in its own repo with other consumers
+/// and has no business naming ours — the pins for a consumer's targets are the
+/// consumer's business.
 ///
 /// `pub` + `doc(hidden)` so `tests/log_pins.rs` can assert this list covers
 /// every `target:` the crate actually emits under. Not public API.
@@ -226,7 +226,7 @@ pub const APP_LOG_PINS: &str = "agent_gossip::a2a=info,agent_gossip::directory=i
 /// (transient command, or startup failed before attach). Call after
 /// `run_cli` returns.
 pub fn flush_log_if_pending() {
-    agent_habilis_mesh::util::logging::flush_pending_to_stderr();
+    fofoca::util::logging::flush_pending_to_stderr();
 }
 
 // Shared config for the crate's `proptest!` blocks. Overrides the default

@@ -11,13 +11,27 @@
 //! directives that `slot-template` expands at build time, so adding a skill
 //! needs no change here.
 //!
-//! The git version stamp (`VERGEN_GIT_*`, feeding `util::version::VERSION`)
-//! lives in the engine crate's build script (`agent-habilis-mesh/build.rs`),
-//! since `util::version` is an engine module.
+//! Also stamps the build's git identity into `VERGEN_GIT_SHA` /
+//! `VERGEN_GIT_DIRTY`, which [`agent_gossip::version`] splices into every
+//! version surface. This has to happen *here*: the engine moved to its own
+//! repo, so its stamp names a `fofoca` commit, and reading it would have
+//! `agent-gossip --version` report a SHA that does not exist in this history.
+//!
+//! Deliberately **not** `Emitter::idempotent()`: vergen emits the
+//! `rerun-if-changed` directives for `.git/HEAD` + the active ref only when
+//! idempotent is off (vergen-gitcl `inner_add_git_map_entries`). With the flag
+//! on, nothing invalidates the cached build-script output, and any reused
+//! target dir — `cargo install --path` reuses the workspace `target/release` —
+//! serves a fossilized stamp forever: installs kept reporting `765793f` for
+//! days of newer commits. A non-git build (released tarball) still compiles
+//! without the flag: the emitter's default error path (`fail_on_error` off)
+//! emits placeholder values for the requested keys instead of failing.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+use vergen_gitcl::{Emitter, GitclBuilder};
 
 /// Names never staged/embedded — shared verbatim with `src/cli/agent.rs`'s
 /// write-out filter via one `include!`d fragment, so staging and write-out can
@@ -39,6 +53,19 @@ fn main() {
     let generated = out_dir.join("skills");
     render_skills(&skills_dir(), &generated);
     emit_embed_fingerprint(&generated);
+    emit_git_stamp();
+}
+
+/// Emit `VERGEN_GIT_SHA` / `VERGEN_GIT_DIRTY` for [`agent_gossip::version`].
+/// A non-git build (released tarball) silently gets vergen's placeholders
+/// rather than failing — see the module docs for why `idempotent` stays off.
+fn emit_git_stamp() {
+    let Ok(gitcl) = GitclBuilder::default().sha(true).dirty(true).build() else {
+        return;
+    };
+    let _ = Emitter::default()
+        .add_instructions(&gitcl)
+        .and_then(|emitter| emitter.emit());
 }
 
 /// `skills/` sits at the workspace root, two levels above this package. Anchored

@@ -1,4 +1,4 @@
-use agent_habilis_mesh::ops::directory::directory_mesh;
+use fofoca::ops::directory::directory_mesh;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,12 +7,12 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
-use agent_habilis_mesh::ops::directory;
-use agent_habilis_mesh::protocol::{LookupOpts, MeshName};
-use agent_habilis_mesh::runtime::EventLoopConfig;
-use agent_habilis_mesh::runtime::tuning::advertise_interval_secs;
+use fofoca::ops::directory;
+use fofoca::protocol::{LookupOpts, MeshName};
+use fofoca::runtime::EventLoopConfig;
+use fofoca::runtime::tuning::advertise_interval_secs;
 
-pub(crate) use agent_habilis_mesh::runtime::DIRECTORY_ADVERTISER_COHOST;
+pub(crate) use fofoca::runtime::DIRECTORY_ADVERTISER_COHOST;
 
 /// Spawn the directory re-broadcast task for `cfg`'s mesh: wire a fresh
 /// live-peer counter into `cfg.live_count`, then re-send the

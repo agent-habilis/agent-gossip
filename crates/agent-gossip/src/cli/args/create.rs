@@ -3,8 +3,8 @@
 use clap::Parser;
 
 use crate::cli::password::PasswordFlag;
-use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::protocol::{DirectorySelection, MeshName};
+use fofoca::protocol::Nickname;
+use fofoca::protocol::{DirectorySelection, MeshName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
@@ -86,8 +86,8 @@ mod tests {
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;
-    use agent_habilis_mesh::protocol::Nickname;
-    use agent_habilis_mesh::protocol::{DirectorySelection, MeshName};
+    use fofoca::protocol::Nickname;
+    use fofoca::protocol::{DirectorySelection, MeshName};
 
     #[test]
     fn create_opts_with_nickname() {

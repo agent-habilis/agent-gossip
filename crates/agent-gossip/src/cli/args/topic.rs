@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use agent_habilis_mesh::protocol::Nickname;
+use fofoca::protocol::Nickname;
 
 use super::shared::SharedServerOpts;
 
@@ -72,7 +72,7 @@ mod tests {
         assert_eq!(
             opts.nickname
                 .as_ref()
-                .map(agent_habilis_mesh::protocol::Nickname::as_str),
+                .map(fofoca::protocol::Nickname::as_str),
             Some("me")
         );
     }

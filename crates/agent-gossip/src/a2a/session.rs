@@ -2,8 +2,8 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
-use agent_habilis_mesh::embed::RosterSnapshot;
-use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname};
+use fofoca::embed::RosterSnapshot;
+use fofoca::protocol::{Message, MessageBody, Nickname};
 
 /// A typed in-process request from an in-process session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket

@@ -1,7 +1,7 @@
 //! Process tuning for the parts of the A2A layer the engine does not own: the
 //! task state machine and the long-poll park.
 //!
-//! Mirrors `agent_habilis_mesh::util::tuning` in shape — a `const` default per
+//! Mirrors `fofoca::util::tuning` in shape — a `const` default per
 //! knob, one `OnceLock` installed from the hidden CLI flags — but deliberately
 //! separate. These govern behavior implemented entirely in `a2a`: the engine has
 //! no task state machine and no poll waiters, so it must not carry the dials for
@@ -23,7 +23,7 @@ pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 /// `--timeout-secs` default.
 ///
 /// **Must stay above the engine's heal interval**, currently 15s
-/// (`agent_habilis_mesh::util::consts::HEAL_INTERVAL_SECS`). A directed request
+/// (`fofoca::util::consts::HEAL_INTERVAL_SECS`). A directed request
 /// rides the gossip overlay unlogged, so one sent while the overlay holds no
 /// live peer link is dropped outright and anti-entropy never heals it; the
 /// sender is rescued only when the next heal tick re-bridges the pair. This sat

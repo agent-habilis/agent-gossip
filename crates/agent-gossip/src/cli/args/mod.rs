@@ -55,14 +55,14 @@ pub(crate) use topology::TopologyOpts;
 )]
 pub(crate) struct Cli {
     /// Per-member log directory (default: the per-user runtime base, see
-    /// `agent_habilis_mesh::util::runtime_base`, with a per-mesh `<prefix>/` subfolder).
+    /// `fofoca::util::runtime_base`, with a per-mesh `<prefix>/` subfolder).
     /// Hidden — a test/ops knob.
     /// Global so it applies to any subcommand.
     #[arg(long, global = true, hide = true)]
     pub log_dir: Option<std::path::PathBuf>,
 
     /// Max log-file bytes before rotating to `<file>.1` (`0` disables).
-    /// Hidden test/ops knob; default `agent_habilis_mesh::util::consts::LOG_FILE_MAX_BYTES`.
+    /// Hidden test/ops knob; default `fofoca::util::consts::LOG_FILE_MAX_BYTES`.
     #[arg(long, global = true, hide = true)]
     pub log_max_bytes: Option<u64>,
 
@@ -241,7 +241,7 @@ pub(crate) enum Commands {
 
         /// How long `ping` collects pongs (seconds). Hidden; tests shorten it
         /// so a `ping` round-trip doesn't wait the full window.
-        #[arg(long, hide = true, default_value_t = agent_habilis_mesh::util::consts::PING_WINDOW_SECS)]
+        #[arg(long, hide = true, default_value_t = fofoca::util::consts::PING_WINDOW_SECS)]
         ping_window_secs: u64,
 
         /// How long a `long: true` fetch parks before returning empty (millis).

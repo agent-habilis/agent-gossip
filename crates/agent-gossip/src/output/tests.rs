@@ -3,7 +3,7 @@
 //! [`super::json`].
 
 use super::json::{SimpleEvent, format_msg_json, format_presence_json};
-use agent_habilis_mesh::protocol::{Message, MessageKind, PresenceSubtype};
+use fofoca::protocol::{Message, MessageKind, PresenceSubtype};
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -11,26 +11,26 @@ fn parse(text: &str) -> serde_json::Value {
 
 // ── format_msg_json: msg type ──────────────────────────────
 
-fn nick(name: &str) -> agent_habilis_mesh::protocol::Nickname {
-    agent_habilis_mesh::protocol::Nickname::from(name)
+fn nick(name: &str) -> fofoca::protocol::Nickname {
+    fofoca::protocol::Nickname::from(name)
 }
 
-fn sid() -> agent_habilis_mesh::protocol::MeshId {
-    agent_habilis_mesh::protocol::MeshId::from("test")
+fn sid() -> fofoca::protocol::MeshId {
+    fofoca::protocol::MeshId::from("test")
 }
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn chat_frame(author: &str, text: &str) -> Message {
     let payload = crate::a2a::gossip::compose_broadcast(&sid(), text);
-    let frame_id = agent_habilis_mesh::protocol::MessageId::new(payload.message_id.as_str())
+    let frame_id = fofoca::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
     Message::new_app(
         &sid(),
         &nick(author),
-        agent_habilis_mesh::protocol::AppFrameParams {
-            tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+        fofoca::protocol::AppFrameParams {
+            tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
             to: None,
             corr: None,
             body,
@@ -66,7 +66,7 @@ fn json_message_has_all_fields() {
 fn json_signed_message_exposes_full_pubkey() {
     // A real (signed) message carries the author's full Ed25519 public key
     // (hex) in the JSON event — the identity behind the display nickname.
-    let identity = agent_habilis_mesh::protocol::Identity::generate();
+    let identity = fofoca::protocol::Identity::generate();
     let msg = chat_frame("alice", "hi").signed(&identity);
     let parsed = parse(&format_msg_json(&msg, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
@@ -80,7 +80,7 @@ fn ready_event_drift_is_present_only_when_stale() {
     let make = |drift: Option<&str>| {
         super::json::event_json(&OutputEvent::Ready {
             mesh: sid(),
-            name: agent_habilis_mesh::protocol::MeshName::new("team").unwrap(),
+            name: fofoca::protocol::MeshName::new("team").unwrap(),
             nickname: nick("alice"),
             drift: drift.map(str::to_owned),
             a2a_port: None,
@@ -374,7 +374,7 @@ fn json_output_is_single_line() {
 
 mod snapshots {
     use super::{format_msg_json, format_presence_json};
-    use agent_habilis_mesh::protocol::{Message, MessageKind, PresenceSubtype};
+    use fofoca::protocol::{Message, MessageKind, PresenceSubtype};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
     /// timestamps from the fixture.
@@ -391,7 +391,7 @@ mod snapshots {
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::status_update(
-            &agent_habilis_mesh::protocol::MeshId::from("test"),
+            &fofoca::protocol::MeshId::from("test"),
             crate::a2a::gossip::StatusUpdateParams {
                 task_id: &tid,
                 state,
@@ -408,7 +408,7 @@ mod snapshots {
         let frame = snap_frame(
             MessageKind::app_to(
                 crate::a2a::wire::STATUS,
-                agent_habilis_mesh::protocol::Nickname::from("calm-otter"),
+                fofoca::protocol::Nickname::from("calm-otter"),
                 None,
             ),
             body.as_str(),
@@ -438,7 +438,7 @@ mod snapshots {
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::artifact_update(
-            &agent_habilis_mesh::protocol::MeshId::from("test"),
+            &fofoca::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
@@ -447,7 +447,7 @@ mod snapshots {
         let frame = snap_frame(
             MessageKind::app_to(
                 crate::a2a::wire::ARTIFACT,
-                agent_habilis_mesh::protocol::Nickname::from("calm-otter"),
+                fofoca::protocol::Nickname::from("calm-otter"),
                 None,
             ),
             body.as_str(),
@@ -459,10 +459,8 @@ mod snapshots {
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame(text: &str) -> Message {
-        let mut payload = crate::a2a::gossip::compose_broadcast(
-            &agent_habilis_mesh::protocol::MeshId::from("test"),
-            text,
-        );
+        let mut payload =
+            crate::a2a::gossip::compose_broadcast(&fofoca::protocol::MeshId::from("test"), text);
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
         Message::fixture(
@@ -473,16 +471,14 @@ mod snapshots {
 
     /// The directed twin of [`snap_chat_frame`].
     fn snap_msg_frame(text: &str) -> Message {
-        let mut payload = crate::a2a::gossip::compose_msg(
-            &agent_habilis_mesh::protocol::MeshId::from("test"),
-            text,
-        );
+        let mut payload =
+            crate::a2a::gossip::compose_msg(&fofoca::protocol::MeshId::from("test"), text);
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
         Message::fixture(
             MessageKind::app_to(
                 crate::a2a::wire::MSG,
-                agent_habilis_mesh::protocol::Nickname::from("addressed-nick"),
+                fofoca::protocol::Nickname::from("addressed-nick"),
                 None,
             ),
             body.as_str(),
@@ -532,7 +528,7 @@ mod snapshots {
     fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
         let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
         super::super::json::format_state_json(
-            agent_habilis_mesh::protocol::Channel::State,
+            fofoca::protocol::Channel::State,
             &Message::fixture(MessageKind::State, &body),
             document,
             is_self,
@@ -582,15 +578,14 @@ mod prop {
     };
 
     use super::{PresenceSubtype, format_msg_json, format_presence_json, sid};
-    use agent_habilis_mesh::protocol::Message;
+    use fofoca::protocol::Message;
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
     }
 
-    fn arb_nickname() -> impl Strategy<Value = agent_habilis_mesh::protocol::Nickname> {
-        "[a-z]{3,8}-[a-z]{3,8}"
-            .prop_map(|raw| agent_habilis_mesh::protocol::Nickname::new(raw).unwrap())
+    fn arb_nickname() -> impl Strategy<Value = fofoca::protocol::Nickname> {
+        "[a-z]{3,8}-[a-z]{3,8}".prop_map(|raw| fofoca::protocol::Nickname::new(raw).unwrap())
     }
 
     proptest! {
@@ -615,7 +610,7 @@ mod prop {
 
         #[test]
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
-            let test_nick = agent_habilis_mesh::protocol::Nickname::from("test-nick");
+            let test_nick = fofoca::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
                 (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
             } else {

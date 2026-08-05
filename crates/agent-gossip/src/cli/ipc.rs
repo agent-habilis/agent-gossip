@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::runtime::ipc::{Addressed, NoDaemon};
+use fofoca::protocol::Nickname;
+use fofoca::runtime::ipc::{Addressed, NoDaemon};
 
-/// [`agent_habilis_mesh::runtime::ipc::send`] with this CLI's remedy appended.
+/// [`fofoca::runtime::ipc::send`] with this CLI's remedy appended.
 ///
 /// The engine reports only the fact ([`NoDaemon`]) — it has no commands to name
 /// — so the "start one with …" half is composed here, beside the commands it
@@ -15,7 +15,7 @@ pub(crate) async fn send<C>(cmd: &C, nickname: &Nickname) -> Result<String>
 where
     C: Serialize + Addressed,
 {
-    agent_habilis_mesh::runtime::ipc::send(&crate::runtime_base(), cmd, nickname)
+    fofoca::runtime::ipc::send(&crate::runtime_base(), cmd, nickname)
         .await
         .map_err(|error| match error.downcast::<NoDaemon>() {
             Ok(no_daemon) => anyhow::anyhow!(

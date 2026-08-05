@@ -4,7 +4,7 @@ agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
 A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
-JSON-RPC binding — see [`docs/a2a-binding.md`](docs/a2a-binding.md). This file is guidance for working **on**
+JSON-RPC binding (`src/bridge/`). This file is guidance for working **on**
 the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
 (source: `docs/manual.txt`).
 
@@ -14,8 +14,9 @@ One concept, one word. The codebase is organized in layers; each
 layer owns a term and never borrows another layer's. When reading or
 changing code, keep these distinct.
 
-See [`docs/glossary.md`](docs/glossary.md) for the full term list, the
-layering, and the invariants that follow from it.
+The prose docs that held the full term list were dropped in `18876e3`
+(`docs/glossary.md`, `docs/a2a-binding.md` and eight siblings) — recover one
+with `git show 18876e3^:docs/glossary.md` if you need it.
 
 ## Comments
 
@@ -52,10 +53,11 @@ every subcommand.
 
 ### Workspace layout
 
-The root `Cargo.toml` is a **virtual manifest** — it owns no package. Every
-crate lives under `crates/` (`agent-gossip` the app, `agent-habilis-mesh` the
-engine, `iroh-multihop-transport`, `slot-template`, and the dev-only `tasks`),
-with `examples/mesh-pipe` as a second engine consumer.
+The root `Cargo.toml` is a **virtual manifest** — it owns no package. This repo
+holds the **app only**: `crates/agent-gossip` (the CLI, MCP server, A2A data
+model and bindings), `agent-gossip-test-fixtures` (the shared test harness),
+`slot-template` (the skill renderer, a build-dependency), and the dev-only
+`tasks`.
 
 Three things in the root manifest are load-bearing *because* it is virtual, and
 dropping any of them changes the build silently:
@@ -69,9 +71,41 @@ dropping any of them changes the build silently:
 - **`[profile.*]` and `[patch.crates-io]`** — cargo honours these only in the
   workspace root. They cannot move into a member manifest.
 
+#### The engine lives in another repo
+
+The gossip engine is **`fofoca`**, developed at
+`github.com/fofoca-network/fofoca` and consumed here as a *sibling path
+dependency* (`../../../fofoca-network/fofoca/crates/fofoca`, declared once in
+`[workspace.dependencies]`). Working on the engine means editing that checkout;
+there is nothing to change here. Two other consumers share it — `agent-share`
+(Rust) and `mallorca` (through `fofoca-ffi`'s C ABI) — so an engine change is
+never just an agent-gossip change.
+
+**The patch table is the sharp edge.** `[patch.crates-io]` is honoured only in a
+workspace root and is *not* inherited across workspaces, so the engine's pins do
+not reach us through the path dep. Our `iroh` / `iroh-base` / `iroh-dns` lines
+must stay in lockstep with `fofoca`'s. A skew does not fail to link — it puts
+two `iroh` crates in one graph, and the mismatch surfaces as `E0308` on types
+that look identical.
+
+Only those three. The engine's other two forks ride dependency *edges* rather
+than the patch table, so they arrive transitively and are none of our business:
+`iroh-gossip` is a direct git dep of `fofoca` (nothing else in the graph names
+it), and `netwatch`/`portmapper` are pinned inside the `iroh` fork itself. The
+rule, and the `cargo tree -i` test for applying it, is written up in `fofoca`'s
+`FORKED.md` under *Fork pins*. One exception lives here: `benches/idle_cost.rs`
+names `netwatch` directly to time `interfaces::State::new()`, so that dev-dep
+points at the fork by `git` — a bare version would quietly measure the unfixed
+crates.io copy.
+
+`agent-gossip` enables the engine's `blob` feature (the offload side-channel);
+the other consumers do not. Note `fofoca::ops::blob` (an ALPN transfer) and the
+separate `fofoca-blobs` crate (a verified-range metadata store, no transport)
+are complements, not alternatives.
+
 #### The engine's public surface
 
-`agent-habilis-mesh` exposes **six** modules, grouped by what a consumer needs
+`fofoca` exposes **six** modules, grouped by what a consumer needs
 rather than by the engine's internal topology. Everything else is `pub(crate)`.
 
 | Module | What it is for |
@@ -97,13 +131,14 @@ for them: `build.rs` renders `../../skills`, and the embedded manual is an
 > application, what that payload means, or what identity the product stamps on
 > the wire.
 
-`cargo task layering` enforces this (and runs first in `cargo task ci`): no file
-under `crates/agent-habilis-mesh/src` may contain `a2a`, `agent_gossip::`, or a
-`b"agent-gossip…"` byte-domain. It fails with the offending lines and this
-rationale. `examples/mesh-pipe` is the live proof — it consumes the engine and
-never the app.
+This used to be enforced by `cargo task layering`, a grep over the engine's
+sources for `a2a` / `agent_gossip::` / `b"agent-gossip…"`. That gate is gone
+because it is now structural: the engine is a different repo with two other
+consumers, so app vocabulary cannot leak into it by accident — it would have to
+be typed into a checkout where it does not compile against anything.
 
-Practical consequences when adding to the engine:
+The rule still binds when you *edit* that checkout. Practical consequences when
+adding to the engine:
 
 - Name the **mechanism**, not the consumer: `http_serve`, not `a2a_serve`;
   `NodeEvent::Ready.http_port`, not `a2a_port`. The app renames at its own
@@ -191,18 +226,18 @@ for local debugging only. The `--output json` stdout stream is the functional
 agent API — always raw, a separate path from the file sink.
 
 Every log line carries an explicit `target:`, one per subsystem:
-`agent_habilis_mesh::{lookup,gossip,lifecycle,beacon,directory,messages}`
+`fofoca::{lookup,gossip,lifecycle,beacon,directory,messages}`
 (`EnvFilter` prefix-matches). Override at runtime, e.g.
-`RUST_LOG=agent_habilis_mesh::gossip=trace cargo run -- create`.
+`RUST_LOG=fofoca::gossip=trace cargo run -- create`.
 
 `agent-gossip` emits under its **own** targets — `agent_gossip::{a2a,directory}`
 — never the engine's. Those are pinned separately, in `APP_LOG_PINS`
 (`agent-gossip/src/lib.rs`), which `agent_gossip::log_filter()` appends to the
-engine's list; `cargo task layering` forbids the engine from naming them, and
-`tests/log_pins.rs` fails if a target is emitted without a pin.
+engine's list, and `tests/log_pins.rs` fails if a target is emitted without a
+pin.
 
-**Write `target: "agent_habilis_mesh::<subsystem>"` on every new `tracing` call
-in `agent-habilis-mesh`.** The targets deliberately match the engine's own
+**Write `target: "fofoca::<subsystem>"` on every new `tracing` call
+in the engine.** The targets deliberately match the engine's own
 crate path, so a call sitting in the module that owns its subsystem is covered
 by the default target too — belt and braces rather than a single point of
 failure. Cross-module calls still need it written out: `reassembly` logs to the

@@ -5,7 +5,7 @@
 
 use clap::{Parser, ValueEnum};
 
-use agent_habilis_mesh::protocol::MeshId;
+use fofoca::protocol::MeshId;
 
 /// `doctor` is the one operator-facing report, so unlike every other command it
 /// renders for a human by default and keeps the machine form behind `--output

@@ -19,9 +19,9 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Building", "test binaries (ci profile)");
     // `cargo build` as well as `cargo test --no-run`, under the same profile:
     // `cargo test` builds test targets plus the bins an integration test execs,
-    // but it does **not** emit a `cdylib`. `agent-habilis-mesh-ffi` is
-    // `["cdylib", "rlib"]` and its C suite links that cdylib out of
-    // `target/<profile>/`, so without this its tests fail on a missing artifact.
+    // and the suite's subprocess layer runs the real `agent-gossip` binary. The
+    // C-ABI cdylib this line also used to produce left with the engine — its
+    // conformance suite lives in the `fofoca` repo now.
     cmd!(sh, "cargo build --workspace --profile ci")
         .quiet()
         .run()?;

@@ -17,7 +17,7 @@ pub struct SurfacedEvent {
 /// A bounded, seq-ordered record of everything the daemon **surfaced** to the
 /// operator/agent — the history `poll` / `fetch_messages` drain.
 ///
-/// Deliberately distinct from [`agent_habilis_mesh::runtime::message_log::MessageLog`]: that is
+/// Deliberately distinct from the engine's own `MessageLog`: that is
 /// the cross-node anti-entropy buffer, whose retention is a deterministic
 /// function of the message *set* (`eviction_key`) so every node agrees on what
 /// survives. This buffer is **local**: a single monotonic `seq` records
@@ -498,7 +498,7 @@ mod tests {
         render_poll_array,
     };
     use crate::output::OutputEvent;
-    use agent_habilis_mesh::protocol::{Channel, Message, MessageKind, Nickname};
+    use fofoca::protocol::{Channel, Message, MessageKind, Nickname};
     use std::time::Duration;
     use tokio::time::Instant as TokioInstant;
 

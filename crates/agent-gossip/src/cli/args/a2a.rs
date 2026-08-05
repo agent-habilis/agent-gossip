@@ -9,8 +9,8 @@ use clap::{Parser, Subcommand};
 use super::legacy::LegacyOutput;
 use super::lookup::PublicLookupArgs;
 use crate::cli::password::PasswordFlag;
-use agent_habilis_mesh::protocol::MeshName;
-use agent_habilis_mesh::protocol::{MeshId, Nickname};
+use fofoca::protocol::MeshName;
+use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct A2aOpts {

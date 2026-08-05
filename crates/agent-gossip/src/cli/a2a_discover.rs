@@ -5,7 +5,7 @@
 use anyhow::Result;
 
 use crate::a2a::{TicketDirectory, TicketDirectoryEvent};
-use agent_habilis_mesh::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
+use fofoca::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
 use super::signal::{interrupted, sigterm_stream};
 
@@ -29,7 +29,7 @@ pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
     // Route the directory session's logs to its per-member file so the JSON
     // stream stays clean.
     if let Some((mesh, nickname)) = discoverer.session_identity() {
-        agent_habilis_mesh::util::logging::attach(mesh, nickname);
+        fofoca::util::logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()

@@ -15,7 +15,7 @@
 use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
-use agent_habilis_mesh::runtime::tuning::{Tuning, init};
+use fofoca::runtime::tuning::{Tuning, init};
 
 use common::{InProcNode, MSG_TIMEOUT};
 

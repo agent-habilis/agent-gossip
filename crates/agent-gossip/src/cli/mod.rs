@@ -10,12 +10,12 @@ use serde::Deserialize;
 use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
-use agent_habilis_mesh::protocol::JoinTarget;
-use agent_habilis_mesh::protocol::{Mesh, MeshConfig, MeshName, resolve_lookups};
-use agent_habilis_mesh::protocol::{MeshId, MessageId, Nickname};
-use agent_habilis_mesh::runtime::run as run_event_loop;
-use agent_habilis_mesh::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
-use agent_habilis_mesh::runtime::{SetupKind, SetupParams, setup_mesh};
+use fofoca::protocol::JoinTarget;
+use fofoca::protocol::{Mesh, MeshConfig, MeshName, resolve_lookups};
+use fofoca::protocol::{MeshId, MessageId, Nickname};
+use fofoca::runtime::run as run_event_loop;
+use fofoca::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
+use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
 
 mod a2a_discover;
 pub(crate) mod agent;
@@ -36,11 +36,11 @@ use args::{
 
 /// Install both process tunings from one flag set. The flags are a single
 /// surface to an operator, but they land in two homes: engine knobs in
-/// `agent_habilis_mesh::util::tuning`, the task/long-poll knobs in
+/// `fofoca::util::tuning`, the task/long-poll knobs in
 /// `a2a::tuning`. Kept together here so a new flag cannot reach one and miss
 /// the other.
 fn install_tuning(opts: &args::tuning::TuningOpts) {
-    agent_habilis_mesh::runtime::tuning::init(opts.tuning());
+    fofoca::runtime::tuning::init(opts.tuning());
     crate::a2a::tuning::init(opts.a2a_tuning());
 }
 
@@ -69,7 +69,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // subcommand resolves its log file (the buffered sink flushes at
     // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
     // AHS_LOG_MAX_BYTES env reads.
-    agent_habilis_mesh::util::logs::configure(agent_habilis_mesh::util::logs::LogConfig {
+    fofoca::util::logs::configure(fofoca::util::logs::LogConfig {
         base: Some(crate::runtime_base()),
         dir: cli.log_dir,
         max_bytes: cli.log_max_bytes,
@@ -121,13 +121,11 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
-            agent_habilis_mesh::runtime::tuning::init(
-                agent_habilis_mesh::runtime::tuning::Tuning {
-                    ping_window_secs,
-                    directory_private,
-                    ..agent_habilis_mesh::runtime::tuning::Tuning::DEFAULTS
-                },
-            );
+            fofoca::runtime::tuning::init(fofoca::runtime::tuning::Tuning {
+                ping_window_secs,
+                directory_private,
+                ..fofoca::runtime::tuning::Tuning::DEFAULTS
+            });
             crate::a2a::tuning::init(crate::a2a::tuning::Tuning {
                 longpoll_max_ms,
                 ..crate::a2a::tuning::Tuning::DEFAULTS
@@ -150,8 +148,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
 
 /// Build the output sink, set up the mesh, and run the event loop. The
 /// shared spine of `create` and `join` — `resolved` carries the
-/// already-resolved [`SetupKind`](agent_habilis_mesh::runtime::SetupKind), author,
-/// and advertise directory (see [`agent_habilis_mesh::runtime::params`]).
+/// already-resolved [`SetupKind`](fofoca::runtime::SetupKind), author,
+/// and advertise directory (see [`fofoca::runtime::Resolved`]).
 async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     let Resolved {
         kind,
@@ -206,6 +204,12 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             runtime_base: Some(crate::runtime_base()),
             state_file: shared.state_file,
             sink,
+            // The mesh mints its own endpoint and serves no extra ALPNs on its
+            // Router: the A2A binding stands up a separate endpoint of its own
+            // (see `bridge::expose`), so there is no accept() loop to share.
+            endpoint: None,
+            protocols: Vec::new(),
+            transports: fofoca::net::TransportOpts::default(),
             multihop: shared.tuning.multihop,
             per_peer_gate: Some(crate::a2a::card_gate()),
             cohost: None,
@@ -223,7 +227,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         .map(|((directory, lookups), counter)| spawn_advertiser(&cfg, counter, directory, lookups));
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).
-    agent_habilis_mesh::util::logging::attach(cfg.mesh_id(), cfg.author());
+    fofoca::util::logging::attach(cfg.mesh_id(), cfg.author());
     run_event_loop(cfg, app, None, http_rx).await
 }
 
@@ -349,7 +353,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             legacy_output: _,
         } => {
             let password = password::resolve_password(password)?;
-            let advertise = agent_habilis_mesh::protocol::DirectorySelection::from_flag(advertise);
+            let advertise = fofoca::protocol::DirectorySelection::from_flag(advertise);
             Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
                 to: &to,
                 flags: lookups.to_set(),
@@ -391,7 +395,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             nickname,
             text,
         } => {
-            let body = agent_habilis_mesh::protocol::MessageBody::new(text)
+            let body = fofoca::protocol::MessageBody::new(text)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
             let resp = ipc::send(&IpcCommand::Broadcast { mesh, body }, &nickname).await?;
             let id = finish_send(&resp, "message")?;
@@ -404,7 +408,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             to,
             text,
         } => {
-            let body = agent_habilis_mesh::protocol::MessageBody::new(text)
+            let body = fofoca::protocol::MessageBody::new(text)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
             let resp = ipc::send(&IpcCommand::Msg { mesh, to, body }, &nickname).await?;
             let id = finish_send(&resp, "message")?;
@@ -498,8 +502,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
             output,
             password,
         } => {
-            let ticket = agent_habilis_mesh::ops::blob::BlobTicket::decode(&ticket)?;
-            let password = password.map(agent_habilis_mesh::protocol::Password::new);
+            let ticket = fofoca::ops::blob::BlobTicket::decode(&ticket)?;
+            let password = password.map(fofoca::protocol::Password::new);
 
             // Where the bytes land, `None` meaning stdout. Precedence:
             //   `--output -`       → stdout
@@ -534,12 +538,11 @@ async fn a2a(action: A2aAction) -> Result<()> {
             match dest {
                 None => {
                     let mut stdout = tokio::io::stdout();
-                    agent_habilis_mesh::ops::blob::fetch(&ticket, &mut stdout, password).await?;
+                    fofoca::ops::blob::fetch(&ticket, &mut stdout, password).await?;
                 }
                 Some(path) => {
                     let mut file = tokio::fs::File::create(&path).await?;
-                    if let Err(error) =
-                        agent_habilis_mesh::ops::blob::fetch(&ticket, &mut file, password).await
+                    if let Err(error) = fofoca::ops::blob::fetch(&ticket, &mut file, password).await
                     {
                         // fetch verifies the hash as it streams; a partial file
                         // from a failed transfer is meaningless, so drop it.
@@ -590,8 +593,8 @@ async fn poll(opts: PollOpts) -> Result<()> {
     // `--nickname`. The state-file form waits for readiness first so a poll
     // can be armed before the daemon has minted its identity.
     let (mesh, nickname) = if let Some(path) = state_file {
-        wait_for_ready(&path, agent_habilis_mesh::runtime::tuning::READY_MAX_SECS).await?;
-        let identity = agent_habilis_mesh::runtime::state_file::read_identity(&path);
+        wait_for_ready(&path, fofoca::runtime::tuning::READY_MAX_SECS).await?;
+        let identity = fofoca::runtime::state_file::read_identity(&path);
         let missing = |field: &'static str| {
             anyhow::anyhow!("state file {} carries no {field}", path.display())
         };
@@ -636,9 +639,8 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // degrading long reads to immediate empties (waiter registry full)
         // can't spin this loop hot — the unchanged cursor re-reads anything
         // that lands during the sleep.
-        let min_cycle = std::time::Duration::from_millis(
-            agent_habilis_mesh::runtime::tuning::POLL_LONG_MIN_CYCLE_MS,
-        );
+        let min_cycle =
+            std::time::Duration::from_millis(fofoca::runtime::tuning::POLL_LONG_MIN_CYCLE_MS);
         if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
             tokio::time::sleep(remaining).await;
         }
@@ -682,7 +684,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
 /// suffixed duration, or `none`/`0` for no expiry. Absent ⇒ the 24h default.
 fn parse_ttl(raw: Option<&str>) -> Result<u64> {
     let Some(raw) = raw.map(str::trim) else {
-        return Ok(agent_habilis_mesh::util::consts::INVITE_DEFAULT_TTL_SECS);
+        return Ok(fofoca::util::consts::INVITE_DEFAULT_TTL_SECS);
     };
     if raw.eq_ignore_ascii_case("none") {
         return Ok(0);
@@ -838,9 +840,7 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
     let deadline = now
         .checked_add(std::time::Duration::from_secs(timeout_secs))
         .unwrap_or_else(|| {
-            now + std::time::Duration::from_secs(
-                agent_habilis_mesh::runtime::tuning::READY_MAX_SECS,
-            )
+            now + std::time::Duration::from_secs(fofoca::runtime::tuning::READY_MAX_SECS)
         });
     loop {
         // Read off the runtime's blocking pool: a `--state-file` on a hung
@@ -850,10 +850,9 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
         // can't self-heal and just spins to the deadline, so log it so the
         // cause is recoverable.
         let path = state_file.to_path_buf();
-        let read = tokio::task::spawn_blocking(move || {
-            agent_habilis_mesh::runtime::state_file::read_snapshot(&path)
-        })
-        .await?;
+        let read =
+            tokio::task::spawn_blocking(move || fofoca::runtime::state_file::read_snapshot(&path))
+                .await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
                 return Ok(());
@@ -870,7 +869,7 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(
-            agent_habilis_mesh::runtime::tuning::READY_POLL_INTERVAL_MS,
+            fofoca::runtime::tuning::READY_POLL_INTERVAL_MS,
         ))
         .await;
     }
@@ -881,7 +880,7 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
 /// file yields `{}` rather than `{"gossip":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
 fn print_ready_identity(state_file: &std::path::Path) {
-    let identity = agent_habilis_mesh::runtime::state_file::read_identity(state_file);
+    let identity = fofoca::runtime::state_file::read_identity(state_file);
     let mut obj = serde_json::Map::new();
     for (key, value) in [
         ("gossip", identity.mesh),
@@ -906,10 +905,9 @@ fn print_ready_identity(state_file: &std::path::Path) {
 /// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
 /// underflow into the past.
 fn ready_is_fresh(last_updated: u64) -> bool {
-    let now = agent_habilis_mesh::util::clock::unix_secs();
+    let now = fofoca::util::clock::unix_secs();
     let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
     let skew = now - last_updated; // >0: file is in the past; <0: in the future
-    let window =
-        i64::try_from(agent_habilis_mesh::runtime::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
+    let window = i64::try_from(fofoca::runtime::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
     skew.abs() <= window
 }

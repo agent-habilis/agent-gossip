@@ -21,6 +21,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The engine lives in its own repo and is consumed as a **sibling path
+      # dependency** (root Cargo.toml: `../../../fofoca-network/fofoca`). That
+      # resolves to `$GITHUB_WORKSPACE/../../../fofoca-network`, i.e.
+      # `/home/runner/fofoca-network` — outside the workspace, and
+      # `actions/checkout` refuses to write there. So check it out inside the
+      # workspace and move it into place. Every job needs it, `fmt` included:
+      # `cargo fmt` reads `cargo metadata`, which fails on an unresolvable path
+      # dependency before it formats a line.
+      #
+      # If `fofoca-network/fofoca` is private, this needs a PAT with read access
+      # in `token:` — the default `GITHUB_TOKEN` is scoped to this repo alone.
+      - uses: actions/checkout@v5
+        with:
+          repository: fofoca-network/fofoca
+          path: .fofoca-checkout
+      - name: Place the engine where the path dependency expects it
+        run: |
+          mkdir -p ../../../fofoca-network
+          mv .fofoca-checkout ../../../fofoca-network/fofoca
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo fmt --all -- --check
 
@@ -28,6 +47,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The engine lives in its own repo and is consumed as a **sibling path
+      # dependency** (root Cargo.toml: `../../../fofoca-network/fofoca`). That
+      # resolves to `$GITHUB_WORKSPACE/../../../fofoca-network`, i.e.
+      # `/home/runner/fofoca-network` — outside the workspace, and
+      # `actions/checkout` refuses to write there. So check it out inside the
+      # workspace and move it into place. Every job needs it, `fmt` included:
+      # `cargo fmt` reads `cargo metadata`, which fails on an unresolvable path
+      # dependency before it formats a line.
+      #
+      # If `fofoca-network/fofoca` is private, this needs a PAT with read access
+      # in `token:` — the default `GITHUB_TOKEN` is scoped to this repo alone.
+      - uses: actions/checkout@v5
+        with:
+          repository: fofoca-network/fofoca
+          path: .fofoca-checkout
+      - name: Place the engine where the path dependency expects it
+        run: |
+          mkdir -p ../../../fofoca-network
+          mv .fofoca-checkout ../../../fofoca-network/fofoca
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # `--workspace`: clippy lints only the packages it is given. Naming the
       # app left the engine, the transport, the template crate and the shared
@@ -58,6 +96,25 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+      # The engine lives in its own repo and is consumed as a **sibling path
+      # dependency** (root Cargo.toml: `../../../fofoca-network/fofoca`). That
+      # resolves to `$GITHUB_WORKSPACE/../../../fofoca-network`, i.e.
+      # `/home/runner/fofoca-network` — outside the workspace, and
+      # `actions/checkout` refuses to write there. So check it out inside the
+      # workspace and move it into place. Every job needs it, `fmt` included:
+      # `cargo fmt` reads `cargo metadata`, which fails on an unresolvable path
+      # dependency before it formats a line.
+      #
+      # If `fofoca-network/fofoca` is private, this needs a PAT with read access
+      # in `token:` — the default `GITHUB_TOKEN` is scoped to this repo alone.
+      - uses: actions/checkout@v5
+        with:
+          repository: fofoca-network/fofoca
+          path: .fofoca-checkout
+      - name: Place the engine where the path dependency expects it
+        run: |
+          mkdir -p ../../../fofoca-network
+          mv .fofoca-checkout ../../../fofoca-network/fofoca
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # Build every test binary, capturing the artifact list. `--no-run`
       # so the build is a separate, readable step from the run, and
@@ -71,28 +128,17 @@ jobs:
       # crypto/network paths for integration tests. See Cargo.toml
       # `[profile.ci]` for why LTO is off.
       #
-      # `--workspace`, not `-p agent-gossip`: `agent-habilis-mesh` owns the
-      # wire version, every crypto byte-domain and `runtime_base()`, and its
-      # snapshots pin the frame format. While CI named only the app, none of
-      # that ran here — a stale engine snapshot could go green.
+      # `--workspace`, not `-p agent-gossip`: it also covers the shared test
+      # harness (`agent-gossip-test-fixtures`) and `slot-template`, whose
+      # renderer decides the bytes of every embedded skill. The engine's own
+      # tests are no longer ours to run — `fofoca` is a separate repo with its
+      # own CI; this job builds it as a dependency and tests the app against it.
       #
       # `--exclude tasks`: the dev-only `cargo task` crate has no tests at
       # all, so under `--workspace` CI paid to build it — and its
       # `clap_mangen` line — under an optimizing profile purely to run
       # nothing. `cargo task lint`/`ci` still cover it locally. Both steps
       # below take that same flag set.
-      #
-      # `cargo test --no-run` builds `agent-habilis-mesh-ffi` as an rlib
-      # (what its Rust tests link) and stops there — it never emits the cdylib,
-      # which is the artifact the C programs in `tests/c_suite.rs` link against
-      # out of `target/ci/`. Without this step those five tests fail on a
-      # missing library, which is exactly what CI did from `0203e35` onward.
-      # `cargo task test` has carried the same line for the same reason
-      # (crates/tasks/src/test.rs); keep the two in step.
-      #
-      # `--workspace` is load-bearing: root `Cargo.toml` sets
-      # `default-members = ["crates/agent-gossip"]`, so a bare `cargo build`
-      # here would build the app alone and produce no cdylib at all.
       - name: Build workspace artifacts
         run: cargo build --workspace --exclude tasks --profile ci
       - name: Build test binaries

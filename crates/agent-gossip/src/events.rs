@@ -1,6 +1,6 @@
 use crate::a2a::{TaskId, TaskState};
-use agent_habilis_mesh::protocol::MeshName;
-use agent_habilis_mesh::protocol::{MeshId, Message, MessageId, Nickname};
+use fofoca::protocol::MeshName;
+use fofoca::protocol::{MeshId, Message, MessageId, Nickname};
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -63,7 +63,7 @@ pub enum OutputEvent {
         reason: TaskGoneReason,
     },
     StateChanged {
-        channel: agent_habilis_mesh::protocol::Channel,
+        channel: fofoca::protocol::Channel,
         event: Box<Message>,
         document: serde_json::Value,
         is_self: bool,

@@ -25,9 +25,9 @@ use bytes::Bytes;
 use crate::a2a::app::A2aApp;
 use crate::a2a::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
 use crate::output;
-use agent_habilis_mesh::embed::EventLoopState;
-use agent_habilis_mesh::embed::HandlerCtx;
-use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname};
+use fofoca::embed::EventLoopState;
+use fofoca::embed::HandlerCtx;
+use fofoca::protocol::{Message, MessageKind, Nickname};
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
 
@@ -464,9 +464,7 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_content(&agent_habilis_mesh::ops::blob::ContentId::new(
-                    task_id.as_str(),
-                ))
+                .evict_content(&fofoca::ops::blob::ContentId::new(task_id.as_str()))
                 .await;
         }
     }
@@ -598,7 +596,7 @@ async fn broadcast_status(
         return;
     };
     let kind = MessageKind::App {
-        tag: agent_habilis_mesh::protocol::AppTag::from(wire::STATUS),
+        tag: fofoca::protocol::AppTag::from(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
@@ -609,7 +607,7 @@ async fn broadcast_status(
         // onto gossip it would flood `author`/`to` in the clear on a timer, and
         // every bystander would run `lifecycle::observe` on a beat meant for
         // one peer — waking a parked bell off someone else's task.
-        let _ = agent_habilis_mesh::ops::deliver(&msg, Bytes::from(bytes), state, ctx.sender).await;
+        let _ = fofoca::ops::deliver(&msg, Bytes::from(bytes), state, ctx.sender).await;
     }
 }
 
@@ -617,7 +615,7 @@ async fn broadcast_status(
 mod tests {
     use super::{LegInfo, LegKind, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
-    use agent_habilis_mesh::protocol::Nickname;
+    use fofoca::protocol::Nickname;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
@@ -730,7 +728,7 @@ mod tests {
     /// ciphertext) is not a valid payload.
     #[test]
     fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
-        use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mut tasks = HashMap::new();
         let now = Instant::now();
@@ -828,7 +826,7 @@ mod tests {
     /// is actually observable.
     #[test]
     fn own_status_echo_completes_the_workers_own_record() {
-        use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let task_id = tid();

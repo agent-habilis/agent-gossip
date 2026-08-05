@@ -2,7 +2,7 @@
 //!
 //! Streams `gossip_found`/`gossip_lost` JSON lines for an agent to act on
 //! (the agent picks and joins by id itself). The pure directory primitives
-//! live in [`agent_habilis_mesh::directory`]; the live consumer in
+//! live in [`fofoca::ops::directory`]; the live consumer in
 //! [`crate::api::Directory`]; this file is just the CLI command + mesh
 //! rendering.
 
@@ -28,7 +28,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the JSON stream isn't drowned in INFO lines on stderr.
     if let Some((mesh, nickname)) = discoverer.session_identity() {
-        agent_habilis_mesh::util::logging::attach(mesh, nickname);
+        fofoca::util::logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()

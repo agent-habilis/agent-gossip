@@ -11,7 +11,6 @@ mod coverage;
 mod fmt;
 mod idle_cpu;
 mod install;
-mod layering;
 mod lint;
 mod logs;
 mod man;
@@ -86,14 +85,6 @@ enum Task {
     Fmt,
     /// Run clippy lints.
     Lint,
-    /// Check that the engine crate names neither A2A nor the application, and
-    /// that its public surface still matches the committed snapshot.
-    Layering {
-        /// Rewrite the public-surface snapshot instead of checking it. Review
-        /// the diff: every added line is a widening of the engine's API.
-        #[arg(long)]
-        bless: bool,
-    },
     /// Remove build artifacts.
     Clean,
     /// Print the logs directory (creating it if missing).
@@ -103,8 +94,8 @@ enum Task {
     /// Run property-based tests.
     Proptest,
     /// Measure what an idle daemon costs, alongside the host conditions that
-    /// set that cost. Idle CPU is driven by ambient `AF_ROUTE` churn, which
-    /// varies by the hour, so the route rate is reported beside the CPU figure
+    /// set that cost. Idle CPU is driven by ambient route/netlink churn, which
+    /// varies by the hour, so the event rate is reported beside the CPU figure
     /// — a before/after that ignores it is comparing two experiments.
     IdleCpu {
         /// Seconds to let the daemons reach a steady state before the clock
@@ -115,6 +106,26 @@ enum Task {
         /// (15s), advertise (20s) and alive (30s) cadences at least once.
         #[arg(long, default_value_t = 120)]
         window: u64,
+        /// Nodes per variant. Above 1 the creator is joined by the rest into
+        /// one mesh, which is what exposes the per-peer costs a lone daemon
+        /// never pays. Regress the per-node figure on this to split the O(N)
+        /// inbound cost from the O(1) timer floor.
+        #[arg(long, default_value_t = 1)]
+        nodes: usize,
+        /// A mesh to measure, as `label[@nodes]=flags`; repeatable, and every
+        /// variant runs concurrently under one ambient stream. Bare `label`
+        /// passes no flags; `@nodes` overrides `--nodes` for that mesh, which
+        /// is how a size sweep stays inside one run. Two variants with the
+        /// same flags but distinct labels (`x-a`, `x-b`) give a control pair
+        /// whose spread is the noise floor. Defaults to `loopback` vs `public`.
+        #[arg(long = "variant")]
+        variants: Vec<String>,
+        /// Run one variant from a prebuilt binary, as `label=path`;
+        /// repeatable. How a fix is validated — patched and stock measured
+        /// side by side under one ambient stream — and the only way to ablate
+        /// a knob that is a `const` with no CLI override.
+        #[arg(long = "binary")]
+        binaries: Vec<String>,
     },
     /// Internal: cargo-zigbuild's `zig cc`/`c++`/`ar` shim. cargo-zigbuild's
     /// cross-link wrapper re-execs THIS binary as `<exe> zig …` (it resolves
@@ -158,12 +169,26 @@ fn main() -> ExitCode {
         Task::Ci => ci::run(&sh),
         Task::Fmt => fmt::run(&sh),
         Task::Lint => lint::run(&sh),
-        Task::Layering { bless } => layering::run(bless),
         Task::Clean => clean::run(&sh),
         Task::Logs => logs::run(),
         Task::Man => man::run(),
         Task::Proptest => proptest::run(&sh),
-        Task::IdleCpu { settle, window } => idle_cpu::run(&sh, settle, window),
+        Task::IdleCpu {
+            settle,
+            window,
+            nodes,
+            variants,
+            binaries,
+        } => idle_cpu::run(
+            &sh,
+            idle_cpu::Plan {
+                settle,
+                window,
+                nodes,
+            },
+            &variants,
+            &binaries,
+        ),
         Task::Zig(zig) => zig
             .execute()
             .map_err(|err| -> Box<dyn std::error::Error> { err.into() }),

@@ -8,14 +8,14 @@ use crate::a2a::rpc::{A2aOp, A2aRequest};
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
-use agent_habilis_mesh::embed::EventLoopState;
-use agent_habilis_mesh::embed::HandlerCtx;
-use agent_habilis_mesh::embed::{AppClass, InboundApp, NodeApp};
-use agent_habilis_mesh::embed::{IpcRequest, NodeDriver};
-use agent_habilis_mesh::net::add_peer_addr;
-use agent_habilis_mesh::protocol::MessageBody;
-use agent_habilis_mesh::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
-use agent_habilis_mesh::runtime::state_file::StateFile;
+use fofoca::embed::EventLoopState;
+use fofoca::embed::HandlerCtx;
+use fofoca::embed::{AppClass, InboundApp, NodeApp};
+use fofoca::embed::{IpcRequest, NodeDriver};
+use fofoca::net::add_peer_addr;
+use fofoca::protocol::MessageBody;
+use fofoca::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
+use fofoca::runtime::state_file::StateFile;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
@@ -301,9 +301,9 @@ async fn merge_own_meta_entry(
     merge: serde_json::Value,
     farewell: bool,
 ) {
-    match agent_habilis_mesh::ops::broadcast_state_merge(
+    match fofoca::ops::broadcast_state_merge(
         state,
-        agent_habilis_mesh::ops::StateMergeParams {
+        fofoca::ops::StateMergeParams {
             mesh: ctx.mesh,
             author: ctx.author,
             merge,
@@ -318,7 +318,7 @@ async fn merge_own_meta_entry(
     .await
     {
         Ok(Some(bytes)) if farewell => {
-            agent_habilis_mesh::ops::unicast_farewell(state, &bytes);
+            fofoca::ops::unicast_farewell(state, &bytes);
         }
         Ok(_) => {}
         Err(error) => {
@@ -732,7 +732,7 @@ async fn handle_a2a_rpc(
 /// argument budget alongside its `state`/`app`/`ctx` handles.
 struct A2aReqParams<'a> {
     message: &'a Message,
-    corr: &'a agent_habilis_mesh::protocol::CorrId,
+    corr: &'a fofoca::protocol::CorrId,
 }
 
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
@@ -839,7 +839,7 @@ async fn handle_a2a_req(
 /// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
 /// handles.
 struct ShardRepairParams<'a> {
-    group: &'a agent_habilis_mesh::protocol::ShardGroup,
+    group: &'a fofoca::protocol::ShardGroup,
     missing: &'a [u32],
     requester: &'a Nickname,
 }
@@ -864,12 +864,12 @@ async fn resend_cached_shards(
         let Ok(msg) = Message::parse(&bytes) else {
             continue; // never: the cache holds frames we serialized ourselves
         };
-        if let Some(to) = agent_habilis_mesh::protocol::sole_addressee(&msg.kind)
+        if let Some(to) = fofoca::protocol::sole_addressee(&msg.kind)
             && to != requester
         {
             continue;
         }
-        if agent_habilis_mesh::ops::deliver(&msg, bytes, state, ctx.sender)
+        if fofoca::ops::deliver(&msg, bytes, state, ctx.sender)
             .await
             .is_ok()
         {
@@ -980,7 +980,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
 mod classify_tests {
     use super::classify;
     use crate::a2a::wire;
-    use agent_habilis_mesh::protocol::{
+    use fofoca::protocol::{
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 

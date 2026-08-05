@@ -1,4 +1,4 @@
-use agent_habilis_mesh::ops::MeshSender;
+use fofoca::ops::MeshSender;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -9,17 +9,17 @@ use crate::a2a::app::A2aApp;
 use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState};
 use crate::output;
-use agent_habilis_mesh::embed::{EventLoopState, PingRound};
-use agent_habilis_mesh::protocol::MeshName;
-use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
-use agent_habilis_mesh::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
-use agent_habilis_mesh::runtime::tuning::ping_window_secs;
+use fofoca::embed::{EventLoopState, PingRound};
+use fofoca::protocol::MeshName;
+use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
+use fofoca::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
+use fofoca::runtime::tuning::ping_window_secs;
 
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
     emit_task_status, send_broadcast, send_msg,
 };
-use agent_habilis_mesh::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
+use fofoca::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
 
 /// Command sent from CLI to the running server over IPC. App-side because its
 /// arms carry a2a-typed payloads (task id/state, gossip A2A calls); the engine's
@@ -140,7 +140,7 @@ pub(crate) enum IpcCommand {
 
 impl Addressed for IpcCommand {
     /// The mesh a command is addressed to, used to derive the socket path in
-    /// [`agent_habilis_mesh::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
+    /// [`fofoca::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
     /// sent by socket path directly (the daemon answers with its own id).
     fn mesh_id(&self) -> Option<&MeshId> {
         match self {
@@ -382,7 +382,7 @@ pub(crate) async fn handle_ipc_command(
                     merge,
                     sender,
                     sink: output,
-                    channel: agent_habilis_mesh::protocol::Channel::State,
+                    channel: fofoca::protocol::Channel::State,
                     surface: true,
                 },
             )
@@ -392,10 +392,7 @@ pub(crate) async fn handle_ipc_command(
             broadcast
         }
         IpcCommand::StateGet { mesh: _ } => {
-            let _ = resp_tx.send(state_get_response(
-                state,
-                agent_habilis_mesh::protocol::Channel::State,
-            ));
+            let _ = resp_tx.send(state_get_response(state, fofoca::protocol::Channel::State));
             false
         }
         IpcCommand::MetaMerge { mesh: _, merge } => {
@@ -407,7 +404,7 @@ pub(crate) async fn handle_ipc_command(
                     merge,
                     sender,
                     sink: output,
-                    channel: agent_habilis_mesh::protocol::Channel::Meta,
+                    channel: fofoca::protocol::Channel::Meta,
                     surface: true,
                 },
             )
@@ -417,10 +414,7 @@ pub(crate) async fn handle_ipc_command(
             broadcast
         }
         IpcCommand::MetaGet { mesh: _ } => {
-            let _ = resp_tx.send(state_get_response(
-                state,
-                agent_habilis_mesh::protocol::Channel::Meta,
-            ));
+            let _ = resp_tx.send(state_get_response(state, fofoca::protocol::Channel::Meta));
             false
         }
         IpcCommand::Topology { mesh: _ } => {
@@ -476,7 +470,7 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
         })
         .to_string();
     };
-    match agent_habilis_mesh::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
+    match fofoca::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
@@ -525,10 +519,7 @@ fn topology_response(state: &EventLoopState) -> String {
 }
 
 /// The `agent-gossip state get` response: the derived document.
-fn state_get_response(
-    state: &EventLoopState,
-    channel: agent_habilis_mesh::protocol::Channel,
-) -> String {
+fn state_get_response(state: &EventLoopState, channel: fofoca::protocol::Channel) -> String {
     let document = state.doc(channel).to_json();
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
@@ -552,7 +543,7 @@ fn peers_response(state: &EventLoopState) -> String {
 #[cfg(test)]
 mod tests {
     use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
-    use agent_habilis_mesh::runtime::ipc::Addressed;
+    use fofoca::runtime::ipc::Addressed;
 
     // ── IpcCommand serialization ───────────────────────────────────
     //
@@ -794,26 +785,26 @@ mod tests {
                 let author = Nickname::new(author).unwrap();
                 let body = MessageBody::new(body).unwrap();
                 let expected_body = body.clone();
-                let identity = agent_habilis_mesh::protocol::Identity::generate();
-                let (bytes, built) = agent_habilis_mesh::protocol::build_msg_bytes(
-                    agent_habilis_mesh::protocol::BuildMsgParams {
-                        tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+                let identity = fofoca::protocol::Identity::generate();
+                let (bytes, built) = fofoca::protocol::build_msg_bytes(
+                    fofoca::protocol::BuildMsgParams {
+                        tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                         mesh: &mesh,
                         author: &author,
                         body,
-                        chain: agent_habilis_mesh::protocol::ChainCtx::genesis(),
+                        chain: fofoca::protocol::ChainCtx::genesis(),
                     },
                     &identity,
                 )
                 .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
-                let parsed = agent_habilis_mesh::protocol::Message::parse(&bytes).unwrap();
+                let parsed = fofoca::protocol::Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.mesh, &mesh);
                 prop_assert_eq!(
                     parsed.kind,
-                    agent_habilis_mesh::protocol::MessageKind::app_broadcast(crate::a2a::wire::BROADCAST)
+                    fofoca::protocol::MessageKind::app_broadcast(crate::a2a::wire::BROADCAST)
                 );
             }
         }

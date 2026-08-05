@@ -61,12 +61,12 @@ use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
     TopicConfig,
 };
-use agent_habilis_mesh::embed::RosterEntry;
-use agent_habilis_mesh::protocol::JoinTarget;
-use agent_habilis_mesh::protocol::{LookupSet, MeshName, RelayLadder, RelaySelection};
-use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
-use agent_habilis_mesh::runtime::derive_topic_mesh;
-use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use fofoca::embed::RosterEntry;
+use fofoca::protocol::JoinTarget;
+use fofoca::protocol::{LookupSet, MeshName, RelayLadder, RelaySelection};
+use fofoca::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
+use fofoca::runtime::derive_topic_mesh;
+use fofoca::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.

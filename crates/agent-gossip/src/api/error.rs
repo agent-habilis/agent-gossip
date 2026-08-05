@@ -20,7 +20,7 @@ impl fmt::Display for CreateError {
                 write!(
                     formatter,
                     "{}",
-                    agent_habilis_mesh::protocol::AdvertiseRequiresReachable
+                    fofoca::protocol::AdvertiseRequiresReachable
                 )
             }
             CreateError::Setup(error) => write!(formatter, "{error}"),

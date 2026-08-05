@@ -20,9 +20,6 @@ cargo-zigbuild = "0.23"
 # swarm lib a build dependency of the task runner.
 agent-gossip = { path = "../agent-gossip" }
 clap_mangen = "0.2"
-# The engine's cargo-style status helpers (`util::output`), shared with the
-# shipped binary rather than forked — see crates/tasks/src/util/mod.rs.
-agent-habilis-mesh = { path = "../agent-habilis-mesh" }
 
 [lints]
 workspace = true

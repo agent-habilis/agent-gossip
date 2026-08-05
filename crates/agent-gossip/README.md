@@ -2,22 +2,24 @@
 
 The application crate — the A2A data model, the three frontends that expose it
 (CLI, MCP server, Rust library), and the shipped `agent-gossip` binary. The
-mesh underneath it is [`agent-habilis-mesh`](../agent-habilis-mesh).
+mesh underneath it is [`fofoca`](../fofoca).
 
 **This file is for people working on the crate.** For what agent-gossip *is*,
 how to install it, and how to use the skills, read the
 [root README](../../README.md). For the user-facing command reference, run
 `agent-gossip man` (source: [`docs/manual.txt`](../../docs/manual.txt)).
 
-## Why the app and the engine are separate crates
+## Why the app and the engine are separate
 
 Everything below the A2A layer — frames, signatures, routing, gating, healing,
-the CRDT documents — lives in the engine crate, and this crate is one of its two
-consumers ([`examples/mesh-pipe`](../../examples/mesh-pipe) is the other, and
-depends on the engine *only*). The split keeps the payload opaque to the
-transport, and keeps `iroh` off this crate's public surface entirely: a join
-target is a mesh id parsed from a string, so iroh version bumps never reach a
-library consumer.
+the CRDT documents — lives in the engine,
+[**fofoca**](https://github.com/fofoca-network/fofoca), which is a separate
+repository with three consumers; this crate is one of them, alongside
+`agent-share` and `mallorca` (the latter through fofoca's C ABI). The split
+keeps the payload opaque to the transport — an application assumption that
+leaked downward would break the other two — and keeps `iroh` off this crate's
+public surface entirely: a join target is a mesh id parsed from a string, so
+iroh version bumps never reach a library consumer.
 
 This crate re-exports the curated engine surface — `MeshId`, `Message`,
 `MessageBody`, `Nickname`, `InviteTicket`, `RosterSnapshot`, `Lane`,

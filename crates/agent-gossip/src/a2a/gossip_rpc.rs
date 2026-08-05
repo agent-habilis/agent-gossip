@@ -14,7 +14,7 @@
 use serde_json::Value;
 
 use crate::a2a::app::A2aApp;
-use agent_habilis_mesh::protocol::{Channel, Nickname};
+use fofoca::protocol::{Channel, Nickname};
 
 use super::TaskId;
 use super::rpc::{A2aOp, RpcError};
@@ -32,7 +32,7 @@ pub(crate) enum Served {
     /// A `shard/repair` ask: re-deliver the named cached shard frames of one
     /// of our big outbound groups (see `reassembly::ShardCache`).
     ShardRepair {
-        group: agent_habilis_mesh::protocol::ShardGroup,
+        group: fofoca::protocol::ShardGroup,
         missing: Vec<u32>,
     },
     /// Not permitted over gossip (unknown method, or one that would author on
@@ -118,13 +118,13 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
         "shard/repair" => {
             let group = params["group"]
                 .as_str()
-                .and_then(agent_habilis_mesh::protocol::ShardGroup::from_uuid_str);
+                .and_then(fofoca::protocol::ShardGroup::from_uuid_str);
             let missing: Vec<u32> = params["missing"]
                 .as_array()
                 .map(|idxs| {
                     idxs.iter()
                         .filter_map(|idx| idx.as_u64().and_then(|idx| u32::try_from(idx).ok()))
-                        .take(agent_habilis_mesh::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
+                        .take(fofoca::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
                         .collect()
                 })
                 .unwrap_or_default();
@@ -145,7 +145,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
 mod tests {
     use super::{Served, classify};
     use crate::a2a::app::A2aApp;
-    use agent_habilis_mesh::protocol::Nickname;
+    use fofoca::protocol::Nickname;
     use serde_json::json;
 
     fn state() -> A2aApp {

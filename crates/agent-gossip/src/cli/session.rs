@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::runtime_base;
-use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::runtime::state_file::read_session_entry;
-use agent_habilis_mesh::util::process;
+use fofoca::protocol::Nickname;
+use fofoca::runtime::state_file::read_session_entry;
+use fofoca::util::process;
 
 use super::args::{LeaveOpts, SessionOpts};
 

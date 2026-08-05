@@ -29,30 +29,34 @@ path = "src/main.rs"
 # build its fixtures; never enabled in a normal or release build, so the public
 # API surface is unchanged. Forwards to the engine's `test-fixtures` (not a
 # `bench` feature of its own — the engine gates no hot path on one).
-bench = ["agent-habilis-mesh/test-fixtures"]
+bench = ["fofoca/test-fixtures"]
 # Off by default. Forwards to the engine's `adversarial` feature and exposes
 # `src/harness/{adversarial,session}.rs` — the crafted-message injector and the
 # `MeshSession` testkit — so the adversarial suite (`tests/adversarial.rs`) can
 # inject malicious wire messages a correct client never would. The testkit lives
 # in `harness`, not `api`, so the feature cannot widen the public surface (nor
 # put an `iroh` type on it). `cargo task test`/`ci` enable it.
-adversarial = ["agent-habilis-mesh/adversarial"]
+adversarial = ["fofoca/adversarial"]
 # Off by default. Installs dhat's heap-profiling global allocator + a profiler
 # in `main`, and makes the CLI quit path return cleanly (instead of
 # `process::exit`) so the profiler flushes `dhat-heap.json` on shutdown. For
 # localizing the gossip-churn per-connection retention: build with this feature,
 # run a churning daemon (`--active-view-capacity 5`), SIGTERM it, inspect the
 # profile. Never in a normal build.
-dhat-heap = ["dep:dhat", "agent-habilis-mesh/dhat-heap"]
+dhat-heap = ["dep:dhat", "fofoca/dhat-heap"]
 
 [build-dependencies]
 # `build.rs` renders the multi-file `skills/` sources into the single-file
 # SKILL.md tree the binary embeds; the renderer is a pure function, so a
 # skill's final bytes are fixed at build time.
 slot-template = { path = "../slot-template" }
+# Stamps this repo's commit into `VERGEN_GIT_SHA`/`VERGEN_GIT_DIRTY`. Ours, not
+# the engine's: `fofoca` lives in a separate repo now, so its stamp names a
+# commit that does not exist in this history.
+vergen-gitcl = { version = "1", features = ["build"] }
 
 [dependencies]
-agent-habilis-mesh = { path = "../agent-habilis-mesh" }
+fofoca = { workspace = true, features = ["blob"] }
 # Optional: only compiled in under the `dhat-heap` feature (heap profiling).
 dhat = { version = "0.3", optional = true }
 tokio.workspace = true
@@ -95,7 +99,7 @@ mimalloc = { version = "0.1", default-features = false }
 # Enable the engine's `test-fixtures` feature for test/bench builds only, so the
 # app's test suites can build the engine's cross-crate test fixtures. Off for a
 # normal `cargo build` (dev-deps don't apply there).
-agent-habilis-mesh = { path = "../agent-habilis-mesh", features = ["test-fixtures"] }
+fofoca = { workspace = true, features = ["blob", "test-fixtures"] }
 # The shared harness the 16 integration binaries drive (`InProcNode`, `Node`, the
 # `cli_*` helpers). A crate rather than a `tests/common/` module because each
 # binary is its own compilation unit: as a module, every helper a binary did not
@@ -116,9 +120,15 @@ divan.workspace = true
 # `benches/idle_cost.rs` only. iroh pulls netwatch transitively and never
 # exposes it, but the idle-CPU bench has to time `interfaces::State::new()`
 # directly — that call is what an AF_ROUTE message costs us, and pricing it is
-# the whole point. Pinned to the version iroh already resolves so the bench
-# measures the code we actually ship, not a second copy.
-netwatch = "0.19.1"
+# the whole point.
+#
+# Named by `git` at the same fork+rev iroh itself resolves, not by version. It
+# used to be `"0.19.1"` and rely on this workspace's `[patch.crates-io]` to
+# redirect it; that patch is gone (the fork now pins netwatch itself), so a bare
+# version dep would quietly resolve to *crates.io* netwatch and the bench would
+# time the unfixed code — invalidating the very measurement the RTM_MISS pin was
+# justified by, while still compiling and still looking right.
+netwatch = { version = "0.19.1", git = "https://github.com/fofoca-network/net-tools", rev = "e02960255ef2f5b2ba4aa3d4cf195e0b8673f370" }
 
 # Offline microbenchmarks of the pure hot paths. Needs `bench` for the
 # `harness::bench` shim that reaches `pub(crate)` internals.
