@@ -24,16 +24,21 @@ rust-version = "1.93"
 # lockstep. Each crate opts in with `dep.workspace = true` (and may union in
 # extra features).
 [workspace.dependencies]
-# The gossip-network engine, developed in its own repo and shared with the
-# other consumers (agent-share, mallorca). A **path** dep to a sibling
-# checkout, not a git rev: this repo and `fofoca` are edited together, and a
-# rev pin would mean a push-and-bump round trip for every engine change.
+# The gossip-network engine, developed in its own repo and shared with
+# agent-share and mallorca.
 #
-# Declared here rather than in the member manifest because a workspace-dep path
-# resolves from the workspace root — otherwise every member would spell out five
-# levels of `../`. CI checks the sibling out alongside this repo; see
-# `.github/workflows/ci.yml`.
-fofoca = { path = "../../../fofoca-network/fofoca/crates/fofoca" }
+# Pinned by **rev**, not a path to a sibling checkout. The path dep was faster to
+# iterate on — no push-and-bump round trip when the engine and this repo change
+# together — but it made "which fofoca is this built against?" unanswerable
+# except by looking at what happened to be on disk. A rev states it, so every
+# consumer can be checked for agreement instead of assumed to agree.
+#
+# The cost is real and deliberate: an engine change is now push-then-bump here.
+# That is the trade, not an oversight — don't quietly restore the path dep.
+#
+# Bumping this is what carries an engine fix into the app; keep it in step with
+# agent-share, which pins the same rev.
+fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "e63a481f1626d02f2b39c681f019cf4cd4b05ba5" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net", "process"] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the MCP `fetch_messages` result embed each event's

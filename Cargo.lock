@@ -100,7 +100,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vergen-gitcl 1.0.8",
+ "vergen-gitcl",
 ]
 
 [[package]]
@@ -683,9 +683,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chacha20"
@@ -1361,7 +1361,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1516,7 +1516,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1583,6 +1583,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fofoca"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1621,6 +1622,7 @@ dependencies = [
 [[package]]
 name = "fofoca-directory"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "fofoca-protocol",
@@ -1633,6 +1635,7 @@ dependencies = [
 [[package]]
 name = "fofoca-doc"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1649,6 +1652,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-multihop-transport"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1666,6 +1670,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-webrtc-transport"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1691,6 +1696,7 @@ dependencies = [
 [[package]]
 name = "fofoca-logging"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "fofoca-protocol",
@@ -1703,6 +1709,7 @@ dependencies = [
 [[package]]
 name = "fofoca-protocol"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1727,6 +1734,7 @@ dependencies = [
 [[package]]
 name = "fofoca-reassembly"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1740,11 +1748,12 @@ dependencies = [
 [[package]]
 name = "fofoca-util"
 version = "0.5.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=e63a481f1626d02f2b39c681f019cf4cd4b05ba5#e63a481f1626d02f2b39c681f019cf4cd4b05ba5"
 dependencies = [
  "libc",
  "tokio",
  "tracing",
- "vergen-gitcl 1.0.8",
+ "vergen-gitcl",
  "web-time",
 ]
 
@@ -2534,8 +2543,8 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "1.0.2"
-source = "git+https://github.com/fofoca-network/iroh?rev=a1c166834f5c16fd266089bb8516a5a577b48c74#a1c166834f5c16fd266089bb8516a5a577b48c74"
+version = "1.0.3"
+source = "git+https://github.com/fofoca-network/iroh?rev=b7e07872a6d28a9b7971ecfaca8db69c4bddd2de#b7e07872a6d28a9b7971ecfaca8db69c4bddd2de"
 dependencies = [
  "backon",
  "blake3",
@@ -2584,8 +2593,8 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "1.0.2"
-source = "git+https://github.com/fofoca-network/iroh?rev=a1c166834f5c16fd266089bb8516a5a577b48c74#a1c166834f5c16fd266089bb8516a5a577b48c74"
+version = "1.0.3"
+source = "git+https://github.com/fofoca-network/iroh?rev=b7e07872a6d28a9b7971ecfaca8db69c4bddd2de#b7e07872a6d28a9b7971ecfaca8db69c4bddd2de"
 dependencies = [
  "curve25519-dalek 5.0.0-rc.0",
  "data-encoding",
@@ -2602,8 +2611,8 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns"
-version = "1.0.2"
-source = "git+https://github.com/fofoca-network/iroh?rev=a1c166834f5c16fd266089bb8516a5a577b48c74#a1c166834f5c16fd266089bb8516a5a577b48c74"
+version = "1.0.3"
+source = "git+https://github.com/fofoca-network/iroh?rev=b7e07872a6d28a9b7971ecfaca8db69c4bddd2de#b7e07872a6d28a9b7971ecfaca8db69c4bddd2de"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2626,7 +2635,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.101.0"
-source = "git+https://github.com/fofoca-network/iroh-gossip?rev=46efd641d55ebe3a606e11c6d6800519ea643be5#46efd641d55ebe3a606e11c6d6800519ea643be5"
+source = "git+https://github.com/fofoca-network/iroh-gossip?rev=57dcb6b8e5c0645c951830faf6b84b5893ee83c1#57dcb6b8e5c0645c951830faf6b84b5893ee83c1"
 dependencies = [
  "blake3",
  "bytes",
@@ -2652,7 +2661,7 @@ dependencies = [
 [[package]]
 name = "iroh-mainline-address-lookup"
 version = "0.4.0"
-source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=890b65407594f55105e438154ce4a41a62431c09#890b65407594f55105e438154ce4a41a62431c09"
+source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1#53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1"
 dependencies = [
  "derive_more",
  "iroh",
@@ -2669,7 +2678,7 @@ dependencies = [
 [[package]]
 name = "iroh-mdns-address-lookup"
 version = "0.4.0"
-source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=890b65407594f55105e438154ce4a41a62431c09#890b65407594f55105e438154ce4a41a62431c09"
+source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1#53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1"
 dependencies = [
  "data-encoding",
  "derive_more",
@@ -2714,8 +2723,8 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "1.0.2"
-source = "git+https://github.com/fofoca-network/iroh?rev=a1c166834f5c16fd266089bb8516a5a577b48c74#a1c166834f5c16fd266089bb8516a5a577b48c74"
+version = "1.0.3"
+source = "git+https://github.com/fofoca-network/iroh?rev=b7e07872a6d28a9b7971ecfaca8db69c4bddd2de#b7e07872a6d28a9b7971ecfaca8db69c4bddd2de"
 dependencies = [
  "blake3",
  "bytes",
@@ -2752,7 +2761,6 @@ dependencies = [
  "tokio-websockets",
  "tracing",
  "url",
- "vergen-gitcl 9.1.0",
  "webpki-roots",
  "ws_stream_wasm",
 ]
@@ -3298,9 +3306,9 @@ dependencies = [
 
 [[package]]
 name = "noq"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bf95190af1bd4a00a10e8255ca0c8ddd9e9a9f5e79151d7a7eb6d56aff5dc89"
+checksum = "e11803df44ac03a30988d61585ea50885d5428e42da944fe1e498799da7886a2"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3320,9 +3328,9 @@ dependencies = [
 
 [[package]]
 name = "noq-proto"
-version = "1.0.1"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa6c890013591e709a3e45dd53501351b7e27e7ff3c7e9fc3dce43e300e7e9d3"
+checksum = "baa7b5ccd819a9c68a0d955e67a881032d09b1a17219b1f90b0997a0888e1a15"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -3347,9 +3355,9 @@ dependencies = [
 
 [[package]]
 name = "noq-udp"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3137a52df66c20090a889828d1c655f21f52294cba64e5c4fbb04fc83eee7c8e"
+checksum = "bde7a5d5102f1cff03d482240f0ed20551661f63663620f4b26112ed751165e9"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -3364,7 +3372,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4245,7 +4253,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4303,7 +4311,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4480,7 +4488,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4977,10 +4985,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4990,7 +4998,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5470,20 +5478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vergen-gitcl"
-version = "9.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77ff3b5300a085d6bcd8fc96a507f706a28ae3814693236c9b409db71a1d15b9"
-dependencies = [
- "anyhow",
- "derive_builder",
- "rustversion",
- "time",
- "vergen",
- "vergen-lib 9.1.0",
-]
-
-[[package]]
 name = "vergen-lib"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5697,7 +5691,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
