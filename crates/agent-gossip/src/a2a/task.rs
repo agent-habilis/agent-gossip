@@ -249,6 +249,15 @@ pub(crate) fn adopt_initiator(
             // (aged out of the anti-entropy window), the reconciliation path a
             // manual `GetTask` gives.
             let rec = slot.get_mut();
+            // …and only from the task's own worker. The caller has already
+            // proved this response answers a call we made to `peer`, but that
+            // says nothing about *which* task the answer may name: any peer we
+            // call once could otherwise return a Task id belonging to a
+            // different peer and drive it terminal, or keep refreshing it past
+            // the reaper. The record's own counterparty is the authority.
+            if rec.peer != *peer {
+                return;
+            }
             if rec.state.is_terminal() {
                 return;
             }
@@ -624,7 +633,7 @@ async fn broadcast_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{LegInfo, LegKind, TaskRole, TaskState, apply};
+    use super::{LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
     use fofoca::protocol::Nickname;
     use std::collections::HashMap;
@@ -762,6 +771,55 @@ mod tests {
             now,
         );
         assert_eq!(tasks[&tid()].state, TaskState::Completed);
+    }
+
+    /// An RPC `Task` snapshot is adopted only from the task's own worker.
+    ///
+    /// The receive path already proves the response answers a call we made to
+    /// that peer, but a call to *anyone* was enough: pre-fix, one reply naming
+    /// another peer's task id drove it terminal (`rec.peer` still read the
+    /// honest worker, so nothing recorded who killed it), and a non-terminal
+    /// snapshot refreshed `last_activity` unconditionally, which held any of
+    /// our tasks off the reaper for as long as the caller kept answering.
+    #[test]
+    fn a_returned_task_is_adopted_only_from_its_own_worker() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), false),
+            now,
+        );
+        let before = tasks[&tid()].last_activity;
+
+        let adopt = |registry: &mut HashMap<TaskId, TaskRecord>, peer: &str, state, when| {
+            super::adopt_initiator(
+                registry,
+                super::AdoptInitiatorParams {
+                    task_id: &tid(),
+                    peer: &Nickname::from(peer),
+                    task_state: state,
+                    now: when,
+                },
+            );
+        };
+
+        let later = now.checked_add(Duration::from_mins(5)).unwrap();
+        adopt(&mut tasks, "wire-thistle", TaskState::Failed, later);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "another peer's answer cannot drive our task terminal"
+        );
+        assert_eq!(
+            tasks[&tid()].last_activity, before,
+            "nor hold it off the reaper by refreshing its activity clock"
+        );
+
+        // The real worker's snapshot is still adopted.
+        adopt(&mut tasks, "calm-otter", TaskState::Failed, later);
+        assert_eq!(tasks[&tid()].state, TaskState::Failed);
     }
 
     /// A second `Offer` on a live task id from a different peer must not
