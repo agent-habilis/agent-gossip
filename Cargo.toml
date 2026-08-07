@@ -38,8 +38,18 @@ rust-version = "1.93"
 #
 # Bumping this is what carries an engine fix into the app; keep it in step with
 # agent-share, which pins the same rev.
-fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "e63a481f1626d02f2b39c681f019cf4cd4b05ba5" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net", "process"] }
+fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "e6ab1388faf0b7c98ccc75044e182b28c8c3a811" }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+  "io-util",
+  "fs",
+  "signal",
+  "net",
+  "process",
+] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the MCP `fetch_messages` result embed each event's
 # already-rendered, field-order-pinned JSON verbatim (a `RawValue`) instead of
@@ -58,7 +68,10 @@ anstream = "0.6"
 # it); declaring it directly only lets us emit our own spans/events and
 # adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
+tracing-subscriber = { version = "0.3", features = [
+  "env-filter",
+  "tracing-log",
+] }
 async-trait = "0.1.89"
 uuid = { version = "1", features = ["v4"] }
 # NOTE: no `iroh` entry, deliberately. This workspace names nothing from the
@@ -191,12 +204,3 @@ inherits = "release"
 lto = false
 codegen-units = 256
 strip = false
-
-# NOTE: no `[patch.crates-io]` block, deliberately, and there must not be one.
-# Every iroh-family fork rides a dependency edge inside `fofoca` now, so we
-# inherit them and state nothing. Re-introducing a patch here would mean this
-# repo owns a copy of the engine's pins that can silently drift out of step --
-# and a drifted pin is not a build error, it is two `iroh` crates in one graph
-# surfacing later as an E0308 on types that look identical.
-#
-# Reach iroh through `fofoca::iroh`, never as a dependency of this workspace.
