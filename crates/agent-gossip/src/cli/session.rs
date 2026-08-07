@@ -195,6 +195,38 @@ fn confirm_owner(owners: &[Owner], target: &Target) -> bool {
     })
 }
 
+/// The live daemon already writing `path`, described for an error message, or
+/// `None` if the path is free.
+///
+/// A state file has exactly one writer: the daemon replaces it wholesale on
+/// every heartbeat. Two daemons pointed at one path therefore take turns
+/// owning it, and everything that resolves identity from that file — the bell,
+/// `ready`, `session`, `leave` — follows whichever wrote last, so which agent
+/// is deaf flips per heartbeat with nothing to indicate it. The skills derive
+/// the path from the agent's parent pid, so two sessions under one parent
+/// collide by construction rather than by accident.
+///
+/// A leftover file from a `SIGKILL`ed daemon is not a collision: nothing
+/// answers for it, so the path is free and the new daemon overwrites it.
+pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
+    let entry = read_session_entry(path)?;
+    let (mesh, pid) = (entry.mesh?, entry.pid?);
+    let nickname = entry.nickname.clone();
+    let target = Target {
+        path: path.to_path_buf(),
+        mesh: mesh.clone(),
+        name: entry.name,
+        nickname: nickname.clone(),
+        topic: entry.topic,
+        pid,
+    };
+    if !confirm_owner(&live_owners().await, &target) {
+        return None;
+    }
+    let who = nickname.map_or_else(|| format!("pid {pid}"), |nick| format!("<{nick}> (pid {pid})"));
+    Some(format!("{who} on gossip {mesh}"))
+}
+
 pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let LeaveOpts {
         gossip: mesh,

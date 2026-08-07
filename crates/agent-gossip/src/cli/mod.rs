@@ -156,6 +156,22 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         author,
         advertise_directory,
     } = resolved;
+    // Refuse to share a state file with a daemon that is still using it.
+    // Failing loudly here beats two daemons alternating ownership of one file
+    // for the rest of the session, which is silent and corrupts identity
+    // resolution for both. Checked before any network setup so the refusal
+    // costs nothing.
+    if let Some(path) = shared.state_file.as_ref()
+        && let Some(owner) = session::live_owner_of(path).await
+    {
+        anyhow::bail!(
+            "state file {} is already in use by {owner}. \
+             A state file has one writer; sharing it makes both daemons \
+             unreachable at random. Pass a different --state-file, or leave \
+             that session first.",
+            path.display(),
+        );
+    }
     // The advertiser reaches the directory over this mesh's own lookups
     // (only `create` advertises, so only `Create` carries them).
     let directory_lookups = match &kind {

@@ -887,6 +887,95 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 }
 
+/// Two daemons must not share one `--state-file`.
+///
+/// A state file has a single writer: the daemon replaces it wholesale every
+/// heartbeat. Pointed at one path, two daemons take turns owning it, and the
+/// bell, `ready`, `session` and `leave` all resolve identity from that file —
+/// so which agent is reachable flips per heartbeat with nothing to say so.
+/// The skills derive the path from the agent's parent pid, which makes two
+/// sessions under one parent collide by construction. The second daemon must
+/// refuse to start, loudly, rather than join the rotation.
+#[test]
+fn second_daemon_refuses_a_state_file_already_in_use() {
+    let log = tmp_log("statefile-collide");
+    let file = File::create(&log).unwrap();
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-collide-{}.json",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&state_file);
+
+    let mut first = common::test_cmd()
+        .args(["create", "--name", "collide-first"])
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stderr(Stdio::from(file))
+        .spawn()
+        .expect("failed to spawn the first daemon");
+
+    // Wait until the first daemon owns the file and is serving.
+    let status = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "60"])
+        .status()
+        .expect("failed to run agent-gossip ready");
+    assert!(status.success(), "the first daemon never came up");
+
+    // Spawn rather than `output()`: a daemon that is *not* refused never
+    // exits, so waiting on it would hang the suite instead of failing it.
+    let mut second = common::test_cmd()
+        .args(["create", "--name", "collide-second"])
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn the second daemon");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let exit = loop {
+        match second.try_wait().expect("failed to poll the second daemon") {
+            Some(exit) => break exit,
+            None if Instant::now() >= deadline => {
+                let _ = second.kill();
+                let _ = second.wait();
+                let _ = Command::new("kill")
+                    .args(["-TERM", &first.id().to_string()])
+                    .status();
+                let _ = first.wait();
+                panic!("the second daemon kept running on a state file already in use");
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    };
+    assert!(!exit.success(), "the second daemon exited 0");
+    let mut stderr = String::new();
+    if let Some(mut pipe) = second.stderr.take() {
+        use std::io::Read;
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    assert!(
+        stderr.contains("already in use"),
+        "the refusal should say the file is taken, got: {stderr}"
+    );
+
+    // The first daemon still owns the file and is unharmed.
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+    assert_eq!(parsed["name"], "collide-first");
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &first.id().to_string()])
+        .status();
+    let _ = first.wait();
+    let _ = fs::remove_file(&log);
+    let _ = fs::remove_file(&state_file);
+}
+
 /// The race the gate exists for: `agent-gossip ready` is started *before* the daemon, so
 /// the state file does not exist yet. The gate must block (file-appears, then
 /// ready-flips) and still exit 0 once the daemon comes up and serves.
