@@ -414,7 +414,7 @@ pub(crate) async fn handle_ipc_command(
             broadcast
         }
         IpcCommand::MetaGet { mesh: _ } => {
-            let _ = resp_tx.send(state_get_response(state, fofoca::protocol::Channel::Meta));
+            let _ = resp_tx.send(meta_get_response(state, author));
             false
         }
         IpcCommand::Topology { mesh: _ } => {
@@ -528,6 +528,38 @@ fn state_get_response(state: &EventLoopState, channel: fofoca::protocol::Channel
     let document = state.doc(channel).to_json();
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
+}
+
+/// The `meta` document plus the entries under `/peers` that no longer name a
+/// live member.
+///
+/// A peer retracts its own entry on a graceful leave, and nothing else can:
+/// the write gate binds every author to its own subtree, so a survivor cannot
+/// tidy up after a peer that was `SIGKILL`ed. The entry therefore outlives its
+/// peer, reading `status: "idle"` forever, while the roster has long since
+/// evicted it.
+///
+/// Reported beside the document rather than filtered out of it. Trimming the
+/// document would be lossy (a returning peer's own entry is the one it merges
+/// into) and, worse, invites a `get` → edit → `merge` round-trip to write the
+/// trimmed view back as if it were truth. `absent` is derived, so it cannot
+/// travel that path.
+fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
+    let document = state.doc(fofoca::protocol::Channel::Meta).to_json();
+    let snapshot = state.roster_snapshot();
+    // Active members only. The roster snapshot chains the *quiet* peers onto
+    // the live ones, and a peer that died ungracefully lands exactly there —
+    // counting it as live is what made this report empty in the first place.
+    let live: std::collections::HashSet<&str> = snapshot
+        .peers
+        .iter()
+        .filter(|entry| !entry.quiet)
+        .map(|entry| entry.nickname.as_str())
+        .collect();
+    let absent = crate::a2a::card::absent_peers(&document, &live, author);
+    let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
+    let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
+    format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
 }
 
 /// Serialize the live roster snapshot as the `agent-gossip peers` response.

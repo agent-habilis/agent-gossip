@@ -2659,6 +2659,82 @@ async fn nickname_reusable_after_peer_leaves() {
     second.leave().await;
 }
 
+/// A peer that dies without a graceful leave keeps its `/peers` meta entry
+/// forever, and `meta get` must say so.
+///
+/// Only the entry's own author can retract it: the forgery gate binds every
+/// writer to its own subtree, so no survivor can tidy up after a SIGKILL. The
+/// entry stays readable with whatever status its agent last set, while the
+/// roster evicts the peer within the alive timeout. An agent picking a peer to
+/// delegate to reads that document, so the staleness has to be visible.
+///
+/// The document itself is left intact — trimming it would drop a returning
+/// peer's own entry and invite a get/edit/merge round-trip to write the
+/// trimmed view back as truth — so the answer rides alongside, in `absent`.
+#[test]
+fn meta_get_names_entries_whose_peer_is_gone() {
+    let (survivor, mesh) = Node::create_flags("meta-ghost", &SHORT_EVICT);
+    let ghost = Node::join_args(&mesh, "meta-ghost-peer", &[], &SHORT_EVICT);
+    common::await_peer_card_cli(&mesh, &survivor.nickname, &ghost.nickname);
+
+    // The doomed peer publishes an agent-side fact, as the join skill does.
+    let merged = common::test_cmd()
+        .args(["meta", "merge", "--gossip", &mesh])
+        .args(["--nickname", &ghost.nickname])
+        .args([
+            "--merge",
+            &format!(
+                r#"{{"peers":{{"{}":{{"status":"idle"}}}}}}"#,
+                ghost.nickname
+            ),
+        ])
+        .output()
+        .expect("failed to run meta merge");
+    assert!(merged.status.success(), "meta merge failed: {merged:?}");
+
+    // Ungraceful death: no `Left`, so no retraction is ever authored.
+    ghost.kill();
+
+    // The survivor evicts it from the roster within the alive timeout, but the
+    // meta entry cannot follow.
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    let ghost_nick = ghost.nickname.clone();
+    loop {
+        let response: serde_json::Value = serde_json::from_str(&ipc_raw(
+            &mesh,
+            &survivor.nickname,
+            &format!(r#"{{"command":"meta_get","mesh":"{mesh}"}}"#),
+        ))
+        .expect("meta_get response is JSON");
+
+        let absent: Vec<&str> = response["absent"]
+            .as_array()
+            .expect("meta_get carries an absent list")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+
+        if absent.contains(&ghost_nick.as_str()) {
+            // The entry is still in the document — reported, not deleted.
+            assert!(
+                response["document"]["peers"][&ghost_nick].is_object(),
+                "the entry must be reported, not trimmed: {response}"
+            );
+            // And the survivor never reports itself.
+            assert!(
+                !absent.contains(&survivor.nickname.as_str()),
+                "a node must not flag its own entry: {response}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "meta_get never reported the dead peer as absent: {response}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 // ── starvation watchdog (the roster-collapse fix) ─────────────────────────────
 
 // `SHORT_EVICT` plus a 6s starvation threshold. The threshold is its own

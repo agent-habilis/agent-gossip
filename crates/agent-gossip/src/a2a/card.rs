@@ -179,6 +179,42 @@ pub(crate) fn publish_merge(nickname: &Nickname, card: &AgentCard) -> serde_json
     })
 }
 
+/// The `/peers` entries in `document` with no **active** member behind them.
+///
+/// A member retracts its own entry on a graceful leave ([`retract_merge`]),
+/// and that is the only way an entry ever leaves the document — the forgery
+/// gate binds every author to its own subtree, so a survivor cannot tidy up
+/// after a peer that was `SIGKILL`ed or lost power. Such an entry stays
+/// readable forever, still reporting whatever status its agent last set.
+///
+/// `live` must hold only the *active* peers. A peer that dies ungracefully is
+/// moved to the roster's quiet set rather than dropped, and the roster
+/// snapshot returns both, so passing the snapshot wholesale reports nothing:
+/// the ghost is still in the list. Being flagged while merely quiet is the
+/// honest answer either way — quiet means no live link, which is precisely
+/// what a caller about to delegate work needs to know.
+///
+/// `self_nick` is excluded because the roster lists peers, not self: without
+/// it every node would report its own card as absent.
+#[must_use]
+pub(crate) fn absent_peers<'doc>(
+    document: &'doc serde_json::Value,
+    live: &std::collections::HashSet<&str>,
+    self_nick: &Nickname,
+) -> Vec<&'doc str> {
+    document
+        .get("peers")
+        .and_then(serde_json::Value::as_object)
+        .map(|peers| {
+            peers
+                .keys()
+                .map(String::as_str)
+                .filter(|nick| *nick != self_nick.as_str() && !live.contains(nick))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The RFC 7386 merge that retracts this member's whole `/peers/<nick>` meta
 /// entry — card, endpoint hint, and self-reported agent facts — on graceful
 /// leave. Only the entry's owner can author it: the card-forgery gate rejects
@@ -241,6 +277,56 @@ mod tests {
         assert!(
             merge["peers"]["calm-otter"].get("model").is_none(),
             "agent-side facts are the agent's own merge, not the daemon's"
+        );
+    }
+
+    /// A peer that died without a graceful leave keeps its meta entry forever:
+    /// the forgery gate means no survivor can retract it. Reading the document
+    /// alone therefore shows a member that is gone, still carrying whatever
+    /// status it last set, which is what a peer-picking agent goes on.
+    #[test]
+    fn absent_peers_names_entries_with_no_live_member() {
+        let document = serde_json::json!({
+            "peers": {
+                "calm-otter": { "status": "idle" },
+                "wire-thistle": { "status": "idle" },
+                "print-onyx": { "status": "busy" },
+            }
+        });
+        let self_nick = Nickname::from("print-onyx");
+        let live = std::collections::HashSet::from(["calm-otter"]);
+
+        let absent = super::absent_peers(&document, &live, &self_nick);
+
+        assert_eq!(
+            absent,
+            vec!["wire-thistle"],
+            "only the entry with no live peer behind it"
+        );
+    }
+
+    /// The roster lists peers, never self, so our own entry has to be excluded
+    /// explicitly. Without that, every node reports its own card as a ghost.
+    #[test]
+    fn absent_peers_never_includes_our_own_entry() {
+        let document = serde_json::json!({ "peers": { "print-onyx": { "status": "idle" } } });
+        let live = std::collections::HashSet::new();
+        assert!(
+            super::absent_peers(&document, &live, &Nickname::from("print-onyx")).is_empty()
+        );
+    }
+
+    /// A document with no `/peers` map at all (a fresh mesh) is not an error.
+    #[test]
+    fn absent_peers_tolerates_a_document_without_peers() {
+        let live = std::collections::HashSet::new();
+        assert!(
+            super::absent_peers(
+                &serde_json::json!({}),
+                &live,
+                &Nickname::from("print-onyx")
+            )
+            .is_empty()
         );
     }
 

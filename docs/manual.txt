@@ -702,8 +702,18 @@ COMMANDS
               The meta channel — a second shared-state document beside state,
               identical in every respect (same merge semantics, exit-code
               contract, ordering, and the meta event on the
-              stream). Use it for gossip metadata rather than the task itself. By
-              convention agents self-report what they run on under
+              stream). Use it for gossip metadata rather than the task itself.
+
+              meta get answers {"ok":true,"document":{...},"absent":[...]}.
+              absent names the /peers entries with no active member behind
+              them. Only a peer can retract its own entry, so one that died
+              without leaving gracefully stays in the document indefinitely,
+              still reporting whatever status it last set. The document is
+              never trimmed — a returning peer merges into its own entry —
+              so absent is the signal that an entry is history rather than a
+              peer you can give work to.
+
+              By convention agents self-report what they run on under
               /peers/<nickname>, e.g.
 
                 agent-gossip meta merge --gossip GOSSIP --nickname NAME \

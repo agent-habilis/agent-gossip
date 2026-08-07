@@ -888,7 +888,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on."
+        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers` entries with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
     )]
     async fn get_meta(
         &self,
@@ -897,7 +897,17 @@ impl AgentGossipServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let document = session.meta_get().await.map_err(to_mcp_error)?;
-        ok_json(serde_json::json!({ "document": document }))
+        // Same rule as the CLI's `meta get`, from the same function, so the two
+        // agent-facing surfaces cannot drift apart on what "absent" means.
+        let roster = session.peers().await.map_err(to_mcp_error)?;
+        let live: std::collections::HashSet<&str> = roster
+            .peers
+            .iter()
+            .filter(|entry| !entry.quiet)
+            .map(|entry| entry.nickname.as_str())
+            .collect();
+        let absent = crate::a2a::card::absent_peers(&document, &live, session.nickname());
+        ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
 }
 
