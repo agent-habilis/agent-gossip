@@ -53,6 +53,31 @@ pub struct StatusFrameParams<'a> {
     pub payload_task_id: &'a str,
 }
 
+/// The value cluster for [`CraftedMsg::sealed_task_status`]: a *well-formed*
+/// status leg for an existing task, from an author who is not that task's
+/// counterparty.
+#[derive(Clone, Copy)]
+pub struct SealedTaskStatusParams<'a> {
+    pub author: &'a str,
+    pub to: &'a str,
+    pub task_id: &'a str,
+    pub state: crate::a2a::TaskState,
+    /// Marks the leg as a liveness beat rather than a transition.
+    pub beat: bool,
+    /// The addressee's public mesh-seal key, as any member can read it from
+    /// the meta document — see [`peer_seal_key`].
+    pub seal_key: [u8; 32],
+}
+
+/// The addressee's public X25519 mesh-seal key, read out of a meta document
+/// exactly as the daemon's own send path reads it. Any mesh member holds this
+/// document, which is the point: sealing to a peer needs no secret.
+#[must_use]
+pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<[u8; 32]> {
+    let peer = Nickname::new(peer.to_owned()).ok()?;
+    crate::a2a::card::peer_seal_key(meta_doc, &peer)
+}
+
 /// Builder for a crafted `Msg`. Choose every field, then `sign` (or not) and
 /// take the wire [`bytes`](CraftedMsg::bytes). Mutating *after* `sign` (e.g.
 /// [`tamper_body`](CraftedMsg::tamper_body)) yields a structurally-valid
@@ -221,6 +246,50 @@ impl CraftedMsg {
                     tag: AppTag::from(wire::STATUS),
                     to: Some(to),
                     corr: Some(CorrId::from(frame_tid.as_str())),
+                    body,
+                },
+            ),
+        }
+    }
+
+    /// A directed `a2a_status` leg that is correct in every respect the
+    /// boundary checks — right tag, right addressing, payload `taskId` and
+    /// `contextId` consistent, body sealed to the addressee — and wrong only in
+    /// who authored it. The shape a bystander produces to drive a task it is
+    /// not a party to; sealing needs nothing secret, since the addressee's key
+    /// is published in the meta document.
+    pub fn sealed_task_status(mesh: &MeshId, params: SealedTaskStatusParams<'_>) -> Self {
+        let SealedTaskStatusParams {
+            author,
+            to,
+            task_id,
+            state,
+            beat,
+            seal_key,
+        } = params;
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let to = Nickname::new(to.to_owned()).expect("valid target");
+        let task_id = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
+        let update = crate::a2a::gossip::status_update(
+            mesh,
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &task_id,
+                state,
+                note: None,
+                metadata: beat.then(|| serde_json::json!({ crate::a2a::META_BEAT: true })),
+            },
+        );
+        let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
+        let body = fofoca::protocol::seal_to_body(&seal_key, body.as_str())
+            .expect("sealing to a published key succeeds");
+        Self {
+            msg: Message::new_app(
+                mesh,
+                &author,
+                AppFrameParams {
+                    tag: AppTag::from(wire::STATUS),
+                    to: Some(to),
+                    corr: None,
                     body,
                 },
             ),

@@ -23,6 +23,7 @@ use agent_gossip_test_fixtures as common;
 use std::time::{Duration, Instant};
 
 use agent_gossip::OutputEvent;
+use agent_gossip::a2a::TaskState;
 use agent_gossip::harness::adversarial::{self, CraftedMsg};
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
@@ -441,6 +442,94 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
         "a relay must not surface a msg addressed to a third party"
     );
     victim.leave().await;
+    attacker.leave().await;
+}
+
+// ── Task-plane authorization: only the counterparty may drive a task ───
+
+/// A bystander drives someone else's live task to `completed`.
+///
+/// This is the full attack, not a shape approximation: the initiator and a real
+/// worker hold a live task; a third member reads the initiator's published
+/// mesh-seal key out of the meta document (no secret, no impersonation — it
+/// signs under its own fresh identity) and sends a *well-formed*, correctly
+/// sealed `a2a_status` naming that task id. Every check the boundary makes
+/// passes — tag, addressing, seal, payload/context consistency — because the
+/// only thing wrong with the frame is who sent it.
+///
+/// Pre-fix this landed twice over: `apply` looked the record up by task id
+/// alone and `advance` derived the sender from the *local* record's role, so
+/// the leg was credited to the worker and froze the record terminal (dropping
+/// the real worker's artifact forever); and the leg was surfaced to the skill
+/// as the worker's own, which is the half no state machine can undo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bystanders_task_status_is_dropped() {
+    let mut initiator = InProcNode::create("adv-taskparty").await;
+    let mut worker = InProcNode::join(&initiator.mesh, "adv-taskparty-wrk").await;
+    let attacker = InProcNode::join(&initiator.mesh, "adv-taskparty-atk").await;
+    attacker.broadcast("warmup").await;
+    assert!(
+        initiator.wait_body("warmup", T).await && worker.wait_body("warmup", T).await,
+        "nodes never meshed"
+    );
+
+    // A real task, accepted by the real worker.
+    let created = initiator.create_task(&worker.nickname, "the brief").await;
+    let task_id = created["result"]["task"]["id"]
+        .as_str()
+        .expect("task id")
+        .to_owned();
+    assert!(
+        worker.wait_task_message(T).await,
+        "worker never received the brief"
+    );
+    let tid = task_id.parse().expect("task id parses");
+    worker.task_status(&tid, TaskState::Working, None).await;
+    assert!(
+        initiator.wait_task_state(TaskState::Working, T).await,
+        "initiator never saw the task accepted"
+    );
+
+    // The bystander seals to the initiator using only the public meta document,
+    // then claims the task is done.
+    let seal_key = adversarial::peer_seal_key(&attacker.meta_get().await, &initiator.nickname)
+        .expect("the initiator's seal key is published in the meta doc");
+    let key = adversarial::new_key();
+    let evil = CraftedMsg::sealed_task_status(
+        attacker.session.mesh_id(),
+        adversarial::SealedTaskStatusParams {
+            author: "wire-thistle",
+            to: &initiator.nickname,
+            task_id: &task_id,
+            state: TaskState::Completed,
+            beat: false,
+            seal_key,
+        },
+    )
+    .sign(&key)
+    .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+
+    // Barrier: a real message from the same node, sent after the injection.
+    attacker.broadcast("barrier-taskparty").await;
+    assert!(
+        initiator.wait_body("barrier-taskparty", T).await,
+        "barrier lost"
+    );
+    assert!(
+        !initiator.wait_task_state(TaskState::Completed, T).await,
+        "a bystander's status must never be surfaced as the counterparty's"
+    );
+
+    // And the record is intact: the real worker's result still lands.
+    worker.task_artifact(&tid, "the real result").await;
+    assert!(
+        initiator.wait_task_state(TaskState::InputRequired, T).await,
+        "the real worker's artifact must still park the task for review"
+    );
+
+    initiator.leave().await;
+    worker.leave().await;
     attacker.leave().await;
 }
 

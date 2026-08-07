@@ -299,6 +299,17 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         return;
     };
 
+    // Only the task's own counterparty may drive it. The frame is
+    // signature-verified upstream, but a signature is not a party: `advance`
+    // *derives* the sender from our own role, so without this an unchecked leg
+    // is attributed to the counterparty by construction and any mesh member
+    // could close, park, or beat a task they are not in. The RPC leg path makes
+    // the same check by hand (`node.rs`'s `ingest_remote_message`); this is the
+    // push plane's, where nearly every transition happens.
+    if rec.peer != *leg.peer {
+        return;
+    }
+
     advance(rec, leg.kind, leg.mine);
     if let Some(fraction) = leg.fraction {
         rec.last_fraction = Some(fraction);
@@ -669,6 +680,116 @@ mod tests {
             mine,
             fraction: None,
         }
+    }
+
+    /// A leg from a peer who is not the task's counterparty is dropped, whatever
+    /// it claims. Pre-fix `apply` looked the record up by task id alone and
+    /// `advance` derived the sender from our own role, so a bystander's status
+    /// frame was applied *as the counterparty's*: `completed` froze the record
+    /// (dropping the real worker's artifact), `artifact` parked it in review with
+    /// the bystander's text, and a `Beat` refreshed `last_skill_activity` — the
+    /// one clock that must stay unreachable from plumbing, or an abandoned task
+    /// never gets reaped.
+    #[test]
+    fn a_leg_from_a_non_party_is_dropped() {
+        let now = Instant::now();
+        let outsider = Box::leak(Box::new(Nickname::from("wire-thistle")));
+        let from_outsider = |kind: LegKind| LegInfo {
+            task_id: Box::leak(Box::new(tid())),
+            peer: outsider,
+            kind,
+            mine: false,
+            fraction: None,
+        };
+
+        // We are the *initiator* — the side the attack lands on, since an
+        // inbound leg is credited to the worker — of a task `calm-otter`
+        // accepted.
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), false),
+            now,
+        );
+        assert_eq!(tasks[&tid()].state, TaskState::Working);
+        let skill_clock = tasks[&tid()].last_skill_activity;
+
+        apply(
+            &mut tasks,
+            &from_outsider(LegKind::Status(TaskState::Completed)),
+            now,
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a non-party cannot close the task"
+        );
+
+        apply(
+            &mut tasks,
+            &from_outsider(LegKind::Status(TaskState::Canceled)),
+            now,
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a non-party cannot cancel the task"
+        );
+
+        apply(&mut tasks, &from_outsider(LegKind::Artifact), now);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a non-party cannot park the task in review"
+        );
+        assert!(!tasks[&tid()].review);
+
+        let later = now.checked_add(Duration::from_mins(30)).unwrap();
+        apply(&mut tasks, &from_outsider(LegKind::Beat), later);
+        assert_eq!(
+            tasks[&tid()].last_skill_activity, skill_clock,
+            "a non-party's beat cannot refresh the skill-liveness clock"
+        );
+
+        // The real counterparty still drives it.
+        apply(&mut tasks, &leg(LegKind::Artifact, false), now);
+        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
+        assert!(tasks[&tid()].review);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Completed), false),
+            now,
+        );
+        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+    }
+
+    /// A second `Offer` on a live task id from a different peer must not
+    /// re-point the record: the id is the attacker's only handle, and the offer
+    /// arm is the one place `leg.peer` was ever read.
+    #[test]
+    fn a_foreign_offer_does_not_rebind_a_live_task() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), now);
+
+        apply(
+            &mut tasks,
+            &LegInfo {
+                task_id: Box::leak(Box::new(tid())),
+                peer: Box::leak(Box::new(Nickname::from("wire-thistle"))),
+                kind: LegKind::Offer,
+                mine: false,
+                fraction: None,
+            },
+            now,
+        );
+
+        assert_eq!(
+            tasks[&tid()].peer,
+            Nickname::from("calm-otter"),
+            "the counterparty is fixed at record creation"
+        );
     }
 
     /// The graceful-`Left` cancel pass hits exactly the departed peer's live

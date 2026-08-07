@@ -514,6 +514,19 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
     if to == ctx.author
         && let Some(task_id) = crate::a2a::gossip::frame_task_id(message)
     {
+        // …and being the addressee is not enough: the leg must come from the
+        // task's own counterparty. Anyone can seal to us (the key is published
+        // in the meta document) and name a task id, so without this a bystander
+        // both drives the record and — the part the state machine cannot
+        // defend — has its text surfaced to our skill *as the worker's result*.
+        // Dropping it here covers the surface as well as the machine.
+        if app
+            .tasks
+            .get(&task_id)
+            .is_some_and(|rec| rec.peer != message.author)
+        {
+            return false;
+        }
         crate::a2a::task::ingest(
             &mut app.tasks,
             crate::a2a::task::IngestLegParams {
