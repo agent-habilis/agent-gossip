@@ -445,6 +445,45 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
     attacker.leave().await;
 }
 
+/// The same relay rule, with the one author the old gate let through: our own
+/// nickname.
+///
+/// `handle_msg` used to admit a frame when `to != self` provided
+/// `author == self`, documented as the sender's echo path. The echo never
+/// comes through there — it is rendered from a plaintext twin on the send path,
+/// and the engine drops our own frames by pubkey before the receive hooks — so
+/// the clause only ever fired on a frame someone else signed while wearing our
+/// nickname. A relayed msg between two other peers then surfaced to us as one
+/// we had sent, in our own `--output json` stream, with `self: false`.
+///
+/// The sibling test above misses this because its fixture authors as "ghost";
+/// only the victim's own nickname reaches the clause.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
+    let (mut victim, attacker) = meshed_pair("msgself").await;
+    let key = adversarial::new_key();
+    let victim_nick = victim.nickname.clone();
+    let evil = CraftedMsg::new(
+        attacker.session.mesh_id(),
+        &victim_nick,
+        "evil-msg-as-victim",
+    )
+    .as_msg()
+    .wrap_msg()
+    .address_to(Some("someone-else"))
+    .sign(&key)
+    .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.broadcast("barrier-msgself").await;
+    assert!(victim.wait_body("barrier-msgself", T).await, "barrier lost");
+    assert!(
+        !surfaced(&mut victim, "evil-msg-as-victim"),
+        "a msg between two other peers must never surface as one we sent"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
 // ── Task-plane authorization: only the counterparty may drive a task ───
 
 /// A bystander drives someone else's live task to `completed`.

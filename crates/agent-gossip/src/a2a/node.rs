@@ -572,16 +572,25 @@ struct MsgParams<'a> {
     self_author: &'a Nickname,
 }
 
-/// A msg: printed and logged **only by its two parties**, the
-/// addressee (`to == self_author`) and — via the sender's echo path — the
-/// sender. Anyone else is a relay: it forwards the frame and returns `false`
-/// here, so the msg never reaches that peer's transcript or poll buffer.
+/// A msg: printed and logged **only by its addressee** (`to == self_author`).
+/// Anyone else is a relay: it forwards the frame and returns `false` here, so
+/// the msg never reaches that peer's transcript or poll buffer.
 ///
 /// The party check is not redundant with unicast routing or sealing. Unicast
 /// decides who receives the bytes and sealing decides who can read them, but a
 /// multihop relay legitimately holds a msg it is not party to; this is the gate
 /// that stops it surfacing there. `surfaceable` gates only the *display*
 /// (join-horizon), never the relay/log.
+///
+/// The sender's own copy does **not** come through here — it is rendered from a
+/// plaintext twin on the send path (`send::print_echo`), because the wire body
+/// is sealed to the addressee. Both call sites are inbound hooks, and the
+/// engine drops our own frames by **pubkey** before either one, so a frame
+/// reaching this function carrying our nickname is by construction someone
+/// else's: nicknames are display labels the engine deliberately never pins.
+/// An `author == self_author` escape hatch here therefore admitted nothing
+/// honest and exactly one thing hostile — a relayed msg between two other
+/// peers, surfaced to us as though we had sent it.
 fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
     let MsgParams {
         message,
@@ -589,7 +598,7 @@ fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
         surfaceable,
         self_author,
     } = params;
-    if to != self_author && message.author != *self_author {
+    if to != self_author {
         return false;
     }
     if surfaceable {
