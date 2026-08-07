@@ -27,8 +27,10 @@ impl RpcError {
         }
     }
 
-    /// A2A `TaskNotFoundError`.
-    fn task_not_found(task_id: &TaskId) -> Self {
+    /// A2A `TaskNotFoundError`. Also the answer a gossip caller gets for a
+    /// task that exists but is not theirs, so the error cannot be used to
+    /// probe which task ids the peer holds.
+    pub(crate) fn task_not_found(task_id: &TaskId) -> Self {
         RpcError {
             code: -32001,
             message: format!("task not found: {task_id}"),
@@ -72,7 +74,12 @@ pub(crate) enum A2aOp {
     GetTask {
         task_id: TaskId,
     },
-    ListTasks,
+    /// `Some(peer)` restricts the listing to tasks whose counterparty is
+    /// `peer` — what a remote caller over gossip may see. `None` is the local
+    /// binding, where the caller owns the daemon and sees every task.
+    ListTasks {
+        peer: Option<Nickname>,
+    },
     CancelTask {
         task_id: TaskId,
     },
@@ -133,7 +140,7 @@ pub(crate) fn parse_op(
         "GetTask" | "SubscribeToTask" => Ok(A2aOp::GetTask {
             task_id: task_id_param()?,
         }),
-        "ListTasks" => Ok(A2aOp::ListTasks),
+        "ListTasks" => Ok(A2aOp::ListTasks { peer: None }),
         "CancelTask" => Ok(A2aOp::CancelTask {
             task_id: task_id_param()?,
         }),
@@ -174,6 +181,25 @@ pub(crate) fn parse_op(
 /// return and what a task-creating `message/send` echoes. History/artifact
 /// accumulation is not stored daemon-side (the event stream carries them);
 /// mesh-specific coordinates ride `metadata`.
+/// The `ListTasks` payload. `peer` scopes the listing to that counterparty's
+/// tasks — what a remote caller may see; `None` lists everything, for the
+/// local binding whose caller owns the daemon.
+fn list_tasks(app: &A2aApp, peer: Option<&Nickname>, mesh: &MeshId) -> Value {
+    // Sort by task id so the response order is stable across calls
+    // (`app.tasks` is a HashMap with unspecified iteration order).
+    let mut entries: Vec<(&TaskId, &TaskRecord)> = app
+        .tasks
+        .iter()
+        .filter(|(_, rec)| peer.is_none_or(|peer| rec.peer == *peer))
+        .collect();
+    entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
+    let tasks: Vec<Value> = entries
+        .into_iter()
+        .map(|(task_id, rec)| task_object(task_id, rec, mesh))
+        .collect();
+    serde_json::json!({ "tasks": tasks })
+}
+
 pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> Value {
     let role = |value: TaskRole| match value {
         TaskRole::Initiator => "initiator",
@@ -241,17 +267,7 @@ pub(crate) async fn handle_op(
             .get(&task_id)
             .map(|rec| task_object(&task_id, rec, mesh))
             .ok_or_else(|| RpcError::task_not_found(&task_id)),
-        A2aOp::ListTasks => {
-            // Sort by task id so the response order is stable across calls
-            // (`app.tasks` is a HashMap with unspecified iteration order).
-            let mut entries: Vec<(&TaskId, &TaskRecord)> = app.tasks.iter().collect();
-            entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
-            let tasks: Vec<Value> = entries
-                .into_iter()
-                .map(|(task_id, rec)| task_object(task_id, rec, mesh))
-                .collect();
-            Ok(serde_json::json!({ "tasks": tasks }))
-        }
+        A2aOp::ListTasks { peer } => Ok(list_tasks(app, peer.as_ref(), mesh)),
         A2aOp::CancelTask { task_id } => {
             if !app.tasks.contains_key(&task_id) {
                 return Err(RpcError::task_not_found(&task_id));

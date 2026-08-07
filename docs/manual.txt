@@ -355,15 +355,18 @@ COMMANDS
                     (--task-id: an answer / approval / change). --text composes
                     the A2A Message.
                 GetTask
-                    read one task (--task-id)
+                    read one task you're a party to (--task-id). A task
+                    between the peer and someone else answers the same
+                    "task not found" as an id that does not exist.
                 ListTasks
-                    list the peer's tasks
+                    list the tasks you and the peer share — not the peer's
+                    whole registry
                 CancelTask
                     cancel a task you're a party to (--task-id)
                 SubscribeToTask
-                    snapshot a task (--task-id); the worker's status/artifact
-                    frames then stream to you (the push plane — no held
-                    connection)
+                    snapshot a task you're a party to (--task-id); the
+                    worker's status/artifact frames then stream to you (the
+                    push plane — no held connection)
                 SendStreamingMessage
                     like SendMessage; the worker's updates then stream
                 mesh/state.get / mesh/meta.get
@@ -1192,7 +1195,8 @@ MCP SERVER
               request/response) and return its JSON-RPC response. Args: to (a
               current peer),
               method (SendMessage for task creation or a follow-up, GetTask,
-              ListTasks, CancelTask), params, timeout_secs. For task creation,
+              ListTasks, CancelTask — the task reads are scoped to tasks you
+              share with that peer), params, timeout_secs. For task creation,
               params.message is an A2A Message with no taskId — the peer mints
               the task id and returns the Task.
 

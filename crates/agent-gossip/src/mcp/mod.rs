@@ -262,8 +262,9 @@ struct A2aCallArgs {
     /// The peer to call (a current peer).
     to: String,
     /// The A2A JSON-RPC method. The peer serves a safe subset:
-    /// "`GetTask`", "`ListTasks`", "`CancelTask`" (only a task you're a
-    /// party to), "mesh/state.get", "mesh/meta.get", and "`SendMessage`"
+    /// "`GetTask`", "`CancelTask`" (both only for a task you're a party to),
+    /// "`ListTasks`" (only the tasks you share with that peer),
+    /// "mesh/state.get", "mesh/meta.get", and "`SendMessage`"
     /// directed at the peer (it ingests the message and returns the Task).
     method: String,
     /// The JSON-RPC params object (default `{}`).
@@ -809,7 +810,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Call a peer's A2A server over gossip (request/response) and return its JSON-RPC response. The peer serves a SAFE subset of A2A v1.0 (PascalCase) methods: \"GetTask\" (params {id}), \"ListTasks\", \"CancelTask\" (params {id}; only for a task you're a party to), \"SubscribeToTask\" (params {id}; snapshot + the worker's pushed frames), \"mesh/state.get\", \"mesh/meta.get\", and \"SendMessage\" (params {message: <A2A Message>}) directed at that peer — no taskId opens a task the worker mints and returns as {\"task\": <Task>}; a taskId is a follow-up. Global-state writes (mesh/state.merge, mesh/meta.merge) and broadcast SendMessage are refused. Blocks until the peer answers or times out; the result is the JSON-RPC response object ({result} or {error})."
+        description = "Call a peer's A2A server over gossip (request/response) and return its JSON-RPC response. The peer serves a SAFE subset of A2A v1.0 (PascalCase) methods: \"GetTask\" (params {id}), \"CancelTask\" (params {id}), \"SubscribeToTask\" (params {id}; snapshot + the worker's pushed frames) — all three only for a task you're a party to, and a task between that peer and someone else answers the same \"task not found\" as an id that does not exist; \"ListTasks\", which lists only the tasks you share with that peer, not its whole registry; \"mesh/state.get\", \"mesh/meta.get\"; and \"SendMessage\" (params {message: <A2A Message>}) directed at that peer — no taskId opens a task the worker mints and returns as {\"task\": <Task>}; a taskId is a follow-up. Global-state writes (mesh/state.merge, mesh/meta.merge) and broadcast SendMessage are refused. Blocks until the peer answers or times out; the result is the JSON-RPC response object ({result} or {error})."
     )]
     async fn a2a_call(
         &self,

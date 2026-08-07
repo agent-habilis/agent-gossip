@@ -50,16 +50,38 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
             .and_then(TaskId::from_uuid_str)
             .ok_or_else(|| RpcError::invalid_params("params.id must be a task id (uuid)"))
     };
+    // Only a task's own peer may read it. A read is not harmless here: the
+    // response carries the id, counterparty, role and state of a task the
+    // caller may have no part in, and that id set is the handle every other
+    // task-plane attack needs. `CancelTask` has always made this check; the
+    // reads did not, which left the reconnaissance step open.
+    let party_only = |wanted: TaskId, op: A2aOp| {
+        if app
+            .tasks
+            .get(&wanted)
+            .is_some_and(|rec| rec.peer == *requester)
+        {
+            Served::Op(op)
+        } else {
+            // Same shape whether the task is absent or someone else's, so the
+            // response cannot be used to probe which ids exist.
+            Served::Reject(RpcError::task_not_found(&wanted))
+        }
+    };
     match method {
         // `SubscribeToTask` returns the same snapshot as `GetTask`; the worker's
         // status/artifact frames already flood + heal to the task's parties (the
         // push plane IS the stream), so the caller keeps receiving the pushed
         // frames after the snapshot — connectionless, no held socket.
         "GetTask" | "SubscribeToTask" => match task_id() {
-            Ok(task_id) => Served::Op(A2aOp::GetTask { task_id }),
+            Ok(task_id) => party_only(task_id.clone(), A2aOp::GetTask { task_id }),
             Err(error) => Served::Reject(error),
         },
-        "ListTasks" => Served::Op(A2aOp::ListTasks),
+        // Scoped to the caller's own tasks — the local binding, whose caller
+        // owns the daemon, is the one that lists everything.
+        "ListTasks" => Served::Op(A2aOp::ListTasks {
+            peer: Some(requester.clone()),
+        }),
         "mesh/state.get" => Served::Op(A2aOp::ChannelGet {
             channel: Channel::State,
         }),
@@ -144,6 +166,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
 #[cfg(test)]
 mod tests {
     use super::{Served, classify};
+    use crate::a2a::rpc::A2aOp;
     use crate::a2a::app::A2aApp;
     use fofoca::protocol::Nickname;
     use serde_json::json;
@@ -156,21 +179,36 @@ mod tests {
         matches!(served, Served::Reject(_))
     }
 
+    /// Open a task record with `peer` as the counterparty, as receiving its
+    /// offer would.
+    fn with_task(app: &mut A2aApp, task_id: &str, peer: &str) {
+        crate::a2a::task::apply(
+            &mut app.tasks,
+            &crate::a2a::task::LegInfo {
+                task_id: &crate::a2a::TaskId::from(task_id),
+                peer: &Nickname::from(peer),
+                kind: crate::a2a::task::LegKind::Offer,
+                mine: false,
+                fraction: None,
+            },
+            std::time::Instant::now(),
+        );
+    }
+
+    const TASK_A: &str = "550e8400-e29b-41d4-a716-446655440000";
+    const TASK_B: &str = "660e8400-e29b-41d4-a716-446655440001";
+
     #[test]
     fn reads_are_served() {
         let caller = Nickname::from("alice");
-        let st = state();
+        let mut st = state();
+        with_task(&mut st, TASK_A, "alice");
         assert!(matches!(
             classify("ListTasks", &json!({}), &caller, &st),
             Served::Op(_)
         ));
         assert!(matches!(
-            classify(
-                "GetTask",
-                &json!({"id": "550e8400-e29b-41d4-a716-446655440000"}),
-                &caller,
-                &st
-            ),
+            classify("GetTask", &json!({"id": TASK_A}), &caller, &st),
             Served::Op(_)
         ));
         assert!(matches!(
@@ -180,12 +218,7 @@ mod tests {
         // Streaming ops are served: SubscribeToTask returns a snapshot op,
         // SendStreamingMessage ingests like a create.
         assert!(matches!(
-            classify(
-                "SubscribeToTask",
-                &json!({"id": "550e8400-e29b-41d4-a716-446655440000"}),
-                &caller,
-                &st
-            ),
+            classify("SubscribeToTask", &json!({"id": TASK_A}), &caller, &st),
             Served::Op(_)
         ));
         assert!(matches!(
@@ -248,6 +281,73 @@ mod tests {
             classify("SendMessage", &directed, &caller, &st),
             Served::Ingest(_)
         ));
+    }
+
+    /// A read is only served to the task's own peer. Pre-fix `GetTask` and
+    /// `SubscribeToTask` were served to anyone who named an id, which handed a
+    /// bystander the task's counterparty, role and state — and, more usefully
+    /// to an attacker, confirmation that the id is live.
+    #[test]
+    fn task_reads_require_being_the_task_peer() {
+        let mut st = state();
+        with_task(&mut st, TASK_A, "alice");
+        let outsider = Nickname::from("wire-thistle");
+
+        for method in ["GetTask", "SubscribeToTask"] {
+            assert!(
+                is_reject(&classify(method, &json!({"id": TASK_A}), &outsider, &st)),
+                "{method} on someone else's task must be refused"
+            );
+            assert!(
+                matches!(
+                    classify(method, &json!({"id": TASK_A}), &Nickname::from("alice"), &st),
+                    Served::Op(_)
+                ),
+                "{method} on your own task is still served"
+            );
+        }
+
+        // An absent id and someone else's id answer alike — same code, and a
+        // message that carries nothing but the id the caller already supplied —
+        // so the error cannot be used to enumerate the ids the peer holds.
+        let reject = |wanted: &str| {
+            match classify("GetTask", &json!({"id": wanted}), &outsider, &st) {
+                Served::Reject(error) => (error.code, error.message.replace(wanted, "<id>")),
+                Served::Op(_) | Served::Ingest(_) | Served::ShardRepair { .. } => {
+                    panic!("expected a rejection")
+                }
+            }
+        };
+        assert_eq!(reject(TASK_B), reject(TASK_A));
+    }
+
+    /// `ListTasks` over gossip is scoped to the caller's own tasks. Pre-fix it
+    /// returned every record the peer held, whoever asked.
+    #[test]
+    fn list_tasks_over_gossip_is_scoped_to_the_caller() {
+        let mut st = state();
+        with_task(&mut st, TASK_A, "alice");
+        with_task(&mut st, TASK_B, "bob");
+
+        let Served::Op(A2aOp::ListTasks { peer: over_gossip }) =
+            classify("ListTasks", &json!({}), &Nickname::from("alice"), &st)
+        else {
+            panic!("ListTasks is served");
+        };
+        assert_eq!(
+            over_gossip,
+            Some(Nickname::from("alice")),
+            "a gossip caller only ever lists its own tasks"
+        );
+
+        // The local binding, whose caller owns the daemon, still lists all.
+        let A2aOp::ListTasks { peer: locally } =
+            crate::a2a::rpc::parse_op("ListTasks", &json!({}), None)
+                .expect("local ListTasks parses")
+        else {
+            panic!("expected ListTasks");
+        };
+        assert_eq!(locally, None);
     }
 
     #[test]
