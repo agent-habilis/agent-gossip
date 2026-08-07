@@ -195,6 +195,40 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     );
 }
 
+/// Whether the registry has room for one more task offered by a peer.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Admission {
+    Ok,
+    /// That peer already holds its allowance of live tasks with us.
+    PeerAtCap,
+    /// The registry is full across every peer.
+    RegistryFull,
+}
+
+/// May `peer` open one more task with us?
+///
+/// A task offer is the only registry entry a remote peer mints directly, so
+/// this is where `tasks` is kept bounded — the discipline every other
+/// registry already follows (`register_a2a_waiter`, `register_poll_waiter`).
+/// The per-peer quota is the load-bearing one: a global cap alone would let a
+/// single flooder fill the registry and lock every honest peer out, which
+/// turns a leak into a denial of service. The global cap is the memory
+/// backstop behind it, since nothing stops an attacker minting fresh
+/// identities.
+pub(crate) fn admit_new_task(tasks: &HashMap<TaskId, TaskRecord>, peer: &Nickname) -> Admission {
+    if tasks.len() >= crate::a2a::tuning::TASKS_CAP {
+        return Admission::RegistryFull;
+    }
+    let live_with_peer = tasks
+        .values()
+        .filter(|rec| rec.peer == *peer && !rec.state.is_terminal())
+        .count();
+    if live_with_peer >= crate::a2a::tuning::TASKS_PER_PEER_CAP {
+        return Admission::PeerAtCap;
+    }
+    Admission::Ok
+}
+
 /// The value cluster [`adopt_initiator`] needs beyond its `tasks` registry
 /// handle.
 #[derive(Clone, Copy)]
@@ -800,6 +834,56 @@ mod tests {
             now,
         );
         assert_eq!(tasks[&tid()].state, TaskState::Completed);
+    }
+
+    /// The registry a remote peer can mint into is bounded, per peer first.
+    ///
+    /// Pre-fix there was no cap at all: a `SendMessage` with no taskId skipped
+    /// the party check, minted a record and pushed a surfaced event, at
+    /// whatever rate the caller managed. The per-peer quota is what keeps a
+    /// flooder from locking everyone else out, so this checks that an honest
+    /// peer is still admitted while the flooder is refused.
+    #[test]
+    fn a_peer_cannot_mint_tasks_without_bound() {
+        use super::{Admission, admit_new_task};
+        let flooder = Nickname::from("wire-thistle");
+        let honest = Nickname::from("calm-otter");
+        let mut tasks = HashMap::new();
+        let now = Instant::now();
+
+        let mut open = |peer: &Nickname, index: usize| {
+            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
+            apply(
+                &mut tasks,
+                &LegInfo {
+                    task_id: &task_id,
+                    peer,
+                    kind: LegKind::Offer,
+                    mine: false,
+                    fraction: None,
+                },
+                now,
+            );
+            task_id
+        };
+
+        let mut minted = Vec::new();
+        for index in 0..crate::a2a::tuning::TASKS_PER_PEER_CAP {
+            minted.push(open(&flooder, index));
+        }
+
+        assert_eq!(admit_new_task(&tasks, &flooder), Admission::PeerAtCap);
+        assert_eq!(
+            admit_new_task(&tasks, &honest),
+            Admission::Ok,
+            "one peer's flood must not lock another peer out"
+        );
+
+        // The quota counts live tasks, so finished ones free it again — an
+        // orchestrator running many short tasks with one worker is not a
+        // flooder, and must not be treated as one.
+        tasks.get_mut(&minted[0]).unwrap().state = TaskState::Completed;
+        assert_eq!(admit_new_task(&tasks, &flooder), Admission::Ok);
     }
 
     /// A task the sweep cancels survives that same sweep.

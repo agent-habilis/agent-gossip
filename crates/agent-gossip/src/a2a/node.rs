@@ -904,6 +904,24 @@ async fn resend_cached_shards(
 /// mint the id); one with a `taskId` is a follow-up. Either way we advance our
 /// coarse machine, surface the message to our skill, and return the
 /// authoritative `Task`.
+/// Refusal for an offer the registry has no room for, or `None` to admit.
+fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<crate::a2a::rpc::RpcError> {
+    use crate::a2a::task::Admission;
+    use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
+    // A2A has no "too many tasks" error, so this is an application code in the
+    // implementation-defined server range, alongside the party check's -32003.
+    let refuse = |message: String| Some(crate::a2a::rpc::RpcError { code: -32004, message });
+    match crate::a2a::task::admit_new_task(&app.tasks, requester) {
+        Admission::Ok => None,
+        Admission::RegistryFull => {
+            refuse(format!("this peer is holding its maximum of {TASKS_CAP} tasks"))
+        }
+        Admission::PeerAtCap => refuse(format!(
+            "you already hold {TASKS_PER_PEER_CAP} live tasks with this peer"
+        )),
+    }
+}
+
 fn ingest_remote_message(
     payload: &crate::a2a::Message,
     requester: &Nickname,
@@ -934,6 +952,13 @@ fn ingest_remote_message(
             }
             Some(_) => {}
         }
+    } else if let Some(error) = task_admission_error(app, requester) {
+        // An offer (no taskId) is the one registry entry a remote peer mints
+        // directly. Refusing over the quota keeps `app.tasks` bounded and,
+        // just as importantly, keeps the sweep's per-expiry work bounded: it
+        // awaits a sealed unicast per expired task while holding the event
+        // loop, so an unbounded registry is a stall as well as a leak.
+        return Err(error);
     }
     crate::a2a::task::apply(
         &mut app.tasks,

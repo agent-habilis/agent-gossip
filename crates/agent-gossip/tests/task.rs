@@ -337,3 +337,53 @@ async fn not_surfaced_to_third_party() {
     bob.leave().await;
     gamma.leave().await;
 }
+
+/// The registry a peer can mint into is bounded, and the refusal reaches the
+/// caller as a JSON-RPC error rather than a silent drop.
+///
+/// Pre-fix a `SendMessage` with no `taskId` minted a record and pushed a
+/// surfaced event with no count check, quota or rate limit anywhere on the
+/// path — so a peer could fill the worker's registry (and evict its agent's
+/// real history out of the surfaced ring) at whatever rate it managed. This
+/// asserts the property rather than the constant: some bound exists, normal
+/// use is well clear of it, and crossing it is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_peer_cannot_open_tasks_past_its_quota() {
+    /// Far enough past any sane quota that reaching it means unbounded.
+    const CEILING: usize = 256;
+
+    let alice = InProcNode::create("t-quota").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-quota-bob").await;
+    alice.broadcast("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+
+    let mut opened = 0;
+    let mut refusal = None;
+    for _ in 0..CEILING {
+        let resp = alice.create_task(bob.nickname.as_str(), "work").await;
+        if let Some(message) = resp["error"]["message"].as_str() {
+            refusal = Some(message.to_owned());
+            break;
+        }
+        assert!(
+            resp["result"]["task"]["id"].is_string(),
+            "neither a task nor an error: {resp}"
+        );
+        opened += 1;
+    }
+
+    let refusal = refusal.unwrap_or_else(|| {
+        panic!("a peer opened {opened} tasks unrefused — the registry is unbounded")
+    });
+    assert!(
+        refusal.contains("live tasks"),
+        "the refusal should name the quota, got: {refusal}"
+    );
+    assert!(
+        opened >= 8,
+        "the quota must leave room for ordinary use, refused after only {opened}"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}

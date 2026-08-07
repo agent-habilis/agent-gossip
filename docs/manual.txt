@@ -353,7 +353,10 @@ COMMANDS
                     task creation (no --task-id: the peer mints the task id and
                     returns {"task": <Task>}) or a follow-up into a task
                     (--task-id: an answer / approval / change). --text composes
-                    the A2A Message.
+                    the A2A Message. A peer caps how many live tasks any one
+                    caller may hold with it, and refuses opens past that with
+                    an error rather than minting; closing finished tasks frees
+                    the allowance.
                 GetTask
                     read one task you're a party to (--task-id). A task
                     between the peer and someone else answers the same

@@ -75,6 +75,26 @@ pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 /// registry can never grow without bound (the bounded-everything discipline).
 pub(crate) const POLL_WAITERS_CAP: usize = 64;
 
+/// Max **live** (non-terminal) tasks one peer may hold with us. A task offer
+/// is the one registry entry a remote peer mints directly, so without a quota
+/// a single member can open them at line rate. Per-peer rather than global so
+/// a flooder exhausts only its own allowance and honest peers keep working.
+///
+/// Counts non-terminal records only: terminal ones linger for the dedup window
+/// (see `task::sweep_registry`), and counting those would let a legitimate
+/// burst of short tasks — an orchestrator fanning out to one worker — hit the
+/// quota on its own history. A flooder gains nothing, since a freshly minted
+/// task is `submitted`, and the only way past the quota is to wait out the
+/// idle timeout.
+pub(crate) const TASKS_PER_PEER_CAP: usize = 64;
+
+/// Max task records held at once, across every peer — the memory backstop the
+/// per-peer quota cannot give on its own, since identities are free (the
+/// adversarial suite's sybil tripwire). Counts terminal records too: they
+/// occupy the map until the sweep drains them, which is what has to stay
+/// bounded.
+pub(crate) const TASKS_CAP: usize = 1024;
+
 /// The runtime-varied knobs, installed once at startup from the hidden flags.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {
