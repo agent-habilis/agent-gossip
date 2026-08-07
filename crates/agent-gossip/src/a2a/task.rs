@@ -433,19 +433,9 @@ pub(crate) async fn tick_task_sweep(
 ) {
     let now = Instant::now();
     let timeout = Duration::from_secs(task_timeout_secs());
-    let expired: Vec<(TaskId, Nickname)> = app
-        .tasks
-        .iter()
-        .filter(|(_, rec)| {
-            !rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout
-        })
-        .map(|(task_id, rec)| (task_id.clone(), rec.peer.clone()))
-        .collect();
+    let (expired, reaped) = sweep_registry(&mut app.tasks, now, timeout);
 
     for (task_id, peer) in expired {
-        if let Some(rec) = app.tasks.get_mut(&task_id) {
-            rec.state = TaskState::Canceled;
-        }
         out.task_timeout(&task_id, output::TaskGoneReason::Timeout);
         tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
         let update = gossip::status_update(
@@ -469,18 +459,8 @@ pub(crate) async fn tick_task_sweep(
         .await;
     }
 
-    // GC: drop terminal records past the dedup window so the registry stays
-    // bounded over a long-lived daemon-side task churn (the analogue of the
-    // heartbeat sweep pruning `quiet_since`). A reaped task's offloaded blobs go
-    // with it — unlink their spool files (the review window has long closed).
-    let reaped: Vec<TaskId> = app
-        .tasks
-        .iter()
-        .filter(|(_, rec)| {
-            rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout
-        })
-        .map(|(task_id, _)| task_id.clone())
-        .collect();
+    // A reaped task's offloaded blobs go with it — unlink their spool files
+    // (the review window has long closed).
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
@@ -488,9 +468,51 @@ pub(crate) async fn tick_task_sweep(
                 .await;
         }
     }
-    app.tasks.retain(|_, rec| {
+}
+
+/// The registry half of [`tick_task_sweep`]: cancel what has gone idle, then
+/// drop terminal records past the dedup window. Returns the cancelled tasks
+/// (with the peer each must be told about) and the ids that were reaped.
+///
+/// Split out from the IO so the ordering rule it encodes is testable: a record
+/// cancelled *in this pass* must survive it. Both passes read one `now`, and
+/// the GC's own justification — a terminal record older than the timeout is
+/// past the dedup window, so no further leg for it can arrive — is only true
+/// for a record that has actually *been* terminal that long. Cancelling
+/// restamps `last_activity`, which is what starts that clock; without it the
+/// GC matched every task the expiry pass had just cancelled, and the freeze
+/// window was zero. A task could then reach `canceled`, fire `task_timeout`,
+/// and be minted live again by the next `GetTask` — while the worker's own
+/// `a2a artifact` for it failed as an unknown task instead of surfacing the
+/// cancel.
+fn sweep_registry(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    now: Instant,
+    timeout: Duration,
+) -> (Vec<(TaskId, Nickname)>, Vec<TaskId>) {
+    let mut expired = Vec::new();
+    for (task_id, rec) in tasks.iter_mut() {
+        if !rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout {
+            rec.state = TaskState::Canceled;
+            rec.last_activity = now;
+            expired.push((task_id.clone(), rec.peer.clone()));
+        }
+    }
+
+    // GC: drop terminal records past the dedup window so the registry stays
+    // bounded over a long-lived daemon-side task churn (the analogue of the
+    // heartbeat sweep pruning `quiet_since`).
+    let reaped: Vec<TaskId> = tasks
+        .iter()
+        .filter(|(_, rec)| {
+            rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout
+        })
+        .map(|(task_id, _)| task_id.clone())
+        .collect();
+    tasks.retain(|_, rec| {
         !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
     });
+    (expired, reaped)
 }
 
 /// Terminally cancel every non-terminal task whose counterparty broadcast a
@@ -505,9 +527,16 @@ pub(crate) fn fail_tasks_for_departed_peer(
     peer: &Nickname,
     out: &output::Output,
 ) {
+    let now = Instant::now();
     for (task_id, rec) in tasks.iter_mut() {
         if rec.peer == *peer && !rec.state.is_terminal() {
             rec.state = TaskState::Canceled;
+            // Start the terminal clock, so "ages into the GC" is true here as
+            // well: a task already idle when its peer left would otherwise be
+            // cancelled and reaped by the very next sweep, with no window in
+            // which a late leg is recognized as a duplicate rather than an
+            // unknown task.
+            rec.last_activity = now;
             out.task_timeout(task_id, output::TaskGoneReason::PeerLeft);
             tracing::debug!(%task_id, %peer, "task canceled (peer left)");
         }
@@ -771,6 +800,46 @@ mod tests {
             now,
         );
         assert_eq!(tasks[&tid()].state, TaskState::Completed);
+    }
+
+    /// A task the sweep cancels survives that same sweep.
+    ///
+    /// Both passes read one `now`, and the expiry pass used to set `Canceled`
+    /// without touching `last_activity` — so the GC's filter (terminal, and
+    /// idle past the timeout) matched every record it had just cancelled, by
+    /// construction. The freeze window the GC justifies itself with was zero.
+    /// Pre-fix this test finds an empty registry: the task fired `task_timeout`
+    /// and then vanished, so the next `GetTask` would mint it live again and
+    /// the worker's own `a2a artifact` for it would fail as an unknown task.
+    #[test]
+    fn a_task_cancelled_by_the_sweep_is_not_reaped_in_the_same_pass() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), now);
+        // Idle well past the debounce.
+        tasks.get_mut(&tid()).unwrap().last_activity =
+            now.checked_sub(timeout * 2).expect("test clock");
+
+        let (expired, reaped) = super::sweep_registry(&mut tasks, now, timeout);
+
+        assert_eq!(expired.len(), 1, "the idle task is cancelled");
+        assert!(reaped.is_empty(), "and is not reaped in the same pass");
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Canceled,
+            "the record is retained, frozen terminal, for the dedup window"
+        );
+
+        // It reaps once it has actually been terminal for the window.
+        let later = now.checked_add(timeout * 2).expect("test clock");
+        let (still_live, now_reaped) = super::sweep_registry(&mut tasks, later, timeout);
+        assert!(
+            still_live.is_empty(),
+            "a terminal record is not re-cancelled"
+        );
+        assert_eq!(now_reaped, vec![tid()]);
+        assert!(tasks.is_empty(), "and the registry stays bounded");
     }
 
     /// An RPC `Task` snapshot is adopted only from the task's own worker.

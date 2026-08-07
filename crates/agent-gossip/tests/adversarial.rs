@@ -491,7 +491,10 @@ async fn a_bystanders_task_status_is_dropped() {
     );
 
     // The bystander seals to the initiator using only the public meta document,
-    // then claims the task is done.
+    // then claims the task is done. Cards replicate asynchronously, so wait for
+    // the initiator's to land rather than racing it — under load it has not
+    // necessarily arrived by the time the task is established.
+    attacker.await_peer_card(&initiator.nickname).await;
     let seal_key = adversarial::peer_seal_key(&attacker.meta_get().await, &initiator.nickname)
         .expect("the initiator's seal key is published in the meta doc");
     let key = adversarial::new_key();
@@ -510,22 +513,27 @@ async fn a_bystanders_task_status_is_dropped() {
     .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
 
-    // Barrier: a real message from the same node, sent after the injection.
-    attacker.broadcast("barrier-taskparty").await;
-    assert!(
-        initiator.wait_body("barrier-taskparty", T).await,
-        "barrier lost"
-    );
-    assert!(
-        !initiator.wait_task_state(TaskState::Completed, T).await,
-        "a bystander's status must never be surfaced as the counterparty's"
-    );
-
-    // And the record is intact: the real worker's result still lands.
+    // Barrier: a real leg on the very path the injection took — the worker's
+    // artifact, a directed sealed frame sent after it. Once that lands, the
+    // injected frame has had its turn, so an absent `completed` means dropped
+    // rather than in flight. It doubles as the proof the record survived: a
+    // frozen record would swallow this artifact.
     worker.task_artifact(&tid, "the real result").await;
     assert!(
         initiator.wait_task_state(TaskState::InputRequired, T).await,
         "the real worker's artifact must still park the task for review"
+    );
+    let forged_landed = initiator.events().iter().any(|event| {
+        matches!(
+            event,
+            OutputEvent::Task { msg, .. }
+                if agent_gossip::a2a::gossip::frame_task_state(msg)
+                    == Some(TaskState::Completed)
+        )
+    });
+    assert!(
+        !forged_landed,
+        "a bystander's status must never be surfaced as the counterparty's"
     );
 
     initiator.leave().await;
