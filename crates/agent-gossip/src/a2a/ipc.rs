@@ -492,6 +492,11 @@ fn info_response(
         "name": name.as_str(),
         "nickname": author.as_str(),
         "peer_count": state.roster_snapshot().count,
+        // The daemon answering, not the pid some file claims. A state file
+        // outlives a SIGKILLed daemon, and the OS reissues pids, so a file's
+        // pid alone cannot say whether *this* session is the one still
+        // running there — see `cli::session::confirm_owner`.
+        "pid": std::process::id(),
     })
     .to_string()
 }

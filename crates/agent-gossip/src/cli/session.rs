@@ -136,6 +136,65 @@ fn target_json(target: &Target) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
+/// What a live daemon answered when asked who it is: its mesh, its nickname,
+/// and — the part no state file can be trusted for — its own pid.
+struct Owner {
+    gossip: String,
+    nickname: String,
+    pid: u32,
+}
+
+/// Ask every daemon socket on this machine to identify itself.
+///
+/// Best-effort by design: a stale socket left by a `SIGKILL`ed daemon simply
+/// fails to answer and is skipped, which is exactly the case this is here to
+/// tell apart from a live one.
+async fn live_owners() -> Vec<Owner> {
+    let mut owners = Vec::new();
+    for path in fofoca::runtime::ipc::active_socket_paths(&runtime_base()) {
+        let Ok(response) =
+            fofoca::runtime::ipc::send_to_path(&path, &crate::a2a::ipc::IpcCommand::Info).await
+        else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
+            continue;
+        };
+        let (Some(gossip), Some(nickname), Some(pid)) = (
+            value["gossip"].as_str(),
+            value["nickname"].as_str(),
+            value["pid"].as_u64().and_then(|pid| u32::try_from(pid).ok()),
+        ) else {
+            continue;
+        };
+        owners.push(Owner {
+            gossip: gossip.to_owned(),
+            nickname: nickname.to_owned(),
+            pid,
+        });
+    }
+    owners
+}
+
+/// Does a live daemon actually answer for this target's mesh *at this pid*?
+///
+/// Both halves matter. Matching only the mesh would still signal the wrong
+/// process when a stale file's pid has been reissued; matching only the pid
+/// would signal a live daemon that has nothing to do with the mesh named. A
+/// daemon predating this check answers without a `pid` and is treated as
+/// unconfirmed, which costs a stale entry a cleanup rather than risking a
+/// stranger's process.
+fn confirm_owner(owners: &[Owner], target: &Target) -> bool {
+    owners.iter().any(|owner| {
+        owner.pid == target.pid
+            && owner.gossip == target.mesh
+            && target
+                .nickname
+                .as_ref()
+                .is_none_or(|wanted| owner.nickname == *wanted)
+    })
+}
+
 pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let LeaveOpts {
         gossip: mesh,
@@ -159,8 +218,20 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         split_owned(live, |pid| process::ancestry_contains(pid, anchor))
     };
 
+    let owners = live_owners().await;
     let mut left = Vec::new();
     for target in &matched {
+        // Confirm the pid still belongs to *this* session before signalling.
+        // `discover` accepts any live `agent-gossip` process, which is enough
+        // to list a session but not to kill one: a SIGKILLed daemon leaves its
+        // state file behind, and once the OS reissues that pid to another
+        // daemon, the file points at a stranger. Signalling on the file's word
+        // alone terminates that stranger's gossip.
+        if !confirm_owner(&owners, target) {
+            let _ = std::fs::remove_file(&target.path);
+            left.push((target.clone(), false));
+            continue;
+        }
         // A failed SIGTERM (EPERM/vanished pid) is reported per-entry, not a
         // hard error: the other matches must still be signalled.
         let signalled = process::terminate(target.pid).is_ok();
@@ -223,7 +294,7 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Target, select_explicit, split_owned};
+    use super::{Owner, Target, confirm_owner, select_explicit, split_owned};
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
@@ -234,6 +305,41 @@ mod tests {
             topic: None,
             pid,
         }
+    }
+
+    /// The scenario that reissued pids create, and the reason `leave` cannot
+    /// act on a state file's word alone.
+    ///
+    /// Daemon A (mesh `aaaa`, pid 10) dies by SIGKILL, so its file survives
+    /// with pid 10 still written in it. The OS hands pid 10 to daemon B, on
+    /// mesh `bbbb`. `discover` accepts the stale entry as live — the pid is
+    /// alive and the process really is called `agent-gossip` — so `leave
+    /// --gossip aaaa` used to SIGTERM daemon B, a gossip it was never asked
+    /// about, and then report `confirmed: false` because A's orphan file was
+    /// never going to disappear.
+    #[test]
+    fn a_reissued_pid_is_not_confirmed_as_the_owner() {
+        let owners = vec![Owner {
+            gossip: "bbbb".to_owned(),
+            nickname: "three-four".to_owned(),
+            pid: 10,
+        }];
+
+        // The stale entry: right pid, wrong gossip. Nobody answers for `aaaa`.
+        assert!(
+            !confirm_owner(&owners, &target("aaaa", "one-two", 10)),
+            "a live daemon on another gossip must not stand in for this one"
+        );
+        // The daemon that does answer for its own gossip is confirmed.
+        assert!(confirm_owner(&owners, &target("bbbb", "three-four", 10)));
+        // Right gossip, but the pid moved on: also not ours to signal.
+        assert!(
+            !confirm_owner(&owners, &target("bbbb", "three-four", 11)),
+            "a matching gossip at a different pid is a different process"
+        );
+        // A nickname that disagrees rules it out even with mesh and pid equal,
+        // which is what separates two daemons sharing one state-file path.
+        assert!(!confirm_owner(&owners, &target("bbbb", "someone-else", 10)));
     }
 
     #[test]
