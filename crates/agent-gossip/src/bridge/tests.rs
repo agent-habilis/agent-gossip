@@ -14,8 +14,9 @@ use fofoca::net::{add_peer_addr, build_peer_endpoint};
 use fofoca::protocol::LookupOpts;
 use fofoca::protocol::{Password, TicketAuth};
 
-use super::connect::{SharedConnection, forward_one};
+use super::connect::{Bridge, SharedConnection, forward_one};
 use super::expose::{bind, serve_connection};
+use super::gate::{LocalGate, TOKEN_HEADER};
 use super::ticket::A2aTicket;
 use super::{A2A_ALPN, A2A_TICKET_LABEL};
 
@@ -74,14 +75,23 @@ async fn spawn_exposer(
     (endpoint, ticket)
 }
 
+/// The bridge's own local base in these tests, and the `Host` a legitimate
+/// client therefore sends.
+const LOCAL_BASE: &str = "http://127.0.0.1:7777";
+const LOCAL_AUTHORITY: &str = "127.0.0.1:7777";
+
+fn bridge_for(shared: &SharedConnection, auth: &TicketAuth, gate: LocalGate) -> Bridge {
+    Bridge {
+        shared: shared.clone(),
+        auth: Arc::new(auth.clone()),
+        local_base: Arc::new(LOCAL_BASE.to_owned()),
+        gate: Arc::new(gate),
+    }
+}
+
 /// Drive one HTTP request through `forward_one` (a local listener stands in for
 /// the connect side's per-connection listener) and return the response.
-async fn drive(
-    shared: &SharedConnection,
-    auth: &TicketAuth,
-    local_base: &str,
-    request: &[u8],
-) -> Vec<u8> {
+async fn drive_gated(bridge: &Bridge, request: &[u8]) -> Vec<u8> {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind local");
     let addr = listener.local_addr().expect("local addr");
     let request = request.to_vec();
@@ -94,10 +104,24 @@ async fn drive(
         got
     });
     let (accepted, _) = listener.accept().await.expect("accept local client");
-    forward_one(shared, auth, accepted, local_base)
-        .await
-        .expect("forward_one");
+    forward_one(bridge, accepted).await.expect("forward_one");
     client.await.expect("client task")
+}
+
+/// Drive a request carrying the gate's token, so the case under test is the
+/// bridging itself rather than the gate.
+async fn drive(
+    shared: &SharedConnection,
+    auth: &TicketAuth,
+    method_and_path: &str,
+    extra: &str,
+) -> Vec<u8> {
+    let (gate, token) = LocalGate::new(LOCAL_AUTHORITY.to_owned(), false);
+    let token = token.expect("a gated bridge mints a token");
+    let request = format!(
+        "{method_and_path} HTTP/1.1\r\nHost: {LOCAL_AUTHORITY}\r\n{TOKEN_HEADER}: {token}\r\n{extra}\r\n"
+    );
+    drive_gated(&bridge_for(shared, auth, gate), request.as_bytes()).await
 }
 
 async fn consumer(ticket: &A2aTicket) -> (fofoca::iroh::Endpoint, SharedConnection) {
@@ -119,8 +143,8 @@ async fn bridge_rewrites_the_agent_card_url_to_the_local_base() {
     let response = drive(
         &shared,
         &auth,
-        "http://127.0.0.1:7777",
-        b"GET /.well-known/agent-card.json HTTP/1.1\r\nHost: x\r\n\r\n",
+        "GET /.well-known/agent-card.json",
+        "",
     )
     .await;
 
@@ -145,13 +169,84 @@ async fn bridge_forwards_a_non_card_exchange_byte_for_byte() {
     let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
     let got = drive(
-        &shared,
-        &auth,
-        "http://127.0.0.1:7777",
-        b"POST /message HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n",
+        &shared, &auth, "POST /message", "Content-Length: 0\r\n",
     )
     .await;
     assert_eq!(got, response, "non-card response forwarded verbatim");
+
+    consumer_endpoint.close().await;
+    exposer.close().await;
+}
+
+/// The local port hands out the ticket-holder's access, so it needs a gate of
+/// its own.
+///
+/// `forward_one` presents `auth.token` itself: whoever opens the local TCP port
+/// drives A2A against the remote peer with the ticket-holder's credential. That
+/// is any other process on the machine, and — because a `fetch` with a
+/// CORS-safelisted content type fires no preflight — any page the user visits
+/// while the bridge is up.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_anonymous_local_client_never_reaches_the_origin() {
+    let origin = spawn_origin(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\n\r\nsecret".to_vec(),
+    )
+    .await;
+    let (exposer, ticket) = spawn_exposer(origin, None).await;
+    let (consumer_endpoint, shared) = consumer(&ticket).await;
+    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
+
+    let (gate, _token) = LocalGate::new(LOCAL_AUTHORITY.to_owned(), false);
+    let got = drive_gated(
+        &bridge_for(&shared, &auth, gate),
+        b"POST /message HTTP/1.1\r\nHost: 127.0.0.1:7777\r\nContent-Length: 0\r\n\r\n",
+    )
+    .await;
+
+    let text = String::from_utf8_lossy(&got);
+    assert!(
+        !text.contains("secret"),
+        "an untokened request reached the origin: {text}"
+    );
+    assert!(
+        text.starts_with("HTTP/1.1 403"),
+        "expected a 403 from the bridge itself, got: {text}"
+    );
+
+    consumer_endpoint.close().await;
+    exposer.close().await;
+}
+
+/// The browser path, end to end: a page's `fetch` carries `Origin` and cannot
+/// omit it, so it is refused before a byte crosses the tunnel — with or without
+/// the token, which is what makes `--allow-anonymous` safe against a web page
+/// even though it drops the token check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cross_origin_request_is_refused_even_anonymously() {
+    let origin = spawn_origin(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\n\r\nsecret".to_vec(),
+    )
+    .await;
+    let (exposer, ticket) = spawn_exposer(origin, None).await;
+    let (consumer_endpoint, shared) = consumer(&ticket).await;
+    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
+
+    let (gate, token) = LocalGate::new(LOCAL_AUTHORITY.to_owned(), true);
+    assert!(token.is_none(), "--allow-anonymous mints no token");
+    let request = format!(
+        "POST /message HTTP/1.1\r\nHost: {LOCAL_AUTHORITY}\r\nOrigin: https://evil.example\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n"
+    );
+    let got = drive_gated(&bridge_for(&shared, &auth, gate), request.as_bytes()).await;
+
+    let text = String::from_utf8_lossy(&got);
+    assert!(
+        !text.contains("secret"),
+        "a cross-origin request reached the origin: {text}"
+    );
+    assert!(
+        text.starts_with("HTTP/1.1 403"),
+        "expected a 403 from the bridge itself, got: {text}"
+    );
 
     consumer_endpoint.close().await;
     exposer.close().await;
@@ -196,13 +291,7 @@ async fn a_second_consumer_is_refused_while_the_bridge_is_paired() {
     // claimed the 1:1 slot. Keeping A's endpoint + connection alive holds it.
     let (endpoint_a, shared_a) = consumer(&ticket).await;
     let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
-    let _ = drive(
-        &shared_a,
-        &auth,
-        "http://127.0.0.1:7777",
-        b"GET / HTTP/1.1\r\nHost: x\r\n\r\n",
-    )
-    .await;
+    let _ = drive(&shared_a, &auth, "GET /", "").await;
     let conn_a = shared_a.get().await.expect("A's connection stays live");
     assert!(conn_a.close_reason().is_none(), "A holds the pairing");
 

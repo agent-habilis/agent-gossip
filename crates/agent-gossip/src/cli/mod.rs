@@ -383,6 +383,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             ticket,
             port,
             password,
+            allow_anonymous,
             legacy_output: _,
         } => {
             // Error when the ticket needs a password and none was passed
@@ -393,7 +394,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 }
                 other => password::resolve_password(other)?,
             };
-            crate::a2a::connect(&ticket, port, password).await
+            crate::a2a::connect(&ticket, port, password, allow_anonymous).await
         }
         A2aAction::Discover {
             directory,

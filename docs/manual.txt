@@ -47,6 +47,7 @@ SYNOPSIS
        agent-gossip a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
        agent-gossip a2a connect TICKET [--port PORT] [--password[=PW]]
+                  [--allow-anonymous]
        agent-gossip a2a discover [--directory NAME]
                   [--public | --mdns --dht --relay[=URLS]]
        agent-gossip a2a fetch TICKET [--nickname NAME] [--output PATH] [--password PW]
@@ -428,15 +429,29 @@ COMMANDS
               ticket alone no longer redeems (inline only, --password=<pw>;
               see create --password).
 
-       a2a connect TICKET [--port PORT] [--password[=PW]]
+       a2a connect TICKET [--port PORT] [--password[=PW]] [--allow-anonymous]
               Redeem a ticket from `a2a expose` and bind a local A2A
               endpoint on 127.0.0.1:PORT (an ephemeral port unless --port is
-              given; the bound URL is printed) that an unmodified A2A
-              client/SDK points at. Every request is forwarded to the exposer
-              over the gossip, and the Agent Card is rewritten so the client
-              discovers the local bridge, not the unreachable origin.
-              --password as in join (required exactly when the ticket is
-              protected).
+              given) that an A2A client/SDK points at. Every request is
+              forwarded to the exposer over the gossip, and the Agent Card is
+              rewritten so the client discovers the local bridge, not the
+              unreachable origin. --password as in join (required exactly
+              when the ticket is protected).
+
+              Two lines are printed on startup: the bound URL, then
+              `token: <hex>`. The bridge presents the ticket credential on
+              the client's behalf, so the local port is as good as the
+              ticket — every request must carry the token as
+              `X-Agent-Gossip-Token: <hex>`, or it is refused with 403. The
+              header is stripped before forwarding, so a client's own
+              Authorization still reaches the origin untouched.
+
+              Requests carrying an Origin header, or a Host that is not the
+              bound address, are refused whatever the token setting: a
+              browser cannot omit Origin, and pinning Host is what stops DNS
+              rebinding. --allow-anonymous drops only the token check, for a
+              client that cannot send a header — it hands the bridge to
+              every process on the machine, so prefer the token.
 
        a2a discover [--directory NAME] [--public | --mdns --dht --relay[=URLS]]
               Browse a directory for advertised a2a bridges — the receiver
@@ -1386,7 +1401,9 @@ EXAMPLES
               agent-gossip a2a expose --to http://127.0.0.1:9999 --password=pw
               # share the printed ticket ; the peer binds a local bridge
               agent-gossip a2a connect TICKET --port 4000 --password=pw
-              # point any A2A client at http://127.0.0.1:4000
+              # prints http://127.0.0.1:4000 then token: <hex>
+              # point an A2A client at that URL, sending the token as
+              #   X-Agent-Gossip-Token: <hex>   (403 without it)
 
        Return a file as a task result and fetch it on the other side:
 

@@ -6,6 +6,7 @@ mod card_rewrite;
 mod connect;
 mod directory;
 mod expose;
+mod gate;
 mod ticket;
 
 #[cfg(test)]

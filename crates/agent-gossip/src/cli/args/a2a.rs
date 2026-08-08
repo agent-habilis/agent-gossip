@@ -83,6 +83,14 @@ pub(crate) enum A2aAction {
         #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
         password: Option<PasswordFlag>,
 
+        /// Serve any local client, without the per-bridge token printed on
+        /// startup. The bridge presents the ticket credential itself, so this
+        /// hands its access to every process on the machine — use it only when
+        /// the client cannot send a header. Cross-origin requests stay refused
+        /// either way.
+        #[arg(long)]
+        allow_anonymous: bool,
+
         #[command(flatten)]
         legacy_output: LegacyOutput,
     },
