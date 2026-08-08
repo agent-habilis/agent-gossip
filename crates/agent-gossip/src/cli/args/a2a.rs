@@ -289,3 +289,36 @@ fn parse_state(raw: &str) -> Result<crate::a2a::TaskState, String> {
         format!("invalid task state '{raw}' (working|input-required|completed|failed|canceled)")
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::A2aAction;
+    use crate::cli::args::{Cli, Commands};
+    use clap::Parser as _;
+
+    /// `--timeout-secs` must default to the shared constant, not a literal.
+    /// `a2a::tuning`'s own test pins the other two surfaces.
+    #[test]
+    fn the_call_timeout_default_is_the_shared_constant() {
+        let cli = Cli::parse_from([
+            "agent-gossip",
+            "a2a",
+            "call",
+            "--gossip",
+            "3CyrP8nj82n8e1Cnr33xKEkssHsdFfKDDVNfqyFzZkS2ENuUjtywLgW6hcdRM",
+            "--nickname",
+            "calm-otter",
+            "--to",
+            "wire-thistle",
+            "--method",
+            "SendMessage",
+        ]);
+        let Commands::A2a { opts } = cli.command else {
+            panic!("expected the a2a command");
+        };
+        let A2aAction::Call { timeout_secs, .. } = opts.action else {
+            panic!("expected the call action");
+        };
+        assert_eq!(timeout_secs, crate::a2a::tuning::CALL_TIMEOUT_SECS);
+    }
+}

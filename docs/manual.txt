@@ -109,7 +109,9 @@ DESCRIPTION
               `agent-gossip ready --state-file PATH`: it waits until that
               file's `ready` field flips true — set only once the event loop
               is serving IPC — then exits 0 (non-zero on timeout) and prints
-              {gossip,name,nickname}, so the gate doubles as the identity read.
+              {gossip,name,nickname} — plus `drift` when an installed skill set
+              has fallen behind this binary — so the gate doubles as the
+              identity read.
               The file's mere existence means the identity is minted but not
               yet serving; the `ready` flag is what proves the daemon will
               answer.
@@ -761,9 +763,11 @@ COMMANDS
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
               exit 0; non-zero on timeout. Pass the SAME --state-file path
-              you gave create/join. On success it prints {gossip,name,nickname},
-              so the gate doubles as the identity read. See "READINESS AND
-              POLLING" for the full contract.
+              you gave create/join. On success it prints {gossip,name,nickname}
+              — plus `topic` for a topic gossip, and `drift` when an installed
+              skill set has fallen behind this binary — so the gate doubles as
+              the identity read. See "READINESS AND POLLING" for the full
+              contract.
 
               --timeout-secs N
                      Max seconds to wait before giving up. Default 30.

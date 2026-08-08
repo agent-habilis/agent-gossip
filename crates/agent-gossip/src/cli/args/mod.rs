@@ -217,10 +217,10 @@ pub(crate) enum Commands {
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
     /// `agent-gossip ready --state-file <path>` blocks until that file reports the
-    /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
-    /// silent gate (exit code only); with `--output json` it prints
-    /// `{gossip,name,nickname}` on success, so the gate doubles as the
-    /// identity read.
+    /// daemon is serving, exiting 0 (non-zero on timeout). On success it prints
+    /// `{gossip,name,nickname}` — plus `topic` for a topic gossip, and `drift`
+    /// when an installed skill set has fallen behind this binary — so the gate
+    /// doubles as the identity read.
     Ready {
         #[command(flatten)]
         opts: ReadyOpts,

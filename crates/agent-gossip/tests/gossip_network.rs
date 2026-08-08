@@ -2988,6 +2988,66 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let _ = fs::remove_file(&bystander_log);
 }
 
+/// Three skills tell an agent "if the ready output carries `drift`, print it
+/// verbatim" — so `ready` has to be able to carry it.
+///
+/// It could not. The daemon computes the stale-skill warning onto its own
+/// `--output json` stdout, which is the exact stream the session-start script
+/// sends to /dev/null, and the `ready` subcommand only ever emitted
+/// gossip/name/nickname/topic. Every agent following the docs was blind to a
+/// skill install that had fallen behind its binary.
+#[test]
+fn ready_carries_the_stale_skill_warning() {
+    let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("ready-drift");
+    let state_file = default_state_file(&mesh, &nickname);
+    let home = std::env::temp_dir().join(format!("agent-gossip-drift-home-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&home);
+    // `plug` installs only into agents it detects, and detection is the
+    // agent's own dotdir existing.
+    fs::create_dir_all(home.join(".codex")).unwrap();
+
+    let ready = |fake_home: &std::path::Path| -> serde_json::Value {
+        let out = common::test_cmd()
+            .args(["ready", "--state-file", state_file.to_str().unwrap()])
+            .env("HOME", fake_home)
+            .output()
+            .expect("failed to run agent-gossip ready");
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+    };
+
+    // A fresh install of this very binary is not drift.
+    let plugged = common::test_cmd()
+        .args(["plug", "--agent", "codex"])
+        .env("HOME", &home)
+        .output()
+        .expect("failed to run agent-gossip plug");
+    assert!(plugged.status.success(), "plug failed: {plugged:?}");
+    let clean = ready(&home);
+    assert_eq!(clean["nickname"], nickname.as_str());
+    assert!(
+        clean["drift"].is_null(),
+        "a matching install must not warn: {clean}"
+    );
+
+    // Diverge one installed skill and the warning must reach the agent.
+    fs::write(home.join(".codex/skills/gossip-join/SKILL.md"), "stale").unwrap();
+    let stale = ready(&home);
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+    let _ = fs::remove_dir_all(&home);
+
+    assert!(
+        stale["drift"]
+            .as_str()
+            .is_some_and(|msg| msg.contains("agent-gossip plug")),
+        "a diverged install must surface drift on ready: {stale}"
+    );
+}
+
 /// `confirmed: true` must mean the daemon has stopped serving, not merely that
 /// its state file is gone.
 ///

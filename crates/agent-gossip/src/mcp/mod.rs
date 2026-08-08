@@ -2,10 +2,11 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes eighteen tools that wrap the existing mesh lifecycle:
+//! Exposes nineteen tools that wrap the existing mesh lifecycle:
 //!
 //! - `create_gossip`
 //! - `join_gossip`
+//! - `topic_gossip`
 //! - `discover_gossips`
 //! - `leave_gossip`
 //! - `send_broadcast`
@@ -270,13 +271,13 @@ struct A2aCallArgs {
     /// The JSON-RPC params object (default `{}`).
     #[serde(default)]
     params: serde_json::Value,
-    /// How long to wait for the peer's response, in seconds (default 15).
+    /// How long to wait for the peer's response, in seconds.
     #[serde(default = "default_a2a_timeout_secs")]
     timeout_secs: u64,
 }
 
-fn default_a2a_timeout_secs() -> u64 {
-    15
+pub(crate) fn default_a2a_timeout_secs() -> u64 {
+    crate::a2a::tuning::CALL_TIMEOUT_SECS
 }
 
 /// Parse an A2A task state from its friendly (kebab-case) name — the agent
@@ -830,7 +831,11 @@ impl AgentGossipServer {
             .await
             .map_err(to_mcp_error)?;
         // Surface a JSON-RPC error as a tool error so the agent sees it fail.
-        if !response["error"]["message"].is_null() {
+        // Keyed on `error` itself, not `error.message`: the CLI exits non-zero
+        // on any non-null `error` (`cli::a2a`), so keying on the nested field
+        // made an error object without a message read as success here and
+        // failure there.
+        if !response["error"].is_null() {
             return Err(McpError::internal_error(
                 response["error"]["message"]
                     .as_str()
@@ -973,15 +978,18 @@ PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping an
 emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \
 call the `ping` tool.
 
-TASKS arrive as `event:\"task\"` records addressed to you and are driven with \
-`send_task`, reusing one `task_id` across all legs: \
-offer → accept/decline → [context] → done → confirm/change. The opening offer \
-body may begin with a `[[task]]` flow marker on its own first line (report-back \
-— do the work and return the result on `done`, which the initiator confirms or \
-`change`s). STRIP that marker line before acting on the brief; a \
-missing/unrecognized marker means `[[task]]`. To initiate a task, prepend the \
-marker to your own offer body. Don't display task legs as chat lines — drive \
-the flow.
+TASKS arrive as `event:\"task\"` records addressed to you, carrying the \
+`task_id` every later leg reuses. As the WORKER you drive your own task: \
+`task_status` \"working\" to accept (re-emit it about once a minute while you \
+work, or the daemon evicts the task as dead), `task_status\" \"failed\" with a \
+note to decline, `task_artifact` to return the result — which parks the task in \
+input-required for the initiator's approval — and `task_status` \"completed\" \
+once that approval arrives as a message leg on the same task. Only you can \
+close it. To INITIATE a task, call `a2a_call` with method \"SendMessage\" and \
+no taskId; the response carries the task the worker minted. Every later leg of \
+yours is `a2a_call` \"SendMessage\" with that taskId — including the approval \
+that lets the worker close. Don't display task legs as chat lines; drive the \
+flow.
 
 SHARED STATE is one JSON document the whole gossip shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \
@@ -1065,4 +1073,102 @@ fn ok_json<T: Serialize>(value: T) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![
         Content::json(value).map_err(to_mcp_error)?,
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentGossipServer, MCP_INSTRUCTIONS};
+    use std::collections::BTreeSet;
+
+    fn declared_tools() -> BTreeSet<String> {
+        AgentGossipServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect()
+    }
+
+    /// Identifiers in `MCP_INSTRUCTIONS` that look like a tool but name a JSON
+    /// field, an event kind, or a CLI flag instead. Anything tool-shaped that is
+    /// not here has to be a real tool.
+    const NOT_TOOLS: &[&str] = &[
+        // event kinds
+        "msg_posted",
+        "peer_return",
+        "peer_timeout",
+        "ping_report",
+        "task_progress",
+        // JSON fields
+        "task_id",
+        "peer_count",
+        "state_file",
+        "last_seen",
+        // task states
+        "input_required",
+        "auth_required",
+    ];
+
+    /// The instructions are the agent's map of this server. A tool named there
+    /// that does not exist sends every MCP agent down a dead end, and the agent
+    /// has no way to tell — the call just fails.
+    ///
+    /// This is how `send_task` survived: it was never a tool, the tool
+    /// descriptions in this same file documented the real flow, and nothing
+    /// compared the two.
+    #[test]
+    fn the_instructions_name_only_tools_that_exist() {
+        let tools = declared_tools();
+        let mut unknown: Vec<&str> = Vec::new();
+        for chunk in MCP_INSTRUCTIONS.split('`').skip(1).step_by(2) {
+            let tool_shaped = chunk.contains('_')
+                && chunk
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_');
+            if tool_shaped && !NOT_TOOLS.contains(&chunk) && !tools.contains(chunk) {
+                unknown.push(chunk);
+            }
+        }
+        unknown.sort_unstable();
+        unknown.dedup();
+        assert!(
+            unknown.is_empty(),
+            "the instructions name tools that do not exist: {unknown:?}\ndeclared: {tools:?}"
+        );
+    }
+
+    /// The module doc is the list a reader trusts before running anything, and
+    /// it drifted twice over: a stale count and a tool it never gained an entry
+    /// for.
+    #[test]
+    fn the_module_doc_lists_every_tool() {
+        let source = include_str!("mod.rs");
+        let doc: String = source
+            .lines()
+            .take_while(|line| line.starts_with("//!"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tools = declared_tools();
+        for tool in &tools {
+            assert!(
+                doc.contains(&format!("`{tool}`")),
+                "the module doc never lists the `{tool}` tool"
+            );
+        }
+        let spelled = ["eighteen", "nineteen", "twenty"]
+            .into_iter()
+            .find(|word| doc.contains(*word))
+            .expect("the module doc spells out how many tools there are");
+        let expected = match tools.len() {
+            18 => "eighteen",
+            19 => "nineteen",
+            20 => "twenty",
+            other => panic!("no spelled-out numeral for {other} tools — update this test"),
+        };
+        assert_eq!(
+            spelled,
+            expected,
+            "the module doc says {spelled} tools; there are {}",
+            tools.len()
+        );
+    }
 }

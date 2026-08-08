@@ -199,7 +199,7 @@ impl NodeDriver for A2aApp {
                     peer,
                     method: "SendMessage",
                     params: serde_json::json!({ "message": message }),
-                    timeout: Duration::from_secs(30),
+                    timeout: Duration::from_secs(crate::a2a::tuning::CALL_TIMEOUT_SECS),
                     responder: A2aResponder::Rpc(resp),
                 },
                 state,

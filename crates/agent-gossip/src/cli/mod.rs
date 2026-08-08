@@ -182,9 +182,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the in-process paths pass `None` so in-process tests
     // stay hermetic. `agent-gossip status` is the on-demand counterpart.
-    let drift = agent::home_dir()
-        .ok()
-        .and_then(|home| agent::drift_warning(&home));
+    let drift = drift_warning();
     // The CLI owns the a2a application state. Tap its output so surfaced events
     // reach the app-side `poll`/`fetch` ring; the engine emits `NodeEvent`s
     // through `io.sink()` (`cfg.sink`) and the app's own `Output` render the
@@ -744,8 +742,8 @@ fn parse_ttl(raw: Option<&str>) -> Result<u64> {
 }
 
 /// Mint an invite via the creating session's daemon (only it holds the issuer
-/// key). Human mode prints just the copyable token; `--output json` prints the
-/// raw `{ok,invite}` line. Exits non-zero on refusal (e.g. not the creator).
+/// key). Prints the raw `{ok,invite}` line. Exits non-zero on refusal (e.g.
+/// not the creator).
 async fn invite(opts: InviteOpts) -> Result<()> {
     let InviteOpts {
         gossip: mesh,
@@ -928,12 +926,26 @@ fn print_ready_identity(state_file: &std::path::Path) {
         ("name", identity.name),
         ("nickname", identity.nickname),
         ("topic", identity.topic),
+        // The skills tell an agent to print `drift` from *this* output. The
+        // daemon computes it too, but only onto its own `--output json` stdout
+        // — the stream the session-start script sends to /dev/null — so the
+        // warning had no way to reach anyone. It is a local check on the
+        // installed skill files, needing no daemon, so `ready` runs it itself.
+        ("drift", drift_warning()),
     ] {
         if let Some(value) = value {
             obj.insert(key.to_owned(), value.into());
         }
     }
     println!("{}", serde_json::Value::Object(obj));
+}
+
+/// The stale-skill nag, or `None` when every installed integration matches
+/// this binary.
+fn drift_warning() -> Option<String> {
+    agent::home_dir()
+        .ok()
+        .and_then(|home| agent::drift_warning(&home))
 }
 
 /// True when a `ready: true` state-file write is recent enough to trust —

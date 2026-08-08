@@ -4,7 +4,9 @@ agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
 A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
-JSON-RPC binding (`src/bridge/`). This file is guidance for working **on**
+JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
+`src/cli/mod.rs`). `src/bridge/` is a different thing — the `a2a expose` /
+`connect` QUIC tunnel. This file is guidance for working **on**
 the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
 (source: `docs/manual.txt`).
 
@@ -68,35 +70,34 @@ dropping any of them changes the build silently:
 - **`default-members = ["crates/agent-gossip"]`** — an unscoped `cargo build` /
   `test` / `clippy` at a virtual root means *all* members. This pins it to the
   app; widening coverage is a deliberate change, not a default.
-- **`[profile.*]` and `[patch.crates-io]`** — cargo honours these only in the
-  workspace root. They cannot move into a member manifest.
+- **`[profile.*]`** — cargo honours these only in the workspace root. They
+  cannot move into a member manifest.
 
 #### The engine lives in another repo
 
 The gossip engine is **`fofoca`**, developed at
-`github.com/fofoca-network/fofoca` and consumed here as a *sibling path
-dependency* (`../../../fofoca-network/fofoca/crates/fofoca`, declared once in
-`[workspace.dependencies]`). Working on the engine means editing that checkout;
-there is nothing to change here. Two other consumers share it — `agent-share`
-(Rust) and `mallorca` (through `fofoca-ffi`'s C ABI) — so an engine change is
-never just an agent-gossip change.
+`github.com/fofoca-network/fofoca` and consumed here as a **git dependency
+pinned by rev** (`[workspace.dependencies]` in the root `Cargo.toml`). Two other
+consumers share it — `agent-share` (Rust) and `mallorca` (through `fofoca-ffi`'s
+C ABI) — so an engine change is never just an agent-gossip change.
 
-**The patch table is the sharp edge.** `[patch.crates-io]` is honoured only in a
-workspace root and is *not* inherited across workspaces, so the engine's pins do
-not reach us through the path dep. Our `iroh` / `iroh-base` / `iroh-dns` lines
-must stay in lockstep with `fofoca`'s. A skew does not fail to link — it puts
-two `iroh` crates in one graph, and the mismatch surfaces as `E0308` on types
-that look identical.
+**The pin is the sharp edge.** Editing a local sibling checkout of `fofoca`
+changes nothing here: the build resolves the pinned rev from the git cache, so
+your change compiles against nothing and the app silently keeps the old
+behaviour. Carrying an engine fix across means pushing it and bumping the `rev`
+in `Cargo.toml`, in step with `agent-share`, which pins the same rev.
 
-Only those three. The engine's other two forks ride dependency *edges* rather
-than the patch table, so they arrive transitively and are none of our business:
-`iroh-gossip` is a direct git dep of `fofoca` (nothing else in the graph names
-it), and `netwatch`/`portmapper` are pinned inside the `iroh` fork itself. The
-rule, and the `cargo tree -i` test for applying it, is written up in `fofoca`'s
-`FORKED.md` under *Fork pins*. One exception lives here: `benches/idle_cost.rs`
-names `netwatch` directly to time `interfaces::State::new()`, so that dev-dep
-points at the fork by `git` — a bare version would quietly measure the unfixed
-crates.io copy.
+There is **no `[patch.crates-io]` table**, and re-adding one is the mistake to
+avoid rather than the rule to follow. `50bdc88` dropped the direct `iroh`
+dependency and the patch table together; the engine now owns every fork pin
+behind its own rev, and naming `iroh` here again puts two copies in one graph
+whose mismatch surfaces as `E0308` on types that look identical. `Cargo.toml`
+says so at the point of temptation. The fork rules and the `cargo tree -i` test
+for applying them live in `fofoca`'s `FORKED.md` under *Fork pins*.
+
+One exception: `benches/idle_cost.rs` names `netwatch` directly to time
+`interfaces::State::new()`, so that dev-dep points at the fork by `git` — a bare
+version would quietly measure the unfixed crates.io copy.
 
 `agent-gossip` enables the engine's `blob` feature (the offload side-channel);
 the other consumers do not. Note `fofoca::ops::blob` (an ALPN transfer) and the
@@ -105,8 +106,8 @@ are complements, not alternatives.
 
 #### The engine's public surface
 
-`fofoca` exposes **six** modules, grouped by what a consumer needs
-rather than by the engine's internal topology. Everything else is `pub(crate)`.
+`fofoca` groups its **six** modules by what a consumer needs rather than by the
+engine's internal topology.
 
 | Module | What it is for |
 |---|---|
@@ -116,6 +117,12 @@ rather than by the engine's internal topology. Everything else is `pub(crate)`.
 | `ops` | What a hook may *do*: `deliver`, `broadcast_*`, `doc`, `blob`, `directory`, `invite`. |
 | `net` | The quarantined `iroh` corner — endpoint construction and reachability probes. Every other module is iroh-free so a consumer's surface can be. |
 | `util` | Host helpers: runtime paths, clock, `logging`, process, version. |
+
+Those six are not the whole surface. `lib.rs` also re-exports the `iroh` crate
+whole (the app imports `fofoca::iroh` in eight-plus files), `async_trait`,
+`VERSION`, the relay ladders, and the two address-lookup crates. Treat the table
+as the map of what a consumer normally reaches for, not as an exhaustive list of
+what is public.
 
 `EventLoopConfig` and `EventLoopState` are **opaque** — accessors only. Both were
 once bags of public fields, and three of the config's were patched in after
@@ -140,9 +147,11 @@ be typed into a checkout where it does not compile against anything.
 The rule still binds when you *edit* that checkout. Practical consequences when
 adding to the engine:
 
-- Name the **mechanism**, not the consumer: `http_serve`, not `a2a_serve`;
-  `NodeEvent::Ready.http_port`, not `a2a_port`. The app renames at its own
-  boundary (`output/mod.rs`) because `a2a_port` is a documented JSON key.
+- Name the **mechanism**, not the consumer: an engine field carrying a served
+  port is `http_port`, never `a2a_port`. The app renames at its own boundary
+  (`output/mod.rs`, which owns the `a2a_port` JSON key) rather than pushing the
+  product's word down. `NodeEvent::Ready` carries only `mesh`/`name`/`nickname`
+  today — the port reaches the app through `Startup`, not the event.
 - Push app vocabulary into config. The `meta` channel's per-peer write gate is a
   `doc::SelfWriteGate { map, field }` the app fills in with `peers`/`card`; the
   engine only plants the genesis and compares before/after.
@@ -153,10 +162,15 @@ adding to the engine:
   A snapshot pinning a *real* A2A payload belongs in the app crate — see
   `a2a::model`'s `snap_a2a_req_frame_wire`.
 
-Two deliberate exclusions, both load-bearing: the `/tmp/agent-gossip-<uid>`
-runtime base (`skills/shared/daemon-session.md` hardcodes that path, so renaming
-it orphans running daemons) and user-facing error text naming the CLI. Neither
-puts A2A in the engine and neither reaches the wire.
+One exclusion is left: user-facing error text naming the CLI. It puts no A2A in
+the engine and never reaches the wire.
+
+The runtime base used to be the other one. It no longer is — `runtime_base`
+takes the product as a parameter and the app passes `"agent-gossip"`
+(`src/lib.rs`), so `/tmp/agent-gossip-<uid>` is the app's choice, not a name
+baked into the engine. The path itself is still load-bearing:
+`skills/shared/daemon-session.md` hardcodes it, so changing what the app passes
+orphans every running daemon.
 
 ### Testing
 

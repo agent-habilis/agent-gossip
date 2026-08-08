@@ -146,3 +146,39 @@ pub(crate) fn task_keepalive_max_secs() -> u64 {
 pub(crate) fn longpoll_max_ms() -> u64 {
     current().longpoll_max_ms
 }
+
+#[cfg(test)]
+mod tests {
+    /// One directed A2A call, three front doors — the CLI's `--timeout-secs`,
+    /// the MCP `a2a_call` argument, and the localhost JSON-RPC binding's
+    /// directed `SendMessage`. They must agree.
+    ///
+    /// They did not. The CLI read this constant while MCP defaulted to 15s and
+    /// the JSON-RPC path hardcoded 30s. 15s is one heal interval, the value
+    /// [`CALL_TIMEOUT_SECS`]'s own comment records as losing "every time" on a
+    /// slow runner: the peer minted the task, the caller gave up first, and the
+    /// initiator was told a live task had failed.
+    ///
+    /// The CLI's half of this lives in `cli::args::a2a`, which owns the flag.
+    #[test]
+    fn mcp_and_the_json_rpc_binding_read_one_call_timeout() {
+        assert_eq!(
+            crate::mcp::default_a2a_timeout_secs(),
+            super::CALL_TIMEOUT_SECS,
+            "the MCP a2a_call default drifted from the constant"
+        );
+
+        // The JSON-RPC binding has no value to read back: it builds a
+        // `Duration` inline. A literal there is what the 30s drift looked
+        // like, so the call site itself is the thing to pin.
+        let node = include_str!("node.rs");
+        assert!(
+            node.contains("timeout: Duration::from_secs(crate::a2a::tuning::CALL_TIMEOUT_SECS)"),
+            "a2a/node.rs no longer reads the directed-send timeout from this module"
+        );
+        assert!(
+            !node.contains("timeout: Duration::from_secs(3"),
+            "a2a/node.rs hardcodes a call timeout again instead of reading the constant"
+        );
+    }
+}
