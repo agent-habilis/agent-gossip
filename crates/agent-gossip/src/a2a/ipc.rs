@@ -563,10 +563,15 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
 }
 
 /// Serialize the live roster snapshot as the `agent-gossip peers` response.
-/// `ok:true` plus the snapshot's `peers` (recency-sorted, peers only)
-/// and `peer_count` (`peers.len() + 1` — the `+1` is self, so
-/// the count is mesh size, not the array length). Matches the field name the
-/// MCP `gossip_info` result and the state file already use for this quantity.
+/// `ok:true` plus the snapshot's `peers` (recency-sorted, peers only) and
+/// `peer_count` — the field name the MCP `gossip_info` result and the state
+/// file already use for this quantity.
+///
+/// The two disagree on purpose: `peer_count` is the *active* peers plus self,
+/// while the array chains the quiet peers on after them so a peer that may
+/// still return stays addressable. So the array is longer than
+/// `peer_count - 1` whenever anyone is quiet — count `!quiet` entries, never
+/// `peers.len()`, to get the live peers without self.
 fn peers_response(state: &EventLoopState) -> String {
     let snapshot = state.roster_snapshot();
     serde_json::json!({

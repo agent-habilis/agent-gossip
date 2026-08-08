@@ -730,6 +730,11 @@ async fn test_alive_presence_is_silent_in_json() {
 /// When a peer is hard-killed, the survivor eventually emits a
 /// `peer_timeout` event and their state file drops to 1.
 ///
+/// Also pins the roster's deliberate asymmetry: the evicted peer leaves
+/// `peer_count` but stays in the `peers` array flagged `quiet`, because it may
+/// still return. Everything that reports a live count reads `peer_count` or
+/// filters on `!quiet`; nothing may use `peers.len()`.
+///
 /// Shortens the eviction window by passing `ALIVE_TIMEOUT_SECS=3` and
 /// `SWEEP_INTERVAL_SECS=1` to the survivor daemon. The env is scoped to
 /// that child process, so nothing leaks to sibling tests in the binary.
@@ -754,19 +759,21 @@ fn test_hard_kill_triggers_peer_timeout() {
 
     // Wait for creator ready.
     let deadline = Instant::now() + CONNECT_TIMEOUT;
-    let mut mesh = None;
-    while Instant::now() < deadline && mesh.is_none() {
+    let mut ready = None;
+    while Instant::now() < deadline && ready.is_none() {
         let content = fs::read_to_string(&log).unwrap_or_default();
         for line in content.lines() {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
                 && parsed["event"] == "ready"
+                && let (Some(mesh), Some(nickname)) =
+                    (parsed["gossip"].as_str(), parsed["nickname"].as_str())
             {
-                mesh = parsed["gossip"].as_str().map(ToString::to_string);
+                ready = Some((mesh.to_owned(), nickname.to_owned()));
             }
         }
         std::thread::sleep(POLL);
     }
-    let mesh = mesh.expect("creator never emitted ready");
+    let (mesh, creator_nick) = ready.expect("creator never emitted ready");
 
     // Spawn a joiner we can kill.
     let mut victim = JsonNode::join(&mesh, "victim-alpha");
@@ -809,6 +816,27 @@ fn test_hard_kill_triggers_peer_timeout() {
     assert!(
         evicted,
         "state file never dropped to peer_count=1 after hard kill"
+    );
+
+    // The count drops, the array does not: the victim is still listed, flagged
+    // quiet, so a returning peer stays addressable. Reading `peers.len()` as a
+    // live count is exactly the over-count this guards.
+    let roster: serde_json::Value = serde_json::from_str(&common::cli_peers(&mesh, &creator_nick))
+        .expect("peers response is JSON");
+    assert_eq!(
+        roster["peer_count"], 1,
+        "peer_count must exclude the quiet peer: {roster}"
+    );
+    let victim_entry = roster["peers"]
+        .as_array()
+        .expect("peers is an array")
+        .iter()
+        .find(|entry| entry["nickname"] == victim.nickname)
+        .unwrap_or_else(|| panic!("quiet peer dropped out of the roster array: {roster}"));
+    assert_eq!(
+        victim_entry["quiet"].as_bool(),
+        Some(true),
+        "the evicted peer must be flagged quiet: {roster}"
     );
 
     // Confirm the JSON stream emitted exactly one peer_timeout event.

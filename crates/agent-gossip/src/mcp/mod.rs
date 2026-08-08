@@ -710,7 +710,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the current session's gossip id, nickname, peer count, and the live peer roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a task target."
+        description = "Return the current session's gossip id, nickname, peer count, and the live peer roster (each peer's nickname + how long ago it was last seen, recency-sorted). peer_count is the active peers plus self; the roster additionally carries quiet peers (heartbeat-evicted, may return) flagged quiet:true, so it is longer than peer_count - 1 whenever one is quiet. Use the roster to pick a task target."
     )]
     async fn gossip_info(
         &self,

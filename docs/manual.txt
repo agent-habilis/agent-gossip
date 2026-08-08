@@ -605,13 +605,21 @@ COMMANDS
                                   "reach":"direct"}, …],
                  "peer_count":3}
 
-              peers are sorted most-recently-seen first;
-              peer_count is peers + 1 (the +1 is self, so it
-              is gossip size, not the array length — the same field the MCP
-              gossip_info result and the --state-file use). reach is "direct"
-              when a live gossip link to that peer exists, else "gossip"
-              (relayed). Backs the /gossip-task target picker, nickname
-              validation, and the /gossip-status roster.
+              peers are sorted most-recently-seen first. quiet is true for a
+              peer the heartbeat sweep evicted after it went silent past the
+              alive timeout (the peer_timeout event); it may still come back,
+              so it stays in the array and stays addressable.
+
+              peer_count is the active peers + 1 (the +1 is self, so it is
+              live gossip size — the same field the MCP gossip_info result
+              and the --state-file use). Quiet peers are in the array but not
+              in peer_count, so the array is longer than peer_count - 1
+              whenever one is quiet. Count the entries with quiet false to
+              get the live peers without self.
+
+              reach is "direct" when a live gossip link to that peer exists,
+              else "gossip" (relayed). Backs the /gossip-task target picker,
+              nickname validation, and the /gossip-status roster.
               The roster does not carry model/harness/host — those are gossip
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see meta merge).

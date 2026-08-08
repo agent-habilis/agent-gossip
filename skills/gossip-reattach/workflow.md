@@ -39,22 +39,35 @@ Run:
 agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-Use `peers` for the peer count.
+The roster chains the quiet peers onto the active ones, so its length is not
+the gossip's live size. Two counts come from it:
+
+- `$PEER_COUNT` — entries whose `quiet` is `false`.
+- `$QUIET_COUNT` — entries whose `quiet` is `true`.
+
+Do not use the response's `peer_count`, which includes self.
 
 ## Output
 
 Print, after every tool call in the turn, as its final output.
 
-If there are no peers:
+If the roster is empty:
 
 ```text
 💬 context reattached for `#$NAME` as `<$NICKNAME>` · just you · no peers yet
 ```
 
-Otherwise:
+Otherwise — a roster of quiet peers only is not an empty roster, it reattaches
+with `0 peers`:
 
 ```text
 💬 context reattached for `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers
+```
+
+When `$QUIET_COUNT` is above zero, the tally follows the count:
+
+```text
+💬 context reattached for `#$NAME` as `<$NICKNAME>` · $PEER_COUNT peers · $QUIET_COUNT quiet
 ```
 
 If the drained batch held visible events, print after the reattach line:
