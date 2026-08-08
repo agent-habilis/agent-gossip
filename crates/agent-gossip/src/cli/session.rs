@@ -269,26 +269,44 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         let signalled = process::terminate(target.pid).is_ok();
         left.push((target.clone(), signalled));
     }
+    // `confirmed` has to mean the daemon is gone, not that its file is. It
+    // removes that file early in shutdown and then keeps serving — still in the
+    // mesh, still answering its socket — for another half-second, so waiting on
+    // the file alone reported a departure that had not happened. A caller that
+    // took it at its word and started a replacement got two daemons on one
+    // identity, the new one announcing `joined` before the old one broadcast
+    // `left`. Requiring silence on the socket too makes the report agree with
+    // the predicate `run_session` refuses to start against.
     let deadline =
         tokio::time::Instant::now() + std::time::Duration::from_secs(confirm_timeout_secs);
-    let mut confirmed: Vec<(Target, bool)> = Vec::new();
-    for (target, signalled) in left {
-        let mut gone = false;
-        while signalled && tokio::time::Instant::now() < deadline {
-            if !target.path.exists() {
-                gone = true;
-                break;
+    let mut outcomes: Vec<(Target, bool, bool)> = left
+        .into_iter()
+        .map(|(target, signalled)| (target, signalled, false))
+        .collect();
+    loop {
+        let still_serving = live_owners().await;
+        let mut waiting = false;
+        for (target, signalled, gone) in &mut outcomes {
+            if !*signalled || *gone {
+                continue;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if target.path.exists() || confirm_owner(&still_serving, target) {
+                waiting = true;
+            } else {
+                *gone = true;
+            }
         }
-        confirmed.push((target, gone));
+        if !waiting || tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     let report = serde_json::json!({
         "ok": true,
-        "left": confirmed
+        "left": outcomes
             .iter()
-            .map(|(target, gone)| {
+            .map(|(target, _, gone)| {
                 let mut obj = target_json(target);
                 obj["confirmed"] = (*gone).into();
                 obj

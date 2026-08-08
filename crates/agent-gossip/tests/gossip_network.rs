@@ -2988,6 +2988,50 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let _ = fs::remove_file(&bystander_log);
 }
 
+/// `confirmed: true` must mean the daemon has stopped serving, not merely that
+/// its state file is gone.
+///
+/// The daemon removes that file early in its shutdown and then spends the rest
+/// of the teardown still in the mesh and still answering its socket. `leave`
+/// polled for the file, so it returned roughly half a second before the daemon
+/// actually went away — and a caller that trusted `confirmed` and started a
+/// replacement got two daemons on one identity, the new one announcing `joined`
+/// while the old one had yet to broadcast `left`.
+#[test]
+fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
+    let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("leave-serving");
+
+    let out = common::test_cmd()
+        .args(["leave", &mesh])
+        .output()
+        .expect("failed to run agent-gossip leave");
+    assert!(out.status.success(), "leave failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(report["left"][0]["confirmed"], true, "report: {report}");
+
+    // The daemon's own socket is the black-box probe: `peers` reaches it from
+    // the nickname alone — no state file involved — so it answers for exactly
+    // as long as the daemon is up.
+    let probe = common::test_cmd()
+        .args(["peers", "--gossip", &mesh, "--nickname", &nickname])
+        .output()
+        .expect("failed to run agent-gossip peers");
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+    assert!(
+        !probe.status.success(),
+        "leave reported confirmed while the daemon was still answering: {}",
+        String::from_utf8_lossy(&probe.stdout).trim()
+    );
+    // The probe only means something if it fails for the right reason.
+    let why = String::from_utf8_lossy(&probe.stderr);
+    assert!(
+        why.contains("No active gossip server running"),
+        "peers failed for an unrelated reason: {why}"
+    );
+}
+
 /// A topic daemon persists the raw string it was derived from: the state file
 /// and the `agent-gossip leave` report both carry it as `topic`, whole —
 /// query string and all. The derived name is lossy (`www.youtube.com/watch`

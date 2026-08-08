@@ -22,8 +22,9 @@ pub(crate) struct LeaveOpts {
     #[arg(long)]
     pub session_pid: Option<u32>,
 
-    /// Seconds to wait for a signalled daemon's state file to disappear
-    /// before reporting it unconfirmed. Hidden — a test knob.
+    /// Seconds to wait for a signalled daemon to drop its state file and stop
+    /// answering its socket before reporting it unconfirmed. Hidden — a test
+    /// knob.
     #[arg(long, hide = true, default_value_t = 5)]
     pub confirm_timeout_secs: u64,
 
