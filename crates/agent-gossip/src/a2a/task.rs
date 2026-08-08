@@ -416,9 +416,19 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
             rec.review = true;
             rec.ball = TaskRole::Initiator;
         }
-        LegKind::Status(TaskState::Completed) if sender == TaskRole::Receiver => {
+        LegKind::Status(TaskState::Completed)
+            if sender == TaskRole::Receiver
+                && matches!(rec.state, TaskState::Working | TaskState::InputRequired) =>
+        {
             // Native A2A: the worker (server) drives its own task to
             // `completed`, after the initiator's approval message.
+            //
+            // Not from `Submitted`: a task closed before its worker ever
+            // accepted delivered nothing, and terminal records are frozen, so
+            // the initiator is left with a record that reads exactly like a
+            // real completion and can never be reopened. `Failed` deliberately
+            // has no such guard — declining an offer outright is the skills'
+            // decline path.
             rec.state = TaskState::Completed;
         }
         LegKind::Status(TaskState::Rejected)
@@ -1292,6 +1302,59 @@ mod tests {
             now,
         );
         assert_eq!(tasks[&tid()].state, TaskState::Completed);
+    }
+
+    /// A worker cannot close a task it never started.
+    ///
+    /// `Rejected` carries a current-state guard; `Completed` had only the
+    /// direction one, so a leg straight from `submitted` drove the initiator's
+    /// record terminal and frozen with no `working`, no artifact and nothing
+    /// delivered — indistinguishable from a real completion, and unrecoverable,
+    /// since a terminal record is immutable.
+    ///
+    /// The decline path is the reason this guard is not simply copied onto
+    /// `Failed`: a worker declines a task it never accepted, so `failed` from
+    /// `submitted` is legitimate and stays allowed.
+    #[test]
+    fn a_completed_leg_cannot_close_a_task_that_never_started() {
+        let mut tasks = HashMap::new();
+        let now = Instant::now();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        assert_eq!(tasks[&tid()].state, TaskState::Submitted);
+
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Completed), false),
+            now,
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Submitted,
+            "a task closed from submitted delivered nothing and can never be reopened"
+        );
+
+        // The worker's own accept is what opens the door.
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), false),
+            now,
+        );
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Completed), false),
+            now,
+        );
+        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+
+        // Declining an offer outright is a different leg, and still lands.
+        let mut declined = HashMap::new();
+        apply(&mut declined, &leg(LegKind::Offer, true), now);
+        apply(
+            &mut declined,
+            &leg(LegKind::Status(TaskState::Failed), false),
+            now,
+        );
+        assert_eq!(declined[&tid()].state, TaskState::Failed);
     }
 
     /// A terminal task is frozen: a later leg never mutates it.
