@@ -56,6 +56,9 @@ pub enum OutputEvent {
         task_id: String,
         state: Option<TaskState>,
         text: String,
+        /// The initiator's `mesh:label` for the task, when the brief carried
+        /// one — absent from a peer that does not set it.
+        label: Option<String>,
         is_self: bool,
     },
     TaskTimeout {

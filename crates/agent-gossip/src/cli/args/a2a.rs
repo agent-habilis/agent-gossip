@@ -186,7 +186,14 @@ pub(crate) enum A2aAction {
         #[arg(long)]
         task_id: Option<crate::a2a::TaskId>,
 
-        /// The raw JSON-RPC params object. Overrides `--text` / `--task-id`.
+        /// One-line name for the task, carried to the peer so both parties
+        /// label it identically. Sugar for `SendMessage`; ignored when
+        /// `--params` is given.
+        #[arg(long)]
+        label: Option<String>,
+
+        /// The raw JSON-RPC params object. Overrides `--text` / `--task-id` /
+        /// `--label`.
         #[arg(long)]
         params: Option<String>,
 

@@ -149,6 +149,11 @@ struct TaskLine<'a> {
     /// not the A2A wire's `ProtoJSON` `TASK_STATE_*` (which rides `payload`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
+    /// The initiator's one-line name for the task, lifted out of the brief's
+    /// `mesh:label` metadata so both parties label it the same way. Rides the
+    /// opening brief only, and is absent from a peer that does not set it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<&'a str>,
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -509,6 +514,9 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             task_id,
             kind,
             state: state.map(crate::a2a::TaskState::as_str),
+            // The label rides the opening brief, which arrives over the RPC
+            // binding (`format_task_message_json`), never as a frame.
+            label: None,
             display: task_display(TaskDisplayParams {
                 author: msg.author.as_str(),
                 to: to.as_str(),
@@ -541,6 +549,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             task_id: leg.task_id.to_owned(),
             kind: "message",
             state: leg.state.map(crate::a2a::TaskState::as_str),
+            label: leg.label,
             display: task_display(TaskDisplayParams {
                 author: leg.author,
                 to: leg.peer,
@@ -731,6 +740,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             task_id,
             state,
             text,
+            label,
             is_self,
         } => {
             return Some(format_task_message_json(&TaskMessageLeg {
@@ -741,6 +751,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 task_id,
                 state: *state,
                 text,
+                label: label.as_deref(),
                 is_self: *is_self,
             }));
         }

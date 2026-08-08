@@ -77,8 +77,8 @@ status-update, a terminal state — for a `task_id` you are not tracking
 **live** (no *open* todo for it; a task you already closed as dropped counts
 as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
-silently — no todo, no printed line, no recovery — and never read it as a
-signal about a task you are tracking. A directed `message` on an untracked id
+silently — no todo, no printed line, no badge change, no recovery — and never
+read it as a signal about a task you are tracking. A directed `message` on an untracked id
 is different, and its `state` field says which kind it is: `submitted` is a
 new task's opening brief — start the worker flow as ever. Any later state is
 a follow-up on a task you lost track of (the daemon still holds the record
@@ -94,18 +94,46 @@ source of truth for task status; never print a status block. Task artifacts are
 the worker's result, not a status change. Update the todo silently — no prose
 before or after the tool call.
 
+Three things go in every task todo, whichever harness you are on:
+
+- a **badge** — one word for what the task is doing right now, from the table
+  below. It leads the todo, because a long row truncates from the right and the
+  badge is the part that must survive.
+- the **task label** — the initiator's one-line name for the task. The
+  initiator sends it on the brief (`--label`) and it arrives on the opening
+  task event's `label` field; **use it verbatim**, so the same task reads the
+  same way in both parties' widgets. Only when the brief carries no `label` do
+  you compose one yourself by condensing the brief.
+- the **counterparty** — the peer at the other end, written `<nick>`. On the
+  initiator that is the worker; on the worker it is the initiator. Never
+  yourself: your own nickname is the one value that tells your user nothing.
+
 Lifecycle, in task-event terms — every harness maps these onto its own tool:
 
-| Task event | The todo |
-|---|---|
-| sent (initiator) / accepted (worker) | open it, in progress, owned by the worker |
-| `working`, `task_progress` | refresh it, still in progress |
-| `input-required`, kind `artifact-update` | leave it in progress; the result is in, awaiting your approval |
-| `input-required`, kind `status-update` | leave it in progress; surface the worker's question |
-| kind `message`, on a task you are working | the initiator's answer or approval — act on it |
-| `completed`, after approval | close it |
-| `failed`, `task_timeout` | close it, noting `dropped (failed/timed out)` |
-| leaving the gossip | close whatever is still open |
+| Task event | The todo | Badge |
+|---|---|---|
+| sent (initiator) | open it, in progress, owned by the worker | `waiting` |
+| accepted (worker) | open it, in progress | `working` |
+| `working`, `task_progress` | refresh it, still in progress | `working` |
+| `input-required`, kind `artifact-update` | leave it in progress; the result is in, awaiting your approval | `result` |
+| `input-required`, kind `status-update` | leave it in progress; surface the worker's question | `question` |
+| you asked a question (worker) | parked on the initiator | `asked` |
+| you sent the artifact (worker) | parked on the initiator | `sent` |
+| kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
+| `completed`, after approval | close it | `done` |
+| `failed`, `task_timeout` | close it, the reason in its `description` | `dropped` |
+| leaving the gossip | close whatever is still open | `dropped` |
+
+`waiting` says the brief was dispatched and the worker has not picked it up —
+which is why there is no worker-side `waiting`: your todo opens on accept.
+`question` and `result` are the two states where **the ball is on you**, and
+their mirror images on the worker are `asked` and `sent`. Those four are the
+ones with an eviction clock running against whoever holds the ball, so they are
+worth a distinct word rather than a shared "in progress".
+
+`done` is not decorative. A clean close and a drop both land on the same
+terminal widget status, so without it a finished row keeps whatever badge it
+died with.
 
 `input-required` means two different things, and only the event's `kind` tells
 them apart. `artifact-update` is the worker's **result**, parked for your
@@ -147,29 +175,46 @@ Opening a todo — one `TaskCreate` call **per task**. It creates exactly one ta
 takes no `tasks`/`todos` array, and is not the Agent tool (no
 `prompt`/`subagent_type`); three tasks means three calls.
 
-- `subject` — `💬 <one-line task> · <worker> · <task id>`, where the `<>` around
-  the worker's nickname are literal characters kept in the rendered text — a
+- `subject` — `💬 <badge> · <task label> · <counterparty> · <task id>`, where the
+  `<>` around the nickname are literal characters kept in the rendered text — a
   nickname is always written `<nick>` (e.g.
-  `💬 summarize the diff · <yard-lore> · 02bd5883-…`); the other two slots are
-  filled bare. The widget renders no markdown, so put no backticks in todo
-  text — this rule is for todo text only, not chat output.
-- `description` — the task id, then the brief.
+  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883-…`); the other three
+  slots are filled bare. The widget renders no markdown, so put no backticks in
+  todo text — this rule is for todo text only, not chat output.
+- `description` — the task id, then the brief; on a close as `dropped`, the
+  reason goes here too. Nothing in `description` is rendered in the row, so it
+  is where anything that would otherwise stretch the subject belongs.
 - `activeForm` — the subject without the `💬` and without the task id.
 
 Then `TaskUpdate` it with `owner` set to the worker's nickname and `status`
 `in_progress`.
 
 Driving it — the statuses are only `pending`, `in_progress`, `completed`, and
-`deleted`. **There is no `failed`**, so a dropped task closes as `completed` with
-the reason written into its `subject`:
+`deleted`. **There is no `failed`**, and a clean close and a drop both land on
+`completed`, so what actually distinguishes the rows is the badge you rewrite
+into the `subject` (and `activeForm`) on every transition:
 
 | Task event | `TaskUpdate` |
 |---|---|
-| `working`, `task_progress` | refresh `subject`/`activeForm`, keep `in_progress` |
-| `input-required` | keep `in_progress` |
-| `completed`, after approval | `status` `completed` |
-| `failed`, `task_timeout` | `status` `completed`, and rewrite `subject` to note `dropped (failed/timed out)` |
-| leaving the gossip | `status` `completed` on every row still `in_progress` |
+| `working`, `task_progress` | badge `working`, keep `in_progress` |
+| `input-required`, kind `status-update` | badge `question`, keep `in_progress` |
+| `input-required`, kind `artifact-update` | badge `result`, keep `in_progress` |
+| you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
+| the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
+| `completed`, after approval | badge `done`, `status` `completed` |
+| `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
+| leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
+
+The badge is the only part of the subject that changes; the label, the
+counterparty and the task id are written once at `TaskCreate` and never
+rewritten.
+
+**A badge is exactly one word, and the subject is exactly four fields.** Never
+append to it — a `dropped · peer-left` is five fields, and every field after it
+lands one column further right than on every other row, which moves the label
+out from under the eye on the one row that most wants reading. A reason, a
+retry count, a duration: all of them belong in `description` or in a printed
+line, never in the subject.
 
 Finding the row for an incoming `task_id`: `TaskList`, then match the id in the
 subject. The id lives in the `subject` because that is the only place it survives
@@ -186,31 +231,39 @@ Worker flow:
 
 1. On an incoming task brief, put accept/decline to the user per the
    **Decisions** section.
-2. Hold `$TASK_ID` from the incoming task event's `task_id` field.
-3. If accepted, run:
+2. Hold `$TASK_ID` from the incoming task event's `task_id` field, and
+   `$TASK_LABEL` from its `label` field — the initiator's name for this task,
+   used verbatim. Only if the event carries no `label` do you condense the
+   brief into one line yourself.
+3. If accepted, open the todo at badge `working` and run:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
    ```
-   Then do the work — and **beat while you work**: re-emit that same
-   `--state working` status at least once a minute. The daemon marks the
-   repeat as a liveness beat (exempt from the task's content-leg cap), and a
-   task with no leg for ~2 minutes is evicted as dead. So run any command
+   Then do the work — and **keep the task alive**: re-emit that same
+   `--state working` status at least once a minute. The repeat changes nothing
+   about the task's state; what it does is refresh the clock the daemon
+   watches. While you hold the ball the daemon emits the actual liveness beats
+   for you, but only for ~2 minutes past your last real leg — after that it
+   stops covering you and the task is evicted as dead. So run any command
    expected to exceed a minute through the harness's background facility and
-   beat while it runs.
+   re-emit while it runs.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
    ```
-   The answer comes back as a `message` leg on the same task, which resumes it to
-   `working` — carry on from there. Ask only when you are genuinely blocked; a
-   question costs the initiator a turn.
+   Move the badge to `asked`. The answer comes back as a `message` leg on the
+   same task, which resumes it to `working` — move the badge back and carry on
+   from there. Ask only when you are genuinely blocked; a question costs the
+   initiator a turn.
 5. For a report-back task, return the result with:
    ```bash
    agent-gossip a2a artifact --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --text "$RESULT"
    ```
-   This parks the task in `input-required` for the initiator's approval. It is
-   not the end of the task — you still owe it a terminal state.
-6. When the initiator's approval arrives, close the task yourself:
+   This parks the task in `input-required` for the initiator's approval; move
+   the badge to `sent`. It is not the end of the task — you still owe it a
+   terminal state.
+6. When the initiator's approval arrives, close the task yourself with badge
+   `done`:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state completed
    ```
@@ -229,6 +282,7 @@ timeout whenever the ball is theirs. Three rules follow for the worker:
   `input-required`.** A beat is a re-emitted `working` status, so beating a
   parked task yanks its state back — and keeps a dead initiator's task alive
   forever. Silence-while-parked is what times an unresponsive initiator out.
+  The badge is the reminder: beat on `working`, never on `asked` or `sent`.
 - **`task_timeout` while parked drops the task, not the work.** Close the
   todo as dropped, keep the artifact, and tell your user the initiator never
   responded and the result is kept.
@@ -244,8 +298,10 @@ fail-explicitly or keep-the-result-and-stop.
 
 Initiator flow:
 
-1. Capture the task id from the directed `SendMessage` response
-   (`result.task.id`) and hold it as `$TASK_ID`.
+1. Send the brief with `--label "$TASK_LABEL"` so the worker names the task the
+   way you do. Capture the task id from the directed `SendMessage` response
+   (`result.task.id`), hold it as `$TASK_ID`, and open the todo at badge
+   `waiting` with that same `$TASK_LABEL`.
 2. Every follow-up into that task — an answer, an approval, a change request —
    carries `--task-id`:
    ```bash
@@ -258,17 +314,21 @@ Initiator flow:
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
 4. A task you initiated is **unacknowledged** until the worker's first event
-   on it — `working`, or a decline `failed`. `task_timeout` (~2 minutes of
-   task silence) is the stall signal for both phases of a task's life: on an
-   unacknowledged task it means the brief was never picked up; on a `working`
-   task it means the worker went dead, since a live worker beats at least
-   once a minute. Either way close the todo, print one line —
+   on it — `working`, or a decline `failed` — which is exactly the window its
+   badge still reads `waiting`. `task_timeout` (~2 minutes of task silence) is
+   the stall signal for both phases of a task's life: on a `waiting` task it
+   means the brief was never picked up; on a `working` one it means the worker
+   went dead, since a live worker beats at least once a minute. Either way
+   close the todo, print one line —
 
    ```text
    💬 `<$WORKER>` · $TASK_LABEL · dropped · $REASON
    ```
 
-   — with `$REASON` `no pickup` or `worker went silent`, and put the
+   — with `$REASON` `no pickup` or `worker went silent`. The todo closes on the
+   bare badge `dropped`, with `$REASON` in its `description`: this line is where
+   the reason is read, and keeping it out of the subject is what holds the row
+   at four fields. Then put the
    recovery to the user per the **Decisions** section: retry the same peer,
    reassign to another, or drop. `CancelTask` the old task only when the
    user picks reassign or drop. A workflow section may override this

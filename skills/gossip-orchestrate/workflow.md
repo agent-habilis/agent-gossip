@@ -45,8 +45,10 @@ Dispatching a subtask to a worker is one directed `SendMessage` carrying no
 `--task-id` — that is what makes it a new task:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --text "$BRIEF"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --label "orch: $SUBTASK_LABEL" --text "$BRIEF"
 ```
+
+`--label` is what makes the worker's todo row read the same as yours.
 
 `$BRIEF` is this template with `$NICKNAME`, `$GOAL_LABEL`, and the subtask
 spliced in:
@@ -64,8 +66,8 @@ Do exactly this subtask. Siblings are running in parallel, so stay inside its bo
 ```
 
 Capture `result.task.id` as that worker's `$TASK_ID`. Track each task per the
-**Task tracking** rules in the Event handling section, with the one-line task
-slot filled as `orch: $SUBTASK_LABEL`.
+**Task tracking** rules in the Event handling section, its label the same
+`orch: $SUBTASK_LABEL` you sent.
 
 **Keep every worker busy.** Start by dispatching one ready subtask to every
 worker, and from then on hold the invariant: a worker without a live task gets
@@ -153,6 +155,13 @@ Then print
 
 and hand the subtask to the freed worker in the same turn. Cancel before
 re-dispatch is not optional: one subtask must never run on two workers.
+
+A reassignment is a new task id, so it is a **new** todo row: close the
+stalled one on badge `dropped` (`no pickup` in its `description`) and open the
+re-dispatched one at `waiting`, same `$SUBTASK_LABEL`, the new worker as
+counterparty. Never edit
+the old row to point at the new worker — two rows are how the widget shows
+one subtask was tried twice.
 
 The worker authors the terminal `completed` once you approve; you never set a
 task's state.

@@ -12,13 +12,18 @@ current conversation goal or plan as the task spec.
 Split the task spec across the selected peers; for an ambiguous split, put it
 to the user per the **Decisions** section before sending.
 
+Hold a one-line label of each split as `$TASK_LABEL`; it names that task in
+both your todo row and the worker's.
+
 For each task, send a directed `SendMessage` brief with clear completion
 criteria. This is the one `SendMessage` that carries no `--task-id` — that is
 what makes it a new task:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --text "$BRIEF"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --label "$TASK_LABEL" --text "$BRIEF"
 ```
+
+`--label` is what makes the worker's todo row read the same as yours.
 
 Capture `result.task.id` as `$TASK_ID`. Track each task per the **Task
 tracking** rules in the Event handling section.

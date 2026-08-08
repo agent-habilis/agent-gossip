@@ -40,3 +40,6 @@ A todo plugin should be installed for the initiator and both workers.
 - [ ] the initiator confirms each; both tasks close cleanly
 - [ ] the initiator tracks both tasks at once (two todo items when a plugin
       is present), each progressing independently
+- [ ] a task id reads with the **same label** in the initiator's todo row and
+      in its worker's, each naming the other peer as counterparty — the two
+      panes line up by eye, without matching uuids

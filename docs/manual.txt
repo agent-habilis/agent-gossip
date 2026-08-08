@@ -35,7 +35,8 @@ SYNOPSIS
        agent-gossip a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
 
        agent-gossip a2a call --gossip GOSSIP --nickname NAME --to NICK --method M
-                  [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
+                  [--text TEXT] [--task-id UUID] [--label LABEL] [--params JSON]
+                  [--timeout-secs N]
 
        agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
@@ -337,7 +338,8 @@ COMMANDS
               never sent in plaintext as a fallback.
 
        a2a call --gossip GOSSIP --nickname NAME --to NICK --method M
-                [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
+                [--text TEXT] [--task-id UUID] [--label LABEL] [--params JSON]
+                [--timeout-secs N]
               Make an A2A call to a peer. Short-lived; requires a running
               create/join daemon for that gossip + nickname. Blocks up to
               --timeout-secs (default 45); exits non-zero when the response is
@@ -353,7 +355,8 @@ COMMANDS
                     task creation (no --task-id: the peer mints the task id and
                     returns {"task": <Task>}) or a follow-up into a task
                     (--task-id: an answer / approval / change). --text composes
-                    the A2A Message. A peer caps how many live tasks any one
+                    the A2A Message; --label names the task for both parties
+                    (see below). A peer caps how many live tasks any one
                     caller may hold with it, and refuses opens past that with
                     an error rather than minting; closing finished tasks frees
                     the allowance.
@@ -376,7 +379,14 @@ COMMANDS
                     read the peer's derived shared-state / meta document
               Mutating global ops (mesh/state.merge, mesh/meta.merge) and
               broadcast SendMessage are refused. --params overrides --text /
-              --task-id with a raw JSON-RPC params object.
+              --task-id / --label with a raw JSON-RPC params object.
+
+              --label is the initiator's one-line name for the task, carried
+              on the opening brief so the worker labels it identically —
+              without it each side invents its own wording for the same task
+              and the two panes cannot be lined up by eye. It surfaces on the
+              worker's task event as the "label" field, and is simply absent
+              from a peer that does not send one.
 
        a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state STATE [--text TEXT]
@@ -1037,6 +1047,11 @@ JSON EVENTS
               "status-update" / "artifact-update" (worker-pushed). state is the
               task's A2A state on a status/artifact leg. payload is the A2A
               object whole, for A2A-aware consumers.
+
+              An opening brief additionally carries "label" — the initiator's
+              one-line name for the task (a2a call --label), which the worker
+              is meant to reuse verbatim so both parties name it the same way.
+              Absent when the initiator sent none.
 
               Content legs also land in the poll / fetch_messages buffer (raw
               records with "type":"task") for the two parties only. See TASKS

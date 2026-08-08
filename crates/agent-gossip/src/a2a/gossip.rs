@@ -5,8 +5,8 @@ use fofoca::protocol::Message as Frame;
 use fofoca::protocol::MessageBody;
 
 use super::{
-    EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_TOTAL, Message, Part, Role, TaskArtifactUpdate,
-    TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
+    EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
+    TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
 /// Compose a broadcast chat payload: `role: user` (chat is a client-side
@@ -37,9 +37,16 @@ pub fn compose_msg(mesh: &MeshId, text: &str) -> Message {
 /// task-creating brief (no `taskId`) or a follow-up into an existing task
 /// (`taskId` set). `role: user` (a client submission), `contextId` = the
 /// mesh; **no** broadcast extension (it is point-to-point).
+/// `label` rides `metadata` as [`META_LABEL`] so the worker names the task the
+/// same way the initiator does.
 #[must_use]
-pub fn send_message_payload(mesh: &MeshId, task_id: Option<&TaskId>, text: &str) -> Message {
-    send_message_payload_parts(mesh, task_id, vec![Part::text(text)])
+pub fn send_message_payload(
+    mesh: &MeshId,
+    task_id: Option<&TaskId>,
+    text: &str,
+    label: Option<&str>,
+) -> Message {
+    send_message_payload_parts(mesh, task_id, vec![Part::text(text)], label)
 }
 
 /// As [`send_message_payload`] but carrying arbitrary parts — used when the
@@ -51,11 +58,15 @@ pub(crate) fn send_message_payload_parts(
     mesh: &MeshId,
     task_id: Option<&TaskId>,
     parts: Vec<Part>,
+    label: Option<&str>,
 ) -> Message {
     let mut message = Message::text(Role::User, "");
     message.parts = parts;
     message.context_id = Some(mesh.as_str().to_string());
     message.task_id = task_id.cloned();
+    // Left None without a label so an unlabeled message stays byte-identical
+    // on the wire (`metadata` is skip_serializing_if).
+    message.metadata = label.map(|label| serde_json::json!({ META_LABEL: label }));
     message
 }
 
@@ -318,6 +329,24 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
         meta.get(META_DONE)?.as_u64()?,
         meta.get(META_TOTAL)?.as_u64()?,
     ))
+}
+
+/// The initiator's one-line task label (`mesh:label`), when the brief carries
+/// one. Peer-controlled text bound for a todo subject, so control characters
+/// (a `\n` would forge a second row) are stripped and the length capped.
+#[must_use]
+pub fn task_label(message: &Message) -> Option<String> {
+    let raw = message
+        .metadata
+        .as_ref()?
+        .get(META_LABEL)?
+        .as_str()?
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(super::tuning::TASK_LABEL_MAX_CHARS)
+        .collect::<String>();
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 /// The task a **logical** frame belongs to, if any: a worker-pushed status or

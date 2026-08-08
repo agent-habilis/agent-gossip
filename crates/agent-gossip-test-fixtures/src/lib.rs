@@ -1047,13 +1047,28 @@ impl InProcNode {
     /// worker mints the id and returns the `Task`. Returns the parsed JSON-RPC
     /// response.
     pub async fn create_task(&self, target: &str, text: &str) -> serde_json::Value {
+        self.create_task_labeled(target, text, None).await
+    }
+
+    /// As [`Self::create_task`], with the initiator's one-line task label
+    /// (`mesh:label`) the worker is meant to reuse verbatim.
+    pub async fn create_task_labeled(
+        &self,
+        target: &str,
+        text: &str,
+        label: Option<&str>,
+    ) -> serde_json::Value {
         // Task creation seals the request to `target`'s card
         // (`a2a::card::peer_seal_key`). The card propagates asynchronously and the
         // seal is one-shot, so wait for it first — otherwise, under the concurrent
         // suite's load, the request is silently dropped and the call hangs.
         self.await_peer_card(target).await;
-        let msg =
-            agent_gossip::a2a::gossip::send_message_payload(self.session.mesh_id(), None, text);
+        let msg = agent_gossip::a2a::gossip::send_message_payload(
+            self.session.mesh_id(),
+            None,
+            text,
+            label,
+        );
         self.a2a_call_retrying(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
     }
@@ -1088,6 +1103,7 @@ impl InProcNode {
             self.session.mesh_id(),
             Some(task_id),
             text,
+            None,
         );
         self.a2a_call_retrying(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
@@ -1251,6 +1267,17 @@ impl InProcNode {
                 .any(|event| matches!(event, OutputEvent::TaskMessage { .. }))
         })
         .await
+    }
+
+    /// The `mesh:label` on the first `message`-kind task event surfaced to us —
+    /// `Some(None)` when that leg carried no label, `None` when no such leg has
+    /// been surfaced at all.
+    pub fn task_message_label(&mut self) -> Option<Option<String>> {
+        self.pump();
+        self.drained.iter().find_map(|event| match event {
+            OutputEvent::TaskMessage { label, .. } => Some(label.clone()),
+            _ => None,
+        })
     }
 
     /// Clean shutdown (broadcasts `Left`).

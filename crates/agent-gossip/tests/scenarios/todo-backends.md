@@ -40,6 +40,10 @@ pi (where the todo integration lives). Set up per the
       itself is unaffected by it)
 - [ ] **with a plugin present:** the task is tracked in the todo widget,
       advancing as it progresses to a finished state
+- [ ] **with a plugin present:** the row's leading badge word actually moves
+      (`waiting` → `working` → `result` → `done` on the initiator; `working` →
+      `sent` → `done` on the worker) rather than sitting on one word for the
+      task's whole life
 - [ ] **without a plugin:** the task is still surfaced legibly in the UI as it
       progresses — the user is not left blind just because no todo widget exists
 - [ ] how the task surfaces in the backend you ran is the thing to judge

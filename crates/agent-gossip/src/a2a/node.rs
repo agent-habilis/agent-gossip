@@ -983,6 +983,7 @@ fn ingest_remote_message(
     // Surface the incoming message to our skill (a `task` event, kind:message).
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
     let text = crate::a2a::gossip::display_text(payload);
+    let label = crate::a2a::gossip::task_label(payload);
     app.output.task_message(&output::TaskMessageLeg {
         id: payload.message_id.as_str(),
         mesh: ctx.mesh.as_str(),
@@ -991,6 +992,7 @@ fn ingest_remote_message(
         task_id: task_id.as_str(),
         state: rec_state,
         text: &text,
+        label: label.as_deref(),
         is_self: false,
     });
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation

@@ -438,14 +438,24 @@ async fn a2a(action: A2aAction) -> Result<()> {
             method,
             text,
             task_id,
+            label,
             params,
             timeout_secs,
         } => {
-            // Compose params from --text/--task-id sugar, unless raw --params given.
+            // Compose params from --text/--task-id/--label sugar, unless raw
+            // --params given.
             let params: serde_json::Value = match params {
                 Some(raw) => serde_json::from_str(&raw)
                     .map_err(|error| anyhow::anyhow!("--params must be valid JSON: {error}"))?,
-                None => compose_a2a_params(&method, &mesh, text.as_deref(), task_id.as_ref()),
+                None => compose_a2a_params(
+                    &method,
+                    &A2aCallSugar {
+                        mesh: &mesh,
+                        text: text.as_deref(),
+                        task_id: task_id.as_ref(),
+                        label: label.as_deref(),
+                    },
+                ),
             };
             let cmd = IpcCommand::A2aCall {
                 mesh,
@@ -574,16 +584,30 @@ async fn a2a(action: A2aAction) -> Result<()> {
     }
 }
 
-fn compose_a2a_params(
-    method: &str,
-    mesh: &MeshId,
-    text: Option<&str>,
-    task_id: Option<&crate::a2a::TaskId>,
-) -> serde_json::Value {
+/// The `--text` / `--task-id` / `--label` sugar `a2a call` turns into a params
+/// object when `--params` is absent.
+struct A2aCallSugar<'a> {
+    mesh: &'a MeshId,
+    text: Option<&'a str>,
+    task_id: Option<&'a crate::a2a::TaskId>,
+    label: Option<&'a str>,
+}
+
+fn compose_a2a_params(method: &str, sugar: &A2aCallSugar<'_>) -> serde_json::Value {
+    let A2aCallSugar {
+        mesh,
+        text,
+        task_id,
+        label,
+    } = *sugar;
     match method {
         "SendMessage" | "SendStreamingMessage" => {
-            let message =
-                crate::a2a::gossip::send_message_payload(mesh, task_id, text.unwrap_or_default());
+            let message = crate::a2a::gossip::send_message_payload(
+                mesh,
+                task_id,
+                text.unwrap_or_default(),
+                label,
+            );
             serde_json::json!({ "message": message })
         }
         "GetTask" | "CancelTask" | "SubscribeToTask" => task_id.map_or_else(

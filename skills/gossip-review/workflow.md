@@ -24,8 +24,10 @@ Send one task per selected peer — a directed `SendMessage` carrying no
 `--task-id`, which is what makes it a new task:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --text "$BRIEF"
+agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --label "review: $SUBJECT_LABEL" --text "$BRIEF"
 ```
+
+`--label` is what makes the reviewer's todo row read the same as yours.
 
 `$BRIEF` is this template with `$NICKNAME` and `$SUBJECT` spliced in:
 
@@ -39,8 +41,10 @@ Return ONE artifact on this task containing your findings as a numbered list. Ea
 ```
 
 Capture `result.task.id` as that reviewer's `$TASK_ID`. Track each task per
-the **Task tracking** rules in the Event handling section, with the one-line
-task slot filled as `review: $SUBJECT_LABEL`.
+the **Task tracking** rules in the Event handling section, its label the same
+`review: $SUBJECT_LABEL` you sent. Every reviewer gets the same brief, so the
+rows differ only by counterparty and badge — that is honest, the tasks are
+identical.
 
 ## Drive
 

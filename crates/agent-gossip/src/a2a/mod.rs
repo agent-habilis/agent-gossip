@@ -17,7 +17,7 @@ pub(crate) mod wire;
 
 pub use extensions::{
     EXT_MESH_A2A_RPC, EXT_MESH_BLOB, EXT_MESH_BROADCAST, EXT_MESH_SEAL, EXT_MESH_STATE,
-    GOSSIP_BINDING, META_BEAT, META_DONE, META_REASON, META_TOTAL,
+    GOSSIP_BINDING, META_BEAT, META_DONE, META_LABEL, META_REASON, META_TOTAL,
 };
 pub use model::{
     A2aRpcId, AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, Artifact,

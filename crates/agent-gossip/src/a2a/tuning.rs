@@ -95,6 +95,12 @@ pub(crate) const TASKS_PER_PEER_CAP: usize = 64;
 /// bounded.
 pub(crate) const TASKS_CAP: usize = 1024;
 
+/// Max characters kept from a peer's `mesh:label`. The label is peer-controlled
+/// text a skill splices into a one-line todo subject, so an unbounded one is a
+/// display flood rather than a memory one — the brief it rides is already
+/// bounded by the frame size.
+pub(crate) const TASK_LABEL_MAX_CHARS: usize = 120;
+
 /// The runtime-varied knobs, installed once at startup from the hidden flags.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {

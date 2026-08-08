@@ -60,6 +60,50 @@ async fn creation_mints_server_id_and_returns_submitted_task() {
     bob.leave().await;
 }
 
+/// The initiator's one-line task label rides the brief as `mesh:label` and
+/// reaches the worker's skill intact, so both panes name the task the same way.
+/// A brief without one leaves the worker to compose its own — the pre-`--label`
+/// behaviour, and what a foreign A2A client still gets.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_label_reaches_the_worker_and_is_absent_when_unset() {
+    let alice = InProcNode::create("t-label").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-label-bob").await;
+    alice.broadcast("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+
+    alice
+        .create_task_labeled(
+            "t-label-bob",
+            "attack the plan",
+            Some("review: agent-gossip project"),
+        )
+        .await;
+    assert!(bob.wait_task_message(TASK_WAIT).await, "brief surfaced");
+    assert_eq!(
+        bob.task_message_label(),
+        Some(Some("review: agent-gossip project".to_owned())),
+        "the worker never saw the initiator's label"
+    );
+
+    let mut carol = InProcNode::join(&alice.mesh, "t-label-carol").await;
+    alice.broadcast("warmup2").await;
+    assert!(
+        carol.wait_body("warmup2", MSG_TIMEOUT).await,
+        "carol joined"
+    );
+    alice.create_task("t-label-carol", "unlabeled brief").await;
+    assert!(carol.wait_task_message(TASK_WAIT).await, "brief surfaced");
+    assert_eq!(
+        carol.task_message_label(),
+        Some(None),
+        "an unlabeled brief must surface no label at all"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+    carol.leave().await;
+}
+
 /// The full native lifecycle: create → worker `working` → worker artifact
 /// (parks in `input-required`) → initiator approval message → worker
 /// `completed`. The initiator observes each worker push; the worker authors
