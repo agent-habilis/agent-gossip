@@ -22,6 +22,8 @@ would all be fetchable.
 - A Cloudflare account with a tunnel created in the Zero Trust dashboard
   (Networks -> Tunnels -> Create a tunnel -> Cloudflared)
 - [Bun](https://bun.sh) >= 1.3 (only for running/type-checking outside Docker)
+- Node >= 24, for the `portless` CLI only — the package itself arrives with
+  `bun install`
 - `ffmpeg` (only for regenerating the demo videos)
 
 ## First-time setup
@@ -59,6 +61,24 @@ bun install
 bun start          # bun server.ts
 bun run type-check # tsc, no emit
 ```
+
+Or under [portless](https://github.com/vercel-labs/portless), which gives the
+site a name instead of a port — useful because 3000 is contended and every
+browser check otherwise has to be told which port won:
+
+```sh
+bun run dev        # https://agent-gossip.localhost
+```
+
+The name and the wrapped script live in the `"portless"` key of `package.json`.
+portless assigns a free port in 4000-4999 and passes it as `PORT`, which
+`server.ts` already reads, so nothing in the server changes. The first run costs
+more than a config edit: it starts a background proxy daemon, generates a local
+CA and adds it to the system trust store, binds port 443 (so it asks for sudo),
+and writes into `/etc/hosts`. `bunx portless clean` undoes all of it.
+
+Safari resolves `.localhost` through the system resolver rather than natively,
+so if the name does not load there, `bunx portless hosts sync`.
 
 ## Stop
 
