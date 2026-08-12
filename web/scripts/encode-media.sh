@@ -4,10 +4,11 @@
 # far too heavy to serve, and far more resolution than terminal text needs.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+# web/, not scripts/ — SRC and OUT below are written relative to the site root.
+cd "$(dirname "$0")/.."
 
 SRC=../assets
-OUT=video
+OUT=src/video
 
 mkdir -p "$OUT"
 

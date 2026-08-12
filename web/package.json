@@ -5,7 +5,7 @@
   "scripts": {
     "start": "bun server.ts",
     "type-check": "tsc -p tsconfig.json",
-    "media": "./encode-media.sh",
+    "media": "./scripts/encode-media.sh",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",

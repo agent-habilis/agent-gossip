@@ -1,6 +1,9 @@
 import { join, normalize } from 'node:path'
 
-const ROOT = new URL('./', import.meta.url).pathname
+// The document root, and deliberately not the directory this file sits in:
+// everything reachable over HTTP lives under src/, so server.ts, package.json
+// and .env stay outside it and the guard below turns them into a 403.
+const ROOT = new URL('./src/', import.meta.url).pathname
 const PORT = Number(process.env['PORT']) || 3000
 
 const RANGE = /^bytes=(\d*)-(\d*)$/

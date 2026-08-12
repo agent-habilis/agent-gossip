@@ -8,8 +8,13 @@ comes from — with the classic HTML palette (white ground, black text, blue
 links, purple visited) in place of that site's colours, and no dark mode,
 because the classic palette never had one.
 
-There is no build step and no client-side JavaScript. `index.html` and
-`style.css` are hand-written and served byte-for-byte off disk.
+There is no build step and no client-side JavaScript. `src/index.html` and
+`src/style.css` are hand-written and served byte-for-byte off disk.
+
+`src/` is the document root, and nothing outside it is reachable over HTTP —
+which is why `server.ts` sits beside `src/` rather than inside it. Were the
+server in its own document root, `/server.ts`, `/package.json` and `/.env`
+would all be fetchable.
 
 ## Prerequisites
 
@@ -63,33 +68,36 @@ docker compose down
 
 ## Media
 
-`video/` holds web-sized re-encodes of the screen recordings in `../assets`,
+`src/video/` holds web-sized re-encodes of the screen recordings in `../assets`,
 plus a poster frame for each. The originals are ~338 MB of high-bitrate capture;
 the encodes are ~32 MB total. Regenerate with:
 
 ```sh
-bun run media   # ./encode-media.sh
+bun run media   # ./scripts/encode-media.sh
 ```
 
 The page loads them with `preload="none"`, so a visitor downloads only posters
 until they press play. `server.ts` answers HTTP range requests — without a `206`
 Safari will not start a `<video>` at all, and seeking breaks everywhere.
 
-`og.png` is rasterized from `og.svg` with headless Chrome (no SVG rasterizer CLI
-is assumed to be installed, and crawlers do not reliably accept SVG cards):
+`src/og.png` is rasterized from `src/og.svg` with headless Chrome (no SVG
+rasterizer CLI is assumed to be installed, and crawlers do not reliably accept
+SVG cards):
 
 ```sh
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --headless --disable-gpu --hide-scrollbars \
-  --screenshot=og.png --window-size=1200,630 "file://$PWD/og.svg"
+  --screenshot=src/og.png --window-size=1200,630 "file://$PWD/src/og.svg"
 ```
 
 ## Layout
 
+- `src/` — the document root; everything served, and nothing else
+- `src/index.html`, `src/style.css` — files served at the site root
+- `src/og.svg` / `src/og.png` — the social card and its source
+- `src/video/` — the demo encodes and their poster frames
 - `server.ts` — zero-dep static server (`Bun.serve` + `Bun.file`), with range support
-- `index.html`, `style.css` — files served at the site root
-- `encode-media.sh` — re-encodes `../assets/*.mp4` into `video/`
-- `og.svg` / `og.png` — the social card and its source
+- `scripts/encode-media.sh` — re-encodes `../assets/*.mp4` into `src/video/`
 - `Dockerfile` — `oven/bun:alpine` image
 - `docker-compose.yml` — `agent-gossip-com` + `cloudflared` services
 - `.env` — local-only, holds `CLOUDFLARE_TUNNEL_TOKEN` (never committed)
