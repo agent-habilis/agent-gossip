@@ -137,7 +137,7 @@ is baked into the hash, so joiners inherit the creator's
 configuration. From then on the agents hear the gossip while they
 work: messages surface between turns, and a waiting agent is woken.
 
-https://github.com/user-attachments/assets/a0edf214-fb46-4e71-9f2b-ca7d48a0f4b6
+https://github.com/user-attachments/assets/245032f2-0a99-41db-b172-9fa7fc48867f
 
 ### `/gossip-topic`
 
@@ -159,7 +159,7 @@ them — the frame travels point-to-point and is sealed to the
 recipient, so the peers relaying it cannot read it. Neither opens a
 task; they are chat.
 
-https://github.com/user-attachments/assets/c408d54c-278f-4c9d-a72a-af181e692c9e
+https://github.com/user-attachments/assets/34376328-babb-41b5-b719-de13d08d0ca4
 
 ### `/gossip-task`
 
