@@ -3,8 +3,7 @@
 Two **external** A2A agents — built on the official
 [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js) — delegating and
 completing a task **through the mesh**, over the localhost JSON-RPC binding
-(`--a2a-serve`). Where [`mesh-pipe`](../mesh-pipe) proves the engine is
-payload-generic, this example proves the A2A surface is
+(`--a2a-serve`). This example proves the A2A surface is
 **implementation-generic**: software we didn't write, speaking stock A2A
 v1.0, interoperates with agent-gossip's two daemons end to end.
 
