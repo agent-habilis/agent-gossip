@@ -68,6 +68,11 @@ Bun.serve({
     // scrubs a demo never refetches it.
     if (pathname.startsWith('/video/')) {
       res.headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+    } else {
+      // s-maxage is what lets Cloudflare hold index.html too; the short
+      // max-age keeps browsers rechecking, so a post-deploy purge reaches
+      // visitors within the minute rather than whenever their cache expires.
+      res.headers.set('Cache-Control', 'public, max-age=60, s-maxage=31536000')
     }
     return res
   },
