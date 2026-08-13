@@ -116,6 +116,13 @@ h2 {
   margin-bottom: 0;
 }
 
+/* A list zeroes its own top margin so it can sit flush under the paragraph
+   that introduces it, so a heading directly above one has to pay for the gap
+   itself. */
+h2:has(+ ul) {
+  margin-bottom: 1em;
+}
+
 ul {
   list-style: none;
   padding: 0;
