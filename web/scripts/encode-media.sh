@@ -13,8 +13,9 @@ OUT=src/video
 mkdir -p "$OUT"
 
 # Per-clip CRF and width: the defaults land most clips under 5 MB, but the two
-# longest ones (adversarial-review, orchestrate) and the 3568px-wide discover
-# capture need their own settings to stay inside the page's byte budget.
+# longest ones (adversarial-review, orchestrate) and the 3568px-wide captures
+# (discover, gossip-join, gossip-msg) need their own settings to stay inside
+# the page's byte budget.
 encode() {
   local name=$1 crf=$2 width=$3
 
@@ -34,7 +35,9 @@ encode() {
 
 encode readme-demo 30 1440
 encode readme-create-join 30 1440
+encode readme-gossip-join 32 1440
 encode readme-topic 30 1440
+encode readme-gossip-msg 32 1440
 encode readme-task 30 1440
 encode readme-adversarial-review 32 1440
 encode readme-orchestrate 30 1152

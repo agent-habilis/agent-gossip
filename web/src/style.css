@@ -89,6 +89,7 @@ li {
 
 h1,
 h2,
+h3,
 p,
 ul {
   margin-block: 1em;
@@ -98,6 +99,18 @@ h1,
 h2 {
   text-transform: uppercase;
   font-weight: bold;
+}
+
+/* Bold but not uppercased, so a subheading reads as one rank below h2
+   rather than as another of them. */
+h3 {
+  font-weight: bold;
+}
+
+/* A command keeps its case inside a heading — /GOSSIP-CREATE is not a
+   command anyone can type. */
+h2 code {
+  text-transform: none;
 }
 
 h2 {
