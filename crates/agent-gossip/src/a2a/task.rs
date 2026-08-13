@@ -830,7 +830,8 @@ mod tests {
         let later = now.checked_add(Duration::from_mins(30)).unwrap();
         apply(&mut tasks, &from_outsider(LegKind::Beat), later);
         assert_eq!(
-            tasks[&tid()].last_skill_activity, skill_clock,
+            tasks[&tid()].last_skill_activity,
+            skill_clock,
             "a non-party's beat cannot refresh the skill-liveness clock"
         );
 
@@ -976,7 +977,8 @@ mod tests {
             "another peer's answer cannot drive our task terminal"
         );
         assert_eq!(
-            tasks[&tid()].last_activity, before,
+            tasks[&tid()].last_activity,
+            before,
             "nor hold it off the reaper by refreshing its activity clock"
         );
 

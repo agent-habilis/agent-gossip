@@ -140,13 +140,7 @@ async fn bridge_rewrites_the_agent_card_url_to_the_local_base() {
     let (consumer_endpoint, shared) = consumer(&ticket).await;
     let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
-    let response = drive(
-        &shared,
-        &auth,
-        "GET /.well-known/agent-card.json",
-        "",
-    )
-    .await;
+    let response = drive(&shared, &auth, "GET /.well-known/agent-card.json", "").await;
 
     let text = String::from_utf8_lossy(&response);
     assert!(
@@ -168,10 +162,7 @@ async fn bridge_forwards_a_non_card_exchange_byte_for_byte() {
     let (consumer_endpoint, shared) = consumer(&ticket).await;
     let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
-    let got = drive(
-        &shared, &auth, "POST /message", "Content-Length: 0\r\n",
-    )
-    .await;
+    let got = drive(&shared, &auth, "POST /message", "Content-Length: 0\r\n").await;
     assert_eq!(got, response, "non-card response forwarded verbatim");
 
     consumer_endpoint.close().await;

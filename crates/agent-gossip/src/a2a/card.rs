@@ -311,9 +311,7 @@ mod tests {
     fn absent_peers_never_includes_our_own_entry() {
         let document = serde_json::json!({ "peers": { "print-onyx": { "status": "idle" } } });
         let live = std::collections::HashSet::new();
-        assert!(
-            super::absent_peers(&document, &live, &Nickname::from("print-onyx")).is_empty()
-        );
+        assert!(super::absent_peers(&document, &live, &Nickname::from("print-onyx")).is_empty());
     }
 
     /// A document with no `/peers` map at all (a fresh mesh) is not an error.
@@ -321,12 +319,8 @@ mod tests {
     fn absent_peers_tolerates_a_document_without_peers() {
         let live = std::collections::HashSet::new();
         assert!(
-            super::absent_peers(
-                &serde_json::json!({}),
-                &live,
-                &Nickname::from("print-onyx")
-            )
-            .is_empty()
+            super::absent_peers(&serde_json::json!({}), &live, &Nickname::from("print-onyx"))
+                .is_empty()
         );
     }
 

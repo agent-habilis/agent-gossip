@@ -242,7 +242,10 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).
     fofoca::util::logging::attach(cfg.mesh_id(), cfg.author());
-    run_event_loop(cfg, app, None, http_rx).await
+    // Boxed for the same reason `create` boxes the session future: it carries
+    // the whole `EventLoopConfig` and sits just over clippy's `large_futures`
+    // budget on 64-bit Linux (it fits under it on aarch64 macOS).
+    Box::pin(run_event_loop(cfg, app, None, http_rx)).await
 }
 
 /// Create a new mesh, print its identifier, and start listening.

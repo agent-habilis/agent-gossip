@@ -270,6 +270,11 @@ async fn own_sharded_status_leg_completes_the_workers_own_record() {
     let task_id = task_id_of(&alice.create_task("t-shard-bob", "big note").await);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
 
+    // A worker cannot close a task it never accepted, so take the offer first —
+    // the sharded leg under test is the `completed` one.
+    bob.task_status(&task_id, TaskState::Working, Some("on it"))
+        .await;
+
     // Comfortably past MAX_MESSAGE_SIZE (3840), so the leg must split.
     let note = "x".repeat(8 * 1024);
     bob.task_status(&task_id, TaskState::Completed, Some(&note))

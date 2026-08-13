@@ -163,7 +163,9 @@ async fn live_owners() -> Vec<Owner> {
         let (Some(gossip), Some(nickname), Some(pid)) = (
             value["gossip"].as_str(),
             value["nickname"].as_str(),
-            value["pid"].as_u64().and_then(|pid| u32::try_from(pid).ok()),
+            value["pid"]
+                .as_u64()
+                .and_then(|pid| u32::try_from(pid).ok()),
         ) else {
             continue;
         };
@@ -223,7 +225,10 @@ pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
     if !confirm_owner(&live_owners().await, &target) {
         return None;
     }
-    let who = nickname.map_or_else(|| format!("pid {pid}"), |nick| format!("<{nick}> (pid {pid})"));
+    let who = nickname.map_or_else(
+        || format!("pid {pid}"),
+        |nick| format!("<{nick}> (pid {pid})"),
+    );
     Some(format!("{who} on gossip {mesh}"))
 }
 

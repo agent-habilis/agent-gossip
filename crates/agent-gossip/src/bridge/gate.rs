@@ -255,9 +255,8 @@ mod tests {
     #[test]
     fn a_rebound_host_is_refused() {
         let (gate, token) = gated();
-        let rebound = format!(
-            "POST /message HTTP/1.1\r\nHost: evil.example:7777\r\n{TOKEN_HEADER}: {token}"
-        );
+        let rebound =
+            format!("POST /message HTTP/1.1\r\nHost: evil.example:7777\r\n{TOKEN_HEADER}: {token}");
         assert_eq!(
             gate.screen(&rebound),
             Err(Refusal("host does not match the bridge address"))

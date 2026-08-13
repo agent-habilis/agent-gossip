@@ -919,12 +919,17 @@ fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<crate::a2a
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     // A2A has no "too many tasks" error, so this is an application code in the
     // implementation-defined server range, alongside the party check's -32003.
-    let refuse = |message: String| Some(crate::a2a::rpc::RpcError { code: -32004, message });
+    let refuse = |message: String| {
+        Some(crate::a2a::rpc::RpcError {
+            code: -32004,
+            message,
+        })
+    };
     match crate::a2a::task::admit_new_task(&app.tasks, requester) {
         Admission::Ok => None,
-        Admission::RegistryFull => {
-            refuse(format!("this peer is holding its maximum of {TASKS_CAP} tasks"))
-        }
+        Admission::RegistryFull => refuse(format!(
+            "this peer is holding its maximum of {TASKS_CAP} tasks"
+        )),
         Admission::PeerAtCap => refuse(format!(
             "you already hold {TASKS_PER_PEER_CAP} live tasks with this peer"
         )),

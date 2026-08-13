@@ -1034,14 +1034,17 @@ async fn test_task_event_wire_contract() {
 
     let task_id = common::cli_task_create(&mesh, &creator.nickname, &worker, "## Task\nport it");
 
-    // The worker surfaces the incoming `message/send` as a task event.
+    // The worker surfaces the incoming `message/send` as a task event. Match it
+    // by id, not by being the first one: a create whose response was lost is
+    // re-issued, and the peer that already served the first attempt mints a
+    // second task from it, so the stream can carry an earlier, unrelated event.
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut task = None;
     while Instant::now() < deadline {
         if let Some(event) = joiner_a
             .json_events()
             .into_iter()
-            .find(|value| value["event"] == "task")
+            .find(|value| value["event"] == "task" && value["task_id"] == task_id)
         {
             task = Some(event);
             break;

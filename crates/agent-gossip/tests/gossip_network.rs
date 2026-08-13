@@ -900,10 +900,8 @@ fn test_ready_gate_succeeds_when_serving() {
 fn second_daemon_refuses_a_state_file_already_in_use() {
     let log = tmp_log("statefile-collide");
     let file = File::create(&log).unwrap();
-    let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-collide-{}.json",
-        std::process::id()
-    ));
+    let state_file =
+        std::env::temp_dir().join(format!("agent-gossip-collide-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
     let mut first = common::test_cmd()

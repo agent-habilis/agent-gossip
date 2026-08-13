@@ -166,8 +166,8 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
 #[cfg(test)]
 mod tests {
     use super::{Served, classify};
-    use crate::a2a::rpc::A2aOp;
     use crate::a2a::app::A2aApp;
+    use crate::a2a::rpc::A2aOp;
     use fofoca::protocol::Nickname;
     use serde_json::json;
 
@@ -300,7 +300,12 @@ mod tests {
             );
             assert!(
                 matches!(
-                    classify(method, &json!({"id": TASK_A}), &Nickname::from("alice"), &st),
+                    classify(
+                        method,
+                        &json!({"id": TASK_A}),
+                        &Nickname::from("alice"),
+                        &st
+                    ),
                     Served::Op(_)
                 ),
                 "{method} on your own task is still served"
@@ -310,14 +315,13 @@ mod tests {
         // An absent id and someone else's id answer alike — same code, and a
         // message that carries nothing but the id the caller already supplied —
         // so the error cannot be used to enumerate the ids the peer holds.
-        let reject = |wanted: &str| {
-            match classify("GetTask", &json!({"id": wanted}), &outsider, &st) {
+        let reject =
+            |wanted: &str| match classify("GetTask", &json!({"id": wanted}), &outsider, &st) {
                 Served::Reject(error) => (error.code, error.message.replace(wanted, "<id>")),
                 Served::Op(_) | Served::Ingest(_) | Served::ShardRepair { .. } => {
                     panic!("expected a rejection")
                 }
-            }
-        };
+            };
         assert_eq!(reject(TASK_B), reject(TASK_A));
     }
 
