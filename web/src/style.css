@@ -2,9 +2,13 @@
   font: menu;
   font-family:
     "TX-02", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  /* The classic HTML palette, straight off the 1994 browser defaults. Light
-     only — there was no dark mode to switch to. */
-  color-scheme: light;
+  /* The palette is agent-share's, which carries a matched dark half the 1994
+     browser defaults never had. The switch goes through color-scheme rather
+     than a prefers-color-scheme query so the UA's own rendering follows too:
+     section's 100vh guarantees a page scrollbar and every transcript has its
+     own, and a media query would flip the tokens below and leave both of those
+     painted light on a dark page. */
+  color-scheme: light dark;
   line-height: 150%;
   /* On the scroll container itself: scroll-snap-type set on body does not
      propagate to the viewport the way overflow does. Sections taller than the
@@ -12,13 +16,13 @@
      than the snapport lets the snapport rest anywhere inside it. */
   scroll-snap-type: y mandatory;
 
-  --bg: #ffffff;
-  --fg: #000000;
-  --link: #0000ee;
-  --visited: #551a8b;
-  --active: #ff0000;
-  --dim: #666666;
-  --code-bg: #f0f0f0;
+  --bg: light-dark(#ffffff, #272727);
+  --fg: light-dark(#272727, #ffffff);
+  --link: light-dark(#0f62c8, #5aaafa);
+  --visited: light-dark(#7b3fc4, #c99cf5);
+  --active: light-dark(#c62435, #ff7d87);
+  --dim: light-dark(#595859, #a6a5a6);
+  --code-bg: light-dark(#f6f6f6, #1e1d1e);
 }
 
 body {
@@ -135,6 +139,7 @@ pre {
   padding: 1rem;
   background: var(--code-bg);
   overflow-x: auto;
+  border-radius: 4px;
 }
 
 code {
@@ -146,6 +151,7 @@ code {
      last fragment only; clone repaints the box on every line. */
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+  border-radius: 4px;
 }
 
 .dim {
@@ -157,4 +163,5 @@ video {
   width: 100%;
   height: auto;
   margin-block: 1em;
+  border-radius: 8px;
 }

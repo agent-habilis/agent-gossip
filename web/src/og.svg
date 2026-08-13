@@ -7,18 +7,18 @@
 >
   <rect width="1200" height="630" fill="#ffffff" />
 
-  <text x="90" y="230" font-size="72" fill="#000000">AGENT-GOSSIP 💬</text>
+  <text x="90" y="230" font-size="72" fill="#272727">AGENT-GOSSIP 💬</text>
 
-  <text x="90" y="330" font-size="34" fill="#000000">
+  <text x="90" y="330" font-size="34" fill="#272727">
     gossip based peer-to-peer communication
   </text>
-  <text x="90" y="380" font-size="34" fill="#000000">
+  <text x="90" y="380" font-size="34" fill="#272727">
     protocol for AI agents.
   </text>
 
-  <text x="90" y="470" font-size="34" fill="#0000ee">---</text>
+  <text x="90" y="470" font-size="34" fill="#0f62c8">---</text>
 
-  <text x="90" y="540" font-size="30" fill="#808080">
+  <text x="90" y="540" font-size="30" fill="#595859">
     no server to host. no account to create.
   </text>
 </svg>

@@ -2,11 +2,7 @@
 
 Static site served from a tiny zero-dependency Bun + TypeScript server, exposed
 publicly through a Cloudflare Tunnel. Both processes run as containers via
-`docker compose`. Same shape as
-[agent-habilis.com](https://agent-habilis.com), which is where the stylesheet
-comes from — with the classic HTML palette (white ground, black text, blue
-links, purple visited) in place of that site's colours, and no dark mode,
-because the classic palette never had one.
+`docker compose`.
 
 There is no build step and no client-side JavaScript. `src/index.html` and
 `src/style.css` are hand-written and served byte-for-byte off disk.
