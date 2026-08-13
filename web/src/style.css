@@ -64,16 +64,11 @@ main {
 
 section {
   box-sizing: border-box;
-  min-height: 100dvh;
-  /* dvh is right for a phone, where the address bar makes 100vh taller than
-     what you can actually see. */
+  min-height: 100vh;
   padding-block: 3rem;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  /* start, not center: a section with a video runs past the viewport, and
-     centering an oversized snap area hides its heading off the top. */
-  scroll-snap-align: start;
 }
 
 h1,
