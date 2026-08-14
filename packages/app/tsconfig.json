@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  // The app compiles against DOM globals, not Bun's. `exactOptionalPropertyTypes`
+  // is relaxed as agent-share relaxes it: moonspace's prop types spread optional
+  // fields through, and the strict reading rejects `{ error: undefined }`.
+  "compilerOptions": { "types": [], "exactOptionalPropertyTypes": false },
+  "include": ["."],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+}

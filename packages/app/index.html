@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent-gossip</title>
+    <meta name="robots" content="noindex" />
+    <!--
+      Resolved at build time, not served from public/: the bundler rewrites this
+      to a hashed asset under /app/. An absolute /favicon.svg would be a path
+      Bun cannot resolve from here, since public/ is copied rather than bundled.
+    -->
+    <link rel="icon" href="../server/public/favicon.svg" />
+    <!--
+      First-paint guard: pick the light/dark half of the chrome before any
+      JavaScript runs, so a hard reload never flashes the wrong colors. The app
+      paints on --bg-sunken (see app.css), hence that pair here. color-scheme
+      goes on html only — on body it would pin the UA's own rendering.
+    -->
+    <style>
+      html {
+        color-scheme: light dark;
+        background: light-dark(#f6f6f6, #1e1d1e);
+        color: light-dark(#272727, #ffffff);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

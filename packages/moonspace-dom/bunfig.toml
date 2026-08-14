@@ -1,0 +1,4 @@
+# Bun does not walk up for a bunfig, so `cd packages/moonspace-dom && bun test`
+# would otherwise run with no DOM registered. The root run picks up the root one.
+[test]
+preload = ["../scripts/test-setup.ts"]

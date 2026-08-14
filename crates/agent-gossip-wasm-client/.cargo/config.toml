@@ -1,0 +1,6 @@
+# `getrandom` refuses to build for wasm32-unknown-unknown unless it is told
+# which entropy source to use, because the target has no OS to ask. Enabling
+# the crate's `wasm_js` *feature* alone is not enough — it also gates on this
+# cfg, so a build that sets only the feature fails with the same message.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

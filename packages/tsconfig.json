@@ -1,0 +1,25 @@
+// The config Bun itself reads for everything under packages/, so `jsx` and
+// `jsxImportSource` have to reach it from tsconfig.base.json — Bun resolves the
+// JSX runtime from the nearest tsconfig, and without them a .tsx file compiles
+// against `react/jsx-dev-runtime` and fails to resolve.
+//
+// As a typecheck program this covers the shared tooling in scripts/ alone —
+// every package has its own tsconfig, and `type-check` runs them all.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"],
+
+    // Kept from before the base existed: the base is shared with vendored
+    // source that does not hold to these, but our own code does.
+    "moduleDetection": "force",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@agent-gossip/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./main.tsx",
+  "exports": {
+    ".": "./main.tsx",
+    "./lib/meshId.ts": "./lib/meshId.ts"
+  },
+  "dependencies": {
+    "moonspace-dom": "workspace:*",
+    "visage-dom": "workspace:*",
+    "visage-router": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

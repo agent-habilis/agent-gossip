@@ -1,0 +1,14 @@
+.env
+.DS_Store
+node_modules/
+
+# The served document root: server/public/ copied verbatim + the bundled app.
+# Built by `bun run build`. Unanchored, so it also covers server/dist/. The
+# vendored library packages are NOT ignored — they are source, and committed.
+dist/
+
+# wasm-bindgen output. Rebuilt by `bun run build:wasm`; the crate is the source.
+app/wasm/pkg/
+
+# Second browser profile, created by scripts/e2e.ts.
+.e2e-tab2/

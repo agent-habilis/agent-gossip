@@ -1,0 +1,32 @@
+// Shared compiler options for the Bun workspace (every package under packages/).
+// Adapted from visage's tsconfig.base.json.
+//
+// Deliberately no `references` and no `composite`. Project references would
+// force `declaration: true`, and cross-package imports would then resolve
+// through emitted .d.ts files rather than source.
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom", "dom.iterable", "esnext.disposable"],
+
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+
+    // Applies to .tsx files only, so the JSX layer is opt-in by file extension
+    // and every existing .ts file is unaffected.
+    "jsx": "react-jsx",
+    "jsxImportSource": "visage-dom",
+
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+    "isolatedModules": true
+  }
+}

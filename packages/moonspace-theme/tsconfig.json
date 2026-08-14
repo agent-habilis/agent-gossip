@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /*
+     * No DOM lib and no `jsx` setting, for the same reason `moonspace` leaves
+     * them out and one more besides.
+     *
+     * This package's `src` is pulled into four other tsconfig programs —
+     * moonspace-dom, moonspace-tui, stories-dom and stories-tui — because tsc
+     * typechecks workspace dependencies from source rather than from a .d.ts.
+     * So `src` has to satisfy the *intersection* of those four, which means no
+     * `visage-*` import of any kind: only two of the four map `visage-style` in
+     * their `paths`, and an import here would be an unresolved module there.
+     * That constraint is why `ColorValue` in `roles.ts` restates a subset of
+     * visage-style's `Color` instead of importing it.
+     *
+     * The stories are deliberately outside `include` — they *do* use the DOM and
+     * JSX, and are typechecked by stories-dom's program instead.
+     */
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+
+    /* Vendored: the Bun globals for the test files, resolved from web/. */
+    "types": ["bun"]
+
+    /*
+     * Upstream carries a `paths` block here for its `stories/` directory.
+     * The stories are not vendored, so the mappings are dropped.
+     */
+  },
+  "include": ["src"]
+}

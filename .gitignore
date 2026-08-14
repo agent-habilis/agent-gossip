@@ -1,5 +1,8 @@
-# Rust build output (one workspace -> one target/, at the root)
-/target
+# Rust build output. Deliberately unanchored: there is more than one workspace
+# here now. `crates/agent-gossip-wasm-client` is excluded from the root
+# workspace (it builds for wasm32 and nowhere else), so it carries its own
+# target/ — 1.2 GB of it. An anchored `/target` covered only the root's.
+target/
 
 # Generated roff man pages. `cargo task man` writes them under /target, but the
 # release workflow's download-artifact drops them here before the build runs —

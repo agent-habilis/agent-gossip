@@ -1,0 +1,24 @@
+// Declaration emit for the published artifact. Upstream's build script drives
+// this; it is not vendored, so nothing here runs it. Typechecking uses
+// tsconfig.json.
+//
+// `noEmit: false` is not redundant: the base config sets `noEmit: true`, which
+// otherwise wins over `emitDeclarationOnly` and makes tsc write nothing and
+// exit 0.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "dist/dts"
+  },
+  "include": ["src"],
+  // Tests are not part of the artifact, and they import `bun:test`, which is
+  // unresolvable without the bun types the published .d.ts must not require.
+  // Both globs are needed — jsx-runtime/index.test.tsx is .tsx. The third
+  // covers helpers shared between test files, which are not tests themselves
+  // and so would otherwise ship a declaration.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.test-util.ts"]
+}

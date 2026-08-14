@@ -1,0 +1,7 @@
+{
+  "extends": "../tsconfig.base.json",
+  // web/tsconfig.base.json omits `types` (the app compiles with `types: []`);
+  // the vendor packages need the Bun globals for tests and src/dev/flag.ts.
+  "compilerOptions": { "types": ["bun"] },
+  "include": ["src"]
+}

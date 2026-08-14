@@ -1,0 +1,43 @@
+# Standalone workspace on purpose, and `exclude`d from the root: this crate
+# builds for wasm32 and nowhere else, so an unscoped `cargo build` at the root
+# would fail on it. It also keeps `web-sys` out of the host lockfile.
+[package]
+name = "agent-gossip-wasm-client"
+version = "0.1.0"
+edition = "2024"
+description = "Browser gossip peer for agent-gossip: A2A over a WebRTC data channel"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[lib]
+# `rlib` so pure logic can be unit-tested; `cdylib` is what wasm-bindgen loads.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The engine, portable half only: `host` pulls in signals, the control socket
+# and the filesystem, none of which exist in a tab.
+fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "e6ab1388faf0b7c98ccc75044e182b28c8c3a811", default-features = false }
+fofoca-iroh-webrtc-transport = { git = "https://github.com/fofoca-network/fofoca", rev = "e6ab1388faf0b7c98ccc75044e182b28c8c3a811", features = ["web"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+send_wrapper = "0.6"
+web-sys = { version = "0.3", features = ["Window", "console", "Storage", "RtcPeerConnection", "RtcPeerConnectionState"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true

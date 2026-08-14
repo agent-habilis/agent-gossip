@@ -1,0 +1,22 @@
+{
+  "name": "moonspace-theme",
+  "version": "0.0.0",
+  "description": "The colour layer of moonspace. Semantic roles, an ANSI-16 mapping, and swappable palettes.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5.9.0"
+  }
+}

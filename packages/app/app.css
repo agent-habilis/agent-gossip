@@ -1,0 +1,46 @@
+/*
+ * Unlayered on purpose: author CSS outside `@layer` outranks both the `reset`
+ * and `moonspace` layers moonspace-dom declares, so everything here wins over a
+ * component style without reaching for `!important`.
+ */
+
+/*
+ * The page chrome sits below the content surface — the same sunken/raised split
+ * agent-share uses. moonspace-dom's GlobalStyle puts `body { background:
+ * var(--bg) }` in `@layer reset`; `html body` keeps the extra specificity too.
+ */
+html body {
+  background: var(--bg-sunken);
+}
+
+#root {
+  margin: 0;
+  min-height: 100dvh;
+}
+
+/*
+ * A room, not a document: dragging across the transcript should move the
+ * pointer, not paint a selection over every line it crosses.
+ *
+ * Unlike agent-share this app *does* render form controls — the join field and
+ * the composer — so they have to opt back in below, or it would be impossible
+ * to select text inside them.
+ */
+html {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/*
+ * …except where the text is the payload: a mesh id headed for someone else's
+ * clipboard, a message worth quoting, anything typed. Opted into per element so
+ * the reason a thing is selectable sits next to the markup that needs it.
+ * `user-select` inherits, hence the descendant selector.
+ */
+input,
+textarea,
+.selectable,
+.selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+}

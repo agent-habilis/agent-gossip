@@ -1,5 +1,11 @@
 [workspace]
 members = ["crates/*"]
+# The browser client builds for wasm32 and nowhere else — `web_sys::window()`
+# does not exist off it, and `fofoca` selects the *native* WebRTC backend on a
+# host target, so a host build cannot type-check by construction. Left in
+# `members` (which `crates/*` would do), every unscoped host build would fail on
+# it. It carries its own `[workspace]` table and its own lockfile.
+exclude = ["crates/agent-gossip-wasm-client"]
 # Load-bearing on a *virtual* manifest: a root package on edition 2024 implies
 # `resolver = "3"`, but a virtual workspace inherits nothing from its members
 # and silently defaults to the edition-2015 `resolver = "1"`. Left implicit, the

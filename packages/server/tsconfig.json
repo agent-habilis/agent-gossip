@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  // Bun globals: this package is the only one that runs on the server.
+  "compilerOptions": {
+    "types": ["bun"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true
+  },
+  "include": ["."],
+  "exclude": ["dist", "public"]
+}

@@ -1,0 +1,50 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /*
+     * ESNext.Disposable is load-bearing, not tidiness: `using` and
+     * Symbol.dispose are how a component releases an interval or an observer,
+     * and without this lib every `using` in the package is a type error.
+     */
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "ESNext.Disposable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    /*
+     * Applies to .tsx only, so .ts files are unaffected. React and visage cannot
+     * both be the JSX runtime for one project — this pair of lines is what makes
+     * this package visage's rather than React's.
+     */
+    "jsx": "react-jsx",
+    "jsxImportSource": "visage-dom",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+
+    /*
+     * visage is typechecked from source, and skipLibCheck does not apply to .ts
+     * files — so visage-dom/src/dev/flag.ts, which reads
+     * `globalThis.process?.env?.NODE_ENV`, needs the Bun globals to resolve.
+     */
+    "types": ["bun"]
+
+    /*
+     * Upstream wires visage in via `paths` to a sibling checkout. In this
+     * vendored copy, visage-dom and visage-style are sibling workspace
+     * packages (declared in package.json), so no mapping is needed.
+     */
+  },
+  "include": ["src"]
+}
