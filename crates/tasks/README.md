@@ -78,8 +78,8 @@ Nothing here asks the developer to `cargo install` a toolchain first.
   `build` calls `Build::execute()` directly. zig itself is vendored into
   `target/tooling/` on first use at a pinned version — never the dev's global or
   brew zig — so a cross build is self-contained and reproducible. `--arch` is
-  sugar for a static-musl Linux target, the shape the Raspberry Pi fleet
-  deploys.
+  sugar for a glibc Linux target pinned at the 2.31 floor, the shape the
+  Raspberry Pi fleet deploys.
 - **`clap_mangen`** is what makes `man` work in-process: it walks the app's clap
   tree via `agent_gossip::cli_command()` and emits one page per subcommand. This
   is why the task runner depends on [`agent-gossip`](../agent-gossip) — and why

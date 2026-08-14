@@ -10,12 +10,13 @@ use anyhow::Result;
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// Compact global allocator, Linux only. The fleet ships a static-musl binary,
-/// and musl's built-in malloc holds a lot of resident memory; swapping in
-/// mimalloc roughly halves the daemon's anonymous RSS (measured on the aarch64
-/// Pi fleet). Not on macOS: Apple's libmalloc is already lean there, so mimalloc
-/// is pure overhead (measured ~1.6 MB worse), and the OS keeps its default.
-/// Yielded to dhat's allocator under the profiling feature.
+/// Compact global allocator, Linux only. The roughly halved anonymous RSS that
+/// justified it was measured on the aarch64 Pi fleet against musl's own malloc,
+/// back when the fleet shipped a static-musl binary; it ships glibc now, so
+/// treat that number as stale and re-measure before leaning on it. Not on macOS:
+/// Apple's libmalloc is already lean there, so mimalloc is pure overhead
+/// (measured ~1.6 MB worse), and the OS keeps its default. Yielded to dhat's
+/// allocator under the profiling feature.
 #[cfg(all(not(feature = "dhat-heap"), target_os = "linux"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

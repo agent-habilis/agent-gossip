@@ -54,10 +54,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          # Both Linux rows build on a runner of their own arch, so the C in
+          # the graph (`aws-lc-sys`, `ring`, `blake3`, `mimalloc`) goes
+          # through the image's own gcc. No cross-compile, so the action
+          # skips `cross` and its Docker image. The cost is a glibc floor:
+          # these are built against the runner's 2.39, so a distro older
+          # than Ubuntu 24.04 / Debian 13 cannot run them.
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
           - target: aarch64-apple-darwin
             os: macos-26
           # The runner is Apple silicon, so this one cross-compiles. Without
@@ -112,7 +118,7 @@ jobs:
           # anyone reproduces this step on macOS. perl's `-pi -e` is identical
           # on both, and the sha256 rewrite below already uses it.
           perl -pi -e "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/agent-gossip.rb
-          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
             sum=$(cut -d' ' -f1 "/tmp/agent-gossip-v$ver-$target.sha256")
             # Replace the sha256 line immediately following this target's url line.
             perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/agent-gossip.rb

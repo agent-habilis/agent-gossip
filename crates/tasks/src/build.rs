@@ -4,8 +4,8 @@
 //! `target/tooling/` on first use (never the dev's global/brew zig);
 //! cargo-zigbuild is a regular crate dependency driven as a *library*, not a
 //! global `cargo install`. So the cross build is self-contained and
-//! reproducible. `--arch` is sugar for a static-musl Linux target — the shape
-//! we deploy to the Raspberry Pi fleet.
+//! reproducible. `--arch` is sugar for a glibc Linux target — the shape we
+//! deploy to the Raspberry Pi fleet.
 
 use std::path::PathBuf;
 
@@ -19,6 +19,11 @@ use crate::util::{output, repo_root};
 /// Bump deliberately (and re-test a cross build) for a new toolchain.
 const ZIG_VERSION: &str = "0.16.0";
 
+/// glibc floor for `--arch`, as the `.<version>` suffix cargo-zigbuild reads.
+/// Debian 11 Bullseye, so a fleet member on an older image still runs the
+/// binary — zig carries every stub set, so reaching back costs nothing.
+const GLIBC_FLOOR: &str = "2.31";
+
 pub(crate) fn run(
     sh: &Shell,
     target: Option<&str>,
@@ -28,8 +33,8 @@ pub(crate) fn run(
     let triple = match (target, arch) {
         (Some(_), Some(_)) => return Err("pass only one of --target / --arch".into()),
         (Some(triple), None) => Some(triple.to_owned()),
-        // `--arch aarch64` ⇒ `aarch64-unknown-linux-musl` (static, no glibc).
-        (None, Some(arch)) => Some(format!("{arch}-unknown-linux-musl")),
+        // `--arch aarch64` ⇒ `aarch64-unknown-linux-gnu.2.31`.
+        (None, Some(arch)) => Some(format!("{arch}-unknown-linux-gnu.{GLIBC_FLOOR}")),
         (None, None) => None,
     };
 
@@ -56,7 +61,13 @@ pub(crate) fn run(
         return Ok(());
     }
 
-    let _ = cmd!(sh, "rustup target add {triple}").quiet().run();
+    // cargo-zigbuild reads the glibc floor off a `.<version>` suffix and splits
+    // it away before rustc sees the triple. rustup and the built path know only
+    // the bare one, so telling them about the suffix leaves the target
+    // uninstalled and prints a path that does not exist.
+    let rust_triple = triple.split_once('.').map_or(triple.as_str(), |(bare, _)| bare);
+
+    let _ = cmd!(sh, "rustup target add {rust_triple}").quiet().run();
 
     output::status(
         "Cross",
@@ -82,13 +93,13 @@ pub(crate) fn run(
         args.push("--release".to_owned());
     }
     let mut build = cargo_zigbuild::Build::parse_from(args);
-    build.enable_zig_ar = true; // mirrors cargo-zigbuild's own bin; needed for musl ar
+    build.enable_zig_ar = true; // mirrors cargo-zigbuild's own bin, which sets it for every target
     build
         .execute()
         .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
     let dir = if release { "release" } else { "debug" };
-    output::status("Built", &format!("target/{triple}/{dir}/agent-gossip"));
+    output::status("Built", &format!("target/{rust_triple}/{dir}/agent-gossip"));
     Ok(())
 }
 

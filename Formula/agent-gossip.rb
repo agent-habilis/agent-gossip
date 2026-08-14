@@ -20,10 +20,10 @@ class AgentGossip < Formula
 
   on_linux do
     if Hardware::CPU.intel?
-      url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-x86_64-unknown-linux-musl.tar.gz"
+      url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "c623a0f38caa797f0650163af6aae91f3c333298809130ccfd63484fc6405782"
     elsif Hardware::CPU.arm?
-      url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-aarch64-unknown-linux-musl.tar.gz"
+      url "https://github.com/agent-habilis/agent-gossip/releases/download/v#{version}/agent-gossip-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "48653d26fc8ea265850bf49a3ee559bbf2a55c1f2650d978d6494441c6ded77f"
     end
   end
