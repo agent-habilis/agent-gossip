@@ -65,7 +65,9 @@ pub(crate) fn run(
     // it away before rustc sees the triple. rustup and the built path know only
     // the bare one, so telling them about the suffix leaves the target
     // uninstalled and prints a path that does not exist.
-    let rust_triple = triple.split_once('.').map_or(triple.as_str(), |(bare, _)| bare);
+    let rust_triple = triple
+        .split_once('.')
+        .map_or(triple.as_str(), |(bare, _)| bare);
 
     let _ = cmd!(sh, "rustup target add {rust_triple}").quiet().run();
 
