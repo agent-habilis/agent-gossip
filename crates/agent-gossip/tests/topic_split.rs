@@ -39,6 +39,9 @@ fn init_short_tuning() {
         rival_recheck_first_secs: 3,
         rival_recheck_secs: 8,
         rival_recheck_meshed_secs: 12,
+        // Both halves of a split have an empty roster, so the alone ceiling
+        // is the cap this test's ramp actually meets.
+        rival_recheck_alone_secs: 12,
         topic_mdns_only: true,
         ..Tuning::DEFAULTS
     });
