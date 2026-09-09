@@ -6,27 +6,27 @@
 //! flattening the full server group would list `--state-file` / `--max-peers` /
 //! `--filter-self` / `--a2a-serve` in its `--help` as silent no-ops.
 //!
-//! Not in `--help`. Production runs on the `fofoca::util::consts`
+//! Not in `--help`. Production runs on the `fofoca::util::tuning`
 //! defaults; the subprocess test suite passes these to run with short timings.
 //! These replace the former env-var overrides — see
 //! `fofoca::util::tuning`.
 
 use clap::Parser;
 
-use fofoca::util::consts;
+use fofoca::util::tuning as defaults;
 
 #[derive(Parser, Debug)]
 pub(crate) struct TuningOpts {
     /// Peer-eviction silence timeout (seconds).
-    #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::ALIVE_TIMEOUT_SECS)]
     pub alive_timeout_secs: u64,
 
     /// How often the sweeper scans for expired peers (seconds).
-    #[arg(long, hide = true, default_value_t = consts::SWEEP_INTERVAL_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::SWEEP_INTERVAL_SECS)]
     pub sweep_interval_secs: u64,
 
     /// Cadence of the unconditional gossip healer (seconds).
-    #[arg(long, hide = true, default_value_t = consts::HEAL_INTERVAL_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::HEAL_INTERVAL_SECS)]
     pub heal_interval_secs: u64,
 
     /// Task idle-debounce timeout (seconds).
@@ -42,15 +42,15 @@ pub(crate) struct TuningOpts {
     pub task_keepalive_max_secs: u64,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
-    #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::BEACON_COHOST_GRACE_SECS)]
     pub beacon_cohost_grace_secs: u64,
 
     /// How long an `agent-gossip ping` round collects pongs (seconds).
-    #[arg(long, hide = true, default_value_t = consts::PING_WINDOW_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::PING_WINDOW_SECS)]
     pub ping_window_secs: u64,
 
     /// How often the daemon checks for orphaning by its spawning agent (millis).
-    #[arg(long, hide = true, default_value_t = consts::PPID_WATCH_INTERVAL_MS)]
+    #[arg(long, hide = true, default_value_t = defaults::PPID_WATCH_INTERVAL_MS)]
     pub ppid_watch_interval_ms: u64,
 
     /// How long a `long: true` poll read parks before returning empty (millis).
@@ -58,27 +58,27 @@ pub(crate) struct TuningOpts {
     pub longpoll_max_ms: u64,
 
     /// Heal inter-tick gap above which the process hard re-bootstraps (seconds).
-    #[arg(long, hide = true, default_value_t = consts::HEAL_STALL_THRESHOLD_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::HEAL_STALL_THRESHOLD_SECS)]
     pub heal_stall_threshold_secs: u64,
 
     /// No inbound gossip for this long, with peers known, trips the starvation watchdog (seconds).
-    #[arg(long, hide = true, default_value_t = consts::STARVATION_THRESHOLD_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::STARVATION_THRESHOLD_SECS)]
     pub starvation_threshold_secs: u64,
 
     /// Directory re-broadcast cadence for an advertiser (seconds).
-    #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::ADVERTISE_INTERVAL_SECS)]
     pub advertise_interval_secs: u64,
 
     /// How long a discoverer keeps showing a gossip after its last ad (seconds).
-    #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::DIRECTORY_EXPIRY_SECS)]
     pub directory_expiry_secs: u64,
 
     /// How often a member broadcasts its anti-entropy digest (seconds).
-    #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_INTERVAL_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::ANTIENTROPY_INTERVAL_SECS)]
     pub antientropy_interval_secs: u64,
 
     /// Max messages re-sent in response to one anti-entropy digest.
-    #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
+    #[arg(long, hide = true, default_value_t = defaults::ANTIENTROPY_MAX_RESEND)]
     pub antientropy_max_resend: usize,
 
     /// Use the loopback (private) directory + relax the advertise→public guard.
@@ -86,15 +86,15 @@ pub(crate) struct TuningOpts {
     pub directory_private: bool,
 
     /// First rival re-check shed of an `EagerProbed` public beacon (seconds).
-    #[arg(long, hide = true, default_value_t = consts::RIVAL_RECHECK_FIRST_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_FIRST_SECS)]
     pub rival_recheck_first_secs: u64,
 
     /// Steady rival re-check cadence for a lone beacon holder (seconds).
-    #[arg(long, hide = true, default_value_t = consts::RIVAL_RECHECK_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_SECS)]
     pub rival_recheck_secs: u64,
 
     /// Steady rival re-check cadence while meshed (seconds).
-    #[arg(long, hide = true, default_value_t = consts::RIVAL_RECHECK_MESHED_SECS)]
+    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_MESHED_SECS)]
     pub rival_recheck_meshed_secs: u64,
 
     /// Narrow topic-mesh lookups to mDNS only (no DHT, no relay).

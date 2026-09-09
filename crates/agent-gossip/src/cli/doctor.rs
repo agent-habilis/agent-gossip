@@ -533,8 +533,8 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
             if reached {
                 let (path, relay) = net::conn_path(&endpoint, rendezvous_id).await;
                 let detail = match relay {
-                    Some(url) => format!("reachable — {path} path (relay {url})"),
-                    None => format!("reachable — {path} path"),
+                    Some(url) => format!("reachable — {} path (relay {url})", path.label()),
+                    None => format!("reachable — {} path", path.label()),
                 };
                 checks.push(Check::new("rendezvous", Verdict::Ok, detail));
             } else {

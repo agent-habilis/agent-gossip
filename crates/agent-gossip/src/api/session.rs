@@ -1,6 +1,6 @@
 use fofoca::embed::RosterSnapshot;
 use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
-use fofoca::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
 use super::advertise::Advertiser;

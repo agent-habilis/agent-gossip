@@ -1361,7 +1361,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1516,7 +1516,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1582,8 +1582,8 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fofoca"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1591,13 +1591,11 @@ dependencies = [
  "bs58",
  "bytes",
  "chacha20poly1305",
- "fofoca-directory",
  "fofoca-doc",
  "fofoca-iroh-multihop-transport",
  "fofoca-iroh-webrtc-transport",
  "fofoca-logging",
  "fofoca-protocol",
- "fofoca-reassembly",
  "fofoca-util",
  "futures-util",
  "interprocess",
@@ -1620,22 +1618,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fofoca-directory"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
-dependencies = [
- "anyhow",
- "fofoca-protocol",
- "fofoca-util",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "fofoca-doc"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1651,11 +1636,12 @@ dependencies = [
 
 [[package]]
 name = "fofoca-iroh-multihop-transport"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "anyhow",
  "bytes",
+ "fofoca-iroh-transport-util",
  "iroh",
  "iroh-base",
  "n0-future",
@@ -1668,12 +1654,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fofoca-iroh-transport-util"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
+dependencies = [
+ "iroh",
+]
+
+[[package]]
 name = "fofoca-iroh-webrtc-transport"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "anyhow",
  "bytes",
+ "fofoca-iroh-transport-util",
  "futures",
  "if-addrs",
  "iroh",
@@ -1683,7 +1678,6 @@ dependencies = [
  "noq-udp",
  "rand 0.9.4",
  "serde",
- "serde_json",
  "str0m",
  "str0m-aws-lc-rs",
  "tokio",
@@ -1695,8 +1689,8 @@ dependencies = [
 
 [[package]]
 name = "fofoca-logging"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "anyhow",
  "fofoca-protocol",
@@ -1708,8 +1702,8 @@ dependencies = [
 
 [[package]]
 name = "fofoca-protocol"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1732,23 +1726,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fofoca-reassembly"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
-dependencies = [
- "anyhow",
- "bytes",
- "fofoca-protocol",
- "fofoca-util",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "fofoca-util"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=2611c67b9ebfee3c49485710d1789bdfa798b8f4#2611c67b9ebfee3c49485710d1789bdfa798b8f4"
 dependencies = [
  "libc",
  "tokio",
@@ -2661,7 +2641,7 @@ dependencies = [
 [[package]]
 name = "iroh-mainline-address-lookup"
 version = "0.4.0"
-source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1#53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1"
+source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=a5a77c6ff26fa2dcbb2b650bd0d095b7c94e2990#a5a77c6ff26fa2dcbb2b650bd0d095b7c94e2990"
 dependencies = [
  "derive_more",
  "iroh",
@@ -2678,7 +2658,7 @@ dependencies = [
 [[package]]
 name = "iroh-mdns-address-lookup"
 version = "0.4.0"
-source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1#53cf1ee6cc10a9b8c4805a5f7fe4d39570d86aa1"
+source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=a5a77c6ff26fa2dcbb2b650bd0d095b7c94e2990#a5a77c6ff26fa2dcbb2b650bd0d095b7c94e2990"
 dependencies = [
  "data-encoding",
  "derive_more",
@@ -3372,7 +3352,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4253,7 +4233,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4311,7 +4291,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4488,7 +4468,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4891,8 +4871,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swarm-discovery"
 version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b4877f20f064de34b77d79237c9caa37c393590af8ef5a2f3253d59be5a338b"
+source = "git+https://github.com/rkuhn/swarm-discovery?rev=b41dbcc431f419ad0cd91f786d4d7c71ec6be9ce#b41dbcc431f419ad0cd91f786d4d7c71ec6be9ce"
 dependencies = [
  "acto",
  "hickory-proto",
@@ -4985,10 +4964,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4998,7 +4977,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5691,7 +5670,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

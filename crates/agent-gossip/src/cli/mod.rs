@@ -11,7 +11,7 @@ use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use fofoca::protocol::JoinTarget;
-use fofoca::protocol::{Mesh, MeshConfig, MeshName, resolve_lookups};
+use fofoca::protocol::{Mesh, MeshConfig, MeshName, TransportPolicy, resolve_lookups};
 use fofoca::protocol::{MeshId, MessageId, Nickname};
 use fofoca::runtime::run as run_event_loop;
 use fofoca::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
@@ -262,6 +262,9 @@ async fn create(opts: CreateOpts) -> Result<()> {
         // Likewise the issuer pubkey: `set_invite` mints the keypair at setup
         // and bakes the pubkey; the `--invite-only` flag rides `CreateParams`.
         issuer_pubkey: None,
+        // No CLI flag lets payload ride the relay, so the mesh takes the
+        // engine's lookup-only default.
+        transport: TransportPolicy::default(),
         // `--no-gossip` is a mesh-wide characteristic baked into the id, so
         // every joiner inherits it from the ticket alone.
     };

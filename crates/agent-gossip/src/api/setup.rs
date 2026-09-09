@@ -2,7 +2,7 @@ use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use crate::output::Output;
-use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
+use fofoca::protocol::{DirectorySelection, MeshConfig, TransportPolicy, resolve_lookups};
 use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
 use fofoca::runtime::{SetupParams, setup_mesh};
 
@@ -28,6 +28,9 @@ pub(super) async fn create_setup(
         lookups: resolve_lookups(cfg.public, cfg.lookups),
         password: None,
         issuer_pubkey: None,
+        // The api exposes no relay-payload knob, so the mesh takes the
+        // engine's lookup-only default.
+        transport: TransportPolicy::default(),
     };
     // The advertiser reaches the directory over this mesh's own lookups.
     let directory_lookups = config.lookups.clone();

@@ -1066,12 +1066,14 @@ async fn build_offload_parts(
     let Some(file) = file else {
         return Ok(vec![crate::a2a::Part::text(text)]);
     };
-    let lookups = mesh
+    let parsed = mesh
         .as_str()
         .parse::<fofoca::protocol::Mesh>()
-        .map_err(|error| anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}"))?
-        .lookups()
-        .clone();
+        .map_err(|error| {
+            anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
+        })?;
+    let lookups = parsed.lookups().clone();
+    let relay_transport = parsed.transport().relay;
     // Route through the choke point so the base is validated (0700, ours) before
     // this attachment payload spool is created — bypassing it could birth the
     // shared base at a world-traversable 0755.
@@ -1084,6 +1086,7 @@ async fn build_offload_parts(
     let ticket = fofoca::ops::blob::offload(
         &mut app.blob_server,
         &lookups,
+        relay_transport,
         fofoca::ops::blob::OffloadRequest {
             path: file.path,
             spool_dir: spool,

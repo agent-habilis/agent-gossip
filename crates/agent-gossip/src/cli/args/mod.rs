@@ -62,7 +62,7 @@ pub(crate) struct Cli {
     pub log_dir: Option<std::path::PathBuf>,
 
     /// Max log-file bytes before rotating to `<file>.1` (`0` disables).
-    /// Hidden test/ops knob; default `fofoca::util::consts::LOG_FILE_MAX_BYTES`.
+    /// Hidden test/ops knob; default `fofoca::util::tuning::LOG_FILE_MAX_BYTES`.
     #[arg(long, global = true, hide = true)]
     pub log_max_bytes: Option<u64>,
 
@@ -241,7 +241,7 @@ pub(crate) enum Commands {
 
         /// How long `ping` collects pongs (seconds). Hidden; tests shorten it
         /// so a `ping` round-trip doesn't wait the full window.
-        #[arg(long, hide = true, default_value_t = fofoca::util::consts::PING_WINDOW_SECS)]
+        #[arg(long, hide = true, default_value_t = fofoca::util::tuning::PING_WINDOW_SECS)]
         ping_window_secs: u64,
 
         /// How long a `long: true` fetch parks before returning empty (millis).

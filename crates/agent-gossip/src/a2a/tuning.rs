@@ -23,7 +23,7 @@ pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 /// `--timeout-secs` default.
 ///
 /// **Must stay above the engine's heal interval**, currently 15s
-/// (`fofoca::util::consts::HEAL_INTERVAL_SECS`). A directed request
+/// (`fofoca::util::tuning::HEAL_INTERVAL_SECS`). A directed request
 /// rides the gossip overlay unlogged, so one sent while the overlay holds no
 /// live peer link is dropped outright and anti-entropy never heals it; the
 /// sender is rescued only when the next heal tick re-bridges the pair. This sat

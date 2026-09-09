@@ -1,7 +1,7 @@
 use fofoca::protocol::JoinTarget;
 use fofoca::protocol::Nickname;
 use fofoca::protocol::{LookupSet, MeshName};
-use fofoca::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
 /// How to join a mesh.
 #[derive(Debug, Clone)]

@@ -53,6 +53,7 @@ fn cfg(lookups: LookupOpts) -> MeshConfig {
         lookups,
         password: None,
         issuer_pubkey: None,
+        transport: fofoca::protocol::TransportPolicy::default(),
     }
 }
 

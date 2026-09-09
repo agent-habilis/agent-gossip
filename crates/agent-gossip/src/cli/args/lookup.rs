@@ -125,8 +125,8 @@ mod tests {
                 "--relay",
                 "https://relay.example"
             ]),
-            RelaySelection::Custom("https://relay.example".parse().unwrap()),
-            "valued ⇒ single-rung Custom ladder"
+            RelaySelection::Named("https://relay.example".parse().unwrap()),
+            "valued ⇒ single-rung named ladder"
         );
         assert_eq!(
             relay_of(&[
@@ -136,7 +136,7 @@ mod tests {
                 "--relay",
                 "https://a.example,https://b.example"
             ]),
-            RelaySelection::Custom("https://a.example,https://b.example".parse().unwrap()),
+            RelaySelection::Named("https://a.example,https://b.example".parse().unwrap()),
             "comma-separated ⇒ ordered multi-rung ladder"
         );
     }

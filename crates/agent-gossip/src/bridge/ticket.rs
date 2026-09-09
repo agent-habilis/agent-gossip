@@ -187,6 +187,7 @@ mod tests {
             size: 1_234_567,
             lookups: LookupOpts::public_preset(),
             password: false,
+            relay_transport: false,
         };
         let a2a = A2aTicket {
             addr: sample_addr(4),

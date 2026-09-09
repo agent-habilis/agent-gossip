@@ -67,7 +67,7 @@ use fofoca::protocol::JoinTarget;
 use fofoca::protocol::{LookupSet, MeshName, RelayLadder, RelaySelection};
 use fofoca::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 use fofoca::runtime::derive_topic_mesh;
-use fofoca::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
@@ -447,7 +447,7 @@ impl AgentGossipServer {
         let relay = match args.relay.as_deref() {
             None => RelaySelection::Unset,
             Some("default") => RelaySelection::Default,
-            Some(urls) => RelaySelection::Custom(urls.parse::<RelayLadder>().map_err(|error| {
+            Some(urls) => RelaySelection::Named(urls.parse::<RelayLadder>().map_err(|error| {
                 McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
             })?),
         };

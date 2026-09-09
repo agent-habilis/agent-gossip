@@ -1024,7 +1024,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
     if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
         return;
     }
-    state.note_peer_endpoint(author.clone(), peer_id);
+    state.note_peer_endpoint(author.clone(), peer_addr.clone());
     if let Err(error) = add_peer_addr(ctx.endpoint, peer_addr) {
         tracing::debug!(%error, %author, "could not seed a meta-doc endpoint into the address book");
     }

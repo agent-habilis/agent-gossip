@@ -7,7 +7,7 @@
 
 use clap::Parser;
 
-use fofoca::util::consts;
+use fofoca::util::tuning as defaults;
 
 use super::legacy::LegacyOutput;
 use super::tuning::TuningOpts;
@@ -23,7 +23,7 @@ pub(crate) struct SharedServerOpts {
     /// set). The gossip holds at most this many QUIC links and relays to peers
     /// beyond it; gossips up to this size form a full mesh with no membership
     /// churn.
-    #[arg(long, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
+    #[arg(long, default_value_t = defaults::GOSSIP_ACTIVE_VIEW_CAPACITY)]
     pub max_peers: usize,
 
     /// Serve the A2A JSON-RPC 2.0 binding on 127.0.0.1 (off by default).
