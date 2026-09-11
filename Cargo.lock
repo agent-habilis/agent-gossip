@@ -1583,7 +1583,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fofoca"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1620,7 +1620,7 @@ dependencies = [
 [[package]]
 name = "fofoca-doc"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1637,7 +1637,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-multihop-transport"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1656,7 +1656,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "iroh",
 ]
@@ -1664,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1690,7 +1690,7 @@ dependencies = [
 [[package]]
 name = "fofoca-logging"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "fofoca-protocol",
@@ -1703,7 +1703,7 @@ dependencies = [
 [[package]]
 name = "fofoca-protocol"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1728,7 +1728,7 @@ dependencies = [
 [[package]]
 name = "fofoca-util"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "libc",
  "tokio",

@@ -1153,8 +1153,8 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fofoca"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1162,12 +1162,10 @@ dependencies = [
  "bs58",
  "bytes",
  "chacha20poly1305",
- "fofoca-directory",
  "fofoca-doc",
  "fofoca-iroh-webrtc-transport",
  "fofoca-logging",
  "fofoca-protocol",
- "fofoca-reassembly",
  "fofoca-util",
  "futures-util",
  "iroh",
@@ -1186,22 +1184,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fofoca-directory"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
-dependencies = [
- "anyhow",
- "fofoca-protocol",
- "fofoca-util",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "fofoca-doc"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1216,12 +1201,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fofoca-iroh-transport-util"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
+dependencies = [
+ "iroh",
+]
+
+[[package]]
 name = "fofoca-iroh-webrtc-transport"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "bytes",
+ "fofoca-iroh-transport-util",
  "futures",
  "if-addrs",
  "iroh",
@@ -1231,7 +1225,6 @@ dependencies = [
  "noq-udp",
  "rand 0.9.5",
  "serde",
- "serde_json",
  "str0m",
  "str0m-aws-lc-rs",
  "tokio",
@@ -1243,8 +1236,8 @@ dependencies = [
 
 [[package]]
 name = "fofoca-logging"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "fofoca-protocol",
@@ -1255,8 +1248,8 @@ dependencies = [
 
 [[package]]
 name = "fofoca-protocol"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1279,23 +1272,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fofoca-reassembly"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
-dependencies = [
- "anyhow",
- "bytes",
- "fofoca-protocol",
- "fofoca-util",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "fofoca-util"
-version = "0.5.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=e6ab1388faf0b7c98ccc75044e182b28c8c3a811#e6ab1388faf0b7c98ccc75044e182b28c8c3a811"
+version = "0.6.0"
+source = "git+https://github.com/fofoca-network/fofoca?rev=43f128033f4b856d547825b2add33774543825ff#43f128033f4b856d547825b2add33774543825ff"
 dependencies = [
  "tokio",
  "tracing",

@@ -1073,7 +1073,7 @@ async fn build_offload_parts(
             anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
         })?;
     let lookups = parsed.lookups().clone();
-    let relay_transport = parsed.transport().relay;
+    let relay_transport = parsed.transport().relay_transport;
     // Route through the choke point so the base is validated (0700, ours) before
     // this attachment payload spool is created — bypassing it could birth the
     // shared base at a world-traversable 0755.
