@@ -1,0 +1,30 @@
+{
+  "name": "@agent-gossip/site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "bun scripts/gen-docs.ts",
+    "build": "bun run gen && next build",
+    "dev": "mkdir -p public && ln -sfn ../../server/public/video public/video && bun run gen && next dev",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "fumadocs-core": "16.15.10",
+    "fumadocs-mdx": "15.4.0",
+    "fumadocs-ui": "16.15.10",
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@mdx-js/mdx": "^3.1.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "postcss": "^8.5.28",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.3.3"
+  }
+}

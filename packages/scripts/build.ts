@@ -1,10 +1,11 @@
 /**
  * Produces `dist/`, the served document root:
  *
- *   server/public/*   copied verbatim  -> server/dist/*      (the marketing site)
+ *   server/public/*   copied verbatim  -> server/dist/*      (videos, og image, favicon)
+ *   site/             next build       -> server/dist/*      (the landing page and docs)
  *   app/index.html    bundled          -> server/dist/app/*  (the gossip app)
  *
- * Neither `app/` nor `server/public/` is served directly, which is what keeps
+ * None of `app/`, `site/` or `server/public/` is served directly, which is what keeps
  * the app sources — and `server.ts`, `package.json`, `.env` — unreachable.
  *
  * Bun reads `jsx` / `jsxImportSource` out of tsconfig, so there is no JSX
@@ -54,13 +55,27 @@ async function stageWasm(): Promise<string> {
   return `/app/${name}`
 }
 
-// Independent and disjoint — the copy writes dist/, the wasm writes dist/app/,
-// and the version only reads a manifest. Serially they were ~40 MB of I/O one
-// after another for no reason.
-const [, wasmPath, version] = await Promise.all([
-  // Verbatim, not bundled: index.html is hand-written and byte-served, and the
-  // video encodes are the reason the server answers range requests at all.
+async function buildSite(): Promise<void> {
+  const build = Bun.spawn(['bun', 'run', 'build'], {
+    cwd: here('site/'),
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+  if ((await build.exited) !== 0) {
+    console.error('site build failed')
+    process.exit(1)
+  }
+  await cp(here('site/out/'), DIST, { recursive: true })
+}
+
+// Independent and disjoint — the copy writes the media and icons, the site its
+// pages and _next/, the wasm dist/app/, and the version only reads a manifest.
+// Serially they were ~40 MB of I/O one after another for no reason.
+const [, , wasmPath, version] = await Promise.all([
+  // Verbatim, not bundled: the video encodes are the reason the server answers
+  // range requests at all.
   cp(here('server/public/'), DIST, { recursive: true }),
+  buildSite(),
   stageWasm(),
   crateVersion(),
 ])

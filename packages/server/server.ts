@@ -73,6 +73,18 @@ Bun.serve({
 
     let file = Bun.file(filePath)
     if (!(await file.exists())) {
+      // The site is exported with trailingSlash, so its pages are
+      // docs/x/index.html and every link it writes is `/docs/x/`. A hand-typed
+      // `/docs/x` is sent there rather than 404ing.
+      if (await Bun.file(join(filePath, 'index.html')).exists()) {
+        const url = new URL(req.url)
+        console.log(`308 ${req.method} ${pathname}`)
+        return new Response(null, {
+          status: 308,
+          headers: { Location: `${url.pathname}/${url.search}` },
+        })
+      }
+
       // Nothing on disk — the client may still own this path. Two cases, and
       // both are served the same shell:
       //
@@ -124,7 +136,9 @@ Bun.serve({
     // /app/ that must stay revalidated — everything beside it is content-hashed
     // by the bundler.
     const immutable =
-      pathname.startsWith('/video/') || (pathname.startsWith('/app/') && pathname !== `/${SHELL}`)
+      pathname.startsWith('/video/') ||
+      pathname.startsWith('/_next/static/') ||
+      (pathname.startsWith('/app/') && pathname !== `/${SHELL}`)
     res.headers.set('Cache-Control', immutable ? CACHE_IMMUTABLE : CACHE_REVALIDATE)
     return res
   },

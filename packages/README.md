@@ -6,9 +6,12 @@ Cloudflare Tunnel. Both processes run as containers via `docker compose`.
 
 Two halves, deliberately unalike:
 
-- **`public/`** — the marketing site. Hand-written `index.html` and `style.css`,
-  copied byte-for-byte into the build. No bundler touches them, and there is no
-  client-side JavaScript on that page.
+- **`site/`** — the landing page and the docs, at `/` and `/docs/`. A
+  [Fumadocs](https://www.fumadocs.dev) site (Next.js, React) built as a static
+  export. The docs pages are generated from `../docs/manual.txt` by
+  `site/scripts/gen-docs.ts` and are not committed, so they cannot drift from
+  the manual the binary embeds. `server/public/` only holds the media, the og
+  image and the favicon, copied byte-for-byte.
 - **`src/`** — the gossip web app, at `/room/` and at every `/<mesh-id>`. A
   [visage](README-vendored.md) SPA bundled by `scripts/build.ts`.
 
@@ -33,7 +36,8 @@ has no app in it, so "you forgot to build" does not look like a routing bug.
 
 | request | served |
 |---|---|
-| `/`, `/style.css`, `/video/…` | the file in `server/dist/` |
+| `/`, `/docs/…`, `/video/…` | the file in `server/dist/` |
+| `/docs/x` (no slash) | `308` to `/docs/x/`, when `docs/x/index.html` exists |
 | `/room`, `/room/…` | the app shell — the whole subtree is the app's |
 | `/<mesh-id>` | the app shell, **only if the segment is a valid mesh id** |
 | anything else | `404` |
@@ -209,7 +213,8 @@ plus a poster frame for each. The originals are ~338 MB of high-bitrate capture;
 the encodes are ~32 MB total. Regenerate with:
 
 ```sh
-bun run media   # ./scripts/encode-media.sh
+bun run media           # re-encode every clip, then cut its posters
+bun run media posters   # only re-cut the posters, from the existing encodes
 ```
 
 The page loads them with `preload="none"`, so a visitor downloads only posters
@@ -230,14 +235,16 @@ SVG cards):
 
 - `server/dist/` — the document root; everything served, and nothing else. Built, gitignored
 - `server/server.ts` — zero-dep static server (`Bun.serve` + `Bun.file`), with range support
-- `server/public/` — the marketing site, copied verbatim into `server/dist/`
+- `server/public/` — the media, og image and favicon, copied verbatim into `server/dist/`
+- `site/` — the landing page and docs (Fumadocs, static export). `bun run build`
+  in it generates `content/docs/` from the manual, then writes `site/out/`
 - `app/` — the gossip app: `main.tsx`, `pages/` (laid out to mirror the URLs),
   `components/`, `lib/`, `wasm/`. Bundled into `server/dist/app/`
 - `visage-*` / `moonspace-*` — vendored as source. See `README-vendored.md`
-- `scripts/build.ts` — copies `server/public/`, bundles `app/`
+- `scripts/build.ts` — copies `server/public/`, builds `site/`, bundles `app/`
 - `scripts/build-wasm.ts` — builds `crates/agent-gossip-wasm-client` and runs `wasm-bindgen`
 - `scripts/e2e.ts` — the browser suite; `scripts/test-setup.ts` — happy-dom preload
-- `scripts/encode-media.sh` — re-encodes `../assets/*.mp4` into `server/public/video/`
+- `scripts/encode-media.ts` — re-encodes `../assets/*.mp4` into `server/public/video/`
 - `Dockerfile` — `oven/bun:alpine` image
 - `docker-compose.yml` — `agent-gossip-com` + `cloudflared` services
 - `.env` — local-only, holds `CLOUDFLARE_TUNNEL_TOKEN` (never committed)
