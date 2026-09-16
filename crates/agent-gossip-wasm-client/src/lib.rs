@@ -66,6 +66,7 @@ impl GossipPeer {
                 lookups: LookupOpts::public_preset(),
                 password: None,
                 issuer_pubkey: None,
+                transport: fofoca::protocol::TransportPolicy::default(),
             },
             advertise: DirectorySelection::Unset,
             password: None,
@@ -186,9 +187,11 @@ fn parse_nickname(nickname: Option<String>) -> Result<Option<Nickname>, JsValue>
     }
 }
 
-/// `dynamic` lets a failed ICE negotiation fall back to the relay; `webrtc`
-/// fails loudly instead. Named rather than inferred so the caller states the
-/// contract it is asserting.
+/// `dynamic` lets a failed ICE negotiation fall back to the relay, but only on
+/// a mesh whose id sets `relay_transport`. On a lookup-only mesh (what `create`
+/// mints, and the CLI's default) the pair stays unlinked instead. `webrtc`
+/// fails loudly. Named rather than inferred so the caller states the contract
+/// it is asserting.
 fn parse_transport(mode: Option<&str>) -> Result<TransportOpts, JsValue> {
     match mode.map(str::trim).filter(|mode| !mode.is_empty()) {
         None | Some("dynamic") => Ok(TransportOpts::default()),

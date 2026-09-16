@@ -22,10 +22,10 @@ use common::{
 };
 use serde_json::json;
 
-/// Heal cadence injected into the reliability tests via the hidden
+/// Heal cadence for the reliability tests, injected through the hidden
 /// `--heal-interval-secs` flag. Floored at 3s: below that the
-/// claim-if-free walk, the 8s `BEACON_MESH_WAIT_SECS` overlap, and the
-/// probe timeouts get racy. Production stays at the 15s default.
+/// claim-if-free walk and the probe timeouts get racy. Production stays
+/// at 15s.
 const TEST_HEAL_SECS: u64 = 3;
 
 /// Anti-entropy cadence injected into the backfill tests via the hidden
@@ -38,12 +38,10 @@ const TEST_AE_SECS: u64 = 2;
 /// `src/util/consts.rs`), so this floor is iroh-bound, not ours.
 const LINK_DEATH_FREEZE: Duration = Duration::from_secs(18);
 
-/// Ceiling for the post-departure handoff poll (a survivor serving the
-/// seed-derived rendezvous after the old beacon's process exited). A
-/// co-host/claim takes a couple of heal cycles at the injected cadence
-/// plus up to `BEACON_MESH_WAIT_SECS` (8s) to bridge; the rest is
-/// loaded-host margin. Callers poll [`survivor_serves_rendezvous`] and
-/// pay only the real handoff time.
+/// Ceiling for the post-departure handoff poll. A co-host claim takes a
+/// couple of heal cycles; the rest is margin for a loaded host. Callers
+/// poll [`survivor_serves_rendezvous`], so they pay only the real handoff
+/// time.
 fn handoff_budget() -> Duration {
     Duration::from_secs(6 * TEST_HEAL_SECS + 20)
 }
@@ -1798,12 +1796,9 @@ fn test_join_horizon_hides_pre_join_history() {
 
 // ── reliability tests ────────────────────────────────────────────────────────
 //
-// `SHORT_EVICT` collapses the ~90s eviction window and the 15s heal
-// cadence to seconds via the hidden tuning flags. `TEST_HEAL_SECS` is
-// floored at 3s: below that the claim-if-free walk, the 8s
-// `BEACON_MESH_WAIT_SECS` overlap, and the probe timeouts get racy
-// (production stays at the 15s default — shorter cadences destabilise
-// convergence in real meshes; a loopback test tolerates them).
+// `SHORT_EVICT` collapses the ~90s eviction window and the heal cadence to
+// seconds through the hidden tuning flags. Such short cadences destabilise
+// convergence in a real mesh, but a loopback test tolerates them.
 
 const SHORT_EVICT: [(&str, &str); 3] = [
     ("--alive-timeout-secs", "3"),

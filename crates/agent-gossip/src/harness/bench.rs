@@ -39,7 +39,7 @@ impl BenchConfig {
         let lookups = LookupOpts {
             mdns: true,
             dht: false,
-            relay: RelayChoice::Custom(vec![
+            relay_lookup: RelayChoice::Custom(vec![
                 "https://a.example".parse().expect("valid relay url"),
                 "https://b.example".parse().expect("valid relay url"),
             ]),

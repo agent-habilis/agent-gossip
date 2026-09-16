@@ -34,7 +34,7 @@ impl LookupArgs {
         LookupSet {
             mdns: self.mdns,
             dht: self.dht,
-            relay,
+            relay_lookup: relay,
         }
     }
 }
@@ -82,7 +82,7 @@ mod tests {
     /// through the create command.
     fn relay_of(args: &[&str]) -> RelaySelection {
         match Cli::parse_from(args).command {
-            Commands::Create { opts } => opts.lookups.to_set().relay,
+            Commands::Create { opts } => opts.lookups.to_set().relay_lookup,
             Commands::Join { .. }
             | Commands::Topic { .. }
             | Commands::Poll { .. }
@@ -182,6 +182,6 @@ mod tests {
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());
         assert!(lookups.mdns && !lookups.dht);
-        assert_eq!(lookups.relay, RelayChoice::Disabled);
+        assert_eq!(lookups.relay_lookup, RelayChoice::Disabled);
     }
 }

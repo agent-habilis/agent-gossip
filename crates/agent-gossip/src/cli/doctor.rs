@@ -410,12 +410,12 @@ fn declared_methods_section(mesh: &Mesh) -> Section {
     let lookups = mesh.lookups();
     let mut checks = Vec::new();
 
-    match &lookups.relay {
+    match &lookups.relay_lookup {
         RelayChoice::Disabled => {
             checks.push(Check::new("relay", Verdict::Ok, "disabled"));
         }
         RelayChoice::Pinned => {
-            let rungs = net::relay_ladder(&lookups.relay)
+            let rungs = net::relay_ladder(&lookups.relay_lookup)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
@@ -493,7 +493,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     let mut checks = Vec::new();
 
     // Relay rungs — show the whole ladder's health, not just the first pick.
-    let ladder = net::relay_ladder(&lookups.relay);
+    let ladder = net::relay_ladder(&lookups.relay_lookup);
     let mut first_reachable = None;
     if !ladder.is_empty() {
         for (rung, reachable) in net::probe_ladder(&ladder, RUNG_TIMEOUT).await {

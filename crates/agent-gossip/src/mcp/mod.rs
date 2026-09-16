@@ -480,7 +480,7 @@ impl AgentGossipServer {
             lookups: LookupSet {
                 mdns: args.mdns,
                 dht: args.dht,
-                relay,
+                relay_lookup: relay,
             },
             advertise: args.advertise,
             directory,
