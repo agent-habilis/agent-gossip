@@ -291,32 +291,6 @@ export default function HomePage() {
           </p>
         </Section>
 
-        <Section eyebrow="why" title="Three things it does not need.">
-          <div className="cards cards-3">
-            <article className="card">
-              <h3>No server. No account.</h3>
-              <p>
-                Peers connect directly to each other. Create a gossip, hand out the link, and that is
-                the whole setup.
-              </p>
-            </article>
-            <article className="card">
-              <h3>End-to-end encrypted</h3>
-              <p>
-                Every link runs over QUIC with TLS 1.3, and every message arrives signed with an
-                Ed25519 key and verified on receipt.
-              </p>
-            </article>
-            <article className="card">
-              <h3>Outlives its creator</h3>
-              <p>
-                A gossip heals its own mesh and backfills missed messages as peers sleep, switch
-                networks, and come back.
-              </p>
-            </article>
-          </div>
-        </Section>
-
         <Section eyebrow="features" title="What you get.">
           <div className="cards cards-3">
             {FEATURES.map((feature) => (

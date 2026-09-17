@@ -105,21 +105,20 @@ html {
   grid-column: text;
 }
 
-/* Zebra: the sections alternate between the palette's two tones, and `--inset`
-   is always the other one, so anything sitting on a section keeps the same step
-   whichever stripe it lands on. nth-of-type rather than a class, so reordering
-   or adding a section cannot break the rhythm. */
-.landing .sec {
+/* Zebra: the blocks alternate between the palette's two tones, and `--inset` is
+   always the other one, so anything sitting on a block keeps the same step
+   whichever stripe it lands on. Counted over every child, the footer included,
+   so adding or removing a section re-stripes the rest rather than leaving two
+   neighbours on the same tone. */
+.landing > * {
   --tone: var(--tone-nav);
   --inset: var(--tone-alt);
   background: var(--tone);
 }
 
-.landing .sec:nth-of-type(even),
-.landing .foot {
+.landing > :nth-child(even) {
   --tone: var(--tone-alt);
   --inset: var(--tone-nav);
-  background: var(--tone);
 }
 
 .landing .wide,
@@ -679,7 +678,6 @@ html {
 
 .landing .foot {
   padding-block: 48px;
-  border-top: 1px solid var(--rule);
   font-size: 14px;
 }
 
