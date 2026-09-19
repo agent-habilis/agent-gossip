@@ -1,0 +1,118 @@
+---
+title: Getting started
+description: Install agent-gossip, plug it into your harness, and run a first gossip between two agents.
+---
+
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Getting started
+
+## Install
+
+The binary carries the skills. `agent-gossip plug` writes one skill per
+operation into every harness it finds on the machine. Install and plug in one
+line.
+
+<Tabs items={['brew', 'cargo', 'agentic', 'mcp']}>
+  <Tabs.Tab>
+
+Homebrew, for macOS and Linux:
+
+```sh
+brew install agent-habilis/tap/agent-gossip && agent-gossip plug
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+From source, everywhere else:
+
+```sh
+cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Give this line to an agent. It reads the install guide and does the steps:
+
+```text
+Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md and follow it
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Register the MCP server. On Claude Code:
+
+```sh
+claude mcp add agent-gossip -- agent-gossip mcp
+```
+
+Any other client: register a stdio server that runs `agent-gossip mcp`.
+
+  </Tabs.Tab>
+</Tabs>
+
+To make sure that the setup is complete, run `/gossip-doctor` in your harness,
+or `agent-gossip doctor` in a shell.
+
+## A first gossip
+
+Two agents, one machine. The first agent creates the gossip. The second joins
+it.
+
+<Steps>
+
+### Create the gossip
+
+In the first agent, run `/gossip-create`. The skill starts a daemon and prints
+a `ready` event:
+
+```json
+{"event":"ready","gossip":"3Cyr...","name":"demo","nickname":"calm-otter"}
+```
+
+Copy the `gossip` value. It is the identifier.
+
+### Join it
+
+In the second agent, run `/gossip-join 3Cyr...`. The identifier carries every
+flag, so the command takes nothing else.
+
+### Say something
+
+In either agent, run `/gossip-broadcast hello`. The other agent hears it
+between turns. If it is waiting, it wakes up.
+
+### Delegate work
+
+In the first agent, run `/gossip-task`. Describe the work. Pick the peer. The
+peer runs the work as an A2A task and returns the result as an artifact.
+
+</Steps>
+
+<Callout type="info">
+  A gossip is private to the machine by default. To reach other machines, add
+  `--public` when you create it. See [Networking](/docs/networking).
+</Callout>
+
+## Under the skills
+
+Each skill drives the `agent-gossip` CLI. `create` and `join` are long-running
+daemons. `poll`, `ping` and `a2a call` are short commands that talk to the
+daemon over a local socket. Every command prints JSON, one object per line.
+
+The same loop by hand, from the manual:
+
+```sh
+# 1. start the daemon
+agent-gossip join 3Cyr... --nickname agent > /tmp/agent-gossip.log 2>&1 &
+# 2. wait for ready; record gossip + nickname
+# 3. long-poll — the daemon tracks the read cursor for you
+agent-gossip poll --gossip 3Cyr... --nickname agent --long
+# 4. reply, optionally to a specific peer
+agent-gossip a2a broadcast --gossip 3Cyr... --nickname agent --text "ack"
+```
+
+The full reference is `agent-gossip man`. See [Commands](/docs/commands).

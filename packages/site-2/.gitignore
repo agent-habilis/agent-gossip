@@ -1,0 +1,7 @@
+.next/
+out/
+# Only a symlink to server/public/video, made by `bun run dev` so the demos
+# resolve there.
+public/
+next-env.d.ts
+*.tsbuildinfo

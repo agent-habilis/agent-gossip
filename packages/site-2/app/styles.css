@@ -1,0 +1,340 @@
+/* Carried over from packages/site/app/global.css: the transcripts are real
+   terminal output, so the whole site is set in monospace. TX-02 is proprietary
+   and ships no font file, so the fallback is what nearly everyone sees — the
+   design is built for it. */
+:root {
+  --x-font-sans: 'TX-02', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --x-font-mono: 'TX-02', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --accent: hsl(var(--nextra-primary-hue) var(--nextra-primary-saturation) var(--nextra-primary-lightness));
+  --tile-bg: #f7f7f7;
+  --line: #d8d8d8;
+  --muted: #595859;
+  --dot: #c9c9c9;
+  /* Section rhythm from packages/site: 64 / 96 / 128px by viewport. */
+  --section: 4rem;
+  --gap: 1rem;
+}
+
+@media (width >= 768px) {
+  :root {
+    --section: 6rem;
+    --gap: 1.5rem;
+  }
+}
+
+@media (width >= 1024px) {
+  :root {
+    --section: 8rem;
+    --gap: 2rem;
+  }
+}
+
+.dark {
+  --tile-bg: #161616;
+  --line: #2e2e2e;
+  --muted: #a6a5a6;
+  --dot: #333;
+}
+
+.foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* Retro-tech label: small caps, tracked. */
+.chip {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------ dot band */
+
+/* The grid runs edge to edge behind the hero and the install line only. The
+   band lives inside the article, so it bleeds out with a viewport-wide
+   pseudo-element rather than a margin that would have to match Nextra's
+   padding; it also reaches up under the navbar, which is transparent. */
+.dots {
+  position: relative;
+  /* One screen tall: the band ends at the fold. svh, not vh, so a phone's
+     browser chrome does not push the fold below the screen. The navbar is
+     sticky above the band, so its height comes off the top; the 1rem is the
+     theme article's own top padding (x:pt-4), pulled into the band so the
+     bottom edge lands on the fold rather than 16px past it. */
+  margin-top: -1rem;
+  min-height: calc(100svh - var(--nextra-navbar-height));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.dots::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: calc(-1 * var(--nextra-navbar-height));
+  bottom: 0;
+  left: 50%;
+  width: 100vw;
+  translate: -50%;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* 100vw counts a classic scrollbar's width; clip so it cannot add a
+   horizontal one. */
+body:has(.dots) {
+  overflow-x: clip;
+}
+
+/* ------------------------------------------------------------------- hero */
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3rem;
+  align-items: center;
+  padding-block: var(--section);
+}
+
+@media (width >= 768px) {
+  .hero {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 4rem;
+  }
+}
+
+.chip {
+  display: inline-block;
+  border: 1px solid var(--line);
+  padding: 0.25rem 0.6rem;
+  text-decoration: none;
+}
+
+.hero-title {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin: 1.5rem 0 1.25rem;
+}
+
+.hero-accent {
+  color: var(--accent);
+}
+
+.hero-sub {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 36ch;
+  margin: 0;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem;
+  margin: 2.5rem 0 0;
+}
+
+.btn {
+  display: inline-block;
+  border: 1px solid var(--accent);
+  padding: 0.75rem 1.25rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.hero-link {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.hero-link:hover,
+.hero-actions .btn:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.3em;
+}
+
+.hero-mark {
+  display: block;
+  justify-self: center;
+  font-size: clamp(7rem, 18vw, 15rem);
+  line-height: 1;
+  padding: 2rem;
+}
+
+@media (width < 768px) {
+  .hero-mark {
+    order: -1;
+    font-size: 6rem;
+    justify-self: start;
+    padding: 1.5rem;
+  }
+}
+
+/* ---------------------------------------------------------------- install */
+
+.install {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding-block: 0 var(--section);
+  text-align: center;
+}
+
+/* The one-line command is longer than a phone; a scrollbar would hide the
+   tail of it, which is the part that matters. */
+.install pre code {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.install-more {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ bento */
+
+/* Nextra's Cards auto-fills columns; a bento wants fixed tracks to span. */
+/* The same gap above the grid as between its tiles, so the dot band ends one
+   tile-gap away from the first row. The grid is the last thing on the page,
+   so it carries the section's bottom padding down to the footer. */
+.bento {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap);
+  margin: var(--gap) 0 var(--section);
+}
+
+/* Nextra renders a card's children above its icon + title row; the tiles
+   read icon → title → text. One rule flips it and the component stays
+   Nextra's. Square corners and a hairline instead of the rounded, shadowed
+   default: retro, and it matches the tiles that are not cards. */
+.bento .nextra-card {
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  border-radius: 2px;
+  border-color: var(--line);
+  background: var(--tile-bg);
+  box-shadow: none;
+  padding: 1.75rem;
+  min-height: 16rem;
+}
+
+.bento .nextra-card > span {
+  padding: 0;
+  font-size: 1.25rem;
+}
+
+.bento p {
+  margin: 0.75rem 0 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.bento-2 {
+  grid-column: span 2;
+}
+
+.bento-tall {
+  grid-row: span 2;
+}
+
+@media (width < 768px) {
+  .bento {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bento > * {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .bento .nextra-card {
+    min-height: 0;
+  }
+}
+
+/* A tile that holds a play button cannot be a Cards.Card, which renders an
+   <a>; it borrows the card's surface instead. */
+.tile {
+  display: flex;
+  flex-direction: column;
+  padding: 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--tile-bg);
+}
+
+.tile-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.5rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* The encodes and their posters are 1440 × 900; any other ratio crops them. */
+.clip {
+  position: relative;
+  aspect-ratio: 1440 / 900;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: #000;
+}
+
+.clip video,
+.clip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.clip-poster {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.clip-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+
+.clip-play svg {
+  width: 3.5rem;
+  height: 3.5rem;
+  padding: 1rem;
+  border: 1px solid rgb(255 255 255 / 60%);
+  background: rgb(0 0 0 / 55%);
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@agent-gossip/site-2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "mkdir -p public && ln -sfn ../../server/public/video public/video && next dev -p 3002",
+    "build": "next build",
+    "test": "bun test",
+    "postbuild": "pagefind --site .next/server/app --output-path public/_pagefind"
+  },
+  "dependencies": {
+    "next": "16.0.11",
+    "nextra": "4.6.1",
+    "nextra-theme-docs": "4.6.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "pagefind": "^1.5.2",
+    "typescript": "^5.9.3"
+  }
+}
