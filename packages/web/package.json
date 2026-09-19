@@ -1,12 +1,12 @@
 {
-  "name": "@agent-gossip/site-2",
+  "name": "@agent-gossip/web",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "mkdir -p public && ln -sfn ../../server/public/video public/video && next dev -p 3002",
+    "dev": "mkdir -p public && ln -sfn ../../server/public/video public/video && next dev",
     "build": "next build",
-    "test": "bun test",
-    "postbuild": "pagefind --site .next/server/app --output-path public/_pagefind"
+    "postbuild": "pagefind --site .next/server/app --output-path out/_pagefind",
+    "test": "bun test"
   },
   "dependencies": {
     "next": "16.0.11",

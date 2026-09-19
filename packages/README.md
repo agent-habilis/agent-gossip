@@ -6,12 +6,13 @@ Cloudflare Tunnel. Both processes run as containers via `docker compose`.
 
 Two halves, deliberately unalike:
 
-- **`site/`** — the landing page and the docs, at `/` and `/docs/`. A
-  [Fumadocs](https://www.fumadocs.dev) site (Next.js, React) built as a static
-  export. The docs pages are generated from `../docs/manual.txt` by
-  `site/scripts/gen-docs.ts` and are not committed, so they cannot drift from
-  the manual the binary embeds. `server/public/` only holds the media, the og
-  image and the favicon, copied byte-for-byte.
+- **`web/`** — the landing page and the docs, at `/` and `/docs/`. A
+  [Nextra](https://nextra.site) site (Next.js, React) built as a static
+  export. The docs are hand-written MDX under `web/content/docs/`; the full
+  CLI reference stays in `agent-gossip man`. Search is
+  [Pagefind](https://pagefind.app), indexed by a `postbuild` step, so it works
+  in `next dev` only after one `bun run build` in `web/`. `server/public/`
+  only holds the media, the og image and the favicon, copied byte-for-byte.
 - **`src/`** — the gossip web app, at `/room/` and at every `/<mesh-id>`. A
   [visage](README-vendored.md) SPA bundled by `scripts/build.ts`.
 
@@ -236,12 +237,12 @@ SVG cards):
 - `server/dist/` — the document root; everything served, and nothing else. Built, gitignored
 - `server/server.ts` — zero-dep static server (`Bun.serve` + `Bun.file`), with range support
 - `server/public/` — the media, og image and favicon, copied verbatim into `server/dist/`
-- `site/` — the landing page and docs (Fumadocs, static export). `bun run build`
-  in it generates `content/docs/` from the manual, then writes `site/out/`
+- `web/` — the landing page and docs (Nextra, static export). `bun run build`
+  in it writes `web/out/`, then Pagefind indexes it into `web/out/_pagefind/`
 - `app/` — the gossip app: `main.tsx`, `pages/` (laid out to mirror the URLs),
   `components/`, `lib/`, `wasm/`. Bundled into `server/dist/app/`
 - `visage-*` / `moonspace-*` — vendored as source. See `README-vendored.md`
-- `scripts/build.ts` — copies `server/public/`, builds `site/`, bundles `app/`
+- `scripts/build.ts` — copies `server/public/`, builds `web/`, bundles `app/`
 - `scripts/build-wasm.ts` — builds `crates/agent-gossip-wasm-client` and runs `wasm-bindgen`
 - `scripts/e2e.ts` — the browser suite; `scripts/test-setup.ts` — happy-dom preload
 - `scripts/encode-media.ts` — re-encodes `../assets/*.mp4` into `server/public/video/`

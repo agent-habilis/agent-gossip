@@ -9,7 +9,7 @@
     "start": "bun scripts/build.ts && bun server/server.ts",
     "dev": "portless",
     "test": "bun test",
-    "type-check": "tsc -p tsconfig.json && tsc --noEmit -p app && tsc --noEmit -p server && tsc --noEmit -p visage-dom && tsc --noEmit -p visage-style && tsc --noEmit -p visage-router && tsc --noEmit -p moonspace && tsc --noEmit -p moonspace-theme && tsc --noEmit -p moonspace-dom && tsc --noEmit -p site && tsc --noEmit -p site-2",
+    "type-check": "tsc -p tsconfig.json && tsc --noEmit -p app && tsc --noEmit -p server && tsc --noEmit -p visage-dom && tsc --noEmit -p visage-style && tsc --noEmit -p visage-router && tsc --noEmit -p moonspace && tsc --noEmit -p moonspace-theme && tsc --noEmit -p moonspace-dom && tsc --noEmit -p web",
     "media": "bun scripts/encode-media.ts",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",

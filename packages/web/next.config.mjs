@@ -1,6 +1,6 @@
-import { createMDX } from 'fumadocs-mdx/next'
+import nextra from 'nextra'
 
-const withMDX = createMDX()
+const withNextra = nextra({})
 
 /** @type {import('next').NextConfig} */
 const config = {
@@ -9,7 +9,9 @@ const config = {
   // the shape server.ts already maps `/x/` onto.
   output: 'export',
   trailingSlash: true,
+  // No image optimizer in a static export.
+  images: { unoptimized: true },
   reactStrictMode: true,
 }
 
-export default withMDX(config)
+export default withNextra(config)

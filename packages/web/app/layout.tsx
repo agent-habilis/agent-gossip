@@ -48,7 +48,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body>
         <Layout
           pageMap={pageMap}
-          docsRepositoryBase="https://github.com/agent-habilis/agent-gossip/tree/main/packages/site-2"
+          docsRepositoryBase="https://github.com/agent-habilis/agent-gossip/tree/main/packages/web"
           sidebar={{ defaultMenuCollapseLevel: 1 }}
           // The site follows the OS color scheme; there is no switch to pick one.
           darkMode={false}

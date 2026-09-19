@@ -2,10 +2,10 @@
  * Produces `dist/`, the served document root:
  *
  *   server/public/*   copied verbatim  -> server/dist/*      (videos, og image, favicon)
- *   site/             next build       -> server/dist/*      (the landing page and docs)
+ *   web/              next build       -> server/dist/*      (the landing page and docs)
  *   app/index.html    bundled          -> server/dist/app/*  (the gossip app)
  *
- * None of `app/`, `site/` or `server/public/` is served directly, which is what keeps
+ * None of `app/`, `web/` or `server/public/` is served directly, which is what keeps
  * the app sources — and `server.ts`, `package.json`, `.env` — unreachable.
  *
  * Bun reads `jsx` / `jsxImportSource` out of tsconfig, so there is no JSX
@@ -57,15 +57,15 @@ async function stageWasm(): Promise<string> {
 
 async function buildSite(): Promise<void> {
   const build = Bun.spawn(['bun', 'run', 'build'], {
-    cwd: here('site/'),
+    cwd: here('web/'),
     stdout: 'inherit',
     stderr: 'inherit',
   })
   if ((await build.exited) !== 0) {
-    console.error('site build failed')
+    console.error('web build failed')
     process.exit(1)
   }
-  await cp(here('site/out/'), DIST, { recursive: true })
+  await cp(here('web/out/'), DIST, { recursive: true })
 }
 
 // Independent and disjoint — the copy writes the media and icons, the site its
