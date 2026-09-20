@@ -1,10 +1,25 @@
 /* Carried over from packages/site/app/global.css: the transcripts are real
-   terminal output, so the whole site is set in monospace. TX-02 is proprietary
-   and ships no font file, so the fallback is what nearly everyone sees — the
-   design is built for it. */
+   terminal output, so the landing page is set in monospace. TX-02 is
+   proprietary and ships no font file, so the fallback is what nearly everyone
+   sees — the design is built for it. Docs keep Nextra's own typography
+   untouched, so the scope is the landing page's own content; the dot band is
+   the one element only it has, which makes it the hook. Scoping to main rather
+   than body deliberately leaves out the navbar and footer, which are shared
+   chrome and must read the same on every page. */
+main:has(.dots) {
+  font-family: 'TX-02', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* The navbar and the footer inset their contents by 1.5rem inside the shared
+   content width; the theme's article uses a wider gutter, which left the hero a
+   step inboard of the logo above it. The same expression as the chrome, not a
+   copied 24px, so the two cannot drift apart. */
+article:has(.dots) {
+  padding-left: max(env(safe-area-inset-left), 1.5rem);
+  padding-right: max(env(safe-area-inset-right), 1.5rem);
+}
+
 :root {
-  --x-font-sans: 'TX-02', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --x-font-mono: 'TX-02', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --accent: hsl(var(--nextra-primary-hue) var(--nextra-primary-saturation) var(--nextra-primary-lightness));
   --tile-bg: #f7f7f7;
   --line: #d8d8d8;
@@ -179,7 +194,10 @@ body:has(.dots) {
 .hero-mark {
   display: block;
   justify-self: center;
-  font-size: clamp(7rem, 18vw, 15rem);
+  /* 23vw, not more: the mark shares a 2fr track with the copy's 3fr, and at the
+     768px breakpoint 24vw already overruns that track. An overrun would be
+     clipped by body:has(.dots), never scrolled, so it would fail silently. */
+  font-size: clamp(8rem, 23vw, 20rem);
   line-height: 1;
   padding: 2rem;
 }
@@ -187,7 +205,7 @@ body:has(.dots) {
 @media (width < 768px) {
   .hero-mark {
     order: -1;
-    font-size: 6rem;
+    font-size: 7.5rem;
     justify-self: start;
     padding: 1.5rem;
   }
