@@ -494,7 +494,7 @@ claude mcp add agent-gossip -- agent-gossip mcp</pre>
             >. Reaches the public internet with nothing to host.
           </li>
           <li>
-            <code>relay</code> — connectivity through a
+            <code>relay</code> — rendezvous through a
             <a href="https://relay.agent-habilis.com" target="_blank" rel="noopener"
               >relay</a
             >. Add <code>--relay-url URLS</code> to name your own, ordered,
@@ -506,12 +506,20 @@ claude mcp add agent-gossip -- agent-gossip mcp</pre>
           cross-machine gossip: each lookup is sufficient on its own, and
           combining them only adds reliability.
         </p>
+      </section>
+      <section>
+        <h2>transport</h2>
         <p>
-          <code>--transport p2p,relay</code> lets gossip payload itself fall
-          back to the relay when a direct path fails (the default,
-          <code>p2p</code>, keeps the relay to lookup only). It needs
-          <code>relay</code> in <code>--lookup</code> and changes the gossip
-          hash.
+          A lookup finds peers. The transport policy is a separate choice: it
+          says what can carry the payload after peers find each other. It is
+          also set at <code>/gossip-create</code> and carried in the hash.
+        </p>
+        <p>
+          <code>--transport p2p</code> is the default. Payload uses direct
+          paths only, and the relay serves lookup only.
+          <code>--transport p2p,relay</code> lets payload fall back to the
+          relay when a direct path fails. It needs <code>relay</code> in
+          <code>--lookup</code> and changes the gossip hash.
         </p>
       </section>
       <section>

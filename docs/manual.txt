@@ -137,7 +137,7 @@ DESCRIPTION
        IDENTIFIERS AND CONFIG
               The identifier (the "gossip hash") is a bare Base58Check string,
               and it is self-describing: it carries a random seed, the gossip
-              name, and the gossip config (networking lookups). No peer
+              name, and the gossip config (lookups and transport policy). No peer
               address is stored, so a gossip outlives its creator as long as
               one member is up. Because the config is inside the identifier,
               every joiner inherits it automatically; join takes no --name,
@@ -186,7 +186,8 @@ COMMANDS
                      relay set.
 
               --transport p2p|p2p,relay
-                     Payload path policy, baked into the id and inherited by
+                     Payload path policy (see "TRANSPORT"), baked into the id
+                     and inherited by
                      every joiner. p2p (the default) sends the payload over
                      direct paths only; the relay serves lookup only
                      (bootstrap dial, signalling, NAT traversal), so a pair
@@ -886,9 +887,11 @@ NETWORKING
                        restricts to those.
        mdns            LAN multicast. Same-LAN reach only.
        dht             Mainline BitTorrent DHT. Public, infrastructure-free.
-       relay           Relay connectivity and the relay-direct rendezvous
-                       dial. Needs a relay ladder: --relay-url, or the
-                       default relay set when --relay-url is omitted.
+       relay           Rendezvous through a relay server (the relay-direct
+                       dial). Needs a relay ladder: --relay-url, or the
+                       default relay set when --relay-url is omitted. This
+                       is a lookup only. It does not let the relay carry
+                       payload (see "TRANSPORT").
 
        --relay-url URLS
                        Ordered, comma-separated relay ladder, e.g.
@@ -896,17 +899,6 @@ NETWORKING
                        beacon homes on the first reachable rung. Requires
                        relay in --lookup. --lookup relay with no --relay-url
                        uses the default relay set.
-
-       --transport p2p|p2p,relay
-                       create-only, stored in the gossip id and inherited by
-                       every joiner. p2p (the default) sends the payload
-                       over direct paths only; the relay serves lookup only
-                       (bootstrap dial, signalling, NAT traversal), so a pair
-                       that cannot connect directly stays unlinked.
-                       p2p,relay lets the payload also fall back to the
-                       relay when a direct path fails. It changes the gossip
-                       id and requires relay in --lookup. relay without p2p
-                       is an error.
 
        Each lookup is sufficient on its own; combining them only adds
        reliability. Name mdns,dht,relay unless you must restrict reach. For
@@ -916,6 +908,22 @@ NETWORKING
        --relay-url flags, with one difference: there the all-on preset is
        already the no-flag default, so an empty --lookup means all three
        lookups instead of loopback-only.
+
+TRANSPORT
+       A lookup says how members find each other. The transport policy says
+       what can carry the payload after they find each other. The two are
+       separate choices. Both are create-time choices, carried in the
+       identifier, and inherited by every joiner.
+
+       --transport p2p|p2p,relay
+                       create only. p2p (the default) sends the payload over
+                       direct paths only. The relay then serves lookup only
+                       (bootstrap dial, signalling, NAT traversal), so a pair
+                       that cannot connect directly stays unlinked.
+                       p2p,relay lets the payload also fall back to the
+                       relay when a direct path fails. It changes the gossip
+                       id and requires relay in --lookup. relay without p2p
+                       is an error.
 
 DIRECTORIES
        A directory is a named, well-known public gossip that gossips advertise
@@ -1240,7 +1248,7 @@ MCP SERVER
               relay_urls (array of URL strings; requires "relay" in lookup),
               and transport (array: ["p2p"] or ["p2p","relay"]). An empty
               lookup makes a loopback-only gossip. An unknown param is
-              rejected. The networking/name choices are baked into the
+              rejected. The name, lookup and transport choices are baked into the
               identifier. Returns the gossip id, name, and your nickname.
               Advertised gossips are found with discover_gossips.
 

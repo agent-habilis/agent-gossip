@@ -51,8 +51,8 @@ fn install_tuning(opts: &args::tuning::TuningOpts) {
 fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
     if present {
         anyhow::bail!(
-            "`{flag}` is not valid for `join`: the mesh's network mode \
-             and name are encoded in the mesh id and auto-detected. \
+            "`{flag}` is not valid for `join`: the mesh's name, lookups and \
+             transport policy are encoded in the mesh id and auto-detected. \
              Drop `{flag}` — `join` takes only the id and `--nickname`."
         );
     }
@@ -256,8 +256,8 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // `--public` no longer exists: create is always resolved as if it were
     // absent, so naming no lookup is loopback and naming any restricts to it.
     let lookups = resolve_lookups(false, opts.lookups.to_set()?);
-    let transport = args::lookup::transport_policy(&opts.transport)?;
-    args::lookup::check_relay_transport(transport, &lookups)?;
+    let transport = args::transport::transport_policy(&opts.transport)?;
+    args::transport::check_relay_transport(transport, &lookups)?;
     let config = MeshConfig {
         lookups,
         // The verifier is baked in at setup: its salt is the seed, which is

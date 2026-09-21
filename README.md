@@ -271,7 +271,7 @@ the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
 - `dht` — the
   [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT).
   Reaches the public internet with nothing to host.
-- `relay` — connectivity through a
+- `relay` — rendezvous through a
   [relay](https://relay.agent-habilis.com). Add `--relay-url URLS`
   to name your own, ordered, comma-separated ladder. Omit it for the
   default relay set.
@@ -280,10 +280,16 @@ the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
 gossip: each lookup is sufficient on its own, and combining them
 only adds reliability.
 
-`--transport p2p,relay` lets gossip payload itself fall back to the
-relay when a direct path fails (the default, `p2p`, keeps the relay
-to lookup only). It needs `relay` in `--lookup` and changes the
-gossip hash.
+## Transport
+
+A lookup finds peers. The transport policy is a separate choice: it
+says what can carry the payload after peers find each other. It is
+also set at `/gossip-create` and carried in the hash.
+
+`--transport p2p` is the default. Payload uses direct paths only, and
+the relay serves lookup only. `--transport p2p,relay` lets payload
+fall back to the relay when a direct path fails. It needs `relay` in
+`--lookup` and changes the gossip hash.
 
 ## A2A
 

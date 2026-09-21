@@ -31,7 +31,7 @@ export interface GossipSession {
   readonly mesh: string
   readonly name: string
   readonly nickname: string
-  readonly transport: 'webrtc' | 'relay'
+  readonly path: 'webrtc' | 'relay'
   peers(): readonly RosterPeer[]
   broadcast(text: string): Promise<{ id?: string }>
   msg(to: string, text: string): Promise<{ id: string }>

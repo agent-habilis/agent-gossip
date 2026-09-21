@@ -54,9 +54,9 @@ impl GossipPeer {
     ///
     /// # Errors
     /// Endpoint bind failure, or no reachable relay.
-    pub async fn create(nickname: Option<String>, transport: Option<String>) -> Result<GossipPeer, JsValue> {
+    pub async fn create(nickname: Option<String>, path_mode: Option<String>) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
-        let transports = parse_transport(transport.as_deref())?;
+        let transports = parse_path_mode(path_mode.as_deref())?;
         let resolved = CreateParams {
             name: MeshName::random(),
             nickname: parse_nickname(nickname)?,
@@ -84,10 +84,10 @@ impl GossipPeer {
     pub async fn join(
         mesh_id: String,
         nickname: Option<String>,
-        transport: Option<String>,
+        path_mode: Option<String>,
     ) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
-        let transports = parse_transport(transport.as_deref())?;
+        let transports = parse_path_mode(path_mode.as_deref())?;
         let target = mesh_id
             .trim()
             .parse::<JoinTarget>()
@@ -192,12 +192,12 @@ fn parse_nickname(nickname: Option<String>) -> Result<Option<Nickname>, JsValue>
 /// mints, and the CLI's default) the pair stays unlinked instead. `webrtc`
 /// fails loudly. Named rather than inferred so the caller states the contract
 /// it is asserting.
-fn parse_transport(mode: Option<&str>) -> Result<TransportOpts, JsValue> {
+fn parse_path_mode(mode: Option<&str>) -> Result<TransportOpts, JsValue> {
     match mode.map(str::trim).filter(|mode| !mode.is_empty()) {
         None | Some("dynamic") => Ok(TransportOpts::default()),
         Some("webrtc") => Ok(TransportOpts::webrtc_only()),
         Some(other) => Err(JsValue::from_str(&format!(
-            "unknown transport {other:?}; expected `webrtc` or `dynamic`"
+            "unknown path mode {other:?}; expected `webrtc` or `dynamic`"
         ))),
     }
 }

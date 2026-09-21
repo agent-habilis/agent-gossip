@@ -62,9 +62,8 @@ use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
     TopicConfig,
 };
-use crate::cli::args::lookup::{
-    Lookup, Transport, check_relay_transport, lookup_set, transport_policy,
-};
+use crate::cli::args::lookup::{Lookup, lookup_set};
+use crate::cli::args::transport::{Transport, check_relay_transport, transport_policy};
 use fofoca::embed::RosterEntry;
 use fofoca::protocol::JoinTarget;
 use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};

@@ -7,8 +7,8 @@ use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
     /// What to join: a mesh id, classified into a [`JoinTarget`] at the
-    /// boundary (parse a string with [`str::parse`]). The network mode and
-    /// name are decoded from the id. (A shared *string* derives its own
+    /// boundary (parse a string with [`str::parse`]). The name, lookups and
+    /// transport policy are decoded from the id. (A shared *string* derives its own
     /// mesh — see the `topic` command — and is not a join target.)
     pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.

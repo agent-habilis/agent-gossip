@@ -6,8 +6,9 @@ use crate::cli::password::PasswordFlag;
 use fofoca::protocol::Nickname;
 use fofoca::protocol::{DirectorySelection, MeshName};
 
-use super::lookup::{LookupArgs, Transport};
+use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
+use super::transport::Transport;
 
 #[derive(Parser, Debug)]
 pub(crate) struct CreateOpts {
