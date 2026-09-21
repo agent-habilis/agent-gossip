@@ -1599,7 +1599,7 @@ impl Node {
     }
 
     /// Like [`create_flags`](Self::create_flags) but also passes extra raw
-    /// `create` CLI args (e.g. `["--public"]`).
+    /// `create` CLI args (e.g. `["--lookup", "mdns,dht,relay"]`).
     pub fn create_args(name: &str, extra: &[&str], flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("create");
         let file = File::create(&log).unwrap();

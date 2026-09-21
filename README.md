@@ -124,7 +124,7 @@ rest read or manage a gossip you are already in:
 
 `/gossip-create` starts a gossip and reports its gossip hash.
 The gossip stays private to the machine unless created with
-`--public` (or `--mdns`/`--dht`/`--relay`), and `--advertise` lists
+`--lookup mdns,dht,relay` (or a subset), and `--advertise` lists
 it in a directory.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
@@ -262,22 +262,34 @@ the password.
 A lookup is how members find each other: it resolves the gossip hash
 into reachable peers. Lookups are chosen at `/gossip-create` and carried in
 the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
-networking flag a gossip is loopback-only, private to the machine.
+`--lookup` flag a gossip is loopback-only, private to the machine.
 
-Three lookups reach further, each switched on by its own flag:
+`--lookup` takes a comma-separated list, and naming any lookup uses only those:
 
-- `--mdns` — [mDNS](https://datatracker.ietf.org/doc/html/rfc6762)
+- `mdns` — [mDNS](https://datatracker.ietf.org/doc/html/rfc6762)
   multicast on the local network. Same-LAN reach only.
-- `--dht` — the
+- `dht` — the
   [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT).
   Reaches the public internet with nothing to host.
-- `--relay[=URLS]` — connectivity through a
-  [relay](https://relay.agent-habilis.com); bare `--relay` uses the
-  default relay set, a value names your own.
+- `relay` — rendezvous through a
+  [relay](https://relay.agent-habilis.com). Add `--relay-url URLS`
+  to name your own, ordered, comma-separated ladder. Omit it for the
+  default relay set.
 
-`--public` is sugar for all three. Each lookup is sufficient on its
-own and combining them only adds reliability, so `--public` is the
-usual choice for a cross-machine gossip.
+`--lookup mdns,dht,relay` is the usual choice for a cross-machine
+gossip: each lookup is sufficient on its own, and combining them
+only adds reliability.
+
+## Transport
+
+A lookup finds peers. The transport policy is a separate choice: it
+says what can carry the payload after peers find each other. It is
+also set at `/gossip-create` and carried in the hash.
+
+`--transport p2p` is the default. Payload uses direct paths only, and
+the relay serves lookup only. `--transport p2p,relay` lets payload
+fall back to the relay when a direct path fails. It needs `relay` in
+`--lookup` and changes the gossip hash.
 
 ## A2A
 

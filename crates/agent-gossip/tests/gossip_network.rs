@@ -735,17 +735,17 @@ async fn test_interleaved_join_leave_order() {
     );
 }
 
-/// `--public` is accepted and the node starts successfully.
+/// `--lookup mdns,dht,relay` is accepted and the node starts successfully.
 #[test]
-fn test_network_public_accepted() {
+fn test_lookup_list_accepted() {
     let log = tmp_log("public");
     let file = File::create(&log).unwrap();
     let mut child = common::test_cmd()
-        .args(["create", "--name", "pub-test", "--public"])
+        .args(["create", "--name", "pub-test", "--lookup", "mdns,dht,relay"])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
-        .expect("failed to spawn create --public");
+        .expect("failed to spawn create --lookup mdns,dht,relay");
 
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let mut found = false;
@@ -765,7 +765,10 @@ fn test_network_public_accepted() {
     let _ = child.wait();
     let _ = fs::remove_file(&log);
 
-    assert!(found, "create --public did not produce any output");
+    assert!(
+        found,
+        "create --lookup mdns,dht,relay did not produce any output"
+    );
 }
 
 /// A catchable termination signal must remove the `--state-file` so the

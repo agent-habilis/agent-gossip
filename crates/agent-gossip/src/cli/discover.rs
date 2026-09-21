@@ -22,7 +22,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // found only by an mDNS-only `discover`.
     let mut discoverer = Directory::open(
         opts.directory.map(|name| name.as_str().to_owned()),
-        opts.lookups.to_set(),
+        opts.lookups.to_set()?,
     )
     .await?;
     // Route the directory session's logs to its per-member file (same as

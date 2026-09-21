@@ -54,7 +54,7 @@ Coverage:
    one pi and one Claude Code session.
 2. Open **one coordinator session + one per role** (the runbook's `roles:`
    frontmatter). Each is a real, independent mesh member — and may run on a
-   **different machine** (create the mesh `--public`, join by id or
+   **different machine** (create the mesh `--lookup mdns,dht,relay`, join by id or
    `agent-gossip discover`).
 3. The coordinator **briefs** each role's goal + the scenario by **mesh
    message**, then observes. The agents run on their own. Nothing travels

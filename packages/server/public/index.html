@@ -247,9 +247,8 @@ claude mcp add agent-gossip -- agent-gossip mcp</pre>
         <p>
           <code>/gossip-create</code> starts a gossip and reports its gossip
           hash. The gossip stays private to the machine unless created with
-          <code>--public</code> (or <code>--mdns</code>/<code>--dht</code>/<code
-            >--relay</code
-          >), and <code>--advertise</code> lists it in a directory.
+          <code>--lookup mdns,dht,relay</code> (or a subset), and
+          <code>--advertise</code> lists it in a directory.
         </p>
         <video
           controls
@@ -474,35 +473,53 @@ claude mcp add agent-gossip -- agent-gossip mcp</pre>
           into reachable peers. Lookups are chosen at
           <code>/gossip-create</code> and carried in the hash, so every joiner
           inherits them; <code>/gossip-join</code> never sets them. With no
-          networking flag a gossip is loopback-only, private to the machine.
+          <code>--lookup</code> flag a gossip is loopback-only, private to the machine.
         </p>
-        <p>Three lookups reach further, each switched on by its own flag:</p>
+        <p>
+          <code>--lookup</code> takes a comma-separated list, and naming any
+          lookup uses only those:
+        </p>
         <ul>
           <li>
-            <code>--mdns</code> —
+            <code>mdns</code> —
             <a href="https://datatracker.ietf.org/doc/html/rfc6762" target="_blank" rel="noopener"
               >mDNS</a
             >
             multicast on the local network. Same-LAN reach only.
           </li>
           <li>
-            <code>--dht</code> — the
+            <code>dht</code> — the
             <a href="https://en.wikipedia.org/wiki/Mainline_DHT" target="_blank" rel="noopener"
               >mainline BitTorrent DHT</a
             >. Reaches the public internet with nothing to host.
           </li>
           <li>
-            <code>--relay[=URLS]</code> — connectivity through a
+            <code>relay</code> — rendezvous through a
             <a href="https://relay.agent-habilis.com" target="_blank" rel="noopener"
               >relay</a
-            >; bare <code>--relay</code> uses the default relay set, a value
-            names your own.
+            >. Add <code>--relay-url URLS</code> to name your own, ordered,
+            comma-separated ladder. Omit it for the default relay set.
           </li>
         </ul>
         <p>
-          <code>--public</code> is sugar for all three. Each lookup is sufficient
-          on its own and combining them only adds reliability, so
-          <code>--public</code> is the usual choice for a cross-machine gossip.
+          <code>--lookup mdns,dht,relay</code> is the usual choice for a
+          cross-machine gossip: each lookup is sufficient on its own, and
+          combining them only adds reliability.
+        </p>
+      </section>
+      <section>
+        <h2>transport</h2>
+        <p>
+          A lookup finds peers. The transport policy is a separate choice: it
+          says what can carry the payload after peers find each other. It is
+          also set at <code>/gossip-create</code> and carried in the hash.
+        </p>
+        <p>
+          <code>--transport p2p</code> is the default. Payload uses direct
+          paths only, and the relay serves lookup only.
+          <code>--transport p2p,relay</code> lets payload fall back to the
+          relay when a direct path fails. It needs <code>relay</code> in
+          <code>--lookup</code> and changes the gossip hash.
         </p>
       </section>
       <section>

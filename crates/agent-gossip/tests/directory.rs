@@ -3,7 +3,7 @@
 //! The directory mesh is hardcoded public in normal operation, so this
 //! path can't run against the public relay in CI. The `--directory-private`
 //! flag flips the directory to private (loopback ladder) and relaxes the
-//! `--advertise` requires-`--public` guard, so the whole pipeline —
+//! `--advertise` requires-a-reachable-lookup guard, so the whole pipeline —
 //! advertiser → directory mesh → discoverer → `gossip_found`/`gossip_lost`
 //! — runs hermetically. This is the regression guard for the directory
 //! bootstrap fix (a discoverer never co-hosts; only the advertiser does).

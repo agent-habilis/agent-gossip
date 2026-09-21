@@ -7,7 +7,7 @@
 use clap::{Parser, Subcommand};
 
 use super::legacy::LegacyOutput;
-use super::lookup::PublicLookupArgs;
+use super::lookup::LookupArgs;
 use crate::cli::password::PasswordFlag;
 use fofoca::protocol::MeshName;
 use fofoca::protocol::{MeshId, Nickname};
@@ -34,10 +34,10 @@ pub(crate) enum A2aAction {
         to: String,
 
         /// Which lookup mechanisms the bridge uses (same flags as `create`):
-        /// naming any uses only those; naming none (or `--public`) is the all-on
-        /// public preset.
+        /// naming any uses only those; naming none is the all-on public
+        /// preset.
         #[command(flatten)]
-        lookups: PublicLookupArgs,
+        lookups: LookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
         /// with `agent-gossip a2a discover` — no ticket to copy. Bare `--advertise` ⇒ the
@@ -107,10 +107,10 @@ pub(crate) enum A2aAction {
         directory: Option<MeshName>,
 
         /// Which lookup mechanisms reach the directory (same flags as
-        /// `discover`): must match the advertiser's. Naming none (or `--public`)
-        /// is the all-on public preset.
+        /// `discover`): must match the advertiser's. Naming none is the
+        /// all-on public preset.
         #[command(flatten)]
-        lookups: PublicLookupArgs,
+        lookups: LookupArgs,
 
         #[command(flatten)]
         legacy_output: LegacyOutput,

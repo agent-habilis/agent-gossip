@@ -15,7 +15,8 @@ mod invite;
 mod join;
 mod leave;
 mod legacy;
-mod lookup;
+pub(crate) mod lookup;
+pub(crate) mod mesh_config;
 mod meta;
 mod peers;
 mod ping;
@@ -26,6 +27,7 @@ mod shared;
 mod state;
 mod topic;
 mod topology;
+pub(crate) mod transport;
 pub(crate) mod tuning;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};

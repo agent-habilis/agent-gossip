@@ -137,7 +137,7 @@ test('a joined session makes the gossip tools work', async () => {
     mesh: 'MESH',
     name: 'room',
     nickname: 'tab',
-    transport: 'webrtc',
+    path: 'webrtc',
     peers: () => [{ nickname: 'cli' }],
     broadcast: async () => ({ id: 'm1' }),
   } as unknown as GossipSession)
@@ -145,11 +145,11 @@ test('a joined session makes the gossip tools work', async () => {
   const info = (await byName('gossip_info').execute({})) as {
     ok: boolean
     peer_count: number
-    transport: string
+    path: string
   }
   expect(info.ok).toBe(true)
   expect(info.peer_count).toBe(1)
-  expect(info.transport).toBe('webrtc')
+  expect(info.path).toBe('webrtc')
 
   const sent = (await byName('send_broadcast').execute({ text: 'hello' })) as {
     ok: boolean
