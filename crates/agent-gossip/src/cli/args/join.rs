@@ -42,11 +42,6 @@ pub(crate) struct JoinOpts {
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
-    /// Accepted only to emit a clear error: the network mode is
-    /// encoded in the gossip id, so `join` has no `--public`.
-    #[arg(long, hide = true)]
-    pub public: bool,
-
     /// Accepted only to emit a clear error: the gossip name is
     /// encoded in the gossip id, so `join` has no `--name`.
     #[arg(long, hide = true)]

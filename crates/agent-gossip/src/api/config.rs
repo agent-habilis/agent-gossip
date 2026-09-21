@@ -1,6 +1,6 @@
 use fofoca::protocol::JoinTarget;
 use fofoca::protocol::Nickname;
-use fofoca::protocol::{LookupSet, MeshName};
+use fofoca::protocol::{LookupSet, MeshName, TransportPolicy};
 use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
 /// How to join a mesh.
@@ -75,17 +75,18 @@ pub struct CreateConfig {
     pub name: MeshName,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// `true` ⇒ the all-on lookup preset (mDNS + DHT + default relay
-    /// ladder) when `lookups` names nothing; `false` ⇒ loopback only.
-    /// Sugar over `lookups`, mirroring the CLI `--public`. Default `false`.
-    pub public: bool,
     /// Granular lookup allowlist (`mdns`/`dht`/`relay`). Naming any one
-    /// uses *only* those (relay defaults off); naming none falls back to
-    /// `public`. Default [`LookupSet::default`] (all off). Mirrors the
-    /// CLI `--mdns`/`--dht`/`--relay` flags.
+    /// uses *only* those (relay defaults off); naming none makes a
+    /// loopback-only mesh. Default [`LookupSet::default`] (all off, i.e.
+    /// loopback). Mirrors the CLI `--lookup`/`--relay-url` flags.
     pub lookups: LookupSet,
+    /// Which transports may carry mesh payload. Default
+    /// [`TransportPolicy::default`] (direct paths only). Mirrors the CLI
+    /// `--transport` flag.
+    pub transport: TransportPolicy,
     /// List this mesh in a directory so discoverers can find it
-    /// without its id. Requires `public`. Default `false`.
+    /// without its id. Requires a lookup that reaches other machines.
+    /// Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
@@ -107,8 +108,8 @@ impl CreateConfig {
         Self {
             name,
             nickname: None,
-            public: false,
             lookups: LookupSet::default(),
+            transport: TransportPolicy::default(),
             advertise: false,
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,

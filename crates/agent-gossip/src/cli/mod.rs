@@ -11,7 +11,7 @@ use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use fofoca::protocol::JoinTarget;
-use fofoca::protocol::{Mesh, MeshConfig, MeshName, TransportPolicy, resolve_lookups};
+use fofoca::protocol::{Mesh, MeshConfig, MeshName, resolve_lookups};
 use fofoca::protocol::{MeshId, MessageId, Nickname};
 use fofoca::runtime::run as run_event_loop;
 use fofoca::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
@@ -19,7 +19,7 @@ use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
 
 mod a2a_discover;
 pub(crate) mod agent;
-mod args;
+pub(crate) mod args;
 mod discover;
 mod doctor;
 mod ipc;
@@ -44,8 +44,8 @@ fn install_tuning(opts: &args::tuning::TuningOpts) {
     crate::a2a::tuning::init(opts.a2a_tuning());
 }
 
-/// `join` has no `--public`/`--name`: both are encoded in the id
-/// identifier and auto-detected. Without this, clap rejects them with
+/// `join` has no `--name`: it is encoded in the id
+/// identifier and auto-detected. Without this, clap rejects it with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
 fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
@@ -89,7 +89,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
-            reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             install_tuning(&opts.shared.tuning);
             Box::pin(join(opts.gossip, opts.nickname, opts.password, opts.shared)).await
@@ -254,17 +253,20 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
     let password = password::resolve_password(opts.password.clone())?;
+    // `--public` no longer exists: create is always resolved as if it were
+    // absent, so naming no lookup is loopback and naming any restricts to it.
+    let lookups = resolve_lookups(false, opts.lookups.to_set()?);
+    let transport = args::lookup::transport_policy(&opts.transport)?;
+    args::lookup::check_relay_transport(transport, &lookups)?;
     let config = MeshConfig {
-        lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
+        lookups,
         // The verifier is baked in at setup: its salt is the seed, which is
         // minted there. The flag's presence is all `resolve` needs.
         password: None,
         // Likewise the issuer pubkey: `set_invite` mints the keypair at setup
         // and bakes the pubkey; the `--invite-only` flag rides `CreateParams`.
         issuer_pubkey: None,
-        // No CLI flag lets payload ride the relay, so the mesh takes the
-        // engine's lookup-only default.
-        transport: TransportPolicy::default(),
+        transport,
         // `--no-gossip` is a mesh-wide characteristic baked into the id, so
         // every joiner inherits it from the ticket alone.
     };
@@ -376,7 +378,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             let advertise = fofoca::protocol::DirectorySelection::from_flag(advertise);
             Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
                 to: &to,
-                flags: lookups.to_set(),
+                flags: lookups.to_set()?,
                 advertise,
                 loopback,
                 password,
@@ -407,7 +409,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
         } => {
             Box::pin(a2a_discover::discover(a2a_discover::DiscoverParams {
                 directory,
-                lookups: lookups.to_set(),
+                lookups: lookups.to_set()?,
             }))
             .await
         }

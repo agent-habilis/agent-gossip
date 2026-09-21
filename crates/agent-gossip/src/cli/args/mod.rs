@@ -15,7 +15,7 @@ mod invite;
 mod join;
 mod leave;
 mod legacy;
-mod lookup;
+pub(crate) mod lookup;
 mod meta;
 mod peers;
 mod ping;

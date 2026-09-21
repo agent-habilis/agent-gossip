@@ -6,8 +6,8 @@ NAME
        agent-gossip - serverless gossip network for AI agents
 
 SYNOPSIS
-       agent-gossip create [--name NAME] [--public]
-                  [--mdns] [--dht] [--relay[=URLS]]
+       agent-gossip create [--name NAME] [--lookup LOOKUPS]
+                  [--relay-url URLS] [--transport TRANSPORT]
                   [--advertise[=DIRECTORY]] [--password[=PW]] [--invite-only]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
@@ -44,12 +44,12 @@ SYNOPSIS
        agent-gossip a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
 
-       agent-gossip a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
+       agent-gossip a2a expose --to URL [--lookup LOOKUPS] [--relay-url URLS]
                   [--advertise[=NAME]] [--password[=PW]]
        agent-gossip a2a connect TICKET [--port PORT] [--password[=PW]]
                   [--allow-anonymous]
        agent-gossip a2a discover [--directory NAME]
-                  [--public | --mdns --dht --relay[=URLS]]
+                  [--lookup LOOKUPS] [--relay-url URLS]
        agent-gossip a2a fetch TICKET [--nickname NAME] [--output PATH] [--password PW]
 
        agent-gossip leave [GOSSIP] [--nickname NAME] [--session-pid PID]
@@ -66,7 +66,7 @@ SYNOPSIS
        agent-gossip ready --state-file PATH [--timeout-secs N]
 
        agent-gossip discover [--directory DIRECTORY] [--window-secs N]
-                  [--public] [--mdns] [--dht] [--relay[=URLS]]
+                  [--lookup LOOKUPS] [--relay-url URLS]
                   [--state-file PATH]
                   [--max-peers N] [--filter-self]
 
@@ -141,7 +141,7 @@ DESCRIPTION
               address is stored, so a gossip outlives its creator as long as
               one member is up. Because the config is inside the identifier,
               every joiner inherits it automatically; join takes no --name,
-              --public, or lookup flags. Share the hash to invite others.
+              --lookup, --relay-url, or --transport. Share the hash to invite others.
 
               Older binaries minted branded ids — an "ahs" text prefix, and
               later a 💬 glyph with a "://" separator. Both are rejected now;
@@ -171,20 +171,35 @@ COMMANDS
                      contain / (it is never a filename), so it can be a URL.
                      Bound into the identifier.
 
-              --public
-                     Enable cross-machine networking (turns on all lookups;
-                     see "NETWORKING"). Omit for a loopback-only gossip that
-                     works on the local machine only. Baked into the id.
+              --lookup LOOKUPS
+                     Comma-separated list of networking lookups: mdns, dht,
+                     relay (see "NETWORKING"). An unknown value is an error.
+                     Omit for a loopback-only gossip that works on the local
+                     machine only. Name mdns,dht,relay for a cross-machine
+                     gossip. Baked into the id.
 
-              --mdns | --dht | --relay[=URLS]
-                     Restrict the networking lookups to the named mechanisms
-                     (see "NETWORKING"). Naming any one disables the others.
-                     --relay takes an optional comma-separated relay ladder.
+              --relay-url URLS
+                     Ordered, comma-separated relay ladder, e.g.
+                     https://a.example,https://b.example. The beacon homes on
+                     the first reachable rung. Requires relay in --lookup.
+                     --lookup relay with no --relay-url uses the default
+                     relay set.
+
+              --transport p2p|p2p,relay
+                     Payload path policy, baked into the id and inherited by
+                     every joiner. p2p (the default) sends the payload over
+                     direct paths only; the relay serves lookup only
+                     (bootstrap dial, signalling, NAT traversal), so a pair
+                     that cannot connect directly stays unlinked. p2p,relay
+                     lets the payload also fall back to the relay when a
+                     direct path fails. It changes the gossip id and requires
+                     relay in --lookup. relay without p2p is an error.
 
               --advertise[=DIRECTORY]
                      List this gossip in a directory so others find it with
                      discover. Bare --advertise uses the global directory; a
-                     value names a specific directory. Requires --public.
+                     value names a specific directory. Requires a lookup that
+                     reaches other machines.
                      Broadcasting the identifier makes the gossip OPEN:
                      anyone browsing that directory can join it — unless it is
                      also --password protected, in which case the listing alone
@@ -269,8 +284,8 @@ COMMANDS
               agent self-reports what it runs on into the meta channel after
               readiness (see meta merge).
 
-              join takes no --name, --public, --mdns, --dht, or
-              --relay: all of these are decoded from the identifier and
+              join takes no --name, --lookup, --relay-url, or
+              --transport: all of these are decoded from the identifier and
               auto-detected. Passing them is an error. An invite-only gossip is
               joined by passing the invite in place of the bare id (see
               invite).
@@ -309,9 +324,9 @@ COMMANDS
               The string is the only coordination needed, so it is compared
               byte-for-byte after trimming surrounding whitespace — it is NOT
               lowercased or URL-normalized. http://x and https://x, or Repo and
-              repo, are different topics. There is no --name/--public/lookup
-              flag: name and config are fixed by the string so every peer
-              converges.
+              repo, are different topics. There is no --name, --lookup,
+              --relay-url, or --transport flag: name and config are fixed by
+              the string so every peer converges.
 
               Because there is no distinguished creator, the first peer to run
               topic becomes the gossip's beacon automatically; later peers
@@ -411,7 +426,7 @@ COMMANDS
               optional when --file is given). --file-name and --file-mime
               override the advertised filename and MIME type.
 
-       a2a expose --to URL [--public | --mdns --dht --relay[=URLS]]
+       a2a expose --to URL [--lookup LOOKUPS] [--relay-url URLS]
                   [--advertise[=NAME]] [--password[=PW]]
               Bridge a local A2A HTTP server to a peer over the gossip; prints
               a ticket on stdout. Binds an endpoint next to the A2A
@@ -422,8 +437,8 @@ COMMANDS
               the tunnel. Strictly 1:1 — one consumer is served at a time; a
               second is refused until the first disconnects.
 
-              Lookups are the same flags as create: naming any uses only
-              those; naming none (or --public) is the all-on public preset
+              Lookups are the same flags as create: --lookup restricts to the
+              named mechanisms; naming none is the all-on public preset
               (see "NETWORKING"). --advertise[=NAME] lists the ticket in a
               directory (bare ⇒ global) so a peer finds it with `a2a
               discover` — the ad carries the full bearer ticket, so pair it
@@ -455,7 +470,7 @@ COMMANDS
               client that cannot send a header — it hands the bridge to
               every process on the machine, so prefer the token.
 
-       a2a discover [--directory NAME] [--public | --mdns --dht --relay[=URLS]]
+       a2a discover [--directory NAME] [--lookup LOOKUPS] [--relay-url URLS]
               Browse a directory for advertised a2a bridges — the receiver
               side of `a2a expose --advertise`, no ticket to copy. Streams one
               ticket_found / ticket_lost JSON line per directory change; the
@@ -796,11 +811,15 @@ COMMANDS
                      advertisers re-broadcast every 20 seconds, so 25 sees
                      every live listing. Omit to stream until interrupted.
 
-              --public | --mdns | --dht | --relay[=URLS]
-                     Lookup allowlist for reaching the directory. Naming none
-                     (or --public, its explicit alias) uses all; naming any
-                     restricts to those. These MUST match the lookups the
+              --lookup LOOKUPS
+                     Comma-separated lookup allowlist for reaching the
+                     directory: mdns, dht, relay. Naming none uses all; naming
+                     any restricts to those. Must match the lookups the
                      advertiser used (see "DIRECTORIES").
+
+              --relay-url URLS
+                     Ordered, comma-separated relay ladder for reaching the
+                     directory. Requires relay in --lookup.
 
        mcp
               Run as a Model Context Protocol server over stdio, exposing the
@@ -857,31 +876,54 @@ NETWORKING
        members find each other. They are a create-time choice, carried in the
        identifier, and inherited by every joiner; join never sets them.
 
-       --public        Sugar for all three lookups on. The usual choice for
-                       cross-machine gossips. Omitting every networking flag
-                       makes a loopback-only gossip (single machine).
-       --mdns          LAN multicast. Same-LAN reach only.
-       --dht           Mainline BitTorrent DHT. Public, infrastructure-free.
-       --relay[=URLS]  Relay connectivity and the relay-direct rendezvous
-                       dial. Bare --relay uses the default relay set; a value
-                       is an ordered, comma-separated ladder, e.g.
-                       --relay https://a.example,https://b.example.
+       --lookup LOOKUPS
+                       Comma-separated list of lookups: mdns, dht, relay. An
+                       unknown value is an error. On create, omitting
+                       --lookup makes a loopback-only gossip (single
+                       machine); name mdns,dht,relay for a cross-machine
+                       gossip. On discover, a2a expose, and a2a discover,
+                       omitting --lookup uses all three lookups; naming any
+                       restricts to those.
+       mdns            LAN multicast. Same-LAN reach only.
+       dht             Mainline BitTorrent DHT. Public, infrastructure-free.
+       relay           Relay connectivity and the relay-direct rendezvous
+                       dial. Needs a relay ladder: --relay-url, or the
+                       default relay set when --relay-url is omitted.
+
+       --relay-url URLS
+                       Ordered, comma-separated relay ladder, e.g.
+                       --relay-url https://a.example,https://b.example. The
+                       beacon homes on the first reachable rung. Requires
+                       relay in --lookup. --lookup relay with no --relay-url
+                       uses the default relay set.
+
+       --transport p2p|p2p,relay
+                       create-only, stored in the gossip id and inherited by
+                       every joiner. p2p (the default) sends the payload
+                       over direct paths only; the relay serves lookup only
+                       (bootstrap dial, signalling, NAT traversal), so a pair
+                       that cannot connect directly stays unlinked.
+                       p2p,relay lets the payload also fall back to the
+                       relay when a direct path fails. It changes the gossip
+                       id and requires relay in --lookup. relay without p2p
+                       is an error.
 
        Each lookup is sufficient on its own; combining them only adds
-       reliability. Use --public unless you must restrict reach. For
+       reliability. Name mdns,dht,relay unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
 
-       discover, a2a expose, and a2a discover take the same flags, with one
-       difference: there the all-on preset is already the no-flag default,
-       so --public is its explicit alias. The alternatives are exclusive:
-       --public conflicts with the granular --mdns/--dht/--relay flags.
+       discover, a2a expose, and a2a discover take the same --lookup and
+       --relay-url flags, with one difference: there the all-on preset is
+       already the no-flag default, so an empty --lookup means all three
+       lookups instead of loopback-only.
 
 DIRECTORIES
        A directory is a named, well-known public gossip that gossips advertise
        into and discover browses. It is not a server. The default directory
        is global.
 
-       advertise (create-time, requires --public) re-broadcasts a gossip's own
+       advertise (create-time, requires a lookup that reaches other machines)
+       re-broadcasts a gossip's own
        identifier into a directory periodically; an advertised gossip is OPEN —
        unless it is --password protected, in which case the listing carries
        the id but joining still needs the password (the safe way to list a
@@ -889,8 +931,8 @@ DIRECTORIES
        set, and emits gossip_found on each advertisement (carrying a
        `password` flag; the human picker shows a 🔒) and gossip_lost when a
        gossip's advertisements stop and age out (~60s). A directory's topic is keyed
-       by its name AND the lookups in use, so an --mdns-only advertiser is
-       found only by an --mdns-only discover; the all-on default on both
+       by its name AND the lookups in use, so a --lookup mdns advertiser is
+       found only by a --lookup mdns discover; the all-on default on both
        sides meets. The eventual join inherits the chosen gossip's own lookups
        from its identifier, independently of how the directory was reached.
        A2A bridge tickets advertise into directories the same way: `a2a
@@ -1191,16 +1233,16 @@ MCP SERVER
 
        TOOLS
        create_gossip
-              Create and join a new gossip. Optional args: network
-              ("private" or "public"), a name, a nickname (random word-word if
-              omitted), advertise (bool) and directory (string; advertise
-              requires network "public"), plus the lookup-restriction args
-              mdns (bool), dht (bool), and relay (string: "default" or a
-              comma-separated relay ladder) — naming any of the three overrides
-              the network preset and uses only those, mirroring the CLI flags.
-              The networking/name choices are baked into the identifier. Returns
-              the gossip id, name, and your nickname. Advertised gossips are found
-              with discover_gossips.
+              Create and join a new gossip. Optional args: a name, a nickname
+              (random word-word if omitted), advertise (bool) and directory
+              (string; advertise requires a lookup that reaches other
+              machines), plus lookup (array of "mdns" | "dht" | "relay"),
+              relay_urls (array of URL strings; requires "relay" in lookup),
+              and transport (array: ["p2p"] or ["p2p","relay"]). An empty
+              lookup makes a loopback-only gossip. An unknown param is
+              rejected. The networking/name choices are baked into the
+              identifier. Returns the gossip id, name, and your nickname.
+              Advertised gossips are found with discover_gossips.
 
        join_gossip
               Join an existing gossip by its identifier. An optional
@@ -1353,14 +1395,13 @@ EXAMPLES
 
        Create a public gossip to invite others across machines:
 
-              agent-gossip create --name team --public
+              agent-gossip create --name team --lookup mdns,dht,relay
               # share the "gossip":"3Cyr..." from the ready event
 
        Create a public gossip with a custom relay ladder:
 
-              agent-gossip create --name ops --public \
-                  --relay https://a.example,https://b.example \
-                 
+              agent-gossip create --name ops --lookup mdns,dht,relay \
+                  --relay-url https://a.example,https://b.example
 
        Join an existing gossip by its identifier:
 
@@ -1392,7 +1433,7 @@ EXAMPLES
 
        Advertise into a directory and discover it elsewhere:
 
-              agent-gossip create --name team --public --advertise
+              agent-gossip create --name team --lookup mdns,dht,relay --advertise
               agent-gossip discover
               # pick a "gossip":"3Cyr..." from gossip_found, then join it
               agent-gossip join 3Cyr... --nickname agent
@@ -1403,7 +1444,7 @@ EXAMPLES
 
        Create an invite-only gossip and admit a peer:
 
-              agent-gossip create --name team --public --invite-only
+              agent-gossip create --name team --lookup mdns,dht,relay --invite-only
               agent-gossip invite --gossip 3Cyr... --nickname calm-otter --ttl 7d
               # share the printed ticket ; the peer joins with it
               agent-gossip join TICKET --nickname agent
