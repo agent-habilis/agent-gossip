@@ -62,12 +62,13 @@ use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
     TopicConfig,
 };
-use crate::cli::args::lookup::{Lookup, lookup_set};
-use crate::cli::args::transport::{Transport, check_relay_transport, transport_policy};
+use crate::cli::args::lookup::Lookup;
+use crate::cli::args::mesh_config;
+use crate::cli::args::transport::Transport;
 use fofoca::embed::RosterEntry;
 use fofoca::protocol::JoinTarget;
+use fofoca::protocol::RelayLadder;
 use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};
-use fofoca::protocol::{RelayLadder, resolve_lookups};
 use fofoca::runtime::derive_topic_mesh;
 use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use session::Session;
@@ -442,12 +443,7 @@ impl AgentGossipServer {
                     })?,
             )
         };
-        let lookups = lookup_set(&args.lookup, relay_urls)
-            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
-        let policy = transport_policy(&args.transport)
-            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
-        let resolved = resolve_lookups(false, lookups.clone());
-        check_relay_transport(policy, &resolved)
+        let resolved = mesh_config::resolve(&args.lookup, relay_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI
         // (`opts.name.unwrap_or_else(MeshName::random)`).
@@ -474,8 +470,8 @@ impl AgentGossipServer {
         let cfg = CreateConfig {
             name,
             nickname,
-            lookups,
-            transport: policy,
+            lookups: resolved.set,
+            transport: resolved.transport,
             advertise: args.advertise,
             directory,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,

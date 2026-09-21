@@ -17,8 +17,8 @@ pub(crate) enum Lookup {
     /// Mainline `BitTorrent` DHT.
     #[value(name = "dht")]
     Dht,
-    /// Rendezvous through a relay server. Lookup only: `--transport` decides
-    /// whether the relay also carries payload.
+    /// Rendezvous through a relay server. A lookup only: it does not make the
+    /// relay carry payload.
     #[value(name = "relay")]
     Relay,
 }

@@ -356,8 +356,8 @@ fn spawn_meshes(
     }
 
     for (variant, spec) in variants.iter().enumerate() {
-        // The lookup set is baked into the gossip id, so a joiner inherits the
-        // variant's discovery config; only the tuning flags need repeating.
+        // The lookup set and the transport policy are baked into the gossip id,
+        // so a joiner inherits both; only the tuning flags need repeating.
         // `--lookup`/`--relay-url`/`--transport` each take a value, as either
         // a separate token (`--flag value`) or `--flag=value`, so a plain
         // exact-token filter would strip the flag and leave its value behind

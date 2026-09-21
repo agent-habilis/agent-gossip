@@ -16,6 +16,7 @@ mod join;
 mod leave;
 mod legacy;
 pub(crate) mod lookup;
+pub(crate) mod mesh_config;
 mod meta;
 mod peers;
 mod ping;

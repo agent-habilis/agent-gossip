@@ -11,7 +11,7 @@ use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use fofoca::protocol::JoinTarget;
-use fofoca::protocol::{Mesh, MeshConfig, MeshName, resolve_lookups};
+use fofoca::protocol::{Mesh, MeshConfig, MeshName};
 use fofoca::protocol::{MeshId, MessageId, Nickname};
 use fofoca::runtime::run as run_event_loop;
 use fofoca::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
@@ -255,18 +255,20 @@ async fn create(opts: CreateOpts) -> Result<()> {
     let password = password::resolve_password(opts.password.clone())?;
     // `--public` no longer exists: create is always resolved as if it were
     // absent, so naming no lookup is loopback and naming any restricts to it.
-    let lookups = resolve_lookups(false, opts.lookups.to_set()?);
-    let transport = args::transport::transport_policy(&opts.transport)?;
-    args::transport::check_relay_transport(transport, &lookups)?;
+    let mesh_parts = args::mesh_config::resolve(
+        &opts.lookups.lookup,
+        opts.lookups.relay_url.clone(),
+        &opts.transport,
+    )?;
     let config = MeshConfig {
-        lookups,
+        lookups: mesh_parts.lookups,
         // The verifier is baked in at setup: its salt is the seed, which is
         // minted there. The flag's presence is all `resolve` needs.
         password: None,
         // Likewise the issuer pubkey: `set_invite` mints the keypair at setup
         // and bakes the pubkey; the `--invite-only` flag rides `CreateParams`.
         issuer_pubkey: None,
-        transport,
+        transport: mesh_parts.transport,
         // `--no-gossip` is a mesh-wide characteristic baked into the id, so
         // every joiner inherits it from the ticket alone.
     };
