@@ -940,9 +940,11 @@ DIRECTORIES
        `password` flag; the human picker shows a 🔒) and gossip_lost when a
        gossip's advertisements stop and age out (~60s). A directory's topic is keyed
        by its name AND the lookups in use, so a --lookup mdns advertiser is
-       found only by a --lookup mdns discover; the all-on default on both
-       sides meets. The eventual join inherits the chosen gossip's own lookups
-       from its identifier, independently of how the directory was reached.
+       found only by a --lookup mdns discover. discover with no --lookup uses
+       all three lookups. create has no such default, so an advertiser meets
+       that discover only with --lookup mdns,dht,relay. The eventual join
+       inherits the chosen gossip's own lookups from its identifier,
+       independently of how the directory was reached.
        A2A bridge tickets advertise into directories the same way: `a2a
        expose --advertise` on one side, `a2a discover` on the other.
 
