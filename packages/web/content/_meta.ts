@@ -18,5 +18,5 @@ export default {
   // Naming it here puts it in the navbar on purpose, rather than leaving an
   // item called "App" to appear in the docs sidebar as a side effect of the
   // page map. Crossing into it is a full document load — see (site)/layout.tsx.
-  app: { type: 'page', title: 'Open the app', href: '/app/' },
+  app: { type: 'page', title: 'Webapp', href: '/app/' },
 }
