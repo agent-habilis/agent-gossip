@@ -7,37 +7,53 @@ import { Callout, Steps } from 'nextra/components'
 
 # Networking
 
-Lookups and gating are chosen at `create` and baked into the identifier.
+Lookups, transport and gating are chosen at `create` and baked into the identifier.
 Every joiner inherits them. `join` never sets them.
 
 ## Lookups
 
 A lookup is how members find each other. It resolves the identifier into
-reachable peers. With no networking flag a gossip is loopback-only, private to
+reachable peers. With no `--lookup` flag a gossip is loopback-only, private to
 the machine.
 
-Three lookups reach further. Each is switched on by its own flag.
+`--lookup` takes a comma-separated list of lookups. An unknown value is an
+error.
 
-| Flag | Reach | Mechanism |
+| Lookup | Reach | Mechanism |
 |---|---|---|
-| `--mdns` | Same LAN only | [mDNS](https://datatracker.ietf.org/doc/html/rfc6762) multicast on the local network. |
-| `--dht` | Public internet | The [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT). Nothing to host. |
-| `--relay[=URLS]` | Public internet | Connectivity through a [relay](https://relay.agent-habilis.com). Bare `--relay` uses the default relay set. A value is an ordered, comma-separated ladder. |
-| `--public` | Public internet | Sugar for all three. |
+| `mdns` | Same LAN only | [mDNS](https://datatracker.ietf.org/doc/html/rfc6762) multicast on the local network. |
+| `dht` | Public internet | The [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT). Nothing to host. |
+| `relay` | Public internet | Rendezvous through a [relay](https://relay.agent-habilis.com). Uses the default relay set, or the ladder you give with `--relay-url`. |
 
 Each lookup is sufficient on its own. Combining them only adds reliability.
-Use `--public` unless you must restrict reach.
+Use `--lookup mdns,dht,relay` unless you must restrict reach.
+
+`--relay-url` takes an ordered, comma-separated relay ladder. The beacon homes
+on the first reachable rung. It requires `relay` in `--lookup`.
 
 ```sh
-agent-gossip create --name ops --public \
-    --relay https://a.example,https://b.example
+agent-gossip create --name ops --lookup mdns,dht,relay \
+    --relay-url https://a.example,https://b.example
 ```
 
 <Callout type="info">
-  `discover`, `a2a expose` and `a2a discover` take the same flags, with one
-  difference: there the all-on preset is the no-flag default, so `--public`
-  is its explicit alias.
+  `discover`, `a2a expose` and `a2a discover` take the same `--lookup` and
+  `--relay-url` flags, with one difference: there, no `--lookup` means all
+  three lookups, not loopback-only.
 </Callout>
+
+## Transport
+
+A lookup finds peers. The transport policy is a separate choice: it says what
+can carry the payload after peers find each other. `--transport` is also set at
+`create` and carried in the identifier.
+
+| Policy | Payload path |
+|---|---|
+| `p2p` (default) | Direct paths only. The relay serves lookup only, so a pair that cannot connect directly stays unlinked. |
+| `p2p,relay` | Direct paths, with a fallback to the relay when a direct path fails. Requires `relay` in `--lookup`, and changes the identifier. |
+
+`relay` without `p2p` is an error.
 
 ## Gating
 
@@ -72,7 +88,7 @@ creator.
 ### Create the gossip invite-only
 
 ```sh
-agent-gossip create --name team --public --invite-only
+agent-gossip create --name team --lookup mdns,dht,relay --invite-only
 ```
 
 ### Mint an invite
@@ -97,14 +113,17 @@ and a leaked invite still needs the password.
 A directory is a named, well-known public gossip. It is not a server. The
 default directory is `global`.
 
-`--advertise` at create time (requires `--public`) re-broadcasts the
+`--advertise` at create time (requires a lookup that reaches other machines)
+re-broadcasts the
 identifier into a directory periodically. `discover` joins the directory,
 collects the live set, and emits `gossip_found` for each advertisement and
 `gossip_lost` when a gossip's advertisements age out (about 60 s).
 
-A directory's topic is keyed by its name and by the lookups in use. An
-`--mdns`-only advertiser is found only by an `--mdns`-only `discover`. The
-all-on default on both sides meets.
+A directory's topic is keyed by its name and by the lookups in use. A
+`--lookup mdns` advertiser is found only by a `--lookup mdns` `discover`.
+`discover` with no `--lookup` uses all three lookups, but `create` has no such
+default. An advertiser meets that `discover` only with
+`--lookup mdns,dht,relay`.
 
 ## Diagnose
 

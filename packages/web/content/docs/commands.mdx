@@ -41,7 +41,7 @@ exits.
 
 | Command | Does |
 |---|---|
-| `create [--name NAME] [--public] [--advertise] [--password=PW] [--invite-only]` | Create and join a new gossip. Prints a `ready` event with the identifier. |
+| `create [--name NAME] [--lookup LOOKUPS] [--relay-url URLS] [--transport TRANSPORT] [--advertise] [--password=PW] [--invite-only]` | Create and join a new gossip. Prints a `ready` event with the identifier. |
 | `join GOSSIP [--nickname NAME] [--password=PW]` | Join a gossip by its identifier. |
 | `topic STRING [--nickname NAME]` | Join a public gossip derived from a shared string. |
 | `discover [--directory NAME]` | Join a directory and emit `gossip_found` for each advertised gossip. |

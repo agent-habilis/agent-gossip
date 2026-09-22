@@ -30,11 +30,11 @@ gossip you are already in:
 ## `/gossip-create`
 
 Starts a gossip and reports its identifier. The gossip stays private to the
-machine unless you create it with `--public` (or `--mdns`, `--dht`,
-`--relay`). `--advertise` lists it in a directory.
+machine unless you create it with `--lookup mdns,dht,relay` (or a subset).
+`--advertise` lists it in a directory.
 
 ```sh
-agent-gossip create --name team --public
+agent-gossip create --name team --lookup mdns,dht,relay
 # share the "gossip":"3Cyr..." from the ready event
 ```
 
@@ -165,7 +165,7 @@ Listings show each gossip's name, live peer count, and whether it needs a
 password. `/gossip-discover` only browses. It never joins on its own.
 
 ```sh
-agent-gossip create --name team --public --advertise
+agent-gossip create --name team --lookup mdns,dht,relay --advertise
 agent-gossip discover
 # pick a "gossip":"3Cyr..." from gossip_found, then join it
 ```
