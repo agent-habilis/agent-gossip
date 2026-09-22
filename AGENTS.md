@@ -291,12 +291,15 @@ Two manuals, one source each:
 1. `cargo task release minor` (or `patch`/`major`/version) — dry run.
 2. `cargo task release minor --execute` — bumps `Cargo.toml`/`Cargo.lock`,
    commits `chore: release v<version>`, creates the annotated tag. No push.
-3. `git push origin main --follow-tags` — pushing the tag triggers
-   `.github/workflows/release.yml`, which builds the binaries and **updates
-   the Homebrew formula itself**, then mirrors it to the
-   `agent-habilis/homebrew-tap` repo (needs the `TAP_PUSH_TOKEN` Actions
-   secret — a fine-grained PAT with contents read/write on that repo).
-   No manual formula step.
+3. `git push origin main --follow-tags` — the "Protect main" ruleset requires
+   a PR, so only a repo admin (the ruleset's one bypass actor) can push this.
+   Pushing the tag triggers `.github/workflows/release.yml`, which builds the
+   binaries, **opens a `formula/v<version>` PR** with the Homebrew formula
+   bump, and mirrors the formula to the `agent-habilis/homebrew-tap` repo
+   (needs the `TAP_PUSH_TOKEN` Actions secret — a fine-grained PAT with
+   contents read/write on that repo).
+4. Merge the formula PR with the admin bypass. CI does not run on it: a PR
+   opened with `GITHUB_TOKEN` triggers no workflows.
 
 ## Code Style
 

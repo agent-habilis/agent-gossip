@@ -101,6 +101,9 @@ jobs:
   update-formula:
     needs: upload
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -123,15 +126,26 @@ jobs:
             # Replace the sha256 line immediately following this target's url line.
             perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/agent-gossip.rb
           done
-      - name: Commit the formula bump
+      # A PR, not a push: the "Protect main" ruleset requires one, and the
+      # GitHub Actions app cannot be a bypass actor on a repo ruleset. A PR
+      # opened with GITHUB_TOKEN does not trigger CI, so an admin merges it
+      # through the ruleset bypass.
+      - name: Open a PR with the formula bump
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/agent-gossip.rb
-          git diff --cached --quiet || git commit -m "chore: update Homebrew formula for ${TAG}"
-          git push origin main
+          git diff --cached --quiet && exit 0
+          branch="formula/${TAG}"
+          git switch -c "$branch"
+          git commit -m "chore: update Homebrew formula for ${TAG}"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: update Homebrew formula for ${TAG}" \
+            --body "Formula bump from the ${TAG} release workflow."
       # The GITHUB_TOKEN is scoped to this repo, so mirroring into the org
       # tap needs the TAP_PUSH_TOKEN secret (fine-grained PAT, contents
       # read/write on homebrew-tap only).
