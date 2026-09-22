@@ -5,11 +5,6 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-
-use crate::a2a::app::A2aApp;
-use crate::a2a::session::SessionRequest;
-use crate::a2a::wire;
-use crate::output;
 use fofoca::embed::EventLoopState;
 use fofoca::ops::MeshSender;
 use fofoca::protocol::Identity;
@@ -21,6 +16,11 @@ use fofoca::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
+
+use crate::a2a::app::A2aApp;
+use crate::a2a::session::SessionRequest;
+use crate::a2a::wire;
+use crate::output;
 
 /// Retain a just-built outbound message in the local log (pruning the
 /// fork/DAG indexes on any eviction) and write the dev log. The operator
@@ -1759,8 +1759,9 @@ pub(crate) async fn handle_session_request(
 
 #[cfg(test)]
 mod split_body_tests {
-    use super::{escaped_char_len, split_body};
     use fofoca::util::consts::MAX_SHARD_TOTAL;
+
+    use super::{escaped_char_len, split_body};
 
     #[test]
     fn escaped_len_counts_json_escapes() {

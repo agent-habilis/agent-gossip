@@ -10,12 +10,11 @@
 //! The CLI/stdout/Unix-socket wire contract lives in `monitor_contract.rs`;
 //! the gossip request/response mechanics in `a2a_rpc.rs`.
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::Duration;
 
 use agent_gossip::events::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
+use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;

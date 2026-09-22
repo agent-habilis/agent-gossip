@@ -306,6 +306,13 @@ Two manuals, one source each:
   `cargo clippy --all-targets -- -D warnings`, so any warning fails CI.
 - `min_ident_chars` rejects single-char identifiers — rename closure params
   (`|e|` → `|error|`, `|m|` → `|msg|`).
+- Imports form one block at the top of the file, before any `mod`, in three
+  groups: std, then external crates (`fofoca` and the workspace crates
+  included), then `self`/`super`/`crate`. Write a child-module import as
+  `self::child::…` so that it sorts into the last group. `cargo task fmt` runs
+  nightly rustfmt (pinned in `crates/tasks/src/fmt.rs`) for the
+  `group_imports` option in `rustfmt.toml`, and `cargo task ci` and the CI fmt
+  job fail on drift. rustfmt does not move a `use` that comes after a `mod`.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
 

@@ -21,15 +21,14 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-
-use crate::a2a::app::A2aApp;
-use crate::a2a::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
-use crate::output;
 use fofoca::embed::EventLoopState;
 use fofoca::embed::HandlerCtx;
 use fofoca::protocol::{Message, MessageKind, Nickname};
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
+use crate::a2a::app::A2aApp;
+use crate::a2a::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
+use crate::output;
 
 /// My part in a task: did I open it (client side), or receive the offer
 /// (the worker — the task's A2A server)?
@@ -706,11 +705,13 @@ async fn broadcast_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
-    use crate::a2a::TaskId;
-    use fofoca::protocol::Nickname;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
+
+    use fofoca::protocol::Nickname;
+
+    use super::{LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
+    use crate::a2a::TaskId;
 
     fn tid() -> TaskId {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")

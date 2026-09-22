@@ -4,13 +4,13 @@
 //! responses. These are the reliability guarantees we make at the
 //! MCP surface.
 
-use agent_gossip_test_fixtures as common;
-
-use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
+
+use agent_gossip_test_fixtures as common;
+use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 
 /// The before-anything seq cursor. Passing `0` as `after` returns the full
 /// buffered log and, being an *explicit* override, never advances the

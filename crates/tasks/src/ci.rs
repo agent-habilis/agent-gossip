@@ -5,7 +5,7 @@ use crate::util::output;
 
 pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Checking", "formatting");
-    cmd!(sh, "cargo fmt --all --check").quiet().run()?;
+    crate::fmt::check(sh)?;
 
     // No layering gate any more: it checked that the engine crate named neither
     // A2A nor the app, and the engine now lives in its own repo (`fofoca`), so

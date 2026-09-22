@@ -4,7 +4,6 @@
 //! current document.
 
 use clap::{Parser, Subcommand};
-
 use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]

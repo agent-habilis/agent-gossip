@@ -1,7 +1,6 @@
+use fofoca::protocol::TransportPolicy;
 use rmcp::schemars;
 use serde::Deserialize;
-
-use fofoca::protocol::TransportPolicy;
 
 /// A payload path a mesh's members may use — the `--transport` policy.
 /// `create`-only; every joiner inherits it from the mesh id.
@@ -36,10 +35,10 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use fofoca::protocol::TransportPolicy;
 
     use super::{Transport, transport_policy};
     use crate::cli::args::Cli;
-    use fofoca::protocol::TransportPolicy;
 
     #[test]
     fn transport_absent_and_p2p_keep_relay_transport_off() {

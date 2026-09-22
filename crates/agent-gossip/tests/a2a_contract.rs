@@ -9,12 +9,11 @@
 //! `mesh-state` extension methods, and the cross-binding property: a JSON-RPC
 //! send on one node surfaces on a plain gossip peer.
 
-use agent_gossip_test_fixtures as common;
-
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Instant;
 
+use agent_gossip_test_fixtures as common;
 use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, Node, POLL, wait_until};
 use serde_json::Value;
 

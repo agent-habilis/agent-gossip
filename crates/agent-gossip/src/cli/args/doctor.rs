@@ -4,7 +4,6 @@
 //! methods to a specific gossip.
 
 use clap::{Parser, ValueEnum};
-
 use fofoca::protocol::MeshId;
 
 /// `doctor` is the one operator-facing report, so unlike every other command it

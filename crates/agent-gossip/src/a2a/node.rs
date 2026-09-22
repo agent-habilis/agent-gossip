@@ -1,13 +1,5 @@
 use std::time::{Duration, Instant};
 
-use tokio::time::Instant as TokioInstant;
-
-use crate::a2a::app::{A2aApp, A2aResponder};
-use crate::a2a::ipc::IpcCommand;
-use crate::a2a::rpc::{A2aOp, A2aRequest};
-use crate::a2a::session::SessionRequest;
-use crate::a2a::wire;
-use crate::output;
 use fofoca::embed::EventLoopState;
 use fofoca::embed::HandlerCtx;
 use fofoca::embed::{AppClass, InboundApp, NodeApp};
@@ -16,6 +8,14 @@ use fofoca::net::add_peer_addr;
 use fofoca::protocol::MessageBody;
 use fofoca::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
 use fofoca::runtime::state_file::StateFile;
+use tokio::time::Instant as TokioInstant;
+
+use crate::a2a::app::{A2aApp, A2aResponder};
+use crate::a2a::ipc::IpcCommand;
+use crate::a2a::rpc::{A2aOp, A2aRequest};
+use crate::a2a::session::SessionRequest;
+use crate::a2a::wire;
+use crate::output;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
@@ -1032,11 +1032,12 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
 
 #[cfg(test)]
 mod classify_tests {
-    use super::classify;
-    use crate::a2a::wire;
     use fofoca::protocol::{
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
+
+    use super::classify;
+    use crate::a2a::wire;
 
     fn mesh() -> MeshId {
         MeshId::from("test")

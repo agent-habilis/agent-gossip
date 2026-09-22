@@ -42,9 +42,16 @@
 //! create / leave / join cycles are supported. See `session.rs`
 //! for the per-mesh abstraction.
 
-mod session;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use fofoca::embed::RosterEntry;
+use fofoca::protocol::JoinTarget;
+use fofoca::protocol::RelayLadder;
+use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};
+use fofoca::runtime::derive_topic_mesh;
+use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
@@ -53,10 +60,9 @@ use rmcp::{
     transport::stdio,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+use self::session::Session;
 use crate::a2a::TaskId;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
@@ -65,13 +71,8 @@ use crate::api::{
 use crate::cli::args::lookup::Lookup;
 use crate::cli::args::mesh_config;
 use crate::cli::args::transport::Transport;
-use fofoca::embed::RosterEntry;
-use fofoca::protocol::JoinTarget;
-use fofoca::protocol::RelayLadder;
-use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};
-use fofoca::runtime::derive_topic_mesh;
-use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
-use session::Session;
+
+mod session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
 pub(crate) async fn run() -> Result<()> {
@@ -1067,8 +1068,9 @@ fn ok_json<T: Serialize>(value: T) -> Result<CallToolResult, McpError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentGossipServer, MCP_INSTRUCTIONS};
     use std::collections::BTreeSet;
+
+    use super::{AgentGossipServer, MCP_INSTRUCTIONS};
 
     fn declared_tools() -> BTreeSet<String> {
         AgentGossipServer::tool_router()

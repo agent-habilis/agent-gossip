@@ -29,9 +29,41 @@
 //! # }
 //! ```
 
+use anyhow::Result;
+// Curated public protocol surface. These types live in the engine crate
+// (`fofoca`); re-exporting them from this crate root keeps the
+// externally-visible `agent_gossip::` API stable across the engine split.
+pub use fofoca::embed::Lane;
+pub use fofoca::embed::{Reach, RosterEntry, RosterSnapshot};
+pub use fofoca::protocol::InviteTicket;
+pub use fofoca::protocol::JoinTarget;
+pub use fofoca::protocol::{
+    BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    Shard, ShardGroup,
+};
+pub use fofoca::protocol::{
+    LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
+    RelaySelection,
+};
+pub use fofoca::protocol::{Nickname, NicknameError};
+// Wire/runtime constants the external test + bench crates assert against; the
+// rest of `util::consts` stays engine-internal.
+pub use fofoca::util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL};
+pub use fofoca::util::logging::LogSink;
+pub use fofoca::util::mesh_prefix;
+
+pub use self::a2a::surfaced::SurfacedEvent;
+pub use self::a2a::{TaskId, TaskState};
+use self::cli::Cli;
+// The `api::MeshSession::peers` / `ping` return types. Iroh-free by
+// construction (nicknames, counts, and two field-less enums), so re-exporting
+// them keeps the roster readable without widening the surface.
+pub use self::events::{OutputEvent, PingPeer, TaskGoneReason};
+pub use self::output::{event_json, surfaced_event_json};
+
 // Application-layer modules. The engine modules (protocol, gossip, daemon,
 // …) live in the `fofoca` crate; this crate re-exports the
-// curated public protocol surface from there below. `a2a` is public on
+// curated public protocol surface from there above. `a2a` is public on
 // purpose — it is the agent-communication data model both bindings (gossip,
 // local JSON-RPC) share, and embedders speak it directly.
 pub mod a2a;
@@ -49,35 +81,6 @@ pub mod status;
 #[cfg(any(feature = "bench", feature = "adversarial"))]
 #[doc(hidden)]
 pub mod harness;
-
-// Curated public protocol surface. These types live in the engine crate
-// (`fofoca`); re-exporting them from this crate root keeps the
-// externally-visible `agent_gossip::` API stable across the engine split.
-pub use a2a::surfaced::SurfacedEvent;
-pub use a2a::{TaskId, TaskState};
-// The `api::MeshSession::peers` / `ping` return types. Iroh-free by
-// construction (nicknames, counts, and two field-less enums), so re-exporting
-// them keeps the roster readable without widening the surface.
-pub use events::{OutputEvent, PingPeer, TaskGoneReason};
-pub use fofoca::embed::Lane;
-pub use fofoca::embed::{Reach, RosterEntry, RosterSnapshot};
-pub use fofoca::protocol::InviteTicket;
-pub use fofoca::protocol::JoinTarget;
-pub use fofoca::protocol::{
-    BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
-    Shard, ShardGroup,
-};
-pub use fofoca::protocol::{
-    LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
-    RelaySelection,
-};
-pub use fofoca::protocol::{Nickname, NicknameError};
-pub use fofoca::util::logging::LogSink;
-// Wire/runtime constants the external test + bench crates assert against; the
-// rest of `util::consts` stays engine-internal.
-pub use fofoca::util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL};
-pub use fofoca::util::mesh_prefix;
-pub use output::{event_json, surfaced_event_json};
 
 /// This binary's name — the single place it is spelled for path purposes. The
 /// engine takes it as a parameter (see [`fofoca::util::runtime_base`])
@@ -113,10 +116,6 @@ pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
 pub fn ensure_mesh_runtime_dir(mesh_id: &str) -> std::io::Result<std::path::PathBuf> {
     fofoca::util::ensure_mesh_runtime_dir(&runtime_base(), mesh_id)
 }
-
-use anyhow::Result;
-
-use cli::Cli;
 
 /// This build's stamp: **this** crate's version plus the engine's git stamp,
 /// e.g. `"0.7.2 (90103e5 dirty:false)"`. Every version surface reads it —

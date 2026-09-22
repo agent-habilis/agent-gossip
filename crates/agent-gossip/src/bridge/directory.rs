@@ -14,11 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
-use tokio::task::JoinHandle;
-
-use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
 use fofoca::ops::directory::directory_mesh;
 use fofoca::protocol::{LookupOpts, LookupSet, MeshName, resolve_lookups};
 use fofoca::protocol::{MeshId, MessageBody, Nickname};
@@ -26,8 +21,12 @@ use fofoca::runtime::CoHostPolicy;
 use fofoca::runtime::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
+use serde::{Deserialize, Serialize};
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::JoinHandle;
 
 use super::ticket::A2aTicket;
+use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
 /// flood of hostile ads must not grow the picker without bound.
@@ -335,10 +334,11 @@ impl Drop for TicketDirectory {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{TicketAd, TicketChange, TicketListings};
-    use crate::bridge::ticket::A2aTicket;
     use fofoca::iroh::{EndpointAddr, SecretKey};
     use fofoca::protocol::LookupOpts;
+
+    use super::{TicketAd, TicketChange, TicketListings};
+    use crate::bridge::ticket::A2aTicket;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
         let addr = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())

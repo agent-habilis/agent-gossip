@@ -5,11 +5,10 @@
 //! observes the artifact (review park). The point-to-point fetch + SHA-256
 //! verification is unit-tested in `src/blob` (loopback round-trip + adversarial).
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::Duration;
 
 use agent_gossip::TaskState;
+use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;

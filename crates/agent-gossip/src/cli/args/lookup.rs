@@ -1,8 +1,7 @@
 use clap::Parser;
+use fofoca::protocol::{LookupSet, RelayLadder, RelaySelection};
 use rmcp::schemars;
 use serde::Deserialize;
-
-use fofoca::protocol::{LookupSet, RelayLadder, RelaySelection};
 
 /// One networking lookup mechanism a gossip may use to find peers — the
 /// `--lookup` allowlist. Naming any restricts to exactly those; naming none
@@ -78,10 +77,10 @@ pub(crate) fn lookup_set(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use fofoca::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
 
     use super::{Lookup, lookup_set};
     use crate::cli::args::Cli;
-    use fofoca::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
 
     #[test]
     fn lookup_list_resolves_to_only_named() {

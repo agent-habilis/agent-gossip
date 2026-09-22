@@ -18,13 +18,12 @@
 //! sent from the same node after the injection — so absence means "dropped",
 //! never "not yet arrived".
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::{Duration, Instant};
 
 use agent_gossip::OutputEvent;
 use agent_gossip::a2a::TaskState;
 use agent_gossip::harness::adversarial::{self, CraftedMsg};
+use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 

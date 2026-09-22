@@ -2,8 +2,9 @@
 //! snapshots + proptests). The wire serializers under test live in
 //! [`super::json`].
 
-use super::json::{SimpleEvent, format_msg_json, format_presence_json};
 use fofoca::protocol::{Message, MessageKind, PresenceSubtype};
+
+use super::json::{SimpleEvent, format_msg_json, format_presence_json};
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -373,8 +374,9 @@ fn json_output_is_single_line() {
 }
 
 mod snapshots {
-    use super::{format_msg_json, format_presence_json};
     use fofoca::protocol::{Message, MessageKind, PresenceSubtype};
+
+    use super::{format_msg_json, format_presence_json};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
     /// timestamps from the fixture.
@@ -572,13 +574,13 @@ mod snapshots {
 }
 
 mod prop {
+    use fofoca::protocol::Message;
     use proptest::{
         collection::vec as arb_vec, prelude::any, prop_assert, prop_assert_eq, proptest,
         strategy::Strategy,
     };
 
     use super::{PresenceSubtype, format_msg_json, format_presence_json, sid};
-    use fofoca::protocol::Message;
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())

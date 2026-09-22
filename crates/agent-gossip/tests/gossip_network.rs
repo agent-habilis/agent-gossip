@@ -7,13 +7,12 @@
 //! Crypto-heavy deps are optimized even in dev builds (see the
 //! `[profile.dev.package]` overrides in `Cargo.toml`), so debug `cargo test`
 //! runs at near-release connect speeds.
-use agent_gossip_test_fixtures as common;
-
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use agent_gossip_test_fixtures as common;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin, chat_text,
     cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,

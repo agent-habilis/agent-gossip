@@ -1,5 +1,4 @@
 use anyhow::{Result, bail};
-
 use fofoca::protocol::Password;
 
 /// The `default_missing_value` a bare `--password` (no `=value`) resolves to.

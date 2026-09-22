@@ -2,17 +2,16 @@ use std::time::Duration;
 
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
-use serde::Serialize;
-
-use crate::a2a::ipc::IpcCommand;
-use crate::status as output;
 use fofoca::net::{self, NetworkCapability};
 use fofoca::protocol::MeshId;
 use fofoca::protocol::{Mesh, RelayChoice};
 use fofoca::runtime::ipc;
+use serde::Serialize;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
+use crate::a2a::ipc::IpcCommand;
+use crate::status as output;
 
 /// Budget for the machine net-report (build endpoint + first completed report).
 const CAPABILITY_TIMEOUT: Duration = Duration::from_secs(6);
@@ -601,8 +600,9 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 
 #[cfg(test)]
 mod tests {
-    use super::declared_methods_section;
     use fofoca::protocol::{Mesh, MeshConfig, MeshName};
+
+    use super::declared_methods_section;
 
     #[test]
     fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {

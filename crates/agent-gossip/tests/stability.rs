@@ -10,11 +10,10 @@
 //! All in-process via the `InProcNode` harness (real iroh mesh, sub-second
 //! to ~30s each, deterministic). Total CI cost ~70s.
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::Duration;
 
 use agent_gossip::OutputEvent;
+use agent_gossip_test_fixtures as common;
 use common::InProcNode;
 
 /// How long the steady-state test holds the mesh quiet before asserting

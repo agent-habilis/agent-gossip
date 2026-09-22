@@ -1,10 +1,11 @@
+use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
+use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
+use fofoca::runtime::{SetupParams, setup_mesh};
+
 use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use crate::output::Output;
-use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
-use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
-use fofoca::runtime::{SetupParams, setup_mesh};
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks

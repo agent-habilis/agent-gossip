@@ -5,10 +5,9 @@
 //! sealed-box crypto itself (round-trip, wrong key, tamper) is unit-tested in
 //! `src/protocol/seal.rs`.
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::Duration;
 
+use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
 
 /// A directed task A→B is readable only by B; the relay C never surfaces it.

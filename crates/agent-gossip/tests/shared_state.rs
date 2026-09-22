@@ -23,11 +23,10 @@
 //! `meta_and_state_channels_are_independent` is the one inherently cross-channel
 //! test and stays standalone.
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::{Duration, Instant};
 
 use agent_gossip::Channel;
+use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT};
 use serde_json::{Value, json};
 

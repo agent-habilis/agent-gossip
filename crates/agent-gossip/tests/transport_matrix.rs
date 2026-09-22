@@ -9,11 +9,10 @@
 //! lifecycle — including the sharded multi-frame RPC — is inherently the
 //! unicast proof; no per-transport policy row is needed.
 
-use agent_gossip_test_fixtures as common;
-
 use std::time::Instant;
 
 use agent_gossip::{Channel, TaskId, TaskState};
+use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 

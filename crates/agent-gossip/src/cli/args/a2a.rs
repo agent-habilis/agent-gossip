@@ -5,12 +5,12 @@
 //!   local A2A HTTP server to a peer over the gossip (a ticket, 1:1).
 
 use clap::{Parser, Subcommand};
+use fofoca::protocol::MeshName;
+use fofoca::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 use super::lookup::LookupArgs;
 use crate::cli::password::PasswordFlag;
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct A2aOpts {
@@ -292,9 +292,10 @@ fn parse_state(raw: &str) -> Result<crate::a2a::TaskState, String> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
+
     use super::A2aAction;
     use crate::cli::args::{Cli, Commands};
-    use clap::Parser as _;
 
     /// `--timeout-secs` must default to the shared constant, not a literal.
     /// `a2a::tuning`'s own test pins the other two surfaces.

@@ -5,9 +5,8 @@
 //! These pin that round-trip for a plain `msg` and for a task content leg —
 //! the body surfaces **once**, as the whole logical message, never as raw shards.
 
-use agent_gossip_test_fixtures as common;
-
 use agent_gossip::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
+use agent_gossip_test_fixtures as common;
 use common::{BIG_BODY_TIMEOUT, InProcNode, MSG_TIMEOUT, chat_text};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

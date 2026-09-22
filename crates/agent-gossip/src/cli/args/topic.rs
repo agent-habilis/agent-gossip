@@ -1,5 +1,4 @@
 use clap::Parser;
-
 use fofoca::protocol::Nickname;
 
 use super::shared::SharedServerOpts;

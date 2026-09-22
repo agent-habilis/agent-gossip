@@ -11,21 +11,21 @@
 //! no mDNS and no DHT; it does not need them, and asking for them costs nothing
 //! — a CLI peer on the same mesh still uses both.
 
-mod driver;
-mod wire;
-
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use fofoca::embed::SilentSink;
 use fofoca::net::TransportOpts;
 use fofoca::protocol::{
     DirectorySelection, JoinTarget, LookupOpts, MeshConfig, MeshName, Nickname,
 };
 use fofoca::runtime::{CreateParams, JoinParams, Node, Resolved, SetupParams, setup_mesh};
-use fofoca::embed::SilentSink;
 use wasm_bindgen::prelude::*;
 
-use driver::{GossipDriver, Inbox, Request};
+use self::driver::{GossipDriver, Inbox, Request};
+
+mod driver;
+mod wire;
 
 /// How many direct WebRTC sessions a tab will hold open.
 const MAX_DIRECT_PEERS: usize = 8;

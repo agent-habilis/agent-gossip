@@ -2,7 +2,6 @@
 //! (The JSON-streaming runtime is [`crate::cli::discover`].)
 
 use clap::Parser;
-
 use fofoca::protocol::MeshName;
 
 use super::legacy::LegacyOutput;
@@ -46,9 +45,9 @@ pub(crate) struct DiscoverOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use fofoca::protocol::MeshName;
 
     use crate::cli::args::{Cli, Commands};
-    use fofoca::protocol::MeshName;
 
     fn discover_opts(args: &[&str]) -> super::DiscoverOpts {
         match Cli::parse_from(args).command {

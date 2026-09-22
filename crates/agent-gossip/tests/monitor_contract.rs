@@ -10,14 +10,13 @@
 //! Uses `--output json` and 3 peers to test multi-peer dynamics.
 //!
 //! Run `cargo build --release` first for faster crypto (shorter connect times).
-use agent_gossip_test_fixtures as common;
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use agent_gossip::Channel;
+use agent_gossip_test_fixtures as common;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, serial_guard, socket_path,
     tmp_log, wait_until,

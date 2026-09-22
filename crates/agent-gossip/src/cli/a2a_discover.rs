@@ -3,11 +3,10 @@
 //! The collector lives in [`crate::a2a::TicketDirectory`].
 
 use anyhow::Result;
-
-use crate::a2a::{TicketDirectory, TicketDirectoryEvent};
 use fofoca::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
 use super::signal::{interrupted, sigterm_stream};
+use crate::a2a::{TicketDirectory, TicketDirectoryEvent};
 
 /// The parsed `agent-gossip a2a discover` CLI arguments.
 pub(super) struct DiscoverParams {

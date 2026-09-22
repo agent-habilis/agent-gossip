@@ -11,13 +11,12 @@
 //! `tasks/cancel`, and a `message/send` **directed at the serving peer** (the
 //! caller asks the peer to take work; the peer ingests it and answers).
 
-use serde_json::Value;
-
-use crate::a2a::app::A2aApp;
 use fofoca::protocol::{Channel, Nickname};
+use serde_json::Value;
 
 use super::TaskId;
 use super::rpc::{A2aOp, RpcError};
+use crate::a2a::app::A2aApp;
 
 /// What a classified gossip request resolves to. Kept separate from
 /// execution so the safe-set decision is a pure, unit-testable function; the
@@ -165,11 +164,12 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
 
 #[cfg(test)]
 mod tests {
+    use fofoca::protocol::Nickname;
+    use serde_json::json;
+
     use super::{Served, classify};
     use crate::a2a::app::A2aApp;
     use crate::a2a::rpc::A2aOp;
-    use fofoca::protocol::Nickname;
-    use serde_json::json;
 
     fn state() -> A2aApp {
         A2aApp::new()

@@ -1,16 +1,15 @@
-use serde_json::Value;
-use tokio::sync::oneshot;
-
-use crate::a2a::app::A2aApp;
-use crate::a2a::send::{BroadcastParams, emit_task_status, send_broadcast};
-use crate::output;
 use fofoca::embed::EventLoopState;
 use fofoca::ops::MeshSender;
 use fofoca::ops::{StateMergeParams, broadcast_state_merge};
 use fofoca::protocol::MeshId;
 use fofoca::protocol::{Channel, MessageBody, Nickname};
+use serde_json::Value;
+use tokio::sync::oneshot;
 
 use super::{TaskId, task::TaskRecord, task::TaskRole};
+use crate::a2a::app::A2aApp;
+use crate::a2a::send::{BroadcastParams, emit_task_status, send_broadcast};
+use crate::output;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
 #[derive(Debug)]

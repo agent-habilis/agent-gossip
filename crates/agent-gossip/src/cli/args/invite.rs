@@ -3,10 +3,9 @@
 //! sign one — after its restart, no new invites can be minted.
 
 use clap::Parser;
+use fofoca::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
-
-use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct InviteOpts {

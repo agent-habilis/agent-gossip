@@ -8,10 +8,9 @@
 
 use anyhow::Result;
 
-use crate::api::{Directory, DirectoryEvent};
-
 use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};
+use crate::api::{Directory, DirectoryEvent};
 
 /// Browse a directory, streaming `gossip_found`/`gossip_lost` JSON lines until
 /// interrupted (SIGINT or SIGTERM) or, with `--window-secs`, until the window

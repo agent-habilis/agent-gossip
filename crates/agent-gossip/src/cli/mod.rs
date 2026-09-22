@@ -5,17 +5,22 @@
 //! parsed args and the daemon / IPC / api layers it drives.
 
 use anyhow::Result;
-use serde::Deserialize;
-
-use crate::a2a::ipc::IpcCommand;
-use crate::api::spawn_advertiser;
-use crate::output::{Output, OutputMode};
 use fofoca::protocol::JoinTarget;
 use fofoca::protocol::{Mesh, MeshConfig, MeshName};
 use fofoca::protocol::{MeshId, MessageId, Nickname};
 use fofoca::runtime::run as run_event_loop;
 use fofoca::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
 use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
+use serde::Deserialize;
+
+pub(crate) use self::args::Cli;
+use self::args::{
+    A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, PeersOpts, PingOpts,
+    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
+};
+use crate::a2a::ipc::IpcCommand;
+use crate::api::spawn_advertiser;
+use crate::output::{Output, OutputMode};
 
 mod a2a_discover;
 pub(crate) mod agent;
@@ -27,12 +32,6 @@ mod password;
 mod plug;
 mod session;
 mod signal;
-
-pub(crate) use args::Cli;
-use args::{
-    A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, PeersOpts, PingOpts,
-    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
-};
 
 /// Install both process tunings from one flag set. The flags are a single
 /// surface to an operator, but they land in two homes: engine knobs in

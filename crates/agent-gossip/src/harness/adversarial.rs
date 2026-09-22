@@ -11,19 +11,19 @@
     reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
 )]
 
-use crate::a2a::wire;
 use fofoca::protocol::Message;
 use fofoca::protocol::PresenceSubtype;
 use fofoca::protocol::{
     AppFrameParams, AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname,
 };
 use fofoca::protocol::{Identity, encode_pubkey};
-
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
 pub use fofoca::util::consts::{
     REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
 };
+
+use crate::a2a::wire;
 
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
 /// so a test can hold one and pass it to the builder/helpers without the

@@ -7,12 +7,11 @@
 //! redirect is pinned by `cli::agent::tests::long_running_gossip_commands_discard_stdout_and_stderr`)
 //! and read content back through `poll`, which must never truncate.
 
-use agent_gossip_test_fixtures as common;
-
 use std::fs;
 use std::process::{Child, Stdio};
 use std::time::Instant;
 
+use agent_gossip_test_fixtures as common;
 use common::{
     CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, cli_message_checked, cli_poll, park_bell, test_cmd, tmp_log,
 };

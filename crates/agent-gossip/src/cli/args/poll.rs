@@ -2,10 +2,9 @@
 //! process via IPC.
 
 use clap::Parser;
+use fofoca::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
-
-use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {

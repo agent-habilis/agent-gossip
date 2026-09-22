@@ -1,14 +1,13 @@
 //! `create` command args: mint and join a new gossip.
 
 use clap::Parser;
-
-use crate::cli::password::PasswordFlag;
 use fofoca::protocol::Nickname;
 use fofoca::protocol::{DirectorySelection, MeshName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
 use super::transport::Transport;
+use crate::cli::password::PasswordFlag;
 
 #[derive(Parser, Debug)]
 pub(crate) struct CreateOpts {
@@ -84,11 +83,11 @@ impl CreateOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use fofoca::protocol::Nickname;
+    use fofoca::protocol::{DirectorySelection, MeshName};
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;
-    use fofoca::protocol::Nickname;
-    use fofoca::protocol::{DirectorySelection, MeshName};
 
     #[test]
     fn create_opts_with_nickname() {

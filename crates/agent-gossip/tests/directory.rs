@@ -8,13 +8,12 @@
 //! — runs hermetically. This is the regression guard for the directory
 //! bootstrap fix (a discoverer never co-hosts; only the advertiser does).
 
-use agent_gossip_test_fixtures as common;
-
 use std::fs::{self, File};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use agent_gossip_test_fixtures as common;
 use common::{CONNECT_TIMEOUT, POLL, test_cmd, tmp_log};
 
 /// Loopback directory + fast timings so the test runs in seconds:

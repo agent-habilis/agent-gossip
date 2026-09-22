@@ -26,10 +26,16 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use agent_gossip::api::{A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams};
 // The single source of truth for the runtime base dir lives in the app crate;
 // re-export it so test code resolves the same per-user base the daemon uses
 // without a divergent copy.
 pub use agent_gossip::runtime_base;
+use agent_gossip::{
+    Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
+    PresenceSubtype, TaskId, TaskState,
+};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
@@ -719,13 +725,6 @@ pub fn cli_channel_merge(channel: Channel, mesh: &str, nickname: &str, merge: &s
 }
 
 // ── In-process harness (api::MeshSession) ──────────────────────
-
-use agent_gossip::api::{A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams};
-use agent_gossip::{
-    Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
-    PresenceSubtype, TaskId, TaskState,
-};
-use tokio::sync::mpsc::UnboundedReceiver;
 
 /// One in-process mesh node: a real [`MeshSession`] (real iroh
 /// endpoint + the real `daemon::run` loop on a background task) plus

@@ -1,12 +1,11 @@
 //! `join` command args: attach to an existing gossip by id/domain/repo.
 
 use clap::Parser;
-
-use crate::cli::password::PasswordFlag;
 use fofoca::protocol::Nickname;
 use fofoca::protocol::{JoinTarget, JoinTargetError};
 
 use super::shared::SharedServerOpts;
+use crate::cli::password::PasswordFlag;
 
 /// Classify a join token, pointing an unrecognized one at `topic` — which is
 /// what a plain shared string is for.

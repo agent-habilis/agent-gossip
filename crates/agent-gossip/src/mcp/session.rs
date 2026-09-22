@@ -6,15 +6,15 @@
 use std::sync::Mutex;
 
 use anyhow::Result;
+use fofoca::embed::RosterSnapshot;
+use fofoca::protocol::MeshName;
+use fofoca::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 
 use crate::a2a::TaskId;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
     TaskArtifactParams, TopicConfig,
 };
-use fofoca::embed::RosterSnapshot;
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -251,12 +251,12 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
+    use fofoca::protocol::JoinTarget;
+    use fofoca::protocol::{MessageKind, PresenceSubtype};
     use serde_json::json;
 
     use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};
     use crate::api::{CreateConfig, JoinConfig};
-    use fofoca::protocol::JoinTarget;
-    use fofoca::protocol::{MessageKind, PresenceSubtype};
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.

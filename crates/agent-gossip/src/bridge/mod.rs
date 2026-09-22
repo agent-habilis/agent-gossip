@@ -2,6 +2,10 @@ use std::time::Duration;
 
 use fofoca::iroh::Endpoint;
 
+pub(crate) use self::connect::connect;
+pub(crate) use self::directory::{TicketDirectory, TicketDirectoryEvent};
+pub(crate) use self::expose::{ExposeParams, expose};
+
 mod card_rewrite;
 mod connect;
 mod directory;
@@ -11,10 +15,6 @@ mod ticket;
 
 #[cfg(test)]
 mod tests;
-
-pub(crate) use connect::connect;
-pub(crate) use directory::{TicketDirectory, TicketDirectoryEvent};
-pub(crate) use expose::{ExposeParams, expose};
 
 pub(crate) const A2A_ALPN: &[u8] = b"agent-gossip/a2a/1";
 pub(crate) const SECRET_LEN: usize = 32;

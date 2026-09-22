@@ -1,17 +1,17 @@
-use fofoca::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
-use fofoca::runtime::CoHostPolicy;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast;
 
+use fofoca::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
+use fofoca::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
+use fofoca::protocol::{LookupSet, MeshName};
+use fofoca::protocol::{MeshId, Nickname};
+use fofoca::runtime::CoHostPolicy;
+use fofoca::runtime::tuning::directory_expiry_secs;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
-use fofoca::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
-use fofoca::protocol::{LookupSet, MeshName};
-use fofoca::protocol::{MeshId, Nickname};
-use fofoca::runtime::tuning::directory_expiry_secs;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
 

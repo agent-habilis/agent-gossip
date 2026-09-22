@@ -42,10 +42,11 @@ pub(crate) fn resolve(
 
 #[cfg(test)]
 mod tests {
+    use fofoca::protocol::RelayChoice;
+
     use super::resolve;
     use crate::cli::args::lookup::Lookup;
     use crate::cli::args::transport::Transport;
-    use fofoca::protocol::RelayChoice;
 
     #[test]
     fn relay_transport_without_relay_lookup_errors() {

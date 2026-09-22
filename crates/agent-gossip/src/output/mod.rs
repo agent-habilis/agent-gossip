@@ -1,20 +1,19 @@
-use tokio::sync::mpsc::{self, UnboundedSender};
-
-use crate::a2a::TaskId;
 use fofoca::protocol::MeshName;
 use fofoca::protocol::{MeshId, Message, MessageKind, Nickname};
+use tokio::sync::mpsc::{self, UnboundedSender};
+
+pub(crate) use self::json::is_visible;
+use self::json::{
+    SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
+    ping_report_display, print_message_json,
+};
+pub use self::json::{event_json, surfaced_event_json};
+use crate::a2a::TaskId;
+pub(crate) use crate::events::{OutputEvent, PingPeer, TaskGoneReason};
 
 mod json;
 #[cfg(test)]
 mod tests;
-
-pub(crate) use crate::events::{OutputEvent, PingPeer, TaskGoneReason};
-pub(crate) use json::is_visible;
-use json::{
-    SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
-    ping_report_display, print_message_json,
-};
-pub use json::{event_json, surfaced_event_json};
 
 /// Output mode — chosen per event loop at construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

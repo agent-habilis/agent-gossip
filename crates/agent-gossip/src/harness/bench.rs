@@ -12,9 +12,10 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 use fofoca::protocol::crypto;
 use fofoca::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
+
+use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the

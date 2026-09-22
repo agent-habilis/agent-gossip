@@ -10,10 +10,9 @@
 
 use anyhow::{Context, Result, bail};
 use fofoca::iroh::EndpointAddr;
-use sha2::{Digest, Sha256};
-
 use fofoca::net::{endpoint_addr_from_json, endpoint_addr_to_json};
 use fofoca::protocol::LookupOpts;
+use sha2::{Digest, Sha256};
 
 use super::SECRET_LEN;
 
@@ -123,9 +122,10 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{A2aTicket, SECRET_LEN};
     use fofoca::iroh::{EndpointAddr, SecretKey};
     use fofoca::protocol::LookupOpts;
+
+    use super::{A2aTicket, SECRET_LEN};
 
     fn sample_addr(byte: u8) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[byte; 32]).public();
