@@ -11,21 +11,21 @@
 //! no mDNS and no DHT; it does not need them, and asking for them costs nothing
 //! — a CLI peer on the same mesh still uses both.
 
-mod driver;
-mod wire;
-
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use fofoca::embed::SilentSink;
 use fofoca::net::TransportOpts;
 use fofoca::protocol::{
     DirectorySelection, JoinTarget, LookupOpts, MeshConfig, MeshName, Nickname,
 };
 use fofoca::runtime::{CreateParams, JoinParams, Node, Resolved, SetupParams, setup_mesh};
-use fofoca::embed::SilentSink;
 use wasm_bindgen::prelude::*;
 
-use driver::{GossipDriver, Inbox, Request};
+use self::driver::{GossipDriver, Inbox, Request};
+
+mod driver;
+mod wire;
 
 /// How many direct WebRTC sessions a tab will hold open.
 const MAX_DIRECT_PEERS: usize = 8;
@@ -54,9 +54,9 @@ impl GossipPeer {
     ///
     /// # Errors
     /// Endpoint bind failure, or no reachable relay.
-    pub async fn create(nickname: Option<String>, transport: Option<String>) -> Result<GossipPeer, JsValue> {
+    pub async fn create(nickname: Option<String>, path_mode: Option<String>) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
-        let transports = parse_transport(transport.as_deref())?;
+        let transports = parse_path_mode(path_mode.as_deref())?;
         let resolved = CreateParams {
             name: MeshName::random(),
             nickname: parse_nickname(nickname)?,
@@ -66,6 +66,7 @@ impl GossipPeer {
                 lookups: LookupOpts::public_preset(),
                 password: None,
                 issuer_pubkey: None,
+                transport: fofoca::protocol::TransportPolicy::default(),
             },
             advertise: DirectorySelection::Unset,
             password: None,
@@ -83,10 +84,10 @@ impl GossipPeer {
     pub async fn join(
         mesh_id: String,
         nickname: Option<String>,
-        transport: Option<String>,
+        path_mode: Option<String>,
     ) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
-        let transports = parse_transport(transport.as_deref())?;
+        let transports = parse_path_mode(path_mode.as_deref())?;
         let target = mesh_id
             .trim()
             .parse::<JoinTarget>()
@@ -186,15 +187,17 @@ fn parse_nickname(nickname: Option<String>) -> Result<Option<Nickname>, JsValue>
     }
 }
 
-/// `dynamic` lets a failed ICE negotiation fall back to the relay; `webrtc`
-/// fails loudly instead. Named rather than inferred so the caller states the
-/// contract it is asserting.
-fn parse_transport(mode: Option<&str>) -> Result<TransportOpts, JsValue> {
+/// `dynamic` lets a failed ICE negotiation fall back to the relay, but only on
+/// a mesh whose id sets `relay_transport`. On a lookup-only mesh (what `create`
+/// mints, and the CLI's default) the pair stays unlinked instead. `webrtc`
+/// fails loudly. Named rather than inferred so the caller states the contract
+/// it is asserting.
+fn parse_path_mode(mode: Option<&str>) -> Result<TransportOpts, JsValue> {
     match mode.map(str::trim).filter(|mode| !mode.is_empty()) {
         None | Some("dynamic") => Ok(TransportOpts::default()),
         Some("webrtc") => Ok(TransportOpts::webrtc_only()),
         Some(other) => Err(JsValue::from_str(&format!(
-            "unknown transport {other:?}; expected `webrtc` or `dynamic`"
+            "unknown path mode {other:?}; expected `webrtc` or `dynamic`"
         ))),
     }
 }

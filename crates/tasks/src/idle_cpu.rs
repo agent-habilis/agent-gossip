@@ -245,7 +245,7 @@ fn parse_variants(specs: &[String]) -> Result<Vec<Variant>, Box<dyn std::error::
             },
             Variant {
                 label: "public".to_owned(),
-                args: vec!["--public".to_owned()],
+                args: vec!["--lookup".to_owned(), "mdns,dht,relay".to_owned()],
                 nodes: None,
                 binary: None,
             },
@@ -356,14 +356,26 @@ fn spawn_meshes(
     }
 
     for (variant, spec) in variants.iter().enumerate() {
-        // The lookup set is baked into the gossip id, so a joiner inherits the
-        // variant's discovery config; only the tuning flags need repeating.
-        let extra: Vec<&str> = spec
-            .args
-            .iter()
-            .map(String::as_str)
-            .filter(|arg| !matches!(*arg, "--public" | "--mdns" | "--dht" | "--relay"))
-            .collect();
+        // The lookup set and the transport policy are baked into the gossip id,
+        // so a joiner inherits both; only the tuning flags need repeating.
+        // `--lookup`/`--relay-url`/`--transport` each take a value, as either
+        // a separate token (`--flag value`) or `--flag=value`, so a plain
+        // exact-token filter would strip the flag and leave its value behind
+        // as a stray positional.
+        let mut extra: Vec<&str> = Vec::with_capacity(spec.args.len());
+        let mut skip_next = false;
+        for arg in &spec.args {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            let flag = arg.split('=').next().unwrap_or(arg.as_str());
+            if matches!(flag, "--lookup" | "--relay-url" | "--transport") {
+                skip_next = !arg.contains('=');
+                continue;
+            }
+            extra.push(arg.as_str());
+        }
         for index in 1..spec.nodes.unwrap_or(nodes) {
             let mut args = vec![meshes[variant].as_str()];
             args.extend_from_slice(&extra);
@@ -524,9 +536,9 @@ fn report(variants: &[Variant], running: &mut [Node], elapsed: f64) {
         "\nA claimed effect must clear the spread of a control pair run in the\n\
          same batch; ambient churn moves these numbers more than most fixes do.\n\
          Variants are concurrent, which holds ambient churn constant but does\n\
-         NOT make them independent: `--public` variants share the host's mDNS\n\
-         multicast group and gateway portmapper, so each public variant added\n\
-         inflates every other one. Compare like against like within a batch."
+         NOT make them independent: `public`-labeled variants share the host's\n\
+         mDNS multicast group and gateway portmapper, so each public variant\n\
+         added inflates every other one. Compare like against like within a batch."
     );
 }
 

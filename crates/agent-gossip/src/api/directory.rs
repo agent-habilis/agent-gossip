@@ -1,17 +1,17 @@
-use fofoca::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
-use fofoca::runtime::CoHostPolicy;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast;
 
+use fofoca::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
+use fofoca::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
+use fofoca::protocol::{LookupSet, MeshName};
+use fofoca::protocol::{MeshId, Nickname};
+use fofoca::runtime::CoHostPolicy;
+use fofoca::runtime::tuning::directory_expiry_secs;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
-use fofoca::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
-use fofoca::protocol::{LookupSet, MeshName};
-use fofoca::protocol::{MeshId, Nickname};
-use fofoca::runtime::tuning::directory_expiry_secs;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
 
@@ -88,8 +88,11 @@ impl Directory {
     /// directory's topic is keyed by name **and** the lookups in use, so a
     /// discoverer only sees advertisers that reached the directory over the
     /// **same** lookups; bare `LookupSet::default()` resolves to the all-on
-    /// preset (mDNS + DHT + relay), matching a `--public` advertiser. A
-    /// disabled leg issues no network requests for the directory. Returns once
+    /// preset (mDNS + DHT + relay), the CLI `discover` default. An advertiser
+    /// has no such default — `create` without `--lookup` is loopback and
+    /// cannot advertise — so it meets this session only by naming
+    /// `--lookup mdns,dht,relay`. A disabled leg issues no network requests
+    /// for the directory. Returns once
     /// the directory session is ready; listings then accumulate in the
     /// background.
     ///
@@ -108,7 +111,7 @@ impl Directory {
                 MeshName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid mesh name")
             }
         };
-        // Directories are inherently networked, so resolve as if `--public`:
+        // Directories are inherently networked, so resolve as all-on:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
         let resolved = resolve_lookups(

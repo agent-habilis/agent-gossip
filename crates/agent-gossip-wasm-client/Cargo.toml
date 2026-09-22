@@ -18,8 +18,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # The engine, portable half only: `host` pulls in signals, the control socket
 # and the filesystem, none of which exist in a tab.
-fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "e6ab1388faf0b7c98ccc75044e182b28c8c3a811", default-features = false }
-fofoca-iroh-webrtc-transport = { git = "https://github.com/fofoca-network/fofoca", rev = "e6ab1388faf0b7c98ccc75044e182b28c8c3a811", features = ["web"] }
+fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "d9434eec9acf81542acea56bba8e86439c8cb8ee", default-features = false }
+fofoca-iroh-webrtc-transport = { git = "https://github.com/fofoca-network/fofoca", rev = "d9434eec9acf81542acea56bba8e86439c8cb8ee", features = ["web"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

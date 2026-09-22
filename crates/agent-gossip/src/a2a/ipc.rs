@@ -1,25 +1,24 @@
-use fofoca::ops::MeshSender;
-use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
-
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::a2a::app::A2aApp;
-use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
-use crate::a2a::{TaskId, TaskState};
-use crate::output;
 use fofoca::embed::{EventLoopState, PingRound};
+use fofoca::ops::MeshSender;
+use fofoca::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
 use fofoca::protocol::MeshName;
 use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
 use fofoca::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
 use fofoca::runtime::tuning::ping_window_secs;
+use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
+use crate::a2a::app::A2aApp;
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
     emit_task_status, send_broadcast, send_msg,
 };
-use fofoca::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
+use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
+use crate::a2a::{TaskId, TaskState};
+use crate::output;
 
 /// Command sent from CLI to the running server over IPC. App-side because its
 /// arms carry a2a-typed payloads (task id/state, gossip A2A calls); the engine's
@@ -584,8 +583,9 @@ fn peers_response(state: &EventLoopState) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
     use fofoca::runtime::ipc::Addressed;
+
+    use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
 
     // ── IpcCommand serialization ───────────────────────────────────
     //

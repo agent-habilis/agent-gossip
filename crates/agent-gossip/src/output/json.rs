@@ -9,10 +9,10 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
+use fofoca::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
-use fofoca::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and

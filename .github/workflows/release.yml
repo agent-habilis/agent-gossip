@@ -4,18 +4,28 @@ on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   verify-version:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       - name: Verify tag matches Cargo.toml version
         run: |
-          tag="${GITHUB_REF#refs/tags/v}"
+          tag="${TAG#v}"
           manifest=$(cargo pkgid -p agent-gossip | sed -E 's/.*[@#]//')
           if [ "$tag" != "$manifest" ]; then
             echo "Tag v$tag does not match Cargo.toml version $manifest" >&2
@@ -27,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create the GitHub Release (idempotent)
-        run: gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -41,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       - name: Generate roff man pages
         run: cargo task man
       - uses: actions/upload-artifact@v4
@@ -75,6 +87,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       # Pull the once-built man pages into ./man so the archive can bundle
       # them; Homebrew installs them from there (see Formula/agent-gossip.rb).
       - name: Download man pages
@@ -89,6 +103,7 @@ jobs:
           # derive the package name/version from `./Cargo.toml`.
           manifest-path: crates/agent-gossip/Cargo.toml
           target: ${{ matrix.target }}
+          ref: refs/tags/${{ env.TAG }}
           archive: $bin-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
           # Bundle the generated man pages alongside the binary so
@@ -101,6 +116,9 @@ jobs:
   update-formula:
     needs: upload
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -109,7 +127,6 @@ jobs:
       - name: Bump Formula/agent-gossip.rb to the released version + checksums
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
           ver="${TAG#v}"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp --clobber
@@ -123,15 +140,25 @@ jobs:
             # Replace the sha256 line immediately following this target's url line.
             perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/agent-gossip.rb
           done
-      - name: Commit the formula bump
+      # A PR, not a push: the "Protect main" ruleset requires one, and the
+      # GitHub Actions app cannot be a bypass actor on a repo ruleset. A PR
+      # opened with GITHUB_TOKEN does not trigger CI, so an admin merges it
+      # through the ruleset bypass.
+      - name: Open a PR with the formula bump
         env:
-          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/agent-gossip.rb
-          git diff --cached --quiet || git commit -m "chore: update Homebrew formula for ${TAG}"
-          git push origin main
+          git diff --cached --quiet && exit 0
+          branch="formula/${TAG}"
+          git switch -c "$branch"
+          git commit -m "chore: update Homebrew formula for ${TAG}"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: update Homebrew formula for ${TAG}" \
+            --body "Formula bump from the ${TAG} release workflow."
       # The GITHUB_TOKEN is scoped to this repo, so mirroring into the org
       # tap needs the TAP_PUSH_TOKEN secret (fine-grained PAT, contents
       # read/write on homebrew-tap only).
@@ -141,8 +168,6 @@ jobs:
           token: ${{ secrets.TAP_PUSH_TOKEN }}
           path: tap
       - name: Mirror the formula to the org tap
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           cp Formula/agent-gossip.rb tap/Formula/agent-gossip.rb
           cd tap

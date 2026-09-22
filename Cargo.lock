@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "agent-gossip"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "agent-gossip-test-fixtures",
  "anstream 0.6.21",
@@ -1583,7 +1583,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fofoca"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1620,7 +1620,7 @@ dependencies = [
 [[package]]
 name = "fofoca-doc"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1637,7 +1637,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-multihop-transport"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1656,7 +1656,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "iroh",
 ]
@@ -1664,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "fofoca-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1690,7 +1690,7 @@ dependencies = [
 [[package]]
 name = "fofoca-logging"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "anyhow",
  "fofoca-protocol",
@@ -1703,7 +1703,7 @@ dependencies = [
 [[package]]
 name = "fofoca-protocol"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1728,7 +1728,7 @@ dependencies = [
 [[package]]
 name = "fofoca-util"
 version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=7cfc15a5d14028fe5340ef4be4b60e46a52aed0e#7cfc15a5d14028fe5340ef4be4b60e46a52aed0e"
+source = "git+https://github.com/fofoca-network/fofoca?rev=d9434eec9acf81542acea56bba8e86439c8cb8ee#d9434eec9acf81542acea56bba8e86439c8cb8ee"
 dependencies = [
  "libc",
  "tokio",
@@ -2615,7 +2615,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.101.0"
-source = "git+https://github.com/fofoca-network/iroh-gossip?rev=57dcb6b8e5c0645c951830faf6b84b5893ee83c1#57dcb6b8e5c0645c951830faf6b84b5893ee83c1"
+source = "git+https://github.com/fofoca-network/iroh-gossip?rev=50f6a933d8f4e11aeac38fd7581db3658f9fe684#50f6a933d8f4e11aeac38fd7581db3658f9fe684"
 dependencies = [
  "blake3",
  "bytes",

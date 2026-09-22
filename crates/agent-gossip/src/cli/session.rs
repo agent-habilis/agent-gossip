@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-
-use crate::runtime_base;
 use fofoca::protocol::Nickname;
 use fofoca::runtime::state_file::read_session_entry;
 use fofoca::util::process;
 
 use super::args::{LeaveOpts, SessionOpts};
+use crate::runtime_base;
 
 /// One live daemon on this machine, resolved from its state file. `mesh`
 /// and `pid` are required to act on an entry; `name`/`nickname`/`topic` are

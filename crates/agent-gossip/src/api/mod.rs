@@ -8,6 +8,14 @@
 //! `iroh` type crosses this boundary: a join target is a mesh id parsed from a
 //! string.
 
+pub(crate) use self::advertise::{DIRECTORY_ADVERTISER_COHOST, spawn_advertiser};
+pub use self::config::{CreateConfig, JoinConfig, TopicConfig};
+pub use self::directory::{Directory, DirectoryEvent, MeshListing};
+pub use self::error::{CreateError, JoinError};
+pub(crate) use self::inproc::InProcessSession;
+pub use self::params::{A2aCallParams, TaskArtifactParams};
+pub use self::session::MeshSession;
+
 mod advertise;
 mod config;
 mod directory;
@@ -16,15 +24,6 @@ mod inproc;
 mod params;
 mod session;
 mod setup;
-
-pub use config::{CreateConfig, JoinConfig, TopicConfig};
-pub use directory::{Directory, DirectoryEvent, MeshListing};
-pub use error::{CreateError, JoinError};
-pub use params::{A2aCallParams, TaskArtifactParams};
-pub use session::MeshSession;
-
-pub(crate) use advertise::{DIRECTORY_ADVERTISER_COHOST, spawn_advertiser};
-pub(crate) use inproc::InProcessSession;
 
 // Last, so it does not trip `clippy::items_after_test_module`.
 #[cfg(test)]

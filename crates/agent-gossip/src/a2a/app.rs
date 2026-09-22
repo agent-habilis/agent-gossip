@@ -8,13 +8,13 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use fofoca::protocol::Nickname;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::TaskId;
 use crate::a2a::surfaced::SurfacedState;
 use crate::output::{Output, OutputEvent};
-use fofoca::protocol::Nickname;
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
@@ -448,8 +448,9 @@ pub(crate) struct A2aWaiter {
 
 #[cfg(test)]
 mod tests {
-    use super::{A2aResponder, rpc_result_from_body};
     use fofoca::protocol::Nickname;
+
+    use super::{A2aResponder, rpc_result_from_body};
 
     /// The localhost binding's `A2aResponder::Rpc` unwraps a peer's JSON-RPC
     /// response body into the `Result<Value, RpcError>` its HTTP handler

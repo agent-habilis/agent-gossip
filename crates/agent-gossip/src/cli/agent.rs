@@ -250,9 +250,11 @@ pub(crate) fn drift_warning(home: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Agent, OWNED_SKILL_DIRS, SKILLS};
-    use include_dir::Dir;
     use std::path::Path;
+
+    use include_dir::Dir;
+
+    use super::{Agent, OWNED_SKILL_DIRS, SKILLS};
 
     /// The embedded tree is the *generated* one: exactly one `SKILL.md` per
     /// skill dir, no `shared/`, no partials, and no leftover runtime reads or

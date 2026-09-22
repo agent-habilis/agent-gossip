@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
+use fofoca::protocol::Nickname;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
-
-use fofoca::protocol::Nickname;
 
 use super::rpc::{A2aOp, A2aRequest, RpcError, parse_op};
 

@@ -13,7 +13,7 @@ import {
 } from './agentTools/session.ts'
 import { loadWasm, type GossipPeer } from '../wasm/index.ts'
 
-export interface Joined extends Pick<GossipSession, 'mesh' | 'name' | 'nickname' | 'transport'> {
+export interface Joined extends Pick<GossipSession, 'mesh' | 'name' | 'nickname' | 'path'> {
   /** The raw JSON the client hands back, so a caller can skip an unchanged parse. */
   rosterJson(): string
   peers(): readonly RosterPeer[]
@@ -40,7 +40,7 @@ function wrap(peer: GossipPeer): Joined {
     nickname: peer.nickname,
     // What this tab asked for. The engine settles per connection and can fall
     // back to the relay; reporting the live path needs the client to expose it.
-    transport: 'webrtc',
+    path: 'webrtc',
     rosterJson: () => peer.peers,
     peers: () => JSON.parse(peer.peers) as RosterPeer[],
     messages: (after) => JSON.parse(peer.messages(after)) as GossipMessage[],
@@ -70,7 +70,7 @@ function wrap(peer: GossipPeer): Joined {
     mesh: joined.mesh,
     name: joined.name,
     nickname: joined.nickname,
-    transport: joined.transport,
+    path: joined.path,
     peers: () => joined.peers(),
     broadcast: async (text: string) => {
       await joined.broadcast(text)

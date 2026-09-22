@@ -295,8 +295,9 @@ impl fmt::Display for TaskState {
 /// kebab name — for our internal surfaces (the IPC socket, MCP tool args),
 /// keeping the `ProtoJSON` `TASK_STATE_*` form confined to the A2A wire objects.
 pub mod friendly_state {
-    use super::TaskState;
     use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::TaskState;
 
     /// # Errors
     /// Never — serialization of a small enum cannot fail.

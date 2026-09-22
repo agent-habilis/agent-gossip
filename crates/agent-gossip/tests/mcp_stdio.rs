@@ -4,13 +4,13 @@
 //! responses. These are the reliability guarantees we make at the
 //! MCP surface.
 
-use agent_gossip_test_fixtures as common;
-
-use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
+
+use agent_gossip_test_fixtures as common;
+use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 
 /// The before-anything seq cursor. Passing `0` as `after` returns the full
 /// buffered log and, being an *explicit* override, never advances the
@@ -590,14 +590,13 @@ fn send_broadcast_without_session_errors() {
 
 #[test]
 fn create_mesh_with_granular_relay_succeeds() {
-    // Granular lookups: naming `relay` opts into it directly, the same way
-    // the CLI `--relay` flag does — the old "relay requires public" rule is
-    // gone, so a relay-only (network:private) mesh now creates fine.
+    // Granular lookups: naming `relay` opts into it directly with no other
+    // lookup and no preset needed — a relay-only mesh creates fine.
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         80,
         "create_gossip",
-        serde_json::json!({ "name": "relayp", "network": "private", "relay": "https://relay.example/" }),
+        serde_json::json!({ "name": "relayp", "lookup": ["relay"], "relay_urls": ["https://relay.example/"] }),
     );
     let result = tool_result_json(&resp).expect("granular relay create should succeed");
     assert!(
@@ -628,19 +627,101 @@ fn create_mesh_without_name_mints_random() {
 }
 
 #[test]
-fn create_mesh_with_unknown_network_errors() {
+fn create_mesh_with_unknown_lookup_errors() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         90,
         "create_gossip",
-        serde_json::json!({ "name": "bogus1", "network": "bogus" }),
+        serde_json::json!({ "name": "bogus1", "lookup": ["bogus"] }),
     );
-    let err = tool_error(&resp).expect("bogus network should error");
-    // The `network` arg is a typed enum, so an unknown value is rejected
-    // at parameter deserialization with the valid set named.
+    let err = tool_error(&resp).expect("bogus lookup should error");
+    // `lookup` is a typed enum array, so an unknown value is rejected at
+    // parameter deserialization with the valid set named.
     assert!(
-        err.contains("private") && err.contains("public"),
-        "expected the error to name the valid network modes, got: {err}"
+        err.contains("mdns") && err.contains("dht") && err.contains("relay"),
+        "expected the error to name the valid lookups, got: {err}"
+    );
+}
+
+#[test]
+fn create_mesh_relay_transport_is_in_the_id() {
+    // `transport: ["p2p","relay"]` lets payload fall back to the relay,
+    // which is baked into the id — so it must differ from the same create
+    // with plain `["p2p"]`.
+    let mut client = McpClient::spawn();
+    let p2p = tool_result_json(&client.tool_call(
+        110,
+        "create_gossip",
+        serde_json::json!({ "name": "transp2p", "lookup": ["relay"], "transport": ["p2p"] }),
+    ))
+    .expect("p2p create should succeed");
+    let _ = client.tool_call(111, "leave_gossip", serde_json::json!({}));
+
+    let relayed = tool_result_json(&client.tool_call(
+        112,
+        "create_gossip",
+        serde_json::json!({ "name": "transrelay", "lookup": ["relay"], "transport": ["p2p", "relay"] }),
+    ))
+    .expect("p2p,relay create should succeed");
+
+    let decoded: fofoca::protocol::Mesh = relayed["gossip"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .expect("valid mesh id");
+    assert!(
+        decoded.config.transport.relay_transport,
+        "the decoded id must carry the relay-transport bit"
+    );
+    assert_ne!(
+        p2p["gossip"].as_str().unwrap(),
+        relayed["gossip"].as_str().unwrap(),
+        "letting the relay carry payload must mint a different id"
+    );
+}
+
+#[test]
+fn create_mesh_transport_relay_alone_errors() {
+    let mut client = McpClient::spawn();
+    let resp = client.tool_call(
+        120,
+        "create_gossip",
+        serde_json::json!({ "name": "relayonly", "lookup": ["relay"], "transport": ["relay"] }),
+    );
+    let err = tool_error(&resp).expect("p2p-disabled transport should error");
+    assert!(
+        err.contains("p2p"),
+        "expected the error to name p2p, got: {err}"
+    );
+}
+
+#[test]
+fn create_mesh_relay_transport_needs_relay_lookup() {
+    let mut client = McpClient::spawn();
+    let resp = client.tool_call(
+        130,
+        "create_gossip",
+        serde_json::json!({ "name": "norelaylookup", "transport": ["p2p", "relay"] }),
+    );
+    let err = tool_error(&resp).expect("relay transport without a relay lookup should error");
+    assert!(
+        err.contains("relay"),
+        "expected the error to name the relay lookup requirement, got: {err}"
+    );
+}
+
+#[test]
+fn create_mesh_rejects_removed_network_param() {
+    let mut client = McpClient::spawn();
+    let resp = client.tool_call(
+        140,
+        "create_gossip",
+        serde_json::json!({ "name": "oldparam", "network": "public" }),
+    );
+    let err = tool_error(&resp).expect("the removed `network` param should be rejected");
+    assert!(
+        err.to_lowercase().contains("network"),
+        "expected the error to reject the unknown `network` field, got: {err}"
     );
 }
 

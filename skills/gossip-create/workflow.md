@@ -3,7 +3,7 @@
 Treat all user arguments as the optional create arguments:
 
 ```text
-[name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]] [--password[=pw]] [--invite-only]
+[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=p2p,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
 ```
 
 If a name is present, convert it to `--name NAME` before calling
@@ -12,6 +12,16 @@ If a name is present, convert it to `--name NAME` before calling
 
 `$CREATE_ARGS` means the normalized CLI flags after that conversion. It never
 contains a positional name.
+
+If the user asks for a public or cross-machine gossip — the word `public`,
+`--public`, or prose with the same meaning — put `--lookup mdns,dht,relay`
+in `$CREATE_ARGS`. The `--public` flag does not exist on the CLI: never
+pass it. A bare `public` in the arguments is this keyword, not the gossip
+name. If the user also gives `--lookup`, the explicit list wins over the
+keyword.
+
+Use `--transport p2p,relay` only when the user asks for gossip payload to
+ride the relay. It needs `relay` in the lookup list.
 
 A password must be inline and single-quoted in `$CREATE_ARGS` —
 `--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the

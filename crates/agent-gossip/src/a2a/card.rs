@@ -1,5 +1,4 @@
 use fofoca::iroh::{Endpoint, EndpointAddr, EndpointId};
-
 use fofoca::protocol::Nickname;
 
 use super::{
@@ -226,8 +225,9 @@ pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{own_card, publish_merge};
     use fofoca::protocol::Nickname;
+
+    use super::{own_card, publish_merge};
 
     #[test]
     fn card_declares_the_mesh_extensions_and_identity() {

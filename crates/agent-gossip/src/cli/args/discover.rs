@@ -2,11 +2,10 @@
 //! (The JSON-streaming runtime is [`crate::cli::discover`].)
 
 use clap::Parser;
-
 use fofoca::protocol::MeshName;
 
 use super::legacy::LegacyOutput;
-use super::lookup::PublicLookupArgs;
+use super::lookup::LookupArgs;
 use super::tuning::TuningOpts;
 
 #[derive(Parser, Debug)]
@@ -24,13 +23,13 @@ pub(crate) struct DiscoverOpts {
     #[arg(long)]
     pub window_secs: Option<u64>,
 
-    /// Lookups used to reach the directory (`--mdns`/`--dht`/`--relay`).
-    /// Naming none (or `--public`) uses all three; naming any restricts to
-    /// those (a disabled leg makes no network requests). Must match the
-    /// lookups the advertiser used — an mDNS-only advertiser is found only
-    /// by an mDNS-only `discover`.
+    /// Lookups used to reach the directory (`--lookup`/`--relay-url`).
+    /// Naming none uses all three; naming any restricts to those (a disabled
+    /// leg makes no network requests). Must match the lookups the advertiser
+    /// used — a `--lookup mdns` advertiser is found only by a `--lookup
+    /// mdns` `discover`.
     #[command(flatten)]
-    pub lookups: PublicLookupArgs,
+    pub lookups: LookupArgs,
 
     /// `discover` joins the directory as a pure consumer: it writes no state
     /// file, runs no gossip session, and serves no binding, so it takes only
@@ -46,9 +45,9 @@ pub(crate) struct DiscoverOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use fofoca::protocol::MeshName;
 
     use crate::cli::args::{Cli, Commands};
-    use fofoca::protocol::MeshName;
 
     fn discover_opts(args: &[&str]) -> super::DiscoverOpts {
         match Cli::parse_from(args).command {

@@ -1,4 +1,8 @@
 use fofoca::embed::RosterSnapshot;
+use fofoca::protocol::{Mesh, MeshName};
+use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
+use fofoca::runtime::tuning::NODE_INBOUND_CAP;
+use fofoca::runtime::{CoHostPolicy, EventLoopConfig};
 use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
 use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
@@ -12,10 +16,6 @@ use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::output::OutputEvent;
 use crate::output::PingPeer;
-use fofoca::protocol::{Mesh, MeshName};
-use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
-use fofoca::runtime::tuning::NODE_INBOUND_CAP;
-use fofoca::runtime::{CoHostPolicy, EventLoopConfig};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event

@@ -7,12 +7,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use fofoca::iroh::endpoint::ConnectionError;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-
 use fofoca::net::{add_peer_addr, build_peer_endpoint};
 use fofoca::protocol::LookupOpts;
 use fofoca::protocol::{Password, TicketAuth};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 use super::connect::{Bridge, SharedConnection, forward_one};
 use super::expose::{bind, serve_connection};

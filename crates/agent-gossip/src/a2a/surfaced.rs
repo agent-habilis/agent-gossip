@@ -493,14 +493,16 @@ impl SurfacedState {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use fofoca::protocol::{Channel, Message, MessageKind, Nickname};
+    use tokio::time::Instant as TokioInstant;
+
     use super::{
         PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
         render_poll_array,
     };
     use crate::output::OutputEvent;
-    use fofoca::protocol::{Channel, Message, MessageKind, Nickname};
-    use std::time::Duration;
-    use tokio::time::Instant as TokioInstant;
 
     fn nick(name: &str) -> Nickname {
         Nickname::new(name.to_owned()).expect("valid test nickname")

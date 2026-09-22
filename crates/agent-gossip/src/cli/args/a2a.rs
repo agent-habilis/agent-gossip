@@ -5,12 +5,12 @@
 //!   local A2A HTTP server to a peer over the gossip (a ticket, 1:1).
 
 use clap::{Parser, Subcommand};
-
-use super::legacy::LegacyOutput;
-use super::lookup::PublicLookupArgs;
-use crate::cli::password::PasswordFlag;
 use fofoca::protocol::MeshName;
 use fofoca::protocol::{MeshId, Nickname};
+
+use super::legacy::LegacyOutput;
+use super::lookup::LookupArgs;
+use crate::cli::password::PasswordFlag;
 
 #[derive(Parser, Debug)]
 pub(crate) struct A2aOpts {
@@ -34,10 +34,10 @@ pub(crate) enum A2aAction {
         to: String,
 
         /// Which lookup mechanisms the bridge uses (same flags as `create`):
-        /// naming any uses only those; naming none (or `--public`) is the all-on
-        /// public preset.
+        /// naming any uses only those; naming none is the all-on public
+        /// preset.
         #[command(flatten)]
-        lookups: PublicLookupArgs,
+        lookups: LookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
         /// with `agent-gossip a2a discover` — no ticket to copy. Bare `--advertise` ⇒ the
@@ -107,10 +107,10 @@ pub(crate) enum A2aAction {
         directory: Option<MeshName>,
 
         /// Which lookup mechanisms reach the directory (same flags as
-        /// `discover`): must match the advertiser's. Naming none (or `--public`)
-        /// is the all-on public preset.
+        /// `discover`): must match the advertiser's. Naming none is the
+        /// all-on public preset.
         #[command(flatten)]
-        lookups: PublicLookupArgs,
+        lookups: LookupArgs,
 
         #[command(flatten)]
         legacy_output: LegacyOutput,
@@ -292,9 +292,10 @@ fn parse_state(raw: &str) -> Result<crate::a2a::TaskState, String> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
+
     use super::A2aAction;
     use crate::cli::args::{Cli, Commands};
-    use clap::Parser as _;
 
     /// `--timeout-secs` must default to the shared constant, not a literal.
     /// `a2a::tuning`'s own test pins the other two surfaces.

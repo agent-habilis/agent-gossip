@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, bail};
-
 use fofoca::protocol::MeshId;
 use fofoca::protocol::Message as Frame;
 use fofoca::protocol::MessageBody;
@@ -414,13 +413,14 @@ pub fn task_text(frame: &Frame) -> String {
 
 #[cfg(test)]
 mod tests {
+    use fofoca::protocol::MeshId;
+    use fofoca::protocol::MessageId;
+    use fofoca::protocol::MessageKind;
+
     use super::{
         Frame, broadcast_payload, compose_broadcast, compose_msg, display_text, msg_payload,
         payload_body,
     };
-    use fofoca::protocol::MeshId;
-    use fofoca::protocol::MessageId;
-    use fofoca::protocol::MessageKind;
 
     fn mesh() -> MeshId {
         MeshId::from("test")

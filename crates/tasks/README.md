@@ -54,7 +54,7 @@ justification travels with the command.
 | `build` | The binary. Cross-compiles with `--target <triple>` or the `--arch` shorthand |
 | `run` | `cargo run --` with the rest forwarded (`cargo task run create`) |
 | `install` | `cargo install` from an absolute path, then reports what the installed binary *says* its version is |
-| `release` | `cargo-release`; dry run unless `--execute`. With no args, just builds the release binary |
+| `release` | Builds the release binary |
 | `man` | Renders roff man pages into `target/man/` |
 | `logs` | Prints the daemon log directory, creating it if missing |
 | `clean` | `cargo clean` plus the separate llvm-cov target dir |
@@ -88,23 +88,14 @@ Nothing here asks the developer to `cargo install` a toolchain first.
   engine's cargo-style status helpers, reused rather than forked. Both audiences
   want the same colored lines, and `anstream` already strips the color for
   whichever of them is piping.
-- **`cargo-llvm-cov`, `cargo-release`, and `cargo-sweep`** are installed on
+- **`cargo-llvm-cov` and `cargo-sweep`** are installed on
   demand by `ensure_installed`, which probes first and never aborts the calling
   task on a hiccup.
 
 ## Releasing
 
-`cargo-release` never publishes to crates.io and never pushes.
-
-```sh
-cargo task release minor              # dry run
-cargo task release minor --execute    # bump, commit, annotated tag — no push
-git push origin main --follow-tags    # the human does this
-```
-
-Pushing the tag triggers `.github/workflows/release.yml`, which builds the
-binaries, **updates the Homebrew formula itself**, and mirrors it to the tap
-repo. There is no manual formula step.
+Releases go through knope change files and a release PR, not this crate. See
+"Releasing" in [`AGENTS.md`](../../AGENTS.md).
 
 ## What it is not
 

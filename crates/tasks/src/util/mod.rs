@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use xshell::{Shell, cmd};
-
 // The app's status helpers, shared rather than forked: both audiences want the
 // same cargo-style colored lines, and `anstream` already strips the color for
 // whichever of them is piping.
 pub(crate) use agent_gossip::status as output;
+use xshell::{Shell, cmd};
 
 /// Workspace root: the grandparent of this crate's `crates/tasks/` manifest dir.
 /// Falls back to CWD if the env var is somehow missing.

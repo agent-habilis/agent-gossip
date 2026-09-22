@@ -1,13 +1,13 @@
 //! `create` command args: mint and join a new gossip.
 
 use clap::Parser;
-
-use crate::cli::password::PasswordFlag;
 use fofoca::protocol::Nickname;
 use fofoca::protocol::{DirectorySelection, MeshName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
+use super::transport::Transport;
+use crate::cli::password::PasswordFlag;
 
 #[derive(Parser, Debug)]
 pub(crate) struct CreateOpts {
@@ -29,12 +29,12 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub name: Option<MeshName>,
 
-    /// Make the gossip reachable across machines — sugar for the all-on
-    /// lookup preset (mDNS + DHT + the default relay ladder). Omitted ⇒
-    /// loopback only (the default). Refine with the `--mdns`/`--dht`/
-    /// `--relay` flags; all of it is baked into the gossip id.
-    #[arg(long, default_value_t = false)]
-    pub public: bool,
+    /// Which transports may carry mesh payload: `p2p` (direct paths only,
+    /// the default) or `p2p,relay` (also fall back to the relay). Baked into
+    /// the gossip id and inherited by every joiner. `relay` requires `relay`
+    /// in `--lookup`.
+    #[arg(long, value_enum, value_delimiter = ',')]
+    pub transport: Vec<Transport>,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
@@ -44,11 +44,11 @@ pub(crate) struct CreateOpts {
     pub nickname: Option<Nickname>,
 
     /// List this gossip in a directory so others can find it with
-    /// `agent-gossip discover` — no id to share. Optional-value, like
-    /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
-    /// `global` directory; `--advertise <directory>` ⇒ that named directory.
-    /// Requires `--public` (a directory listing only makes sense for a
-    /// cross-machine gossip). Note: advertising broadcasts the full join
+    /// `agent-gossip discover` — no id to share. Optional-value: absent ⇒
+    /// unlisted; bare `--advertise` ⇒ the default `global` directory;
+    /// `--advertise <directory>` ⇒ that named directory. Requires a lookup
+    /// that reaches other machines (a directory listing only makes sense for
+    /// a cross-machine gossip). Note: advertising broadcasts the full join
     /// token, so the gossip becomes open to anyone discovering that directory.
     /// Absent ⇒ unlisted; bare `--advertise` ⇒ the well-known `global`
     /// directory (the `default_missing_value`); valued ⇒ that named directory.
@@ -74,7 +74,7 @@ pub(crate) struct CreateOpts {
 
 impl CreateOpts {
     /// Resolve the `--advertise` flag's absent/bare/valued shape into a
-    /// [`DirectorySelection`] (mirrors `LookupArgs::to_set` for `--relay`).
+    /// [`DirectorySelection`] (mirrors `LookupArgs::to_set` for `--relay-url`).
     pub(crate) fn advertise_selection(&self) -> DirectorySelection {
         DirectorySelection::from_flag(self.advertise.clone())
     }
@@ -83,11 +83,11 @@ impl CreateOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use fofoca::protocol::Nickname;
+    use fofoca::protocol::{DirectorySelection, MeshName};
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;
-    use fofoca::protocol::Nickname;
-    use fofoca::protocol::{DirectorySelection, MeshName};
 
     #[test]
     fn create_opts_with_nickname() {
@@ -240,12 +240,18 @@ mod tests {
             }
         }
         assert_eq!(
-            advertise_of(&["agent-gossip", "create", "--public"]),
+            advertise_of(&["agent-gossip", "create", "--lookup", "mdns,dht,relay"]),
             DirectorySelection::Unset,
             "absent ⇒ Unset (unlisted)"
         );
         assert_eq!(
-            advertise_of(&["agent-gossip", "create", "--public", "--advertise"]),
+            advertise_of(&[
+                "agent-gossip",
+                "create",
+                "--lookup",
+                "mdns,dht,relay",
+                "--advertise"
+            ]),
             DirectorySelection::Named(MeshName::new("global").unwrap()),
             "bare ⇒ the global directory (default_missing_value)"
         );
@@ -253,7 +259,8 @@ mod tests {
             advertise_of(&[
                 "agent-gossip",
                 "create",
-                "--public",
+                "--lookup",
+                "mdns,dht,relay",
                 "--advertise",
                 "gamedev"
             ]),
@@ -316,7 +323,8 @@ mod tests {
             "create",
             "--name",
             "team",
-            "--public",
+            "--lookup",
+            "mdns,dht,relay",
             "--nickname",
             "custom-name",
         ]);
@@ -327,7 +335,7 @@ mod tests {
                     opts.nickname.as_ref().map(Nickname::as_str),
                     Some("custom-name")
                 );
-                assert!(opts.public);
+                assert_eq!(opts.lookups.lookup.len(), 3);
             }
             Commands::Join { .. }
             | Commands::Topic { .. }

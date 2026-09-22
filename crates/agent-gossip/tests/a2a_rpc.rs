@@ -5,7 +5,6 @@
 //! rejection of a mutating op, and the fast-fail for an unknown peer.
 
 use agent_gossip_test_fixtures as common;
-
 use common::{InProcNode, MSG_TIMEOUT, await_mutual_cards};
 use serde_json::json;
 

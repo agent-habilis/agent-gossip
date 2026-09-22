@@ -1,6 +1,7 @@
-use crate::a2a::{TaskId, TaskState};
 use fofoca::protocol::MeshName;
 use fofoca::protocol::{MeshId, Message, MessageId, Nickname};
+
+use crate::a2a::{TaskId, TaskState};
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]

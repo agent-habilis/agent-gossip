@@ -1,10 +1,11 @@
+use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
+use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
+use fofoca::runtime::{SetupParams, setup_mesh};
+
 use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use crate::output::Output;
-use fofoca::protocol::{DirectorySelection, MeshConfig, TransportPolicy, resolve_lookups};
-use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
-use fofoca::runtime::{SetupParams, setup_mesh};
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
@@ -25,12 +26,12 @@ pub(super) async fn create_setup(
 > {
     crate::register_build_version();
     let config = MeshConfig {
-        lookups: resolve_lookups(cfg.public, cfg.lookups),
+        // No sugar flag left in the api: naming no lookup is loopback,
+        // naming any restricts to those.
+        lookups: resolve_lookups(false, cfg.lookups),
         password: None,
         issuer_pubkey: None,
-        // The api exposes no relay-payload knob, so the mesh takes the
-        // engine's lookup-only default.
-        transport: TransportPolicy::default(),
+        transport: cfg.transport,
     };
     // The advertiser reaches the directory over this mesh's own lookups.
     let directory_lookups = config.lookups.clone();

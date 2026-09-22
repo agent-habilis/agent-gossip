@@ -1,18 +1,17 @@
-use fofoca::ops::directory::directory_mesh;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use fofoca::ops::directory;
+use fofoca::ops::directory::directory_mesh;
+use fofoca::protocol::{LookupOpts, MeshName};
+pub(crate) use fofoca::runtime::DIRECTORY_ADVERTISER_COHOST;
+use fofoca::runtime::EventLoopConfig;
+use fofoca::runtime::tuning::advertise_interval_secs;
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
-use fofoca::ops::directory;
-use fofoca::protocol::{LookupOpts, MeshName};
-use fofoca::runtime::EventLoopConfig;
-use fofoca::runtime::tuning::advertise_interval_secs;
-
-pub(crate) use fofoca::runtime::DIRECTORY_ADVERTISER_COHOST;
 
 /// Spawn the directory re-broadcast task for `cfg`'s mesh: wire a fresh
 /// live-peer counter into `cfg.live_count`, then re-send the

@@ -7,6 +7,24 @@
 
 use clap::{Parser, Subcommand};
 
+pub(crate) use self::a2a::{A2aAction, A2aOpts};
+pub(crate) use self::create::CreateOpts;
+pub(crate) use self::discover::DiscoverOpts;
+pub(crate) use self::doctor::{DoctorOpts, OutputFormat};
+pub(crate) use self::invite::InviteOpts;
+pub(crate) use self::join::JoinOpts;
+pub(crate) use self::leave::LeaveOpts;
+pub(crate) use self::meta::{MetaAction, MetaOpts};
+pub(crate) use self::peers::PeersOpts;
+pub(crate) use self::ping::PingOpts;
+pub(crate) use self::poll::PollOpts;
+pub(crate) use self::ready::ReadyOpts;
+pub(crate) use self::session::SessionOpts;
+pub(crate) use self::shared::SharedServerOpts;
+pub(crate) use self::state::{StateAction, StateOpts};
+pub(crate) use self::topic::TopicOpts;
+pub(crate) use self::topology::TopologyOpts;
+
 mod a2a;
 mod create;
 mod discover;
@@ -15,7 +33,8 @@ mod invite;
 mod join;
 mod leave;
 mod legacy;
-mod lookup;
+pub(crate) mod lookup;
+pub(crate) mod mesh_config;
 mod meta;
 mod peers;
 mod ping;
@@ -26,25 +45,8 @@ mod shared;
 mod state;
 mod topic;
 mod topology;
+pub(crate) mod transport;
 pub(crate) mod tuning;
-
-pub(crate) use a2a::{A2aAction, A2aOpts};
-pub(crate) use create::CreateOpts;
-pub(crate) use discover::DiscoverOpts;
-pub(crate) use doctor::{DoctorOpts, OutputFormat};
-pub(crate) use invite::InviteOpts;
-pub(crate) use join::JoinOpts;
-pub(crate) use leave::LeaveOpts;
-pub(crate) use meta::{MetaAction, MetaOpts};
-pub(crate) use peers::PeersOpts;
-pub(crate) use ping::PingOpts;
-pub(crate) use poll::PollOpts;
-pub(crate) use ready::ReadyOpts;
-pub(crate) use session::SessionOpts;
-pub(crate) use shared::SharedServerOpts;
-pub(crate) use state::{StateAction, StateOpts};
-pub(crate) use topic::TopicOpts;
-pub(crate) use topology::TopologyOpts;
 
 #[derive(Parser, Debug)]
 #[command(

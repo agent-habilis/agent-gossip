@@ -2,7 +2,6 @@
 //! gossip graph) from a running daemon's point of view, as JSON.
 
 use clap::Parser;
-
 use fofoca::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]

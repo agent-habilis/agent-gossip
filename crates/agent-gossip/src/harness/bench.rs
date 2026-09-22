@@ -12,9 +12,10 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 use fofoca::protocol::crypto;
 use fofoca::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
+
+use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the
@@ -39,7 +40,7 @@ impl BenchConfig {
         let lookups = LookupOpts {
             mdns: true,
             dht: false,
-            relay: RelayChoice::Custom(vec![
+            relay_lookup: RelayChoice::Custom(vec![
                 "https://a.example".parse().expect("valid relay url"),
                 "https://b.example".parse().expect("valid relay url"),
             ]),

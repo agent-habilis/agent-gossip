@@ -182,7 +182,7 @@ export const TOOLS: readonly ModelContextTool[] = [
           gossip: gossip.mesh,
           name: gossip.name,
           nickname: gossip.nickname,
-          transport: gossip.transport,
+          path: gossip.path,
           peer_count: peers.length,
           peers,
         }

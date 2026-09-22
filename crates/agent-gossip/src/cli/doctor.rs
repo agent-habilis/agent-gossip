@@ -2,17 +2,16 @@ use std::time::Duration;
 
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
-use serde::Serialize;
-
-use crate::a2a::ipc::IpcCommand;
-use crate::status as output;
 use fofoca::net::{self, NetworkCapability};
 use fofoca::protocol::MeshId;
 use fofoca::protocol::{Mesh, RelayChoice};
 use fofoca::runtime::ipc;
+use serde::Serialize;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
+use crate::a2a::ipc::IpcCommand;
+use crate::status as output;
 
 /// Budget for the machine net-report (build endpoint + first completed report).
 const CAPABILITY_TIMEOUT: Duration = Duration::from_secs(6);
@@ -410,12 +409,12 @@ fn declared_methods_section(mesh: &Mesh) -> Section {
     let lookups = mesh.lookups();
     let mut checks = Vec::new();
 
-    match &lookups.relay {
+    match &lookups.relay_lookup {
         RelayChoice::Disabled => {
             checks.push(Check::new("relay", Verdict::Ok, "disabled"));
         }
         RelayChoice::Pinned => {
-            let rungs = net::relay_ladder(&lookups.relay)
+            let rungs = net::relay_ladder(&lookups.relay_lookup)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
@@ -493,7 +492,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     let mut checks = Vec::new();
 
     // Relay rungs — show the whole ladder's health, not just the first pick.
-    let ladder = net::relay_ladder(&lookups.relay);
+    let ladder = net::relay_ladder(&lookups.relay_lookup);
     let mut first_reachable = None;
     if !ladder.is_empty() {
         for (rung, reachable) in net::probe_ladder(&ladder, RUNG_TIMEOUT).await {
@@ -601,8 +600,9 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 
 #[cfg(test)]
 mod tests {
-    use super::declared_methods_section;
     use fofoca::protocol::{Mesh, MeshConfig, MeshName};
+
+    use super::declared_methods_section;
 
     #[test]
     fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {

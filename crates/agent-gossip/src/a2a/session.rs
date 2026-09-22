@@ -1,9 +1,9 @@
 use anyhow::Result;
+use fofoca::embed::RosterSnapshot;
+use fofoca::protocol::{Message, MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
-use fofoca::embed::RosterSnapshot;
-use fofoca::protocol::{Message, MessageBody, Nickname};
 
 /// A typed in-process request from an in-process session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket

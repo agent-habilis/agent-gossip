@@ -63,13 +63,7 @@ enum Task {
         args: Vec<String>,
     },
     /// Build the release binary.
-    Release {
-        /// `cargo-release` level (`patch`|`minor`|`major`|`x.y.z`) plus
-        /// extra flags such as `--execute`. Dry run by default; with no
-        /// args this just builds the release binary.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
+    Release,
     /// Run the binary (`cargo run`). Extra args go to `agent-gossip`
     /// (e.g. `cargo task run create`).
     Run {
@@ -163,7 +157,7 @@ fn main() -> ExitCode {
             release,
         } => build::run(&sh, target.as_deref(), arch.as_deref(), release),
         Task::Bench { args } => bench::run(&sh, &args),
-        Task::Release { args } => release::run(&sh, &args),
+        Task::Release => release::run(&sh),
         Task::Run { args } => run::run(&sh, &args),
         Task::Install => install::run(&sh),
         Task::Coverage => coverage::run(&sh),

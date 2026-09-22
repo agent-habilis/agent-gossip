@@ -8,12 +8,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use fofoca::iroh::endpoint::{Connection, RecvStream, SendStream};
 use fofoca::iroh::{Endpoint, EndpointAddr};
+use fofoca::net::{add_peer_addr, build_peer_endpoint};
+use fofoca::protocol::{Password, TicketAuth};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-
-use fofoca::net::{add_peer_addr, build_peer_endpoint};
-use fofoca::protocol::{Password, TicketAuth};
 
 use super::card_rewrite::CardRewriter;
 use super::gate::{LocalGate, MAX_HEAD_BYTES, Refusal, refusal_response};

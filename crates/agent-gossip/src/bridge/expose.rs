@@ -10,15 +10,14 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use fofoca::iroh::Endpoint;
 use fofoca::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
-use rand::RngCore;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
-
 use fofoca::net::build_endpoint;
 use fofoca::protocol::{
     DirectorySelection, LookupOpts, LookupSet, resolve_lookups, validate_advertise,
 };
 use fofoca::protocol::{Password, TicketAuth, ct_eq};
+use rand::RngCore;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 
 use super::directory::{TicketAd, spawn_ticket_advertiser};
 use super::ticket::A2aTicket;

@@ -8,9 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use include_dir::Dir;
 
-use crate::status::{home_path, status, status_warn, warn};
-
 use super::agent::{self, Agent, AgentState, SKILLS, home_dir, owned_skill_dirs_under, skipped};
+use crate::status::{home_path, status, status_warn, warn};
 
 /// Which operation a default selection is for.
 #[derive(Clone, Copy)]

@@ -8,10 +8,9 @@
 
 use anyhow::Result;
 
-use crate::api::{Directory, DirectoryEvent};
-
 use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};
+use crate::api::{Directory, DirectoryEvent};
 
 /// Browse a directory, streaming `gossip_found`/`gossip_lost` JSON lines until
 /// interrupted (SIGINT or SIGTERM) or, with `--window-secs`, until the window
@@ -22,7 +21,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // found only by an mDNS-only `discover`.
     let mut discoverer = Directory::open(
         opts.directory.map(|name| name.as_str().to_owned()),
-        opts.lookups.to_set(),
+        opts.lookups.to_set()?,
     )
     .await?;
     // Route the directory session's logs to its per-member file (same as

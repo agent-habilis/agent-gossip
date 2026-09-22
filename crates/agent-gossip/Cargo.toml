@@ -1,6 +1,6 @@
 [package]
 name = "agent-gossip"
-version = "0.8.0"
+version = "0.9.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
@@ -159,10 +159,3 @@ harness = false
 [[test]]
 name = "adversarial"
 required-features = ["adversarial"]
-
-[package.metadata.release]
-publish = false
-push = false
-tag-name = "v{{version}}"
-pre-release-commit-message = "chore: release v{{version}}"
-allow-branch = ["main"]

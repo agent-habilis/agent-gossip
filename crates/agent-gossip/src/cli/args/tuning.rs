@@ -12,7 +12,6 @@
 //! `fofoca::util::tuning`.
 
 use clap::Parser;
-
 use fofoca::util::tuning as defaults;
 
 #[derive(Parser, Debug)]

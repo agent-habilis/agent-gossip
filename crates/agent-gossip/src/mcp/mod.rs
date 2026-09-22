@@ -42,9 +42,16 @@
 //! create / leave / join cycles are supported. See `session.rs`
 //! for the per-mesh abstraction.
 
-mod session;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use fofoca::embed::RosterEntry;
+use fofoca::protocol::JoinTarget;
+use fofoca::protocol::RelayLadder;
+use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};
+use fofoca::runtime::derive_topic_mesh;
+use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
@@ -53,22 +60,19 @@ use rmcp::{
     transport::stdio,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+use self::session::Session;
 use crate::a2a::TaskId;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
     TopicConfig,
 };
-use fofoca::embed::RosterEntry;
-use fofoca::protocol::JoinTarget;
-use fofoca::protocol::{LookupSet, MeshName, RelayLadder, RelaySelection};
-use fofoca::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
-use fofoca::runtime::derive_topic_mesh;
-use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
-use session::Session;
+use crate::cli::args::lookup::Lookup;
+use crate::cli::args::mesh_config;
+use crate::cli::args::transport::Transport;
+
+mod session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
 pub(crate) async fn run() -> Result<()> {
@@ -96,20 +100,8 @@ impl AgentGossipServer {
 
 // ── tool argument schemas ────────────────────────────────────────
 
-/// Network reachability for a new gossip. A typed JSON-RPC enum (renders
-/// as `"private"` / `"public"` in the tool schema), so an unknown value is
-/// rejected at deserialize rather than by a hand-written string match.
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "lowercase")]
-enum NetworkMode {
-    /// Loopback-only (same machine).
-    #[default]
-    Private,
-    /// Cross-machine: iroh's DNS + relay reach peers across the internet.
-    Public,
-}
-
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CreateMeshArgs {
     /// Human-readable gossip name. Optional — omit for a random
     /// `word-word` name (the same style as the nickname). When given:
@@ -119,31 +111,27 @@ struct CreateMeshArgs {
     /// same name and forgery is infeasible.
     #[serde(default)]
     name: Option<String>,
-    /// Network mode. "private" keeps the gossip loopback-only (same
-    /// machine); "public" enables the all-on lookup preset (mDNS + DHT +
-    /// default relay). Naming any of `mdns`/`dht`/`relay` below overrides
-    /// the preset and uses only those (the same model as the CLI flags).
-    #[serde(default)]
-    network: NetworkMode,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Enable the LAN mDNS address-lookup. Naming it (or `dht`/`relay`)
-    /// switches off the `network` preset and uses only the named lookups.
+    /// Networking lookups: any of "mdns", "dht", "relay". Naming any
+    /// restricts to those; an empty list makes a loopback-only gossip (the
+    /// same model as the CLI `--lookup` flag).
     #[serde(default)]
-    mdns: bool,
-    /// Enable the mainline-DHT address-lookup. See `mdns`.
+    lookup: Vec<Lookup>,
+    /// Ordered relay ladder. Requires "relay" in `lookup`; omit for the
+    /// default relay set.
     #[serde(default)]
-    dht: bool,
-    /// Relay lookup: omit for off, `"default"` for the pinned n0 prod
-    /// ladder, or a comma-separated `a,b,c` of relay URLs for a custom
-    /// ordered ladder.
+    relay_urls: Vec<String>,
+    /// Which transports may carry mesh payload: `["p2p"]` (default, direct
+    /// paths only) or `["p2p","relay"]` (also fall back to the relay, which
+    /// needs "relay" in `lookup`).
     #[serde(default)]
-    relay: Option<String>,
+    transport: Vec<Transport>,
     /// List this gossip in a directory so others can find it with
-    /// `agent-gossip discover` (no id to share). Requires `network: "public"`. Note:
-    /// advertising broadcasts the join token — the gossip becomes open to
-    /// anyone discovering the directory.
+    /// `agent-gossip discover` (no id to share). Requires a lookup that
+    /// reaches other machines. Note: advertising broadcasts the join
+    /// token — the gossip becomes open to anyone discovering the directory.
     #[serde(default)]
     advertise: bool,
     /// The directory to advertise into when `advertise` is true.
@@ -444,13 +432,20 @@ impl AgentGossipServer {
         // failure here is `invalid_params`); the api resolves the lookups
         // and validates advertise, surfacing the latter as a typed
         // `CreateError` we re-classify below.
-        let relay = match args.relay.as_deref() {
-            None => RelaySelection::Unset,
-            Some("default") => RelaySelection::Default,
-            Some(urls) => RelaySelection::Named(urls.parse::<RelayLadder>().map_err(|error| {
-                McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
-            })?),
+        let relay_urls = if args.relay_urls.is_empty() {
+            None
+        } else {
+            Some(
+                args.relay_urls
+                    .join(",")
+                    .parse::<RelayLadder>()
+                    .map_err(|error| {
+                        McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
+                    })?,
+            )
         };
+        let resolved = mesh_config::resolve(&args.lookup, relay_urls, &args.transport)
+            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI
         // (`opts.name.unwrap_or_else(MeshName::random)`).
         let name = match args.name {
@@ -476,12 +471,8 @@ impl AgentGossipServer {
         let cfg = CreateConfig {
             name,
             nickname,
-            public: matches!(args.network, NetworkMode::Public),
-            lookups: LookupSet {
-                mdns: args.mdns,
-                dht: args.dht,
-                relay,
-            },
+            lookups: resolved.set,
+            transport: resolved.transport,
             advertise: args.advertise,
             directory,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
@@ -1077,8 +1068,9 @@ fn ok_json<T: Serialize>(value: T) -> Result<CallToolResult, McpError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentGossipServer, MCP_INSTRUCTIONS};
     use std::collections::BTreeSet;
+
+    use super::{AgentGossipServer, MCP_INSTRUCTIONS};
 
     fn declared_tools() -> BTreeSet<String> {
         AgentGossipServer::tool_router()

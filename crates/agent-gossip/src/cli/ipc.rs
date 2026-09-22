@@ -1,8 +1,7 @@
 use anyhow::Result;
-use serde::Serialize;
-
 use fofoca::protocol::Nickname;
 use fofoca::runtime::ipc::{Addressed, NoDaemon};
+use serde::Serialize;
 
 /// [`fofoca::runtime::ipc::send`] with this CLI's remedy appended.
 ///
