@@ -55,6 +55,7 @@ export function Clip({ clip, title, duration }: Props) {
             width={1440}
             height={900}
             alt=""
+            loading="lazy"
             decoding="async"
           />
           <span className="clip-play">

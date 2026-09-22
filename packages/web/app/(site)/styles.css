@@ -29,6 +29,10 @@ article:has(.dots) {
   --sunken: #f1f1f1;
   --muted: #595859;
   --dot: #c9c9c9;
+  /* Nextra's inline-code tint mixed into the page color rather than into
+     transparent: the same shade on a plain page, but opaque, so the landing's
+     dot grid cannot show through a code block. */
+  --code-bg: color-mix(in oklab, var(--x-color-black) 3%, var(--x-color-nextra-bg));
   /* Section rhythm from packages/site: 64 / 96 / 128px by viewport. */
   --section: 4rem;
   --gap: 1rem;
@@ -53,6 +57,7 @@ article:has(.dots) {
   --sunken: #0c0c0c;
   --muted: #a6a5a6;
   --dot: #333;
+  --code-bg: color-mix(in oklab, var(--x-color-white) 10%, var(--x-color-nextra-bg));
 }
 
 .foot-links {
@@ -103,6 +108,38 @@ footer,
    at the navbar instead of showing through it. */
 .nextra-navbar-blur {
   background: var(--sunken);
+}
+
+/* The same rule inside the content. Code blocks ring themselves with an inset
+   shadow, inline code and callouts with a border; each already has its own
+   fill, which is what separates it. */
+pre {
+  box-shadow: none;
+}
+
+/* One fill for blocks and inline code, so the two read as one material. */
+pre {
+  background-color: var(--code-bg);
+}
+
+/* Nextra's own selector, plus `html`: its rule is unlayered with the same
+   specificity, so without the prefix the winner is stylesheet order. */
+html :not(pre) > code.nextra-code:not([class*='twoslash-']) {
+  background-color: var(--code-bg);
+  border: none;
+}
+
+.nextra-callout {
+  border: none;
+}
+
+/* The rule opens a section instead of underlining its title, so the line
+   groups the heading with what follows it rather than cutting it off. Only the
+   width moves: the color stays Nextra's `nextra-border`, in both themes. */
+article h2.nextra-border {
+  border-width: 1px 0 0;
+  border-top-style: solid;
+  padding-block: 1.5rem 0;
 }
 
 /* Retro-tech label: small caps, tracked. */
@@ -259,14 +296,6 @@ body:has(.dots) {
   text-align: center;
 }
 
-/* Nextra rings its code blocks with an inset shadow, which reads as a border
-   and is lighter than the block it outlines. The fill is the block. Scoped to
-   the landing page's own sections, so the docs keep theirs. */
-.dots pre,
-.tile pre {
-  box-shadow: none;
-}
-
 /* The one-line command is longer than a phone; a scrollbar would hide the
    tail of it, which is the part that matters. */
 .install pre code {
@@ -303,24 +332,34 @@ body:has(.dots) {
 /* Nextra renders a card's children above its icon + title row; the tiles
    read icon → title → text. One rule flips it and the component stays
    Nextra's. Square corners, no border and no shadow: a tile is a raised
-   surface, the way `bgRaised` is in the app. */
-.bento .nextra-card {
+   surface, the way `bgRaised` is in the app. The docs home's feature grid
+   borrows the same card. */
+.bento .nextra-card,
+.features .nextra-card {
   flex-direction: column-reverse;
   justify-content: flex-end;
   border-radius: 2px;
   border: none;
   background: var(--tile-bg);
   box-shadow: none;
+  padding: 1.25rem;
+}
+
+.bento .nextra-card {
   padding: 1.75rem;
   min-height: 13rem;
 }
 
 /* Top-aligned, so the emoji stays at the top left of a title that wraps to a
    second line rather than centering against both. */
-.bento .nextra-card > span {
+.bento .nextra-card > span,
+.features .nextra-card > span {
   padding: 0;
-  font-size: 1.25rem;
   align-items: flex-start;
+}
+
+.bento .nextra-card > span {
+  font-size: 1.25rem;
 }
 
 .tile-emoji {
@@ -330,7 +369,8 @@ body:has(.dots) {
   line-height: 1.5;
 }
 
-.bento p {
+.bento p,
+.features p {
   margin: 0.75rem 0 0;
   font-size: 0.9375rem;
   line-height: 1.6;
@@ -377,6 +417,12 @@ body:has(.dots) {
   margin: 1.5rem 0 0;
   font-size: 1.25rem;
   font-weight: 600;
+}
+
+/* A clip after other content needs a gap; a clip that opens its container
+   (the landing tile) takes its spacing from that container. */
+.clip:not(:first-child) {
+  margin-top: 1.5rem;
 }
 
 /* The encodes and their posters are 1440 × 900; any other ratio crops them. */
