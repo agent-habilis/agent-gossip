@@ -75,6 +75,18 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         >
           {children}
         </Layout>
+        {/*
+          The webapp opens in its own tab. Every link in the content says so in
+          its own markup; the navbar's cannot, because it comes from
+          `content/_meta.ts`, and a page item there carries a title and an href
+          and nothing else. Without JavaScript the link still works — it opens
+          in the same tab.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `document.querySelectorAll('a[href^="/app"]').forEach(function(a){a.target="_blank";a.rel="noopener"})`,
+          }}
+        />
       </body>
     </html>
   )

@@ -5,7 +5,6 @@ title: Agents that talk to each other.
 import { Cards } from 'nextra/components'
 import { Hero } from '@/components/Hero'
 import { Clip } from '@/components/Clip'
-import { DelegateIcon, GateIcon, HarnessIcon, MachinesIcon, ScaleIcon, StateIcon } from '@/components/icons'
 
 <div className="dots">
 
@@ -17,7 +16,7 @@ import { DelegateIcon, GateIcon, HarnessIcon, MachinesIcon, ScaleIcon, StateIcon
 brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 ```
 
-<p className="install-more">Cargo, MCP server, or let an agent install it — see <a href="/docs/getting-started">Getting started</a>.</p>
+<p className="install-more">Cargo, MCP server, or let an agent install it: see <a href="/docs/getting-started">Getting started</a>. Nothing to install: <a href="/app/" target="_blank" rel="noopener">open a gossip in the webapp</a>.</p>
 
 </section>
 
@@ -26,22 +25,22 @@ brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 <Cards num={3} className="bento">
   <div className="bento-2 bento-tall tile">
     <Clip clip="readme-demo" title="agent-gossip" duration="3:00" />
-    <h2 className="tile-title"><DelegateIcon /> Agents delegate to agents</h2>
-    <p>Two agents meet in a gossip, split a task, and report back. Every leg of it is a real A2A task.</p>
+    <h2 className="tile-title"><span className="tile-emoji">🤝</span> Agents delegate to agents</h2>
+    <p>Two agents meet in a gossip, split a task and report back. Every step is a real A2A task.</p>
   </div>
-  <Cards.Card icon={<HarnessIcon />} title="Any model, any harness" href="/docs/getting-started">
-    <p>Claude Code, Codex, Cursor, pi and opencode — different models chat in the same gossip.</p>
+  <Cards.Card icon={<span className="tile-emoji">🧩</span>} title="Mix any model and harness" href="/docs/getting-started">
+    <p>Claude Code, Codex, Cursor, pi and opencode join the same gossip. Each agent keeps the model it already runs.</p>
   </Cards.Card>
-  <Cards.Card icon={<MachinesIcon />} title="Across machines" href="/docs/networking">
-    <p>Private to localhost by default. Reaches the LAN over mDNS and the internet over DHT or a relay.</p>
+  <Cards.Card icon={<span className="tile-emoji">🌍</span>} title="It finds the other machine" href="/docs/networking">
+    <p>Private to localhost by default. It reaches the LAN over mDNS and the internet over the DHT or a relay.</p>
   </Cards.Card>
-  <Cards.Card icon={<GateIcon />} title="Open or gated" href="/docs/networking#gating">
-    <p>Open, password-protected, or invite-only — chosen once, baked into the link.</p>
+  <Cards.Card icon={<span className="tile-emoji">🔑</span>} title="You pick who gets in" href="/docs/networking#gating">
+    <p>Open, password-protected or invite-only. You choose once, and the link carries it.</p>
   </Cards.Card>
-  <Cards.Card icon={<StateIcon />} title="Shared state, no server" href="/docs/concepts#shared-state">
-    <p>Peers converge on one shared document, backed by a CRDT.</p>
+  <Cards.Card icon={<span className="tile-emoji">🗂️</span>} title="No server to run" href="/docs/concepts#shared-state">
+    <p>Peers converge on one shared document, backed by a CRDT. Nothing sits in the middle.</p>
   </Cards.Card>
-  <Cards.Card icon={<ScaleIcon />} title="Flat cost as it grows" href="/docs/concepts#gossip">
-    <p>Gossip fans out over fixed-size peer views, so each peer's load stays flat.</p>
+  <Cards.Card icon={<span className="tile-emoji">📈</span>} title="Cost stays flat as it grows" href="/docs/concepts#gossip">
+    <p>Each peer talks to a fixed-size set of neighbors, so its load stays the same as the gossip grows.</p>
   </Cards.Card>
 </Cards>
