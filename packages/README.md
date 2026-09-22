@@ -4,51 +4,52 @@ The marketing site plus the browser gossip client, served from a tiny
 zero-dependency Bun + TypeScript server and exposed publicly through a
 Cloudflare Tunnel. Both processes run as containers via `docker compose`.
 
-Two halves, deliberately unalike:
+Everything lives in **`web/`**, one [Nextra](https://nextra.site) site (Next.js,
+React) built as a static export, with **Nextra driving every route**:
 
-- **`web/`** — the landing page and the docs, at `/` and `/docs/`. A
-  [Nextra](https://nextra.site) site (Next.js, React) built as a static
-  export. The docs are hand-written MDX under `web/content/docs/`; the full
-  CLI reference stays in `agent-gossip man`. Search is
-  [Pagefind](https://pagefind.app), indexed by a `postbuild` step, so it works
-  in `next dev` only after one `bun run build` in `web/`. `server/public/`
-  only holds the media, the og image and the favicon, copied byte-for-byte.
-- **`src/`** — the gossip web app, at `/room/` and at every `/<mesh-id>`. A
-  [visage](README-vendored.md) SPA bundled by `scripts/build.ts`.
+| route | content |
+|---|---|
+| `/` | the landing page (`web/content/index.mdx`) |
+| `/docs/…` | the docs, hand-written MDX under `web/content/docs/` |
+| `/app/` | the gossip web app |
 
-Both land in **`dist/`, which is the document root**. Nothing outside it is
-reachable over HTTP — which is why `server.ts`, `src/`, `public/` and `vendor/`
-all sit beside it rather than inside it. Were the server in its own document
-root, `/server.ts`, `/package.json` and `/.env` would all be fetchable, and so
-would every `.tsx` file in the app.
+The full CLI reference stays in `agent-gossip man`. Search is
+[Pagefind](https://pagefind.app), indexed by a `postbuild` step, so it works in
+`next dev` only after one `bun run build` in `web/`.
 
-`server/dist/` is gitignored, so a fresh checkout must build before it can serve:
+`/app/` is the one place two worlds meet. The app is a
+[visage](README-vendored.md) SPA — its own JSX runtime and reconciler, not
+React — so Next does not render it. `web/scripts/build-webapp.ts` bundles
+`web/webapp/` with Bun into `web/public/app/`, and the route at
+`web/app/app/page.tsx` is a mount point that pulls that bundle in. Two bundlers
+in one package, which is the price of keeping the visage sources unchanged and
+the vendored libraries free of pragmas.
+
+A room is `/app/?mesh=<id>`, not `/<mesh-id>`: a static export has no server
+that could resolve an arbitrary path into a shell. `web/webapp/lib/route.ts` is
+the whole router.
+
+`web/out/` is the document root and is gitignored, so a fresh checkout must
+build before it can serve:
 
 ```sh
 bun install
-bun run build     # server/public/ copied + app/ bundled -> server/dist/
+bun run build     # webapp bundled into web/public/app/, then next build -> web/out/
 bun run serve
 ```
 
-`bun start` does both. The server answers `503` rather than `404` when `dist/`
-has no app in it, so "you forgot to build" does not look like a routing bug.
+`bun start` does both.
 
 ## Routing
 
+The server no longer routes — it returns files. Every URL that exists is one the
+export wrote, so there is no shell fallback and no mesh-id check:
+
 | request | served |
 |---|---|
-| `/`, `/docs/…`, `/video/…` | the file in `server/dist/` |
+| any path | the file in `web/out/` |
 | `/docs/x` (no slash) | `308` to `/docs/x/`, when `docs/x/index.html` exists |
-| `/room`, `/room/…` | the app shell — the whole subtree is the app's |
-| `/<mesh-id>` | the app shell, **only if the segment is a valid mesh id** |
 | anything else | `404` |
-
-That last rule is a real base58check over the id, not a character class
-(`app/lib/meshId.ts`, shared with the app's join form so the two cannot
-disagree). The site owns paths at the root, so a loose pattern would shadow
-`/style.css`; and a one-character typo in a shared link has to 404 rather than
-open a room that can never connect. It also settles reserved words for free —
-`/about` cannot pass a checksum, so there is no denylist to maintain.
 
 ## Tests
 
@@ -57,7 +58,7 @@ bun test        # unit — happy-dom, milliseconds
 bun run e2e     # end-to-end — a real Chrome via agent-browse, seconds
 ```
 
-The e2e suite needs a built `dist/` and a running server, and targets
+The e2e suite needs a built `web/out/` and a running server, and targets
 `https://agent-gossip.localhost` (override with `E2E_BASE`). Chrome for Testing
 trusts portless's CA, so the HTTPS alias works as-is — which matters, because a
 secure context is what lets the wasm client use `crypto.subtle` and WebRTC.
@@ -234,18 +235,23 @@ SVG cards):
 
 ## Layout
 
-- `server/dist/` — the document root; everything served, and nothing else. Built, gitignored
-- `server/server.ts` — zero-dep static server (`Bun.serve` + `Bun.file`), with range support
-- `server/public/` — the media, og image and favicon, copied verbatim into `server/dist/`
-- `web/` — the landing page and docs (Nextra, static export). `bun run build`
-  in it writes `web/out/`, then Pagefind indexes it into `web/out/_pagefind/`
-- `app/` — the gossip app: `main.tsx`, `pages/` (laid out to mirror the URLs),
-  `components/`, `lib/`, `wasm/`. Bundled into `server/dist/app/`
+- `web/out/` — the document root; everything served, and nothing else. Built, gitignored
+- `web/server.ts` — zero-dep static server (`Bun.serve` + `Bun.file`), with range support
+- `web/app/` — the Next routes. `layout.tsx` is the bare document shell;
+  `(site)/` adds the docs chrome; `app/` is the webapp mount point, outside that
+  group so the SPA gets the whole viewport
+- `web/content/` — the landing page and docs as MDX
+- `web/public/` — the media, og image and favicon, served as-is. `public/app/`
+  is the built webapp bundle, gitignored
+- `web/webapp/` — the gossip app: `main.tsx`, `pages/` (`home/` is the front
+  door, `room/` a joined mesh), `components/`, `lib/`, `wasm/`. Its own
+  `tsconfig.json`, which is what makes Bun compile it as visage JSX
+- `web/scripts/build-webapp.ts` — bundles `webapp/` and stages the wasm into `public/app/`
 - `visage-*` / `moonspace-*` — vendored as source. See `README-vendored.md`
-- `scripts/build.ts` — copies `server/public/`, builds `web/`, bundles `app/`
+- `scripts/build.ts` — runs `bun run build` in `web/`
 - `scripts/build-wasm.ts` — builds `crates/agent-gossip-wasm-client` and runs `wasm-bindgen`
 - `scripts/e2e.ts` — the browser suite; `scripts/test-setup.ts` — happy-dom preload
-- `scripts/encode-media.ts` — re-encodes `../assets/*.mp4` into `server/public/video/`
+- `scripts/encode-media.ts` — re-encodes `../assets/*.mp4` into `web/public/video/`
 - `Dockerfile` — `oven/bun:alpine` image
 - `docker-compose.yml` — `agent-gossip-com` + `cloudflared` services
 - `.env` — local-only, holds `CLOUDFLARE_TUNNEL_TOKEN` (never committed)

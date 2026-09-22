@@ -10,13 +10,12 @@
  * one browser and joining it from another over WebRTC.
  */
 
-import { GOLDEN_MESH_ID, isMeshId } from '@agent-gossip/app/lib/meshId.ts'
+import { GOLDEN_MESH_ID, isMeshId } from '../web/webapp/lib/meshId.ts'
 
 const BASE = Bun.env['E2E_BASE'] ?? 'https://agent-gossip.localhost'
 const CA = `${Bun.env['HOME']}/.portless/ca.pem`
 
 const GOLDEN = GOLDEN_MESH_ID
-const NEAR_MISS = `${GOLDEN.slice(0, -1)}9`
 
 const TAB1 = Bun.env['PWD'] ?? '.'
 const TAB2 = `${TAB1}/.e2e-tab2`
@@ -147,28 +146,26 @@ await test('/ serves the marketing page', async () => {
 })
 
 await test('static assets still serve', async () => {
-  equal(await status('/style.css'), 200, 'GET /style.css')
+  equal(await status('/og.png'), 200, 'GET /og.png')
   equal(await status('/video/readme-demo.mp4'), 200, 'GET /video/readme-demo.mp4')
 })
 
-await test('the whole /room subtree is the app', async () => {
-  for (const path of ['/room', '/room/', '/room/anything']) {
-    equal(await status(path), 200, `GET ${path}`)
-  }
+await test('the webapp is one exported page', async () => {
+  equal(await status('/app/'), 200, 'GET /app/')
+  // The mesh rides in the query string, which the server never sees — the same
+  // file answers with or without it.
+  equal(await status(`/app/?mesh=${GOLDEN}`), 200, 'GET /app/?mesh=<valid id>')
 })
 
-await test('a valid mesh id serves the app', async () => {
-  equal(await status(`/${GOLDEN}`), 200, 'GET /<valid id>')
-})
-
-await test('a one-character typo 404s rather than opening a dead room', async () => {
-  // The check that proves the id test is a real checksum and not a character
-  // class — a regex would happily serve this.
-  equal(await status(`/${NEAR_MISS}`), 404, 'GET /<near-miss id>')
+await test('the webapp bundle serves beside its page', async () => {
+  equal(await status('/app/main.js'), 200, 'GET /app/main.js')
+  equal(await status('/app/main.css'), 200, 'GET /app/main.css')
 })
 
 await test('unknown paths and server source are unreachable', async () => {
-  for (const path of ['/about', '/server.ts', '/package.json', '/app/main.tsx']) {
+  // `/room` and a bare mesh id were routes the old server invented; nothing
+  // serves them now that Nextra owns every path the export wrote.
+  for (const path of ['/about', '/room', `/${GOLDEN}`, '/server.ts', '/package.json', '/app/main.tsx']) {
     equal(await status(path), 404, `GET ${path}`)
   }
 })
@@ -177,10 +174,10 @@ await test('unknown paths and server source are unreachable', async () => {
 
 console.log('\nbrowser')
 
-await browse(['launch', TAB1, `${BASE}/room/`])
+await browse(['launch', TAB1, `${BASE}/app/`])
 
 await test('the splash shows a spinner and holds for its floor', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   await Bun.sleep(1200)
 
   const during = await evaluate(
@@ -216,7 +213,7 @@ await test('the splash shows a spinner and holds for its floor', async () => {
 })
 
 await test('the front door offers create and join', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=create]'), 'create button never appeared')
   const labels = await evaluate(
     TAB1,
@@ -230,7 +227,7 @@ await test('the front door offers create and join', async () => {
 await test('create never hangs — it reports a reason', async () => {
   // The regression this guards: `create` set a "creating…" state with no
   // failure path, so a click sat there forever with nothing to act on.
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=create]'), 'create button never appeared')
   await evaluate(TAB1, `document.querySelector('[data-action=create]').click()`)
 
@@ -254,7 +251,7 @@ await test('create never hangs — it reports a reason', async () => {
 })
 
 await test('a bad id is refused locally, without navigating', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=join]'), 'join button never appeared')
 
   const outcome = await evaluate(
@@ -272,12 +269,12 @@ await test('a bad id is refused locally, without navigating', async () => {
     })()`,
   )
   const { path, hasError } = JSON.parse(String(outcome)) as { path: string; hasError: boolean }
-  equal(path, '/room/', 'stayed on the front door')
+  equal(path, '/app/', 'stayed on the front door')
   assert(hasError, 'no error shown for a bad id')
 })
 
 await test('a valid id navigates to the room URL', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=join]'), 'join button never appeared')
 
   const path = await evaluate(
@@ -290,14 +287,14 @@ await test('a valid id navigates to the room URL', async () => {
       input.dispatchEvent(new Event('input', { bubbles: true }))
       document.querySelector('[data-action=join-submit]').click()
       await new Promise(r => setTimeout(r, 500))
-      return location.pathname
+      return location.pathname + location.search
     })()`,
   )
-  equal(path, `/${GOLDEN}`, 'room URL')
+  equal(path, `/app/?mesh=${GOLDEN}`, 'room URL')
 })
 
 await test('a room never paints a composer before it has joined', async () => {
-  await navigate(TAB1, `/${GOLDEN}`)
+  await navigate(TAB1, `/app/?mesh=${GOLDEN}`)
   await Bun.sleep(2000)
   // The invariant is not "it stays connecting" — it is that the composer only
   // exists once the mesh is joined. A chat window that accepts typing before
@@ -315,7 +312,7 @@ await test('a room never paints a composer before it has joined', async () => {
 })
 
 await test('no console errors on the front door', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   const log = await browse(['watch', '3000', '--folder', TAB1, '--group', 'console'])
   const errors = [...log.matchAll(/"level":"(error)"/g)]
   assert(errors.length === 0, `${errors.length} console error(s)`)
@@ -326,7 +323,7 @@ await test('no console errors on the front door', async () => {
 console.log('\nwebmcp bridge')
 
 await test('registration never breaks the page, with or without WebMCP', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=create]'), 'the page did not render')
   // Deliberately not asserting whether `document.modelContext` exists: Chrome
   // for Testing shipped it between 149 and 152, and pinning either answer makes
@@ -338,7 +335,7 @@ await test('registration never breaks the page, with or without WebMCP', async (
 })
 
 await test('the agent badge is absent until a tool is called', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=create]'), 'the page did not render')
   const badge = await evaluate(TAB1, `Boolean(document.querySelector('[data-agent-badge]'))`)
   // Nothing tells a page an agent connected, so a badge before any call would
@@ -347,7 +344,7 @@ await test('the agent badge is absent until a tool is called', async () => {
 })
 
 await test('the tools register and answer a real executeTool call', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=create]'), 'the page did not render')
 
   // Chrome for Testing 152 ships WebMCP on by default, so this drives the real
@@ -450,23 +447,24 @@ async function say(folder: string, text: string): Promise<void> {
 
 console.log('\ntwo tabs on one gossip')
 
-let roomPath = ''
+let roomMesh = ''
 
 await test('tab 1 creates a gossip and lands on its room URL', async () => {
-  await navigate(TAB1, '/room/')
+  await navigate(TAB1, '/app/')
   assert(await waitFor(TAB1, '[data-action=create]'), 'create button never appeared')
   await evaluate(TAB1, `document.querySelector('[data-action=create]').click()`)
   assert(await waitFor(TAB1, '[data-status=ready]', 60_000), 'never reached a room')
-  roomPath = String(await evaluate(TAB1, 'location.pathname'))
-  assert(roomPath.length > 40, `expected a room URL, got ${roomPath}`)
-  assert(await isMeshId(roomPath.replace(/^\//, '')), `not a valid mesh id: ${roomPath}`)
+  const path = String(await evaluate(TAB1, 'location.pathname'))
+  equal(path, '/app/', 'stayed on the one exported page')
+  roomMesh = String(await evaluate(TAB1, `new URLSearchParams(location.search).get('mesh')`))
+  assert(await isMeshId(roomMesh), `not a valid mesh id: ${roomMesh}`)
 })
 
 await test('tab 2 opens that URL and both rosters show the other', async () => {
   // agent-browse keys one window per folder, so a second tab means a second
   // folder key — and the directory has to exist before `launch` will take it.
   await Bun.spawn(['mkdir', '-p', TAB2]).exited
-  await browse(['launch', TAB2, `${BASE}${roomPath}?nickname=tabtwo`])
+  await browse(['launch', TAB2, `${BASE}/app/?mesh=${roomMesh}&nickname=tabtwo`])
   assert(await waitFor(TAB2, '[data-status=ready]', 60_000), 'tab 2 never joined')
   // Both directions, and awaited together: they poll different tabs, so running
   // them in series doubled the worst case for no reason.

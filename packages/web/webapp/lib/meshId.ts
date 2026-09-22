@@ -104,13 +104,13 @@ export async function parseMeshInput(input: string): Promise<string | null> {
 
   const candidates = [trimmed]
 
-  // A pasted URL — take the last non-empty path segment, which is where the id
-  // sits in `https://agent-gossip.com/<id>`.
+  // A pasted URL — `?mesh=` is where the copy button puts the id. The old
+  // `/<id>` shape is deliberately not read: those links point at a route that
+  // no longer exists, so accepting one would join a gossip from a URL that
+  // 404s for whoever it is pasted to next.
   try {
-    const url = new URL(trimmed)
-    const segments = url.pathname.split('/').filter(Boolean)
-    const last = segments.at(-1)
-    if (last) candidates.push(decodeURIComponent(last))
+    const query = new URL(trimmed).searchParams.get('mesh')
+    if (query) candidates.push(query)
   } catch {
     // Not a URL. The bare-id candidate above still stands.
   }

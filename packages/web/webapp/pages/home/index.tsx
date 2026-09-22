@@ -1,10 +1,10 @@
 import { Button, Input, Stack, Text } from 'moonspace-dom'
-import { useNavigate } from 'visage-router'
 import { component, signal } from 'visage-dom'
 
 import { Chrome } from '../../components/Chrome/index.tsx'
 import { createMesh } from '../../lib/mesh.ts'
 import { parseMeshInput } from '../../lib/meshId.ts'
+import { openRoom } from '../../lib/route.ts'
 
 type Mode =
   | { phase: 'choosing' }
@@ -13,11 +13,10 @@ type Mode =
   | { phase: 'failed'; reason: string }
 
 /**
- * The front door at `/room/`: create a gossip, or join one by id. Both land on
- * the same `/<id>` URL — there is no creator-flavoured variant of it.
+ * The front door at `/app/`: create a gossip, or join one by id. Both land on
+ * the same `?mesh=<id>` URL — there is no creator-flavoured variant of it.
  */
 export const HomePage = component(function* () {
-  const navigate = useNavigate(this)
   const mode = signal<Mode>({ phase: 'choosing' })
   // Not reactive: only the submit handler reads it, and re-rendering on every
   // keystroke would fight the input's own cursor.
@@ -29,7 +28,7 @@ export const HomePage = component(function* () {
       mode.value = { phase: 'joining', error: 'that does not look like a gossip id' }
       return
     }
-    navigate(`/${id}`)
+    openRoom(id)
   }
 
   async function create() {
@@ -38,7 +37,7 @@ export const HomePage = component(function* () {
       const joined = await createMesh()
       // `replace`, not push, so back returns to this page rather than re-running
       // creation and making a second mesh.
-      navigate(`/${joined.mesh}`, { replace: true })
+      openRoom(joined.mesh, { replace: true })
     } catch (error) {
       // Anything that goes wrong has to land somewhere visible. Leaving this
       // unhandled is what left the page sitting on "creating…" forever.

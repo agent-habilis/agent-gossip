@@ -33,7 +33,16 @@ const FOOTER_LINKS = [
   ['iroh', 'https://www.iroh.computer/'],
 ] as const
 
-export default async function RootLayout({ children }: { children: ReactNode }) {
+/**
+ * One of **two** root layouts; `(webapp)` is the other. Two roots rather than a
+ * shared shell is what makes Next do a full document load when crossing between
+ * the docs and the webapp — and that load is load-bearing: the webapp is a
+ * visage app mounted by a plain module script, which evaluates once per
+ * document. Under a shared root the crossing is a soft navigation, and a second
+ * one leaves the mount point empty, the docs stylesheet applied over the app,
+ * and the previous wasm client running on a detached tree.
+ */
+export default async function SiteLayout({ children }: { children: ReactNode }) {
   const pageMap = await getPageMap()
   return (
     <html lang="en" dir="ltr" suppressHydrationWarning>

@@ -1,5 +1,0 @@
-# Same as every other package: Bun does not walk up for a bunfig. The server has
-# no DOM tests today, but a suite added here must not be the one that discovers
-# this file is missing.
-[test]
-preload = ["../scripts/test-setup.ts"]

@@ -1,7 +1,8 @@
 .next/
 out/
-# Only a symlink to server/public/video, made by `bun run dev` so the demos
-# resolve there.
-public/
+# The rest of public/ is committed media that Next serves as-is. Only the
+# webapp bundle is built, by `bun run build-webapp`.
+public/app/
+public/_pagefind/
 next-env.d.ts
 *.tsbuildinfo

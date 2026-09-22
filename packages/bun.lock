@@ -5,8 +5,7 @@
     "": {
       "name": "agent-gossip-com",
       "dependencies": {
-        "@agent-gossip/app": "workspace:*",
-        "@agent-gossip/server": "workspace:*",
+        "@agent-gossip/web": "workspace:*",
         "moonspace": "workspace:*",
         "moonspace-dom": "workspace:*",
         "moonspace-theme": "workspace:*",
@@ -19,15 +18,6 @@
         "@types/bun": "^1.3.14",
         "portless": "^0.15.5",
         "typescript": "^5.9.3",
-      },
-    },
-    "app": {
-      "name": "@agent-gossip/app",
-      "version": "0.0.0",
-      "dependencies": {
-        "moonspace-dom": "workspace:*",
-        "visage-dom": "workspace:*",
-        "visage-router": "workspace:*",
       },
     },
     "moonspace": {
@@ -60,13 +50,6 @@
         "typescript": "^5.9.0",
       },
     },
-    "server": {
-      "name": "@agent-gossip/server",
-      "version": "0.0.0",
-      "dependencies": {
-        "@agent-gossip/app": "workspace:*",
-      },
-    },
     "visage-dom": {
       "name": "visage-dom",
       "version": "0.0.0",
@@ -88,11 +71,13 @@
     "web": {
       "name": "@agent-gossip/web",
       "dependencies": {
+        "moonspace-dom": "workspace:*",
         "next": "16.0.11",
         "nextra": "4.6.1",
         "nextra-theme-docs": "4.6.1",
         "react": "19.3.0",
         "react-dom": "19.3.0",
+        "visage-dom": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^26.5.1",
@@ -112,10 +97,6 @@
     },
   },
   "packages": {
-    "@agent-gossip/app": ["@agent-gossip/app@workspace:app"],
-
-    "@agent-gossip/server": ["@agent-gossip/server@workspace:server"],
-
     "@agent-gossip/web": ["@agent-gossip/web@workspace:web"],
 
     "@antfu/install-pkg": ["@antfu/install-pkg@2.1.0", "", { "dependencies": { "package-manager-detector": "^1.8.0", "tinyexec": "^1.3.1" } }, "sha512-sdg9NxU3zR4Mnawfbc/x6GB5Wf17WYud5qOuEuxXjaKpYpMkISSJEjItGebXJ2bQ4DIcly4NYH23mtkGJjvKUw=="],

@@ -41,9 +41,12 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
+  // webapp/ is visage JSX with its own tsconfig; pulling it into this React
+  // program would typecheck every element against React's JSX namespace.
   "exclude": [
     "node_modules",
     ".next",
-    "out"
+    "out",
+    "webapp"
   ]
 }

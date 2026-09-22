@@ -33,17 +33,23 @@ test('non-base58 characters are rejected', async () => {
 
 test('a pasted URL yields the id', async () => {
   for (const input of [
-    `https://agent-gossip.com/${GOLDEN}`,
-    `https://agent-gossip.localhost/${GOLDEN}?nickname=tab`,
+    // The shape the app hands out. The id is in the query, so a parser that
+    // reads the last path segment sees `app` and refuses the very link the
+    // copy button produced.
+    `https://agent-gossip.com/app/?mesh=${GOLDEN}`,
+    `https://agent-gossip.localhost/app/?mesh=${GOLDEN}&nickname=tab`,
     `  ${GOLDEN}  `,
   ]) {
     expect(await parseMeshInput(input)).toBe(GOLDEN)
   }
 })
 
-test('a URL whose segment is not an id yields null', async () => {
+test('a URL with no mesh parameter yields null', async () => {
   expect(await parseMeshInput('https://agent-gossip.com/about')).toBe(null)
   expect(await parseMeshInput('')).toBe(null)
+  // The pre-`?mesh=` link shape. Refused on purpose: `/<id>` is not a route any
+  // more, so a link like this cannot be shared onward even if it parsed.
+  expect(await parseMeshInput(`https://agent-gossip.com/${GOLDEN}`)).toBe(null)
 })
 
 test('leading ones decode to leading zero bytes', async () => {

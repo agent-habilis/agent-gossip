@@ -11,7 +11,7 @@ import { mkdir, readdir } from 'node:fs/promises'
 const here = (path: string) => new URL(`../${path}`, import.meta.url).pathname
 
 const SRC = here('../assets')
-const OUT = here('server/public/video')
+const OUT = here('web/public/video')
 
 interface Clip {
   name: string

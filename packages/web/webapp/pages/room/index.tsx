@@ -1,11 +1,11 @@
 import { Button, Input, MiddleTruncate, Stack, Text, t } from 'moonspace-dom'
 import { component, disposable, interval, keyed, signal, timeout } from 'visage-dom'
-import { useParams, useSearchParams } from 'visage-router'
 
 import { Chrome } from '../../components/Chrome/index.tsx'
 import { Centered } from '../../components/Centered/index.tsx'
 import { Connecting } from '../../components/Connecting/index.tsx'
 import { joinMesh, type Joined } from '../../lib/mesh.ts'
+import { meshUrl } from '../../lib/route.ts'
 import type { GossipMessage, RosterPeer } from '../../lib/agentTools/session.ts'
 
 type Phase =
@@ -17,13 +17,13 @@ type Phase =
 const POLL_MS = 500
 
 /**
- * The room at `/<mesh-id>`.
+ * The room at `/app/?mesh=<id>`.
  *
  * The splash stays up until the mesh is actually joined — not until the assets
  * finished loading. A room that painted its composer before the transport was
  * up would be a chat window that silently drops what you type.
  */
-const Room = component<{ mesh: string; nickname?: string }>(function* (props) {
+export const Room = component<{ mesh: string; nickname?: string }>(function* (props) {
   const state = signal<Phase>({ phase: 'connecting' })
   const messages = signal<readonly GossipMessage[]>([])
   const peers = signal<readonly RosterPeer[]>([])
@@ -41,8 +41,18 @@ const Room = component<{ mesh: string; nickname?: string }>(function* (props) {
   // lengths threw away the parse and missed a same-size swap besides.
   let rosterJson = ''
 
+  // The join is in flight for seconds. Leaving inside that window disposes the
+  // component before there is anything to leave, so the flag is what stops the
+  // resolved client from outliving its room — going back and forward again
+  // would otherwise join the same mesh a second time, with the first still up.
+  let left = false
+
   void joinMesh(mesh, { nickname }).then(
     (peer) => {
+      if (left) {
+        void peer.leave()
+        return
+      }
       joined = peer
       state.value = { phase: 'ready' }
     },
@@ -72,6 +82,7 @@ const Room = component<{ mesh: string; nickname?: string }>(function* (props) {
   })
 
   using _leave = disposable(() => {
+    left = true
     void joined?.leave()
   })
 
@@ -100,7 +111,7 @@ const Room = component<{ mesh: string; nickname?: string }>(function* (props) {
   using _resetCopied = disposable(() => resetCopied?.[Symbol.dispose]())
 
   async function copyLink() {
-    const url = `${location.origin}/${mesh}`
+    const url = meshUrl(mesh)
     try {
       await navigator.clipboard.writeText(url)
       copied.value = true
@@ -204,26 +215,10 @@ function Invite({ mesh }: { mesh: string }) {
     <Stack direction="column" gap={1} data-invite="">
       <Text color="fgMuted">nobody else is here yet. share this link:</Text>
       <Text class="selectable" data-invite-url="">
-        {`${location.origin}/${mesh}`}
+        {meshUrl(mesh)}
       </Text>
       <Text color="fgMuted">or, from a terminal:</Text>
       <Text class="selectable" color="fgSubtle">{`agent-gossip join ${mesh}`}</Text>
     </Stack>
   )
 }
-
-/**
- * Keyed on the mesh id, and that is load-bearing rather than tidiness: the
- * router keeps a depth-0 route component alive across navigations, so without
- * the key a move between two rooms would reuse the first room's client.
- */
-export const RoomLayout = component(function* () {
-  const params = useParams(this)
-  const [search] = useSearchParams(this)
-
-  yield () => {
-    const mesh = params.value['id'] ?? ''
-    const nickname = search.value.get('nickname') ?? undefined
-    return <Room key={mesh} mesh={mesh} nickname={nickname} />
-  }
-})

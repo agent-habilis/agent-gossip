@@ -9,7 +9,7 @@ import './app.css'
 import { Connecting } from './components/Connecting/index.tsx'
 import { registerAgentTools } from './lib/agentTools/index.ts'
 import { boot, bootWithSplash } from './lib/boot.ts'
-import { App } from './pages/index.ts'
+import { App } from './pages/index.tsx'
 
 // Kick the bootstrap off at module scope, not on mount: the wasm fetch and
 // compile then overlap the splash rather than starting after it.
@@ -23,9 +23,6 @@ boot()
 void registerAgentTools().catch((error: unknown) => {
   console.debug('[agent-gossip] publishing agent tools failed', error)
 })
-
-const root = document.getElementById('root')
-if (!root) throw new Error('#root is missing from index.html')
 
 const Root = component(function* () {
   const ready = signal(false)
@@ -45,4 +42,20 @@ const Root = component(function* () {
   )
 })
 
-render(<Root />, root)
+/**
+ * The page loads this as `<script type="module" async>`, which React may hoist
+ * into `<head>`. An async module runs as soon as its fetch finishes and does
+ * not wait for the parser, so on a warm cache it can beat `#root` into
+ * existence — and throwing there leaves a blank page with no retry.
+ */
+function mount(): void {
+  const root = document.getElementById('root')
+  if (!root) throw new Error('#root is missing from the page')
+  render(<Root />, root)
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mount, { once: true })
+} else {
+  mount()
+}
