@@ -431,6 +431,8 @@ body:has(.dots) {
   aspect-ratio: 1440 / 900;
   overflow: hidden;
   background: #000;
+  /* Nextra's code-block radius, so a clip and a block read as one set. */
+  border-radius: var(--x-radius-md);
 }
 
 .clip video,
@@ -463,5 +465,6 @@ body:has(.dots) {
   height: 3.5rem;
   padding: 1rem;
   border: 1px solid rgb(255 255 255 / 60%);
+  border-radius: 50%;
   background: rgb(0 0 0 / 55%);
 }
