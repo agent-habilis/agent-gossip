@@ -1,0 +1,39 @@
+name: knope-release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  tag:
+    if: github.head_ref == 'release' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+      - id: version
+        run: echo "tag=v$(cargo pkgid -p agent-gossip | sed -E 's/.*[@#]//')" >> "$GITHUB_OUTPUT"
+      - uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+      - run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  # A tag created with GITHUB_TOKEN does not trigger `release.yml`'s
+  # `push: tags`, so call it directly.
+  build:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit

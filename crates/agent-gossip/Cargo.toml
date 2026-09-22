@@ -159,10 +159,3 @@ harness = false
 [[test]]
 name = "adversarial"
 required-features = ["adversarial"]
-
-[package.metadata.release]
-publish = false
-push = false
-tag-name = "v{{version}}"
-pre-release-commit-message = "chore: release v{{version}}"
-allow-branch = ["main"]

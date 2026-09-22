@@ -286,20 +286,41 @@ Two manuals, one source each:
 
 ### Releasing
 
-`cargo-release` never publishes to crates.io and never pushes automatically.
+A release is declared by a change file and cut by merging a PR. `knope`
+(`knope.toml`) does the versioning. Nothing publishes to crates.io.
 
-1. `cargo task release minor` (or `patch`/`major`/version) — dry run.
-2. `cargo task release minor --execute` — bumps `Cargo.toml`/`Cargo.lock`,
-   commits `chore: release v<version>`, creates the annotated tag. No push.
-3. `git push origin main --follow-tags` — the "Protect main" ruleset requires
-   a PR, so only a repo admin (the ruleset's one bypass actor) can push this.
-   Pushing the tag triggers `.github/workflows/release.yml`, which builds the
-   binaries, **opens a `formula/v<version>` PR** with the Homebrew formula
-   bump, and mirrors the formula to the `agent-habilis/homebrew-tap` repo
-   (needs the `TAP_PUSH_TOKEN` Actions secret — a fine-grained PAT with
-   contents read/write on that repo).
-4. Merge the formula PR with the admin bypass. CI does not run on it: a PR
-   opened with `GITHUB_TOKEN` triggers no workflows.
+1. In the feature PR, add a change file with `knope document-change`, or
+   write `.changeset/<summary>.md` by hand:
+   ```md
+   ---
+   default: patch
+   ---
+
+   # Add the foo command
+   ```
+   The key is `default`, not the package name: a named package makes knope
+   tag `agent-gossip/v<version>`, which the `v*` release trigger never sees.
+   Commit messages do not count (`[changes] ignore_conventional_commits`).
+   While the version is `0.x`, knope shifts the levels down one, as Cargo's
+   semver does: `major` gives `0.10.0`, and `minor` and `patch` both give
+   `0.9.1`.
+2. On each push to `main` with change files,
+   `.github/workflows/prepare-release.yml` force-pushes the `release` branch
+   (version bump in `Cargo.toml`/`Cargo.lock`, `CHANGELOG.md`, change files
+   deleted) and opens or updates the "chore: prepare release" PR.
+3. Merge that PR with the admin bypass. CI does not run on it: a PR opened
+   with `GITHUB_TOKEN` triggers no workflows.
+4. `.github/workflows/knope-release.yml` then creates the GitHub Release and
+   its `v<version>` tag at the merge commit, and calls `release.yml` through
+   `workflow_call` — a tag created with `GITHUB_TOKEN` does not fire
+   `release.yml`'s `push: tags`. `release.yml` builds the binaries, **opens a
+   `formula/v<version>` PR** with the Homebrew formula bump, and mirrors the
+   formula to the `agent-habilis/homebrew-tap` repo (needs the
+   `TAP_PUSH_TOKEN` Actions secret — a fine-grained PAT with contents
+   read/write on that repo).
+5. Merge the formula PR with the admin bypass.
+
+Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 
 ## Code Style
 

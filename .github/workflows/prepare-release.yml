@@ -1,0 +1,42 @@
+name: prepare-release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: true
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # knope fails when it has nothing to release, so skip instead of
+      # swallowing every error with `continue-on-error`.
+      - id: changes
+        run: |
+          if compgen -G '.changeset/*.md' > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.found == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - if: steps.changes.outputs.found == 'true'
+        uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+      # GITHUB_TOKEN opens the PR, so CI does not run on it; an admin merges
+      # it through the ruleset bypass, as with the formula PR.
+      - if: steps.changes.outputs.found == 'true'
+        run: knope prepare-release --verbose
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

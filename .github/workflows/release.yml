@@ -4,18 +4,28 @@ on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   verify-version:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       - name: Verify tag matches Cargo.toml version
         run: |
-          tag="${GITHUB_REF#refs/tags/v}"
+          tag="${TAG#v}"
           manifest=$(cargo pkgid -p agent-gossip | sed -E 's/.*[@#]//')
           if [ "$tag" != "$manifest" ]; then
             echo "Tag v$tag does not match Cargo.toml version $manifest" >&2
@@ -27,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create the GitHub Release (idempotent)
-        run: gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -41,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       - name: Generate roff man pages
         run: cargo task man
       - uses: actions/upload-artifact@v4
@@ -75,6 +87,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       # Pull the once-built man pages into ./man so the archive can bundle
       # them; Homebrew installs them from there (see Formula/agent-gossip.rb).
       - name: Download man pages
@@ -89,6 +103,7 @@ jobs:
           # derive the package name/version from `./Cargo.toml`.
           manifest-path: crates/agent-gossip/Cargo.toml
           target: ${{ matrix.target }}
+          ref: refs/tags/${{ env.TAG }}
           archive: $bin-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
           # Bundle the generated man pages alongside the binary so
@@ -112,7 +127,6 @@ jobs:
       - name: Bump Formula/agent-gossip.rb to the released version + checksums
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
           ver="${TAG#v}"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp --clobber
@@ -133,7 +147,6 @@ jobs:
       - name: Open a PR with the formula bump
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -155,8 +168,6 @@ jobs:
           token: ${{ secrets.TAP_PUSH_TOKEN }}
           path: tap
       - name: Mirror the formula to the org tap
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           cp Formula/agent-gossip.rb tap/Formula/agent-gossip.rb
           cd tap
