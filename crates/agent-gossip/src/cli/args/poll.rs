@@ -32,12 +32,19 @@ pub(crate) struct PollOpts {
 
     /// Block until an unserved event arrives (long-poll) — the receive bell.
     /// Parks until the daemon holds a waking event it has not yet served to a
-    /// plain poll; state/meta document echoes never fire it. The daemon holds
+    /// plain poll; state/meta document echoes and your own `working` status
+    /// updates never fire it. The daemon holds
     /// each request up to ~60s and the CLI transparently re-issues on an
     /// empty window, so this never times out; a killed call loses nothing.
     /// Omit for an immediate read.
     #[arg(long)]
     pub long: bool,
+
+    /// Wait this many seconds before the bell starts listening. The bell
+    /// counts as armed during the wait, which a shell `sleep` before the
+    /// command would not.
+    #[arg(long, value_name = "SECS", requires = "long")]
+    pub settle_secs: Option<u64>,
 
     #[command(flatten)]
     pub legacy_output: LegacyOutput,
@@ -51,6 +58,38 @@ mod tests {
 
     fn parse(argv: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(argv)
+    }
+
+    #[test]
+    fn settle_secs_requires_long() {
+        let err = parse(&[
+            "agent-gossip",
+            "poll",
+            "--gossip",
+            "g",
+            "--nickname",
+            "n",
+            "--settle-secs",
+            "5",
+        ])
+        .expect_err("--settle-secs without --long must be rejected");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let cli = parse(&[
+            "agent-gossip",
+            "poll",
+            "--gossip",
+            "g",
+            "--nickname",
+            "n",
+            "--long",
+            "--settle-secs",
+            "5",
+        ])
+        .expect("--settle-secs with --long parses");
+        let Commands::Poll { opts } = cli.command else {
+            panic!("expected Poll command");
+        };
+        assert_eq!(opts.settle_secs, Some(5));
     }
 
     #[test]

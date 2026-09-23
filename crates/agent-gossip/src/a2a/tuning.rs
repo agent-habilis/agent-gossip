@@ -46,6 +46,11 @@ pub(crate) const TASK_KEEPALIVE_MAX_SECS: u64 = 120;
 /// client re-issues.
 pub(crate) const LONGPOLL_MAX_MS: u64 = 60_000;
 
+/// How long `bell-check` waits for a missing bell before it reports one
+/// (milliseconds). Covers a bell re-armed as the turn ends, which needs a
+/// moment to take its lock.
+pub(crate) const BELL_CHECK_GRACE_MS: u64 = 1_500;
+
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed** IPC
 /// contract (a long-poll client can't know the daemon's configured log size, so
 /// the read cap can't depend on it). At the engine's default message-log size

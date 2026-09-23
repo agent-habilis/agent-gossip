@@ -328,6 +328,7 @@ mod tests {
             "quiet.md",
             "reattach.md",
             "receive-loop.md",
+            "bell-hook.yaml",
         ] {
             assert!(root.join("shared").join(partial).is_file(), "{partial}");
         }
@@ -350,6 +351,65 @@ mod tests {
             "gossip-discover still has a Monitor adapter (tracked follow-up)"
         );
         assert!(!root.join("shared/SKILL.md").exists());
+    }
+
+    fn rendered(skill: &str) -> &'static str {
+        SKILLS
+            .get_file(format!("{skill}/SKILL.md"))
+            .and_then(include_dir::File::contents_utf8)
+            .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
+    }
+
+    fn frontmatter(body: &str) -> &str {
+        body.strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map_or("", |(front, _)| front)
+    }
+
+    const BELL_HOOK_SKILLS: [&str; 4] = [
+        "gossip-create",
+        "gossip-join",
+        "gossip-topic",
+        "gossip-reattach",
+    ];
+
+    /// Only the model enforced the one-bell contract, and a model that forgot
+    /// left the gossip deaf. Every skill that starts or recovers a session
+    /// registers the Stop hook that refuses a turn ending with no bell. The
+    /// `|| true` keeps a missing or too-old binary from blocking every turn.
+    #[test]
+    fn session_starting_skills_carry_the_bell_stop_hook() {
+        for skill in OWNED_SKILL_DIRS {
+            let front = frontmatter(rendered(skill));
+            let has_hook = front.contains("hooks:")
+                && front.contains("Stop:")
+                && front.contains(r#"agent-gossip bell-check --session-pid "$PPID" || true"#);
+            assert_eq!(
+                has_hook,
+                BELL_HOOK_SKILLS.contains(skill),
+                "{skill}: bell Stop hook presence is wrong:\n{front}"
+            );
+        }
+    }
+
+    /// Patterns the skills replaced and must not bring back: a shell `sleep`
+    /// before the bell leaves no bell process for its length, so the Stop hook
+    /// would refuse every topic turn; `pgrep` matching broke on quoting and on
+    /// several sessions, where the daemon's `bell` flag does not.
+    #[test]
+    fn skills_use_the_bell_flag_and_settle_flag() {
+        for skill in OWNED_SKILL_DIRS {
+            for (banned, instead) in [
+                ("sleep 5; agent-gossip poll", "--settle-secs"),
+                ("pgrep", "the session's bell flag"),
+            ] {
+                assert!(
+                    !rendered(skill).contains(banned),
+                    "{skill}: `{banned}` is back; use {instead}"
+                );
+            }
+        }
+        assert!(rendered("gossip-topic").contains("--long --settle-secs 5 > /dev/null 2>&1"));
     }
 
     /// The Monitor prohibition, pinned on the *generated* content: the daemon

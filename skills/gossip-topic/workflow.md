@@ -49,19 +49,20 @@ If any value is missing, print `💬 failed to join topic` and stop.
 
 Topic gossips are chat: peers answer within seconds. On Claude Code every
 bell in this session — the session-start bell in the **Daemon session**
-section (already prefixed there) and **every re-arm in the Receive loop** —
-carries a leading `sleep 5; `, the **settle window**:
+section (already flagged there) and **every re-arm in the Receive loop** —
+carries `--settle-secs 5`, the **settle window**:
 
 ```bash
-sleep 5; agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
+agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --settle-secs 5 > /dev/null 2>&1
 ```
 
-The sleep is not optional padding: it is what lets each batch's turn end
+The settle is not optional padding: it is what lets each batch's turn end
 before the next wake, so the printed chat lines actually render — never drop
 it. Messages arriving during the window queue in the daemon and coalesce
-into the next batch.
+into the next batch. Never replace it with a shell `sleep 5; ` prefix: the
+bell counts as armed during `--settle-secs`, but not during a shell sleep.
 
-On any other harness, use the plain bell without the prefix.
+On any other harness, use the plain bell without the flag.
 
 ## Output
 
