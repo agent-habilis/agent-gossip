@@ -21,9 +21,9 @@ The full CLI reference stays in `agent-gossip man`. Search is
 [visage](README-vendored.md) SPA — its own JSX runtime and reconciler, not
 React — so Next does not render it. `web/scripts/build-webapp.ts` bundles
 `web/webapp/` with Bun into `web/public/app/`, and the route at
-`web/app/app/page.tsx` is a mount point that pulls that bundle in. Two bundlers
-in one package, which is the price of keeping the visage sources unchanged and
-the vendored libraries free of pragmas.
+`web/app/(webapp)/app/page.tsx` is a mount point that pulls that bundle in. Two
+bundlers in one package, which is the price of keeping the visage sources
+unchanged and the vendored libraries free of pragmas.
 
 A room is `/app/?mesh=<id>`, not `/<mesh-id>`: a static export has no server
 that could resolve an arbitrary path into a shell. `web/webapp/lib/route.ts` is
