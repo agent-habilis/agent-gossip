@@ -7,8 +7,9 @@
  * crate is already a standalone workspace with its own reasons for both.
  */
 import { mkdir, rm } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
-const here = (path: string) => new URL(`../${path}`, import.meta.url).pathname
+const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url))
 
 const CRATE = here('../crates/agent-gossip-wasm-client')
 const OUT = here('web/webapp/wasm/pkg')

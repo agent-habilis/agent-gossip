@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
 // Runs the real server against its real document root, so the fixtures are
 // written into out/ under a name no build produces, and removed afterwards.
-const DIST = new URL('./out/', import.meta.url).pathname
+const DIST = fileURLToPath(new URL('./out/', import.meta.url))
 const FIXTURE = '__server-test__'
 const CHUNK = `_next/static/${FIXTURE}.js`
 const PORT = 20000 + Math.floor(Math.random() * 20000)
@@ -18,7 +19,7 @@ const get = (path: string, headers?: Record<string, string>) =>
 beforeAll(async () => {
   await Bun.write(`${DIST}${FIXTURE}/page/index.html`, '<p>fixture</p>')
   await Bun.write(`${DIST}${CHUNK}`, '')
-  server = Bun.spawn(['bun', new URL('./server.ts', import.meta.url).pathname], {
+  server = Bun.spawn(['bun', fileURLToPath(new URL('./server.ts', import.meta.url))], {
     env: { ...process.env, PORT: String(PORT) },
     stdout: 'ignore',
   })

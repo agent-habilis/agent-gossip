@@ -12,8 +12,9 @@
  */
 import { readdir, rm } from 'node:fs/promises'
 import { watch } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const here = (path: string) => new URL(`../${path}`, import.meta.url).pathname
+const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url))
 
 const OUT = here('public/app/')
 const SRC = here('webapp/')

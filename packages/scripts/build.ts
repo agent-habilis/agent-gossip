@@ -8,13 +8,14 @@
  * `web`'s own `prebuild` runs `scripts/build-webapp.ts`, which is what puts the
  * webapp under `public/app/` before the export copies it.
  */
+import { fileURLToPath } from 'node:url'
 
 // Only when absent: the Docker image has no Rust toolchain and relies on the
 // `pkg/` copied in from the host, and a warm rebuild should not pay for cargo.
 const wasm = new URL('../web/webapp/wasm/pkg/agent_gossip_wasm_client_bg.wasm', import.meta.url)
 if (!(await Bun.file(wasm).exists())) {
   const buildWasm = Bun.spawn(['bun', 'run', 'build:wasm'], {
-    cwd: new URL('../', import.meta.url).pathname,
+    cwd: fileURLToPath(new URL('../', import.meta.url)),
     stdout: 'inherit',
     stderr: 'inherit',
   })
@@ -25,7 +26,7 @@ if (!(await Bun.file(wasm).exists())) {
 }
 
 const build = Bun.spawn(['bun', 'run', 'build'], {
-  cwd: new URL('../web/', import.meta.url).pathname,
+  cwd: fileURLToPath(new URL('../web/', import.meta.url)),
   stdout: 'inherit',
   stderr: 'inherit',
 })

@@ -1,4 +1,5 @@
 import { join, normalize, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /** A path built from disk, made safe to put in a Location header. */
 const encodePath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
@@ -11,7 +12,7 @@ const encodePath = (path: string) => path.split('/').map(encodeURIComponent).joi
 // out/ is produced by `bun run build`: the Next static export, which already
 // carries public/ — media, icons and the bundled webapp — inside it. It is
 // gitignored, so a fresh checkout must build before serving.
-const ROOT = new URL('./out/', import.meta.url).pathname
+const ROOT = fileURLToPath(new URL('./out/', import.meta.url))
 const PORT = Number(process.env['PORT']) || 3000
 
 const RANGE = /^bytes=(\d*)-(\d*)$/

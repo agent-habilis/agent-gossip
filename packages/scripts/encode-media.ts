@@ -7,8 +7,9 @@
  * takes seconds; a full run re-encodes every video, which takes many minutes.
  */
 import { mkdir, readdir } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
-const here = (path: string) => new URL(`../${path}`, import.meta.url).pathname
+const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url))
 
 const SRC = here('../assets')
 const OUT = here('web/public/video')
