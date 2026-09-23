@@ -19,10 +19,9 @@ const RANGE = /^bytes=(\d*)-(\d*)$/
 
 // Content-addressed or content-stable and referenced by name.
 const CACHE_IMMUTABLE = 'public, max-age=31536000, immutable'
-// s-maxage is what lets Cloudflare hold index.html too; the short max-age keeps
-// browsers rechecking, so a post-deploy purge reaches visitors within the
-// minute rather than whenever their cache expires.
-const CACHE_REVALIDATE = 'public, max-age=60, s-maxage=31536000'
+// These URLs survive a deploy with new content behind them, and nothing purges
+// the edge after one, so Cloudflare gets the same minute as a browser.
+const CACHE_REVALIDATE = 'public, max-age=60, s-maxage=60'
 // A miss is the one answer a shared cache must not hold: the file it is missing
 // is usually one a deploy is about to add.
 const CACHE_MISS = 'public, max-age=60'

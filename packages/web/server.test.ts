@@ -104,6 +104,13 @@ describe('server', () => {
     expect(res.headers.get('cache-control')).not.toContain('immutable')
   })
 
+  // A page keeps its URL across deploys, so a shared cache that held it for
+  // longer would serve the previous build to everyone until someone purged.
+  test('lets a shared cache hold a page for a minute only', async () => {
+    const res = await get(`/${FIXTURE}/page/`)
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60')
+  })
+
   test('caches a page by name but not a range of it', async () => {
     const res = await get(`/${FIXTURE}/page/`, { Range: 'bytes=0-3' })
     expect(res.status).toBe(206)
