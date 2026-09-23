@@ -117,6 +117,26 @@ describe('server', () => {
     expect(res.headers.get('cache-control')).not.toContain('immutable')
   })
 
+  // A player asks for fixed-size chunks, so the last one usually runs past the
+  // end of the file; RFC 9110 has the server clamp it rather than refuse it.
+  test('clamps a range that runs past the end of the file', async () => {
+    const res = await get(`/${FIXTURE}/page/`, { Range: 'bytes=0-999' })
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe('bytes 0-13/14')
+  })
+
+  test('clamps a suffix range longer than the file', async () => {
+    const res = await get(`/${FIXTURE}/page/`, { Range: 'bytes=-500' })
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe('bytes 0-13/14')
+  })
+
+  test('refuses a range that starts past the end of the file', async () => {
+    const res = await get(`/${FIXTURE}/page/`, { Range: 'bytes=14-' })
+    expect(res.status).toBe(416)
+    expect(res.headers.get('content-range')).toBe('bytes */14')
+  })
+
   // A shared cache must not hold a miss: the file it is missing is usually one
   // the next deploy adds.
   test('does not let a shared cache pin a 404', async () => {

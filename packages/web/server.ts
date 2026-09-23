@@ -48,8 +48,8 @@ function ranged(file: Bun.BunFile, header: string, cacheControl: string): Respon
 
   const [, rawStart = '', rawEnd = ''] = match
   // `bytes=-500` means the last 500 bytes, not "from 0 to 500".
-  const start = rawStart === '' ? size - Number(rawEnd) : Number(rawStart)
-  const end = rawStart === '' || rawEnd === '' ? size - 1 : Number(rawEnd)
+  const start = rawStart === '' ? Math.max(0, size - Number(rawEnd)) : Number(rawStart)
+  const end = rawStart === '' || rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1)
 
   if (!(start >= 0 && end < size && start <= end)) {
     return new Response('Range Not Satisfiable', {
