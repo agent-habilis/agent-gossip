@@ -248,7 +248,7 @@ SVG cards):
   `tsconfig.json`, which is what makes Bun compile it as visage JSX
 - `web/scripts/build-webapp.ts` — bundles `webapp/` and stages the wasm into `public/app/`
 - `visage-*` / `moonspace-*` — vendored as source. See `README-vendored.md`
-- `scripts/build.ts` — runs `bun run build` in `web/`
+- `scripts/build.ts` — runs `build:wasm` if `pkg/` is missing, then `bun run build` in `web/`
 - `scripts/build-wasm.ts` — builds `crates/agent-gossip-wasm-client` and runs `wasm-bindgen`
 - `scripts/e2e.ts` — the browser suite; `scripts/test-setup.ts` — happy-dom preload
 - `scripts/encode-media.ts` — re-encodes `../assets/*.mp4` into `web/public/video/`
