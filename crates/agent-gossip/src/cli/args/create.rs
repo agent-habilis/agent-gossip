@@ -125,7 +125,8 @@ mod tests {
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
             | Commands::Invite { .. }
-            | Commands::Session { .. } => {
+            | Commands::Session { .. }
+            | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -157,7 +158,8 @@ mod tests {
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
             | Commands::Invite { .. }
-            | Commands::Session { .. } => {
+            | Commands::Session { .. }
+            | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -186,7 +188,8 @@ mod tests {
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
             | Commands::Invite { .. }
-            | Commands::Session { .. } => {
+            | Commands::Session { .. }
+            | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -236,7 +239,8 @@ mod tests {
                 | Commands::Doctor { .. }
                 | Commands::Leave { .. }
                 | Commands::Invite { .. }
-                | Commands::Session { .. } => panic!("expected Create"),
+                | Commands::Session { .. }
+                | Commands::BellCheck { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -292,7 +296,8 @@ mod tests {
                 | Commands::Doctor { .. }
                 | Commands::Leave { .. }
                 | Commands::Invite { .. }
-                | Commands::Session { .. } => panic!("expected Create"),
+                | Commands::Session { .. }
+                | Commands::BellCheck { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -355,7 +360,8 @@ mod tests {
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
             | Commands::Invite { .. }
-            | Commands::Session { .. } => {
+            | Commands::Session { .. }
+            | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
         }

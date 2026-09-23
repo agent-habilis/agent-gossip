@@ -5,7 +5,8 @@ use fofoca::protocol::Nickname;
 use fofoca::runtime::state_file::read_session_entry;
 use fofoca::util::process;
 
-use super::args::{LeaveOpts, SessionOpts};
+use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
+use super::bell;
 use crate::runtime_base;
 
 /// One live daemon on this machine, resolved from its state file. `mesh`
@@ -333,12 +334,23 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
         legacy_output: _,
     } = opts;
     let Discovery { live, cleaned } = discover();
-    let anchor = session_pid.unwrap_or_else(default_session_pid);
-    let (owned, other_sessions) = split_owned(live, |pid| process::ancestry_contains(pid, anchor));
+    let (owned, other_sessions) = owned_sessions(live, session_pid);
 
+    let sessions: Vec<_> = owned
+        .iter()
+        .map(|target| {
+            let mut json = target_json(target);
+            json["bell"] = target
+                .nickname
+                .as_deref()
+                .is_some_and(|nickname| bell::is_armed(&target.mesh, nickname))
+                .into();
+            json
+        })
+        .collect();
     let report = serde_json::json!({
         "ok": true,
-        "sessions": owned.iter().map(target_json).collect::<Vec<_>>(),
+        "sessions": sessions,
         "other_sessions": other_sessions,
         "cleaned": cleaned,
     });
@@ -346,9 +358,70 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
     Ok(())
 }
 
+fn owned_sessions(live: Vec<Target>, session_pid: Option<u32>) -> (Vec<Target>, usize) {
+    let anchor = session_pid.unwrap_or_else(default_session_pid);
+    split_owned(live, |pid| process::ancestry_contains(pid, anchor))
+}
+
+/// The sessions that are serving but have no bell armed. A session still
+/// starting up is skipped: its first bell waits for `ready` before it can
+/// take the lock.
+fn unarmed(
+    owned: &[Target],
+    is_ready: impl Fn(&Target) -> bool,
+    is_armed: impl Fn(&str, &str) -> bool,
+) -> Vec<&str> {
+    owned
+        .iter()
+        .filter_map(|target| {
+            let nickname = target.nickname.as_deref()?;
+            (!is_armed(&target.mesh, nickname) && is_ready(target)).then_some(nickname)
+        })
+        .collect()
+}
+
+fn is_ready(target: &Target) -> bool {
+    fofoca::runtime::state_file::read_snapshot(&target.path)
+        .ok()
+        .flatten()
+        .is_some_and(|snapshot| snapshot.ready && super::ready_is_fresh(snapshot.last_updated))
+}
+
+/// The Claude Code Stop hook's probe. It answers in the hook's JSON protocol
+/// and always exits 0, so the hook can swallow every failure (`|| true`): a
+/// missing binary, or one too old to know this command, never blocks a turn.
+pub(crate) fn bell_check(opts: &BellCheckOpts) {
+    let &BellCheckOpts {
+        session_pid,
+        grace_ms,
+    } = opts;
+    let (owned, _) = owned_sessions(discover().live, session_pid);
+    // A bell re-armed in the same breath as the turn ends may not hold its
+    // lock yet.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    loop {
+        let missing = unarmed(&owned, is_ready, bell::is_armed);
+        if missing.is_empty() {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            let reason = format!(
+                "gossip bell not armed for {}: run the Receive loop (poll + re-arm) before ending the turn",
+                missing.join(", ")
+            );
+            println!(
+                "{}",
+                serde_json::json!({ "decision": "block", "reason": reason })
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Owner, Target, confirm_owner, select_explicit, split_owned};
+    use super::{Owner, Target, confirm_owner, select_explicit, split_owned, unarmed};
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
@@ -359,6 +432,24 @@ mod tests {
             topic: None,
             pid,
         }
+    }
+
+    #[test]
+    fn unarmed_skips_unready_and_armed_sessions() {
+        let mut anonymous = target("m4", "x", 4);
+        anonymous.nickname = None;
+        let owned = [
+            target("m1", "armed", 1),
+            target("m2", "starting", 2),
+            target("m3", "deaf", 3),
+            anonymous,
+        ];
+        let missing = unarmed(
+            &owned,
+            |target| target.pid != 2,
+            |_, nickname| nickname == "armed",
+        );
+        assert_eq!(missing, ["deaf"]);
     }
 
     /// The scenario that reissued pids create, and the reason `leave` cannot

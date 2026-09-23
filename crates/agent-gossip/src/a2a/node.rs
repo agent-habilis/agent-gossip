@@ -327,21 +327,18 @@ async fn merge_own_meta_entry(
     }
 }
 
-/// Whether a surfaced event belongs in the `poll`/`fetch` history — an explicit
-/// allow-list of the documented pollable contract (chat, presence joined/left,
-/// content task legs, and the transient `ping_report`/`peer_timeout`/
-/// `peer_return`/`task_timeout`/`fork`). Deliberately an allow-list, not
-/// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
-/// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
-/// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
-/// liveness widget update, never a retained record).
 /// Whether a surfaced event should wake a parked `poll --long` bell: anything
 /// the agent must see (`is_visible`) or act on (a task interaction). State and
 /// meta document echoes, `fork`, and presence `alive` beats stay in the ring —
 /// consumable in the next batch — but never ring the bell on their own, so a
 /// self meta report at session start cannot cost the agent a wake-up turn.
+/// The agent's own `working` status echo is quiet for the same reason: a worker
+/// re-sends it every ~45 s, and each ring cost a poll + re-arm turn.
 pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
+    if is_self_working_echo(event) {
+        return false;
+    }
     output::is_visible(event)
         || matches!(
             event,
@@ -351,6 +348,22 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
         )
 }
 
+fn is_self_working_echo(event: &output::OutputEvent) -> bool {
+    matches!(
+        event,
+        output::OutputEvent::Task { msg, is_self: true }
+            if super::gossip::frame_task_state(msg) == Some(super::TaskState::Working)
+    )
+}
+
+/// Whether a surfaced event belongs in the `poll`/`fetch` history — an explicit
+/// allow-list of the documented pollable contract (chat, presence joined/left,
+/// content task legs, and the transient `ping_report`/`peer_timeout`/
+/// `peer_return`/`task_timeout`/`fork`). Deliberately an allow-list, not
+/// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
+/// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
+/// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
+/// liveness widget update, never a retained record).
 pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
     match event {
@@ -1036,8 +1049,9 @@ mod classify_tests {
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
-    use super::classify;
-    use crate::a2a::wire;
+    use super::{classify, wakes};
+    use crate::a2a::{TaskState, wire};
+    use crate::output::OutputEvent;
 
     fn mesh() -> MeshId {
         MeshId::from("test")
@@ -1098,28 +1112,43 @@ mod classify_tests {
 
     // A well-formed task-status frame (its payload's contextId names the mesh).
     fn status_frame(to: Option<Nickname>) -> Message {
-        let sw = mesh();
-        let task_id = crate::a2a::TaskId::random();
-        let status = crate::a2a::gossip::status_update(
-            &sw,
-            crate::a2a::gossip::StatusUpdateParams {
-                task_id: &task_id,
-                state: crate::a2a::TaskState::Working,
-                note: None,
-                metadata: None,
-            },
-        );
-        let body = crate::a2a::gossip::payload_body(&status).unwrap();
-        Message::new_app(
-            &sw,
-            &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::STATUS),
-                to,
-                corr: None,
-                body,
-            },
-        )
+        status_frame_in(TaskState::Working, to)
+    }
+
+    fn status_frame_in(state: TaskState, to: Option<Nickname>) -> Message {
+        crate::a2a::gossip::test_status_frame(&mesh(), state, to)
+    }
+
+    fn task_event(msg: Message, is_self: bool) -> OutputEvent {
+        OutputEvent::Task {
+            msg: Box::new(msg),
+            is_self,
+        }
+    }
+
+    // A worker's own `working` beats land every ~45 s; letting them ring its
+    // bell turned every beat into a poll + re-arm turn. The rows beyond the
+    // first pin the scope: only that one echo is quiet.
+    #[test]
+    fn only_a_self_working_echo_does_not_wake_the_bell() {
+        let to = Some(Nickname::from("initiator"));
+        let self_working = task_event(status_frame_in(TaskState::Working, to.clone()), true);
+        assert!(!wakes(&self_working), "own working beat is quiet");
+
+        let peer_working = task_event(status_frame_in(TaskState::Working, to.clone()), false);
+        assert!(wakes(&peer_working), "a peer's working status still wakes");
+
+        for state in [
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+        ] {
+            let own = task_event(status_frame_in(state, to.clone()), true);
+            assert!(wakes(&own), "own {state:?} transition still wakes");
+        }
+
+        let own_artifact = task_event(app_frame(wire::ARTIFACT), true);
+        assert!(wakes(&own_artifact), "own artifact echo still wakes");
     }
 
     // These assertions are deliberately worded "broadcast"/"directed" rather

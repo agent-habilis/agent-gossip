@@ -70,7 +70,8 @@ mod tests {
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
             | Commands::Invite { .. }
-            | Commands::Session { .. } => panic!("expected Discover"),
+            | Commands::Session { .. }
+            | Commands::BellCheck { .. } => panic!("expected Discover"),
         }
     }
 

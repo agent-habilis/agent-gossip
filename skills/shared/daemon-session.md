@@ -68,12 +68,12 @@ poll wait for the daemon and resolve the identity itself, so the bell is armed
 before the identity exists:
 
 ```bash
-<!-- slot name="bell_prefix" -->agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long > /dev/null 2>&1
+agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
 ```
 
 The bell's exit is the signal; its output is discarded. Read content with a
-**foreground** poll per the **Receive loop** section. Any prefix on the
-command above is part of the bell (a topic gossip's settle window on Claude
+**foreground** poll per the **Receive loop** section. Any flag after
+`--long` above is part of the bell (a topic gossip's settle window on Claude
 Code): keep it on every re-arm.
 
 **Tool call 3 — the foreground gate**, one script: wait for the daemon, report

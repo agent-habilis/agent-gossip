@@ -3142,23 +3142,18 @@ fn leave_report_carries_the_full_topic_string() {
     let _ = fs::remove_file(&log);
 }
 
-/// Session scope end to end: a daemon spawned under a decoy "agent" shell is
-/// owned by that shell's pid. `agent-gossip session --session-pid <shell>` reports it
-/// without touching it; `agent-gossip leave --session-pid <shell>` stops it. Daemons
-/// belonging to other tests (children of this test binary, not of the decoy
-/// shell) must never match.
-#[test]
-fn leave_session_scope_via_decoy_parent() {
-    let _serial = serial_guard();
-
-    let log = tmp_log("leave-decoy");
+/// A daemon under a stand-in agent process: a shell that runs `create`, so a
+/// test can pass the shell's pid as `--session-pid`. Returns the shell, its
+/// pid, the gossip id, the nickname, and the daemon's log.
+fn spawn_decoy(name: &str) -> (std::process::Child, String, String, String, PathBuf) {
+    let log = tmp_log(name);
     // The trailing `:` defeats the shell's exec-of-last-command optimization,
     // keeping the shell alive as the daemon's parent — the ancestry link the
     // session scope matches on.
-    let mut decoy = Command::new("sh")
+    let decoy = Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "{} --log-dir {} create --name leave-decoy > {} 2>&1; :",
+            "{} --log-dir {} create --name {name} > {} 2>&1; :",
             bin().display(),
             common::test_log_dir(),
             log.display(),
@@ -3177,15 +3172,31 @@ fn leave_session_scope_via_decoy_parent() {
         std::thread::sleep(POLL);
     }
     let (mesh, nickname) = ready_identity(&log).unwrap();
+    (decoy, decoy_pid, mesh, nickname, log)
+}
 
-    // Read-only probe: reports the decoy's daemon, does not stop it.
+fn session_report(session_pid: &str) -> serde_json::Value {
     let out = common::test_cmd()
-        .args(["session", "--session-pid", &decoy_pid])
+        .args(["session", "--session-pid", session_pid])
         .output()
         .expect("failed to run agent-gossip session");
     assert!(out.status.success(), "session failed: {out:?}");
-    let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+}
+
+/// Session scope end to end: a daemon spawned under a decoy "agent" shell is
+/// owned by that shell's pid. `agent-gossip session --session-pid <shell>` reports it
+/// without touching it; `agent-gossip leave --session-pid <shell>` stops it. Daemons
+/// belonging to other tests (children of this test binary, not of the decoy
+/// shell) must never match.
+#[test]
+fn leave_session_scope_via_decoy_parent() {
+    let _serial = serial_guard();
+
+    let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("leave-decoy");
+
+    // Read-only probe: reports the decoy's daemon, does not stop it.
+    let report = session_report(&decoy_pid);
     let sessions = report["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
     assert_eq!(sessions[0]["gossip"], mesh.as_str());
@@ -3233,6 +3244,119 @@ fn leave_nothing_owned_is_a_clean_noop() {
 
     let _ = idle.kill();
     let _ = idle.wait();
+}
+
+/// The Stop hook's probe must block nothing for an agent that is not in a
+/// gossip.
+#[test]
+fn bell_check_passes_without_a_session() {
+    let mut idle = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let out = bell_check(&idle.id().to_string());
+    assert!(out.status.success(), "bell-check failed: {out:?}");
+    assert!(out.stdout.is_empty(), "no session must not block: {out:?}");
+
+    let _ = idle.kill();
+    let _ = idle.wait();
+}
+
+fn bell_check(session_pid: &str) -> std::process::Output {
+    common::test_cmd()
+        .args([
+            "bell-check",
+            "--session-pid",
+            session_pid,
+            "--grace-ms",
+            "0",
+        ])
+        .output()
+        .expect("failed to run agent-gossip bell-check")
+}
+
+/// The Stop-hook decision `bell-check` printed, or `None` when it let the
+/// turn end.
+fn bell_check_block_reason(session_pid: &str) -> Option<String> {
+    let out = bell_check(session_pid);
+    assert!(out.status.success(), "bell-check always exits 0: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stdout = stdout.trim();
+    if stdout.is_empty() {
+        return None;
+    }
+    let decision: serde_json::Value = serde_json::from_str(stdout).unwrap();
+    assert_eq!(decision["decision"], "block");
+    Some(decision["reason"].as_str().unwrap().to_owned())
+}
+
+fn wait_for_bell(session_pid: &str, armed: bool) {
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    while session_report(session_pid)["sessions"][0]["bell"] != armed {
+        assert!(
+            Instant::now() < deadline,
+            "session never reported bell:{armed}"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// `session` and `bell-check` read the bell from the lock a live `poll --long`
+/// holds: both bell forms take it, the OS drops it when the bell dies, and a
+/// settle delay does not open a window with no bell.
+#[test]
+fn bell_check_and_session_track_the_bell_lock() {
+    let _serial = serial_guard();
+    let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
+
+    assert_eq!(session_report(&decoy_pid)["sessions"][0]["bell"], false);
+    let reason = bell_check_block_reason(&decoy_pid).expect("no bell blocks the turn");
+    assert!(
+        reason.contains("gossip bell not armed") && reason.contains(nickname.as_str()),
+        "the reason names the problem and the session: {reason}"
+    );
+
+    let mut session_start_bell = common::test_cmd()
+        .args(["poll", "--state-file"])
+        .arg(default_state_file(&mesh, &nickname))
+        .arg("--long")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn the state-file bell");
+    wait_for_bell(&decoy_pid, true);
+    assert_eq!(bell_check_block_reason(&decoy_pid), None, "armed passes");
+
+    let _ = session_start_bell.kill();
+    let _ = session_start_bell.wait();
+    wait_for_bell(&decoy_pid, false);
+    assert!(
+        bell_check_block_reason(&decoy_pid).is_some(),
+        "a killed bell is gone"
+    );
+
+    let mut settling_bell = common::test_cmd()
+        .args(["poll", "--gossip", &mesh, "--nickname", &nickname, "--long"])
+        .args(["--settle-secs", "30"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn the re-armed bell");
+    wait_for_bell(&decoy_pid, true);
+    assert_eq!(
+        bell_check_block_reason(&decoy_pid),
+        None,
+        "a settling bell already counts"
+    );
+
+    let _ = settling_bell.kill();
+    let _ = settling_bell.wait();
+    let _ = common::test_cmd()
+        .args(["leave", "--session-pid", &decoy_pid])
+        .output();
+    let _ = decoy.wait();
+    let _ = fs::remove_file(&log);
 }
 
 /// Gossip carries no directed traffic, so a directed A2A task that

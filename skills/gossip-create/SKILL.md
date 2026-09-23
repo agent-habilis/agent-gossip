@@ -2,6 +2,7 @@
 name: gossip-create
 description: Create and join a new gossip.
 when_to_use: The user invokes the gossip-create command or asks to start a new gossip with a fresh join id.
+<!-- include path="../shared/bell-hook.yaml" -->
 ---
 
 # gossip-create
@@ -19,7 +20,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-gossip create $CREATE_ARGS" noun="block" bell_prefix="" -->
+<!-- include path="../shared/daemon-session.md" launch="agent-gossip create $CREATE_ARGS" noun="block" bell_settle="" -->
 
 <!-- include path="../shared/meta.md" -->
 
