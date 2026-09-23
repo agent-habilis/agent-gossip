@@ -99,8 +99,9 @@ describe('server', () => {
   // The policy has to read the resolved path, not the requested one, or a
   // traversal back out of /video/ borrows its year-long immutable header.
   test('decides the cache policy on the resolved path', async () => {
-    const res = await get(`/video/..%2f${CHUNK}%2f..%2f..%2f${FIXTURE}/page/`)
-    if (res.status === 200) expect(res.headers.get('cache-control')).not.toContain('immutable')
+    const res = await get(`/video/..%2f${CHUNK}%2f..%2f..%2f..%2f${FIXTURE}/page/`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).not.toContain('immutable')
   })
 
   test('caches a page by name but not a range of it', async () => {
