@@ -970,20 +970,33 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 fn task_creation_surfaces_to_worker_via_fetch() {
     let (mut creator, mut joiner, mesh, creator_nick) = create_pair(700);
 
-    let raw = joiner.tool_call(
-        710,
-        "a2a_call",
-        serde_json::json!({
-            "to": creator_nick,
-            "method": "SendMessage",
-            "params": { "message": {
-                "messageId": "550e8400-e29b-41d4-a716-446655440000",
-                "role": "ROLE_USER",
-                "parts": [{ "text": "## Task\nport it" }],
-                "contextId": mesh,
-            }},
-        }),
-    );
+    // A directed request sent while the overlay holds no live link is dropped
+    // for good, so one attempt waits out the whole call timeout. Re-send on a
+    // short per-attempt timeout, as `InProcNode::a2a_call_retrying` does.
+    let call_deadline = Instant::now() + MSG_TIMEOUT;
+    let mut attempt_id = 710;
+    let raw = loop {
+        let raw = joiner.tool_call(
+            attempt_id,
+            "a2a_call",
+            serde_json::json!({
+                "to": creator_nick,
+                "method": "SendMessage",
+                "params": { "message": {
+                    "messageId": "550e8400-e29b-41d4-a716-446655440000",
+                    "role": "ROLE_USER",
+                    "parts": [{ "text": "## Task\nport it" }],
+                    "contextId": mesh,
+                }},
+                "timeout_secs": 10,
+            }),
+        );
+        let timed_out = tool_error(&raw).is_some_and(|error| error.contains("timed out"));
+        if !timed_out || Instant::now() >= call_deadline {
+            break raw;
+        }
+        attempt_id += 1;
+    };
     let resp = tool_result_json(&raw)
         .unwrap_or_else(|| panic!("a2a_call should succeed; raw response: {raw}"));
     // The worker mints the task id and returns a submitted Task (v1.0
@@ -1008,7 +1021,9 @@ fn task_creation_surfaces_to_worker_via_fetch() {
             .as_array()
             .into_iter()
             .flatten()
-            .find(|event| event["event"] == "task")
+            // Match on the id, not the first task: an attempt whose response
+            // was dropped still minted a task of its own on the worker.
+            .find(|event| event["event"] == "task" && event["task_id"] == task_id.as_str())
             .cloned();
         if let Some(found) = found {
             break found;
@@ -1021,7 +1036,6 @@ fn task_creation_surfaces_to_worker_via_fetch() {
         probe += 1;
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(task["task_id"], task_id.as_str());
     assert_eq!(task["kind"], "message");
     assert_eq!(task["to"], creator_nick);
     assert_eq!(task["body"], "## Task\nport it");
