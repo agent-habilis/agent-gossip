@@ -131,10 +131,10 @@ Bun.serve({
       const notFound = Bun.file(join(ROOT, '404.html'))
       if (await notFound.exists()) {
         return new Response(notFound, {
-          // Deliberately no s-maxage: a shared cache must not pin a miss for a
-          // year. A page requested once before the deploy that adds it would
-          // stay a 404 until someone purged, and any client could fill the edge
-          // with misses under invented paths.
+          // CACHE_MISS, not the page policy, so a miss stays short even if pages
+          // are ever given a longer edge lifetime: a page requested once before
+          // the deploy that adds it would stay a 404 for that long, and any
+          // client could fill the edge with misses under invented paths.
           headers: { 'Cache-Control': CACHE_MISS, 'Content-Type': 'text/html;charset=utf-8' },
           status: 404,
         })
