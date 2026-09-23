@@ -495,13 +495,14 @@ impl SurfacedState {
 mod tests {
     use std::time::Duration;
 
-    use fofoca::protocol::{Channel, Message, MessageKind, Nickname};
+    use fofoca::protocol::{Channel, MeshId, Message, MessageKind, Nickname};
     use tokio::time::Instant as TokioInstant;
 
     use super::{
         PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
         render_poll_array,
     };
+    use crate::a2a::{TaskState, gossip};
     use crate::output::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
@@ -520,6 +521,18 @@ mod tests {
             channel: Channel::Meta,
             event: Box::new(Message::fixture(MessageKind::Meta, "{}")),
             document: serde_json::json!({}),
+            is_self: true,
+        }
+    }
+
+    fn self_working_status() -> OutputEvent {
+        let msg = gossip::test_status_frame(
+            &MeshId::from("test"),
+            TaskState::Working,
+            Some(nick("initiator")),
+        );
+        OutputEvent::Task {
+            msg: Box::new(msg),
             is_self: true,
         }
     }
@@ -842,6 +855,34 @@ mod tests {
             "the meta echo rides along: {body}"
         );
         assert_eq!(surfaced.last_served, 0, "a bell delivery serves nothing");
+    }
+
+    #[tokio::test]
+    async fn bell_ignores_self_working_echo_but_delivers_it_with_the_next_waking_batch() {
+        let mut surfaced = SurfacedState::new();
+        surfaced.push(self_working_status()); // seq 1, non-waking
+
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(tx),
+        });
+        assert_eq!(surfaced.poll_waiters.len(), 1, "parked over the self echo");
+        surfaced.fulfill_ready_poll_waiters();
+        assert!(
+            rx.try_recv().is_err(),
+            "own working beat never rings the bell"
+        );
+
+        surfaced.push(peer_return("a")); // seq 2, waking
+        surfaced.fulfill_ready_poll_waiters();
+        let body = rx.await.expect("woken by the waking event");
+        assert!(
+            body.contains("\"seq\":1") && body.contains("\"seq\":2"),
+            "the self echo rides along: {body}"
+        );
     }
 
     /// The gap-window race: a waking event that landed after the foreground

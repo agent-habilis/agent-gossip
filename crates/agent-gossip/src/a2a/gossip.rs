@@ -411,6 +411,34 @@ pub fn task_text(frame: &Frame) -> String {
     }
 }
 
+/// A well-formed task-status frame from `author`, for tests across modules.
+#[cfg(test)]
+pub(crate) fn test_status_frame(
+    mesh: &MeshId,
+    state: TaskState,
+    to: Option<fofoca::protocol::Nickname>,
+) -> Frame {
+    let status = status_update(
+        mesh,
+        StatusUpdateParams {
+            task_id: &TaskId::random(),
+            state,
+            note: None,
+            metadata: None,
+        },
+    );
+    Frame::new_app(
+        mesh,
+        &fofoca::protocol::Nickname::from("author"),
+        fofoca::protocol::AppFrameParams {
+            tag: fofoca::protocol::AppTag::from(wire::STATUS),
+            to,
+            corr: None,
+            body: payload_body(&status).expect("status body"),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use fofoca::protocol::MeshId;

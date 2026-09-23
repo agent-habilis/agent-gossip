@@ -22,8 +22,8 @@ SYNOPSIS
                   [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip poll --gossip GOSSIP --nickname NAME [--long]
-       agent-gossip poll --state-file PATH [--long]
+       agent-gossip poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N]]
+       agent-gossip poll --state-file PATH [--long [--settle-secs N]]
 
        agent-gossip ping --gossip GOSSIP --nickname NAME
 
@@ -489,8 +489,8 @@ COMMANDS
               --output - forces stdout even with --nickname. --password takes
               a plain value (this one flag has no --password=<pw> form).
 
-       poll --gossip GOSSIP --nickname NAME [--long]
-       poll --state-file PATH [--long]
+       poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N]]
+       poll --state-file PATH [--long [--settle-secs N]]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live JSON stream emits — chat, presence
@@ -518,10 +518,11 @@ COMMANDS
               --long
                      The receive bell: block until the daemon holds a WAKING
                      event it has not yet served to a plain poll, instead of
-                     an immediate read. State/meta document echoes are
-                     non-waking — they never fire the bell and ride along
-                     with the next waking batch (documents are read on demand
-                     with `state get`/`meta get`). Never advances the read
+                     an immediate read. State/meta document echoes and your
+                     own `working` task status updates are non-waking — they
+                     never fire the bell and ride along with the next waking
+                     batch (documents are read on demand with `state get`/
+                     `meta get`). Never advances the read
                      cursor, so the pattern is: bell exits → issue a plain
                      poll for the content and re-arm the bell, both at once.
                      No timeout: the daemon holds each request up to ~60s and
@@ -530,6 +531,14 @@ COMMANDS
                      deadline during the wait. A daemon shutting down cleanly
                      ends a parked long-poll with an empty batch and exit 0 —
                      leaving a gossip never requires stopping the bell.
+                     While it runs, the bell holds a lock that `session`
+                     reports as "bell":true; the OS releases it when the
+                     bell exits.
+
+              --settle-secs N
+                     With --long only: wait N seconds before the bell starts
+                     listening. Events that land in the wait coalesce into
+                     one batch. The bell counts as armed during the wait.
 
               --state-file PATH
                      Resolve --gossip/--nickname from a create/join/topic
@@ -689,11 +698,13 @@ COMMANDS
               its conversation context (a context clear or compaction)
               re-learns the gossip id, name, and nickname of a session it is
               still joined to, instead of concluding it is not in a gossip.
-              prints:
+              "bell" is true while a `poll --long` bell for that session
+              is running. prints:
 
                 {"ok":true,
                  "sessions":[{"gossip":"<hash>","name":"cool-team",
-                              "nickname":"swift-cedar","pid":34299}],
+                              "nickname":"swift-cedar","pid":34299,
+                              "bell":true}],
                  "other_sessions":0,"cleaned":0}
 
        state merge --gossip GOSSIP --nickname NAME --merge MERGE
@@ -1072,9 +1083,10 @@ JSON EVENTS
                         echoes, task legs, fork, presence alive beats, and
                         operational events are not (they are context — read
                         the documents on demand with state get / meta get).
-                        State/meta echoes are also non-waking: they never
-                        fire a parked `poll --long` and ride along with the
-                        next waking batch.
+                        State/meta echoes, and your own `working` task
+                        status updates, are also non-waking: they never fire
+                        a parked `poll --long` and ride along with the next
+                        waking batch.
 
               Presence carries "subtype":"joined" or "subtype":"left" in
               place of body; its display reads, e.g., 💬️ `<nick>` has joined.
