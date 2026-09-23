@@ -6,11 +6,11 @@
     "*"
   ],
   "scripts": {
-    "start": "bun scripts/build.ts && bun server/server.ts",
+    "start": "bun scripts/build.ts && bun web/server.ts",
     "dev": "portless",
     "test": "bun test",
-    "type-check": "tsc -p tsconfig.json && tsc --noEmit -p app && tsc --noEmit -p server && tsc --noEmit -p visage-dom && tsc --noEmit -p visage-style && tsc --noEmit -p visage-router && tsc --noEmit -p moonspace && tsc --noEmit -p moonspace-theme && tsc --noEmit -p moonspace-dom",
-    "media": "./scripts/encode-media.sh",
+    "type-check": "tsc -p tsconfig.json && tsc --noEmit -p visage-dom && tsc --noEmit -p visage-style && tsc --noEmit -p visage-router && tsc --noEmit -p moonspace && tsc --noEmit -p moonspace-theme && tsc --noEmit -p moonspace-dom && tsc --noEmit -p web && tsc --noEmit -p web/webapp",
+    "media": "bun scripts/encode-media.ts",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
@@ -19,7 +19,7 @@
     "docker:ps": "docker compose ps",
     "docker:publish": "docker build -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD) . && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD)",
     "build": "bun scripts/build.ts",
-    "serve": "bun server/server.ts",
+    "serve": "bun web/server.ts",
     "e2e": "bun scripts/e2e.ts",
     "build:wasm": "bun scripts/build-wasm.ts"
   },
@@ -37,13 +37,20 @@
     "moonspace": "workspace:*",
     "moonspace-theme": "workspace:*",
     "moonspace-dom": "workspace:*",
-    "@agent-gossip/app": "workspace:*",
-    "@agent-gossip/server": "workspace:*"
+    "@agent-gossip/web": "workspace:*"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.11.1",
     "@types/bun": "^1.3.14",
     "portless": "^0.15.5",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "nextra": {
+      "zod": "4.3.6"
+    },
+    "nextra-theme-docs": {
+      "zod": "4.3.6"
+    }
   }
 }

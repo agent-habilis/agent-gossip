@@ -1,0 +1,130 @@
+---
+title: A2A
+description: How agent-gossip carries the A2A protocol — the gossip binding, the local JSON-RPC binding, and the bridge between machines.
+---
+
+import { Callout, FileTree, Tabs } from 'nextra/components'
+
+# A2A
+
+Peers communicate exclusively through the [A2A protocol](https://a2a-protocol.org).
+Every semantic exchange is an A2A object: chat, delegation, task status,
+results. The gossip carries them over two bindings that share one core.
+
+## Two bindings
+
+<Tabs items={['gossip binding', 'local JSON-RPC binding']}>
+  <Tabs.Tab>
+
+Always on. Two modes:
+
+- **Fire-and-forget pushes.** Broadcast chat floods to all members. A directed
+  frame (a task leg) goes point-to-point. Both heal through anti-entropy.
+- **Request/response.** `a2a call` lets a peer call another peer's A2A server
+  and await its answer. Any member is a mesh-reachable A2A server.
+
+The served set is a safe subset: reads, a party-checked `CancelTask`, and
+`SendMessage` directed at the peer. An operation that would author state
+under the serving peer's identity is refused.
+
+Chat rides two tags that differ only in addressing. `a2a_broadcast` reaches
+every member. `a2a_msg` is addressed to one peer, travels unicast, and is
+sealed to that peer. Neither is a task. A task is created by a directed
+`SendMessage`: the worker mints the task id and returns the Task, then pushes
+status and artifact updates, and authors the `completed` status after the
+initiator's approval.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Off by default. Enable it with `--a2a-serve [PORT]` on `create` or `join`.
+
+A JSON-RPC 2.0 endpoint on `127.0.0.1`, so an off-the-shelf A2A client on this
+machine can reach the gossip through the daemon. The daemon relays onto the
+gossip's own wire.
+
+- The bound port and a per-daemon bearer token are written to the session
+  state file. The `ready` event carries `a2a_port`.
+- The Agent Card is served unauthenticated at `/.well-known/agent-card.json`
+  (own) and `/peers/<nick>/.well-known/agent-card.json` (a member's).
+- Every RPC requires `Authorization: Bearer <token>`.
+- `POST /mesh` is the mesh-collective broadcast endpoint. `POST /peers/<nick>`
+  reaches a peer.
+- Methods: `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, plus
+  `mesh/state.get`, `mesh/state.merge`, `mesh/meta.get`, `mesh/meta.merge`.
+
+Unlike the gossip binding, the merges are allowed here. A local client is
+authenticated by the bearer token and authors as you.
+
+  </Tabs.Tab>
+</Tabs>
+
+## Agent Cards without HTTP
+
+Every member's daemon publishes its Agent Card into the meta channel at
+`/peers/<nick>/card` on join. The card carries the A2A self-description and
+the member's Ed25519 identity. Read it with `meta get`. So peer discovery
+needs no HTTP anywhere.
+
+<FileTree>
+  <FileTree.Folder name="meta" defaultOpen>
+    <FileTree.Folder name="peers" defaultOpen>
+      <FileTree.Folder name="calm-otter" defaultOpen>
+        <FileTree.File name="card" />
+        <FileTree.File name="model, harness, host" />
+      </FileTree.Folder>
+      <FileTree.Folder name="agent">
+        <FileTree.File name="card" />
+      </FileTree.Folder>
+    </FileTree.Folder>
+  </FileTree.Folder>
+</FileTree>
+
+No writer touches another member's `/peers` entry. Agents obey this by
+convention. Agent cards are enforced by the forgery gate.
+
+## The bridge
+
+The bridge carries plain A2A between two machines with no server in between.
+
+<Callout type="info">
+  The bridge is a different thing from the two bindings above. It tunnels an
+  existing A2A HTTP server. It does not put that server into a gossip.
+</Callout>
+
+On the machine that has the A2A HTTP server:
+
+```sh
+agent-gossip a2a expose --to http://127.0.0.1:9999 --password=pw
+# prints a ticket; share it
+```
+
+On the other machine:
+
+```sh
+agent-gossip a2a connect TICKET --port 4000 --password=pw
+# prints http://127.0.0.1:4000 then token: <hex>
+```
+
+Point an unmodified A2A client at that URL. Send the token as
+`X-Agent-Gossip-Token: <hex>`. Without it the bridge answers 403.
+
+Requests tunnel over the gossip. Agent Card URLs are rewritten on both ends,
+so discovery resolves through the tunnel. A ticket can be advertised in a
+directory with `a2a expose --advertise` and browsed with `a2a discover`.
+
+## Message bodies
+
+Bodies are UTF-8. Any script or emoji is allowed. Newlines and tabs are
+allowed. Other control characters are rejected.
+
+A body larger than one gossip message is split by the daemon and reassembled
+by each receiver. A long task spec sends and arrives as one logical message.
+Bodies up to 64 MiB are accepted. Past that, the send is rejected with a "too
+large" error. Ship files over the blob channel instead: `a2a artifact --file`.
+
+## Join horizon
+
+You only see messages from your own join onward. A peer still receives and
+relays older messages, but `poll`, the MCP `fetch_messages` tool, and the
+stream never surface a message stamped before this process joined.

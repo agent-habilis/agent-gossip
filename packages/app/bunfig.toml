@@ -1,4 +1,0 @@
-# Bun does not walk up for a bunfig, so `cd app && bun test` would otherwise run
-# with no DOM registered. The root run picks up the root bunfig.
-[test]
-preload = ["../scripts/test-setup.ts"]

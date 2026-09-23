@@ -1,17 +1,18 @@
 /**
  * Builds `crates/agent-gossip-wasm-client` for wasm32 and runs `wasm-bindgen`
- * over the result, leaving the glue + `.wasm` in `app/wasm/pkg/` where the app
+ * over the result, leaving the glue + `.wasm` in `web/webapp/wasm/pkg/` where the app
  * imports them.
  *
  * Not wasm-pack: it wants to own the manifest and the output layout, and the
  * crate is already a standalone workspace with its own reasons for both.
  */
 import { mkdir, rm } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
-const here = (path: string) => new URL(`../${path}`, import.meta.url).pathname
+const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url))
 
 const CRATE = here('../crates/agent-gossip-wasm-client')
-const OUT = here('app/wasm/pkg')
+const OUT = here('web/webapp/wasm/pkg')
 
 async function tool(name: string, args: string[], cwd: string, env: Record<string, string> = {}) {
   const proc = Bun.spawn([name, ...args], {
@@ -57,4 +58,4 @@ await tool(
 )
 
 const wasm = Bun.file(`${OUT}/agent_gossip_wasm_client_bg.wasm`)
-console.log(`built ${(wasm.size / 1024 / 1024).toFixed(1)} MB of wasm into app/wasm/pkg/`)
+console.log(`built ${(wasm.size / 1024 / 1024).toFixed(1)} MB of wasm into web/webapp/wasm/pkg/`)

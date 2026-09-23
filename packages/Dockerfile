@@ -5,4 +5,4 @@ COPY . .
 # own — and .dockerignore keeps a stale local one from being copied over it.
 RUN bun install --frozen-lockfile && bun run build
 EXPOSE 3000
-CMD ["bun", "server/server.ts"]
+CMD ["bun", "web/server.ts"]

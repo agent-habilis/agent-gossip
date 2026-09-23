@@ -1,0 +1,37 @@
+{
+  "name": "@agent-gossip/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "portless",
+    "predev:next": "NODE_ENV=development bun scripts/build-webapp.ts",
+    "dev:next": "next dev",
+    "prebuild": "bun scripts/build-webapp.ts",
+    "build": "next build",
+    "postbuild": "pagefind --site .next/server/app --output-path out/_pagefind",
+    "build:webapp": "bun scripts/build-webapp.ts",
+    "watch:webapp": "NODE_ENV=development bun scripts/build-webapp.ts --watch",
+    "serve": "bun server.ts",
+    "test": "bun test"
+  },
+  "portless": {
+    "name": "agent-gossip",
+    "script": "dev:next"
+  },
+  "dependencies": {
+    "moonspace-dom": "workspace:*",
+    "visage-dom": "workspace:*",
+    "next": "16.0.11",
+    "nextra": "4.6.1",
+    "nextra-theme-docs": "4.6.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "pagefind": "^1.5.2",
+    "typescript": "^5.9.3"
+  }
+}
