@@ -3280,12 +3280,15 @@ fn bell_check(session_pid: &str) -> std::process::Output {
 /// turn end.
 fn bell_check_block_reason(session_pid: &str) -> Option<String> {
     let out = bell_check(session_pid);
-    assert!(out.status.success(), "bell-check always exits 0: {out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stdout = stdout.trim();
     if stdout.is_empty() {
+        assert!(out.status.success(), "a pass exits 0: {out:?}");
         return None;
     }
+    // A shell `bell-check && echo armed` must not lie; the Stop hook's
+    // `|| true` still hands Claude Code the JSON.
+    assert_eq!(out.status.code(), Some(3), "a block exits 3: {out:?}");
     let decision: serde_json::Value = serde_json::from_str(stdout).unwrap();
     assert_eq!(decision["decision"], "block");
     Some(decision["reason"].as_str().unwrap().to_owned())

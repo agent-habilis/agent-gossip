@@ -388,9 +388,11 @@ fn is_ready(target: &Target) -> bool {
 }
 
 /// The Claude Code Stop hook's probe. It answers in the hook's JSON protocol
-/// and always exits 0, so the hook can swallow every failure (`|| true`): a
-/// missing binary, or one too old to know this command, never blocks a turn.
-pub(crate) fn bell_check(opts: &BellCheckOpts) {
+/// and returns whether it blocked, so the caller exits 3 and a shell
+/// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
+/// a missing binary, or one too old to know this command, never blocks a
+/// turn, and Claude Code still reads the JSON.
+pub(crate) fn bell_check(opts: &BellCheckOpts) -> bool {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
@@ -402,7 +404,7 @@ pub(crate) fn bell_check(opts: &BellCheckOpts) {
     loop {
         let missing = unarmed(&owned, is_ready, bell::is_armed);
         if missing.is_empty() {
-            return;
+            return false;
         }
         if std::time::Instant::now() >= deadline {
             let reason = format!(
@@ -413,7 +415,7 @@ pub(crate) fn bell_check(opts: &BellCheckOpts) {
                 "{}",
                 serde_json::json!({ "decision": "block", "reason": reason })
             );
-            return;
+            return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

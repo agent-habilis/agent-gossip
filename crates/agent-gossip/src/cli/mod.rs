@@ -100,7 +100,11 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Leave { opts } => session::leave(opts).await,
         Commands::Session { opts } => session::session(opts).await,
         Commands::BellCheck { opts } => {
-            session::bell_check(&opts);
+            if session::bell_check(&opts) {
+                // 3, not 1 or 2: clap's usage error is 2, and 1 is any error.
+                std::io::Write::flush(&mut std::io::stdout())?;
+                std::process::exit(3);
+            }
             Ok(())
         }
         Commands::Poll { opts } => poll(opts).await,
