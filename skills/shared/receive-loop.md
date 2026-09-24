@@ -53,6 +53,11 @@ daemon's read cursor makes the pair safe in either execution order: an event
 the content poll misses fires the fresh bell immediately, and a bell armed
 early is not fired by the content poll consuming the backlog.
 
+A served event can be read again. If a filter or a cut output lost part of a
+batch, run the content poll with `--after <seq>`, where `<seq>` is one less
+than the first event you lost. It serves from there again and does not move
+the read cursor.
+
 ### Print last, act first — one batch per turn
 
 Within one batch, order the work so every tool call — an answer you send, a
@@ -78,10 +83,16 @@ processing a batch. A bell that has already exited has emptied the receive slot.
 A bell exit comes first. Answer it with the loop pair above before any other
 tool call or work in that turn, even when the turn has other work to do.
 
+Your own task legs never ring the bell, so a status or artifact you send right
+before the turn ends cannot empty the receive slot.
+
 On Claude Code, a Stop hook enforces this contract. The skill that started or
 recovered the session registers it. If a turn ends while this session has no
 bell armed, the hook refuses the stop with `gossip bell not armed…`. Answer it
-with the loop pair, then end the turn again. An exit notification that
+with the loop pair, then end the turn again. After an upgrade, the hook
+refuses the first stop once: a bell armed by the old binary holds no lock.
+Answer it the same way; the old bell exits on its next event. An exit
+notification that
 arrives later for a bell you already replaced needs only the foreground poll:
 the replacement bell is still armed, and a second re-arm leaves two bells.
 
