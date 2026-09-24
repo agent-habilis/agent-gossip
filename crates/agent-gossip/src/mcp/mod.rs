@@ -50,7 +50,6 @@ use fofoca::embed::RosterEntry;
 use fofoca::protocol::JoinTarget;
 use fofoca::protocol::RelayLadder;
 use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};
-use fofoca::runtime::derive_topic_mesh;
 use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use rmcp::{
     ServerHandler, ServiceExt,
@@ -71,6 +70,7 @@ use crate::api::{
 use crate::cli::args::lookup::Lookup;
 use crate::cli::args::mesh_config;
 use crate::cli::args::transport::Transport;
+use crate::topic::derive_topic_mesh;
 
 mod session;
 
@@ -525,7 +525,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Join a public gossip derived deterministically from a shared string — no id to share. Anyone who calls topic_gossip with the same string joins the same gossip, on any machine (the string is hashed into the gossip seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
+        description = "Join a public gossip derived deterministically from a shared string — no id to share. Anyone who calls topic_gossip with the same string joins the same gossip, on any machine (the string is hashed into the gossip seed; the name is derived, networking is always public, and payload can go through the relay when a direct path fails). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
     )]
     async fn topic_gossip(
         &self,

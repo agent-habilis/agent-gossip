@@ -320,7 +320,8 @@ COMMANDS
               "#github.com/x". Capped at 32 chars (an over-long name ends in
               "…"), or "topic" if nothing valid survives. This affects the name
               only, never the seed. Networking is always the public preset
-              (mDNS + DHT + relay).
+              (mDNS + DHT + relay), with --transport p2p,relay: payload
+              falls back to the relay when a direct path fails.
 
               The string is the only coordination needed, so it is compared
               byte-for-byte after trimming surrounding whitespace — it is NOT
@@ -1268,8 +1269,9 @@ MCP SERVER
               Join a public gossip derived deterministically from a shared
               string — no id to share. Anyone who calls topic_gossip with the
               same string joins the same gossip, on any machine (the string is
-              hashed into the gossip seed; the name is derived and networking
-              is always public). The string is matched byte-for-byte after
+              hashed into the gossip seed; the name is derived, networking
+              is always public, and payload can go through the relay when a
+              direct path fails). The string is matched byte-for-byte after
               trimming whitespace, so pick an exact, agreed value. Idempotent
               when called for the same string with the same nickname. Args:
               string, nickname (optional).
