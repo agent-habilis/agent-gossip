@@ -105,6 +105,10 @@ pub(crate) const TASKS_CAP: usize = 1024;
 /// bounded by the frame size.
 pub(crate) const TASK_LABEL_MAX_CHARS: usize = 120;
 
+/// Leg ids remembered per task to tell a replayed leg from a new one. A task
+/// carries tens of real legs; beats are not counted.
+pub(crate) const TASK_SURFACED_LEGS_CAP: usize = 64;
+
 /// The runtime-varied knobs, installed once at startup from the hidden flags.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {

@@ -23,11 +23,14 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use fofoca::embed::EventLoopState;
 use fofoca::embed::HandlerCtx;
-use fofoca::protocol::{Message, MessageKind, Nickname};
+use fofoca::protocol::{Message, MessageId, MessageKind, Nickname};
+use fofoca::util::bounded_fifo_set::BoundedFifoSet;
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
 use crate::a2a::app::A2aApp;
-use crate::a2a::tuning::{task_keepalive_secs, task_skill_silence_max_secs, task_timeout_secs};
+use crate::a2a::tuning::{
+    TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs, task_timeout_secs,
+};
 use crate::output;
 
 /// My part in a task: did I open it (client side), or receive the offer
@@ -48,7 +51,7 @@ impl TaskRole {
 }
 
 /// One in-flight task this node is a party to.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct TaskRecord {
     /// The other party.
     pub peer: Nickname,
@@ -83,6 +86,11 @@ pub(crate) struct TaskRecord {
     /// peer beats only while it owes the next move, so until it has, its
     /// silence cannot be read as death.
     pub peer_beats: bool,
+    /// Ids of the peer's legs already surfaced for this task. The engine
+    /// forgets a frame id after a bounded count, and anti-entropy then serves
+    /// the same leg again, so the app remembers what it has shown. Beats are
+    /// never recorded: at one every 30 s they would evict every real id.
+    pub surfaced_legs: BoundedFifoSet<MessageId>,
     /// Last progress fraction reported, replayed on keepalives.
     pub last_fraction: Option<(u64, u64)>,
     /// Which role currently owes the next move.
@@ -213,6 +221,41 @@ fn is_stale(frame: &Message) -> bool {
     u64::try_from(age_secs).is_ok_and(|age| age > task_timeout_secs())
 }
 
+/// Whether an inbound leg was already shown, and must stay off the surface: its
+/// task closed (live record terminal, or reaped and remembered in `closed`), or
+/// this leg id was surfaced before. An unknown task still surfaces: the
+/// initiator's record comes from the RPC response, and the worker's first leg
+/// can arrive ahead of it.
+pub(crate) fn is_replay(
+    tasks: &HashMap<TaskId, TaskRecord>,
+    closed: &BoundedFifoSet<TaskId>,
+    task_id: &TaskId,
+    leg_id: &MessageId,
+) -> bool {
+    if closed.contains(task_id) {
+        return true;
+    }
+    tasks
+        .get(task_id)
+        .is_some_and(|rec| rec.state.is_terminal() || rec.surfaced_legs.contains(leg_id))
+}
+
+/// Remember a leg that was surfaced, so a later copy of it is a replay. A beat
+/// is skipped: at one every 30 s, beats would evict every real leg id.
+pub(crate) fn note_surfaced(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    task_id: &TaskId,
+    frame: &Message,
+) {
+    let is_beat = gossip::status_payload(frame).is_ok_and(|payload| gossip::is_beat(&payload));
+    if is_beat {
+        return;
+    }
+    if let Some(rec) = tasks.get_mut(task_id) {
+        rec.surfaced_legs.insert(frame.id.clone());
+    }
+}
+
 /// Whether the registry has room for one more task offered by a peer.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Admission {
@@ -285,6 +328,7 @@ pub(crate) fn adopt_initiator(
                 last_peer_activity: now,
                 last_skill_activity: now,
                 peer_beats: false,
+                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -357,6 +401,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_peer_activity: now,
                 last_skill_activity: now,
                 peer_beats: false,
+                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 ball: TaskRole::Receiver,
             });
@@ -509,7 +554,7 @@ pub(crate) async fn tick_task_sweep(
 ) {
     let now = Instant::now();
     let timeout = Duration::from_secs(task_timeout_secs());
-    let (expired, reaped) = sweep_registry(&mut app.tasks, now, timeout);
+    let (expired, reaped) = sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
 
     for (task_id, peer) in expired {
         out.task_timeout(&task_id, output::TaskGoneReason::Timeout);
@@ -563,6 +608,7 @@ pub(crate) async fn tick_task_sweep(
 /// cancel.
 fn sweep_registry(
     tasks: &mut HashMap<TaskId, TaskRecord>,
+    closed: &mut BoundedFifoSet<TaskId>,
     now: Instant,
     timeout: Duration,
 ) -> (Vec<(TaskId, Nickname)>, Vec<TaskId>) {
@@ -590,6 +636,9 @@ fn sweep_registry(
     tasks.retain(|_, rec| {
         !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
     });
+    for task_id in &reaped {
+        closed.insert(task_id.clone());
+    }
     (expired, reaped)
 }
 
@@ -833,7 +882,7 @@ mod tests {
             accepted,
         );
 
-        let (expired, _) = super::sweep_registry(&mut tasks, now, timeout);
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
         assert!(expired.is_empty(), "an old peer's silence is not death");
     }
 
@@ -846,7 +895,7 @@ mod tests {
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
 
-        let (expired, _) = super::sweep_registry(&mut tasks, now, timeout);
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
         assert_eq!(expired.len(), 1);
     }
 
@@ -895,6 +944,109 @@ mod tests {
             },
         );
         assert_eq!(tasks[&tid()].last_peer_activity, peer_clock);
+    }
+
+    fn closed() -> fofoca::util::bounded_fifo_set::BoundedFifoSet<TaskId> {
+        fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8)
+    }
+
+    /// An inbound status frame for `tid()`; a beat when `beat` is true.
+    fn status_leg(beat: bool) -> fofoca::protocol::Message {
+        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+
+        let mesh = MeshId::from("test");
+        let payload = crate::a2a::gossip::status_update(
+            &mesh,
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &tid(),
+                state: TaskState::Working,
+                note: None,
+                metadata: beat.then(|| crate::a2a::gossip::beat_metadata(None)),
+            },
+        );
+        Message::new_app(
+            &mesh,
+            &Nickname::from("calm-otter"),
+            AppFrameParams {
+                tag: AppTag::from(crate::a2a::wire::STATUS),
+                to: Some(Nickname::from("worker-bot")),
+                corr: None,
+                body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
+            },
+        )
+    }
+
+    /// A leg on a task that already closed is a replay: anti-entropy served an
+    /// old frame after the engine forgot its id. Pre-fix it surfaced again,
+    /// so agents saw `completed` twice and stale `working` text after it.
+    #[test]
+    fn a_leg_on_a_closed_task_is_a_replay() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        tasks.get_mut(&tid()).unwrap().state = TaskState::Completed;
+        let late = status_leg(false);
+        assert!(super::is_replay(&tasks, &closed(), &tid(), &late.id));
+    }
+
+    /// The record goes 2 min after close, and the replays in the field came
+    /// 45 min to 4 h late, so the sweep remembers what it reaped.
+    #[test]
+    fn a_leg_on_a_reaped_task_is_a_replay() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let rec = tasks.get_mut(&tid()).unwrap();
+        rec.state = TaskState::Completed;
+        rec.last_activity = now.checked_sub(timeout * 2).unwrap();
+
+        let mut reaped_ids = closed();
+        let (_, reaped) = super::sweep_registry(&mut tasks, &mut reaped_ids, now, timeout);
+        assert_eq!(reaped, vec![tid()]);
+        assert!(tasks.is_empty());
+        let late = status_leg(false);
+        assert!(super::is_replay(&tasks, &reaped_ids, &tid(), &late.id));
+    }
+
+    #[test]
+    fn the_same_leg_surfaces_once() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let working = status_leg(false);
+        super::note_surfaced(&mut tasks, &tid(), &working);
+        assert!(super::is_replay(&tasks, &closed(), &tid(), &working.id));
+    }
+
+    /// A peer beats every 30 s with a fresh id. Recorded, the beats would push
+    /// every real id out of the bounded set in about 32 min, well inside the
+    /// replay window.
+    #[test]
+    fn beats_do_not_evict_surfaced_legs() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let real = status_leg(false);
+        super::note_surfaced(&mut tasks, &tid(), &real);
+        for _ in 0..100 {
+            super::note_surfaced(&mut tasks, &tid(), &status_leg(true));
+        }
+        assert!(super::is_replay(&tasks, &closed(), &tid(), &real.id));
+    }
+
+    /// Pin: a new leg on a live task surfaces, and so does a leg for a task we
+    /// do not know yet (the worker's first leg can beat the RPC response).
+    #[test]
+    fn a_new_leg_and_an_unknown_task_surface() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        super::note_surfaced(&mut tasks, &tid(), &status_leg(false));
+        let fresh = status_leg(false);
+        assert!(!super::is_replay(&tasks, &closed(), &tid(), &fresh.id));
+        let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
+        assert!(!super::is_replay(&tasks, &closed(), &unknown, &fresh.id));
     }
 
     fn leg(kind: LegKind, mine: bool) -> LegInfo<'static> {
@@ -1060,7 +1212,7 @@ mod tests {
         rec.peer_beats = true;
         rec.last_peer_activity = now.checked_sub(timeout * 2).expect("test clock");
 
-        let (expired, reaped) = super::sweep_registry(&mut tasks, now, timeout);
+        let (expired, reaped) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
 
         assert_eq!(expired.len(), 1, "the idle task is cancelled");
         assert!(reaped.is_empty(), "and is not reaped in the same pass");
@@ -1072,7 +1224,8 @@ mod tests {
 
         // It reaps once it has actually been terminal for the window.
         let later = now.checked_add(timeout * 2).expect("test clock");
-        let (still_live, now_reaped) = super::sweep_registry(&mut tasks, later, timeout);
+        let (still_live, now_reaped) =
+            super::sweep_registry(&mut tasks, &mut closed(), later, timeout);
         assert!(
             still_live.is_empty(),
             "a terminal record is not re-cancelled"
@@ -1098,7 +1251,7 @@ mod tests {
         rec.last_activity = now;
         rec.peer_beats = true;
 
-        let (expired, _) = super::sweep_registry(&mut tasks, now, timeout);
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
         assert_eq!(
             expired.len(),
             1,
@@ -1109,7 +1262,7 @@ mod tests {
         let mut beaten = HashMap::new();
         apply(&mut beaten, &leg(LegKind::Offer, true), long_ago);
         apply(&mut beaten, &leg(LegKind::Beat, false), now);
-        let (still_live, _) = super::sweep_registry(&mut beaten, now, timeout);
+        let (still_live, _) = super::sweep_registry(&mut beaten, &mut closed(), now, timeout);
         assert!(still_live.is_empty(), "the peer's beat keeps the task live");
     }
 

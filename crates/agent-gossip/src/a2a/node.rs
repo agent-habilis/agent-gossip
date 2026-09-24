@@ -558,6 +558,16 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         }
         let prior = app.tasks.get(&task_id).map(|rec| rec.state);
         surface &= !is_empty_working_repeat(prior, message);
+        if crate::a2a::task::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
+            tracing::info!(
+                target: "agent_gossip::a2a",
+                %task_id,
+                leg = %message.id,
+                author = %message.author,
+                "replayed task leg kept off the surface"
+            );
+            surface = false;
+        }
         crate::a2a::task::ingest(
             &mut app.tasks,
             crate::a2a::task::IngestLegParams {
@@ -567,6 +577,9 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
                 now: Instant::now(),
             },
         );
+        if surface {
+            crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
+        }
     }
     handle_task(
         &app.output,
