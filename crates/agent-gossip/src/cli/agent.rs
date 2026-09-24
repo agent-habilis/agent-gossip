@@ -443,6 +443,31 @@ mod tests {
         assert_eq!(daemon_starters_checked, 3);
     }
 
+    /// The binary never self-reports `cwd`; only the ready gate's merge puts it
+    /// in meta, and `gossip-status` only shows what meta holds.
+    #[test]
+    fn peer_cwd_is_reported_and_shown() {
+        let body = |skill: &str| {
+            SKILLS
+                .get_file(format!("{skill}/SKILL.md"))
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
+        };
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let merge = body(skill)
+                .lines()
+                .find(|line| {
+                    line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"")
+                })
+                .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"));
+            assert!(
+                merge.contains("\"cwd\":"),
+                "{skill}: merge must report cwd: {merge}"
+            );
+        }
+        assert!(body("gossip-status").contains("| host | cwd |"));
+    }
+
     #[test]
     fn install_paths_are_under_home() {
         let home = Path::new("/home/x");

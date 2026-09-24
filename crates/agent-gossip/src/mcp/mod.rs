@@ -300,9 +300,10 @@ struct ApplyStateMergeArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ApplyMetaMergeArgs {
     /// The RFC 7386 JSON Merge Patch for the **meta** channel — gossip metadata,
-    /// by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…}`
-    /// self-reported by each agent (`host` is the machine's hostname), e.g.
-    /// `{"peers":{"swift-cedar":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}}`.
+    /// by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…,"cwd":…}`
+    /// self-reported by each agent (`host` is the machine's hostname, `cwd` the
+    /// working directory with $HOME shortened to `~`), e.g.
+    /// `{"peers":{"swift-cedar":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01","cwd":"~/src/app"}}}`.
     /// Same merge semantics as `apply_state_merge`: each key merges in, `null`
     /// deletes — so reporting your own entry never clobbers another peer's.
     merge: serde_json::Value,
@@ -868,7 +869,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}} (`host` is the machine's hostname). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\"}}} (`host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
     async fn apply_meta_merge(
         &self,
@@ -884,7 +885,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers` entries with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
+        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host, cwd}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers` entries with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
     )]
     async fn get_meta(
         &self,
@@ -996,8 +997,8 @@ META is a SECOND shared-state channel beside `state` — byte-for-byte the same 
 (read with `get_meta`, change with `apply_meta_merge`, peer changes arrive as \
 `event:\"meta\"`), reserved by convention for gossip metadata rather than the task. \
 Report what YOU run on once you are in the gossip: `apply_meta_merge` \
-{\"peers\":{\"<your-nickname>\":{\"model\":…,\"harness\":…,\"host\":…}}} (`host` is your \
-machine's hostname; the binary does not self-report this) — merge means your entry \
+{\"peers\":{\"<your-nickname>\":{\"model\":…,\"harness\":…,\"host\":…,\"cwd\":…}}} (`host` is your \
+machine's hostname, `cwd` your working directory with $HOME shortened to `~`; the binary does not self-report these) — merge means your entry \
 never clobbers another peer's. Re-merge it if you switch models; set your peer key \
 to null to clear it. Read `/peers` to see what peers run on.
 

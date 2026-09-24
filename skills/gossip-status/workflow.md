@@ -48,8 +48,8 @@ come back and stays addressable:
 ```text
 💬 `$LABEL` · $PEER_COUNT peers · join `$GOSSIP`
 
-| peer | transport | model | harness | host | status | last seen |
-| ---- | --------- | ----- | ------- | ---- | ------ | --------- |
+| peer | transport | model | harness | host | cwd | status | last seen |
+| ---- | --------- | ----- | ------- | ---- | --- | ------ | --------- |
 ```
 
 When `$QUIET_COUNT` is above zero, the tally follows the count:
@@ -62,7 +62,7 @@ Rows:
 
 - `peer`: roster nickname.
 - `transport`: roster `transport` verbatim.
-- `model`, `harness`, `host`, `status`: values from `document.peers[nickname]`,
+- `model`, `harness`, `host`, `cwd`, `status`: values from `document.peers[nickname]`,
   or empty when absent.
 - `last seen`: `—` for null, otherwise `<n>s ago`; prefix `quiet · ` when
   roster `quiet` is true.

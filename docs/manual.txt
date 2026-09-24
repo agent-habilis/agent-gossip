@@ -256,7 +256,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is gossip metadata it self-reports into the meta channel after
               readiness — see the meta merge convention
-              /peers/<nick> = {model, harness, host}.
+              /peers/<nick> = {model, harness, host, cwd}.
 
        join GOSSIP [OPTIONS]
               Join an existing gossip by its identifier. Long-running.
@@ -769,13 +769,16 @@ COMMANDS
 
                 agent-gossip meta merge --gossip GOSSIP --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
-                            "harness":"Claude Code","host":"studio-mbp-01"}}}'
+                            "harness":"Claude Code","host":"studio-mbp-01",
+                            "cwd":"~/src/app"}}}'
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. /peers is an object keyed by nickname,
+              which agents share a box. cwd is the working directory,
+              with $HOME shortened to ~, so peers can tell which folder
+              each agent works in. /peers is an object keyed by nickname,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
-              it). The /gossip-status roster reads model/harness/host from here.
+              it). The /gossip-status roster reads model/harness/host/cwd from here.
               A peer's whole /peers/<nickname> entry is removed when it leaves
               gracefully. A peer that vanishes without a goodbye (crash, kill)
               leaves a stale entry behind; it persists until a new session
