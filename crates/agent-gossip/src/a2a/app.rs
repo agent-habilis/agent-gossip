@@ -110,6 +110,10 @@ pub(crate) struct A2aApp {
     /// Ids of tasks the sweep reaped after they closed. The record goes 2 min
     /// after close, but anti-entropy can serve a leg of it hours later.
     pub closed_tasks: BoundedFifoSet<TaskId>,
+    /// `Message::dedup_key` of every chat line surfaced, the same
+    /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
+    /// a bounded count of frames, and anti-entropy then serves the line again.
+    pub surfaced_chat: BoundedFifoSet<[u8; 16]>,
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
     /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
     /// call's deadline. Fulfilled directly by the matching response frame.
@@ -159,6 +163,7 @@ impl A2aApp {
         Self {
             tasks: HashMap::new(),
             closed_tasks: BoundedFifoSet::new(crate::a2a::tuning::TASKS_CAP),
+            surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
             a2a_port: None,
@@ -176,6 +181,7 @@ impl A2aApp {
         Self {
             tasks: HashMap::new(),
             closed_tasks: BoundedFifoSet::new(crate::a2a::tuning::TASKS_CAP),
+            surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
             a2a_port: None,

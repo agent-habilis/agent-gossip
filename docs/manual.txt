@@ -587,7 +587,8 @@ COMMANDS
               on a task already `working` is not surfaced: it counts as the
               peer's activity only. A leg for a closed task, or one already
               surfaced, is not surfaced again; `poll --after` still re-reads
-              the ring. Both daemons send a
+              the ring. The same holds for chat: a `msg` or broadcast already
+              surfaced is not surfaced again. Both daemons send a
               keepalive (every 30s) for every live task, from the offer on,
               whoever holds the ball. A party times the task out only after 2
               minutes with no leg or keepalive from the other daemon — its

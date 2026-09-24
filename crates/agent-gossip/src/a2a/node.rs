@@ -481,19 +481,25 @@ fn route_content(
         // `classify`: a directed BROADCAST or a broadcast MSG falls through to
         // the no-op arm rather than being surfaced/logged by a relay.
         MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            handle_broadcast(&app.output, message, surfaceable)
+            surface_chat(message, surfaceable, app, |out, surface| {
+                handle_broadcast(out, message, surface)
+            })
         }
         MessageKind::App {
             tag, to: Some(to), ..
-        } if tag.as_str() == wire::MSG => handle_msg(
-            &app.output,
-            MsgParams {
-                message,
-                to,
-                surfaceable,
-                self_author: ctx.author,
-            },
-        ),
+        } if tag.as_str() == wire::MSG => {
+            surface_chat(message, surfaceable, app, |out, surface| {
+                handle_msg(
+                    out,
+                    MsgParams {
+                        message,
+                        to,
+                        surfaceable: surface,
+                        self_author: ctx.author,
+                    },
+                )
+            })
+        }
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => handle_task_leg(
@@ -590,6 +596,41 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             self_author: ctx.author,
         },
     )
+}
+
+/// Run a chat handler with a replayed line kept off the surface, and remember
+/// the line once it is printed. A sharded body reaches here with its group id
+/// as the logical id, the same on every completion, so a group the engine
+/// completes again is covered too. Loggability stays the handler's answer: a
+/// line we refuse to log is one every peer's digest re-offers.
+fn surface_chat(
+    message: &Message,
+    surfaceable: bool,
+    app: &mut A2aApp,
+    handler: impl FnOnce(&output::Output, bool) -> bool,
+) -> bool {
+    let replay = is_replayed_chat(&app.surfaced_chat, message);
+    if replay && surfaceable {
+        tracing::info!(
+            target: "agent_gossip::a2a",
+            id = %message.id,
+            author = %message.author,
+            "replayed chat message kept off the surface"
+        );
+    }
+    let surface = surfaceable && !replay;
+    let logged = handler(&app.output, surface);
+    if surface && logged {
+        app.surfaced_chat.insert(message.dedup_key());
+    }
+    logged
+}
+
+fn is_replayed_chat(
+    surfaced: &fofoca::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
+    message: &Message,
+) -> bool {
+    surfaced.contains(&message.dedup_key())
 }
 
 /// Returns whether the message should be logged (pushed to the poll buffer).
@@ -694,20 +735,24 @@ fn surface_logical(logical: &Message, surfaceable: bool, app: &mut A2aApp, ctx: 
         // Both chat tags shard (a long msg as readily as a long broadcast); task
         // legs never do — `message/send` rides RPC, status/artifact are small.
         MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            handle_broadcast(&app.output, logical, surfaceable);
+            surface_chat(logical, surfaceable, app, |out, surface| {
+                handle_broadcast(out, logical, surface)
+            });
         }
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::MSG => {
-            handle_msg(
-                &app.output,
-                MsgParams {
-                    message: logical,
-                    to,
-                    surfaceable,
-                    self_author: ctx.author,
-                },
-            );
+            surface_chat(logical, surfaceable, app, |out, surface| {
+                handle_msg(
+                    out,
+                    MsgParams {
+                        message: logical,
+                        to,
+                        surfaceable: surface,
+                        self_author: ctx.author,
+                    },
+                )
+            });
         }
         MessageKind::App {
             tag, to: Some(to), ..
@@ -1080,7 +1125,7 @@ mod classify_tests {
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
-    use super::{classify, is_empty_working_repeat, wakes};
+    use super::{classify, is_empty_working_repeat, is_replayed_chat, surface_chat, wakes};
     use crate::a2a::{TaskState, wire};
     use crate::output::OutputEvent;
 
@@ -1252,6 +1297,64 @@ mod classify_tests {
             !is_empty_working_repeat(working, &status_frame_in(TaskState::InputRequired, None)),
             "a question surfaces"
         );
+    }
+
+    fn chat_from(pubkey: &str) -> Message {
+        let mut chat = msg_frame(None);
+        chat.pubkey = pubkey.to_owned();
+        chat
+    }
+
+    // Anti-entropy re-sends a chat line once the engine has forgotten its key.
+    // Pre-fix it surfaced again as a new visible line, up to hours late.
+    #[test]
+    fn a_chat_line_surfaces_once() {
+        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let chat = chat_from("aa");
+        surfaced.insert(chat.dedup_key());
+        assert!(is_replayed_chat(&surfaced, &chat));
+    }
+
+    // The key is the engine's `(pubkey, id)`: another author reusing the id
+    // (a signed forgery) must not hide the real line.
+    #[test]
+    fn the_same_id_from_another_author_still_surfaces() {
+        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let chat = chat_from("aa");
+        surfaced.insert(chat.dedup_key());
+        let mut forgery = chat.clone();
+        forgery.pubkey = "bb".to_owned();
+        assert!(!is_replayed_chat(&surfaced, &forgery));
+    }
+
+    // `surface_chat` records a line only once it was really printed, and keeps
+    // returning the handler's loggability for a replay: a line we refuse to
+    // log is one every peer's digest re-offers.
+    #[test]
+    fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
+        let mut app = crate::a2a::app::A2aApp::detached(crate::output::Output::silent());
+        let chat = chat_from("aa");
+
+        // A msg addressed to someone else: the handler declines, nothing recorded.
+        assert!(!surface_chat(&chat, true, &mut app, |_, _| false));
+        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+
+        // Before the join horizon: logged but not printed, nothing recorded.
+        assert!(surface_chat(&chat, false, &mut app, |_, _| true));
+        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+
+        // Printed once, then recorded.
+        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
+            assert!(surface, "a new line surfaces");
+            true
+        }));
+        assert!(is_replayed_chat(&app.surfaced_chat, &chat));
+
+        // The replay: kept off the surface, still logged.
+        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
+            assert!(!surface, "a replay does not surface");
+            true
+        }));
     }
 
     // These assertions are deliberately worded "broadcast"/"directed" rather

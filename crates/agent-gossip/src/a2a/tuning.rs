@@ -109,6 +109,12 @@ pub(crate) const TASK_LABEL_MAX_CHARS: usize = 120;
 /// carries tens of real legs; beats are not counted.
 pub(crate) const TASK_SURFACED_LEGS_CAP: usize = 64;
 
+/// Chat keys remembered to tell a replayed chat line from a new one. A replay
+/// reaches the app only after the engine's dedup FIFO has seen `SEEN_IDS_CAP`
+/// newer frames, so this must hold more than that; twice the FIFO, tied to the
+/// engine constant, stays ahead of it if the engine changes it.
+pub(crate) const CHAT_SURFACED_IDS_CAP: usize = fofoca::util::tuning::SEEN_IDS_CAP * 2;
+
 /// The runtime-varied knobs, installed once at startup from the hidden flags.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {
