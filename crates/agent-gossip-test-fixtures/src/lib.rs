@@ -32,7 +32,7 @@ use agent_gossip::api::{A2aCallParams, CreateConfig, JoinConfig, MeshSession, Ta
 // without a divergent copy.
 pub use agent_gossip::runtime_base;
 use agent_gossip::{
-    Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
+    Channel, Lane, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
     PresenceSubtype, TaskId, TaskState,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -1078,16 +1078,34 @@ impl InProcNode {
     /// nickname whose card will never arrive and must fail fast, not block).
     /// [`Self::create_task`] applies it for you; a bare `a2a_call` to a real
     /// peer must call this first or it races card propagation.
+    ///
+    /// The card is not enough on its own: the meta doc and the live roster
+    /// converge separately, and a directed send checks the roster. Until
+    /// `target` is in it on a lane that carries payload, the send fails as an
+    /// unknown peer or is held for a relay that is lookup only — both seen as
+    /// CI flakes in `tests/seal.rs`.
     pub async fn await_peer_card(&self, target: &str) {
         let pointer = format!("/peers/{target}/card");
         let deadline = Instant::now() + MSG_TIMEOUT;
-        while self.meta_get().await.pointer(&pointer).is_none() {
+        while self.meta_get().await.pointer(&pointer).is_none()
+            || !self.carries_directed_frames_to(target).await
+        {
             assert!(
                 Instant::now() < deadline,
-                "{target}'s card never reached this node's meta doc"
+                "{target}'s card never reached this node's meta doc, or no direct lane to it formed"
             );
             tokio::time::sleep(POLL).await;
         }
+    }
+
+    async fn carries_directed_frames_to(&self, target: &str) -> bool {
+        self.session.peers().await.is_ok_and(|roster| {
+            roster.peers.iter().any(|entry| {
+                entry.nickname.as_str() == target
+                    && !entry.quiet
+                    && matches!(entry.transport, Lane::Unicast | Lane::Multihop)
+            })
+        })
     }
 
     /// Send a follow-up message (answer / approval / change) into an existing
