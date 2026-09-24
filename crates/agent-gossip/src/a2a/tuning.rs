@@ -10,14 +10,18 @@
 
 use std::sync::OnceLock;
 
-/// Idle ceiling for one A2A task before the daemon fails it (seconds).
-///
-/// Covers the worst case a *skill* can sit silent between legs. The keepalive
-/// below is what keeps a genuinely-working task from tripping it.
+/// How long one A2A task may go with no leg or keepalive from the other party
+/// before the daemon fails it (seconds). Both daemons beat every live task, so
+/// only a gone peer daemon trips it, never a silent skill.
 pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 
-/// How often the ball-owner's daemon emits a task keepalive (seconds).
+/// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
+
+/// How long a task may go with no leg from either agent before the daemons
+/// stop beating it (seconds). Long enough for an overnight human wait; short
+/// enough that tasks forgotten after a `/clear` free the per-peer quota.
+pub(crate) const TASK_SKILL_SILENCE_MAX_SECS: u64 = 24 * 60 * 60;
 
 /// How long `a2a call` waits for a directed peer response (seconds), and the
 /// `--timeout-secs` default.
@@ -35,11 +39,6 @@ pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 /// longer to report as such. That is the right way round: a false failure
 /// against a healthy peer is worse than a slow answer about a dead one.
 pub(crate) const CALL_TIMEOUT_SECS: u64 = 45;
-
-/// Longest the daemon auto-covers a silent task with keepalives before it stops
-/// and lets [`TASK_TIMEOUT_SECS`] run (seconds). Bounds how long a wedged skill
-/// can be kept alive by plumbing alone.
-pub(crate) const TASK_KEEPALIVE_MAX_SECS: u64 = 120;
 
 /// Longest a blocking `poll` / `fetch_messages` parks before returning empty
 /// (milliseconds). A ceiling, not a timeout the caller sees as an error: the
@@ -106,7 +105,7 @@ pub(crate) const TASK_LABEL_MAX_CHARS: usize = 120;
 pub(crate) struct Tuning {
     pub(crate) task_timeout_secs: u64,
     pub(crate) task_keepalive_secs: u64,
-    pub(crate) task_keepalive_max_secs: u64,
+    pub(crate) task_skill_silence_max_secs: u64,
     pub(crate) longpoll_max_ms: u64,
 }
 
@@ -114,7 +113,7 @@ impl Tuning {
     pub(crate) const DEFAULTS: Self = Self {
         task_timeout_secs: TASK_TIMEOUT_SECS,
         task_keepalive_secs: TASK_KEEPALIVE_SECS,
-        task_keepalive_max_secs: TASK_KEEPALIVE_MAX_SECS,
+        task_skill_silence_max_secs: TASK_SKILL_SILENCE_MAX_SECS,
         longpoll_max_ms: LONGPOLL_MAX_MS,
     };
 }
@@ -139,8 +138,8 @@ pub(crate) fn task_keepalive_secs() -> u64 {
     current().task_keepalive_secs
 }
 
-pub(crate) fn task_keepalive_max_secs() -> u64 {
-    current().task_keepalive_max_secs
+pub(crate) fn task_skill_silence_max_secs() -> u64 {
+    current().task_skill_silence_max_secs
 }
 
 pub(crate) fn longpoll_max_ms() -> u64 {

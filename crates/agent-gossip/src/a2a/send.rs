@@ -1210,9 +1210,6 @@ fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLe
 /// body is sealed to the addressee, so a status leg's state could not be read
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
-///
-/// Only *skill-driven* legs may come through here. The daemon's own keepalive
-/// beat must NOT — see [`crate::a2a::task::broadcast_status`].
 fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
     crate::a2a::task::ingest(
         &mut app.tasks,

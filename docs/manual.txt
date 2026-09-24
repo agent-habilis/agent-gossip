@@ -574,15 +574,18 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              stream (see "JSON EVENTS"). The daemon
-              runs a 2-minute idle-debounce timeout and a keepalive (every 30s)
-              for the party that holds the ball — the keepalive only covers a
-              silent owner for up to 2 minutes past its last real leg, so a
-              crashed skill's task is reaped rather than held forever. A worker
-              on a long task keeps its side alive by re-emitting the `working`
-              status at least once a minute (the repeat is marked as a beat);
-              a never-picked-up task has no cover at all, so
-              the timeout doubles as a ~2-minute pickup deadline.
+              stream (see "JSON EVENTS"). Both daemons send a
+              keepalive (every 30s) for every live task, from the offer on,
+              whoever holds the ball. A party times the task out only after 2
+              minutes with no leg or keepalive from the other daemon — its
+              session ended or crashed. Silence from a live agent (a pending
+              accept, a review, a long build) never times a task out, so a
+              skill does not re-emit `working` to keep it alive. Two limits:
+              a task neither agent touches for 24 hours stops being beaten,
+              and the other daemon cancels it about 2 minutes later; a peer
+              on an older version, which beats only while it owes the next
+              move, is not timed out for silence until its first keepalive
+              arrives.
 
        ORCHESTRATION
               A skill-level convention layered on tasks: one agent (the

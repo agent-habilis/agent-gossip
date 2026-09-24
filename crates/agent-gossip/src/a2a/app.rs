@@ -103,7 +103,7 @@ impl SurfacedIo {
 pub(crate) struct A2aApp {
     /// In-flight tasks this node is a party to, keyed by `task_id`
     /// (see [`crate::a2a::task`]). The coarse state machine + the two
-    /// task timers (debounce sweep, ball-owner keepalive) read/write this;
+    /// task timers (debounce sweep, keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
     pub tasks: HashMap<TaskId, crate::a2a::task::TaskRecord>,
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a

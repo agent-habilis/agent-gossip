@@ -130,8 +130,8 @@ subtask depending on it drops with it — remove them from the queue; all of
 them appear on the report's `dropped:` line.
 
 A `task_timeout` on a task still unacknowledged (no `working` yet — see the
-initiator flow in the Event handling section) is a stalled pickup, surfacing
-~2 minutes after dispatch. Its re-dispatch is automatic — orchestrate
+initiator flow in the Event handling section) is a stalled pickup: the worker's
+daemon went away before it accepted. Its re-dispatch is automatic — orchestrate
 overrides the initiator flow's ask-the-user recovery; the second-drop rule
 above is the escalation. When re-dispatching, prefer a worker other than the
 one that stalled. Preference only: the stalling peer stays a full candidate

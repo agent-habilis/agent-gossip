@@ -32,13 +32,13 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_TIMEOUT_SECS)]
     pub task_timeout_secs: u64,
 
-    /// Task keepalive cadence for the ball-owner (seconds).
+    /// Task keepalive cadence, for each party of a live task (seconds).
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_KEEPALIVE_SECS)]
     pub task_keepalive_secs: u64,
 
-    /// Longest the daemon auto-covers a silent task without a skill leg (seconds).
-    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_KEEPALIVE_MAX_SECS)]
-    pub task_keepalive_max_secs: u64,
+    /// Task silence from both agents after which the daemons stop beating it (seconds).
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_SKILL_SILENCE_MAX_SECS)]
+    pub task_skill_silence_max_secs: u64,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = defaults::BEACON_COHOST_GRACE_SECS)]
@@ -144,7 +144,7 @@ impl TuningOpts {
         crate::a2a::tuning::Tuning {
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
-            task_keepalive_max_secs: self.task_keepalive_max_secs,
+            task_skill_silence_max_secs: self.task_skill_silence_max_secs,
             longpoll_max_ms: self.longpoll_max_ms,
         }
     }

@@ -1099,8 +1099,8 @@ async fn test_task_unknown_peer_errors() {
     );
 }
 
-/// Task timers: while both peers are alive the ball-owner's daemon
-/// keepalive prevents a spurious idle-timeout; once the ball-owner dies,
+/// Task timers: while both peers are alive the daemon keepalives prevent a
+/// spurious idle-timeout; once the ball-owner dies,
 /// the other party's debounce fires a `task_timeout`. Run with shortened
 /// timers (`--task-timeout-secs 3`, keepalive 1s, sweep 1s).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1177,81 +1177,6 @@ async fn test_task_idle_timeout_after_owner_dies() {
     );
 }
 
-/// The keepalive is bounded by skill liveness, not process liveness: a
-/// ball-owner whose daemon stays **alive** but whose *skill* goes silent past
-/// `--task-keepalive-max-secs` stops being covered, so the peer's debounce
-/// fires a `task_timeout` — a crashed/abandoned skill can't hold the peer
-/// forever. Shortened timers make the window seconds, not minutes.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_task_times_out_when_skill_goes_silent() {
-    let timers: &[(&str, &str)] = &[
-        ("--task-timeout-secs", "3"),
-        ("--task-keepalive-secs", "1"),
-        ("--task-keepalive-max-secs", "2"),
-        ("--sweep-interval-secs", "1"),
-    ];
-    let (creator, mesh) = JsonNode::create_with_flags(timers);
-    let mut joiner = JsonNode::join_with_flags(&mesh, "tk-silent", timers);
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner.wait_ready(&mesh));
-
-    let saw_join = wait_until(
-        || {
-            creator
-                .presence_events()
-                .iter()
-                .filter(|value| value["subtype"] == "joined")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_join >= 1, "creator never saw the joiner join");
-
-    // Creator creates; the worker (joiner) holds the ball and accepts, then its
-    // skill sends nothing more (simulating a crash/abandon while the daemon
-    // process keeps running).
-    let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-silent", "port it");
-    let saw_offer = wait_until(
-        || {
-            joiner
-                .json_events()
-                .iter()
-                .filter(|value| value["event"] == "task" && value["kind"] == "message")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert!(saw_offer >= 1, "joiner never surfaced the task message");
-    common::cli_task_status(&mesh, "tk-silent", &tid, "working");
-
-    // The ball-owner's daemon is still alive, but its skill is silent past the
-    // keepalive-max window, so the keepalive stops and the task is reaped. The
-    // ball-owner's own sweep and the creator's debounce fire at ~the same time
-    // (whichever broadcasts `Cancel` first terminalizes the other), so accept a
-    // `task_timeout` on **either** node — before the fix, none would ever fire.
-    let timed_out = wait_until(
-        || {
-            let is_this_timeout = |value: &&serde_json::Value| {
-                value["event"] == "task_timeout" && value["task_id"] == tid.as_str()
-            };
-            let count = |node: &JsonNode| node.json_events().iter().filter(is_this_timeout).count();
-            count(&creator) + count(&joiner)
-        },
-        1,
-        RECOVERY_TIMEOUT,
-    );
-    assert!(
-        timed_out >= 1,
-        "a task whose ball-owner skill went silent must time out, even though the daemon lives"
-    );
-    assert!(
-        joiner.child.try_wait().ok().flatten().is_none(),
-        "the ball-owner daemon must still be alive — the timeout is from skill silence, not process death"
-    );
-}
-
 /// The converse, and the test that would have caught the sealed-self-echo bug
 /// from the *agent's* side: a task driven to `completed` through the full
 /// report-back flow must never be reaped afterwards. No `task_timeout`, no
@@ -1271,14 +1196,13 @@ async fn test_task_times_out_when_skill_goes_silent() {
 /// The deadline is deliberately not hardcoded. Pre-fix it depended on where the
 /// ball sat: a task parked in `input-required` puts it on the initiator, so the
 /// worker sends no keepalive and the sweep fires one `--task-timeout-secs` after
-/// the last leg that reached `apply`; a task the worker still owns is keepalived
-/// for up to `--task-keepalive-max-secs` first. The window below clears both.
+/// the last leg that reached `apply`; a task the worker still owned was
+/// keepalived for up to a 2 s cap first. The window below clears both.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_completed_task_is_never_reaped() {
     let timers: &[(&str, &str)] = &[
         ("--task-timeout-secs", "3"),
         ("--task-keepalive-secs", "1"),
-        ("--task-keepalive-max-secs", "2"),
         ("--sweep-interval-secs", "1"),
     ];
     let (creator, mesh) = JsonNode::create_with_flags(timers);
@@ -1335,7 +1259,7 @@ async fn test_completed_task_is_never_reaped() {
     common::cli_task_status(&mesh, "tk-done", &tid, "completed");
 
     // Now wait out a window that comfortably exceeds every pre-fix deadline —
-    // keepalive-max (2s) + timeout (3s) + a sweep tick (1s), with headroom.
+    // the old 2 s keepalive cap + timeout (3s) + a sweep tick (1s), with headroom.
     tokio::time::sleep(Duration::from_secs(12)).await;
 
     let reaped = |node: &JsonNode| {
@@ -1361,6 +1285,118 @@ async fn test_completed_task_is_never_reaped() {
         0,
         "the initiator saw a timeout/cancel for an approved, completed task"
     );
+}
+
+/// The three human-shaped waits from the field, held silent side by side for
+/// three idle timeouts while both daemons live: the worker's user deciding
+/// whether to accept, the worker running one long command, and the
+/// initiator's user reviewing the result. Pre-fix every one was cancelled once
+/// the silent side's skill had been quiet past the keepalive cap, which is
+/// what lost tasks at ~4 min in production.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_silent_tasks_survive_while_daemons_live() {
+    let timers: &[(&str, &str)] = &[
+        ("--task-timeout-secs", "5"),
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let worker_nick = "tk-silent";
+    let (creator, mesh) = JsonNode::create_with_flags(timers);
+    let worker = JsonNode::join_with_flags(&mesh, worker_nick, timers);
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the worker join");
+
+    let accept_question = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "decide");
+    let long_command = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "build");
+    let review = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "review");
+    let saw_offers = wait_until(
+        || {
+            worker
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
+                .count()
+        },
+        3,
+        MSG_TIMEOUT,
+    );
+    assert!(
+        saw_offers >= 3,
+        "worker never surfaced all three task messages"
+    );
+    common::cli_task_status(&mesh, worker_nick, &long_command, "working");
+    common::cli_task_status(&mesh, worker_nick, &review, "working");
+    common::cli_task_artifact(&mesh, worker_nick, &review, "the result");
+
+    // Three idle timeouts with no skill leg from either side.
+    tokio::time::sleep(Duration::from_secs(15)).await;
+
+    // Each task paired with the skill status legs it really carried.
+    let tasks = [(&accept_question, 0), (&long_command, 1), (&review, 1)];
+    let reaped = |node: &JsonNode, tid: &str| {
+        node.json_events()
+            .iter()
+            .filter(|value| {
+                let timed_out = value["event"] == "task_timeout" && value["task_id"] == tid;
+                let canceled = value["event"] == "task"
+                    && value["task_id"] == tid
+                    && value["state"] == "canceled";
+                timed_out || canceled
+            })
+            .count()
+    };
+    for (tid, _) in tasks {
+        assert_eq!(
+            reaped(&worker, tid),
+            0,
+            "the worker reaped silent task {tid} while both daemons lived"
+        );
+        assert_eq!(
+            reaped(&creator, tid),
+            0,
+            "the initiator reaped silent task {tid} while both daemons lived"
+        );
+    }
+
+    // Dozens of beats crossed each way in that window. None may reach the
+    // poll ring, or each one would wake a parked bell.
+    let polled = |nickname: &str| -> Vec<serde_json::Value> {
+        serde_json::from_str(&common::cli_poll(&mesh, nickname, None))
+            .expect("poll prints a JSON array")
+    };
+    let status_legs = |events: &[serde_json::Value], tid: &str| {
+        events
+            .iter()
+            .filter(|value| value["task_id"] == tid && value["kind"] == "status-update")
+            .count()
+    };
+    let creator_events = polled(&creator.nickname);
+    let worker_events = polled(worker_nick);
+    for (tid, skill_status_legs) in tasks {
+        assert_eq!(
+            status_legs(&creator_events, tid),
+            skill_status_legs,
+            "a beat for {tid} reached the initiator's poll"
+        );
+        assert_eq!(
+            status_legs(&worker_events, tid),
+            skill_status_legs,
+            "a beat for {tid} reached the worker's poll"
+        );
+    }
 }
 
 /// `agent-gossip peers` returns the live roster: `ok`, a `count` (peers + 1
