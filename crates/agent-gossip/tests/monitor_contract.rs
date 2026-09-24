@@ -1474,6 +1474,139 @@ async fn test_a_repeated_working_does_not_reach_the_initiator() {
     );
 }
 
+/// End to end through the real receive path: after a task closes, a later leg
+/// for it never surfaces at the initiator, first while the initiator still
+/// holds the closed record and again after its sweep reaped it. Anti-entropy
+/// replays reach the same path; pre-fix both legs surfaced as fresh events.
+///
+/// The barrier is a msg, a different frame from the status legs, so the
+/// transport does not order them: a late leg delayed past it would pass
+/// vacuously. The red run shows the legs arrive first in practice, and a leg on
+/// the same task, the stronger barrier, is exactly what the fix hides.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
+    // The initiator reaps a closed record 3 s after close; the worker keeps its
+    // own for the default 2 min, so it can still send on the task. The worker
+    // never beats inside the test: its first beat would make the initiator
+    // read 3 s of worker silence as death, and a slow approval hop under load
+    // would then cancel the live task.
+    let fast_reap: &[(&str, &str)] = &[
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let worker_nick = "tk-late";
+    let (creator, mesh) = JsonNode::create_with_flags(fast_reap);
+    let worker =
+        JsonNode::join_with_flags(&mesh, worker_nick, &[("--task-keepalive-secs", "3600")]);
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the worker join");
+
+    let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "count");
+    let saw_offer = wait_until(
+        || {
+            worker
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_offer >= 1, "worker never surfaced the task message");
+    common::cli_task_status(&mesh, worker_nick, &tid, "working");
+    common::cli_task_artifact(&mesh, worker_nick, &tid, "three");
+    common::cli_task_followup(&common::FollowupParams {
+        mesh: &mesh,
+        nickname: &creator.nickname,
+        to: worker_nick,
+        task_id: &tid,
+        text: "approved",
+    });
+    common::cli_task_status(&mesh, worker_nick, &tid, "completed");
+    let saw_completed = wait_until(
+        || {
+            creator
+                .json_events()
+                .iter()
+                .filter(|value| value["task_id"] == tid.as_str() && value["state"] == "completed")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert_eq!(saw_completed, 1, "the initiator never saw the task close");
+
+    let late_note = |text: &str| {
+        let out = common::test_cmd()
+            .args([
+                "a2a",
+                "status",
+                "--gossip",
+                &mesh,
+                "--nickname",
+                worker_nick,
+            ])
+            .args(["--task-id", &tid, "--state", "working", "--text", text])
+            .output()
+            .expect("a2a status failed to spawn");
+        assert!(out.status.success(), "late status refused: {out:?}");
+    };
+    // Condition 2: the initiator still holds the closed record.
+    late_note("stale while closed");
+    // Condition 1: the reap runs 3 s + one sweep tick after close; 10 s leaves
+    // room for slipped ticks, so this note meets the reaped path, not the
+    // terminal record.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    late_note("stale after reap");
+
+    // A msg sent after both is the delivery barrier: once it surfaces, the
+    // late legs had their chance to surface too.
+    let out = common::cli_msg_raw(&mesh, worker_nick, &creator.nickname, "barrier");
+    assert!(out.status.success(), "barrier msg failed: {out:?}");
+    let saw_barrier = wait_until(
+        || {
+            creator
+                .json_events()
+                .iter()
+                .filter(|value| value["body"] == "barrier")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert_eq!(saw_barrier, 1, "the barrier msg never arrived");
+
+    let late: Vec<_> = creator
+        .json_events()
+        .into_iter()
+        .filter(|value| {
+            value["task_id"] == tid.as_str()
+                && value["body"]
+                    .as_str()
+                    .is_some_and(|body| body.starts_with("stale"))
+        })
+        .collect();
+    assert!(
+        late.is_empty(),
+        "a late leg on a closed task surfaced: {late:?}"
+    );
+}
+
 /// `agent-gossip peers` returns the live roster: `ok`, a `count` (peers + 1
 /// for self), and a `peers` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
