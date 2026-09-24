@@ -525,7 +525,7 @@ mod tests {
         }
     }
 
-    fn self_working_status() -> OutputEvent {
+    fn self_task_echo() -> OutputEvent {
         let msg = gossip::test_status_frame(
             &MeshId::from("test"),
             TaskState::Working,
@@ -858,9 +858,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bell_ignores_self_working_echo_but_delivers_it_with_the_next_waking_batch() {
+    async fn bell_ignores_self_task_echo_but_delivers_it_with_the_next_waking_batch() {
         let mut surfaced = SurfacedState::new();
-        surfaced.push(self_working_status()); // seq 1, non-waking
+        surfaced.push(self_task_echo()); // seq 1, non-waking
 
         let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
@@ -871,10 +871,7 @@ mod tests {
         });
         assert_eq!(surfaced.poll_waiters.len(), 1, "parked over the self echo");
         surfaced.fulfill_ready_poll_waiters();
-        assert!(
-            rx.try_recv().is_err(),
-            "own working beat never rings the bell"
-        );
+        assert!(rx.try_recv().is_err(), "own task echo never rings the bell");
 
         surfaced.push(peer_return("a")); // seq 2, waking
         surfaced.fulfill_ready_poll_waiters();

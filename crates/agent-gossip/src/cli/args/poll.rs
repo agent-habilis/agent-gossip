@@ -32,8 +32,8 @@ pub(crate) struct PollOpts {
 
     /// Block until an unserved event arrives (long-poll) — the receive bell.
     /// Parks until the daemon holds a waking event it has not yet served to a
-    /// plain poll; state/meta document echoes and your own `working` status
-    /// updates never fire it. The daemon holds
+    /// plain poll; state/meta document echoes and your own task echoes
+    /// (status, artifact, message) never fire it. The daemon holds
     /// each request up to ~60s and the CLI transparently re-issues on an
     /// empty window, so this never times out; a killed call loses nothing.
     /// Omit for an immediate read.

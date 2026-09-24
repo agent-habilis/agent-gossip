@@ -332,11 +332,12 @@ async fn merge_own_meta_entry(
 /// meta document echoes, `fork`, and presence `alive` beats stay in the ring —
 /// consumable in the next batch — but never ring the bell on their own, so a
 /// self meta report at session start cannot cost the agent a wake-up turn.
-/// The agent's own `working` status echo is quiet for the same reason: a worker
-/// re-sends it every ~45 s, and each ring cost a poll + re-arm turn.
+/// The agent's own task echoes are quiet for the same reason: it already holds
+/// the id of every leg it sent, and an echo landing right after a re-arm rang
+/// the bell for nothing and made the Stop hook refuse the turn.
 pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
-    if is_self_working_echo(event) {
+    if is_self_task_echo(event) {
         return false;
     }
     output::is_visible(event)
@@ -348,11 +349,11 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
         )
 }
 
-fn is_self_working_echo(event: &output::OutputEvent) -> bool {
+fn is_self_task_echo(event: &output::OutputEvent) -> bool {
     matches!(
         event,
-        output::OutputEvent::Task { msg, is_self: true }
-            if super::gossip::frame_task_state(msg) == Some(super::TaskState::Working)
+        output::OutputEvent::Task { is_self: true, .. }
+            | output::OutputEvent::TaskMessage { is_self: true, .. }
     )
 }
 
@@ -1126,29 +1127,54 @@ mod classify_tests {
         }
     }
 
-    // A worker's own `working` beats land every ~45 s; letting them ring its
-    // bell turned every beat into a poll + re-arm turn. The rows beyond the
-    // first pin the scope: only that one echo is quiet.
+    fn task_message(is_self: bool) -> OutputEvent {
+        OutputEvent::TaskMessage {
+            id: "m".to_owned(),
+            mesh: "sw".to_owned(),
+            author: "initiator".to_owned(),
+            peer: "worker".to_owned(),
+            task_id: "t".to_owned(),
+            state: Some(TaskState::Working),
+            text: "approved".to_owned(),
+            label: None,
+            is_self,
+        }
+    }
+
+    // The agent already knows every task leg it sent: the CLI returned its id.
+    // Its echo landed right after the re-arm and rang the bell for nothing,
+    // which made the Stop hook refuse the turn. The peer's legs still wake.
     #[test]
-    fn only_a_self_working_echo_does_not_wake_the_bell() {
+    fn no_self_task_echo_wakes_the_bell() {
         let to = Some(Nickname::from("initiator"));
-        let self_working = task_event(status_frame_in(TaskState::Working, to.clone()), true);
-        assert!(!wakes(&self_working), "own working beat is quiet");
-
-        let peer_working = task_event(status_frame_in(TaskState::Working, to.clone()), false);
-        assert!(wakes(&peer_working), "a peer's working status still wakes");
-
         for state in [
+            TaskState::Working,
             TaskState::InputRequired,
             TaskState::Completed,
             TaskState::Failed,
         ] {
             let own = task_event(status_frame_in(state, to.clone()), true);
-            assert!(wakes(&own), "own {state:?} transition still wakes");
+            assert!(!wakes(&own), "own {state:?} echo is quiet");
+            let peer = task_event(status_frame_in(state, to.clone()), false);
+            assert!(wakes(&peer), "a peer's {state:?} status still wakes");
         }
 
-        let own_artifact = task_event(app_frame(wire::ARTIFACT), true);
-        assert!(wakes(&own_artifact), "own artifact echo still wakes");
+        assert!(
+            !wakes(&task_event(app_frame(wire::ARTIFACT), true)),
+            "own artifact echo is quiet"
+        );
+        assert!(
+            wakes(&task_event(app_frame(wire::ARTIFACT), false)),
+            "a peer's artifact still wakes"
+        );
+        assert!(
+            !wakes(&task_message(true)),
+            "own task message echo is quiet"
+        );
+        assert!(
+            wakes(&task_message(false)),
+            "a peer's task message still wakes"
+        );
     }
 
     // These assertions are deliberately worded "broadcast"/"directed" rather
