@@ -17,7 +17,7 @@
     "docker:logs": "docker compose logs -f",
     "docker:restart": "docker compose restart",
     "docker:ps": "docker compose ps",
-    "docker:publish": "docker build -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD) . && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD)",
+    "docker:publish": "docker build -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest -t ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD) --build-context crates=../crates . && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:latest && docker push ${DOCKER_IMAGE:-srvc-gitea.tetra-ostrich.ts.net/caiogondim/agent-gossip-com}:$(git rev-parse --short HEAD)",
     "build": "bun scripts/build.ts",
     "serve": "bun web/server.ts",
     "e2e": "bun scripts/e2e.ts",

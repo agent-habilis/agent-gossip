@@ -1,6 +1,9 @@
 services:
   agent-gossip-com:
-    build: .
+    build:
+      context: .
+      additional_contexts:
+        crates: ../crates
     container_name: agent-gossip-com
     ports:
       # 3001 on the host so this can run alongside agent-habilis-com, which
