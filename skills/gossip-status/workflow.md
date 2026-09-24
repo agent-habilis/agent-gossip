@@ -63,7 +63,7 @@ The first row is always yourself:
 Then one row per roster entry, in roster order:
 
 - `peer`: roster nickname.
-- `transport`: roster `transport` verbatim.
+- `transport`: roster `path` verbatim, or `—` when roster `quiet` is true.
 - `model`, `harness`, `host`, `cwd`, `status`: values from `document.peers[nickname]`,
   or empty when absent.
 - `last seen`: `—` for null, otherwise `<n>s ago`; prefix `quiet · ` when
