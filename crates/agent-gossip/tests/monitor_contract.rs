@@ -1399,6 +1399,81 @@ async fn test_silent_tasks_survive_while_daemons_live() {
     }
 }
 
+/// A peer's repeated `working` with no text changes nothing: the task is
+/// already `working`. Pre-fix each one surfaced to the initiator and woke its
+/// bell, which is what a 0.8/0.9 worker's manual beat loop still sends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_repeated_working_does_not_reach_the_initiator() {
+    let worker_nick = "tk-repeat";
+    let (creator, mesh) = JsonNode::create_with_flags(&[]);
+    let worker = JsonNode::join_with_flags(&mesh, worker_nick, &[]);
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the worker join");
+
+    let tid = common::cli_task_create(&mesh, &creator.nickname, worker_nick, "build");
+    let saw_offer = wait_until(
+        || {
+            worker
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_offer >= 1, "worker never surfaced the task message");
+    for _ in 0..3 {
+        common::cli_task_status(&mesh, worker_nick, &tid, "working");
+    }
+    common::cli_task_artifact(&mesh, worker_nick, &tid, "done");
+
+    // The artifact arriving proves the repeats before it were delivered too.
+    let saw_artifact = wait_until(
+        || {
+            creator
+                .json_events()
+                .iter()
+                .filter(|value| {
+                    value["task_id"] == tid.as_str() && value["kind"] == "artifact-update"
+                })
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_artifact >= 1, "the initiator never got the artifact");
+
+    let polled: Vec<serde_json::Value> =
+        serde_json::from_str(&common::cli_poll(&mesh, &creator.nickname, None))
+            .expect("poll prints a JSON array");
+    let working = polled
+        .iter()
+        .filter(|value| {
+            value["task_id"] == tid.as_str()
+                && value["kind"] == "status-update"
+                && value["state"] == "working"
+        })
+        .count();
+    assert_eq!(
+        working, 1,
+        "only the accept reaches the initiator: {polled:?}"
+    );
+}
+
 /// `agent-gossip peers` returns the live roster: `ok`, a `count` (peers + 1
 /// for self), and a `peers` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.

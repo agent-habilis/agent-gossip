@@ -583,7 +583,9 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              stream (see "JSON EVENTS"). Both daemons send a
+              stream (see "JSON EVENTS"). A repeated `working` with no text
+              on a task already `working` is not surfaced: it counts as the
+              peer's activity only. Both daemons send a
               keepalive (every 30s) for every live task, from the offer on,
               whoever holds the ball. A party times the task out only after 2
               minutes with no leg or keepalive from the other daemon — its

@@ -327,6 +327,20 @@ async fn merge_own_meta_entry(
     }
 }
 
+/// A peer's `working` with no text on a task already `working` changes nothing
+/// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
+/// keep the task alive, and each one woke the initiator's bell, so it is kept
+/// off the surface like a beat. It still reaches the state machine, which
+/// counts it as the peer's activity.
+fn is_empty_working_repeat(prior: Option<super::TaskState>, message: &Message) -> bool {
+    use super::TaskState;
+    prior == Some(TaskState::Working)
+        && super::gossip::status_payload(message).is_ok_and(|payload| {
+            !super::gossip::is_beat(&payload) && payload.status.state == TaskState::Working
+        })
+        && super::gossip::task_text(message).trim().is_empty()
+}
+
 /// Whether a surfaced event should wake a parked `poll --long` bell: anything
 /// the agent must see (`is_visible`) or act on (a task interaction). State and
 /// meta document echoes, `fork`, and presence `alive` beats stay in the ring —
@@ -523,6 +537,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         to,
         surfaceable,
     } = leg;
+    let mut surface = surfaceable;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
     if to == ctx.author
@@ -541,6 +556,8 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         {
             return false;
         }
+        let prior = app.tasks.get(&task_id).map(|rec| rec.state);
+        surface &= !is_empty_working_repeat(prior, message);
         crate::a2a::task::ingest(
             &mut app.tasks,
             crate::a2a::task::IngestLegParams {
@@ -556,7 +573,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         TaskDisplayParams {
             message,
             to,
-            surfaceable,
+            surfaceable: surface,
             self_author: ctx.author,
         },
     )
@@ -1050,7 +1067,7 @@ mod classify_tests {
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
-    use super::{classify, wakes};
+    use super::{classify, is_empty_working_repeat, wakes};
     use crate::a2a::{TaskState, wire};
     use crate::output::OutputEvent;
 
@@ -1174,6 +1191,53 @@ mod classify_tests {
         assert!(
             wakes(&task_message(false)),
             "a peer's task message still wakes"
+        );
+    }
+
+    fn working_with(note: Option<&str>, metadata: Option<serde_json::Value>) -> Message {
+        let status = crate::a2a::gossip::status_update(
+            &mesh(),
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &crate::a2a::TaskId::random(),
+                state: TaskState::Working,
+                note,
+                metadata,
+            },
+        );
+        Message::new_app(
+            &mesh(),
+            &Nickname::from("author"),
+            AppFrameParams {
+                tag: AppTag::from(wire::STATUS),
+                to: Some(Nickname::from("initiator")),
+                corr: None,
+                body: crate::a2a::gossip::payload_body(&status).unwrap(),
+            },
+        )
+    }
+
+    // Only an empty `working` on a task already `working` is a repeat: the
+    // accept, a progress note, a beat and every other state still surface.
+    #[test]
+    fn only_an_empty_working_on_a_working_task_is_a_repeat() {
+        let working = Some(TaskState::Working);
+        assert!(is_empty_working_repeat(working, &working_with(None, None)));
+        assert!(
+            !is_empty_working_repeat(Some(TaskState::Submitted), &working_with(None, None)),
+            "the accept surfaces"
+        );
+        assert!(
+            !is_empty_working_repeat(working, &working_with(Some("tests pass"), None)),
+            "a progress note surfaces"
+        );
+        let beat = working_with(None, Some(crate::a2a::gossip::beat_metadata(None)));
+        assert!(
+            !is_empty_working_repeat(working, &beat),
+            "a beat keeps its own path"
+        );
+        assert!(
+            !is_empty_working_repeat(working, &status_frame_in(TaskState::InputRequired, None)),
+            "a question surfaces"
         );
     }
 
