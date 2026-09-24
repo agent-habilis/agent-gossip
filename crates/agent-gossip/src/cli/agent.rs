@@ -503,6 +503,108 @@ mod tests {
         assert_eq!(daemon_starters_checked, 3);
     }
 
+    /// The binary never self-reports `cwd`; only the ready gate's merge puts it
+    /// in meta, and `gossip-status` only shows what meta holds.
+    #[test]
+    fn peer_cwd_is_reported_and_shown() {
+        let body = |skill: &str| {
+            SKILLS
+                .get_file(format!("{skill}/SKILL.md"))
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
+        };
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let merge = body(skill)
+                .lines()
+                .find(|line| {
+                    line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"")
+                })
+                .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"));
+            assert!(
+                merge.contains("\"cwd\":"),
+                "{skill}: merge must report cwd: {merge}"
+            );
+        }
+        assert!(body("gossip-status").contains("| host | cwd |"));
+    }
+
+    fn ready_gate_merge(skill: &str) -> &'static str {
+        let is_merge =
+            |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");
+        SKILLS
+            .get_file(format!("{skill}/SKILL.md"))
+            .and_then(include_dir::File::contents_utf8)
+            .and_then(|body| body.lines().find(is_merge))
+            .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"))
+    }
+
+    /// The merge JSON is spliced together in shell, so a quote or backslash in
+    /// the working directory must be escaped, or the merge is rejected.
+    #[cfg(unix)]
+    #[test]
+    fn ready_gate_merge_is_valid_json_for_any_cwd() {
+        let home = std::env::temp_dir()
+            .canonicalize()
+            .expect("temp dir resolves")
+            .join(format!("ag-cwd-{}", std::process::id()));
+        let cwd = home.join("we\"ird\\dir");
+        std::fs::create_dir_all(&cwd).expect("create the odd cwd");
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let merge = ready_gate_merge(skill)
+                .replace("{MODEL}", "m")
+                .replace("{HARNESS}", "h");
+            let script = format!(
+                "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; {merge}"
+            );
+            let out = std::process::Command::new("bash")
+                .args(["-c", &script])
+                .current_dir(&cwd)
+                .env("HOME", &home)
+                .output()
+                .expect("run bash");
+            let json: serde_json::Value =
+                serde_json::from_slice(&out.stdout).unwrap_or_else(|error| {
+                    panic!(
+                        "{skill}: merge is not JSON ({error}): {}",
+                        String::from_utf8_lossy(&out.stdout)
+                    )
+                });
+            assert_eq!(json["peers"]["n"]["cwd"], "~/we\"ird\\dir", "{skill}");
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The roster never includes self, so without a row of its own a lone
+    /// peer sees no table at all, and never its own model, host, or cwd.
+    #[test]
+    fn status_table_lists_self() {
+        let body = SKILLS
+            .get_file("gossip-status/SKILL.md")
+            .and_then(include_dir::File::contents_utf8)
+            .expect("gossip-status/SKILL.md is embedded utf-8");
+        assert!(body.contains("`$NICKNAME (you)`"));
+        assert!(!body.contains("no peers yet"));
+    }
+
+    /// A printed line is chat markdown, so a command left outside backticks
+    /// renders as prose the user cannot tell apart from the sentence.
+    #[test]
+    fn printed_skill_commands_are_code() {
+        for skill in OWNED_SKILL_DIRS {
+            let body = SKILLS
+                .get_file(format!("{skill}/SKILL.md"))
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            for line in body.lines().filter(|line| line.starts_with('💬')) {
+                let bare_command = line
+                    .split('`')
+                    .step_by(2)
+                    .any(|prose| prose.contains("SKILL_PREFIX}gossip-"));
+                assert!(!bare_command, "{skill}: command outside backticks: {line}");
+            }
+        }
+    }
+
     #[test]
     fn install_paths_are_under_home() {
         let home = Path::new("/home/x");

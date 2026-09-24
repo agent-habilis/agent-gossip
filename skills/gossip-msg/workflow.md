@@ -6,7 +6,7 @@ argument — the next section asks for it.
 If no text is present, print:
 
 ```text
-💬 usage: ${SKILL_PREFIX}gossip-msg {text}
+💬 usage: `${SKILL_PREFIX}gossip-msg {text}`
 ```
 
 Then stop.

@@ -10,7 +10,7 @@ agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 The candidates are exactly the roster's `peers` — never yourself, and
 never a nickname that appears only in the meta document. The meta document is
 not pruned when a peer leaves and includes your own entry; it only decorates
-candidates with model, harness, host, and status. An empty `peers`
+candidates with model, harness, host, cwd, and status. An empty `peers`
 array is the empty-roster stop — do not use the response's `peer_count`, which
 includes self.
 

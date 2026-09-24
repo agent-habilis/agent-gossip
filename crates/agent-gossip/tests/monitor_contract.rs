@@ -1414,7 +1414,14 @@ async fn test_peers_roster_shape() {
             reach == "direct" || reach == "gossip",
             "unexpected reach: {reach}"
         );
+        assert!(entry["path"].is_string(), "path is a string: {entry}");
     }
+    assert!(
+        peers.iter().any(|entry| entry["path"]
+            .as_str()
+            .is_some_and(|path| path.starts_with("ip"))),
+        "at least one peer should have an active ip path in a localhost mesh: {roster}"
+    );
     assert!(
         reach_values(&roster).iter().any(|reach| reach == "direct"),
         "at least one peer should resolve to a live direct link in a localhost mesh"

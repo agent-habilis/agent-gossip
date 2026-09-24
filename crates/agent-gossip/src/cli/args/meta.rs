@@ -20,7 +20,7 @@ pub(crate) enum MetaAction {
     /// value deletes that key, nested objects merge) and a non-object value
     /// replaces the document. By convention agents self-report under
     /// `/peers/<nickname>`, e.g.
-    /// `'{"peers":{"word-word":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}}'`
+    /// `'{"peers":{"word-word":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01","cwd":"~/src/app"}}}'`
     /// — merge means your entry never clobbers another peer's. The `meta` and
     /// `state` channels are fully independent.
     Merge {

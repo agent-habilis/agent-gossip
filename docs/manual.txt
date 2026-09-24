@@ -256,7 +256,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is gossip metadata it self-reports into the meta channel after
               readiness — see the meta merge convention
-              /peers/<nick> = {model, harness, host}.
+              /peers/<nick> = {model, harness, host, cwd}.
 
        join GOSSIP [OPTIONS]
               Join an existing gossip by its identifier. Long-running.
@@ -320,7 +320,8 @@ COMMANDS
               "#github.com/x". Capped at 32 chars (an over-long name ends in
               "…"), or "topic" if nothing valid survives. This affects the name
               only, never the seed. Networking is always the public preset
-              (mDNS + DHT + relay).
+              (mDNS + DHT + relay), with --transport p2p,relay: payload
+              falls back to the relay when a direct path fails.
 
               The string is the only coordination needed, so it is compared
               byte-for-byte after trimming surrounding whitespace — it is NOT
@@ -627,7 +628,8 @@ COMMANDS
                  "peers":[{"nickname":"word-word",
                                   "last_seen_secs_ago":12,
                                   "quiet":false,
-                                  "reach":"direct"}, …],
+                                  "reach":"direct",
+                                  "path":"ip"}, …],
                  "peer_count":3}
 
               peers are sorted most-recently-seen first. quiet is true for a
@@ -643,7 +645,15 @@ COMMANDS
               get the live peers without self.
 
               reach is "direct" when a live gossip link to that peer exists,
-              else "gossip" (relayed). Backs the /gossip-task target picker,
+              else "gossip" (relayed).
+
+              path is the network path to that peer, from its active
+              addresses: ip, webrtc, multihop, relay, or several of them
+              joined by + (ip+relay). It is unknown for a quiet peer or when
+              no address is active yet. When more than one is active, the
+              path iroh selects among them is not shown.
+
+              The roster backs the /gossip-task target picker,
               nickname validation, and the /gossip-status roster.
               The roster does not carry model/harness/host — those are gossip
               metadata each agent self-reports into the meta channel; read
@@ -780,13 +790,16 @@ COMMANDS
 
                 agent-gossip meta merge --gossip GOSSIP --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
-                            "harness":"Claude Code","host":"studio-mbp-01"}}}'
+                            "harness":"Claude Code","host":"studio-mbp-01",
+                            "cwd":"~/src/app"}}}'
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. /peers is an object keyed by nickname,
+              which agents share a box. cwd is the working directory,
+              with $HOME shortened to ~, so peers can tell which folder
+              each agent works in. /peers is an object keyed by nickname,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
-              it). The /gossip-status roster reads model/harness/host from here.
+              it). The /gossip-status roster reads model/harness/host/cwd from here.
               A peer's whole /peers/<nickname> entry is removed when it leaves
               gracefully. A peer that vanishes without a goodbye (crash, kill)
               leaves a stale entry behind; it persists until a new session
@@ -1277,8 +1290,9 @@ MCP SERVER
               Join a public gossip derived deterministically from a shared
               string — no id to share. Anyone who calls topic_gossip with the
               same string joins the same gossip, on any machine (the string is
-              hashed into the gossip seed; the name is derived and networking
-              is always public). The string is matched byte-for-byte after
+              hashed into the gossip seed; the name is derived, networking
+              is always public, and payload can go through the relay when a
+              direct path fails). The string is matched byte-for-byte after
               trimming whitespace, so pick an exact, agreed value. Idempotent
               when called for the same string with the same nickname. Args:
               string, nickname (optional).

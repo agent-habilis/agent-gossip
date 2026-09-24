@@ -1,11 +1,12 @@
 use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
-use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams};
+use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved};
 use fofoca::runtime::{SetupParams, setup_mesh};
 
 use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use crate::output::Output;
+use crate::topic::resolve_topic;
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
@@ -126,12 +127,7 @@ pub(super) async fn topic_setup(
     cfg: TopicConfig,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
-    let resolved = TopicParams {
-        string: cfg.string,
-        nickname: cfg.nickname,
-    }
-    .resolve()
-    .map_err(JoinError::Resolve)?;
+    let resolved = resolve_topic(cfg.string, cfg.nickname).map_err(JoinError::Resolve)?;
     resolved_setup(resolved, cfg.max_peers, output).await
 }
 

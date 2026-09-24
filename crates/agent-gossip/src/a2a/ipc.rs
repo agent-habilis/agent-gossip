@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use fofoca::embed::{EventLoopState, PingRound};
+use fofoca::iroh::Endpoint;
 use fofoca::ops::MeshSender;
 use fofoca::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
 use fofoca::protocol::MeshName;
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::a2a::app::A2aApp;
+use crate::a2a::peer_path::respond_with_paths;
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
     emit_task_status, send_broadcast, send_msg,
@@ -171,6 +173,7 @@ pub(crate) struct IpcDispatchParams<'a> {
     pub(crate) mesh: &'a MeshId,
     pub(crate) name: &'a MeshName,
     pub(crate) author: &'a Nickname,
+    pub(crate) endpoint: &'a Endpoint,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -192,6 +195,7 @@ pub(crate) async fn handle_ipc_command(
         mesh,
         name,
         author,
+        endpoint,
         app,
     } = params;
     // The per-mesh socket path already routes a command to the right daemon,
@@ -369,7 +373,7 @@ pub(crate) async fn handle_ipc_command(
             }
         }
         IpcCommand::Peers { mesh: _ } => {
-            let _ = resp_tx.send(peers_response(state));
+            respond_with_paths(state, endpoint, resp_tx);
             false
         }
         IpcCommand::StateMerge { mesh: _, merge } => {
@@ -559,26 +563,6 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
-}
-
-/// Serialize the live roster snapshot as the `agent-gossip peers` response.
-/// `ok:true` plus the snapshot's `peers` (recency-sorted, peers only) and
-/// `peer_count` — the field name the MCP `gossip_info` result and the state
-/// file already use for this quantity.
-///
-/// The two disagree on purpose: `peer_count` is the *active* peers plus self,
-/// while the array chains the quiet peers on after them so a peer that may
-/// still return stays addressable. So the array is longer than
-/// `peer_count - 1` whenever anyone is quiet — count `!quiet` entries, never
-/// `peers.len()`, to get the live peers without self.
-fn peers_response(state: &EventLoopState) -> String {
-    let snapshot = state.roster_snapshot();
-    serde_json::json!({
-        "ok": true,
-        "peers": snapshot.peers,
-        "peer_count": snapshot.count,
-    })
-    .to_string()
 }
 
 #[cfg(test)]
