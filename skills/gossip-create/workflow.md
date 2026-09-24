@@ -14,14 +14,16 @@ If a name is present, convert it to `--name NAME` before calling
 contains a positional name.
 
 If the user asks for a public or cross-machine gossip — the word `public`,
-`--public`, or prose with the same meaning — put `--lookup mdns,dht,relay`
-in `$CREATE_ARGS`. The `--public` flag does not exist on the CLI: never
-pass it. A bare `public` in the arguments is this keyword, not the gossip
-name. If the user also gives `--lookup`, the explicit list wins over the
-keyword.
+`--public`, or prose with the same meaning — put every lookup and every
+transport in `$CREATE_ARGS`: `--lookup mdns,dht,relay --transport p2p,relay`.
+The `--public` flag does not exist on the CLI: never pass it. A bare `public`
+in the arguments is this keyword, not the gossip name. If the user also gives
+`--lookup` or `--transport`, the explicit value wins over the keyword. If the
+final lookup list has no `relay`, drop `relay` from the transport:
+`--transport p2p,relay` needs `relay` in the lookup list.
 
-Use `--transport p2p,relay` only when the user asks for gossip payload to
-ride the relay. It needs `relay` in the lookup list.
+Without the keyword, use `--transport p2p,relay` only when the user asks for
+gossip payload to ride the relay.
 
 A password must be inline and single-quoted in `$CREATE_ARGS` —
 `--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the
