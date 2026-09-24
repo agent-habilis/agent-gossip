@@ -22,8 +22,10 @@ in the arguments is this keyword, not the gossip name. If the user also gives
 final lookup list has no `relay`, drop `relay` from the transport:
 `--transport p2p,relay` needs `relay` in the lookup list.
 
-Without the keyword, use `--transport p2p,relay` only when the user asks for
-gossip payload to ride the relay.
+Without the keyword, a request for gossip payload to ride the relay also
+counts as a cross-machine gossip. If the user gives no `--lookup`, use
+`--lookup mdns,dht,relay --transport p2p,relay`. The default lookup of
+`create` is loopback, and relay transport needs a relay lookup.
 
 A password must be inline and single-quoted in `$CREATE_ARGS` —
 `--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the
