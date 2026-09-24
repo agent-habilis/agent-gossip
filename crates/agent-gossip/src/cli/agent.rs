@@ -468,6 +468,25 @@ mod tests {
         assert!(body("gossip-status").contains("| host | cwd |"));
     }
 
+    /// A printed line is chat markdown, so a command left outside backticks
+    /// renders as prose the user cannot tell apart from the sentence.
+    #[test]
+    fn printed_skill_commands_are_code() {
+        for skill in OWNED_SKILL_DIRS {
+            let body = SKILLS
+                .get_file(format!("{skill}/SKILL.md"))
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            for line in body.lines().filter(|line| line.starts_with('💬')) {
+                let bare_command = line
+                    .split('`')
+                    .step_by(2)
+                    .any(|prose| prose.contains("SKILL_PREFIX}gossip-"));
+                assert!(!bare_command, "{skill}: command outside backticks: {line}");
+            }
+        }
+    }
+
     #[test]
     fn install_paths_are_under_home() {
         let home = Path::new("/home/x");

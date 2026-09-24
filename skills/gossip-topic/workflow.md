@@ -8,7 +8,7 @@ not otherwise normalize it.
 If no topic string is present, print:
 
 ```text
-💬 usage: ${SKILL_PREFIX}gossip-topic {string}
+💬 usage: `${SKILL_PREFIX}gossip-topic {string}`
 ```
 
 Then stop.
@@ -20,7 +20,7 @@ If conversation context says this session already ran
 `${SKILL_PREFIX}gossip-topic` and has not since left, print:
 
 ```text
-💬 already in a gossip. use ${SKILL_PREFIX}gossip-leave first.
+💬 already in a gossip. use `${SKILL_PREFIX}gossip-leave` first.
 ```
 
 Then stop.

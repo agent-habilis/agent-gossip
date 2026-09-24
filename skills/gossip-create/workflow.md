@@ -42,7 +42,7 @@ If the check succeeds, handle any returned events per the **Event handling**
 section, print:
 
 ```text
-💬 already in a gossip. use ${SKILL_PREFIX}gossip-leave first if you want to create a new one.
+💬 already in a gossip. use `${SKILL_PREFIX}gossip-leave` first if you want to create a new one.
 ```
 
 Then stop.
