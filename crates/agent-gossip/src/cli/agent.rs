@@ -468,6 +468,18 @@ mod tests {
         assert!(body("gossip-status").contains("| host | cwd |"));
     }
 
+    /// The roster never includes self, so without a row of its own a lone
+    /// peer sees no table at all, and never its own model, host, or cwd.
+    #[test]
+    fn status_table_lists_self() {
+        let body = SKILLS
+            .get_file("gossip-status/SKILL.md")
+            .and_then(include_dir::File::contents_utf8)
+            .expect("gossip-status/SKILL.md is embedded utf-8");
+        assert!(body.contains("`$NICKNAME (you)`"));
+        assert!(!body.contains("no peers yet"));
+    }
+
     /// A printed line is chat markdown, so a command left outside backticks
     /// renders as prose the user cannot tell apart from the sentence.
     #[test]
