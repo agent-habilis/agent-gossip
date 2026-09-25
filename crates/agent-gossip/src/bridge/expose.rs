@@ -11,9 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use fofoca::iroh::Endpoint;
 use fofoca::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use fofoca::net::build_endpoint;
-use fofoca::protocol::{
-    DirectorySelection, LookupOpts, LookupSet, resolve_lookups, validate_advertise,
-};
+use fofoca::protocol::{DirectorySelection, LookupOpts, LookupSet, validate_advertise};
 use fofoca::protocol::{Password, TicketAuth, ct_eq};
 use rand::RngCore;
 use tokio::io::AsyncWriteExt;
@@ -67,7 +65,7 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
     let lookups = if loopback {
         LookupOpts::loopback()
     } else {
-        resolve_lookups(true, flags)
+        crate::api::resolve_lookups_or_public(true, flags)
     };
     validate_advertise(&advertise, &lookups)?;
     let (endpoint, ticket, auth) = bind(lookups.clone(), password.as_ref()).await?;

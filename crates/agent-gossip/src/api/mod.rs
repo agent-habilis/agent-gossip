@@ -19,6 +19,7 @@ pub use self::session::MeshSession;
 mod advertise;
 mod config;
 mod directory;
+pub(crate) use self::directory::resolve_lookups_or_public;
 mod error;
 mod inproc;
 mod params;
