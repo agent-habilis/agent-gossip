@@ -194,7 +194,9 @@ async fn send_msg_part(
     if state.is_meshed() {
         commit_outbound_part(state, msg, out, echo);
         // Single send decision: a directed message goes point-to-point over
-        // unicast, a broadcast over gossip (see `transport::deliver`).
+        // unicast, a broadcast over gossip (see `transport::deliver`). Inline,
+        // not `deliver_in_background`: the CLI needs the delivery verdict to
+        // report an unreachable peer, and each IPC send is one-shot.
         fofoca::ops::deliver(msg, bytes, state, sender).await?;
     } else if state
         .pending_outbound_mut()
@@ -1270,11 +1272,13 @@ pub(crate) async fn send_shard_repair_requests(
         .signed(state.identity());
         fofoca::util::logging::log_out(&frame);
         match frame.serialize() {
+            // In the background: this runs from `on_tick`, inline on the event
+            // loop, where a cold `deliver` would stop the node for the dial.
             Ok(bytes) => {
-                if let Err(error) =
-                    fofoca::ops::deliver(&frame, Bytes::from(bytes), state, sender).await
+                if !fofoca::ops::deliver_in_background(&frame, Bytes::from(bytes), state, sender)
+                    .await
                 {
-                    tracing::debug!(%error, "shard repair request send failed; next tick retries");
+                    tracing::debug!("shard repair request not sent; next tick retries");
                 }
             }
             Err(error) => tracing::debug!(%error, "shard repair request serialize failed"),

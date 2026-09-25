@@ -981,10 +981,10 @@ async fn resend_cached_shards(
         {
             continue;
         }
-        if fofoca::ops::deliver(&msg, bytes, state, ctx.sender)
-            .await
-            .is_ok()
-        {
+        // In the background: this serves a gossip RPC inline on the event
+        // loop, and the requester's connection may be cold. A shard that does
+        // not start is asked for again on the requester's next tick.
+        if fofoca::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
             resent += 1;
         }
     }

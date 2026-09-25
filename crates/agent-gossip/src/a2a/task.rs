@@ -738,8 +738,9 @@ struct BroadcastStatusParams<'a> {
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
 /// keepalive beat and the timeout cancel). A serialize error is swallowed
 /// like any other plumbing broadcast — the payloads are small literals.
-/// Returns whether the frame went out, so a failed beat is not counted as
-/// sent and retries on the next tick instead of a full cadence later.
+/// Returns whether the send started, so a beat that could not start is not
+/// counted as sent and retries on the next tick instead of a full cadence
+/// later. A send that starts and then fails costs one cadence.
 async fn broadcast_status(
     state: &EventLoopState,
     ctx: &HandlerCtx<'_>,
@@ -773,10 +774,11 @@ async fn broadcast_status(
     // it takes unicast to `peer` like every other directed frame. Straight
     // onto gossip it would flood `author`/`to` in the clear on a timer, and
     // every bystander would run `lifecycle::observe` on a beat meant for
-    // one peer — waking a parked bell off someone else's task.
-    fofoca::ops::deliver(&msg, Bytes::from(bytes), state, ctx.sender)
-        .await
-        .is_ok()
+    // one peer — waking a parked bell off someone else's task. In the
+    // background because this runs from `on_tick`, inline on the event loop:
+    // a cold `deliver` dials there and stops the whole node for the dial and
+    // path-select budgets, once per due task.
+    fofoca::ops::deliver_in_background(&msg, Bytes::from(bytes), state, ctx.sender).await
 }
 
 #[cfg(test)]
