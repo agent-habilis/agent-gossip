@@ -289,7 +289,8 @@ also set at `/gossip-create` and carried in the hash.
 `--transport p2p` is the default. Payload uses direct paths only, and
 the relay serves lookup only. `--transport p2p,relay` lets payload
 fall back to the relay when a direct path fails. It needs `relay` in
-`--lookup` and changes the gossip hash.
+`--lookup` and changes the gossip hash. A topic gossip always uses
+`p2p,relay`.
 
 ## A2A
 

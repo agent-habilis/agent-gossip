@@ -27,7 +27,7 @@ pub(crate) fn peer_url(pubkey_hex: &str) -> String {
 /// `AgentInterface.url` (the bare `<pubkey>`), not the display nickname;
 /// `capabilities.extensions` declares the mesh's protocol extensions so a
 /// strict A2A client can gate on them. Agent-side facts the daemon cannot know
-/// (model, harness, host, extra skills) are merged by the agent as sibling keys
+/// (model, harness, host, cwd, extra skills) are merged by the agent as sibling keys
 /// under `/peers/<nick>` — the card is the daemon's contribution, not the whole
 /// peer entry.
 #[must_use]

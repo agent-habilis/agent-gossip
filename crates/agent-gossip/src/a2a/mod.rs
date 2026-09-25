@@ -21,6 +21,7 @@ pub(crate) mod http;
 pub(crate) mod ipc;
 mod model;
 pub(crate) mod node;
+pub(crate) mod peer_path;
 pub(crate) mod rpc;
 pub(crate) mod send;
 pub(crate) mod session;

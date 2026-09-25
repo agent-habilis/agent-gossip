@@ -9,7 +9,7 @@ use fofoca::protocol::JoinTarget;
 use fofoca::protocol::{Mesh, MeshConfig, MeshName};
 use fofoca::protocol::{MeshId, MessageId, Nickname};
 use fofoca::runtime::run as run_event_loop;
-use fofoca::runtime::{CreateParams, JoinParams, Resolved, TopicParams};
+use fofoca::runtime::{CreateParams, JoinParams, Resolved};
 use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
 use serde::Deserialize;
 
@@ -21,6 +21,7 @@ use self::args::{
 use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
+use crate::topic::resolve_topic;
 
 mod a2a_discover;
 pub(crate) mod agent;
@@ -338,11 +339,7 @@ async fn join(
 /// seed, name, and (always-public) config are all derived from the string, so
 /// the same string joins the same topic on any machine — no id to share.
 async fn topic(opts: TopicOpts) -> Result<()> {
-    let resolved = TopicParams {
-        string: opts.string,
-        nickname: opts.nickname,
-    }
-    .resolve()?;
+    let resolved = resolve_topic(opts.string, opts.nickname)?;
     Box::pin(run_session(resolved, opts.shared)).await
 }
 

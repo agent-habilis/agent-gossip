@@ -5,7 +5,7 @@ The full argument string is the message text.
 If no text is present, print:
 
 ```text
-💬 usage: ${SKILL_PREFIX}gossip-broadcast {text}
+💬 usage: `${SKILL_PREFIX}gossip-broadcast {text}`
 ```
 
 Then stop.

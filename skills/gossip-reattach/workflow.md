@@ -8,7 +8,7 @@ session carries `topic`, hold that too.
 If no session is found, print:
 
 ```text
-💬 not in a gossip. use ${SKILL_PREFIX}gossip-create or ${SKILL_PREFIX}gossip-join first.
+💬 not in a gossip. use `${SKILL_PREFIX}gossip-create` or `${SKILL_PREFIX}gossip-join` first.
 ```
 
 Then stop.

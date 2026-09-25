@@ -242,6 +242,7 @@ impl NodeDriver for A2aApp {
                 mesh: ctx.mesh,
                 name: req.name,
                 author: ctx.author,
+                endpoint: ctx.endpoint,
                 app: self,
             },
             state,

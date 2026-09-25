@@ -9,12 +9,13 @@ agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
 agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-Use `peers` from `peers` and `document.peers` from `meta`.
+Use `peers` from `peers` and `document.peers` from `meta`. The roster never
+lists yourself; your own row comes from `document.peers[$NICKNAME]`.
 
 The roster chains the quiet peers onto the active ones, so its length is not
 the gossip's live size. Two counts come from it:
 
-- `$PEER_COUNT` — entries whose `quiet` is `false`.
+- `$PEER_COUNT` — entries whose `quiet` is `false`, plus one for yourself.
 - `$QUIET_COUNT` — entries whose `quiet` is `true`.
 
 Do not use the response's `peer_count`, which includes self.
@@ -35,21 +36,15 @@ Identify the gossip on one line, then the roster. The label depends on `$TOPIC`:
 own. The hash is bare base58 with no prefix, so the label is what tells a
 reader what the trailing token is.
 
-If the roster is empty, print:
-
-```text
-💬 `$LABEL` · no peers yet · join `$GOSSIP`
-```
-
-Otherwise print a markdown table. A roster of quiet peers only is not an empty
-roster — it prints `0 peers` and still lists them, because a quiet peer can
-come back and stays addressable:
+Always print a markdown table, even when the roster is empty — your own row is
+always in it. Quiet peers are listed too, because a quiet peer can come back
+and stays addressable:
 
 ```text
 💬 `$LABEL` · $PEER_COUNT peers · join `$GOSSIP`
 
-| peer | transport | model | harness | host | status | last seen |
-| ---- | --------- | ----- | ------- | ---- | ------ | --------- |
+| peer | transport | model | harness | host | cwd | status | last seen |
+| ---- | --------- | ----- | ------- | ---- | --- | ------ | --------- |
 ```
 
 When `$QUIET_COUNT` is above zero, the tally follows the count:
@@ -58,11 +53,18 @@ When `$QUIET_COUNT` is above zero, the tally follows the count:
 💬 `$LABEL` · $PEER_COUNT peers · $QUIET_COUNT quiet · join `$GOSSIP`
 ```
 
-Rows:
+The first row is always yourself:
+
+- `peer`: `$NICKNAME (you)`.
+- `transport` and `last seen`: `—`.
+- `model`, `harness`, `host`, `cwd`, `status`: values from
+  `document.peers[$NICKNAME]`, or empty when absent.
+
+Then one row per roster entry, in roster order:
 
 - `peer`: roster nickname.
-- `transport`: roster `transport` verbatim.
-- `model`, `harness`, `host`, `status`: values from `document.peers[nickname]`,
+- `transport`: roster `path` verbatim, or `—` when roster `quiet` is true.
+- `model`, `harness`, `host`, `cwd`, `status`: values from `document.peers[nickname]`,
   or empty when absent.
 - `last seen`: `—` for null, otherwise `<n>s ago`; prefix `quiet · ` when
   roster `quiet` is true.

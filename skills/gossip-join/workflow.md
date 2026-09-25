@@ -14,7 +14,7 @@ the shell (`'\''`). Never echo the password back in chat.
 If no target is present, print:
 
 ```text
-💬 usage: ${SKILL_PREFIX}gossip-join {hash} [--password=<pw>]
+💬 usage: `${SKILL_PREFIX}gossip-join {hash} [--password=<pw>]`
 ```
 
 Then stop.
@@ -28,7 +28,7 @@ If conversation context says this session already ran
 left, print:
 
 ```text
-💬 already in a gossip. use ${SKILL_PREFIX}gossip-leave first.
+💬 already in a gossip. use `${SKILL_PREFIX}gossip-leave` first.
 ```
 
 Then stop.
