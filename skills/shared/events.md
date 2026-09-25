@@ -128,8 +128,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 which is why there is no worker-side `waiting`: your todo opens on accept.
 `question` and `result` are the two states where **the ball is on you**, and
 their mirror images on the worker are `asked` and `sent`. Those four are the
-ones with an eviction clock running against whoever holds the ball, so they are
-worth a distinct word rather than a shared "in progress".
+states where a task waits on one side, so they are worth a distinct word
+rather than a shared "in progress".
 
 `done` is not decorative. A clean close and a drop both land on the same
 terminal widget status, so without it a finished row keeps whatever badge it
