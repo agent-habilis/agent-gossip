@@ -1198,14 +1198,17 @@ JSON EVENTS
                         marker in the document and check it.
 
        meta   The gossip's META channel changed (see the meta command). Same
-              shape as the state event with "event":"meta" and "type":"meta" —
-              the same merge / document / self fields and the same reaction
-              contract. Branch on "event" to tell the two channels apart. The
+              shape as the state event with "event":"meta" and "type":"meta",
+              but WITHOUT the document field: the meta document is every
+              peer's agent card, so read it on demand with `meta get`. The
+              merge and self fields and the reaction contract are the same.
+              Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
               by convention a /peers/<nick> change is a peer self-reporting what
               it runs on, which the gossip skills surface in chat as a line such
               as 💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
-              identity rendered as an inline code span, read from document.peers).
+              identity rendered as an inline code span, read from the merge or
+              from `meta get`).
 
        gossip_found / gossip_lost
               From agent-gossip discover, one per directory change.

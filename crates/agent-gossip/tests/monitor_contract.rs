@@ -1796,9 +1796,10 @@ fn test_ping_report_is_pollable() {
 /// Shared-state wire contract over the REAL path the in-process harness bypasses:
 /// `agent-gossip <channel> merge` on one daemon → the change gossips → the peer's
 /// `--output json` stream carries a `{"event":"<chan>","type":"<chan>",...}`
-/// record with the merge + derived document, and `agent-gossip <channel> get` on the peer
-/// reflects it. Run for both channels (`state`, `meta`) to prove parity end to
-/// end.
+/// record with the merge, plus the derived document on `state` only, and
+/// `agent-gossip <channel> get` on the peer reflects it. A `meta` event leaves the
+/// document out: it is every peer's agent card, read on demand with `meta get`.
+/// Run for both channels (`state`, `meta`) end to end.
 fn channel_wire_contract(channel: Channel) {
     let label = common::channel_subcommand(channel);
     let (creator, mesh) = JsonNode::create();
@@ -1845,16 +1846,17 @@ fn channel_wire_contract(channel: Channel) {
         event["merge"], want_doc,
         "{label} event carries the applied merge document: {event}"
     );
-    // The derived document carries the merge; on the meta channel the
-    // daemon-published cards are masked out of the comparison.
-    let mut document = event["document"].clone();
-    if let Some(map) = document.as_object_mut() {
-        map.remove("peers");
+    if channel == Channel::Meta {
+        assert!(
+            event.get("document").is_none(),
+            "a meta event leaves the document out: {event}"
+        );
+    } else {
+        assert_eq!(
+            event["document"], want_doc,
+            "{label} event carries the derived document: {event}"
+        );
     }
-    assert_eq!(
-        document, want_doc,
-        "{label} event carries the derived document: {event}"
-    );
 
     // The `<chan> get` command on the joiner returns the same document
     // (cards masked on meta, as above).
