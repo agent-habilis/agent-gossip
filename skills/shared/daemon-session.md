@@ -50,7 +50,7 @@ tool calls), mapped as:
 owned by this agent session. It must remain alive for the whole gossip session.
 
 ```bash
-mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev 2>/dev/null || true; } && exec <!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
+mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && exec <!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
 ```
 
 The `> /dev/null` is not cosmetic and must never be dropped. A harness
@@ -61,7 +61,8 @@ never message bodies — so a failed launch (wrong password, protected gossip)
 can be explained: the gate script prints that file when `ready` fails.
 The launch first moves the previous `.stderr` to `.stderr.prev`, so a
 relaunch keeps the last daemon's errors instead of erasing them. If a daemon
-died before this launch, its last errors are in `.stderr.prev`.
+died before this launch, its last errors are in `.stderr.prev`. If that move
+fails, the launch stops, so the old file is never truncated.
 Diagnostics still land in the daemon's own log, where bodies are redacted.
 Do not parse daemon stdout or logs on this path, and read the `.stderr` file
 only through the gate's failure branch.
