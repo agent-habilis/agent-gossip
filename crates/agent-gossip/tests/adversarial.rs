@@ -203,6 +203,72 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     attacker.leave().await;
 }
 
+/// A chat line re-sent after the engine forgot its key surfaces only once.
+/// The engine dedups on a bounded FIFO of the last `SEEN_IDS_CAP` frames, and
+/// anti-entropy re-sends a line a peer's digest does not list, so in the field
+/// the same line came back hours later as a new visible message. Here the
+/// injector pushes enough filler frames to evict the key, then re-sends the
+/// line: the path a real replay takes. The gossip overlay drops byte-identical
+/// payloads for 90 s, and a field replay comes hours later, so the re-sent copy
+/// adds one trailing space: a new payload to the overlay, the same signed
+/// message to the engine, which verifies canonical bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replayed_chat_message_surfaces_once() {
+    let (mut victim, injector) = meshed_pair("chat-replay").await;
+    let key = adversarial::new_key();
+    let mesh = injector.session.mesh_id();
+
+    let original = CraftedMsg::new(mesh, "replayer", "said once")
+        .wrap_a2a()
+        .sign(&key)
+        .bytes();
+    injector
+        .session
+        .inject_raw(original.clone())
+        .await
+        .expect("inject original");
+    assert!(
+        victim.wait_body("said once", T).await,
+        "the original never arrived"
+    );
+
+    let fillers = fofoca::util::tuning::SEEN_IDS_CAP + 1;
+    for index in 0..fillers {
+        let filler = CraftedMsg::new(mesh, "replayer", &format!("filler {index}"))
+            .wrap_a2a()
+            .sign(&key)
+            .bytes();
+        injector
+            .session
+            .inject_raw(filler)
+            .await
+            .expect("inject filler");
+    }
+    let last_filler = format!("filler {}", fillers - 1);
+    assert!(
+        victim.wait_body(&last_filler, T).await,
+        "the fillers never all arrived"
+    );
+
+    let mut replay = original;
+    replay.push(b' ');
+    injector
+        .session
+        .inject_raw(replay)
+        .await
+        .expect("inject replay");
+    injector.broadcast("after-replay").await;
+    assert!(victim.wait_body("after-replay", T).await, "barrier lost");
+
+    assert_eq!(
+        victim.count_body("said once"),
+        1,
+        "a replayed chat line surfaced again"
+    );
+    victim.leave().await;
+    injector.leave().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
     // The signature gate stops an *unsigned* id-replay, but a peer can sign its

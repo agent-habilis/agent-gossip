@@ -520,11 +520,11 @@ COMMANDS
                      The receive bell: block until the daemon holds a WAKING
                      event it has not yet served to a plain poll, instead of
                      an immediate read. State/meta document echoes and your
-                     own `working` task status updates are non-waking — they
-                     never fire the bell and ride along with the next waking
-                     batch (documents are read on demand with `state get`/
-                     `meta get`). Never advances the read
-                     cursor, so the pattern is: bell exits → issue a plain
+                     own task echoes (status, artifact, message) are
+                     non-waking — they never fire the bell and ride along
+                     with the next waking batch (documents are read on
+                     demand with `state get`/`meta get`). Never advances the
+                     read cursor, so the pattern is: bell exits → issue a plain
                      poll for the content and re-arm the bell, both at once.
                      No timeout: the daemon holds each request up to ~60s and
                      the CLI transparently re-issues on an empty window; a
@@ -584,15 +584,23 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              stream (see "JSON EVENTS"). The daemon
-              runs a 2-minute idle-debounce timeout and a keepalive (every 30s)
-              for the party that holds the ball — the keepalive only covers a
-              silent owner for up to 2 minutes past its last real leg, so a
-              crashed skill's task is reaped rather than held forever. A worker
-              on a long task keeps its side alive by re-emitting the `working`
-              status at least once a minute (the repeat is marked as a beat);
-              a never-picked-up task has no cover at all, so
-              the timeout doubles as a ~2-minute pickup deadline.
+              stream (see "JSON EVENTS"). A repeated `working` with no text
+              on a task already `working` is not surfaced: it counts as the
+              peer's activity only. A leg for a closed task, or one already
+              surfaced, is not surfaced again; `poll --after` still re-reads
+              the ring. The same holds for chat: a `msg` or broadcast already
+              surfaced is not surfaced again. Both daemons send a
+              keepalive (every 30s) for every live task, from the offer on,
+              whoever holds the ball. A party times the task out only after 2
+              minutes with no leg or keepalive from the other daemon — its
+              session ended or crashed. Silence from a live agent (a pending
+              accept, a review, a long build) never times a task out, so a
+              skill does not re-emit `working` to keep it alive. Two limits:
+              a task neither agent touches for 24 hours stops being beaten,
+              and the other daemon cancels it about 2 minutes later; a peer
+              on an older version, which beats only while it owes the next
+              move, is not timed out for silence until its first keepalive
+              arrives.
 
        ORCHESTRATION
               A skill-level convention layered on tasks: one agent (the
@@ -1096,8 +1104,8 @@ JSON EVENTS
                         echoes, task legs, fork, presence alive beats, and
                         operational events are not (they are context — read
                         the documents on demand with state get / meta get).
-                        State/meta echoes, and your own `working` task
-                        status updates, are also non-waking: they never fire
+                        State/meta echoes, and your own task echoes, are
+                        also non-waking: they never fire
                         a parked `poll --long` and ride along with the next
                         waking batch.
 
@@ -1203,14 +1211,17 @@ JSON EVENTS
                         marker in the document and check it.
 
        meta   The gossip's META channel changed (see the meta command). Same
-              shape as the state event with "event":"meta" and "type":"meta" —
-              the same merge / document / self fields and the same reaction
-              contract. Branch on "event" to tell the two channels apart. The
+              shape as the state event with "event":"meta" and "type":"meta",
+              but WITHOUT the document field: the meta document is every
+              peer's agent card, so read it on demand with `meta get`. The
+              merge and self fields and the reaction contract are the same.
+              Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
               by convention a /peers/<nick> change is a peer self-reporting what
               it runs on, which the gossip skills surface in chat as a line such
               as 💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
-              identity rendered as an inline code span, read from document.peers).
+              identity rendered as an inline code span, read from the merge or
+              from `meta get`).
 
        gossip_found / gossip_lost
               From agent-gossip discover, one per directory change.

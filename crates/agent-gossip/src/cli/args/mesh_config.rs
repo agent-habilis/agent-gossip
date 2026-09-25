@@ -28,7 +28,7 @@ pub(crate) fn resolve(
     transports: &[Transport],
 ) -> anyhow::Result<Resolved> {
     let set = lookup_set(lookups, relay_url)?;
-    let resolved = resolve_lookups(false, set.clone());
+    let resolved = resolve_lookups(set.clone());
     let transport = transport_policy(transports)?;
     if transport.relay_transport && resolved.relay_lookup == RelayChoice::Disabled {
         anyhow::bail!("--transport p2p,relay needs a relay lookup: add `relay` to --lookup");

@@ -328,16 +328,31 @@ async fn merge_own_meta_entry(
     }
 }
 
+/// A peer's `working` with no text on a task already `working` changes nothing
+/// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
+/// keep the task alive, and each one woke the initiator's bell, so it is kept
+/// off the surface like a beat. It still reaches the state machine, which
+/// counts it as the peer's activity.
+fn is_empty_working_repeat(prior: Option<super::TaskState>, message: &Message) -> bool {
+    use super::TaskState;
+    prior == Some(TaskState::Working)
+        && super::gossip::status_payload(message).is_ok_and(|payload| {
+            !super::gossip::is_beat(&payload) && payload.status.state == TaskState::Working
+        })
+        && super::gossip::task_text(message).trim().is_empty()
+}
+
 /// Whether a surfaced event should wake a parked `poll --long` bell: anything
 /// the agent must see (`is_visible`) or act on (a task interaction). State and
 /// meta document echoes, `fork`, and presence `alive` beats stay in the ring —
 /// consumable in the next batch — but never ring the bell on their own, so a
 /// self meta report at session start cannot cost the agent a wake-up turn.
-/// The agent's own `working` status echo is quiet for the same reason: a worker
-/// re-sends it every ~45 s, and each ring cost a poll + re-arm turn.
+/// The agent's own task echoes are quiet for the same reason: it already holds
+/// the id of every leg it sent, and an echo landing right after a re-arm rang
+/// the bell for nothing and made the Stop hook refuse the turn.
 pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
-    if is_self_working_echo(event) {
+    if is_self_task_echo(event) {
         return false;
     }
     output::is_visible(event)
@@ -349,11 +364,11 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
         )
 }
 
-fn is_self_working_echo(event: &output::OutputEvent) -> bool {
+fn is_self_task_echo(event: &output::OutputEvent) -> bool {
     matches!(
         event,
-        output::OutputEvent::Task { msg, is_self: true }
-            if super::gossip::frame_task_state(msg) == Some(super::TaskState::Working)
+        output::OutputEvent::Task { is_self: true, .. }
+            | output::OutputEvent::TaskMessage { is_self: true, .. }
     )
 }
 
@@ -467,19 +482,25 @@ fn route_content(
         // `classify`: a directed BROADCAST or a broadcast MSG falls through to
         // the no-op arm rather than being surfaced/logged by a relay.
         MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            handle_broadcast(&app.output, message, surfaceable)
+            surface_chat(message, surfaceable, app, |out, surface| {
+                handle_broadcast(out, message, surface)
+            })
         }
         MessageKind::App {
             tag, to: Some(to), ..
-        } if tag.as_str() == wire::MSG => handle_msg(
-            &app.output,
-            MsgParams {
-                message,
-                to,
-                surfaceable,
-                self_author: ctx.author,
-            },
-        ),
+        } if tag.as_str() == wire::MSG => {
+            surface_chat(message, surfaceable, app, |out, surface| {
+                handle_msg(
+                    out,
+                    MsgParams {
+                        message,
+                        to,
+                        surfaceable: surface,
+                        self_author: ctx.author,
+                    },
+                )
+            })
+        }
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => handle_task_leg(
@@ -523,6 +544,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         to,
         surfaceable,
     } = leg;
+    let mut surface = surfaceable;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
     if to == ctx.author
@@ -541,6 +563,18 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         {
             return false;
         }
+        let prior = app.tasks.get(&task_id).map(|rec| rec.state);
+        surface &= !is_empty_working_repeat(prior, message);
+        if crate::a2a::task::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
+            tracing::info!(
+                target: "agent_gossip::a2a",
+                %task_id,
+                leg = %message.id,
+                author = %message.author,
+                "replayed task leg kept off the surface"
+            );
+            surface = false;
+        }
         crate::a2a::task::ingest(
             &mut app.tasks,
             crate::a2a::task::IngestLegParams {
@@ -550,16 +584,54 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
                 now: Instant::now(),
             },
         );
+        if surface {
+            crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
+        }
     }
     handle_task(
         &app.output,
         TaskDisplayParams {
             message,
             to,
-            surfaceable,
+            surfaceable: surface,
             self_author: ctx.author,
         },
     )
+}
+
+/// Run a chat handler with a replayed line kept off the surface, and remember
+/// the line once it is printed. A sharded body reaches here with its group id
+/// as the logical id, the same on every completion, so a group the engine
+/// completes again is covered too. Loggability stays the handler's answer: a
+/// line we refuse to log is one every peer's digest re-offers.
+fn surface_chat(
+    message: &Message,
+    surfaceable: bool,
+    app: &mut A2aApp,
+    handler: impl FnOnce(&output::Output, bool) -> bool,
+) -> bool {
+    let replay = is_replayed_chat(&app.surfaced_chat, message);
+    if replay && surfaceable {
+        tracing::info!(
+            target: "agent_gossip::a2a",
+            id = %message.id,
+            author = %message.author,
+            "replayed chat message kept off the surface"
+        );
+    }
+    let surface = surfaceable && !replay;
+    let logged = handler(&app.output, surface);
+    if surface && logged {
+        app.surfaced_chat.insert(message.dedup_key());
+    }
+    logged
+}
+
+fn is_replayed_chat(
+    surfaced: &fofoca::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
+    message: &Message,
+) -> bool {
+    surfaced.contains(&message.dedup_key())
 }
 
 /// Returns whether the message should be logged (pushed to the poll buffer).
@@ -664,20 +736,24 @@ fn surface_logical(logical: &Message, surfaceable: bool, app: &mut A2aApp, ctx: 
         // Both chat tags shard (a long msg as readily as a long broadcast); task
         // legs never do — `message/send` rides RPC, status/artifact are small.
         MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            handle_broadcast(&app.output, logical, surfaceable);
+            surface_chat(logical, surfaceable, app, |out, surface| {
+                handle_broadcast(out, logical, surface)
+            });
         }
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::MSG => {
-            handle_msg(
-                &app.output,
-                MsgParams {
-                    message: logical,
-                    to,
-                    surfaceable,
-                    self_author: ctx.author,
-                },
-            );
+            surface_chat(logical, surfaceable, app, |out, surface| {
+                handle_msg(
+                    out,
+                    MsgParams {
+                        message: logical,
+                        to,
+                        surfaceable: surface,
+                        self_author: ctx.author,
+                    },
+                )
+            });
         }
         MessageKind::App {
             tag, to: Some(to), ..
@@ -905,10 +981,10 @@ async fn resend_cached_shards(
         {
             continue;
         }
-        if fofoca::ops::deliver(&msg, bytes, state, ctx.sender)
-            .await
-            .is_ok()
-        {
+        // In the background: this serves a gossip RPC inline on the event
+        // loop, and the requester's connection may be cold. A shard that does
+        // not start is asked for again on the requester's next tick.
+        if fofoca::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
             resent += 1;
         }
     }
@@ -1050,7 +1126,7 @@ mod classify_tests {
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
-    use super::{classify, wakes};
+    use super::{classify, is_empty_working_repeat, is_replayed_chat, surface_chat, wakes};
     use crate::a2a::{TaskState, wire};
     use crate::output::OutputEvent;
 
@@ -1127,29 +1203,159 @@ mod classify_tests {
         }
     }
 
-    // A worker's own `working` beats land every ~45 s; letting them ring its
-    // bell turned every beat into a poll + re-arm turn. The rows beyond the
-    // first pin the scope: only that one echo is quiet.
+    fn task_message(is_self: bool) -> OutputEvent {
+        OutputEvent::TaskMessage {
+            id: "m".to_owned(),
+            mesh: "sw".to_owned(),
+            author: "initiator".to_owned(),
+            peer: "worker".to_owned(),
+            task_id: "t".to_owned(),
+            state: Some(TaskState::Working),
+            text: "approved".to_owned(),
+            label: None,
+            is_self,
+        }
+    }
+
+    // The agent already knows every task leg it sent: the CLI returned its id.
+    // Its echo landed right after the re-arm and rang the bell for nothing,
+    // which made the Stop hook refuse the turn. The peer's legs still wake.
     #[test]
-    fn only_a_self_working_echo_does_not_wake_the_bell() {
+    fn no_self_task_echo_wakes_the_bell() {
         let to = Some(Nickname::from("initiator"));
-        let self_working = task_event(status_frame_in(TaskState::Working, to.clone()), true);
-        assert!(!wakes(&self_working), "own working beat is quiet");
-
-        let peer_working = task_event(status_frame_in(TaskState::Working, to.clone()), false);
-        assert!(wakes(&peer_working), "a peer's working status still wakes");
-
         for state in [
+            TaskState::Working,
             TaskState::InputRequired,
             TaskState::Completed,
             TaskState::Failed,
         ] {
             let own = task_event(status_frame_in(state, to.clone()), true);
-            assert!(wakes(&own), "own {state:?} transition still wakes");
+            assert!(!wakes(&own), "own {state:?} echo is quiet");
+            let peer = task_event(status_frame_in(state, to.clone()), false);
+            assert!(wakes(&peer), "a peer's {state:?} status still wakes");
         }
 
-        let own_artifact = task_event(app_frame(wire::ARTIFACT), true);
-        assert!(wakes(&own_artifact), "own artifact echo still wakes");
+        assert!(
+            !wakes(&task_event(app_frame(wire::ARTIFACT), true)),
+            "own artifact echo is quiet"
+        );
+        assert!(
+            wakes(&task_event(app_frame(wire::ARTIFACT), false)),
+            "a peer's artifact still wakes"
+        );
+        assert!(
+            !wakes(&task_message(true)),
+            "own task message echo is quiet"
+        );
+        assert!(
+            wakes(&task_message(false)),
+            "a peer's task message still wakes"
+        );
+    }
+
+    fn working_with(note: Option<&str>, metadata: Option<serde_json::Value>) -> Message {
+        let status = crate::a2a::gossip::status_update(
+            &mesh(),
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &crate::a2a::TaskId::random(),
+                state: TaskState::Working,
+                note,
+                metadata,
+            },
+        );
+        Message::new_app(
+            &mesh(),
+            &Nickname::from("author"),
+            AppFrameParams {
+                tag: AppTag::from(wire::STATUS),
+                to: Some(Nickname::from("initiator")),
+                corr: None,
+                body: crate::a2a::gossip::payload_body(&status).unwrap(),
+            },
+        )
+    }
+
+    // Only an empty `working` on a task already `working` is a repeat: the
+    // accept, a progress note, a beat and every other state still surface.
+    #[test]
+    fn only_an_empty_working_on_a_working_task_is_a_repeat() {
+        let working = Some(TaskState::Working);
+        assert!(is_empty_working_repeat(working, &working_with(None, None)));
+        assert!(
+            !is_empty_working_repeat(Some(TaskState::Submitted), &working_with(None, None)),
+            "the accept surfaces"
+        );
+        assert!(
+            !is_empty_working_repeat(working, &working_with(Some("tests pass"), None)),
+            "a progress note surfaces"
+        );
+        let beat = working_with(None, Some(crate::a2a::gossip::beat_metadata(None)));
+        assert!(
+            !is_empty_working_repeat(working, &beat),
+            "a beat keeps its own path"
+        );
+        assert!(
+            !is_empty_working_repeat(working, &status_frame_in(TaskState::InputRequired, None)),
+            "a question surfaces"
+        );
+    }
+
+    fn chat_from(pubkey: &str) -> Message {
+        let mut chat = msg_frame(None);
+        chat.pubkey = pubkey.to_owned();
+        chat
+    }
+
+    // Anti-entropy re-sends a chat line once the engine has forgotten its key.
+    // Pre-fix it surfaced again as a new visible line, up to hours late.
+    #[test]
+    fn a_chat_line_surfaces_once() {
+        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let chat = chat_from("aa");
+        surfaced.insert(chat.dedup_key());
+        assert!(is_replayed_chat(&surfaced, &chat));
+    }
+
+    // The key is the engine's `(pubkey, id)`: another author reusing the id
+    // (a signed forgery) must not hide the real line.
+    #[test]
+    fn the_same_id_from_another_author_still_surfaces() {
+        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let chat = chat_from("aa");
+        surfaced.insert(chat.dedup_key());
+        let mut forgery = chat.clone();
+        forgery.pubkey = "bb".to_owned();
+        assert!(!is_replayed_chat(&surfaced, &forgery));
+    }
+
+    // `surface_chat` records a line only once it was really printed, and keeps
+    // returning the handler's loggability for a replay: a line we refuse to
+    // log is one every peer's digest re-offers.
+    #[test]
+    fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
+        let mut app = crate::a2a::app::A2aApp::detached(crate::output::Output::silent());
+        let chat = chat_from("aa");
+
+        // A msg addressed to someone else: the handler declines, nothing recorded.
+        assert!(!surface_chat(&chat, true, &mut app, |_, _| false));
+        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+
+        // Before the join horizon: logged but not printed, nothing recorded.
+        assert!(surface_chat(&chat, false, &mut app, |_, _| true));
+        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+
+        // Printed once, then recorded.
+        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
+            assert!(surface, "a new line surfaces");
+            true
+        }));
+        assert!(is_replayed_chat(&app.surfaced_chat, &chat));
+
+        // The replay: kept off the surface, still logged.
+        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
+            assert!(!surface, "a replay does not surface");
+            true
+        }));
     }
 
     // These assertions are deliberately worded "broadcast"/"directed" rather

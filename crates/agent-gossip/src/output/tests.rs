@@ -537,6 +537,78 @@ mod snapshots {
         )
     }
 
+    /// Every peer's agent card, the shape a `meta` document holds.
+    fn four_card_meta_document() -> serde_json::Value {
+        let card = serde_json::json!({
+            "name": "peer",
+            "description": "agent-gossip peer — an AI agent reachable over the mesh's A2A gossip binding",
+            "version": "0.9.0 (1f15293 dirty:false)",
+            "capabilities": {"streaming": true, "extensions": [
+                {"uri": "https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1", "description": "gossip-wide broadcast Messages"},
+                {"uri": "https://agent-habilis.dev/a2a/ext/mesh-state/v1", "description": "a shared RFC 7386 JSON document per gossip"},
+                {"uri": "https://agent-habilis.dev/a2a/ext/mesh-a2a-rpc/v1", "description": "serves A2A over gossip"},
+                {"uri": "https://agent-habilis.dev/a2a/ext/mesh-seal/v1", "params": {"x25519": "C1MW9JGaHdWscBb7Kwa5Vo8o8zsdURZP4TdMsc6xwLNP"}}
+            ]},
+            "skills": [{"id": "chat", "name": "chat"}, {"id": "delegate", "name": "delegate"}]
+        });
+        let peers: serde_json::Map<String, serde_json::Value> = ["aa", "bb", "cc", "dd"]
+            .iter()
+            .map(|nick| {
+                (
+                    (*nick).to_owned(),
+                    serde_json::json!({"card": card, "model": "m", "harness": "h", "status": "idle"}),
+                )
+            })
+            .collect();
+        serde_json::json!({ "peers": peers })
+    }
+
+    /// A `meta` event drops the derived document: it is every peer's agent
+    /// card, ~4k tokens with four peers, and the skills read it on demand with
+    /// `meta get`. The merge and the display stay. Pre-fix every meta echo
+    /// repeated all cards, and polls after a join reached 30 KB.
+    #[test]
+    fn a_meta_event_carries_no_document() {
+        let merge = serde_json::json!({"peers": {"aa": {"status": "busy"}}});
+        let msg = Message::fixture(
+            MessageKind::State,
+            &format!(r#"{{"k":"merge","merge":{merge}}}"#),
+        );
+        let document = four_card_meta_document();
+        let line = super::super::json::format_state_json(
+            fofoca::protocol::Channel::Meta,
+            &msg,
+            &document,
+            false,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!(
+            parsed.get("document").is_none(),
+            "meta event carries the document: {line}"
+        );
+        assert_eq!(parsed["merge"], merge);
+        assert!(parsed["display"].as_str().unwrap().contains("/peers/aa"));
+    }
+
+    /// Pin: a `state` event keeps its document; the MCP tools promise it.
+    #[test]
+    fn a_state_event_keeps_its_document() {
+        let merge = serde_json::json!({"turn": "b"});
+        let msg = Message::fixture(
+            MessageKind::State,
+            &format!(r#"{{"k":"merge","merge":{merge}}}"#),
+        );
+        let document = serde_json::json!({"turn": "b"});
+        let line = super::super::json::format_state_json(
+            fofoca::protocol::Channel::State,
+            &msg,
+            &document,
+            false,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["document"], document);
+    }
+
     #[test]
     fn snap_state_change() {
         insta::assert_snapshot!(snap_state(

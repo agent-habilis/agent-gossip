@@ -497,6 +497,25 @@ mod tests {
                     long_running.iter().any(|line| is_bell(line)),
                     "{path}: expected a poll bell, found {long_running:?}"
                 );
+                // A relaunch truncates the stderr file, which erased the only
+                // trace of a daemon that died. The launch keeps the previous
+                // file as `.stderr.prev`.
+                assert!(
+                    long_running
+                        .iter()
+                        .filter(|line| is_daemon_launch(line))
+                        .all(|line| line.contains(".stderr.prev")),
+                    "{path}: the daemon launch must keep the previous stderr file: {long_running:?}"
+                );
+                // A move that fails must stop the launch: carrying on lets the
+                // `2>` below truncate the file the move was meant to keep.
+                assert!(
+                    long_running
+                        .iter()
+                        .filter(|line| is_daemon_launch(line))
+                        .all(|line| !line.contains("|| true")),
+                    "{path}: a failed stderr move must not be swallowed: {long_running:?}"
+                );
                 daemon_starters_checked += 1;
             }
         }
