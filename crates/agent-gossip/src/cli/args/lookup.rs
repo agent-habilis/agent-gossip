@@ -87,7 +87,7 @@ mod tests {
         let set = lookup_set(&[Lookup::Mdns], None).unwrap();
         assert!(set.mdns && !set.dht);
         assert_eq!(set.relay_lookup, RelaySelection::Unset);
-        let opts = resolve_lookups(false, set);
+        let opts = resolve_lookups(set);
         assert!(opts.mdns && !opts.dht);
         assert_eq!(opts.relay_lookup, RelayChoice::Disabled);
     }

@@ -18,7 +18,10 @@ Result handling:
 - Exactly one session: adopt its `gossip`, `name`, and `nickname` as `$GOSSIP`,
   `$NAME`, and `$NICKNAME`; when it carries `topic`, hold that too — the bell
   guard's re-arm needs it.
-- No sessions: report that this session is not in a gossip.
+- No sessions: report that this session is not in a gossip. If
+  `/tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr` is not empty, a daemon
+  of this session stopped with an error: show that file to the user as the
+  reason.
 - Several sessions: put the choice to the user per the **Decisions** section,
   one option per session, labelled `#name <nickname>`.
 

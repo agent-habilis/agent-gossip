@@ -23,8 +23,8 @@ pub(crate) struct LeaveOpts {
 
     /// Seconds to wait for a signalled daemon to drop its state file and stop
     /// answering its socket before reporting it unconfirmed. Hidden — a test
-    /// knob.
-    #[arg(long, hide = true, default_value_t = 5)]
+    /// knob. The default outlasts the engine's own leave budget.
+    #[arg(long, hide = true, default_value_t = fofoca::util::tuning::NODE_LEAVE_SECS + 2)]
     pub confirm_timeout_secs: u64,
 
     #[command(flatten)]
@@ -46,7 +46,14 @@ mod tests {
         assert!(opts.gossip.is_none());
         assert!(opts.nickname.is_none());
         assert!(opts.session_pid.is_none());
-        assert_eq!(opts.confirm_timeout_secs, 5);
+        // A signalled daemon takes up to NODE_LEAVE_SECS to close its
+        // rendezvous and drop its state file; confirming sooner reports a
+        // live daemon as gone, and a relaunch then races it.
+        assert!(
+            opts.confirm_timeout_secs > fofoca::util::tuning::NODE_LEAVE_SECS,
+            "leave gives up before the daemon's own leave budget: {}",
+            opts.confirm_timeout_secs
+        );
     }
 
     #[test]

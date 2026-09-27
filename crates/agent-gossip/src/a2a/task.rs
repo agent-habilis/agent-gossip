@@ -7,7 +7,7 @@
 //! advance it, a `TaskArtifactUpdate` returns the result, and the **worker's**
 //! `completed` status closes it (after the initiator's approval message). The
 //! daemon owns only the *coarse* lifecycle — state advance, the per-task idle
-//! debounce, and the ball-owner keepalive — while the skill owns the
+//! debounce, and the per-task keepalive — while the skill owns the
 //! *content*.
 //!
 //! The machine is **distributed** with no consensus: each party derives
@@ -23,11 +23,14 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use fofoca::embed::EventLoopState;
 use fofoca::embed::HandlerCtx;
-use fofoca::protocol::{Message, MessageKind, Nickname};
+use fofoca::protocol::{Message, MessageId, MessageKind, Nickname};
+use fofoca::util::bounded_fifo_set::BoundedFifoSet;
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
 use crate::a2a::app::A2aApp;
-use crate::a2a::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
+use crate::a2a::tuning::{
+    TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs, task_timeout_secs,
+};
 use crate::output;
 
 /// My part in a task: did I open it (client side), or receive the offer
@@ -48,7 +51,7 @@ impl TaskRole {
 }
 
 /// One in-flight task this node is a party to.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct TaskRecord {
     /// The other party.
     pub peer: Nickname,
@@ -63,41 +66,53 @@ pub(crate) struct TaskRecord {
     /// wire marker.
     pub review: bool,
     /// Local-clock instant of the last leg (inbound or our own, **including**
-    /// the daemon's own keepalive) — the idle-debounce reads this, never the
-    /// wire `ts` (which can skew).
+    /// the daemon's own keepalive) — the terminal GC reads this, never the wire
+    /// `ts` (which can skew).
     pub last_activity: Instant,
-    /// Local-clock instant of the last leg driven by a **skill** on either
-    /// side — every real leg through [`apply`], but **not** the daemon's own
-    /// keepalive (which never routes through [`apply`]). The keepalive gates
-    /// on this, not `last_activity`: reading the same clock the keepalive
-    /// refreshes would let it feed the timeout it is subject to, so a crashed
-    /// skill would keepalive the peer forever. See [`should_keepalive`].
+    /// Local-clock instant of our own last leg or beat. The keepalive cadence
+    /// reads this: on `last_activity` the peer's beats kept ours quiet.
+    pub last_sent: Instant,
+    /// Local-clock instant of the last leg or beat **from the counterparty**.
+    /// The idle sweep reads this, not `last_activity`: both sides beat, so on
+    /// the shared clock our own beats would keep a task alive after the peer
+    /// daemon died.
+    pub last_peer_activity: Instant,
+    /// Local-clock instant of the last leg an agent sent, on either side.
+    /// Beats never touch it (an RPC snapshot in `adopt_initiator` does), so it
+    /// measures how long both agents have left the task alone, and a forgotten
+    /// task stops being beaten.
     pub last_skill_activity: Instant,
+    /// Whether the counterparty has beaten this task at least once. A 0.8/0.9
+    /// peer beats only while it owes the next move, so until it has, its
+    /// silence cannot be read as death.
+    pub peer_beats: bool,
+    /// Ids of the peer's legs already surfaced for this task. The engine
+    /// forgets a frame id after a bounded count, and anti-entropy then serves
+    /// the same leg again, so the app remembers what it has shown. Beats are
+    /// never recorded: at one every 30 s they would evict every real id.
+    pub surfaced_legs: BoundedFifoSet<MessageId>,
     /// Last progress fraction reported, replayed on keepalives.
     pub last_fraction: Option<(u64, u64)>,
-    /// Which role currently owes the next move — that party's daemon emits
-    /// the keepalive, and that party's silence is what eventually times out.
+    /// Which role currently owes the next move.
     pub ball: TaskRole,
 }
 
 impl TaskRecord {
-    /// Am I the ball-owner (so my daemon keepalives this task)?
-    fn i_own_ball(&self) -> bool {
-        self.ball == self.role
+    /// Both parties beat every live task, whoever holds the ball: a human
+    /// deciding, a reviewer reading, and a long build all look like silence,
+    /// and each lost tasks at ~4 min. A beat proves the daemon is up, and the
+    /// engine's orphan watch quits the daemon when its agent session dies. The
+    /// silence cap covers the one case that watch cannot see: a live session
+    /// whose agent forgot the task.
+    fn should_keepalive(&self, now: Instant, cadence: Duration) -> bool {
+        !self.state.is_terminal()
+            && now.duration_since(self.last_sent) >= cadence
+            && !self.skill_silence_exceeded(now)
     }
 
-    /// Should my daemon emit a keepalive for this task right now? True only
-    /// when I own the ball on a live task, I have been quiet past the
-    /// keepalive `cadence`, **and** a skill has driven a real leg within
-    /// `max_silence` — the last gate is what stops a crashed skill's daemon
-    /// from keepaliving the peer forever (the keepalive itself never
-    /// refreshes `last_skill_activity`, so once the skill stops, this goes
-    /// false and the peer's debounce reaps the task).
-    fn should_keepalive(&self, now: Instant, cadence: Duration, max_silence: Duration) -> bool {
-        !self.state.is_terminal()
-            && self.i_own_ball()
-            && now.duration_since(self.last_activity) >= cadence
-            && now.duration_since(self.last_skill_activity) < max_silence
+    fn skill_silence_exceeded(&self, now: Instant) -> bool {
+        now.duration_since(self.last_skill_activity)
+            > Duration::from_secs(task_skill_silence_max_secs())
     }
 }
 
@@ -180,6 +195,9 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         wire::ARTIFACT => (LegKind::Artifact, None),
         _ => return,
     };
+    if kind == LegKind::Beat && !mine && is_stale(frame) {
+        return;
+    }
     let peer = if mine { to } else { &frame.author };
     apply(
         tasks,
@@ -192,6 +210,50 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         },
         now,
     );
+}
+
+/// A beat older than one idle timeout proves nothing about the peer now. The
+/// engine dedups by a bounded count, not by age, so a relay could re-inject an
+/// old beat after the peer died. The bound is coarse on purpose, to tolerate
+/// clock skew between hosts.
+fn is_stale(frame: &Message) -> bool {
+    let age_secs = fofoca::util::clock::unix_secs().saturating_sub(frame.timestamp);
+    u64::try_from(age_secs).is_ok_and(|age| age > task_timeout_secs())
+}
+
+/// Whether an inbound leg was already shown, and must stay off the surface: its
+/// task closed (live record terminal, or reaped and remembered in `closed`), or
+/// this leg id was surfaced before. An unknown task still surfaces: the
+/// initiator's record comes from the RPC response, and the worker's first leg
+/// can arrive ahead of it.
+pub(crate) fn is_replay(
+    tasks: &HashMap<TaskId, TaskRecord>,
+    closed: &BoundedFifoSet<TaskId>,
+    task_id: &TaskId,
+    leg_id: &MessageId,
+) -> bool {
+    if closed.contains(task_id) {
+        return true;
+    }
+    tasks
+        .get(task_id)
+        .is_some_and(|rec| rec.state.is_terminal() || rec.surfaced_legs.contains(leg_id))
+}
+
+/// Remember a leg that was surfaced, so a later copy of it is a replay. A beat
+/// is skipped: at one every 30 s, beats would evict every real leg id.
+pub(crate) fn note_surfaced(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    task_id: &TaskId,
+    frame: &Message,
+) {
+    let is_beat = gossip::status_payload(frame).is_ok_and(|payload| gossip::is_beat(&payload));
+    if is_beat {
+        return;
+    }
+    if let Some(rec) = tasks.get_mut(task_id) {
+        rec.surfaced_legs.insert(frame.id.clone());
+    }
 }
 
 /// Whether the registry has room for one more task offered by a peer.
@@ -262,7 +324,11 @@ pub(crate) fn adopt_initiator(
                 state: task_state,
                 review: false,
                 last_activity: now,
+                last_sent: now,
+                last_peer_activity: now,
                 last_skill_activity: now,
+                peer_beats: false,
+                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -295,6 +361,8 @@ pub(crate) fn adopt_initiator(
                 return;
             }
             rec.last_activity = now;
+            rec.last_peer_activity = now;
+            rec.last_skill_activity = now;
             if task_state.is_terminal() {
                 rec.state = task_state;
                 rec.review = false;
@@ -329,7 +397,11 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 state: TaskState::Submitted,
                 review: false,
                 last_activity: now,
+                last_sent: now,
+                last_peer_activity: now,
                 last_skill_activity: now,
+                peer_beats: false,
+                surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 ball: TaskRole::Receiver,
             });
@@ -357,10 +429,16 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         rec.last_fraction = Some(fraction);
     }
     rec.last_activity = now;
-    // A real leg (skill-sent or peer-received) proves a skill is driving this
-    // task; the daemon's own keepalive never routes through `apply`, so it
-    // cannot refresh this clock and thus cannot cover for a dead skill forever.
-    rec.last_skill_activity = now;
+    if leg.mine {
+        rec.last_sent = now;
+    } else {
+        rec.last_peer_activity = now;
+    }
+    if leg.kind == LegKind::Beat {
+        rec.peer_beats |= !leg.mine;
+    } else {
+        rec.last_skill_activity = now;
+    }
 }
 
 /// The per-leg coarse transition (state + review + ball). Illegal /
@@ -476,7 +554,7 @@ pub(crate) async fn tick_task_sweep(
 ) {
     let now = Instant::now();
     let timeout = Duration::from_secs(task_timeout_secs());
-    let (expired, reaped) = sweep_registry(&mut app.tasks, now, timeout);
+    let (expired, reaped) = sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
 
     for (task_id, peer) in expired {
         out.task_timeout(&task_id, output::TaskGoneReason::Timeout);
@@ -530,12 +608,15 @@ pub(crate) async fn tick_task_sweep(
 /// cancel.
 fn sweep_registry(
     tasks: &mut HashMap<TaskId, TaskRecord>,
+    closed: &mut BoundedFifoSet<TaskId>,
     now: Instant,
     timeout: Duration,
 ) -> (Vec<(TaskId, Nickname)>, Vec<TaskId>) {
     let mut expired = Vec::new();
     for (task_id, rec) in tasks.iter_mut() {
-        if !rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout {
+        let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
+        let peer_gone = rec.peer_beats || rec.skill_silence_exceeded(now);
+        if !rec.state.is_terminal() && peer_silent && peer_gone {
             rec.state = TaskState::Canceled;
             rec.last_activity = now;
             expired.push((task_id.clone(), rec.peer.clone()));
@@ -555,6 +636,9 @@ fn sweep_registry(
     tasks.retain(|_, rec| {
         !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
     });
+    for task_id in &reaped {
+        closed.insert(task_id.clone());
+    }
     (expired, reaped)
 }
 
@@ -586,13 +670,9 @@ pub(crate) fn fail_tasks_for_departed_peer(
     }
 }
 
-/// Emit a beat (keepalive) status for every live task whose ball we hold,
-/// that we've gone quiet on past the keepalive cadence, and whose **skill**
-/// has driven a leg recently — so a silent owner (deciding, executing,
-/// reviewing) does not wrongly time out, while a *crashed* skill's task is
-/// no longer covered and the peer's debounce reaps it. The task analogue of
-/// the engine's own lifecycle keepalive tick. See
-/// [`TaskRecord::should_keepalive`].
+/// Emit a beat (keepalive) status for every live task we have gone quiet on
+/// past the keepalive cadence. The task analogue of the engine's own lifecycle
+/// keepalive tick. See [`TaskRecord::should_keepalive`].
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
     app: &mut A2aApp,
@@ -603,11 +683,10 @@ pub(crate) async fn tick_task_keepalive(
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
-    let max_silence = Duration::from_secs(task_keepalive_max_secs());
     let due: Vec<KeepaliveDue> = app
         .tasks
         .iter()
-        .filter(|(_, rec)| rec.should_keepalive(now, cadence, max_silence))
+        .filter(|(_, rec)| rec.should_keepalive(now, cadence))
         .map(|(task_id, rec)| {
             (
                 task_id.clone(),
@@ -628,7 +707,7 @@ pub(crate) async fn tick_task_keepalive(
                 metadata: Some(gossip::beat_metadata(fraction)),
             },
         );
-        broadcast_status(
+        let sent = broadcast_status(
             state,
             ctx,
             BroadcastStatusParams {
@@ -638,8 +717,10 @@ pub(crate) async fn tick_task_keepalive(
             },
         )
         .await;
-        if let Some(rec) = app.tasks.get_mut(&task_id) {
-            rec.last_activity = Instant::now();
+        if sent && let Some(rec) = app.tasks.get_mut(&task_id) {
+            let sent_at = Instant::now();
+            rec.last_activity = sent_at;
+            rec.last_sent = sent_at;
         }
     }
 }
@@ -657,35 +738,28 @@ struct BroadcastStatusParams<'a> {
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
 /// keepalive beat and the timeout cancel). A serialize error is swallowed
 /// like any other plumbing broadcast — the payloads are small literals.
-///
-/// **Do not fold this into `send::broadcast_directed_frame`.** It looks like a
-/// duplicate of it and it is not: that path self-ingests through
-/// `send::ingest_own_leg`, and a beat routed through `apply` would refresh
-/// `last_skill_activity` (see [`TaskRecord::should_keepalive`]) — the one clock
-/// that stops a *crashed* skill's daemon from keepaliving its tasks forever.
-/// Unify the two and every abandoned task becomes immortal: beaten indefinitely,
-/// never reaped. The keepalive hand-sets `last_activity` above instead, which is
-/// exactly the point. `monitor_contract`'s
-/// `test_task_times_out_when_skill_goes_silent` is what catches this.
+/// Returns whether the send started, so a beat that could not start is not
+/// counted as sent and retries on the next tick instead of a full cadence
+/// later. A send that starts and then fails costs one cadence.
 async fn broadcast_status(
     state: &EventLoopState,
     ctx: &HandlerCtx<'_>,
     params: BroadcastStatusParams<'_>,
-) {
+) -> bool {
     let BroadcastStatusParams {
         peer,
         task_id: _task_id,
         update,
     } = params;
     let Ok(body) = gossip::payload_body(update) else {
-        return;
+        return false;
     };
     // Directed status frames are sealed to the peer like every other directed
     // frame (the receive path always unseals a directed body). If the peer's key
     // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
     // a later one retries.
     let Ok(body) = crate::a2a::send::seal_directed(state, peer, &body) else {
-        return;
+        return false;
     };
     let kind = MessageKind::App {
         tag: fofoca::protocol::AppTag::from(wire::STATUS),
@@ -693,14 +767,18 @@ async fn broadcast_status(
         corr: None,
     };
     let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(state.identity());
-    if let Ok(bytes) = msg.serialize() {
-        // Through `deliver`, not `sender.broadcast`: the frame is directed, so
-        // it takes unicast to `peer` like every other directed frame. Straight
-        // onto gossip it would flood `author`/`to` in the clear on a timer, and
-        // every bystander would run `lifecycle::observe` on a beat meant for
-        // one peer — waking a parked bell off someone else's task.
-        let _ = fofoca::ops::deliver(&msg, Bytes::from(bytes), state, ctx.sender).await;
-    }
+    let Ok(bytes) = msg.serialize() else {
+        return false;
+    };
+    // Through `deliver`, not `sender.broadcast`: the frame is directed, so
+    // it takes unicast to `peer` like every other directed frame. Straight
+    // onto gossip it would flood `author`/`to` in the clear on a timer, and
+    // every bystander would run `lifecycle::observe` on a beat meant for
+    // one peer — waking a parked bell off someone else's task. In the
+    // background because this runs from `on_tick`, inline on the event loop:
+    // a cold `deliver` dials there and stops the whole node for the dial and
+    // path-select budgets, once per due task.
+    fofoca::ops::deliver_in_background(&msg, Bytes::from(bytes), state, ctx.sender).await
 }
 
 #[cfg(test)]
@@ -717,41 +795,260 @@ mod tests {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
     }
 
-    /// The keepalive gate: I keepalive a task I own the ball on once I've been
-    /// quiet past the cadence — but ONLY while a skill has driven a leg within
-    /// `max_silence`. Once the skill goes silent past it (a crash), the gate
-    /// closes so the daemon stops covering and the peer's debounce reaps it.
+    /// Every live task is beaten once quiet past the cadence — on either side,
+    /// whoever holds the ball, however long the skill has been silent. Pre-fix
+    /// only the ball-owner beat, and only within 120 s of its skill's last leg,
+    /// so an accept question, a review, or a long build lost the task.
     #[test]
-    fn keepalive_gated_on_skill_liveness() {
-        let cadence = Duration::from_mins(1);
-        let max_silence = Duration::from_mins(15);
+    fn keepalive_covers_every_live_task_past_the_cadence() {
+        let cadence = Duration::from_secs(30);
         let now = Instant::now();
+        let quiet = now.checked_sub(2 * cadence).unwrap();
 
-        // A task I own the ball on (offer received ⇒ I'm the Receiver, ball mine).
+        // I initiated it and the worker holds the ball.
         let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, false), now);
+        apply(&mut tasks, &leg(LegKind::Offer, true), quiet);
         let rec = tasks.get_mut(&tid()).unwrap();
-        assert!(rec.i_own_ball());
+        assert_eq!(rec.ball, TaskRole::Receiver);
+        assert!(
+            rec.should_keepalive(now, cadence),
+            "the side without the ball beats too"
+        );
 
-        // Quiet past the cadence and the skill is fresh ⇒ keepalive.
-        rec.last_activity = now.checked_sub(2 * cadence).unwrap();
-        rec.last_skill_activity = now.checked_sub(cadence).unwrap();
-        assert!(rec.should_keepalive(now, cadence, max_silence));
+        // Silent for an hour: still beaten.
+        let hour_ago = now.checked_sub(Duration::from_hours(1)).unwrap();
+        rec.last_sent = hour_ago;
+        assert!(
+            rec.should_keepalive(now, cadence),
+            "skill silence does not stop the beat"
+        );
 
-        // Still within the cadence ⇒ not due yet.
-        rec.last_activity = now;
-        assert!(!rec.should_keepalive(now, cadence, max_silence));
+        // Within the cadence ⇒ not due yet.
+        rec.last_sent = now;
+        assert!(!rec.should_keepalive(now, cadence));
 
-        // Due, but the skill has been silent past `max_silence` (a crash) ⇒
-        // the gate closes: the daemon must NOT keep covering the dead task.
-        rec.last_activity = now.checked_sub(2 * cadence).unwrap();
-        rec.last_skill_activity = now.checked_sub(2 * max_silence).unwrap();
-        assert!(!rec.should_keepalive(now, cadence, max_silence));
-
-        // A terminal task is never keepalived.
-        rec.last_skill_activity = now;
+        // A terminal task is never beaten.
+        rec.last_sent = quiet;
         rec.state = TaskState::Canceled;
-        assert!(!rec.should_keepalive(now, cadence, max_silence));
+        assert!(!rec.should_keepalive(now, cadence));
+    }
+
+    /// The peer's beat must not stand in for ours. The cadence once read the
+    /// clock that inbound legs refresh too, so whichever side beat first kept
+    /// the other side quiet, and that side's peer then reaped the task.
+    #[test]
+    fn a_peer_beat_does_not_suppress_our_beat() {
+        let cadence = Duration::from_secs(30);
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(
+            &mut tasks,
+            &leg(LegKind::Offer, true),
+            now.checked_sub(2 * cadence).unwrap(),
+        );
+        apply(&mut tasks, &leg(LegKind::Beat, false), now);
+        assert!(tasks[&tid()].should_keepalive(now, cadence));
+    }
+
+    /// A task no agent has touched for the silence cap stops being beaten, so
+    /// the peer reaps it. Without the cap, a task forgotten after a `/clear`
+    /// was beaten for as long as both daemons ran, and 64 of them filled the
+    /// per-peer quota.
+    #[test]
+    fn a_forgotten_task_stops_beating_after_the_silence_cap() {
+        let cadence = Duration::from_secs(30);
+        let now = Instant::now();
+        let day_ago = now.checked_sub(Duration::from_hours(25)).unwrap();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), day_ago);
+        // Only the daemons have spoken since: the peer's beat, and ours.
+        apply(&mut tasks, &leg(LegKind::Beat, false), now);
+        tasks.get_mut(&tid()).unwrap().last_sent = day_ago;
+        assert!(!tasks[&tid()].should_keepalive(now, cadence));
+    }
+
+    /// A 0.8/0.9 peer beats only while it owes the next move, so its silence
+    /// says nothing about whether it lives. Reaping it after one idle timeout
+    /// cancelled a working task 2 min after accept, sooner than before the
+    /// heartbeat.
+    #[test]
+    fn a_peer_that_never_beat_is_not_reaped_for_silence() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let accepted = now.checked_sub(timeout * 2).unwrap();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), accepted);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), true),
+            accepted,
+        );
+
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
+        assert!(expired.is_empty(), "an old peer's silence is not death");
+    }
+
+    /// The silence cap still ends a task with a peer that never beat.
+    #[test]
+    fn a_peer_that_never_beat_is_reaped_after_the_silence_cap() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let day_ago = now.checked_sub(Duration::from_hours(25)).unwrap();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
+
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
+        assert_eq!(expired.len(), 1);
+    }
+
+    /// A beat is only evidence while it is fresh. The engine dedups by a
+    /// bounded count, not by age, so a relay that re-injects an old beat after
+    /// the peer died must not keep the task alive.
+    #[test]
+    fn a_stale_beat_does_not_refresh_the_peer_clock() {
+        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+
+        let mesh = MeshId::from("test");
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let peer_clock = tasks[&tid()].last_peer_activity;
+
+        let payload = crate::a2a::gossip::status_update(
+            &mesh,
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &tid(),
+                state: TaskState::Working,
+                note: None,
+                metadata: Some(crate::a2a::gossip::beat_metadata(None)),
+            },
+        );
+        let mut beat = Message::new_app(
+            &mesh,
+            &Nickname::from("calm-otter"),
+            AppFrameParams {
+                tag: AppTag::from(crate::a2a::wire::STATUS),
+                to: Some(Nickname::from("worker-bot")),
+                corr: None,
+                body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
+            },
+        );
+        beat.timestamp -= 3600;
+
+        let later = now.checked_add(Duration::from_mins(1)).unwrap();
+        super::ingest(
+            &mut tasks,
+            super::IngestLegParams {
+                frame: &beat,
+                task_id: &tid(),
+                mine: false,
+                now: later,
+            },
+        );
+        assert_eq!(tasks[&tid()].last_peer_activity, peer_clock);
+    }
+
+    fn closed() -> fofoca::util::bounded_fifo_set::BoundedFifoSet<TaskId> {
+        fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8)
+    }
+
+    /// An inbound status frame for `tid()`; a beat when `beat` is true.
+    fn status_leg(beat: bool) -> fofoca::protocol::Message {
+        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+
+        let mesh = MeshId::from("test");
+        let payload = crate::a2a::gossip::status_update(
+            &mesh,
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &tid(),
+                state: TaskState::Working,
+                note: None,
+                metadata: beat.then(|| crate::a2a::gossip::beat_metadata(None)),
+            },
+        );
+        Message::new_app(
+            &mesh,
+            &Nickname::from("calm-otter"),
+            AppFrameParams {
+                tag: AppTag::from(crate::a2a::wire::STATUS),
+                to: Some(Nickname::from("worker-bot")),
+                corr: None,
+                body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
+            },
+        )
+    }
+
+    /// A leg on a task that already closed is a replay: anti-entropy served an
+    /// old frame after the engine forgot its id. Pre-fix it surfaced again,
+    /// so agents saw `completed` twice and stale `working` text after it.
+    #[test]
+    fn a_leg_on_a_closed_task_is_a_replay() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        tasks.get_mut(&tid()).unwrap().state = TaskState::Completed;
+        let late = status_leg(false);
+        assert!(super::is_replay(&tasks, &closed(), &tid(), &late.id));
+    }
+
+    /// The record goes 2 min after close, and the replays in the field came
+    /// 45 min to 4 h late, so the sweep remembers what it reaped.
+    #[test]
+    fn a_leg_on_a_reaped_task_is_a_replay() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let rec = tasks.get_mut(&tid()).unwrap();
+        rec.state = TaskState::Completed;
+        rec.last_activity = now.checked_sub(timeout * 2).unwrap();
+
+        let mut reaped_ids = closed();
+        let (_, reaped) = super::sweep_registry(&mut tasks, &mut reaped_ids, now, timeout);
+        assert_eq!(reaped, vec![tid()]);
+        assert!(tasks.is_empty());
+        let late = status_leg(false);
+        assert!(super::is_replay(&tasks, &reaped_ids, &tid(), &late.id));
+    }
+
+    #[test]
+    fn the_same_leg_surfaces_once() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let working = status_leg(false);
+        super::note_surfaced(&mut tasks, &tid(), &working);
+        assert!(super::is_replay(&tasks, &closed(), &tid(), &working.id));
+    }
+
+    /// A peer beats every 30 s with a fresh id. Recorded, the beats would push
+    /// every real id out of the bounded set in about 32 min, well inside the
+    /// replay window.
+    #[test]
+    fn beats_do_not_evict_surfaced_legs() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let real = status_leg(false);
+        super::note_surfaced(&mut tasks, &tid(), &real);
+        for _ in 0..100 {
+            super::note_surfaced(&mut tasks, &tid(), &status_leg(true));
+        }
+        assert!(super::is_replay(&tasks, &closed(), &tid(), &real.id));
+    }
+
+    /// Pin: a new leg on a live task surfaces, and so does a leg for a task we
+    /// do not know yet (the worker's first leg can beat the RPC response).
+    #[test]
+    fn a_new_leg_and_an_unknown_task_surface() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        super::note_surfaced(&mut tasks, &tid(), &status_leg(false));
+        let fresh = status_leg(false);
+        assert!(!super::is_replay(&tasks, &closed(), &tid(), &fresh.id));
+        let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
+        assert!(!super::is_replay(&tasks, &closed(), &unknown, &fresh.id));
     }
 
     fn leg(kind: LegKind, mine: bool) -> LegInfo<'static> {
@@ -770,9 +1067,8 @@ mod tests {
     /// `advance` derived the sender from our own role, so a bystander's status
     /// frame was applied *as the counterparty's*: `completed` froze the record
     /// (dropping the real worker's artifact), `artifact` parked it in review with
-    /// the bystander's text, and a `Beat` refreshed `last_skill_activity` — the
-    /// one clock that must stay unreachable from plumbing, or an abandoned task
-    /// never gets reaped.
+    /// the bystander's text, and a `Beat` refreshed the clock the reaper reads,
+    /// so any mesh member could keep an abandoned task alive.
     #[test]
     fn a_leg_from_a_non_party_is_dropped() {
         let now = Instant::now();
@@ -796,7 +1092,7 @@ mod tests {
             now,
         );
         assert_eq!(tasks[&tid()].state, TaskState::Working);
-        let skill_clock = tasks[&tid()].last_skill_activity;
+        let peer_clock = tasks[&tid()].last_peer_activity;
 
         apply(
             &mut tasks,
@@ -831,9 +1127,9 @@ mod tests {
         let later = now.checked_add(Duration::from_mins(30)).unwrap();
         apply(&mut tasks, &from_outsider(LegKind::Beat), later);
         assert_eq!(
-            tasks[&tid()].last_skill_activity,
-            skill_clock,
-            "a non-party's beat cannot refresh the skill-liveness clock"
+            tasks[&tid()].last_peer_activity,
+            peer_clock,
+            "a non-party's beat cannot refresh the reaper's clock"
         );
 
         // The real counterparty still drives it.
@@ -913,11 +1209,12 @@ mod tests {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
-        // Idle well past the debounce.
-        tasks.get_mut(&tid()).unwrap().last_activity =
-            now.checked_sub(timeout * 2).expect("test clock");
+        // A peer that beats, idle well past the debounce.
+        let rec = tasks.get_mut(&tid()).unwrap();
+        rec.peer_beats = true;
+        rec.last_peer_activity = now.checked_sub(timeout * 2).expect("test clock");
 
-        let (expired, reaped) = super::sweep_registry(&mut tasks, now, timeout);
+        let (expired, reaped) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
 
         assert_eq!(expired.len(), 1, "the idle task is cancelled");
         assert!(reaped.is_empty(), "and is not reaped in the same pass");
@@ -929,13 +1226,46 @@ mod tests {
 
         // It reaps once it has actually been terminal for the window.
         let later = now.checked_add(timeout * 2).expect("test clock");
-        let (still_live, now_reaped) = super::sweep_registry(&mut tasks, later, timeout);
+        let (still_live, now_reaped) =
+            super::sweep_registry(&mut tasks, &mut closed(), later, timeout);
         assert!(
             still_live.is_empty(),
             "a terminal record is not re-cancelled"
         );
         assert_eq!(now_reaped, vec![tid()]);
         assert!(tasks.is_empty(), "and the registry stays bounded");
+    }
+
+    /// The reaper reads the peer's clock, so our own beats cannot hold a task
+    /// whose counterparty went silent. Both sides beat since the task
+    /// heartbeat, and on the shared `last_activity` a dead worker's task stayed
+    /// live for as long as the initiator's daemon kept beating it.
+    #[test]
+    fn own_beats_do_not_hold_off_the_reaper() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let long_ago = now.checked_sub(timeout * 2).expect("test clock");
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), long_ago);
+        // Our daemon beat a moment ago; the worker, which beats, has said
+        // nothing since.
+        let rec = tasks.get_mut(&tid()).unwrap();
+        rec.last_activity = now;
+        rec.peer_beats = true;
+
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
+        assert_eq!(
+            expired.len(),
+            1,
+            "a silent peer times out despite our beats"
+        );
+
+        // A beat from the peer keeps it live.
+        let mut beaten = HashMap::new();
+        apply(&mut beaten, &leg(LegKind::Offer, true), long_ago);
+        apply(&mut beaten, &leg(LegKind::Beat, false), now);
+        let (still_live, _) = super::sweep_registry(&mut beaten, &mut closed(), now, timeout);
+        assert!(still_live.is_empty(), "the peer's beat keeps the task live");
     }
 
     /// An RPC `Task` snapshot is adopted only from the task's own worker.
@@ -981,6 +1311,11 @@ mod tests {
             tasks[&tid()].last_activity,
             before,
             "nor hold it off the reaper by refreshing its activity clock"
+        );
+        assert_eq!(
+            tasks[&tid()].last_peer_activity,
+            before,
+            "nor refresh the reaper's own clock"
         );
 
         // The real worker's snapshot is still adopted.
@@ -1163,7 +1498,7 @@ mod tests {
     /// firing `task_timeout` and broadcasting a `canceled` for finished work. The
     /// idle clock it reaped against sat at the last leg that *did* reach `apply`
     /// (the artifact); with no artifact, the keepalive covered the task until
-    /// `TASK_KEEPALIVE_MAX_SECS` ran out and the timeout ran from there.
+    /// its former 120 s cap on skill silence ran out and the timeout ran from there.
     ///
     /// This pins `ingest`, **not** its callers: it calls `ingest` directly. The
     /// caller contract — `broadcast_directed_frame` passing the plaintext twin it
@@ -1241,8 +1576,9 @@ mod tests {
         // This is `tick_task_sweep`'s expiry predicate, verbatim.
         let timeout = Duration::from_secs(crate::a2a::task::task_timeout_secs());
         let rec = tasks.get_mut(&tid()).expect("the record is live");
-        rec.last_activity = now.checked_sub(10 * timeout).expect("in range");
-        let expired = !rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout;
+        rec.last_peer_activity = now.checked_sub(10 * timeout).expect("in range");
+        let expired =
+            !rec.state.is_terminal() && now.duration_since(rec.last_peer_activity) > timeout;
         assert!(
             !expired,
             "a completed task is never swept, so it never emits a spurious task_timeout"

@@ -2,6 +2,7 @@
 name: gossip-join
 description: Join an existing gossip.
 when_to_use: The user invokes the gossip-join command or asks to join a gossip by id.
+<!-- include path="../shared/bell-hook.yaml" -->
 ---
 
 # gossip-join
@@ -19,7 +20,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-gossip join \"$TARGET\"$PASSWORD" noun="line" bell_prefix="" -->
+<!-- include path="../shared/daemon-session.md" launch="agent-gossip join \"$TARGET\"$PASSWORD" noun="line" bell_settle="" -->
 
 <!-- include path="../shared/meta.md" -->
 

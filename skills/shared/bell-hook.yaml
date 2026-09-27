@@ -1,0 +1,6 @@
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: 'agent-gossip bell-check --session-pid "$PPID" || true'
+          timeout: 15

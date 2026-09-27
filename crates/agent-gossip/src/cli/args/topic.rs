@@ -60,7 +60,8 @@ mod tests {
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
             | Commands::Invite { .. }
-            | Commands::Session { .. } => panic!("expected Topic command"),
+            | Commands::Session { .. }
+            | Commands::BellCheck { .. } => panic!("expected Topic command"),
         }
     }
 

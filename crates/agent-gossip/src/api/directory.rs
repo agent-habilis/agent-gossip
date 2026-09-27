@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use fofoca::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
 use fofoca::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
-use fofoca::protocol::{LookupSet, MeshName};
+use fofoca::protocol::{LookupOpts, LookupSet, MeshName};
 use fofoca::protocol::{MeshId, Nickname};
 use fofoca::runtime::CoHostPolicy;
 use fofoca::runtime::tuning::directory_expiry_secs;
@@ -114,7 +114,7 @@ impl Directory {
         // Directories are inherently networked, so resolve as all-on:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
-        let resolved = resolve_lookups(
+        let resolved = resolve_lookups_or_public(
             !fofoca::runtime::tuning::directory_private_for_test(),
             lookups,
         );
@@ -240,5 +240,64 @@ impl Drop for Directory {
         }
         // The directory `MeshSession` (if not already taken by `close`)
         // drops here, winding down its own loop.
+    }
+}
+
+/// fofoca's `resolve_lookups` with the old `public` default: a networked
+/// surface (a directory, a bridge) that names no lookup gets the all-on public
+/// preset. fofoca #5 moved that choice out to its callers. The lookups are
+/// baked into the gossip id, so this must resolve exactly as before, or peers
+/// on an older version land in a different directory.
+pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> LookupOpts {
+    // Mirrors fofoca's private `LookupSet::any`.
+    let names_none = !lookups.mdns && !lookups.dht && !lookups.relay_lookup.is_set();
+    if public && names_none {
+        LookupOpts::public_preset()
+    } else {
+        resolve_lookups(lookups)
+    }
+}
+
+#[cfg(test)]
+mod lookup_tests {
+    use fofoca::ops::directory::directory_mesh;
+    use fofoca::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
+
+    use super::resolve_lookups_or_public;
+
+    fn directory_topic(public: bool, lookups: LookupSet) -> String {
+        let name = MeshName::new(DEFAULT_DIRECTORY).unwrap();
+        format!(
+            "{:?}",
+            directory_mesh(&name, resolve_lookups_or_public(public, lookups)).topic_id()
+        )
+    }
+
+    /// The directory's gossip id may not move when the fofoca pin moves: the
+    /// values were captured on fofoca d9434ee, before its `resolve_lookups`
+    /// lost the `public` argument. A change here strands every peer on an
+    /// older version in a different directory. Create, join and topic need no
+    /// such pin: they never passed `public`, so they resolve as before by
+    /// construction.
+    #[test]
+    fn directory_ids_survive_the_lookup_api_change() {
+        assert_eq!(
+            directory_topic(true, LookupSet::default()),
+            "TopicId(78f11ae0bfaed76d7afd27a0dc1ce8d84ff3a25f6662376ca9075656552adf4a)"
+        );
+        assert_eq!(
+            directory_topic(
+                true,
+                LookupSet {
+                    mdns: true,
+                    ..LookupSet::default()
+                }
+            ),
+            "TopicId(219939de7b2233e62f9820bb7a34f352a060cf72767393e14483fb4424296351)"
+        );
+        assert_eq!(
+            directory_topic(false, LookupSet::default()),
+            "TopicId(932e1377041f2796b0be49bc90e152abc42eef835d21ecd933a3a0cf0ac69897)"
+        );
     }
 }

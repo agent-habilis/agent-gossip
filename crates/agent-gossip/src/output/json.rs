@@ -186,8 +186,8 @@ struct TaskProgressLine<'a> {
 
 /// A `{"event":"state",...}` line for a shared-state change. Its own top-level
 /// event (not the `message` family) so skills branch on `event`. Carries the
-/// merge delta and the freshly-derived document; field order is part of the
-/// wire format.
+/// merge delta and, on the `state` channel, the freshly-derived document; field
+/// order is part of the wire format.
 #[derive(Serialize)]
 struct StateLine<'a> {
     event: &'static str,
@@ -200,7 +200,8 @@ struct StateLine<'a> {
     pubkey: Option<&'a str>,
     ts: i64,
     merge: serde_json::Value,
-    document: &'a serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    document: Option<&'a serde_json::Value>,
     display: String,
     #[serde(rename = "self")]
     is_self: bool,
@@ -680,7 +681,11 @@ pub(super) fn format_state_json(
             pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
             ts: event.timestamp,
             merge: merge.unwrap_or(serde_json::Value::Null),
-            document,
+            // The meta document is every peer's agent card, ~4k tokens with
+            // four peers, repeated on each change; readers take it on demand
+            // with `meta get`. Only this JSON form drops it: the typed
+            // `OutputEvent::StateChanged` keeps it for in-process readers.
+            document: (channel != fofoca::protocol::Channel::Meta).then_some(document),
             display: state_display(event.author.as_str(), is_self, &what),
             is_self,
         })

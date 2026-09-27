@@ -128,8 +128,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 which is why there is no worker-side `waiting`: your todo opens on accept.
 `question` and `result` are the two states where **the ball is on you**, and
 their mirror images on the worker are `asked` and `sent`. Those four are the
-ones with an eviction clock running against whoever holds the ball, so they are
-worth a distinct word rather than a shared "in progress".
+states where a task waits on one side, so they are worth a distinct word
+rather than a shared "in progress".
 
 `done` is not decorative. A clean close and a drop both land on the same
 terminal widget status, so without it a finished row keeps whatever badge it
@@ -175,16 +175,17 @@ Opening a todo — one `TaskCreate` call **per task**. It creates exactly one ta
 takes no `tasks`/`todos` array, and is not the Agent tool (no
 `prompt`/`subagent_type`); three tasks means three calls.
 
-- `subject` — `💬 <badge> · <task label> · <counterparty> · <task id>`, where the
+- `subject` — `💬 <badge> · <task label> · <counterparty> · <short id>`, where the
   `<>` around the nickname are literal characters kept in the rendered text — a
   nickname is always written `<nick>` (e.g.
-  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883-…`); the other three
-  slots are filled bare. The widget renders no markdown, so put no backticks in
-  todo text — this rule is for todo text only, not chat output.
-- `description` — the task id, then the brief; on a close as `dropped`, the
-  reason goes here too. Nothing in `description` is rendered in the row, so it
-  is where anything that would otherwise stretch the subject belongs.
-- `activeForm` — the subject without the `💬` and without the task id.
+  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883`); the other three
+  slots are filled bare. `<short id>` is the first 8 characters of the task
+  id. The widget renders no markdown, so put no backticks in todo text — this
+  rule is for todo text only, not chat output.
+- `description` — the full task id, then the brief; on a close as `dropped`,
+  the reason goes here too. Nothing in `description` is rendered in the row, so
+  it is where anything that would otherwise stretch the subject belongs.
+- `activeForm` — the subject without the `💬` and without the short id.
 
 Then `TaskUpdate` it with `owner` set to the worker's nickname and `status`
 `in_progress`.
@@ -206,7 +207,7 @@ into the `subject` (and `activeForm`) on every transition:
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
 The badge is the only part of the subject that changes; the label, the
-counterparty and the task id are written once at `TaskCreate` and never
+counterparty and the short id are written once at `TaskCreate` and never
 rewritten.
 
 **A badge is exactly one word, and the subject is exactly four fields.** Never
@@ -216,11 +217,13 @@ out from under the eye on the one row that most wants reading. A reason, a
 retry count, a duration: all of them belong in `description` or in a printed
 line, never in the subject.
 
-Finding the row for an incoming `task_id`: `TaskList`, then match the id in the
-subject. The id lives in the `subject` because that is the only place it survives
-— `TaskList` returns `id`, `subject`, `status`, `owner`, and `blockedBy`, but not
-`description` — so an id kept anywhere tidier cannot be found again after a gap
-marker, a reattach, or a compaction. Ignore `metadata`: no read path returns it.
+Finding the row for an incoming `task_id`: `TaskList`, then match its short id
+against the last field of each subject. If more than one row matches, `TaskGet`
+them in turn until the full id in `description` matches. The short id lives in
+the `subject` because that is the only place it survives — `TaskList` returns
+`id`, `subject`, `status`, `owner`, and `blockedBy`, but not `description` — so
+an id kept anywhere tidier cannot be found again after a gap marker, a
+reattach, or a compaction. Ignore `metadata`: no read path returns it.
 
 #### Task widget — other harnesses
 
@@ -239,14 +242,9 @@ Worker flow:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
    ```
-   Then do the work — and **keep the task alive**: re-emit that same
-   `--state working` status at least once a minute. The repeat changes nothing
-   about the task's state; what it does is refresh the clock the daemon
-   watches. While you hold the ball the daemon emits the actual liveness beats
-   for you, but only for ~2 minutes past your last real leg — after that it
-   stops covering you and the task is evicted as dead. So run any command
-   expected to exceed a minute through the harness's background facility and
-   re-emit while it runs.
+   Then do the work. Do not re-emit `working` to keep the task alive: both
+   daemons beat every live task for as long as they run, so a long build, a
+   question to your user, or a long review cannot time the task out.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
@@ -275,23 +273,21 @@ Worker flow:
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
    ```
 
-The eviction clock is symmetric — the initiator is on the same ~2-minute
-timeout whenever the ball is theirs. Three rules follow for the worker:
+A task times out only when the other party's daemon stops beating it for
+~2 minutes — its session ended or crashed. Silence from a live peer never
+times a task out. Two rules follow for the worker:
 
-- **Beat only while the task is `working` — never while parked in
-  `input-required`.** A beat is a re-emitted `working` status, so beating a
-  parked task yanks its state back — and keeps a dead initiator's task alive
-  forever. Silence-while-parked is what times an unresponsive initiator out.
-  The badge is the reminder: beat on `working`, never on `asked` or `sent`.
 - **`task_timeout` while parked drops the task, not the work.** Close the
-  todo as dropped, keep the artifact, and tell your user the initiator never
-  responded and the result is kept.
+  todo as dropped, keep the artifact, and tell your user the initiator went
+  away and the result is kept.
 - **The initiator vanished mid-work:** on `peer_timeout` for the task's
   counterparty with no `peer_return` within ~2 minutes, stop the work, emit
   `a2a status --state failed --text "initiator unreachable"` — an explicit
   terminal beats going silent and waiting to be reaped — close the todo, and
   tell your user. A graceful leave needs none of this: the daemon cancels on
-  the spot (`task_timeout`, reason `peer-left`).
+  the spot (`task_timeout`, reason `peer-left`). The daemon also cancels
+  after ~2 minutes with no beat from a dead initiator; this rule only makes
+  the end explicit and names the reason.
 
 You never reassign a task you are serving; your recoveries are
 fail-explicitly or keep-the-result-and-stop.
@@ -315,17 +311,16 @@ Initiator flow:
    changes with the follow-up above. The worker closes the task; you do not.
 4. A task you initiated is **unacknowledged** until the worker's first event
    on it — `working`, or a decline `failed` — which is exactly the window its
-   badge still reads `waiting`. `task_timeout` (~2 minutes of task silence) is
-   the stall signal for both phases of a task's life: on a `waiting` task it
-   means the brief was never picked up; on a `working` one it means the worker
-   went dead, since a live worker beats at least once a minute. Either way
+   badge still reads `waiting`. `task_timeout` means the worker's daemon
+   stopped beating the task for ~2 minutes — its session ended or crashed.
+   A slow pickup or a long silent job never causes it. Either way
    close the todo, print one line —
 
    ```text
    💬 `<$WORKER>` · $TASK_LABEL · dropped · $REASON
    ```
 
-   — with `$REASON` `no pickup` or `worker went silent`. The todo closes on the
+   — with `$REASON` `no pickup` (no `working` yet) or `worker went silent`. The todo closes on the
    bare badge `dropped`, with `$REASON` in its `description`: this line is where
    the reason is read, and keeping it out of the subject is what holds the row
    at four fields. Then put the

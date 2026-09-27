@@ -2,6 +2,7 @@
 name: gossip-topic
 description: Join a public gossip derived from a shared string.
 when_to_use: The user invokes the gossip-topic command or asks to join a topic gossip without a join id.
+<!-- include path="../shared/bell-hook.yaml" -->
 ---
 
 # gossip-topic
@@ -19,7 +20,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-gossip topic \"$TOPIC\"" noun="line" bell_prefix="sleep 5; " -->
+<!-- include path="../shared/daemon-session.md" launch="agent-gossip topic \"$TOPIC\"" noun="line" bell_settle=" --settle-secs 5" -->
 
 <!-- include path="../shared/meta.md" -->
 

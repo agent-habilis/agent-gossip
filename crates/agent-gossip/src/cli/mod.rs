@@ -26,6 +26,7 @@ use crate::topic::resolve_topic;
 mod a2a_discover;
 pub(crate) mod agent;
 pub(crate) mod args;
+mod bell;
 mod discover;
 mod doctor;
 mod ipc;
@@ -99,6 +100,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Leave { opts } => session::leave(opts).await,
         Commands::Session { opts } => session::session(opts).await,
+        Commands::BellCheck { opts } => {
+            if session::bell_check(&opts) {
+                // 3, not 1 or 2: clap's usage error is 2, and 1 is any error.
+                std::io::Write::flush(&mut std::io::stdout())?;
+                std::process::exit(3);
+            }
+            Ok(())
+        }
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
         Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
@@ -632,6 +641,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         state_file,
         after,
         long,
+        settle_secs,
         legacy_output: _,
     } = opts;
     // clap enforces exactly one form: `--state-file`, or `--gossip` +
@@ -655,9 +665,21 @@ async fn poll(opts: PollOpts) -> Result<()> {
             nickname.expect("clap: --nickname required without --state-file"),
         )
     };
+    let bell_mesh = mesh.to_string();
+    let mut bell_lock = None;
+    let mut settle = settle_secs.map(std::time::Duration::from_secs);
     let cmd = IpcCommand::Poll { mesh, after, long };
 
     loop {
+        // A duplicate bell takes the lock over once the first one exits, so
+        // the flag does not go false while this one is still parked.
+        if long && bell_lock.is_none() {
+            bell_lock = bell::acquire(&bell_mesh, nickname.as_str()).await;
+        }
+        // After the lock, so the bell counts as armed while it settles.
+        if let Some(wait) = settle.take() {
+            tokio::time::sleep(wait).await;
+        }
         let started = tokio::time::Instant::now();
         let resp = ipc::send(&cmd, &nickname).await?;
         // An empty response is the daemon closing the connection without
@@ -963,7 +985,7 @@ fn drift_warning() -> Option<String> {
 /// clock stepped backward (NTP correction, VM restore) — so it is rejected
 /// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
 /// underflow into the past.
-fn ready_is_fresh(last_updated: u64) -> bool {
+pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
     let now = fofoca::util::clock::unix_secs();
     let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
     let skew = now - last_updated; // >0: file is in the past; <0: in the future

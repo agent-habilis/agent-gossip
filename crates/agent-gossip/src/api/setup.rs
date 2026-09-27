@@ -29,7 +29,7 @@ pub(super) async fn create_setup(
     let config = MeshConfig {
         // No sugar flag left in the api: naming no lookup is loopback,
         // naming any restricts to those.
-        lookups: resolve_lookups(false, cfg.lookups),
+        lookups: resolve_lookups(cfg.lookups),
         password: None,
         issuer_pubkey: None,
         transport: cfg.transport,

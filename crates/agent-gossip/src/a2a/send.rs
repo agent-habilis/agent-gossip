@@ -194,7 +194,9 @@ async fn send_msg_part(
     if state.is_meshed() {
         commit_outbound_part(state, msg, out, echo);
         // Single send decision: a directed message goes point-to-point over
-        // unicast, a broadcast over gossip (see `transport::deliver`).
+        // unicast, a broadcast over gossip (see `transport::deliver`). Inline,
+        // not `deliver_in_background`: the CLI needs the delivery verdict to
+        // report an unreachable peer, and each IPC send is one-shot.
         fofoca::ops::deliver(msg, bytes, state, sender).await?;
     } else if state
         .pending_outbound_mut()
@@ -1210,9 +1212,6 @@ fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLe
 /// body is sealed to the addressee, so a status leg's state could not be read
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
-///
-/// Only *skill-driven* legs may come through here. The daemon's own keepalive
-/// beat must NOT — see [`crate::a2a::task::broadcast_status`].
 fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
     crate::a2a::task::ingest(
         &mut app.tasks,
@@ -1273,11 +1272,13 @@ pub(crate) async fn send_shard_repair_requests(
         .signed(state.identity());
         fofoca::util::logging::log_out(&frame);
         match frame.serialize() {
+            // In the background: this runs from `on_tick`, inline on the event
+            // loop, where a cold `deliver` would stop the node for the dial.
             Ok(bytes) => {
-                if let Err(error) =
-                    fofoca::ops::deliver(&frame, Bytes::from(bytes), state, sender).await
+                if !fofoca::ops::deliver_in_background(&frame, Bytes::from(bytes), state, sender)
+                    .await
                 {
-                    tracing::debug!(%error, "shard repair request send failed; next tick retries");
+                    tracing::debug!("shard repair request not sent; next tick retries");
                 }
             }
             Err(error) => tracing::debug!(%error, "shard repair request serialize failed"),

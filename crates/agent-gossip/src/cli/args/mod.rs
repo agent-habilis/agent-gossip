@@ -19,7 +19,7 @@ pub(crate) use self::peers::PeersOpts;
 pub(crate) use self::ping::PingOpts;
 pub(crate) use self::poll::PollOpts;
 pub(crate) use self::ready::ReadyOpts;
-pub(crate) use self::session::SessionOpts;
+pub(crate) use self::session::{BellCheckOpts, SessionOpts};
 pub(crate) use self::shared::SharedServerOpts;
 pub(crate) use self::state::{StateAction, StateOpts};
 pub(crate) use self::topic::TopicOpts;
@@ -124,6 +124,15 @@ pub(crate) enum Commands {
     Session {
         #[command(flatten)]
         opts: SessionOpts,
+    },
+
+    /// Exit 3 when a gossip session of the calling agent has no bell armed.
+    ///
+    /// The probe behind the skills' Claude Code Stop hook.
+    #[command(hide = true)]
+    BellCheck {
+        #[command(flatten)]
+        opts: BellCheckOpts,
     },
 
     /// Check for new messages in a gossip
