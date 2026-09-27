@@ -1,3 +1,9 @@
+## 0.11.2 (2026-09-27)
+
+### Fixes
+
+- Show a short task id in todo rows
+
 ## 0.11.1 (2026-09-25)
 
 ### Features
