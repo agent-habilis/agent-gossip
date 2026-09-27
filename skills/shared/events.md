@@ -175,16 +175,17 @@ Opening a todo — one `TaskCreate` call **per task**. It creates exactly one ta
 takes no `tasks`/`todos` array, and is not the Agent tool (no
 `prompt`/`subagent_type`); three tasks means three calls.
 
-- `subject` — `💬 <badge> · <task label> · <counterparty> · <task id>`, where the
+- `subject` — `💬 <badge> · <task label> · <counterparty> · <short id>`, where the
   `<>` around the nickname are literal characters kept in the rendered text — a
   nickname is always written `<nick>` (e.g.
-  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883-…`); the other three
-  slots are filled bare. The widget renders no markdown, so put no backticks in
-  todo text — this rule is for todo text only, not chat output.
-- `description` — the task id, then the brief; on a close as `dropped`, the
-  reason goes here too. Nothing in `description` is rendered in the row, so it
-  is where anything that would otherwise stretch the subject belongs.
-- `activeForm` — the subject without the `💬` and without the task id.
+  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883`); the other three
+  slots are filled bare. `<short id>` is the first 8 characters of the task
+  id. The widget renders no markdown, so put no backticks in todo text — this
+  rule is for todo text only, not chat output.
+- `description` — the full task id, then the brief; on a close as `dropped`,
+  the reason goes here too. Nothing in `description` is rendered in the row, so
+  it is where anything that would otherwise stretch the subject belongs.
+- `activeForm` — the subject without the `💬` and without the short id.
 
 Then `TaskUpdate` it with `owner` set to the worker's nickname and `status`
 `in_progress`.
@@ -206,7 +207,7 @@ into the `subject` (and `activeForm`) on every transition:
 | leaving the gossip | badge `dropped`, `status` `completed` on every row still `in_progress` |
 
 The badge is the only part of the subject that changes; the label, the
-counterparty and the task id are written once at `TaskCreate` and never
+counterparty and the short id are written once at `TaskCreate` and never
 rewritten.
 
 **A badge is exactly one word, and the subject is exactly four fields.** Never
@@ -216,11 +217,13 @@ out from under the eye on the one row that most wants reading. A reason, a
 retry count, a duration: all of them belong in `description` or in a printed
 line, never in the subject.
 
-Finding the row for an incoming `task_id`: `TaskList`, then match the id in the
-subject. The id lives in the `subject` because that is the only place it survives
-— `TaskList` returns `id`, `subject`, `status`, `owner`, and `blockedBy`, but not
-`description` — so an id kept anywhere tidier cannot be found again after a gap
-marker, a reattach, or a compaction. Ignore `metadata`: no read path returns it.
+Finding the row for an incoming `task_id`: `TaskList`, then match its short id
+against the last field of each subject. If more than one row matches, `TaskGet`
+them in turn until the full id in `description` matches. The short id lives in
+the `subject` because that is the only place it survives — `TaskList` returns
+`id`, `subject`, `status`, `owner`, and `blockedBy`, but not `description` — so
+an id kept anywhere tidier cannot be found again after a gap marker, a
+reattach, or a compaction. Ignore `metadata`: no read path returns it.
 
 #### Task widget — other harnesses
 
