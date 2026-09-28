@@ -201,6 +201,7 @@ impl NodeDriver for A2aApp {
                     params: serde_json::json!({ "message": message }),
                     timeout: Duration::from_secs(crate::a2a::tuning::CALL_TIMEOUT_SECS),
                     responder: A2aResponder::Rpc(resp),
+                    file: None,
                 },
                 state,
                 self,
@@ -833,8 +834,8 @@ async fn handle_a2a_rpc(
         // Only act on a response to a call WE actually issued (a matching
         // outstanding waiter). An unsolicited response is ignored — otherwise
         // any member could inject phantom initiator-side task records by forging
-        // responses. Adopt the authoritative `Task` a `SendMessage` returned.
-        app.adopt_returned_task(&message.author, message.body.as_str());
+        // responses. The waiter adopts the authoritative `Task` a `SendMessage`
+        // returned.
         app.fulfill_a2a_waiter(corr, &message.author, message.body.as_str());
     }
 }
@@ -1088,6 +1089,7 @@ fn ingest_remote_message(
         state: rec_state,
         text: &text,
         label: label.as_deref(),
+        message: Some(payload),
         is_self: false,
     });
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
@@ -1213,6 +1215,7 @@ mod classify_tests {
             state: Some(TaskState::Working),
             text: "approved".to_owned(),
             label: None,
+            message: None,
             is_self,
         }
     }

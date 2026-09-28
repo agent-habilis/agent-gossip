@@ -1889,3 +1889,499 @@ async fn state_wire_contract_patch_get_event_and_cas() {
 async fn meta_wire_contract_patch_get_event_and_cas() {
     channel_wire_contract(Channel::Meta);
 }
+
+/// Removes a test's scratch file even when an assert fails first.
+struct RemoveOnDrop(PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        fs::remove_file(&self.0).ok();
+    }
+}
+
+/// A scratch file of 65536 bytes, unique to this test process and `tag`.
+fn scratch_file(tag: &str) -> (RemoveOnDrop, Vec<u8>) {
+    let path = std::env::temp_dir().join(format!(
+        "agent-gossip-call-file-{}-{tag}",
+        std::process::id()
+    ));
+    let bytes: Vec<u8> = (0..64 * 1024_u32)
+        .map(|index| (index % 251) as u8)
+        .collect();
+    fs::write(&path, &bytes).expect("write the file to send");
+    (RemoveOnDrop(path), bytes)
+}
+
+/// `a2a call --method SendMessage` from `nickname` to `to`, plus `extra` args.
+fn cli_call(mesh: &str, nickname: &str, to: &str, extra: &[&std::ffi::OsStr]) -> Command {
+    let mut cmd = common::test_cmd();
+    cmd.args([
+        "a2a",
+        "call",
+        "--gossip",
+        mesh,
+        "--nickname",
+        nickname,
+        "--to",
+        to,
+        "--method",
+        "SendMessage",
+    ])
+    .args(extra);
+    cmd
+}
+
+fn assert_success(out: &std::process::Output, what: &str) {
+    assert!(
+        out.status.success(),
+        "{what} failed ({})\nstdout: {}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+}
+
+/// The worker's `message` event on `task_id` that carries a file part.
+fn await_file_message(worker: &JsonNode, task_id: &str) -> serde_json::Value {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let found = worker.json_events().into_iter().find(|value| {
+            value["event"] == "task"
+                && value["kind"] == "message"
+                && value["task_id"] == task_id
+                && value["payload"]["parts"]
+                    .as_array()
+                    .is_some_and(|parts| parts.iter().any(|part| part["url"].is_string()))
+        });
+        if let Some(event) = found {
+            return event;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the worker never surfaced a message with a file part: {:#?}",
+            worker.json_events()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// `a2a fetch` the ticket in `url` and assert it holds `bytes`.
+fn assert_fetches(url: &str, bytes: &[u8]) {
+    use sha2::Digest as _;
+
+    let fetched = RemoveOnDrop(std::env::temp_dir().join(format!(
+        "agent-gossip-call-file-{}-{}.got",
+        std::process::id(),
+        &url[url.len().saturating_sub(12)..]
+    )));
+    let fetch = common::test_cmd()
+        .args(["a2a", "fetch", url, "--output"])
+        .arg(&fetched.0)
+        .output()
+        .expect("a2a fetch command failed to spawn");
+    assert_success(&fetch, "a2a fetch");
+    let got = fs::read(&fetched.0).expect("read the fetched file");
+    assert_eq!(
+        sha2::Sha256::digest(&got),
+        sha2::Sha256::digest(bytes),
+        "the fetched bytes differ from the sent file"
+    );
+}
+
+/// A follow-up into a task can carry a file, as `a2a artifact --file` can: the
+/// sender offloads it over the blob channel, the worker's `message` event holds
+/// a `Part.url` ticket first, and `a2a fetch` on that ticket gets the same
+/// bytes. The text stays in `body`; `payload` holds only the parts `body`
+/// cannot show. agent-graph sends a missing graph folder back this way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task_followup_carries_a_file() {
+    let (creator, mesh) = JsonNode::create();
+    let worker = JsonNode::join(&mesh, "tf-file");
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+
+    let tid = common::cli_task_create(&mesh, &creator.nickname, "tf-file", "take the node");
+    let (sent, bytes) = scratch_file("followup.tar");
+
+    let out = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tf-file",
+        &[
+            "--task-id".as_ref(),
+            tid.as_ref(),
+            "--text".as_ref(),
+            "graph abc".as_ref(),
+            "--file".as_ref(),
+            sent.0.as_os_str(),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert_success(&out, "a2a call --file");
+
+    let event = await_file_message(&worker, &tid);
+    assert!(
+        event["body"]
+            .as_str()
+            .is_some_and(|body| body.contains("graph abc")),
+        "the follow-up lost its text: {event:#?}"
+    );
+    let parts = event["payload"]["parts"].as_array().expect("payload parts");
+    assert_eq!(
+        parts.len(),
+        1,
+        "payload must hold only the file part: {parts:#?}"
+    );
+    let url = parts[0]["url"].as_str().expect("the file part comes first");
+    assert_fetches(url, &bytes);
+}
+
+/// A first call has no task id yet — the worker mints it. A file-only call
+/// sends exactly one part, the file, under the name and MIME type the caller
+/// gave, with no empty text part after it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task_first_call_carries_a_file() {
+    let (creator, mesh) = JsonNode::create();
+    let worker = JsonNode::join(&mesh, "tf-first");
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-first");
+
+    let (sent, bytes) = scratch_file("first.tar");
+    let out = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tf-first",
+        &[
+            "--file".as_ref(),
+            sent.0.as_os_str(),
+            "--file-name".as_ref(),
+            "graph.tar".as_ref(),
+            "--file-mime".as_ref(),
+            "application/x-tar".as_ref(),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert_success(&out, "a2a call --file");
+    let response: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("a2a call prints JSON");
+    let tid = response["result"]["task"]["id"]
+        .as_str()
+        .expect("the worker minted a task id")
+        .to_owned();
+
+    let event = await_file_message(&worker, &tid);
+    let parts = event["payload"]["parts"].as_array().expect("payload parts");
+    assert_eq!(
+        parts.len(),
+        1,
+        "a file-only call sends one part: {parts:#?}"
+    );
+    assert_eq!(parts[0]["filename"], "graph.tar", "{parts:#?}");
+    assert_eq!(parts[0]["mediaType"], "application/x-tar", "{parts:#?}");
+    assert!(
+        !event["body"].as_str().unwrap_or_default().ends_with('\n'),
+        "an empty text part leaked into the body: {event:#?}"
+    );
+    assert_fetches(parts[0]["url"].as_str().expect("a url"), &bytes);
+}
+
+/// The daemon runs in its own directory, so a relative `--file` must be
+/// resolved against the caller's directory before it crosses the socket.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_call_file_path_is_relative_to_the_caller() {
+    let (creator, mesh) = JsonNode::create();
+    let worker = JsonNode::join(&mesh, "tf-rel");
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-rel");
+
+    let (sent, bytes) = scratch_file("relative.tar");
+    let dir = sent.0.parent().expect("a temp dir");
+    let name = sent.0.file_name().expect("a file name");
+    let out = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tf-rel",
+        &["--file".as_ref(), name],
+    )
+    .current_dir(dir)
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert_success(&out, "a2a call --file <relative path>");
+    let response: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("a2a call prints JSON");
+    let tid = response["result"]["task"]["id"]
+        .as_str()
+        .expect("the worker minted a task id");
+    let event = await_file_message(&worker, tid);
+    assert_fetches(
+        event["payload"]["parts"][0]["url"].as_str().expect("a url"),
+        &bytes,
+    );
+}
+
+/// A call that cannot go out spools nothing: the peer check runs before the
+/// file is copied into the blob store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_call_file_to_unknown_peer_spools_nothing() {
+    let (creator, mesh) = JsonNode::create();
+    assert!(creator.wait_ready(&mesh));
+
+    let (sent, _bytes) = scratch_file("nobody.tar");
+    let out = cli_call(
+        &mesh,
+        &creator.nickname,
+        "nobody-here",
+        &["--file".as_ref(), sent.0.as_os_str()],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert!(!out.status.success(), "a call to an unknown peer must fail");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("unknown peer"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let spool = agent_gossip::ensure_mesh_runtime_dir(&mesh)
+        .expect("the mesh runtime dir")
+        .join(format!("{}.blobs", creator.nickname));
+    let spooled = fs::read_dir(&spool).map_or(0, Iterator::count);
+    assert_eq!(
+        spooled,
+        0,
+        "a refused call spooled a blob in {}",
+        spool.display()
+    );
+}
+
+/// A missing file, and `--file` on a method that carries no message, fail
+/// with exit 1 and a message that names the problem.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_call_file_errors_exit_non_zero() {
+    let (creator, mesh) = JsonNode::create();
+    let worker = JsonNode::join(&mesh, "tf-err");
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-err");
+
+    let missing = std::env::temp_dir().join(format!(
+        "agent-gossip-call-file-{}-missing.tar",
+        std::process::id()
+    ));
+    let missing_out = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tf-err",
+        &["--file".as_ref(), missing.as_os_str()],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert_eq!(
+        missing_out.status.code(),
+        Some(1),
+        "a missing file must exit 1"
+    );
+
+    let (sent, _bytes) = scratch_file("gettask.tar");
+    let get_task_out = common::test_cmd()
+        .args([
+            "a2a",
+            "call",
+            "--gossip",
+            &mesh,
+            "--nickname",
+            &creator.nickname,
+            "--to",
+            "tf-err",
+            "--method",
+            "GetTask",
+            "--params",
+            r#"{"id":"00000000-0000-4000-8000-000000000000"}"#,
+            "--file",
+        ])
+        .arg(&sent.0)
+        .output()
+        .expect("a2a call command failed to spawn");
+    assert_eq!(
+        get_task_out.status.code(),
+        Some(1),
+        "--file on GetTask must exit 1"
+    );
+    assert!(
+        String::from_utf8_lossy(&get_task_out.stdout)
+            .contains("needs a SendMessage call with a message"),
+        "stdout: {}",
+        String::from_utf8_lossy(&get_task_out.stdout)
+    );
+}
+
+/// The worker `nickname` declines `task_id`, which ends the task.
+fn decline(mesh: &str, nickname: &str, task_id: &str) {
+    let out = common::test_cmd()
+        .args([
+            "a2a",
+            "status",
+            "--gossip",
+            mesh,
+            "--nickname",
+            nickname,
+            "--task-id",
+            task_id,
+            "--state",
+            "failed",
+            "--text",
+            "no",
+        ])
+        .output()
+        .expect("a2a status command failed to spawn");
+    assert_success(&out, "a2a status --state failed");
+}
+
+/// One file offered on two first calls is one blob with two owners: when the
+/// first task ends and is reaped, the second task can still fetch it. This is
+/// the graph-up case — one graph tar offered to several peers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_same_file_on_two_tasks_outlives_the_first() {
+    let fast_reap = [
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
+    let first = JsonNode::join_with_flags(&mesh, "tf-share-a", &fast_reap);
+    let second = JsonNode::join_with_flags(&mesh, "tf-share-b", &fast_reap);
+    for node in [&creator, &first, &second] {
+        assert!(node.wait_ready(&mesh));
+    }
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-share-a");
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-share-b");
+
+    let (sent, bytes) = scratch_file("shared.tar");
+    let mut task_ids = Vec::new();
+    for worker in ["tf-share-a", "tf-share-b"] {
+        let out = cli_call(
+            &mesh,
+            &creator.nickname,
+            worker,
+            &["--file".as_ref(), sent.0.as_os_str()],
+        )
+        .output()
+        .expect("a2a call command failed to spawn");
+        assert_success(&out, "a2a call --file");
+        let response: serde_json::Value =
+            serde_json::from_slice(&out.stdout).expect("a2a call prints JSON");
+        task_ids.push(
+            response["result"]["task"]["id"]
+                .as_str()
+                .expect("the worker minted a task id")
+                .to_owned(),
+        );
+    }
+    let second_event = await_file_message(&second, &task_ids[1]);
+    let second_url = second_event["payload"]["parts"][0]["url"]
+        .as_str()
+        .expect("a url")
+        .to_owned();
+
+    decline(&mesh, "tf-share-a", &task_ids[0]);
+
+    let first_reaped = || {
+        common::trace_log(&mesh, &creator.nickname)
+            .lines()
+            .any(|line| line.contains("task reaped") && line.contains(task_ids[0].as_str()))
+    };
+    let reap_deadline = Instant::now() + Duration::from_secs(15);
+    while !first_reaped() {
+        assert!(
+            Instant::now() < reap_deadline,
+            "the initiator never reaped the first task"
+        );
+        std::thread::sleep(POLL);
+    }
+    assert_fetches(&second_url, &bytes);
+
+    // When the last task that holds the blob is reaped too, the spool is empty.
+    decline(&mesh, "tf-share-b", &task_ids[1]);
+    let spool = agent_gossip::ensure_mesh_runtime_dir(&mesh)
+        .expect("the mesh runtime dir")
+        .join(format!("{}.blobs", creator.nickname));
+    let spool_deadline = Instant::now() + Duration::from_secs(15);
+    while fs::read_dir(&spool).map_or(0, Iterator::count) > 0 {
+        assert!(
+            Instant::now() < spool_deadline,
+            "the reaped tasks left a blob in {}",
+            spool.display()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// A `--file` call that timed out, but that the worker still took, is
+/// cancelled at the worker: the caller was told the call failed, so no task
+/// may live on for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
+    let fast_reap = [
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
+    let worker = JsonNode::join_with_flags(&mesh, "tf-late", &fast_reap);
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-late");
+
+    let (sent, _bytes) = scratch_file("late.tar");
+    let out = cli_call(
+        &mesh,
+        &creator.nickname,
+        "tf-late",
+        &[
+            "--file".as_ref(),
+            sent.0.as_os_str(),
+            "--timeout-secs".as_ref(),
+            "0".as_ref(),
+        ],
+    )
+    .output()
+    .expect("a2a call command failed to spawn");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("timed out"),
+        "the call must time out before the reply: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let task_id = loop {
+        let found = worker.json_events().into_iter().find_map(|value| {
+            (value["event"] == "task" && value["kind"] == "message")
+                .then(|| value["task_id"].as_str().map(str::to_owned))
+                .flatten()
+        });
+        if let Some(task_id) = found {
+            break task_id;
+        }
+        assert!(Instant::now() < deadline, "the worker never got the brief");
+        std::thread::sleep(POLL);
+    };
+
+    let cancelled = || {
+        worker.json_events().into_iter().any(|value| {
+            value["task_id"] == task_id.as_str()
+                && (value["event"] == "task_timeout" || value["state"] == "canceled")
+        })
+    };
+    let cancel_deadline = Instant::now() + Duration::from_secs(20);
+    while !cancelled() {
+        assert!(
+            Instant::now() < cancel_deadline,
+            "the worker's task was never cancelled: {:#?}",
+            worker.json_events()
+        );
+        std::thread::sleep(POLL);
+    }
+}

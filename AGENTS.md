@@ -106,8 +106,8 @@ are complements, not alternatives.
 
 #### The engine's public surface
 
-`fofoca` groups its **six** modules by what a consumer needs rather than by the
-engine's internal topology.
+`fofoca` groups its **seven** modules by what a consumer needs rather than by
+the engine's internal topology.
 
 | Module | What it is for |
 |---|---|
@@ -117,8 +117,9 @@ engine's internal topology.
 | `ops` | What a hook may *do*: `deliver`, `broadcast_*`, `doc`, `blob`, `directory`, `invite`. |
 | `net` | The quarantined `iroh` corner — endpoint construction and reachability probes. Every other module is iroh-free so a consumer's surface can be. |
 | `util` | Host helpers: runtime paths, clock, `logging`, process, version. |
+| `membership` | One embedded membership of a mesh over `runtime`, shared by the C ABI, the browser peer and the chat example. |
 
-Those six are not the whole surface. `lib.rs` also re-exports the `iroh` crate
+Those seven are not the whole surface. `lib.rs` also re-exports the `iroh` crate
 whole (the app imports `fofoca::iroh` in eight-plus files), `async_trait`,
 `VERSION`, the relay ladders, and the two address-lookup crates. Treat the table
 as the map of what a consumer normally reaches for, not as an exhaustive list of
