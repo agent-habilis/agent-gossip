@@ -60,6 +60,9 @@ pub enum OutputEvent {
         /// The initiator's `mesh:label` for the task, when the brief carried
         /// one — absent from a peer that does not set it.
         label: Option<String>,
+        /// The A2A `Message` the leg carried, for its non-text parts (a file's
+        /// `Part.url`). `None` on the initiator's adopted-`Task` leg.
+        message: Option<Box<crate::a2a::Message>>,
         is_self: bool,
     },
     TaskTimeout {

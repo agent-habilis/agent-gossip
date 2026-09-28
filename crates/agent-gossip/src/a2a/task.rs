@@ -556,24 +556,37 @@ pub(crate) async fn tick_task_sweep(
     let timeout = Duration::from_secs(task_timeout_secs());
     let (expired, reaped) = sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
 
-    for (task_id, peer) in expired {
-        out.task_timeout(&task_id, output::TaskGoneReason::Timeout);
+    for (task_id, peer) in &expired {
+        out.task_timeout(task_id, output::TaskGoneReason::Timeout);
         tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
+    }
+    // A task a late reply opened is unknown to the caller's agent, so it gets
+    // no `task_timeout` line — only the worker is told.
+    let late_cancels = app.take_late_cancels();
+    let cancels = expired
+        .iter()
+        .map(|(task_id, peer)| (task_id, peer, "timeout"))
+        .chain(
+            late_cancels
+                .iter()
+                .map(|(task_id, peer)| (task_id, peer, "call-timed-out")),
+        );
+    for (task_id, peer, reason) in cancels {
         let update = gossip::status_update(
             ctx.mesh,
             gossip::StatusUpdateParams {
-                task_id: &task_id,
+                task_id,
                 state: TaskState::Canceled,
                 note: None,
-                metadata: Some(serde_json::json!({ META_REASON: "timeout" })),
+                metadata: Some(serde_json::json!({ META_REASON: reason })),
             },
         );
         broadcast_status(
             state,
             ctx,
             BroadcastStatusParams {
-                peer: &peer,
-                task_id: &task_id,
+                peer,
+                task_id,
                 update: &update,
             },
         )
@@ -582,12 +595,20 @@ pub(crate) async fn tick_task_sweep(
 
     // A reaped task's offloaded blobs go with it — unlink their spool files
     // (the review window has long closed).
+    let call_blobs = app.take_call_blobs(&reaped, now);
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
                 .evict_content(&fofoca::ops::blob::ContentId::new(task_id.as_str()))
                 .await;
         }
+        for group in &call_blobs {
+            server.evict_content(group).await;
+        }
+    }
+    // Logged after the eviction, so a reader of this line knows the blobs are gone.
+    for task_id in &reaped {
+        tracing::info!(target: "agent_gossip::a2a", %task_id, "task reaped");
     }
 }
 

@@ -36,6 +36,7 @@ SYNOPSIS
 
        agent-gossip a2a call --gossip GOSSIP --nickname NAME --to NICK --method M
                   [--text TEXT] [--task-id UUID] [--label LABEL] [--params JSON]
+                  [--file PATH] [--file-name NAME] [--file-mime MIME]
                   [--timeout-secs N]
 
        agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
@@ -359,6 +360,7 @@ COMMANDS
 
        a2a call --gossip GOSSIP --nickname NAME --to NICK --method M
                 [--text TEXT] [--task-id UUID] [--label LABEL] [--params JSON]
+                [--file PATH] [--file-name NAME] [--file-mime MIME]
                 [--timeout-secs N]
               Make an A2A call to a peer. Short-lived; requires a running
               create/join daemon for that gossip + nickname. Blocks up to
@@ -376,7 +378,14 @@ COMMANDS
                     returns {"task": <Task>}) or a follow-up into a task
                     (--task-id: an answer / approval / change). --text composes
                     the A2A Message; --label names the task for both parties
-                    (see below). A peer caps how many live tasks any one
+                    (see below). --file attaches a file, on a new task or
+                    a follow-up: it travels over the blob channel as a
+                    Part.url ticket the peer fetches with `a2a fetch`, as for
+                    a2a artifact --file. The file lives as long as its task.
+                    If the call times out, no task is kept: a worker that
+                    took the brief anyway gets a canceled status
+                    (mesh:reason call-timed-out), and the file goes with it.
+                    A peer caps how many live tasks any one
                     caller may hold with it, and refuses opens past that with
                     an error rather than minting; closing finished tasks frees
                     the allowance.
@@ -1158,7 +1167,10 @@ JSON EVENTS
               SendMessage leg — the brief, an answer, an approval), or
               "status-update" / "artifact-update" (worker-pushed). state is the
               task's A2A state on a status/artifact leg. payload is the A2A
-              object whole, for A2A-aware consumers.
+              object whole, for A2A-aware consumers, except on a "message"
+              leg: there it is the A2A Message without its text parts, which
+              body already holds. A file sent with a2a call --file is a part
+              with a "url" there; fetch it with a2a fetch <url>.
 
               An opening brief additionally carries "label" — the initiator's
               one-line name for the task (a2a call --label), which the worker

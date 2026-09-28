@@ -125,6 +125,12 @@ pub(crate) enum IpcCommand {
         #[serde(default)]
         params: serde_json::Value,
         timeout_secs: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<std::path::PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_mime: Option<String>,
     },
     /// Identity probe for `doctor`: the daemon answers with its own mesh id,
     /// human name, nickname, and peer count. Carries no mesh — a
@@ -430,6 +436,9 @@ pub(crate) async fn handle_ipc_command(
             method,
             params: rpc_params,
             timeout_secs,
+            file,
+            file_name,
+            file_mime,
         } => {
             // The response arrives later (the peer's `A2aResp`, or a timeout),
             // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
@@ -443,6 +452,11 @@ pub(crate) async fn handle_ipc_command(
                     params: rpc_params,
                     timeout: Duration::from_secs(timeout_secs),
                     responder: crate::a2a::app::A2aResponder::Ipc(resp_tx),
+                    file: file.map(|path| crate::a2a::send::FileRef {
+                        path,
+                        name: file_name,
+                        mime: file_mime,
+                    }),
                 },
                 state,
                 app,

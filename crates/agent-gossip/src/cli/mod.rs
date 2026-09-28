@@ -455,6 +455,9 @@ async fn a2a(action: A2aAction) -> Result<()> {
             label,
             params,
             timeout_secs,
+            file,
+            file_name,
+            file_mime,
         } => {
             // Compose params from --text/--task-id/--label sugar, unless raw
             // --params given.
@@ -471,12 +474,19 @@ async fn a2a(action: A2aAction) -> Result<()> {
                     },
                 ),
             };
+            // The daemon runs in its own directory, so a relative path must
+            // resolve here, against the caller's.
+            let file = file.map(std::path::absolute).transpose()?;
+            let file_name = advertised_file_name(file.as_deref(), file_name);
             let cmd = IpcCommand::A2aCall {
                 mesh,
                 to,
                 method,
                 params,
                 timeout_secs,
+                file,
+                file_name,
+                file_mime,
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             println!("{resp}");
@@ -516,13 +526,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
             if text.is_none() && file.is_none() {
                 anyhow::bail!("provide --text and/or --file");
             }
-            // Default the advertised filename to the file's own basename.
-            let file_name = file_name.or_else(|| {
-                file.as_ref()
-                    .and_then(|path| path.file_name())
-                    .and_then(|name| name.to_str())
-                    .map(str::to_owned)
-            });
+            let file = file.map(std::path::absolute).transpose()?;
+            let file_name = advertised_file_name(file.as_deref(), file_name);
             let cmd = IpcCommand::A2aArtifact {
                 mesh,
                 task_id,
@@ -596,6 +601,17 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn advertised_file_name(
+    file: Option<&std::path::Path>,
+    file_name: Option<String>,
+) -> Option<String> {
+    file_name.or_else(|| {
+        file.and_then(std::path::Path::file_name)
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+    })
 }
 
 /// The `--text` / `--task-id` / `--label` sugar `a2a call` turns into a params

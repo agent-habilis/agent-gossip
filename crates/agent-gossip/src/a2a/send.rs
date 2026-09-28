@@ -1111,6 +1111,62 @@ async fn build_offload_parts(
     Ok(parts)
 }
 
+/// Who attaches which file to an `a2a call` — grouped so [`attach_call_file`]
+/// stays within the argument budget alongside its state/app handles.
+pub(crate) struct CallFile<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) file: FileRef,
+}
+
+/// Offload `file` and put its `Part.url` first among the parts of the
+/// `SendMessage` in `params` (`a2a call --file`). An empty text part — the
+/// `--text`-less sugar — is dropped, as `build_offload_parts` drops it.
+///
+/// A follow-up's blob joins its task's content group, so the task sweep reaps
+/// it. A first call has no task id yet — the worker mints it — so its blob goes
+/// in a fresh group, which is returned: the caller owns its eviction.
+///
+/// # Errors
+/// When `params` carries no A2A `message`, or the offload fails.
+pub(crate) async fn attach_call_file(
+    params: &mut serde_json::Value,
+    attachment: CallFile<'_>,
+    state: &EventLoopState,
+    app: &mut A2aApp,
+) -> anyhow::Result<Option<fofoca::ops::blob::ContentId>> {
+    let CallFile { mesh, author, file } = attachment;
+    let slot = params
+        .get_mut("message")
+        .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
+    let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
+    let (task_id, fresh_group) = match message.task_id.clone() {
+        Some(task_id) => (task_id, false),
+        None => (crate::a2a::TaskId::random(), true),
+    };
+    let mut parts = build_offload_parts(
+        OffloadTextParams {
+            mesh,
+            author,
+            task_id: &task_id,
+            text: "",
+            file: Some(file),
+        },
+        state,
+        app,
+    )
+    .await?;
+    parts.extend(
+        message
+            .parts
+            .into_iter()
+            .filter(|part| part.text.as_deref() != Some("")),
+    );
+    message.parts = parts;
+    *slot = serde_json::to_value(message)?;
+    Ok(fresh_group.then(|| fofoca::ops::blob::ContentId::new(task_id.as_str())))
+}
+
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
 /// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
 /// so the state/sender/out handles stay their own leading params.
@@ -1298,6 +1354,9 @@ pub(crate) struct BroadcastA2aCallParams<'a> {
     pub(crate) params: serde_json::Value,
     pub(crate) timeout: std::time::Duration,
     pub(crate) responder: crate::a2a::app::A2aResponder,
+    /// `a2a call --file`: attached only once the peer check passes, so a call
+    /// that cannot go out spools nothing.
+    pub(crate) file: Option<FileRef>,
 }
 
 /// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
@@ -1317,7 +1376,9 @@ pub(crate) async fn broadcast_a2a_call(
         params,
         timeout,
         responder,
+        file,
     } = call;
+    let mut params = params;
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
     };
@@ -1338,8 +1399,22 @@ pub(crate) async fn broadcast_a2a_call(
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
+    let blob_group = match file {
+        None => None,
+        Some(file) => {
+            let attachment = CallFile { mesh, author, file };
+            match attach_call_file(&mut params, attachment, state, app).await {
+                Ok(group) => group,
+                Err(error) => {
+                    responder.send_response(&rpc_error(-32602, &error.to_string()));
+                    return;
+                }
+            }
+        }
+    };
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::new(envelope.to_string()) else {
+        app.orphan_blob(blob_group);
         responder.send_response(&rpc_error(
             -32602,
             "request params contain control characters",
@@ -1350,6 +1425,7 @@ pub(crate) async fn broadcast_a2a_call(
     let body = match seal_directed(state, &peer, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
+            app.orphan_blob(blob_group);
             responder.send_response(&rpc_error(-32603, &error.to_string()));
             return;
         }
@@ -1378,6 +1454,7 @@ pub(crate) async fn broadcast_a2a_call(
         peer,
         deadline,
         responder,
+        blob_group,
     }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
@@ -1725,6 +1802,7 @@ pub(crate) async fn handle_session_request(
                     params: rpc_params,
                     timeout,
                     responder: crate::a2a::app::A2aResponder::Typed(resp),
+                    file: None,
                 },
                 state,
                 app,

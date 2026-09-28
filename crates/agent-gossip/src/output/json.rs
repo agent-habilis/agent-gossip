@@ -132,7 +132,8 @@ struct PresenceLine<'a> {
 /// top-level event (not the `message` family) so skills branch on `event`;
 /// field order is part of the wire format. `kind` is the native A2A construct
 /// (`"message"` / `"status-update"` / `"artifact-update"`), `state` the task's
-/// A2A state; `payload` is the construct whole for A2A-aware consumers.
+/// A2A state; `payload` is the construct whole for A2A-aware consumers, except
+/// that a `message` leg drops the text parts `body` already holds.
 #[derive(Serialize)]
 struct TaskLine<'a> {
     pub event: &'static str,
@@ -534,6 +535,14 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
     )
 }
 
+/// The leg's `Message` without its text parts: the text is already in `body`
+/// and `display`, and a third copy would triple a long brief in every poll.
+fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Value> {
+    let mut message = message.clone();
+    message.parts.retain(|part| part.text.is_none());
+    serde_json::to_value(message).ok()
+}
+
 /// Format an RPC `message/send` task leg (the initiator's brief / answer /
 /// approval, surfaced on the worker; or the created `Task` adopted on the
 /// initiator) as a `{"event":"task","kind":"message",...}` line.
@@ -559,7 +568,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
                 body: leg.text,
             }),
             body: leg.text.to_owned(),
-            payload: None,
+            payload: leg.message.and_then(message_without_text),
             is_self: leg.is_self,
         })
         .expect("task event serialization should never fail"),
@@ -746,6 +755,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             state,
             text,
             label,
+            message,
             is_self,
         } => {
             return Some(format_task_message_json(&TaskMessageLeg {
@@ -757,6 +767,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 state: *state,
                 text,
                 label: label.as_deref(),
+                message: message.as_deref(),
                 is_self: *is_self,
             }));
         }
