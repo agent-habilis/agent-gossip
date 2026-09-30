@@ -333,6 +333,57 @@ fn bell_with_max_secs_ends_itself_as_a_quiet_ring() {
     );
 }
 
+/// `--max-secs` is the bound the harness limit relies on, so a long
+/// `--settle-secs` must not push the bell past it: the settle wait is cut to
+/// the time that is left, and the deadline is checked before the next request.
+#[test]
+fn bell_max_secs_cuts_the_settle_wait() {
+    use std::io::Read as _;
+
+    let (_daemon, mesh, nick) = spawn_create_with("bellsettle", &["--longpoll-max-ms", "1000"]);
+    let started = Instant::now();
+    let mut bell = test_cmd()
+        .args([
+            "poll",
+            "--gossip",
+            &mesh,
+            "--nickname",
+            &nick,
+            "--long",
+            "--settle-secs",
+            "30",
+            "--max-secs",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("bell spawns");
+
+    let status = wait_exit(&mut bell);
+    let mut body = String::new();
+    bell.stdout
+        .take()
+        .expect("piped")
+        .read_to_string(&mut body)
+        .expect("read bell output");
+    assert!(status.success(), "the bell must exit 0, got {status}");
+    assert_eq!(body.trim(), "[]", "a quiet ring prints exactly []");
+    // Not before the deadline: the settle was cut to `--max-secs`, not skipped.
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(2),
+        "the bell ended before --max-secs: {:?}",
+        started.elapsed()
+    );
+    // The settle wait is 30 s; 15 s is half of it and far over the ~3 s the
+    // bell needs, so a loaded host does not flake the test.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(15),
+        "--settle-secs held the bell past --max-secs: {:?}",
+        started.elapsed()
+    );
+}
+
 /// The negative twin: with no `--max-secs` the bell keeps parking on a quiet
 /// daemon, through several park cycles.
 #[test]

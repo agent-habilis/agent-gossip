@@ -723,9 +723,21 @@ async fn poll(opts: PollOpts) -> Result<()> {
         if long && bell_lock.is_none() {
             bell_lock = bell::acquire(&bell_mesh, nickname.as_str()).await;
         }
-        // After the lock, so the bell counts as armed while it settles.
+        // After the lock, so the bell counts as armed while it settles. The
+        // wait stops at `--max-secs`, or a long settle would outlast the bound.
         if let Some(wait) = settle.take() {
-            tokio::time::sleep(wait).await;
+            let left = max_duration.map_or(wait, |max| {
+                wait.min(max.saturating_sub(poll_started.elapsed()))
+            });
+            tokio::time::sleep(left).await;
+        }
+        // A quiet ring that ends the bell before a harness time limit stops
+        // it: the same `[]` and exit 0 as any empty ring, so the agent re-arms
+        // without a notice. Checked before each new request, never after a
+        // response, so a request already parked still delivers its event.
+        if max_duration.is_some_and(|max| poll_started.elapsed() >= max) {
+            println!("[]");
+            return Ok(());
         }
         let started = tokio::time::Instant::now();
         let resp = ipc::send(&cmd, &nickname).await?;
@@ -746,14 +758,6 @@ async fn poll(opts: PollOpts) -> Result<()> {
         }
         if !(long && resp == "[]") {
             println!("{resp}");
-            return Ok(());
-        }
-        // A quiet ring that ends the bell before a harness time limit stops
-        // it: the same `[]` and exit 0 as any empty ring, so the agent re-arms
-        // without a notice. Checked after a response, so a parked request
-        // that holds an event still delivers it.
-        if max_duration.is_some_and(|max| poll_started.elapsed() >= max) {
-            println!("[]");
             return Ok(());
         }
         // Both empty paths render exactly `[]`; an error response is a JSON
