@@ -3637,8 +3637,12 @@ fn owner_pid_rejects_init_and_dead_owner() {
     }
 
     for owner in ["1", dead_pid.as_str(), zombie_pid.as_str()] {
+        // CI sets RUST_BACKTRACE, which makes anyhow append a backtrace to the
+        // error; the one-line check is about the output a user sees by default.
         let out = common::test_cmd()
             .args(["create", "--name", "owner-reject", "--owner-pid", owner])
+            .env_remove("RUST_BACKTRACE")
+            .env_remove("RUST_LIB_BACKTRACE")
             .stdin(Stdio::null())
             .output()
             .expect("failed to run create");
