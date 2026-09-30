@@ -28,6 +28,8 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
         anyhow::bail!("p2p cannot be disabled: use `p2p` or `p2p,relay`");
     }
     Ok(TransportPolicy {
+        udp: true,
+        webrtc: true,
         relay_transport: transports.contains(&Transport::Relay),
     })
 }
@@ -46,6 +48,8 @@ mod tests {
         assert_eq!(
             transport_policy(&[Transport::P2p]).unwrap(),
             TransportPolicy {
+                udp: true,
+                webrtc: true,
                 relay_transport: false
             }
         );

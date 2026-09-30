@@ -3408,3 +3408,299 @@ fn directed_task_delivers_point_to_point() {
         std::thread::sleep(POLL);
     }
 }
+
+struct DetachedDaemon {
+    owner: KillOnDrop,
+    state_file: PathBuf,
+    launcher_pid: u32,
+    launcher_stderr: String,
+    launch_time: Duration,
+}
+
+/// Launch `create --owner-pid` for a `sleep` owner and wait for the launcher
+/// to exit. The state file sits where `session` discovery looks for it.
+fn launch_detached_daemon(name: &str) -> DetachedDaemon {
+    let owner = KillOnDrop(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("failed to spawn the owner"),
+    );
+    let sessions_dir = common::runtime_base().join("sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
+    let stderr_file = tmp_log(&format!("{name}-stderr"));
+
+    let started = Instant::now();
+    let mut launcher = common::test_cmd()
+        .args(["create", "--name", name, "--owner-pid"])
+        .arg(owner.0.id().to_string())
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(File::create(&stderr_file).unwrap())
+        .spawn()
+        .expect("failed to spawn the launcher");
+    let launcher_pid = launcher.id();
+    let status = launcher.wait().unwrap();
+    let launch_time = started.elapsed();
+    let launcher_stderr = fs::read_to_string(&stderr_file).unwrap_or_default();
+    assert!(
+        status.success(),
+        "launcher failed: {status}\nstderr:\n{launcher_stderr}"
+    );
+    let _ = fs::remove_file(&stderr_file);
+    DetachedDaemon {
+        owner,
+        state_file,
+        launcher_pid,
+        launcher_stderr,
+        launch_time,
+    }
+}
+
+fn wait_until_gone(path: &std::path::Path, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while path.exists() && Instant::now() < deadline {
+        std::thread::sleep(POLL);
+    }
+    !path.exists()
+}
+
+/// `--owner-pid` detaches the daemon from its launcher and ties its life to
+/// the owner: the launcher returns at once, the daemon survives it, `session`
+/// and `bell-check` find it through the owner, and it stops with the owner.
+#[test]
+fn detached_daemon_follows_its_owner() {
+    let _serial = serial_guard();
+    let mut daemon = launch_detached_daemon("detach-owner");
+
+    assert!(
+        daemon.launch_time < Duration::from_secs(2),
+        "the launcher took {:?}",
+        daemon.launch_time
+    );
+    assert!(
+        daemon.launcher_stderr.is_empty(),
+        "the launcher wrote to stderr: {}",
+        daemon.launcher_stderr
+    );
+
+    let ready = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&daemon.state_file)
+        .output()
+        .expect("failed to run ready");
+    assert!(ready.status.success(), "ready failed: {ready:?}");
+
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&daemon.state_file).unwrap()).unwrap();
+    let daemon_pid = state["pid"].as_u64().expect("state file carries the pid");
+    let ps_field = |field: &str| {
+        let out = Command::new("ps")
+            .args(["-o", field, "-p", &daemon_pid.to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    assert_eq!(
+        ps_field("pgid="),
+        daemon_pid.to_string(),
+        "the daemon is not the leader of its own process group"
+    );
+    let parent_pid = ps_field("ppid=");
+    assert_ne!(
+        parent_pid,
+        daemon.launcher_pid.to_string(),
+        "the daemon is still a child of the launcher"
+    );
+
+    let owner_pid = daemon.owner.0.id().to_string();
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"].as_array().unwrap().len(),
+        1,
+        "session does not see the daemon through its owner: {sessions}"
+    );
+    assert!(
+        bell_check_block_reason(&owner_pid).is_some(),
+        "bell-check does not see the daemon through its owner"
+    );
+
+    let _ = daemon.owner.0.kill();
+    let _ = daemon.owner.0.wait();
+    assert!(
+        wait_until_gone(&daemon.state_file, Duration::from_secs(15)),
+        "the daemon outlived its owner"
+    );
+}
+
+/// `leave --session-pid <owner>` reaches a detached daemon, which is no
+/// longer a descendant of any agent process.
+#[test]
+fn detached_daemon_leaves_by_owner() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("detach-leave");
+    let ready = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&daemon.state_file)
+        .output()
+        .expect("failed to run ready");
+    assert!(ready.status.success(), "ready failed: {ready:?}");
+
+    let out = common::test_cmd()
+        .args(["leave", "--session-pid", &daemon.owner.0.id().to_string()])
+        .output()
+        .expect("failed to run leave");
+    assert!(out.status.success(), "leave failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(
+        report["left"].as_array().unwrap().len(),
+        1,
+        "leave missed the detached daemon: {report}"
+    );
+    assert!(
+        wait_until_gone(&daemon.state_file, Duration::from_secs(5)),
+        "the state file survived leave"
+    );
+}
+
+/// A caller that captures the launcher's output reads it to EOF. The detached
+/// daemon must not hold the write end of that pipe, or the caller blocks until
+/// the daemon exits and gets the daemon's JSON stdout as well.
+#[test]
+fn detached_daemon_releases_a_captured_pipe() {
+    let _serial = serial_guard();
+    let mut owner = KillOnDrop(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("failed to spawn the owner"),
+    );
+    let sessions_dir = common::runtime_base().join("sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
+
+    let mut launcher = common::test_cmd()
+        .args(["create", "--name", "detach-pipe", "--owner-pid"])
+        .arg(owner.0.id().to_string())
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn the launcher");
+    let mut stdout = launcher.stdout.take().unwrap();
+    let mut stderr = launcher.stderr.take().unwrap();
+    let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+    let stderr_eof = eof_tx.clone();
+    std::thread::spawn(move || {
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut Vec::new());
+        let _ = eof_tx.send(());
+    });
+    std::thread::spawn(move || {
+        let _ = std::io::Read::read_to_end(&mut stderr, &mut Vec::new());
+        let _ = stderr_eof.send(());
+    });
+    let both_closed = (0..2).all(|_| eof_rx.recv_timeout(Duration::from_secs(10)).is_ok());
+    let launcher_status = launcher.wait().unwrap();
+
+    // A failed launch starts no daemon and closes both pipes at once, so the
+    // pipe check alone passes without proving anything.
+    assert!(
+        launcher_status.success(),
+        "the launcher failed: {launcher_status}"
+    );
+    let ready = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .output()
+        .expect("failed to run ready");
+    assert!(ready.status.success(), "ready failed: {ready:?}");
+    assert!(state_file.exists(), "no daemon wrote the state file");
+    assert!(
+        both_closed,
+        "the detached daemon still holds the caller's stdout or stderr pipe"
+    );
+
+    let _ = owner.0.kill();
+    let _ = owner.0.wait();
+    assert!(
+        wait_until_gone(&state_file, Duration::from_secs(15)),
+        "the daemon outlived its owner"
+    );
+}
+
+/// An owner of 1 (init), a dead process or a zombie would end the daemon at once or
+/// never, so the start refuses all with one line on stderr.
+#[test]
+fn owner_pid_rejects_init_and_dead_owner() {
+    let mut dead = Command::new("true").spawn().unwrap();
+    let dead_pid = dead.id().to_string();
+    let _ = dead.wait();
+    // Exited but never reaped: a zombie still answers `kill -0`.
+    let mut zombie = Command::new("true").spawn().unwrap();
+    let zombie_pid = zombie.id().to_string();
+    let exited = Instant::now() + Duration::from_secs(2);
+    while fofoca::util::process::live_start_time(zombie.id()).is_some() {
+        assert!(Instant::now() < exited, "the zombie owner never exited");
+        std::thread::sleep(POLL);
+    }
+
+    for owner in ["1", dead_pid.as_str(), zombie_pid.as_str()] {
+        // CI sets RUST_BACKTRACE, which makes anyhow append a backtrace to the
+        // error; the one-line check is about the output a user sees by default.
+        let out = common::test_cmd()
+            .args(["create", "--name", "owner-reject", "--owner-pid", owner])
+            .env_remove("RUST_BACKTRACE")
+            .env_remove("RUST_LIB_BACKTRACE")
+            .stdin(Stdio::null())
+            .output()
+            .expect("failed to run create");
+        assert_eq!(out.status.code(), Some(1), "owner {owner}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            stderr.trim().lines().count(),
+            1,
+            "owner {owner}: expected one stderr line, got: {stderr}"
+        );
+    }
+    let _ = zombie.wait();
+}
+
+/// A flag error must reach the caller from the launcher itself: once the
+/// launcher has exited 0, the child's error only shows as a `ready` timeout.
+#[test]
+fn owner_pid_launcher_reports_flag_errors() {
+    let mut owner = KillOnDrop(
+        Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("failed to spawn the owner"),
+    );
+    let owner_pid = owner.0.id().to_string();
+    let mesh = fofoca::protocol::MeshId::from("owner-flag-error").to_string();
+    let bad_invocations: [&[&str]; 2] = [
+        &["join", &mesh, "--name", "not-allowed"],
+        &["create", "--name", "flag-error", "--transport", "relay"],
+    ];
+    for args in bad_invocations {
+        let out = common::test_cmd()
+            .args(args)
+            .args(["--owner-pid", &owner_pid])
+            .stdin(Stdio::null())
+            .output()
+            .expect("failed to run the launcher");
+        assert!(
+            !out.status.success(),
+            "the launcher hid a flag error behind exit 0 for {args:?}: {out:?}"
+        );
+    }
+    let _ = owner.0.kill();
+}

@@ -46,6 +46,14 @@ pub(crate) struct PollOpts {
     #[arg(long, value_name = "SECS", requires = "long")]
     pub settle_secs: Option<u64>,
 
+    /// End the bell by itself once this many seconds have passed: print the
+    /// quiet empty batch `[]` and exit 0, as an ordinary empty ring does.
+    /// The bell can overshoot by one daemon park (~60s). Use it when a
+    /// harness stops a background command at a time limit, so the bell
+    /// ends first and the agent re-arms it without a notice.
+    #[arg(long, value_name = "SECS", requires = "long")]
+    pub max_secs: Option<u64>,
+
     #[command(flatten)]
     pub legacy_output: LegacyOutput,
 }
@@ -90,6 +98,20 @@ mod tests {
             panic!("expected Poll command");
         };
         assert_eq!(opts.settle_secs, Some(5));
+    }
+
+    #[test]
+    fn max_secs_requires_long() {
+        let base = ["agent-gossip", "poll", "--gossip", "g", "--nickname", "n"];
+        let err = parse(&[&base[..], &["--max-secs", "7000"]].concat())
+            .expect_err("--max-secs without --long must be rejected");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let cli = parse(&[&base[..], &["--long", "--max-secs", "7000"]].concat())
+            .expect("--max-secs with --long parses");
+        let Commands::Poll { opts } = cli.command else {
+            panic!("expected Poll command");
+        };
+        assert_eq!(opts.max_secs, Some(7000));
     }
 
     #[test]

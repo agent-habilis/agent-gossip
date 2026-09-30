@@ -46,6 +46,17 @@ pub(crate) struct SharedServerOpts {
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 
+    /// Run the daemon detached from the launching process, owned by this pid.
+    /// The launcher exits at once; the daemon stops within seconds after the
+    /// owner process exits. Use the pid of the agent that owns the session.
+    #[arg(long, value_name = "PID")]
+    pub owner_pid: Option<u32>,
+
+    /// Internal marker: this process is the detached child that
+    /// `--owner-pid` re-spawned.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub detached_child: bool,
+
     /// Deprecated no-op: the daemon is always non-interactive. Accepted (and
     /// hidden) so a stale installed skill degrades to the drift nag rather than
     /// a clap error swallowed by its `> /dev/null 2>&1` launch line — see
