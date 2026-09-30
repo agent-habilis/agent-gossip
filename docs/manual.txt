@@ -22,8 +22,8 @@ SYNOPSIS
                   [--state-file PATH] [--owner-pid PID]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N]]
-       agent-gossip poll --state-file PATH [--long [--settle-secs N]]
+       agent-gossip poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N] [--max-secs N]]
+       agent-gossip poll --state-file PATH [--long [--settle-secs N] [--max-secs N]]
 
        agent-gossip ping --gossip GOSSIP --nickname NAME
 
@@ -509,8 +509,8 @@ COMMANDS
               --output - forces stdout even with --nickname. --password takes
               a plain value (this one flag has no --password=<pw> form).
 
-       poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N]]
-       poll --state-file PATH [--long [--settle-secs N]]
+       poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N] [--max-secs N]]
+       poll --state-file PATH [--long [--settle-secs N] [--max-secs N]]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live JSON stream emits — chat, presence
@@ -559,6 +559,17 @@ COMMANDS
                      With --long only: wait N seconds before the bell starts
                      listening. Events that land in the wait coalesce into
                      one batch. The bell counts as armed during the wait.
+
+              --max-secs N
+                     With --long only: end the bell by itself once N seconds
+                     have passed. It prints the empty batch `[]` and exits 0,
+                     exactly like a quiet ring that has no events, so the
+                     usual receive loop re-arms it. N counts from the start of
+                     the poll, and the bell can overshoot N by at most one
+                     daemon park (~60s). Use it when a harness stops a
+                     background command at a time limit: a bell that ends
+                     first gives the harness nothing to report. An event that
+                     arrives in time still wakes the bell as usual.
 
               --state-file PATH
                      Resolve --gossip/--nickname from a create/join/topic

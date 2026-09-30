@@ -635,6 +635,9 @@ fn compose_a2a_params(method: &str, sugar: &A2aCallSugar<'_>) -> serde_json::Val
 /// Query the running daemon's live peer roster. Always emits the
 /// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
 async fn poll(opts: PollOpts) -> Result<()> {
+    // First, so `--max-secs` counts from the process start like the harness
+    // clock does, readiness wait included.
+    let poll_started = tokio::time::Instant::now();
     let PollOpts {
         gossip,
         nickname,
@@ -642,6 +645,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         after,
         long,
         settle_secs,
+        max_secs,
         legacy_output: _,
     } = opts;
     // clap enforces exactly one form: `--state-file`, or `--gossip` +
@@ -668,6 +672,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
     let bell_mesh = mesh.to_string();
     let mut bell_lock = None;
     let mut settle = settle_secs.map(std::time::Duration::from_secs);
+    let max_duration = max_secs.map(std::time::Duration::from_secs);
     let cmd = IpcCommand::Poll { mesh, after, long };
 
     loop {
@@ -699,6 +704,14 @@ async fn poll(opts: PollOpts) -> Result<()> {
         }
         if !(long && resp == "[]") {
             println!("{resp}");
+            return Ok(());
+        }
+        // A quiet ring that ends the bell before a harness time limit stops
+        // it: the same `[]` and exit 0 as any empty ring, so the agent re-arms
+        // without a notice. Checked after a response, so a parked request
+        // that holds an event still delivers it.
+        if max_duration.is_some_and(|max| poll_started.elapsed() >= max) {
+            println!("[]");
             return Ok(());
         }
         // Both empty paths render exactly `[]`; an error response is a JSON

@@ -43,10 +43,16 @@ impl Drop for Daemon {
 /// Spawn `create` with stdout+stderr to a log, and wait for the `ready` line.
 /// Returns the daemon, its log, mesh, and nickname.
 fn spawn_create(name: &str) -> (Daemon, String, String) {
+    spawn_create_with(name, &[])
+}
+
+/// [`spawn_create`] with extra `create` flags, for the hidden tuning knobs.
+fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
     let log = tmp_log(&format!("lossless-{name}"));
     let file = fs::File::create(&log).unwrap();
     let child = test_cmd()
         .args(["create", "--name", name])
+        .args(flags)
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
@@ -266,6 +272,80 @@ fn bell_exits_cleanly_when_the_daemon_leaves() {
         "a clean daemon shutdown must end the bell with exit 0, got {status}: {body}"
     );
     assert_eq!(body.trim(), "[]", "the sentinel never reaches stdout");
+}
+
+/// The harness stops a background task at its time limit, with a notice the
+/// agent must not see. A bell told `--max-secs N` ends itself once N seconds
+/// have passed: a quiet `[]` and exit 0, exactly like an ordinary empty ring,
+/// so the Receive loop re-arms it without a word. The short `--longpoll-max-ms`
+/// keeps the daemon's park (60 s by default) from dominating the test.
+#[test]
+fn bell_with_max_secs_ends_itself_as_a_quiet_ring() {
+    use std::io::Read as _;
+
+    let (_daemon, mesh, nick) = spawn_create_with("bellmax", &["--longpoll-max-ms", "1000"]);
+    let started = Instant::now();
+    let mut bell = test_cmd()
+        .args([
+            "poll",
+            "--gossip",
+            &mesh,
+            "--nickname",
+            &nick,
+            "--long",
+            "--max-secs",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("bell spawns");
+
+    let status = wait_exit(&mut bell);
+    let mut body = String::new();
+    bell.stdout
+        .take()
+        .expect("piped")
+        .read_to_string(&mut body)
+        .expect("read bell output");
+    let mut stderr = String::new();
+    bell.stderr
+        .take()
+        .expect("piped")
+        .read_to_string(&mut stderr)
+        .expect("read bell stderr");
+    assert!(
+        status.success(),
+        "--max-secs must end the bell with exit 0, got {status}. stderr: {stderr}"
+    );
+    assert_eq!(body.trim(), "[]", "a quiet ring prints exactly []");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(2),
+        "the bell ended before --max-secs: {:?}",
+        started.elapsed()
+    );
+    // Far under the 60 s production park the bell must not wait for, and far
+    // over the ~3 s it needs, so a loaded host does not flake it.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "the bell waited for a full production park: {:?}",
+        started.elapsed()
+    );
+}
+
+/// The negative twin: with no `--max-secs` the bell keeps parking on a quiet
+/// daemon, through several park cycles.
+#[test]
+fn bell_without_max_secs_keeps_parking() {
+    let (_daemon, mesh, nick) = spawn_create_with("bellnomax", &["--longpoll-max-ms", "1000"]);
+    let mut bell = park_bell(&mesh, &nick);
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert!(
+        bell.try_wait().expect("try_wait").is_none(),
+        "a bell without --max-secs must not end on a quiet daemon"
+    );
+    let _ = bell.kill();
+    let _ = bell.wait();
 }
 
 /// The negative twin: a daemon that dies WITHOUT announcing shutdown (SIGKILL)

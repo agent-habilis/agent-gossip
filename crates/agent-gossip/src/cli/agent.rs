@@ -581,6 +581,53 @@ mod tests {
         }
     }
 
+    /// The harness stops a Claude Code background task at its `timeout`, with a
+    /// notice the agent must not see. Every Claude Code bell therefore ends
+    /// itself first with `--max-secs 7000`. The worst case is 7000 s, plus one
+    /// 60 s park, plus the 1 s minimum cycle: under the 7200000 ms limit. The
+    /// generic bell keeps its old text.
+    #[test]
+    fn claude_code_bells_end_before_the_harness_limit() {
+        let bells = |skill: &str| -> Vec<&'static str> {
+            rendered(skill)
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with("agent-gossip poll ") && line.contains("--long"))
+                .collect()
+        };
+        for skill in OWNED_SKILL_DIRS {
+            for line in bells(skill)
+                .iter()
+                .filter(|line| line.contains("--max-secs"))
+            {
+                assert!(
+                    line.ends_with("--max-secs 7000 > /dev/null 2>&1"),
+                    "{skill}: a Claude Code bell must end with `--max-secs 7000`: {line}"
+                );
+            }
+        }
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let ending: Vec<_> = bells(skill)
+                .into_iter()
+                .filter(|line| line.contains("--max-secs 7000"))
+                .collect();
+            assert!(
+                ending.iter().any(|line| line.contains("--state-file")),
+                "{skill}: the first Claude Code bell has no --max-secs 7000: {ending:?}"
+            );
+            assert!(
+                ending.iter().any(|line| line.contains("--gossip")),
+                "{skill}: the Claude Code re-arm has no --max-secs 7000: {ending:?}"
+            );
+        }
+        assert!(
+            bells("gossip-reattach")
+                .iter()
+                .any(|line| line.contains("--gossip") && line.contains("--max-secs 7000")),
+            "gossip-reattach: the Claude Code re-arm has no --max-secs 7000"
+        );
+    }
+
     /// The binary never self-reports `cwd`; only the ready gate's merge puts it
     /// in meta, and `gossip-status` only shows what meta holds.
     #[test]

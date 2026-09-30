@@ -66,8 +66,14 @@ foreground, mapped as:
   mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && <!-- slot name="launch" --> --owner-pid "$PPID" --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
   ```
 
-- Tool call 2 → the bell command below, as a background `Bash` call with
-  `timeout: 7200000`, the longest value allowed.
+- Tool call 2 → this bell command, as a background `Bash` call with
+  `timeout: 7200000`, the longest value allowed. `--max-secs 7000` ends the
+  bell by itself before that limit, as an ordinary quiet ring:
+
+  ```bash
+  agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
+  ```
+
 - Tool call 3 → the gate script below, unchanged.
 
 The `> /dev/null` and the `.stderr` file follow the same rules as the generic
