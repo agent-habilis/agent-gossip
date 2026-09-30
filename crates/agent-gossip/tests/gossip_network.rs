@@ -3608,16 +3608,33 @@ fn detached_daemon_releases_a_captured_pipe() {
         let _ = stderr_eof.send(());
     });
     let both_closed = (0..2).all(|_| eof_rx.recv_timeout(Duration::from_secs(10)).is_ok());
-    let _ = launcher.wait();
+    let launcher_status = launcher.wait().unwrap();
 
-    let _ = owner.0.kill();
-    let _ = owner.0.wait();
-    let stopped = wait_until_gone(&state_file, Duration::from_secs(15));
+    // A failed launch starts no daemon and closes both pipes at once, so the
+    // pipe check alone passes without proving anything.
+    assert!(
+        launcher_status.success(),
+        "the launcher failed: {launcher_status}"
+    );
+    let ready = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .output()
+        .expect("failed to run ready");
+    assert!(ready.status.success(), "ready failed: {ready:?}");
+    assert!(state_file.exists(), "no daemon wrote the state file");
     assert!(
         both_closed,
         "the detached daemon still holds the caller's stdout or stderr pipe"
     );
-    assert!(stopped, "the daemon outlived its owner");
+
+    let _ = owner.0.kill();
+    let _ = owner.0.wait();
+    assert!(
+        wait_until_gone(&state_file, Duration::from_secs(15)),
+        "the daemon outlived its owner"
+    );
 }
 
 /// An owner of 1 (init), a dead process or a zombie would end the daemon at once or
