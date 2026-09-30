@@ -1,3 +1,9 @@
+## 0.11.3 (2026-09-30)
+
+### Fixes
+
+- Keep the Claude Code daemon alive past the 2-hour background limit
+
 ## 0.11.2 (2026-09-27)
 
 ### Fixes
