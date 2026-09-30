@@ -22,6 +22,9 @@ pub(crate) struct Target {
     /// echoes instead of the lossy derived `name`.
     topic: Option<String>,
     pid: u32,
+    /// The agent process a detached daemon (`--owner-pid`) answers to. Such a
+    /// daemon is no descendant of it, so ancestry alone cannot match.
+    owner_pid: Option<u32>,
 }
 
 pub(crate) struct Discovery {
@@ -51,6 +54,7 @@ fn discover() -> Discovery {
         };
         if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-gossip") {
             live.push(Target {
+                owner_pid: entry.owner_pid,
                 path,
                 mesh,
                 name: entry.name,
@@ -64,6 +68,16 @@ fn discover() -> Discovery {
         }
     }
     Discovery { live, cleaned }
+}
+
+/// Whether the session anchored at `anchor` owns this daemon: the daemon is
+/// its descendant, or the daemon named the anchor, or one of its descendants,
+/// as its owner.
+fn owned_by(target: &Target, anchor: u32) -> bool {
+    process::ancestry_contains(target.pid, anchor)
+        || target
+            .owner_pid
+            .is_some_and(|owner| owner == anchor || process::ancestry_contains(owner, anchor))
 }
 
 /// Resolve a live session's mesh id from its nickname — for commands that need
@@ -95,9 +109,9 @@ fn state_file_paths() -> Vec<PathBuf> {
 /// else's. `is_owned` is injected so the split is testable without real
 /// processes; the real caller passes an ancestry check against
 /// `session_pid`.
-fn split_owned(live: Vec<Target>, is_owned: impl Fn(u32) -> bool) -> (Vec<Target>, usize) {
+fn split_owned(live: Vec<Target>, is_owned: impl Fn(&Target) -> bool) -> (Vec<Target>, usize) {
     let (owned, others): (Vec<Target>, Vec<Target>) =
-        live.into_iter().partition(|target| is_owned(target.pid));
+        live.into_iter().partition(|target| is_owned(target));
     let other_sessions = others.len();
     (owned, other_sessions)
 }
@@ -221,6 +235,7 @@ pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
         nickname: nickname.clone(),
         topic: entry.topic,
         pid,
+        owner_pid: entry.owner_pid,
     };
     if !confirm_owner(&live_owners().await, &target) {
         return None;
@@ -252,7 +267,7 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         )
     } else {
         let anchor = session_pid.unwrap_or_else(default_session_pid);
-        split_owned(live, |pid| process::ancestry_contains(pid, anchor))
+        split_owned(live, |target| owned_by(target, anchor))
     };
 
     let owners = live_owners().await;
@@ -360,7 +375,7 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
 
 fn owned_sessions(live: Vec<Target>, session_pid: Option<u32>) -> (Vec<Target>, usize) {
     let anchor = session_pid.unwrap_or_else(default_session_pid);
-    split_owned(live, |pid| process::ancestry_contains(pid, anchor))
+    split_owned(live, |target| owned_by(target, anchor))
 }
 
 /// The sessions that are serving but have no bell armed. A session still
@@ -423,7 +438,7 @@ pub(crate) fn bell_check(opts: &BellCheckOpts) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Owner, Target, confirm_owner, select_explicit, split_owned, unarmed};
+    use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
@@ -433,6 +448,7 @@ mod tests {
             nickname: Some(nickname.to_owned()),
             topic: None,
             pid,
+            owner_pid: None,
         }
     }
 
@@ -490,12 +506,23 @@ mod tests {
     }
 
     #[test]
+    fn owned_by_follows_the_recorded_owner() {
+        let own = std::process::id();
+        let parent = fofoca::util::process::parent_of(own).expect("test process has a parent");
+        let mut detached = target("aaaa", "one-two", u32::MAX);
+        assert!(!owned_by(&detached, own), "no owner recorded");
+        detached.owner_pid = Some(own);
+        assert!(owned_by(&detached, own), "the owner itself");
+        assert!(owned_by(&detached, parent), "an ancestor of the owner");
+    }
+
+    #[test]
     fn split_owned_partitions_by_pid() {
         let live = vec![
             target("aaaa", "one-two", 10),
             target("bbbb", "three-four", 20),
         ];
-        let (owned, other_sessions) = split_owned(live, |pid| pid == 10);
+        let (owned, other_sessions) = split_owned(live, |target| target.pid == 10);
         assert_eq!(owned.len(), 1);
         assert_eq!(owned[0].pid, 10);
         assert_eq!(other_sessions, 1);

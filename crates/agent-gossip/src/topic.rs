@@ -19,6 +19,8 @@ pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
             password: None,
             issuer_pubkey: None,
             transport: TransportPolicy {
+                udp: true,
+                webrtc: true,
                 relay_transport: true,
             },
         },
@@ -42,6 +44,17 @@ mod tests {
     use fofoca::protocol::LookupOpts;
 
     use super::derive_topic_mesh;
+
+    /// The id the 0.11.2 release derives for `standup`. A drift here splits a
+    /// topic into two gossips, one per version.
+    #[test]
+    fn topic_id_matches_the_released_derivation() {
+        let mesh = derive_topic_mesh("standup").unwrap();
+        assert_eq!(
+            mesh.to_string(),
+            "AgBnTCvTVJaSL7KDGarW4RTM9keGyygT7znwDurPdHiYDbGXkExWHmqY5CUgAyqegj"
+        );
+    }
 
     #[test]
     fn topic_mesh_uses_relay_transport() {

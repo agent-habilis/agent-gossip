@@ -44,7 +44,7 @@ rust-version = "1.93"
 #
 # Bumping this is what carries an engine fix into the app; keep it in step with
 # agent-share, which pins the same rev.
-fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "4ec7f60cb7ea3e27286de7c5ba20a109600221cb" }
+fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "8804d8af012125e6cb63b8aec1de6fdab3bd3a74" }
 tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",

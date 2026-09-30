@@ -154,11 +154,49 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     }
 }
 
+/// With `--owner-pid`, re-spawn this process as a daemon in its own session and
+/// exit. The caller runs it after every argument is resolved, so an argument
+/// error exits from the launcher, and before the mesh is set up, so no log
+/// buffer is flushed into the caller's `.stderr` file.
+fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
+    let Some(owner) = shared.owner_pid else {
+        return Ok(());
+    };
+    if shared.detached_child {
+        return Ok(());
+    }
+    fofoca::runtime::validate_owner_pid(owner)?;
+    let mut child = std::process::Command::new(std::env::current_exe()?);
+    child
+        .args(std::env::args_os().skip(1))
+        .arg("--detached-child")
+        .stdin(std::process::Stdio::null());
+    // SAFETY: `setsid` is async-signal-safe and touches no memory of this
+    // process, so it is sound between fork and exec.
+    #[expect(
+        unsafe_code,
+        reason = "setsid has no safe std wrapper; process_group(0) is not enough because Claude Code also walks processes by session id"
+    )]
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut child, || {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    child
+        .spawn()
+        .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
+    std::process::exit(0)
+}
+
 /// Build the output sink, set up the mesh, and run the event loop. The
 /// shared spine of `create` and `join` — `resolved` carries the
 /// already-resolved [`SetupKind`](fofoca::runtime::SetupKind), author,
 /// and advertise directory (see [`fofoca::runtime::Resolved`]).
 async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
+    detach_if_owned(&shared)?;
     let Resolved {
         kind,
         author,
@@ -239,6 +277,10 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         },
     )
     .await?;
+    let cfg = match shared.owner_pid {
+        Some(owner) => cfg.with_owner_pid(owner)?,
+        None => cfg,
+    };
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this mesh's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
