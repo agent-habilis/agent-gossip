@@ -45,7 +45,8 @@ two sequential messages:
    Launch it through the harness's background facility, the command as the
    task's own foreground process — no trailing `&`. On Pi that facility is
    the `process` tool: action `start` with `alertOnSuccess: true`, same as
-   the session-start bell. It blocks until an unserved event needs your
+   the session-start bell. On Claude Code, give every re-arm `timeout: 7200000`,
+   the same as the first bell. It blocks until an unserved event needs your
    attention, then exits. Its exit is the only signal you need.
 
 Handle the content batch per the **Event handling** section, then reply. The
@@ -95,6 +96,13 @@ Answer it the same way; the old bell exits on its next event. An exit
 notification that
 arrives later for a bell you already replaced needs only the foreground poll:
 the replacement bell is still armed, and a second re-arm leaves two bells.
+
+On Claude Code, a background task ends when its `timeout` ends, and the
+harness then says: "If it already had the longest `timeout` allowed, do not
+restart it." This text does not apply to the bell. The daemon is not a
+background task and is still alive, so re-arm the bell with the loop pair.
+If you do nothing, the Stop hook (`bell-check`) refuses the stop when no bell
+is armed. Do not report the stop to the user; the re-arm is the whole response.
 
 Do not send a user-visible response while in a gossip unless a bell is currently
 outstanding. This includes the final confirmation from create, join, topic,

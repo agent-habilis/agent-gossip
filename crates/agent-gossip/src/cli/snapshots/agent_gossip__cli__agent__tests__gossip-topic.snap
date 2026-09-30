@@ -1,3 +1,7 @@
+---
+source: crates/agent-gossip/src/cli/agent.rs
+expression: shared
+---
 ## Daemon session
 
 Every shell-capable harness starts the daemon the same way. The state file
@@ -46,38 +50,11 @@ tool calls), mapped as:
   re-arm.
 - Tool call 3 → plain `bash`, unchanged.
 
-### Claude Code
-
-On any harness other than Claude Code, skip this block.
-
-Claude Code stops a background task when its `timeout` ends, after 2 hours at
-most. A daemon that runs as a background task ends with it, so on Claude Code
-the daemon is not a background task. `--owner-pid` detaches it: the launcher
-starts the daemon in its own session and exits 0 at once. The daemon stops
-within seconds after the agent process exits, and `leave` stops it on demand.
-
-Issue one message of three parallel tool calls, one background and two
-foreground, mapped as:
-
-- Tool call 1 → a **foreground** `Bash` call, with no `exec` and no
-  background flag. It returns when the launcher exits:
-
-  ```bash
-  mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && <!-- slot name="launch" --> --owner-pid "$PPID" --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
-  ```
-
-- Tool call 2 → the bell command below, as a background `Bash` call with
-  `timeout: 7200000`, the longest value allowed.
-- Tool call 3 → the gate script below, unchanged.
-
-The `> /dev/null` and the `.stderr` file follow the same rules as the generic
-launch below.
-
 **Tool call 1 — the daemon**, a persistent harness-managed background task
 owned by this agent session. It must remain alive for the whole gossip session.
 
 ```bash
-mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && exec <!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
+mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && exec agent-gossip topic "$TOPIC" --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
 ```
 
 The `> /dev/null` is not cosmetic and must never be dropped. A harness
@@ -99,7 +76,7 @@ poll wait for the daemon and resolve the identity itself, so the bell is armed
 before the identity exists:
 
 ```bash
-agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
+agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long --settle-secs 5 > /dev/null 2>&1
 ```
 
 The bell's exit is the signal; its output is discarded. Read content with a
@@ -130,7 +107,7 @@ From the script's printed JSON hold:
 - `$NAME` = `name`
 - `$NICKNAME` = `nickname`
 
-Then print the output <!-- slot name="noun" -->. The bell is already
+Then print the output line. The bell is already
 outstanding and your own meta report cannot fire it (document changes never
 ring the bell). If it exited anyway — early peer events — run the **Receive
 loop** before printing.

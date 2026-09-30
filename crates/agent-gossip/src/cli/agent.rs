@@ -429,6 +429,23 @@ mod tests {
         }
     }
 
+    /// The detached launch is the only one that carries `--owner-pid`; it
+    /// must not `exec`, or the foreground call would never return. The
+    /// generic launch keeps `exec` so Pi, Codex and Cursor do not change.
+    fn assert_launch_shape(path: &str, line: &str) {
+        if line.contains("--owner-pid") {
+            assert!(
+                !line.contains("exec ") && !line.contains("--detach"),
+                "{path}: the detached launch must not exec or use --detach: {line}"
+            );
+        } else {
+            assert!(
+                line.contains("exec agent-gossip"),
+                "{path}: the generic launch must stay `exec agent-gossip`: {line}"
+            );
+        }
+    }
+
     /// A harness writes a background command's output to a file. The daemon's
     /// `--output json` stdout carries every message body, so the
     /// `> /dev/null` on each such line is the only thing keeping bodies
@@ -446,8 +463,7 @@ mod tests {
     fn long_running_gossip_commands_discard_stdout_and_stderr() {
         fn is_daemon_launch(line: &str) -> bool {
             ["create", "join", "topic"].iter().any(|sub| {
-                line.starts_with(&format!("agent-gossip {sub} "))
-                    || line.contains(&format!("exec agent-gossip {sub} "))
+                line.contains(&format!("agent-gossip {sub} ")) && line.contains("--state-file")
             })
         }
         fn is_bell(line: &str) -> bool {
@@ -490,9 +506,25 @@ mod tests {
                         .iter()
                         .filter(|line| is_daemon_launch(line))
                         .count(),
-                    1,
-                    "{path}: expected exactly one daemon launch, found {long_running:?}"
+                    2,
+                    "{path}: expected two daemon launches (generic and Claude Code), \
+                     found {long_running:?}"
                 );
+                // Only the Claude Code launch detaches. The generic one stays a
+                // harness task, so Pi, Codex and Cursor keep the old behaviour.
+                assert_eq!(
+                    long_running
+                        .iter()
+                        .filter(|line| is_daemon_launch(line)
+                            && line.contains(r#"--owner-pid "$PPID""#))
+                        .count(),
+                    1,
+                    "{path}: exactly one launch carries --owner-pid \"$PPID\": {long_running:?}"
+                );
+                long_running
+                    .iter()
+                    .filter(|line| is_daemon_launch(line))
+                    .for_each(|line| assert_launch_shape(&path, line));
                 assert!(
                     long_running.iter().any(|line| is_bell(line)),
                     "{path}: expected a poll bell, found {long_running:?}"
@@ -520,6 +552,33 @@ mod tests {
             }
         }
         assert_eq!(daemon_starters_checked, 3);
+    }
+
+    /// Pi, Codex and Cursor must keep the launch text they have today, so the
+    /// snapshot covers only the Daemon session section, with the Claude Code
+    /// block cut out.
+    #[test]
+    fn generic_and_pi_daemon_text_is_unchanged() {
+        for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
+            let body = rendered(skill);
+            let start = body
+                .find("## Daemon session")
+                .unwrap_or_else(|| panic!("{skill}: no Daemon session section"));
+            let end = body[start..]
+                .find("## Meta channel")
+                .map_or(body.len(), |offset| start + offset);
+            let section = &body[start..end];
+            let shared = match section.find("### Claude Code") {
+                Some(block) => {
+                    let after = section[block..]
+                        .find("**Tool call 1 — the daemon**")
+                        .unwrap_or_else(|| panic!("{skill}: Claude Code block has no end"));
+                    format!("{}{}", &section[..block], &section[block + after..])
+                }
+                None => section.to_owned(),
+            };
+            insta::assert_snapshot!(skill, shared);
+        }
     }
 
     /// The binary never self-reports `cwd`; only the ready gate's merge puts it

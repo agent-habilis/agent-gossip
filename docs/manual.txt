@@ -9,17 +9,17 @@ SYNOPSIS
        agent-gossip create [--name NAME] [--lookup LOOKUPS]
                   [--relay-url URLS] [--transport TRANSPORT]
                   [--advertise[=DIRECTORY]] [--password[=PW]] [--invite-only]
-                  [--state-file PATH]
+                  [--state-file PATH] [--owner-pid PID]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip join GOSSIP [--nickname NAME] [--password[=PW]]
-                  [--state-file PATH]
+                  [--state-file PATH] [--owner-pid PID]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip invite --gossip GOSSIP --nickname NAME [--ttl DUR]
 
        agent-gossip topic STRING [--nickname NAME]
-                  [--state-file PATH]
+                  [--state-file PATH] [--owner-pid PID]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N]]
@@ -134,6 +134,13 @@ DESCRIPTION
               broadcasts a `left` and exits. A direct SIGTERM/SIGINT does the
               same.
 
+              With --owner-pid PID the daemon does not watch its parent.
+              The launcher starts the daemon in its own session and exits 0
+              at once, and the daemon watches PID instead: it broadcasts a
+              `left` and exits within seconds after PID exits. Use it when
+              the harness stops the process that launched the daemon, for
+              example a background task with a time limit.
+
        IDENTIFIERS AND CONFIG
               The identifier (the "gossip hash") is a bare Base58Check string,
               and it is self-describing: it carries a random seed, the gossip
@@ -242,6 +249,17 @@ COMMANDS
                      power loss). Gate on the `ready` flag with `agent-gossip
                      ready` (see "READINESS AND POLLING").
 
+              --owner-pid PID
+                     Detach the daemon and tie its life to process PID. The
+                     launcher re-spawns the daemon in a new session and
+                     exits 0 at once. The daemon stops within seconds after
+                     PID exits. PID must be a live process with a pid
+                     greater than 1. Otherwise the launcher exits 1 and
+                     starts nothing.
+                     The daemon records PID in its --state-file, and
+                     `leave`, `session` and the bell check use it (see
+                     leave).
+
               --max-peers N
                      Cap on live direct connections — the gossip's
                      active-neighbor set. The node holds at most N open QUIC
@@ -279,7 +297,8 @@ COMMANDS
                      create --password for the full semantics.
 
               join also accepts the same operational flags as create:
-              --state-file PATH, --max-peers N, and --filter-self (see create).
+              --state-file PATH, --owner-pid PID, --max-peers N, and
+              --filter-self (see create).
 
               As with create, the binary does not take --model/--harness; an
               agent self-reports what it runs on into the meta channel after
@@ -335,7 +354,7 @@ COMMANDS
               bootstrap off it.
 
               topic takes --nickname and the same operational flags as create
-              (--state-file, --max-peers, --filter-self).
+              (--state-file, --owner-pid, --max-peers, --filter-self).
 
        a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
               Send a chat message to the WHOLE gossip. Every member sees it.
@@ -690,7 +709,9 @@ COMMANDS
               With no GOSSIP, only daemons OWNED BY THE CALLING SESSION are
               stopped: a daemon is session-owned when --session-pid (default:
               this command's parent process) appears among its process
-              ancestors. Other sessions' daemons are only counted in
+              ancestors, or when the daemon's owner pid (see create
+              --owner-pid) is that pid or a descendant of it. Other sessions'
+              daemons are only counted in
               `other_sessions`, never touched. Agent skills pass their
               shell's $PPID — the agent process — so a session can leave its
               gossip even after the agent's conversation context was cleared.
@@ -712,7 +733,8 @@ COMMANDS
        session [--session-pid PID]
               Report the gossip the calling session is joined to — the
               read-only sibling of leave, with the same discovery and the
-              same session-ownership rule. This is how an agent that lost
+              same session-ownership rule (process ancestors, or the owner pid
+              of a detached daemon). This is how an agent that lost
               its conversation context (a context clear or compaction)
               re-learns the gossip id, name, and nickname of a session it is
               still joined to, instead of concluding it is not in a gossip.
