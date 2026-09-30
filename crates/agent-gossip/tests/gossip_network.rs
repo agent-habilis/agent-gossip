@@ -3569,6 +3569,57 @@ fn detached_daemon_leaves_by_owner() {
     );
 }
 
+/// A caller that captures the launcher's output reads it to EOF. The detached
+/// daemon must not hold the write end of that pipe, or the caller blocks until
+/// the daemon exits and gets the daemon's JSON stdout as well.
+#[test]
+fn detached_daemon_releases_a_captured_pipe() {
+    let _serial = serial_guard();
+    let mut owner = KillOnDrop(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("failed to spawn the owner"),
+    );
+    let sessions_dir = common::runtime_base().join("sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
+
+    let mut launcher = common::test_cmd()
+        .args(["create", "--name", "detach-pipe", "--owner-pid"])
+        .arg(owner.0.id().to_string())
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn the launcher");
+    let mut stdout = launcher.stdout.take().unwrap();
+    let mut stderr = launcher.stderr.take().unwrap();
+    let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+    let stderr_eof = eof_tx.clone();
+    std::thread::spawn(move || {
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut Vec::new());
+        let _ = eof_tx.send(());
+    });
+    std::thread::spawn(move || {
+        let _ = std::io::Read::read_to_end(&mut stderr, &mut Vec::new());
+        let _ = stderr_eof.send(());
+    });
+    let both_closed = (0..2).all(|_| eof_rx.recv_timeout(Duration::from_secs(10)).is_ok());
+    let _ = launcher.wait();
+
+    let _ = owner.0.kill();
+    let _ = owner.0.wait();
+    let stopped = wait_until_gone(&state_file, Duration::from_secs(15));
+    assert!(
+        both_closed,
+        "the detached daemon still holds the caller's stdout or stderr pipe"
+    );
+    assert!(stopped, "the daemon outlived its owner");
+}
+
 /// An owner of 1 (init), a dead process or a zombie would end the daemon at once or
 /// never, so the start refuses all with one line on stderr.
 #[test]

@@ -170,7 +170,9 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
     child
         .args(std::env::args_os().skip(1))
         .arg("--detached-child")
-        .stdin(std::process::Stdio::null());
+        .stdin(std::process::Stdio::null())
+        .stdout(detached_stdio(&std::io::stdout()))
+        .stderr(detached_stdio(&std::io::stderr()));
     // SAFETY: `setsid` is async-signal-safe and touches no memory of this
     // process, so it is sound between fork and exec.
     #[expect(
@@ -189,6 +191,28 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
         .spawn()
         .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
     std::process::exit(0)
+}
+
+/// The detached daemon's copy of one of the launcher's output streams. A pipe or
+/// a socket is how a caller captures output (libuv, and so Node, uses a
+/// socketpair), and the caller reads it to EOF: a daemon that held the write
+/// end would block the caller for its whole life and fill the pipe with message
+/// bodies. A file, `/dev/null` or a tty is inherited, so the skill's `.stderr`
+/// file still gets startup errors.
+fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
+    use std::os::unix::fs::FileTypeExt as _;
+    let captured = stream
+        .as_fd()
+        .try_clone_to_owned()
+        .and_then(|fd| std::fs::File::from(fd).metadata())
+        .map_or(true, |meta| {
+            meta.file_type().is_fifo() || meta.file_type().is_socket()
+        });
+    if captured {
+        std::process::Stdio::null()
+    } else {
+        std::process::Stdio::inherit()
+    }
 }
 
 /// Build the output sink, set up the mesh, and run the event loop. The
