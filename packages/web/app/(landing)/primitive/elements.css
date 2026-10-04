@@ -1,0 +1,84 @@
+/* Table, details, progress. */
+
+/* table; rows are 3 baselines high, rules are inset shadows */
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  text-align: left;
+}
+th, td {
+  padding: calc(var(--baseline) / 2) var(--lineHeight) calc(var(--baseline) / 2) 0;
+}
+th {
+  font-weight: 700;
+}
+thead th {
+  box-shadow: inset 0 calc(var(--hrThickness) * -1) 0 var(--rule-color);
+}
+tbody td, tbody th {
+  box-shadow: inset 0 -1px 0 var(--line-color);
+}
+
+/* details */
+summary {
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::before {
+  content: "+";
+  display: inline-block;
+  width: var(--lineHeight);
+}
+details[open] > summary::before {
+  content: "−";
+}
+details > :not(summary) {
+  margin-left: var(--lineHeight);
+}
+
+/* progress; 1 baseline high, half a baseline of space above and below */
+progress {
+  display: block;
+  width: 100%;
+  height: var(--baseline);
+  margin: calc(var(--baseline) / 2) 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--field-background);
+}
+progress::-webkit-progress-bar {
+  background: transparent;
+}
+progress::-webkit-progress-value {
+  background: var(--foreground-color);
+}
+progress::-moz-progress-bar {
+  background: var(--foreground-color);
+}
+
+/* indeterminate: a band moves across the track */
+progress:indeterminate {
+  background-image: linear-gradient(var(--foreground-color), var(--foreground-color));
+  background-size: 30% 100%;
+  background-repeat: no-repeat;
+  background-position: 35% 0;
+}
+progress:indeterminate::-moz-progress-bar {
+  background: transparent;
+}
+@media (prefers-reduced-motion: no-preference) {
+  progress:indeterminate {
+    animation: p-progress 1.5s linear infinite;
+  }
+}
+@keyframes p-progress {
+  from { background-position: -43% 0; }
+  to { background-position: 143% 0; }
+}

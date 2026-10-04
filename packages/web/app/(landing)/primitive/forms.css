@@ -1,0 +1,75 @@
+/* Forms. Bare platform elements; fields are 3 baselines high, like buttons. */
+label {
+  display: block;
+  font-weight: 700;
+}
+label:has(input[type="radio"], input[type="checkbox"]) {
+  display: inline-block;
+  margin-right: var(--lineHeight);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+/* text fields */
+input:not([type="radio"], [type="checkbox"], [type="submit"], [type="button"], [type="reset"],
+          [type="range"], [type="file"], [type="color"], [type="image"], [type="hidden"]),
+select,
+textarea {
+  display: block;
+  width: 100%;
+  height: calc(var(--baseline) * 3);
+  padding: 0 var(--baseline);
+  border-radius: var(--radius);
+  background-color: var(--field-background);
+  color: var(--field-color);
+  /* the line is an inset shadow, so the height stays on the baseline */
+  box-shadow: inset 0 0 0 1px var(--line-color);
+  appearance: none;
+  -webkit-appearance: none;
+}
+textarea {
+  height: auto;
+  padding: calc(var(--baseline) / 2) var(--baseline);
+  resize: vertical;
+}
+::placeholder {
+  color: var(--placeholder-color);
+  opacity: 1;
+}
+
+/* select arrow, drawn with gradients in the text color */
+select {
+  padding-right: calc(var(--lineHeight) + var(--baseline));
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(-45deg, transparent 50%, currentColor 50%);
+  background-size: 5px 5px;
+  background-position:
+    right calc(var(--baseline) + 5px) center,
+    right var(--baseline) center;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+/* radio and checkbox stay native */
+input[type="radio"],
+input[type="checkbox"] {
+  margin-right: calc(var(--baseline) / 2);
+  accent-color: var(--foreground-color);
+  vertical-align: middle;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-color);
+  outline-offset: 2px;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background-color: var(--disabled-background);
+  color: var(--disabled-color);
+  cursor: not-allowed;
+}

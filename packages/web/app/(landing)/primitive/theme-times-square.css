@@ -1,0 +1,55 @@
+/*
+Theme: Times Square (github.com/caiogondim/times-square), dark.
+Use: <html data-theme="times-square">. Overrides roles only; the default theme stays as is.
+*/
+:root[data-theme="times-square"] {
+  /* palette, from times-square src/colors.js */
+  --ts-background: #2b2b2b;
+  --ts-foreground: #b8b8b8;
+  --ts-red: #eca4b2;
+  --ts-yellow: #d9b264;
+  --ts-green: #81c963;
+  --ts-cyan: #69c7bc;
+  --ts-blue: #89bdea;
+  --ts-magenta: #dea2ea;
+  --ts-white: #fefefe;
+  --ts-comment: #757575;
+  --ts-selection: #4b4b4b;
+  --ts-gray-1: #414141;
+  --ts-gray-2: #363636;
+  --ts-gray-3: #2b2b2b;
+  --ts-gray-4: #202020;
+  --ts-gray-5: #161616;
+
+  /* roles */
+  --background-color: var(--ts-background);
+  --foreground-color: var(--ts-foreground);
+  --muted-color: var(--ts-comment);
+  --rule-color: var(--ts-foreground);
+  --accent-color: var(--ts-yellow);
+  --accent-contrast-color: var(--ts-gray-5);
+  --focus-color: var(--ts-white);
+
+  --button-background: var(--ts-foreground);
+  --button-color: var(--ts-gray-5);
+  --button-hover-background: var(--ts-white);
+  --button-active-background: var(--ts-comment);
+  --button-secondary-background: var(--ts-gray-1);
+  --button-secondary-color: var(--ts-foreground);
+  --button-secondary-hover-background: var(--ts-selection);
+  --button-secondary-active-background: var(--ts-gray-2);
+  --disabled-background: var(--ts-gray-2);
+  --disabled-color: var(--ts-comment);
+
+  --field-background: var(--ts-gray-4);
+  --field-color: var(--ts-foreground);
+  --placeholder-color: var(--ts-comment);
+  --line-color: var(--ts-gray-1);
+
+  /* debug overlay, visible on the dark background */
+  --debug-column: rgba(236, 164, 178, 0.14);
+  --debug-cell: rgba(236, 164, 178, 0.9);
+  --debug-line: rgba(137, 189, 234, 0.4);
+  --debug-baseline: rgba(137, 189, 234, 0.14);
+  --debug-margin: rgba(129, 201, 99, 0.9);
+}

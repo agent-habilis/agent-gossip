@@ -1,0 +1,77 @@
+/* Tokens. Variable names follow Raster (rsms.me/raster). */
+:root {
+  /* font size is the basis of all other measurements */
+  --fontSize: 16px;
+
+  /* line height is the basis for vertical spacing */
+  --lineHeight: calc(var(--fontSize) * 1.5);
+
+  /* horizontal and vertical spacing basis */
+  --baseline: calc(var(--lineHeight) / 2);
+
+  /* spacing below blocks */
+  --blockSpacingBottom: var(--lineHeight);
+
+  /* grid spacing */
+  --columnGap: var(--lineHeight);
+  --rowGap: var(--lineHeight);
+  --pageMargin: calc(var(--lineHeight) * 2);
+
+  /* fonts */
+  --sansFont: system-ui, -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --monoFont: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* type sizes */
+  --h1-size: 3rem;
+  --h2-size: 2rem;
+  --h3-size: 1.25rem;
+  --h4-size: 1rem;
+  --small-size: 0.8125rem;
+
+  --hrThickness: 2px;
+
+  /* corner radius */
+  --radius: calc(var(--baseline) / 4);
+
+  /* palette */
+  --black: #000;
+  --gray-1: #2a2a2a;
+  --gray-2: #5a5a5a;
+  --gray-3: #7e7e7e;
+  --gray-4: #999;
+  --gray-5: #b4b4b4;
+  --gray-6: #d0d0d0;
+  --white: #fff;
+  --accent: #ff764d;
+
+  /* color roles; styles use only these */
+  --background-color: var(--gray-4);
+  --foreground-color: var(--black);
+  --muted-color: var(--gray-1);
+  --rule-color: var(--black);
+  --accent-color: var(--accent);
+  --accent-contrast-color: var(--black); /* text on accent */
+  --focus-color: var(--white);
+
+  --button-background: var(--black);
+  --button-color: var(--white);
+  --button-hover-background: var(--gray-1);
+  --button-active-background: var(--gray-2);
+  --button-secondary-background: var(--gray-6);
+  --button-secondary-color: var(--black);
+  --button-secondary-hover-background: var(--white);
+  --button-secondary-active-background: var(--gray-5);
+  --disabled-background: var(--gray-3);
+  --disabled-color: var(--gray-2);
+
+  --field-background: var(--gray-6);
+  --field-color: var(--black);
+  --placeholder-color: var(--gray-2);
+  --line-color: var(--gray-2); /* thin rules: table rows, field outline */
+}
+
+@media only screen and (max-width: 768px) {
+  :root {
+    --pageMargin: var(--lineHeight);
+  }
+}

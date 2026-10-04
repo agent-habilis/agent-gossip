@@ -1,0 +1,116 @@
+/* Typography. Every line-height and margin is a multiple of --baseline. */
+
+/* block */
+p, ul, ol, dl, pre, blockquote, figure, table, details, .p-grid, h3, h4 {
+  margin-bottom: var(--blockSpacingBottom);
+}
+:last-child {
+  margin-bottom: 0;
+}
+
+/* headings */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  text-wrap: balance;
+}
+h1 {
+  font-size: var(--h1-size);
+  line-height: calc(var(--lineHeight) * 2);
+  letter-spacing: -0.03em;
+  margin-bottom: var(--lineHeight);
+}
+h2 {
+  font-size: var(--h2-size);
+  line-height: calc(var(--baseline) * 3);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--baseline);
+}
+h3 {
+  font-size: var(--h3-size);
+  letter-spacing: -0.01em;
+}
+h4 {
+  font-size: var(--h4-size);
+  margin-bottom: 0;
+}
+h5, h6 {
+  font-size: var(--small-size);
+}
+h6 {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* text */
+p, li, dd, blockquote {
+  max-width: 65ch;
+}
+b, strong {
+  font-weight: 700;
+}
+i, em {
+  font-style: italic;
+}
+small, figcaption {
+  font-size: var(--small-size);
+  color: var(--muted-color);
+}
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+  text-decoration-skip-ink: auto;
+}
+a:hover {
+  color: var(--accent-color);
+}
+
+/* lists */
+ul, ol {
+  padding-left: var(--lineHeight);
+}
+li > ul, li > ol {
+  margin-bottom: 0;
+}
+
+/* blockquote; the rule is an inset shadow */
+blockquote {
+  padding-left: var(--lineHeight);
+  box-shadow: inset var(--hrThickness) 0 0 var(--rule-color);
+}
+blockquote footer {
+  font-size: var(--small-size);
+  color: var(--muted-color);
+}
+
+/* abbreviation */
+abbr[title] {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
+/* preformatted text */
+code, pre, kbd {
+  font-family: var(--monoFont);
+  font-size: 0.9em;
+}
+pre {
+  overflow-x: auto;
+}
+kbd {
+  padding: 0 calc(var(--baseline) / 2);
+  border-radius: var(--radius);
+  background: var(--field-background);
+  color: var(--field-color);
+  box-shadow: inset 0 0 0 1px var(--line-color);
+}
+
+/* horizontal rule; takes one line, the rule sits on the line grid */
+hr {
+  border-top: var(--hrThickness) solid var(--rule-color);
+  margin-bottom: calc(var(--lineHeight) - var(--hrThickness));
+}
+.p-grid > hr {
+  grid-column: 1 / -1;
+}
