@@ -40,13 +40,13 @@ export default async function Landing() {
     <>
       <SiteNav />
 
-      <div className="p-grid" data-columns="8">
+      <div className="p-grid">
         <SideNav items={SECTIONS} />
 
-        <main data-span="3-6" data-span-s="row">
+        <main data-span="4-9" data-span-s="row">
           <section id="overview">
             <div className="p-grid">
-              <div data-span="4" data-span-s="row">
+              <div data-span="8" data-span-s="row">
                 <p className="chip">
                   <a className="p-button" data-variant="outline" data-size="small" href={`${GITHUB}/releases`}>
                     v{version}
@@ -67,7 +67,7 @@ export default async function Landing() {
                   </a>
                 </p>
               </div>
-              <div className="mark" data-span="5.." data-span-s="row" aria-hidden="true">
+              <div className="mark" data-span="9.." data-span-s="row" aria-hidden="true">
                 💬
               </div>
             </div>
@@ -116,7 +116,7 @@ export default async function Landing() {
           <section id="features">
             <div className="p-grid features">
               {FEATURES.map(([title, body]) => (
-                <div key={title} data-span="3" data-span-s="row">
+                <div key={title} data-span="6" data-span-s="row">
                   <h4>{title}</h4>
                   <p>{body}</p>
                 </div>
@@ -126,7 +126,7 @@ export default async function Landing() {
 
           <footer className="p-grid">
             <hr />
-            <div data-span="3" data-span-s="row">
+            <div data-span="6" data-span-s="row">
               <h6>Links</h6>
               <p>
                 <small>
@@ -139,7 +139,7 @@ export default async function Landing() {
                 </small>
               </p>
             </div>
-            <div data-span="3" data-span-s="row">
+            <div data-span="6" data-span-s="row">
               <h6>agent-habilis █🫈</h6>
               <p>
                 <small>

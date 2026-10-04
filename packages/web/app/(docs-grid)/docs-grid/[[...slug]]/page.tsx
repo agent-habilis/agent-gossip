@@ -55,13 +55,13 @@ export default async function DocsGridPage(props: Props) {
     <>
       <SiteNav current="docs" />
 
-      <div className="p-grid docs" data-columns="8">
+      <div className="p-grid docs">
         <SideNav
           title="Docs"
           items={PAGES.map((page) => ({ href: href(page.slug), label: page.title, current: page.slug === current }))}
         />
 
-        <article data-span="3-6" data-span-s="row">
+        <article data-span="4-9" data-span-s="row">
           <MDXContent {...props} components={COMPONENTS} />
 
           <hr />
@@ -72,7 +72,7 @@ export default async function DocsGridPage(props: Props) {
         </article>
 
         {headings.length > 0 && (
-          <aside className="toc" data-span="7.." data-span-s="row">
+          <aside className="toc" data-span="10.." data-span-s="row">
             <h6>On this page</h6>
             <ul>
               {headings.map((item) => (

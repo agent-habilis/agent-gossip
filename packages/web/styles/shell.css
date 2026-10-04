@@ -2,7 +2,7 @@
    width, one nav, one sidebar, so crossing between them moves only content. */
 body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 
-.site-nav { margin-bottom: calc(var(--lineHeight) * 3); }
+.site-nav { margin-bottom: var(--pageMargin); }
 .site-nav a { text-decoration: none; }
 .nav-links a + a { margin-left: var(--lineHeight); }
 .nav-links [aria-current] { color: var(--accent-color); }
@@ -17,9 +17,9 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 .sidebar h6 { margin-bottom: var(--baseline); }
 
 @media only screen and (max-width: 768px) {
-  /* Stacked, the brand and the links get the same three lines that
-     separate the links from the sidebar. */
-  .site-nav { row-gap: calc(var(--lineHeight) * 3); }
+  /* Stacked, the brand, the links and the sidebar sit three lines apart:
+     --pageMargin shrinks to one line here, too tight for the stack. */
+  .site-nav { row-gap: calc(var(--lineHeight) * 3); margin-bottom: calc(var(--lineHeight) * 3); }
   .sidebar { position: static; }
   /* Two even columns, every cell one line: the longest title would otherwise
      wrap and, with equal rows, make every row two lines tall. */

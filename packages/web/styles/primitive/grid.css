@@ -1,342 +1,117 @@
 /*
-Grid. Derived from Raster v20 (rsms.me/raster) by Rasmus Andersson, MIT license,
-see vendor/raster/LICENSE.txt. Changes: platform elements instead of <r-grid> and
-<r-cell> (class "p-grid", any child is a cell), data- attributes, 6 columns by default,
-gaps, and a plain --columns number for the debug overlay.
+Grid: 12 columns, nested grids included.
 
-  <div class="p-grid" data-columns="6">
+  <div class="p-grid">
     <div data-span="2" data-span-s="row">…</div>
   </div>
 
-data-span values: "2" (span 2), "2-5" (start 2, end 5), "2+3" (start 2, span 3),
-"2.." (start 2, to row end), "row" (whole row).
--s applies at window width <= 768, -l at >= 1600.
+data-span: "2" (span 2), "2-5" (columns 2 to 5), "2+3" (from 2, span 3),
+"2.." (from 2 to the row end), "row" (the whole row). data-span-s applies at
+widths up to 768px, data-span-l from 1600px.
 */
 .p-grid {
   display: grid;
-  --grid-tc: repeat(6, 1fr);
-  --columns: 6;
-  grid-template-columns: var(--grid-tc);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   column-gap: var(--columnGap);
   row-gap: var(--rowGap);
-  --grid-cs: 1; /* column start */
-  --grid-ce: -1 /* column end */
 }
 
-.p-grid[data-columns="1"] { --grid-tc: repeat(1, 1fr); --columns: 1 }
-.p-grid[data-columns="2"] { --grid-tc: repeat(2, 1fr); --columns: 2 }
-.p-grid[data-columns="3"] { --grid-tc: repeat(3, 1fr); --columns: 3 }
-.p-grid[data-columns="4"] { --grid-tc: repeat(4, 1fr); --columns: 4 }
-.p-grid[data-columns="5"] { --grid-tc: repeat(5, 1fr); --columns: 5 }
-.p-grid[data-columns="6"] { --grid-tc: repeat(6, 1fr); --columns: 6 }
-.p-grid[data-columns="7"] { --grid-tc: repeat(7, 1fr); --columns: 7 }
-.p-grid[data-columns="8"] { --grid-tc: repeat(8, 1fr); --columns: 8 }
-.p-grid[data-columns="9"] { --grid-tc: repeat(9, 1fr); --columns: 9 }
-.p-grid[data-columns="10"] { --grid-tc: repeat(10, 1fr); --columns: 10 }
-.p-grid[data-columns="11"] { --grid-tc: repeat(11, 1fr); --columns: 11 }
-.p-grid[data-columns="12"] { --grid-tc: repeat(12, 1fr); --columns: 12 }
-.p-grid[data-columns="13"] { --grid-tc: repeat(13, 1fr); --columns: 13 }
-.p-grid[data-columns="14"] { --grid-tc: repeat(14, 1fr); --columns: 14 }
-.p-grid[data-columns="15"] { --grid-tc: repeat(15, 1fr); --columns: 15 }
-.p-grid[data-columns="16"] { --grid-tc: repeat(16, 1fr); --columns: 16 }
-.p-grid[data-columns="17"] { --grid-tc: repeat(17, 1fr); --columns: 17 }
-.p-grid[data-columns="18"] { --grid-tc: repeat(18, 1fr); --columns: 18 }
-.p-grid[data-columns="19"] { --grid-tc: repeat(19, 1fr); --columns: 19 }
-.p-grid[data-columns="20"] { --grid-tc: repeat(20, 1fr); --columns: 20 }
-.p-grid[data-columns="21"] { --grid-tc: repeat(21, 1fr); --columns: 21 }
-.p-grid[data-columns="22"] { --grid-tc: repeat(22, 1fr); --columns: 22 }
-.p-grid[data-columns="23"] { --grid-tc: repeat(23, 1fr); --columns: 23 }
-.p-grid[data-columns="24"] { --grid-tc: repeat(24, 1fr); --columns: 24 }
-.p-grid[data-columns="25"] { --grid-tc: repeat(25, 1fr); --columns: 25 }
-.p-grid[data-columns="26"] { --grid-tc: repeat(26, 1fr); --columns: 26 }
-.p-grid[data-columns="27"] { --grid-tc: repeat(27, 1fr); --columns: 27 }
-.p-grid[data-columns="28"] { --grid-tc: repeat(28, 1fr); --columns: 28 }
-.p-grid[data-columns="29"] { --grid-tc: repeat(29, 1fr); --columns: 29 }
-.p-grid[data-columns="30"] { --grid-tc: repeat(30, 1fr); --columns: 30 }
+.p-grid > [data-span^="1"] { --start: 1 }
+.p-grid > [data-span^="2"] { --start: 2 }
+.p-grid > [data-span^="3"] { --start: 3 }
+.p-grid > [data-span^="4"] { --start: 4 }
+.p-grid > [data-span^="5"] { --start: 5 }
+.p-grid > [data-span^="6"] { --start: 6 }
+.p-grid > [data-span^="7"] { --start: 7 }
+.p-grid > [data-span^="8"] { --start: 8 }
+.p-grid > [data-span^="9"] { --start: 9 }
+.p-grid > [data-span^="10"] { --start: 10 }
+.p-grid > [data-span^="11"] { --start: 11 }
+.p-grid > [data-span^="12"] { --start: 12 }
 
-/* data-span=start... */
-.p-grid > [data-span^="1"] { --grid-cs: 1 }
-.p-grid > [data-span^="2"] { --grid-cs: 2 }
-.p-grid > [data-span^="3"] { --grid-cs: 3 }
-.p-grid > [data-span^="4"] { --grid-cs: 4 }
-.p-grid > [data-span^="5"] { --grid-cs: 5 }
-.p-grid > [data-span^="6"] { --grid-cs: 6 }
-.p-grid > [data-span^="7"] { --grid-cs: 7 }
-.p-grid > [data-span^="8"] { --grid-cs: 8 }
-.p-grid > [data-span^="9"] { --grid-cs: 9 }
-.p-grid > [data-span^="10"] { --grid-cs: 10 }
-.p-grid > [data-span^="11"] { --grid-cs: 11 }
-.p-grid > [data-span^="12"] { --grid-cs: 12 }
-.p-grid > [data-span^="13"] { --grid-cs: 13 }
-.p-grid > [data-span^="14"] { --grid-cs: 14 }
-.p-grid > [data-span^="15"] { --grid-cs: 15 }
-.p-grid > [data-span^="16"] { --grid-cs: 16 }
-.p-grid > [data-span^="17"] { --grid-cs: 17 }
-.p-grid > [data-span^="18"] { --grid-cs: 18 }
-.p-grid > [data-span^="19"] { --grid-cs: 19 }
-.p-grid > [data-span^="20"] { --grid-cs: 20 }
-.p-grid > [data-span^="21"] { --grid-cs: 21 }
-.p-grid > [data-span^="22"] { --grid-cs: 22 }
-.p-grid > [data-span^="23"] { --grid-cs: 23 }
-.p-grid > [data-span^="24"] { --grid-cs: 24 }
-.p-grid > [data-span^="25"] { --grid-cs: 25 }
-.p-grid > [data-span^="26"] { --grid-cs: 26 }
-.p-grid > [data-span^="27"] { --grid-cs: 27 }
-.p-grid > [data-span^="28"] { --grid-cs: 28 }
-.p-grid > [data-span^="29"] { --grid-cs: 29 }
-.p-grid > [data-span^="30"] { --grid-cs: 30 }
+.p-grid > [data-span="1"], .p-grid > [data-span$="+1"], .p-grid > [data-span$="-1"] { --size: 1; --end: 2 }
+.p-grid > [data-span="2"], .p-grid > [data-span$="+2"], .p-grid > [data-span$="-2"] { --size: 2; --end: 3 }
+.p-grid > [data-span="3"], .p-grid > [data-span$="+3"], .p-grid > [data-span$="-3"] { --size: 3; --end: 4 }
+.p-grid > [data-span="4"], .p-grid > [data-span$="+4"], .p-grid > [data-span$="-4"] { --size: 4; --end: 5 }
+.p-grid > [data-span="5"], .p-grid > [data-span$="+5"], .p-grid > [data-span$="-5"] { --size: 5; --end: 6 }
+.p-grid > [data-span="6"], .p-grid > [data-span$="+6"], .p-grid > [data-span$="-6"] { --size: 6; --end: 7 }
+.p-grid > [data-span="7"], .p-grid > [data-span$="+7"], .p-grid > [data-span$="-7"] { --size: 7; --end: 8 }
+.p-grid > [data-span="8"], .p-grid > [data-span$="+8"], .p-grid > [data-span$="-8"] { --size: 8; --end: 9 }
+.p-grid > [data-span="9"], .p-grid > [data-span$="+9"], .p-grid > [data-span$="-9"] { --size: 9; --end: 10 }
+.p-grid > [data-span="10"], .p-grid > [data-span$="+10"], .p-grid > [data-span$="-10"] { --size: 10; --end: 11 }
+.p-grid > [data-span="11"], .p-grid > [data-span$="+11"], .p-grid > [data-span$="-11"] { --size: 11; --end: 12 }
+.p-grid > [data-span="12"], .p-grid > [data-span$="+12"], .p-grid > [data-span$="-12"] { --size: 12; --end: 13 }
 
-/* data-span=...+width, span=...-end */
-.p-grid > [data-span$="+1"], .p-grid > [data-span="1"] { --grid-ce: 1 }
-.p-grid > [data-span$="+2"], .p-grid > [data-span$="-1"], .p-grid > [data-span="2"] { --grid-ce: 2 }
-.p-grid > [data-span$="+3"], .p-grid > [data-span$="-2"], .p-grid > [data-span="3"] { --grid-ce: 3 }
-.p-grid > [data-span$="+4"], .p-grid > [data-span$="-3"], .p-grid > [data-span="4"] { --grid-ce: 4 }
-.p-grid > [data-span$="+5"], .p-grid > [data-span$="-4"], .p-grid > [data-span="5"] { --grid-ce: 5 }
-.p-grid > [data-span$="+6"], .p-grid > [data-span$="-5"], .p-grid > [data-span="6"] { --grid-ce: 6 }
-.p-grid > [data-span$="+7"], .p-grid > [data-span$="-6"], .p-grid > [data-span="7"] { --grid-ce: 7 }
-.p-grid > [data-span$="+8"], .p-grid > [data-span$="-7"], .p-grid > [data-span="8"] { --grid-ce: 8 }
-.p-grid > [data-span$="+9"], .p-grid > [data-span$="-8"], .p-grid > [data-span="9"] { --grid-ce: 9 }
-.p-grid > [data-span$="+10"], .p-grid > [data-span$="-9"], .p-grid > [data-span="10"] { --grid-ce: 10 }
-.p-grid > [data-span$="+11"], .p-grid > [data-span$="-10"], .p-grid > [data-span="11"] { --grid-ce: 11 }
-.p-grid > [data-span$="+12"], .p-grid > [data-span$="-11"], .p-grid > [data-span="12"] { --grid-ce: 12 }
-.p-grid > [data-span$="+13"], .p-grid > [data-span$="-12"], .p-grid > [data-span="13"] { --grid-ce: 13 }
-.p-grid > [data-span$="+14"], .p-grid > [data-span$="-13"], .p-grid > [data-span="14"] { --grid-ce: 14 }
-.p-grid > [data-span$="+15"], .p-grid > [data-span$="-14"], .p-grid > [data-span="15"] { --grid-ce: 15 }
-.p-grid > [data-span$="+16"], .p-grid > [data-span$="-15"], .p-grid > [data-span="16"] { --grid-ce: 16 }
-.p-grid > [data-span$="+17"], .p-grid > [data-span$="-16"], .p-grid > [data-span="17"] { --grid-ce: 17 }
-.p-grid > [data-span$="+18"], .p-grid > [data-span$="-17"], .p-grid > [data-span="18"] { --grid-ce: 18 }
-.p-grid > [data-span$="+19"], .p-grid > [data-span$="-18"], .p-grid > [data-span="19"] { --grid-ce: 19 }
-.p-grid > [data-span$="+20"], .p-grid > [data-span$="-19"], .p-grid > [data-span="20"] { --grid-ce: 20 }
-.p-grid > [data-span$="+21"], .p-grid > [data-span$="-20"], .p-grid > [data-span="21"] { --grid-ce: 21 }
-.p-grid > [data-span$="+22"], .p-grid > [data-span$="-21"], .p-grid > [data-span="22"] { --grid-ce: 22 }
-.p-grid > [data-span$="+23"], .p-grid > [data-span$="-22"], .p-grid > [data-span="23"] { --grid-ce: 23 }
-.p-grid > [data-span$="+24"], .p-grid > [data-span$="-23"], .p-grid > [data-span="24"] { --grid-ce: 24 }
-.p-grid > [data-span$="+25"], .p-grid > [data-span$="-24"], .p-grid > [data-span="25"] { --grid-ce: 25 }
-.p-grid > [data-span$="+26"], .p-grid > [data-span$="-25"], .p-grid > [data-span="26"] { --grid-ce: 26 }
-.p-grid > [data-span$="+27"], .p-grid > [data-span$="-26"], .p-grid > [data-span="27"] { --grid-ce: 27 }
-.p-grid > [data-span$="+28"], .p-grid > [data-span$="-27"], .p-grid > [data-span="28"] { --grid-ce: 28 }
-.p-grid > [data-span$="+29"], .p-grid > [data-span$="-28"], .p-grid > [data-span="29"] { --grid-ce: 29 }
-.p-grid > [data-span$="+30"], .p-grid > [data-span$="-29"], .p-grid > [data-span="30"] { --grid-ce: 30 }
-.p-grid > [data-span$="-30"] { --grid-ce: 31 }
-
-/* connect vars */
-.p-grid > [data-span] { grid-column-end: span var(--grid-ce) }
-.p-grid > [data-span*="+"], .p-grid > [data-span*="-"], .p-grid > [data-span*=".."] {
-  grid-column-start: var(--grid-cs) }
-.p-grid > [data-span*="-"], .p-grid > [data-span*=".."] {
-  grid-column-end: var(--grid-ce) }
+.p-grid > [data-span] { grid-column: auto / span var(--size) }
+.p-grid > [data-span*="+"] { grid-column: var(--start) / span var(--size) }
+.p-grid > [data-span*="-"] { grid-column: var(--start) / var(--end) }
+.p-grid > [data-span$=".."] { grid-column: var(--start) / -1 }
 .p-grid > [data-span="row"] { grid-column: 1 / -1 }
 
-/* for window width <= 600 */
 @media only screen and (max-width: 768px) {
-  .p-grid[data-columns-s="1"] { --grid-tc: repeat(1, 1fr); --columns: 1 }
-  .p-grid[data-columns-s="2"] { --grid-tc: repeat(2, 1fr); --columns: 2 }
-  .p-grid[data-columns-s="3"] { --grid-tc: repeat(3, 1fr); --columns: 3 }
-  .p-grid[data-columns-s="4"] { --grid-tc: repeat(4, 1fr); --columns: 4 }
-  .p-grid[data-columns-s="5"] { --grid-tc: repeat(5, 1fr); --columns: 5 }
-  .p-grid[data-columns-s="6"] { --grid-tc: repeat(6, 1fr); --columns: 6 }
-  .p-grid[data-columns-s="7"] { --grid-tc: repeat(7, 1fr); --columns: 7 }
-  .p-grid[data-columns-s="8"] { --grid-tc: repeat(8, 1fr); --columns: 8 }
-  .p-grid[data-columns-s="9"] { --grid-tc: repeat(9, 1fr); --columns: 9 }
-  .p-grid[data-columns-s="10"] { --grid-tc: repeat(10, 1fr); --columns: 10 }
-  .p-grid[data-columns-s="11"] { --grid-tc: repeat(11, 1fr); --columns: 11 }
-  .p-grid[data-columns-s="12"] { --grid-tc: repeat(12, 1fr); --columns: 12 }
-  .p-grid[data-columns-s="13"] { --grid-tc: repeat(13, 1fr); --columns: 13 }
-  .p-grid[data-columns-s="14"] { --grid-tc: repeat(14, 1fr); --columns: 14 }
-  .p-grid[data-columns-s="15"] { --grid-tc: repeat(15, 1fr); --columns: 15 }
-  .p-grid[data-columns-s="16"] { --grid-tc: repeat(16, 1fr); --columns: 16 }
-  .p-grid[data-columns-s="17"] { --grid-tc: repeat(17, 1fr); --columns: 17 }
-  .p-grid[data-columns-s="18"] { --grid-tc: repeat(18, 1fr); --columns: 18 }
-  .p-grid[data-columns-s="19"] { --grid-tc: repeat(19, 1fr); --columns: 19 }
-  .p-grid[data-columns-s="20"] { --grid-tc: repeat(20, 1fr); --columns: 20 }
-  .p-grid[data-columns-s="21"] { --grid-tc: repeat(21, 1fr); --columns: 21 }
-  .p-grid[data-columns-s="22"] { --grid-tc: repeat(22, 1fr); --columns: 22 }
-  .p-grid[data-columns-s="23"] { --grid-tc: repeat(23, 1fr); --columns: 23 }
-  .p-grid[data-columns-s="24"] { --grid-tc: repeat(24, 1fr); --columns: 24 }
-  .p-grid[data-columns-s="25"] { --grid-tc: repeat(25, 1fr); --columns: 25 }
-  .p-grid[data-columns-s="26"] { --grid-tc: repeat(26, 1fr); --columns: 26 }
-  .p-grid[data-columns-s="27"] { --grid-tc: repeat(27, 1fr); --columns: 27 }
-  .p-grid[data-columns-s="28"] { --grid-tc: repeat(28, 1fr); --columns: 28 }
-  .p-grid[data-columns-s="29"] { --grid-tc: repeat(29, 1fr); --columns: 29 }
-  .p-grid[data-columns-s="30"] { --grid-tc: repeat(30, 1fr); --columns: 30 }
-  
-  /* data-span-s=start... */
-  .p-grid > [data-span-s^="1"] { --grid-cs: 1 }
-  .p-grid > [data-span-s^="2"] { --grid-cs: 2 }
-  .p-grid > [data-span-s^="3"] { --grid-cs: 3 }
-  .p-grid > [data-span-s^="4"] { --grid-cs: 4 }
-  .p-grid > [data-span-s^="5"] { --grid-cs: 5 }
-  .p-grid > [data-span-s^="6"] { --grid-cs: 6 }
-  .p-grid > [data-span-s^="7"] { --grid-cs: 7 }
-  .p-grid > [data-span-s^="8"] { --grid-cs: 8 }
-  .p-grid > [data-span-s^="9"] { --grid-cs: 9 }
-  .p-grid > [data-span-s^="10"] { --grid-cs: 10 }
-  .p-grid > [data-span-s^="11"] { --grid-cs: 11 }
-  .p-grid > [data-span-s^="12"] { --grid-cs: 12 }
-  .p-grid > [data-span-s^="13"] { --grid-cs: 13 }
-  .p-grid > [data-span-s^="14"] { --grid-cs: 14 }
-  .p-grid > [data-span-s^="15"] { --grid-cs: 15 }
-  .p-grid > [data-span-s^="16"] { --grid-cs: 16 }
-  .p-grid > [data-span-s^="17"] { --grid-cs: 17 }
-  .p-grid > [data-span-s^="18"] { --grid-cs: 18 }
-  .p-grid > [data-span-s^="19"] { --grid-cs: 19 }
-  .p-grid > [data-span-s^="20"] { --grid-cs: 20 }
-  .p-grid > [data-span-s^="21"] { --grid-cs: 21 }
-  .p-grid > [data-span-s^="22"] { --grid-cs: 22 }
-  .p-grid > [data-span-s^="23"] { --grid-cs: 23 }
-  .p-grid > [data-span-s^="24"] { --grid-cs: 24 }
-  .p-grid > [data-span-s^="25"] { --grid-cs: 25 }
-  .p-grid > [data-span-s^="26"] { --grid-cs: 26 }
-  .p-grid > [data-span-s^="27"] { --grid-cs: 27 }
-  .p-grid > [data-span-s^="28"] { --grid-cs: 28 }
-  .p-grid > [data-span-s^="29"] { --grid-cs: 29 }
-  .p-grid > [data-span-s^="30"] { --grid-cs: 30 }
-  
-  /* data-span-s=...+width, span-s=...-end */
-  .p-grid > [data-span-s$="+1"], .p-grid > [data-span-s="1"] { --grid-ce: 1 }
-  .p-grid > [data-span-s$="+2"], .p-grid > [data-span-s$="-1"], .p-grid > [data-span-s="2"] { --grid-ce: 2 }
-  .p-grid > [data-span-s$="+3"], .p-grid > [data-span-s$="-2"], .p-grid > [data-span-s="3"] { --grid-ce: 3 }
-  .p-grid > [data-span-s$="+4"], .p-grid > [data-span-s$="-3"], .p-grid > [data-span-s="4"] { --grid-ce: 4 }
-  .p-grid > [data-span-s$="+5"], .p-grid > [data-span-s$="-4"], .p-grid > [data-span-s="5"] { --grid-ce: 5 }
-  .p-grid > [data-span-s$="+6"], .p-grid > [data-span-s$="-5"], .p-grid > [data-span-s="6"] { --grid-ce: 6 }
-  .p-grid > [data-span-s$="+7"], .p-grid > [data-span-s$="-6"], .p-grid > [data-span-s="7"] { --grid-ce: 7 }
-  .p-grid > [data-span-s$="+8"], .p-grid > [data-span-s$="-7"], .p-grid > [data-span-s="8"] { --grid-ce: 8 }
-  .p-grid > [data-span-s$="+9"], .p-grid > [data-span-s$="-8"], .p-grid > [data-span-s="9"] { --grid-ce: 9 }
-  .p-grid > [data-span-s$="+10"], .p-grid > [data-span-s$="-9"], .p-grid > [data-span-s="10"] { --grid-ce: 10 }
-  .p-grid > [data-span-s$="+11"], .p-grid > [data-span-s$="-10"], .p-grid > [data-span-s="11"] { --grid-ce: 11 }
-  .p-grid > [data-span-s$="+12"], .p-grid > [data-span-s$="-11"], .p-grid > [data-span-s="12"] { --grid-ce: 12 }
-  .p-grid > [data-span-s$="+13"], .p-grid > [data-span-s$="-12"], .p-grid > [data-span-s="13"] { --grid-ce: 13 }
-  .p-grid > [data-span-s$="+14"], .p-grid > [data-span-s$="-13"], .p-grid > [data-span-s="14"] { --grid-ce: 14 }
-  .p-grid > [data-span-s$="+15"], .p-grid > [data-span-s$="-14"], .p-grid > [data-span-s="15"] { --grid-ce: 15 }
-  .p-grid > [data-span-s$="+16"], .p-grid > [data-span-s$="-15"], .p-grid > [data-span-s="16"] { --grid-ce: 16 }
-  .p-grid > [data-span-s$="+17"], .p-grid > [data-span-s$="-16"], .p-grid > [data-span-s="17"] { --grid-ce: 17 }
-  .p-grid > [data-span-s$="+18"], .p-grid > [data-span-s$="-17"], .p-grid > [data-span-s="18"] { --grid-ce: 18 }
-  .p-grid > [data-span-s$="+19"], .p-grid > [data-span-s$="-18"], .p-grid > [data-span-s="19"] { --grid-ce: 19 }
-  .p-grid > [data-span-s$="+20"], .p-grid > [data-span-s$="-19"], .p-grid > [data-span-s="20"] { --grid-ce: 20 }
-  .p-grid > [data-span-s$="+21"], .p-grid > [data-span-s$="-20"], .p-grid > [data-span-s="21"] { --grid-ce: 21 }
-  .p-grid > [data-span-s$="+22"], .p-grid > [data-span-s$="-21"], .p-grid > [data-span-s="22"] { --grid-ce: 22 }
-  .p-grid > [data-span-s$="+23"], .p-grid > [data-span-s$="-22"], .p-grid > [data-span-s="23"] { --grid-ce: 23 }
-  .p-grid > [data-span-s$="+24"], .p-grid > [data-span-s$="-23"], .p-grid > [data-span-s="24"] { --grid-ce: 24 }
-  .p-grid > [data-span-s$="+25"], .p-grid > [data-span-s$="-24"], .p-grid > [data-span-s="25"] { --grid-ce: 25 }
-  .p-grid > [data-span-s$="+26"], .p-grid > [data-span-s$="-25"], .p-grid > [data-span-s="26"] { --grid-ce: 26 }
-  .p-grid > [data-span-s$="+27"], .p-grid > [data-span-s$="-26"], .p-grid > [data-span-s="27"] { --grid-ce: 27 }
-  .p-grid > [data-span-s$="+28"], .p-grid > [data-span-s$="-27"], .p-grid > [data-span-s="28"] { --grid-ce: 28 }
-  .p-grid > [data-span-s$="+29"], .p-grid > [data-span-s$="-28"], .p-grid > [data-span-s="29"] { --grid-ce: 29 }
-  .p-grid > [data-span-s$="+30"], .p-grid > [data-span-s$="-29"], .p-grid > [data-span-s="30"] { --grid-ce: 30 }
-  .p-grid > [data-span-s$="-30"] { --grid-ce: 31 }
-  
-  /* connect vars */
-  .p-grid > [data-span-s] { grid-column-end: span var(--grid-ce) }
-  .p-grid > [data-span-s*="+"], .p-grid > [data-span-s*="-"], .p-grid > [data-span-s*=".."] {
-    grid-column-start: var(--grid-cs) }
-  .p-grid > [data-span-s*="-"], .p-grid > [data-span-s*=".."] {
-    grid-column-end: var(--grid-ce) }
+  .p-grid > [data-span-s^="1"] { --start: 1 }
+  .p-grid > [data-span-s^="2"] { --start: 2 }
+  .p-grid > [data-span-s^="3"] { --start: 3 }
+  .p-grid > [data-span-s^="4"] { --start: 4 }
+  .p-grid > [data-span-s^="5"] { --start: 5 }
+  .p-grid > [data-span-s^="6"] { --start: 6 }
+  .p-grid > [data-span-s^="7"] { --start: 7 }
+  .p-grid > [data-span-s^="8"] { --start: 8 }
+  .p-grid > [data-span-s^="9"] { --start: 9 }
+  .p-grid > [data-span-s^="10"] { --start: 10 }
+  .p-grid > [data-span-s^="11"] { --start: 11 }
+  .p-grid > [data-span-s^="12"] { --start: 12 }
+
+  .p-grid > [data-span-s="1"], .p-grid > [data-span-s$="+1"], .p-grid > [data-span-s$="-1"] { --size: 1; --end: 2 }
+  .p-grid > [data-span-s="2"], .p-grid > [data-span-s$="+2"], .p-grid > [data-span-s$="-2"] { --size: 2; --end: 3 }
+  .p-grid > [data-span-s="3"], .p-grid > [data-span-s$="+3"], .p-grid > [data-span-s$="-3"] { --size: 3; --end: 4 }
+  .p-grid > [data-span-s="4"], .p-grid > [data-span-s$="+4"], .p-grid > [data-span-s$="-4"] { --size: 4; --end: 5 }
+  .p-grid > [data-span-s="5"], .p-grid > [data-span-s$="+5"], .p-grid > [data-span-s$="-5"] { --size: 5; --end: 6 }
+  .p-grid > [data-span-s="6"], .p-grid > [data-span-s$="+6"], .p-grid > [data-span-s$="-6"] { --size: 6; --end: 7 }
+  .p-grid > [data-span-s="7"], .p-grid > [data-span-s$="+7"], .p-grid > [data-span-s$="-7"] { --size: 7; --end: 8 }
+  .p-grid > [data-span-s="8"], .p-grid > [data-span-s$="+8"], .p-grid > [data-span-s$="-8"] { --size: 8; --end: 9 }
+  .p-grid > [data-span-s="9"], .p-grid > [data-span-s$="+9"], .p-grid > [data-span-s$="-9"] { --size: 9; --end: 10 }
+  .p-grid > [data-span-s="10"], .p-grid > [data-span-s$="+10"], .p-grid > [data-span-s$="-10"] { --size: 10; --end: 11 }
+  .p-grid > [data-span-s="11"], .p-grid > [data-span-s$="+11"], .p-grid > [data-span-s$="-11"] { --size: 11; --end: 12 }
+  .p-grid > [data-span-s="12"], .p-grid > [data-span-s$="+12"], .p-grid > [data-span-s$="-12"] { --size: 12; --end: 13 }
+
+  .p-grid > [data-span-s] { grid-column: auto / span var(--size) }
+  .p-grid > [data-span-s*="+"] { grid-column: var(--start) / span var(--size) }
+  .p-grid > [data-span-s*="-"] { grid-column: var(--start) / var(--end) }
+  .p-grid > [data-span-s$=".."] { grid-column: var(--start) / -1 }
   .p-grid > [data-span-s="row"] { grid-column: 1 / -1 }
 }
 
-/* for window width >= 1600 */
-@media only screen and (min-width: 1599px) {
-  .p-grid[data-columns-l="1"] { --grid-tc: repeat(1, 1fr); --columns: 1 }
-  .p-grid[data-columns-l="2"] { --grid-tc: repeat(2, 1fr); --columns: 2 }
-  .p-grid[data-columns-l="3"] { --grid-tc: repeat(3, 1fr); --columns: 3 }
-  .p-grid[data-columns-l="4"] { --grid-tc: repeat(4, 1fr); --columns: 4 }
-  .p-grid[data-columns-l="5"] { --grid-tc: repeat(5, 1fr); --columns: 5 }
-  .p-grid[data-columns-l="6"] { --grid-tc: repeat(6, 1fr); --columns: 6 }
-  .p-grid[data-columns-l="7"] { --grid-tc: repeat(7, 1fr); --columns: 7 }
-  .p-grid[data-columns-l="8"] { --grid-tc: repeat(8, 1fr); --columns: 8 }
-  .p-grid[data-columns-l="9"] { --grid-tc: repeat(9, 1fr); --columns: 9 }
-  .p-grid[data-columns-l="10"] { --grid-tc: repeat(10, 1fr); --columns: 10 }
-  .p-grid[data-columns-l="11"] { --grid-tc: repeat(11, 1fr); --columns: 11 }
-  .p-grid[data-columns-l="12"] { --grid-tc: repeat(12, 1fr); --columns: 12 }
-  .p-grid[data-columns-l="13"] { --grid-tc: repeat(13, 1fr); --columns: 13 }
-  .p-grid[data-columns-l="14"] { --grid-tc: repeat(14, 1fr); --columns: 14 }
-  .p-grid[data-columns-l="15"] { --grid-tc: repeat(15, 1fr); --columns: 15 }
-  .p-grid[data-columns-l="16"] { --grid-tc: repeat(16, 1fr); --columns: 16 }
-  .p-grid[data-columns-l="17"] { --grid-tc: repeat(17, 1fr); --columns: 17 }
-  .p-grid[data-columns-l="18"] { --grid-tc: repeat(18, 1fr); --columns: 18 }
-  .p-grid[data-columns-l="19"] { --grid-tc: repeat(19, 1fr); --columns: 19 }
-  .p-grid[data-columns-l="20"] { --grid-tc: repeat(20, 1fr); --columns: 20 }
-  .p-grid[data-columns-l="21"] { --grid-tc: repeat(21, 1fr); --columns: 21 }
-  .p-grid[data-columns-l="22"] { --grid-tc: repeat(22, 1fr); --columns: 22 }
-  .p-grid[data-columns-l="23"] { --grid-tc: repeat(23, 1fr); --columns: 23 }
-  .p-grid[data-columns-l="24"] { --grid-tc: repeat(24, 1fr); --columns: 24 }
-  .p-grid[data-columns-l="25"] { --grid-tc: repeat(25, 1fr); --columns: 25 }
-  .p-grid[data-columns-l="26"] { --grid-tc: repeat(26, 1fr); --columns: 26 }
-  .p-grid[data-columns-l="27"] { --grid-tc: repeat(27, 1fr); --columns: 27 }
-  .p-grid[data-columns-l="28"] { --grid-tc: repeat(28, 1fr); --columns: 28 }
-  .p-grid[data-columns-l="29"] { --grid-tc: repeat(29, 1fr); --columns: 29 }
-  .p-grid[data-columns-l="30"] { --grid-tc: repeat(30, 1fr); --columns: 30 }
-  
-  /* data-span-l=start... */
-  .p-grid > [data-span-l^="1"] { --grid-cs: 1 }
-  .p-grid > [data-span-l^="2"] { --grid-cs: 2 }
-  .p-grid > [data-span-l^="3"] { --grid-cs: 3 }
-  .p-grid > [data-span-l^="4"] { --grid-cs: 4 }
-  .p-grid > [data-span-l^="5"] { --grid-cs: 5 }
-  .p-grid > [data-span-l^="6"] { --grid-cs: 6 }
-  .p-grid > [data-span-l^="7"] { --grid-cs: 7 }
-  .p-grid > [data-span-l^="8"] { --grid-cs: 8 }
-  .p-grid > [data-span-l^="9"] { --grid-cs: 9 }
-  .p-grid > [data-span-l^="10"] { --grid-cs: 10 }
-  .p-grid > [data-span-l^="11"] { --grid-cs: 11 }
-  .p-grid > [data-span-l^="12"] { --grid-cs: 12 }
-  .p-grid > [data-span-l^="13"] { --grid-cs: 13 }
-  .p-grid > [data-span-l^="14"] { --grid-cs: 14 }
-  .p-grid > [data-span-l^="15"] { --grid-cs: 15 }
-  .p-grid > [data-span-l^="16"] { --grid-cs: 16 }
-  .p-grid > [data-span-l^="17"] { --grid-cs: 17 }
-  .p-grid > [data-span-l^="18"] { --grid-cs: 18 }
-  .p-grid > [data-span-l^="19"] { --grid-cs: 19 }
-  .p-grid > [data-span-l^="20"] { --grid-cs: 20 }
-  .p-grid > [data-span-l^="21"] { --grid-cs: 21 }
-  .p-grid > [data-span-l^="22"] { --grid-cs: 22 }
-  .p-grid > [data-span-l^="23"] { --grid-cs: 23 }
-  .p-grid > [data-span-l^="24"] { --grid-cs: 24 }
-  .p-grid > [data-span-l^="25"] { --grid-cs: 25 }
-  .p-grid > [data-span-l^="26"] { --grid-cs: 26 }
-  .p-grid > [data-span-l^="27"] { --grid-cs: 27 }
-  .p-grid > [data-span-l^="28"] { --grid-cs: 28 }
-  .p-grid > [data-span-l^="29"] { --grid-cs: 29 }
-  .p-grid > [data-span-l^="30"] { --grid-cs: 30 }
-  
-  /* data-span-l=...+width, span-l=...-end */
-  .p-grid > [data-span-l$="+1"], .p-grid > [data-span-l="1"] { --grid-ce: 1 }
-  .p-grid > [data-span-l$="+2"], .p-grid > [data-span-l$="-1"], .p-grid > [data-span-l="2"] { --grid-ce: 2 }
-  .p-grid > [data-span-l$="+3"], .p-grid > [data-span-l$="-2"], .p-grid > [data-span-l="3"] { --grid-ce: 3 }
-  .p-grid > [data-span-l$="+4"], .p-grid > [data-span-l$="-3"], .p-grid > [data-span-l="4"] { --grid-ce: 4 }
-  .p-grid > [data-span-l$="+5"], .p-grid > [data-span-l$="-4"], .p-grid > [data-span-l="5"] { --grid-ce: 5 }
-  .p-grid > [data-span-l$="+6"], .p-grid > [data-span-l$="-5"], .p-grid > [data-span-l="6"] { --grid-ce: 6 }
-  .p-grid > [data-span-l$="+7"], .p-grid > [data-span-l$="-6"], .p-grid > [data-span-l="7"] { --grid-ce: 7 }
-  .p-grid > [data-span-l$="+8"], .p-grid > [data-span-l$="-7"], .p-grid > [data-span-l="8"] { --grid-ce: 8 }
-  .p-grid > [data-span-l$="+9"], .p-grid > [data-span-l$="-8"], .p-grid > [data-span-l="9"] { --grid-ce: 9 }
-  .p-grid > [data-span-l$="+10"], .p-grid > [data-span-l$="-9"], .p-grid > [data-span-l="10"] { --grid-ce: 10 }
-  .p-grid > [data-span-l$="+11"], .p-grid > [data-span-l$="-10"], .p-grid > [data-span-l="11"] { --grid-ce: 11 }
-  .p-grid > [data-span-l$="+12"], .p-grid > [data-span-l$="-11"], .p-grid > [data-span-l="12"] { --grid-ce: 12 }
-  .p-grid > [data-span-l$="+13"], .p-grid > [data-span-l$="-12"], .p-grid > [data-span-l="13"] { --grid-ce: 13 }
-  .p-grid > [data-span-l$="+14"], .p-grid > [data-span-l$="-13"], .p-grid > [data-span-l="14"] { --grid-ce: 14 }
-  .p-grid > [data-span-l$="+15"], .p-grid > [data-span-l$="-14"], .p-grid > [data-span-l="15"] { --grid-ce: 15 }
-  .p-grid > [data-span-l$="+16"], .p-grid > [data-span-l$="-15"], .p-grid > [data-span-l="16"] { --grid-ce: 16 }
-  .p-grid > [data-span-l$="+17"], .p-grid > [data-span-l$="-16"], .p-grid > [data-span-l="17"] { --grid-ce: 17 }
-  .p-grid > [data-span-l$="+18"], .p-grid > [data-span-l$="-17"], .p-grid > [data-span-l="18"] { --grid-ce: 18 }
-  .p-grid > [data-span-l$="+19"], .p-grid > [data-span-l$="-18"], .p-grid > [data-span-l="19"] { --grid-ce: 19 }
-  .p-grid > [data-span-l$="+20"], .p-grid > [data-span-l$="-19"], .p-grid > [data-span-l="20"] { --grid-ce: 20 }
-  .p-grid > [data-span-l$="+21"], .p-grid > [data-span-l$="-20"], .p-grid > [data-span-l="21"] { --grid-ce: 21 }
-  .p-grid > [data-span-l$="+22"], .p-grid > [data-span-l$="-21"], .p-grid > [data-span-l="22"] { --grid-ce: 22 }
-  .p-grid > [data-span-l$="+23"], .p-grid > [data-span-l$="-22"], .p-grid > [data-span-l="23"] { --grid-ce: 23 }
-  .p-grid > [data-span-l$="+24"], .p-grid > [data-span-l$="-23"], .p-grid > [data-span-l="24"] { --grid-ce: 24 }
-  .p-grid > [data-span-l$="+25"], .p-grid > [data-span-l$="-24"], .p-grid > [data-span-l="25"] { --grid-ce: 25 }
-  .p-grid > [data-span-l$="+26"], .p-grid > [data-span-l$="-25"], .p-grid > [data-span-l="26"] { --grid-ce: 26 }
-  .p-grid > [data-span-l$="+27"], .p-grid > [data-span-l$="-26"], .p-grid > [data-span-l="27"] { --grid-ce: 27 }
-  .p-grid > [data-span-l$="+28"], .p-grid > [data-span-l$="-27"], .p-grid > [data-span-l="28"] { --grid-ce: 28 }
-  .p-grid > [data-span-l$="+29"], .p-grid > [data-span-l$="-28"], .p-grid > [data-span-l="29"] { --grid-ce: 29 }
-  .p-grid > [data-span-l$="+30"], .p-grid > [data-span-l$="-29"], .p-grid > [data-span-l="30"] { --grid-ce: 30 }
-  .p-grid > [data-span-l$="-30"] { --grid-ce: 31 }
-  
-  /* connect vars */
-  .p-grid > [data-span-l] { grid-column-end: span var(--grid-ce) }
-  .p-grid > [data-span-l*="+"], .p-grid > [data-span-l*="-"], .p-grid > [data-span-l*=".."] {
-    grid-column-start: var(--grid-cs) }
-  .p-grid > [data-span-l*="-"], .p-grid > [data-span-l*=".."] {
-    grid-column-end: var(--grid-ce) }
+@media only screen and (min-width: 1600px) {
+  .p-grid > [data-span-l^="1"] { --start: 1 }
+  .p-grid > [data-span-l^="2"] { --start: 2 }
+  .p-grid > [data-span-l^="3"] { --start: 3 }
+  .p-grid > [data-span-l^="4"] { --start: 4 }
+  .p-grid > [data-span-l^="5"] { --start: 5 }
+  .p-grid > [data-span-l^="6"] { --start: 6 }
+  .p-grid > [data-span-l^="7"] { --start: 7 }
+  .p-grid > [data-span-l^="8"] { --start: 8 }
+  .p-grid > [data-span-l^="9"] { --start: 9 }
+  .p-grid > [data-span-l^="10"] { --start: 10 }
+  .p-grid > [data-span-l^="11"] { --start: 11 }
+  .p-grid > [data-span-l^="12"] { --start: 12 }
+
+  .p-grid > [data-span-l="1"], .p-grid > [data-span-l$="+1"], .p-grid > [data-span-l$="-1"] { --size: 1; --end: 2 }
+  .p-grid > [data-span-l="2"], .p-grid > [data-span-l$="+2"], .p-grid > [data-span-l$="-2"] { --size: 2; --end: 3 }
+  .p-grid > [data-span-l="3"], .p-grid > [data-span-l$="+3"], .p-grid > [data-span-l$="-3"] { --size: 3; --end: 4 }
+  .p-grid > [data-span-l="4"], .p-grid > [data-span-l$="+4"], .p-grid > [data-span-l$="-4"] { --size: 4; --end: 5 }
+  .p-grid > [data-span-l="5"], .p-grid > [data-span-l$="+5"], .p-grid > [data-span-l$="-5"] { --size: 5; --end: 6 }
+  .p-grid > [data-span-l="6"], .p-grid > [data-span-l$="+6"], .p-grid > [data-span-l$="-6"] { --size: 6; --end: 7 }
+  .p-grid > [data-span-l="7"], .p-grid > [data-span-l$="+7"], .p-grid > [data-span-l$="-7"] { --size: 7; --end: 8 }
+  .p-grid > [data-span-l="8"], .p-grid > [data-span-l$="+8"], .p-grid > [data-span-l$="-8"] { --size: 8; --end: 9 }
+  .p-grid > [data-span-l="9"], .p-grid > [data-span-l$="+9"], .p-grid > [data-span-l$="-9"] { --size: 9; --end: 10 }
+  .p-grid > [data-span-l="10"], .p-grid > [data-span-l$="+10"], .p-grid > [data-span-l$="-10"] { --size: 10; --end: 11 }
+  .p-grid > [data-span-l="11"], .p-grid > [data-span-l$="+11"], .p-grid > [data-span-l$="-11"] { --size: 11; --end: 12 }
+  .p-grid > [data-span-l="12"], .p-grid > [data-span-l$="+12"], .p-grid > [data-span-l$="-12"] { --size: 12; --end: 13 }
+
+  .p-grid > [data-span-l] { grid-column: auto / span var(--size) }
+  .p-grid > [data-span-l*="+"] { grid-column: var(--start) / span var(--size) }
+  .p-grid > [data-span-l*="-"] { grid-column: var(--start) / var(--end) }
+  .p-grid > [data-span-l$=".."] { grid-column: var(--start) / -1 }
   .p-grid > [data-span-l="row"] { grid-column: 1 / -1 }
 }

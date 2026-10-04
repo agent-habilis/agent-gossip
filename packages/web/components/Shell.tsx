@@ -5,13 +5,13 @@ const DISCORD = 'https://discord.gg/7FrS8GkQ8'
 // moves the content and nothing around it.
 export function SiteNav({ current }: { current?: 'docs' }) {
   return (
-    <nav className="p-grid site-nav" data-columns="8">
-      <div data-span="2" data-span-s="row">
+    <nav className="p-grid site-nav">
+      <div data-span="3" data-span-s="row">
         <a href="/" className="brand">
           <strong>agent-gossip 💬</strong>
         </a>
       </div>
-      <div className="nav-links" data-span="3.." data-span-s="row">
+      <div className="nav-links" data-span="4.." data-span-s="row">
         <a href="/docs-grid/" aria-current={current === 'docs' ? 'page' : undefined}>
           Docs
         </a>
@@ -34,7 +34,7 @@ export interface SideNavItem {
 
 export function SideNav({ title, items }: { title?: string; items: SideNavItem[] }) {
   return (
-    <aside className="sidebar" data-span="2" data-span-s="row">
+    <aside className="sidebar" data-span="3" data-span-s="row">
       {title && <h6>{title}</h6>}
       <ul>
         {items.map((item) => (
