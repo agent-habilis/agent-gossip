@@ -5,6 +5,10 @@ import { Head } from 'nextra/components'
 import { getPageMap } from 'nextra/page-map'
 
 import 'nextra-theme-docs/style.css'
+// Tokens and palette only: primitive's reset and element styles would fight
+// Nextra's, so the docs take its values through styles.css instead.
+import '../../styles/primitive/tokens.css'
+import '../../styles/primitive/theme-times-square.css'
 import './styles.css'
 
 const description =
@@ -45,22 +49,22 @@ const FOOTER_LINKS = [
 export default async function SiteLayout({ children }: { children: ReactNode }) {
   const pageMap = await getPageMap()
   return (
-    <html lang="en" dir="ltr" suppressHydrationWarning>
+    <html lang="en" dir="ltr" data-theme="times-square" suppressHydrationWarning>
       <Head
         faviconGlyph="💬"
-        color={{
-          hue: { light: 213, dark: 210 },
-          saturation: { light: 86, dark: 94 },
-          lightness: { light: 42, dark: 67 },
-        }}
+        // Times Square yellow (#d9b264), the landing's accent; both halves,
+        // since the theme is pinned to dark.
+        color={{ hue: 40, saturation: 61, lightness: 62 }}
+        backgroundColor={{ dark: '#2b2b2b', light: '#2b2b2b' }}
       />
       <body>
         <Layout
           pageMap={pageMap}
           docsRepositoryBase="https://github.com/agent-habilis/agent-gossip/tree/main/packages/web"
           sidebar={{ defaultMenuCollapseLevel: 1, toggleButton: false }}
-          // The site follows the OS color scheme; there is no switch to pick one.
+          // Dark only, like the landing page: Times Square has no light half.
           darkMode={false}
+          nextThemes={{ defaultTheme: 'dark', forcedTheme: 'dark' }}
           navbar={
             <Navbar
               logo={<b>agent-gossip 💬</b>}

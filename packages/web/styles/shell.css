@@ -1,0 +1,29 @@
+/* The shell the landing page and the docs share (components/Shell.tsx): one
+   width, one nav, one sidebar, so crossing between them moves only content. */
+body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
+
+.site-nav { margin-bottom: calc(var(--lineHeight) * 3); }
+.site-nav a { text-decoration: none; }
+.nav-links a + a { margin-left: var(--lineHeight); }
+.nav-links [aria-current] { color: var(--accent-color); }
+.brand { color: var(--accent-color); }
+
+/* The sidebar stays in view while the content scrolls. */
+.sidebar { position: sticky; top: var(--lineHeight); align-self: start; }
+.sidebar ul { list-style: none; padding: 0; }
+.sidebar a { text-decoration: none; color: var(--foreground-color); }
+.sidebar a:hover { color: var(--accent-color); }
+.sidebar [aria-current] { color: var(--accent-color); font-weight: 700; }
+.sidebar h6 { margin-bottom: var(--baseline); }
+
+@media only screen and (max-width: 768px) {
+  /* Stacked, the brand and the links get the same three lines that
+     separate the links from the sidebar. */
+  .site-nav { row-gap: calc(var(--lineHeight) * 3); }
+  .sidebar { position: static; }
+  /* Two even columns, every cell one line: the longest title would otherwise
+     wrap and, with equal rows, make every row two lines tall. */
+  .sidebar ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 0 var(--baseline); }
+  .sidebar li { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .p-grid > * { min-width: 0; }
+}

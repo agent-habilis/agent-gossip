@@ -1,0 +1,120 @@
+/* The docs prototype: primitive's grid and type, the landing page's theme.
+   The nav and sidebar are the shared shell (styles/shell.css). */
+
+/* The TOC stays in view while the article scrolls, like the sidebar. */
+/* Right-aligned, so it closes the page's right edge the way the sidebar
+   opens its left. */
+.toc { position: sticky; top: var(--lineHeight); align-self: start; text-align: right; }
+.toc ul { list-style: none; padding: 0; }
+/* The content's color, not muted: a heading here is often all code, and
+   muted code on its own fill read as disabled. */
+.toc a { text-decoration: none; color: var(--foreground-color); }
+.toc a:hover { color: var(--accent-color); }
+.toc code { color: inherit; }
+.toc h6 { margin-bottom: var(--baseline); }
+
+/* --------------------------------------------------------------- article */
+
+article { min-width: 0; }
+article h1 { margin-bottom: var(--lineHeight); }
+article h2 { margin-top: calc(var(--lineHeight) * 2); }
+article h3 { margin-top: calc(var(--lineHeight) * 1.5); margin-bottom: var(--baseline); }
+article h4 { margin-top: var(--lineHeight); }
+article :is(h2, h3, h4) { scroll-margin-top: var(--lineHeight); }
+article a { color: var(--accent-color); }
+article :is(p, li) { max-width: none; }
+article li + li { margin-top: calc(var(--baseline) / 2); }
+article table { margin-bottom: var(--lineHeight); }
+article hr { margin-top: calc(var(--lineHeight) * 2); }
+
+/* Heading anchors Nextra adds after the text. */
+article :is(h2, h3, h4) a[href^="#"] { display: none; }
+
+pre {
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+/* Shiki writes both themes into each token as variables; the docs theme's
+   stylesheet is what picks one, and it is not loaded here. */
+pre span { color: var(--shiki-dark); }
+:not(pre) > code {
+  padding: 0 calc(var(--baseline) / 2);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+
+.pager { display: flex; justify-content: space-between; max-width: none; }
+
+/* ------------------------------------------- nextra/components, restyled */
+
+/* The icon takes a line of its own, so the text starts on the same left edge
+   as every other block instead of hanging off the icon. */
+.nextra-callout {
+  display: block;
+  margin-bottom: var(--lineHeight);
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+.nextra-callout svg { display: block; margin-bottom: var(--baseline); color: var(--accent-color); width: 1em; height: var(--lineHeight); }
+
+.nextra-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--lineHeight);
+  margin-bottom: var(--lineHeight);
+}
+.nextra-card {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  padding: var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--ts-gray-2);
+  color: var(--foreground-color);
+  text-decoration: none;
+}
+article a.nextra-card { color: var(--foreground-color); }
+.nextra-card:hover { background: var(--ts-gray-1); }
+.nextra-card > span { display: flex; gap: var(--baseline); font-weight: 700; }
+.nextra-card p { margin-top: var(--baseline); }
+
+/* Steps: a counted rule down the left, as Nextra draws it. */
+.nextra-steps {
+  counter-reset: step;
+  margin-bottom: var(--lineHeight);
+  padding-left: var(--lineHeight);
+  box-shadow: inset 1px 0 0 var(--line-color);
+}
+.nextra-steps :is(h2, h3, h4) { counter-increment: step; margin-top: var(--lineHeight); }
+.nextra-steps :is(h2, h3, h4)::before {
+  content: counter(step) ". ";
+  color: var(--accent-color);
+}
+
+.nextra-filetree ul { list-style: none; padding-left: var(--lineHeight); }
+.nextra-filetree { margin-bottom: var(--lineHeight); font-family: var(--monoFont); }
+.nextra-filetree svg { display: inline; width: 1em; height: 1em; margin-right: calc(var(--baseline) / 2); }
+
+[role="tablist"] {
+  display: flex;
+  gap: var(--lineHeight);
+  margin-bottom: var(--baseline);
+  box-shadow: inset 0 -1px 0 var(--line-color);
+}
+[role="tab"] { cursor: pointer; color: var(--muted-color); background: none; }
+[role="tab"][aria-selected="true"] {
+  color: var(--accent-color);
+  box-shadow: inset 0 calc(var(--hrThickness) * -1) 0 var(--accent-color);
+}
+
+@media only screen and (max-width: 768px) {
+  .toc { display: none; }
+  .nextra-cards { grid-template-columns: minmax(0, 1fr); }
+  pre code { white-space: pre-wrap; word-break: break-all; }
+}
+
+/* primitive sizes code at 0.9em, which compounds for code inside pre. */
+pre code { font-size: inherit; }
+.clip { margin-bottom: var(--lineHeight); }

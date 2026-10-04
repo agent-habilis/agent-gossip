@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 
-import './primitive/primitive.css'
+import '../../styles/primitive/primitive.css'
+import '../../styles/shell.css'
 import './landing.css'
 
 const description =

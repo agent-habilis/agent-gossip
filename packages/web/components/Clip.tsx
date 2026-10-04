@@ -1,7 +1,10 @@
 'use client'
 import { useRef, useState } from 'react'
 
-import { PlayIcon } from './icons'
+// The design system's button. Imported here as well as by the primitive
+// roots: the Nextra docs render clips too and load no primitive elements.
+import '../styles/primitive/button.css'
+import './Clip.css'
 
 interface Props {
   /** Basename under /video/, without extension. */
@@ -47,7 +50,12 @@ export function Clip({ clip, title, duration }: Props) {
         hidden={!playing}
       />
       {!playing && (
-        <button type="button" className="clip-poster" onClick={play}>
+        <button
+          type="button"
+          className="clip-poster"
+          onClick={play}
+          aria-label={`Play the ${title} demo, ${duration}, no audio`}
+        >
           <img
             src={`/video/${clip}.jpg`}
             srcSet={`/video/${clip}@720.jpg 720w, /video/${clip}.jpg 1440w`}
@@ -58,10 +66,9 @@ export function Clip({ clip, title, duration }: Props) {
             loading="lazy"
             decoding="async"
           />
-          <span className="clip-play">
-            <PlayIcon />
-            <span className="sr-only">
-              Play the {title} demo, {duration}, no audio
+          <span className="clip-play" aria-hidden="true">
+            <span className="p-button" data-icon="▶">
+              Play
             </span>
           </span>
         </button>

@@ -1,0 +1,47 @@
+/* With the component rather than a layout's stylesheet: both docs roots,
+   Nextra's and the grid prototype, render clips. */
+/* A clip after other content needs a gap; a clip that opens its container
+   takes its spacing from that container. */
+.clip:not(:first-child) {
+  margin-top: 1.5rem;
+}
+
+/* The encodes and their posters are 1440 × 900; any other ratio crops them. */
+.clip {
+  position: relative;
+  aspect-ratio: 1440 / 900;
+  overflow: hidden;
+  background: #000;
+  /* The landing's demo video radius, so a clip reads the same on both. */
+  border-radius: 16px;
+}
+
+.clip video,
+.clip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.clip-poster {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.clip-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* The whole poster is the button; the p-button inside is only its face, so
+   it takes the hover from the poster rather than from itself. */
+.clip-poster:hover .p-button {
+  background: var(--button-hover-background);
+}
