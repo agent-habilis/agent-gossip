@@ -1,3 +1,4 @@
+import { changelogHref } from '@/components/changelog'
 import { crateVersion } from '@/components/crateVersion'
 import { GITHUB, SideNav, SiteFooter, SiteNav } from '@/components/Shell'
 
@@ -23,6 +24,7 @@ const external = { target: '_blank', rel: 'noopener' } as const
 
 export default async function Landing() {
   const version = await crateVersion()
+  const releaseNotes = await changelogHref(version)
   return (
     <>
       <SiteNav />
@@ -35,7 +37,7 @@ export default async function Landing() {
             <div className="p-grid">
               <div data-span="8" data-span-s="row">
                 <p className="chip">
-                  <a className="p-button" data-variant="outline" data-size="small" href={`${GITHUB}/releases`}>
+                  <a className="p-button" data-variant="outline" data-size="small" href={releaseNotes}>
                     v{version}
                   </a>
                 </p>
