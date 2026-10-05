@@ -27,10 +27,6 @@ export function SiteNav({ current }: { current?: 'docs' | 'blog' }) {
         <a href="/docs-grid/" aria-current={current === 'docs' ? 'page' : undefined}>
           Docs
         </a>
-        {/* The webapp opens in its own tab, as every link to it on the docs does. */}
-        <a href="/app/" target="_blank" rel="noopener">
-          Webapp
-        </a>
         <a href={GITHUB}>GitHub</a>
         <a href={DISCORD}>Discord</a>
       </div>

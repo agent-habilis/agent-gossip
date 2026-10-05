@@ -1,8 +1,8 @@
 export default {
   docs: { type: 'page', title: 'Docs' },
   // The webapp is a Next route, not MDX, so Nextra only knows its folder name.
-  // Naming it here puts it in the navbar on purpose, rather than leaving an
-  // item called "App" to appear in the docs sidebar as a side effect of the
-  // page map. Crossing into it is a full document load — see (site)/layout.tsx.
-  app: { type: 'page', title: 'Webapp', href: '/app/' },
+  // Named here and hidden, so it is out of the navbar and no item called "App"
+  // appears in the docs sidebar as a side effect of the page map. The route
+  // still serves at /app/.
+  app: { type: 'page', title: 'Webapp', href: '/app/', display: 'hidden' },
 }

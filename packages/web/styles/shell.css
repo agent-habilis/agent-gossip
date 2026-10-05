@@ -15,7 +15,8 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 :is(.sidebar, .site-footer) a { text-decoration: none; color: var(--foreground-color); }
 :is(.sidebar, .site-footer) a:hover { color: var(--accent-color); }
 .sidebar [aria-current] { color: var(--accent-color); font-weight: 700; }
-.sidebar h6 { margin-bottom: var(--baseline); }
+/* A list heading sits half a line above its links, in the sidebar and the footer alike. */
+:is(.sidebar, .site-footer) h6 { margin-bottom: var(--baseline); }
 
 .site-footer { margin-top: calc(var(--lineHeight) * 2); }
 

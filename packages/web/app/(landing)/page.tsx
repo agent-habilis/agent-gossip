@@ -37,7 +37,7 @@ export default async function Landing() {
             <div className="p-grid">
               <div data-span="8" data-span-s="row">
                 <p className="chip">
-                  <a className="p-button" data-variant="outline" data-size="small" href={releaseNotes}>
+                  <a className="p-button" data-variant="secondary" data-size="small" href={releaseNotes}>
                     v{version}
                   </a>
                 </p>
