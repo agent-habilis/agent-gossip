@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation'
 import { importPage } from 'nextra/pages'
 
 import { SideNav, SiteNav } from '@/components/Shell'
@@ -30,8 +31,11 @@ type TocItem = { id: string; value: unknown; depth: number }
 export default async function DocsPage(props: Props) {
   const { slug = [] } = await props.params
   const current = slug.join('/')
-  const { default: MDXContent, toc } = await importPage(['docs', ...slug])
+  // Checked before the import: an unknown page is a 404, and a -1 index would
+  // otherwise offer the first page as "next".
   const index = PAGES.findIndex((page) => page.slug === current)
+  if (index === -1) notFound()
+  const { default: MDXContent, toc } = await importPage(['docs', ...slug])
   const prev = PAGES[index - 1]
   const next = PAGES[index + 1]
   const headings = (toc as TocItem[]).filter((item) => item.depth === 2)

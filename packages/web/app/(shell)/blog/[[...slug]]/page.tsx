@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation'
 import { importPage } from 'nextra/pages'
 
 import { getPosts, postHref } from '@/components/blog'
@@ -16,6 +17,8 @@ async function resolve(props: Props) {
   const { slug = [] } = await props.params
   const posts = await getPosts()
   const index = slug.length ? posts.findIndex((post) => post.slug === slug[0]) : 0
+  // An unknown post is a 404; an empty /blog/ with no posts yet renders empty.
+  if (index === -1) notFound()
   return { posts, index, post: posts[index] }
 }
 
