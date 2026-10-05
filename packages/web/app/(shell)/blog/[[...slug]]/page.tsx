@@ -1,7 +1,6 @@
 import { importPage } from 'nextra/pages'
 
 import { getPosts, postHref } from '@/components/blog'
-import { PLAIN_COMPONENTS } from '@/components/mdxComponents'
 import { SideNav, SiteNav } from '@/components/Shell'
 
 type Props = { params: Promise<{ slug?: string[] }> }
@@ -49,7 +48,7 @@ export default async function BlogPage(props: Props) {
               <time dateTime={post.date}>{post.date}</time>
             </small>
           </p>
-          <MDXContent {...props} components={PLAIN_COMPONENTS} />
+          <MDXContent {...props} />
 
           <hr />
           <p className="pager">

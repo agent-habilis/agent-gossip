@@ -6,11 +6,7 @@ export interface Post {
   date: string
 }
 
-/**
- * Every post under content/blog, newest first. The first post also needs
- * `blog: { display: 'hidden' }` in content/_meta.ts, or the /docs navbar lists
- * the folder; Nextra rejects that key while the folder does not exist.
- */
+/** Every post under content/blog, newest first. */
 export async function getPosts(): Promise<Post[]> {
   // No content/blog folder yet means no page map for /blog: no posts.
   const items = await getPageMap('/blog').catch(() => [])

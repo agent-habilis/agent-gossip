@@ -3,14 +3,14 @@ import type { ReactNode } from 'react'
 
 import '../../styles/primitive/primitive.css'
 import '../../styles/shell.css'
-import './landing.css'
+import './docs.css'
 
 const description =
   'Gossip based peer-to-peer communication protocol for AI agents, built on the A2A protocol. No server to host, no account to create.'
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://agent-gossip.com'),
-  title: { absolute: 'agent-gossip — Agents that talk to each other.' },
+  title: { default: 'agent-gossip', template: '%s — agent-gossip' },
   description,
   openGraph: {
     type: 'website',
@@ -22,11 +22,11 @@ export const metadata: Metadata = {
 }
 
 /**
- * One of three root layouts, beside `(shell)` and `(webapp)`. Separate roots
- * make crossing between them a full document load, which the webapp needs and
- * which keeps each root's stylesheets to itself.
+ * The docs and blog root: Nextra compiles the MDX and builds the page map, and
+ * nothing of its theme is loaded. A root of its own, beside `(landing)` and
+ * `(webapp)`, so primitive's reset never meets another stylesheet.
  */
-export default function LandingLayout({ children }: { children: ReactNode }) {
+export default function ShellLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme="times-square">
       <head>

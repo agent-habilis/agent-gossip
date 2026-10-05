@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const PAGE = '/docs-grid/changelog/'
+const PAGE = '/docs/changelog/'
 
 /**
  * Where the changelog page lists a release. Its heading is "0.11.3

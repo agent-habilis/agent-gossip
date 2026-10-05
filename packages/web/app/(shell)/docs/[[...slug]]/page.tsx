@@ -1,13 +1,11 @@
 import { importPage } from 'nextra/pages'
 
-import { PLAIN_COMPONENTS } from '@/components/mdxComponents'
 import { SideNav, SiteNav } from '@/components/Shell'
 import meta from '@/content/docs/_meta'
 
-const BASE = '/docs-grid'
+const BASE = '/docs'
 
-// The sidebar's order and titles are the docs' own _meta, so the prototype
-// cannot drift from /docs.
+// The sidebar's order and titles are the docs' own _meta.
 const PAGES = Object.entries(meta).map(([key, title]) => ({
   slug: key === 'index' ? '' : key,
   title,
@@ -29,7 +27,7 @@ export async function generateMetadata(props: Props) {
 
 type TocItem = { id: string; value: unknown; depth: number }
 
-export default async function DocsGridPage(props: Props) {
+export default async function DocsPage(props: Props) {
   const { slug = [] } = await props.params
   const current = slug.join('/')
   const { default: MDXContent, toc } = await importPage(['docs', ...slug])
@@ -48,8 +46,8 @@ export default async function DocsGridPage(props: Props) {
           items={PAGES.map((page) => ({ href: href(page.slug), label: page.title, current: page.slug === current }))}
         />
 
-        <article data-span="4-9" data-span-s="row">
-          <MDXContent {...props} components={PLAIN_COMPONENTS} />
+        <article data-span="4-9" data-span-s="row" data-pagefind-body>
+          <MDXContent {...props} />
 
           <hr />
           <p className="pager">
