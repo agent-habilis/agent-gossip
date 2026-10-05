@@ -48,49 +48,82 @@ pre span { color: var(--shiki-dark); }
 
 /* ------------------------------------------- nextra/components, restyled */
 
-/* The icon takes a line of its own, so the text starts on the same left edge
-   as every other block instead of hanging off the icon. */
 .nextra-callout {
-  display: block;
+  display: flow-root;
   margin-bottom: var(--lineHeight);
   padding: var(--baseline) var(--lineHeight);
   border-radius: var(--radius);
   background: var(--field-background);
 }
-.nextra-callout svg { display: block; margin-bottom: var(--baseline); color: var(--accent-color); width: 1em; height: var(--lineHeight); }
+/* The icon is a color emoji rather than Nextra's SVG, floated into the first
+   line so later lines wrap back under it. The kind is only told apart by
+   Nextra's tint class; anything unmatched falls back to info. */
+.nextra-callout > div:first-child {
+  float: left;
+  margin-right: var(--baseline);
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.nextra-callout > div:first-child svg { display: none; }
+.nextra-callout > div:first-child::before { content: "\2139\FE0F"; }
+.nextra-callout[class*="bg-yellow"] > div:first-child::before { content: "\26A0\FE0F"; }
+/* Inline code shares the callout's fill, so it steps one shade lighter to
+   stay visible. */
+.nextra-callout :not(pre) > code { background: var(--ts-gray-2); }
 
+/* Cards read like the landing's Features: no tile, just the title over its
+   text in a two-column grid. The whole card is a link, so hover colors the
+   title. */
 .nextra-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--lineHeight);
+  grid-auto-rows: 1fr;
+  gap: calc(var(--lineHeight) * 2) var(--lineHeight);
   margin-bottom: var(--lineHeight);
 }
 .nextra-card {
   display: flex;
   flex-direction: column-reverse;
   justify-content: flex-end;
-  padding: var(--lineHeight);
-  border-radius: var(--radius);
-  background: var(--ts-gray-2);
-  color: var(--foreground-color);
   text-decoration: none;
 }
 article a.nextra-card { color: var(--foreground-color); }
-.nextra-card:hover { background: var(--ts-gray-1); }
-.nextra-card > span { display: flex; gap: var(--baseline); font-weight: 700; }
-.nextra-card p { margin-top: var(--baseline); }
+.nextra-card > span {
+  display: flex;
+  gap: calc(var(--baseline) / 2);
+  font-size: var(--h4-size);
+  font-weight: 700;
+}
+.nextra-card:hover > span { color: var(--accent-color); }
+/* Cards render their children before the title span and flip the order with
+   column-reverse, so primitive's :last-child reset never reaches the text. */
+.nextra-card p { margin: 0; }
 
-/* Steps: a counted rule down the left, as Nextra draws it. */
+/* Steps: numbered discs on a rule down the left. The disc's left edge is the
+   column's, so the rule runs through the disc's centre and the step content
+   starts half a line past the disc. */
 .nextra-steps {
+  --step-gutter: calc(var(--lineHeight) + var(--baseline));
   counter-reset: step;
   margin-bottom: var(--lineHeight);
-  padding-left: var(--lineHeight);
-  box-shadow: inset 1px 0 0 var(--line-color);
+  padding-left: var(--step-gutter);
+  background: linear-gradient(var(--line-color), var(--line-color)) no-repeat
+    calc(var(--lineHeight) / 2 - 0.5px) 0 / 1px 100%;
 }
-.nextra-steps :is(h2, h3, h4) { counter-increment: step; margin-top: var(--lineHeight); }
+.nextra-steps :is(h2, h3, h4) { position: relative; counter-increment: step; margin-top: var(--lineHeight); }
 .nextra-steps :is(h2, h3, h4)::before {
-  content: counter(step) ". ";
-  color: var(--accent-color);
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: calc(var(--step-gutter) * -1);
+  display: grid;
+  place-items: center;
+  width: var(--lineHeight);
+  height: var(--lineHeight);
+  border-radius: 50%;
+  background: var(--accent-color);
+  color: var(--accent-contrast-color);
+  font-size: var(--small-size);
+  font-weight: 700;
 }
 
 .nextra-filetree ul { list-style: none; padding-left: var(--lineHeight); }
@@ -100,7 +133,6 @@ article a.nextra-card { color: var(--foreground-color); }
 [role="tablist"] {
   display: flex;
   gap: var(--lineHeight);
-  margin-bottom: var(--baseline);
   box-shadow: inset 0 -1px 0 var(--line-color);
 }
 [role="tab"] { cursor: pointer; color: var(--muted-color); background: none; }
@@ -108,10 +140,15 @@ article a.nextra-card { color: var(--foreground-color); }
   color: var(--accent-color);
   box-shadow: inset 0 calc(var(--hrThickness) * -1) 0 var(--accent-color);
 }
+/* Nextra plants a hidden h3 at the top of each panel, an anchor only; the
+   article's heading margins would still open a gap under the tabs. */
+[role="tabpanel"] > h3:first-child { margin: 0; }
+/* The panel ends on its last block (often a code block), which primitive's
+   :last-child reset leaves flush against whatever follows the tabs. */
+[role="tabpanel"] { margin-bottom: var(--lineHeight); }
 
 @media only screen and (max-width: 768px) {
   .toc { display: none; }
-  .nextra-cards { grid-template-columns: minmax(0, 1fr); }
   pre code { white-space: pre-wrap; word-break: break-all; }
 }
 

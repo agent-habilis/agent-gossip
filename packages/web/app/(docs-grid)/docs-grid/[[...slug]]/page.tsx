@@ -66,8 +66,18 @@ export default async function DocsGridPage(props: Props) {
 
           <hr />
           <p className="pager">
-            {prev ? <a href={href(prev.slug)}>← {prev.title}</a> : <span />}
-            {next && <a href={href(next.slug)}>{next.title} →</a>}
+            {prev ? (
+              <a className="p-button" data-variant="outline" href={href(prev.slug)}>
+                ← {prev.title}
+              </a>
+            ) : (
+              <span />
+            )}
+            {next && (
+              <a className="p-button" data-variant="accent" data-icon="→" href={href(next.slug)}>
+                {next.title}
+              </a>
+            )}
           </p>
         </article>
 

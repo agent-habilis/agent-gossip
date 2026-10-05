@@ -1,5 +1,17 @@
-const GITHUB = 'https://github.com/agent-habilis/agent-gossip'
+export const GITHUB = 'https://github.com/agent-habilis/agent-gossip'
 const DISCORD = 'https://discord.gg/7FrS8GkQ8'
+
+const LINKS = [
+  ['GitHub', GITHUB],
+  ['Discord', DISCORD],
+  ['Docs', '/docs'],
+  ['License', `${GITHUB}/blob/main/LICENSE`],
+  ['fofoca', 'https://github.com/fofoca-network/fofoca'],
+] as const
+
+const SIBLINGS = ['agent-browse', 'agent-file', 'agent-graph', 'agent-inject', 'agent-port', 'agent-share'].map(
+  (name) => [name, `https://github.com/agent-habilis/${name}`] as const,
+)
 
 // The landing page and the docs share one shell, so crossing between them
 // moves the content and nothing around it.
@@ -46,5 +58,31 @@ export function SideNav({ title, items }: { title?: string; items: SideNavItem[]
         ))}
       </ul>
     </aside>
+  )
+}
+
+function FooterColumn({ title, links }: { title: string; links: readonly (readonly [string, string])[] }) {
+  return (
+    <div data-span="6" data-span-s="row">
+      <h6>{title}</h6>
+      <p>
+        {links.map(([label, href]) => (
+          <span key={href}>
+            <a href={href}>{label}</a>
+            <br />
+          </span>
+        ))}
+      </p>
+    </div>
+  )
+}
+
+export function SiteFooter() {
+  return (
+    <footer className="p-grid site-footer">
+      <hr />
+      <FooterColumn title="Links" links={LINKS} />
+      <FooterColumn title="agent-habilis █🫈" links={SIBLINGS} />
+    </footer>
   )
 }

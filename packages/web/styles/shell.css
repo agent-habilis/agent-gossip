@@ -11,10 +11,13 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 /* The sidebar stays in view while the content scrolls. */
 .sidebar { position: sticky; top: var(--lineHeight); align-self: start; }
 .sidebar ul { list-style: none; padding: 0; }
-.sidebar a { text-decoration: none; color: var(--foreground-color); }
-.sidebar a:hover { color: var(--accent-color); }
+/* Plain links, accent on hover, in the sidebar and the footer alike. */
+:is(.sidebar, .site-footer) a { text-decoration: none; color: var(--foreground-color); }
+:is(.sidebar, .site-footer) a:hover { color: var(--accent-color); }
 .sidebar [aria-current] { color: var(--accent-color); font-weight: 700; }
 .sidebar h6 { margin-bottom: var(--baseline); }
+
+.site-footer { margin-top: calc(var(--lineHeight) * 2); }
 
 @media only screen and (max-width: 768px) {
   /* Stacked, the brand, the links and the sidebar sit three lines apart:

@@ -22,8 +22,9 @@
   --monoFont: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* type sizes */
-  --h1-size: 3rem;
-  --h2-size: 2rem;
+  /* fluid: 3rem and 2rem at desktop, shrinking on phones without a breakpoint */
+  --h1-size: clamp(2.25rem, 1.5rem + 3vw, 3rem);
+  --h2-size: clamp(1.5rem, 1.25rem + 1vw, 2rem);
   --h3-size: 1.25rem;
   --h4-size: 1rem;
   --small-size: 0.8125rem;

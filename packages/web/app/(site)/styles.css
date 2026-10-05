@@ -48,6 +48,9 @@ article {
 
 article :is(p, li) {
   line-height: var(--lineHeight);
+  /* lang="en" on <html> gives the hyphenation dictionary; long paths and hashes wrap instead of overflowing */
+  hyphens: auto;
+  overflow-wrap: anywhere;
 }
 
 article :is(h1, h2, h3, h4) {
@@ -140,35 +143,43 @@ html :not(pre) > code.nextra-code:not([class*='twoslash-']) {
 
 /* Nextra tints each callout kind with a Tailwind hue (blue, amber, …) that
    the palette has no place for. One fill for all of them, like the code
-   blocks; the accent icon is what marks them as asides. */
+   blocks; the emoji is what marks them as asides. */
 .nextra-callout {
+  display: flow-root;
+  padding: var(--baseline) var(--lineHeight);
   border: none;
   border-radius: var(--radius);
   background: var(--field-background);
   color: var(--foreground-color);
 }
 
-.nextra-callout svg {
-  color: var(--accent-color);
-}
-
-/* The icon takes a line of its own, so the text starts on the same left edge
-   as every other block instead of hanging off the icon. */
-.nextra-callout {
-  display: block;
-  padding: var(--baseline) var(--lineHeight);
-}
-
+/* The icon is a color emoji rather than Nextra's SVG, floated into the first
+   line so later lines wrap back under it. The kind is only told apart by
+   Nextra's tint class; anything unmatched falls back to info. */
 .nextra-callout > div:first-child {
+  float: left;
+  margin-right: var(--baseline);
   padding: 0;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   font-size: 1rem;
 }
 
 .nextra-callout > div:first-child svg {
-  display: block;
-  margin: 0 0 var(--baseline);
-  width: 1em;
-  height: var(--lineHeight);
+  display: none;
+}
+
+.nextra-callout > div:first-child::before {
+  content: '\2139\FE0F';
+}
+
+.nextra-callout[class*='bg-yellow'] > div:first-child::before {
+  content: '\26A0\FE0F';
+}
+
+/* Inline code shares the callout's fill, so it steps one shade lighter to
+   stay visible. Same prefixed selector as the inline-code rule above. */
+html .nextra-callout :not(pre) > code.nextra-code:not([class*='twoslash-']) {
+  background-color: var(--ts-gray-2);
 }
 
 /* The rule opens a section instead of underlining its title, so the line

@@ -44,6 +44,7 @@ h6 {
 /* text */
 p, li, dd, blockquote {
   max-width: 65ch;
+  text-wrap: pretty;
 }
 b, strong {
   font-weight: 700;
