@@ -1,0 +1,117 @@
+/*
+Grid: 12 columns, nested grids included.
+
+  <div class="p-grid">
+    <div data-span="2" data-span-s="row">…</div>
+  </div>
+
+data-span: "2" (span 2), "2-5" (columns 2 to 5), "2+3" (from 2, span 3),
+"2.." (from 2 to the row end), "row" (the whole row). data-span-s applies at
+widths up to 768px, data-span-l from 1600px.
+*/
+.p-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--columnGap);
+  row-gap: var(--rowGap);
+}
+
+.p-grid > [data-span^="1"] { --start: 1 }
+.p-grid > [data-span^="2"] { --start: 2 }
+.p-grid > [data-span^="3"] { --start: 3 }
+.p-grid > [data-span^="4"] { --start: 4 }
+.p-grid > [data-span^="5"] { --start: 5 }
+.p-grid > [data-span^="6"] { --start: 6 }
+.p-grid > [data-span^="7"] { --start: 7 }
+.p-grid > [data-span^="8"] { --start: 8 }
+.p-grid > [data-span^="9"] { --start: 9 }
+.p-grid > [data-span^="10"] { --start: 10 }
+.p-grid > [data-span^="11"] { --start: 11 }
+.p-grid > [data-span^="12"] { --start: 12 }
+
+.p-grid > [data-span="1"], .p-grid > [data-span$="+1"], .p-grid > [data-span$="-1"] { --size: 1; --end: 2 }
+.p-grid > [data-span="2"], .p-grid > [data-span$="+2"], .p-grid > [data-span$="-2"] { --size: 2; --end: 3 }
+.p-grid > [data-span="3"], .p-grid > [data-span$="+3"], .p-grid > [data-span$="-3"] { --size: 3; --end: 4 }
+.p-grid > [data-span="4"], .p-grid > [data-span$="+4"], .p-grid > [data-span$="-4"] { --size: 4; --end: 5 }
+.p-grid > [data-span="5"], .p-grid > [data-span$="+5"], .p-grid > [data-span$="-5"] { --size: 5; --end: 6 }
+.p-grid > [data-span="6"], .p-grid > [data-span$="+6"], .p-grid > [data-span$="-6"] { --size: 6; --end: 7 }
+.p-grid > [data-span="7"], .p-grid > [data-span$="+7"], .p-grid > [data-span$="-7"] { --size: 7; --end: 8 }
+.p-grid > [data-span="8"], .p-grid > [data-span$="+8"], .p-grid > [data-span$="-8"] { --size: 8; --end: 9 }
+.p-grid > [data-span="9"], .p-grid > [data-span$="+9"], .p-grid > [data-span$="-9"] { --size: 9; --end: 10 }
+.p-grid > [data-span="10"], .p-grid > [data-span$="+10"], .p-grid > [data-span$="-10"] { --size: 10; --end: 11 }
+.p-grid > [data-span="11"], .p-grid > [data-span$="+11"], .p-grid > [data-span$="-11"] { --size: 11; --end: 12 }
+.p-grid > [data-span="12"], .p-grid > [data-span$="+12"], .p-grid > [data-span$="-12"] { --size: 12; --end: 13 }
+
+.p-grid > [data-span] { grid-column: auto / span var(--size) }
+.p-grid > [data-span*="+"] { grid-column: var(--start) / span var(--size) }
+.p-grid > [data-span*="-"] { grid-column: var(--start) / var(--end) }
+.p-grid > [data-span$=".."] { grid-column: var(--start) / -1 }
+.p-grid > [data-span="row"] { grid-column: 1 / -1 }
+
+@media only screen and (max-width: 768px) {
+  .p-grid > [data-span-s^="1"] { --start: 1 }
+  .p-grid > [data-span-s^="2"] { --start: 2 }
+  .p-grid > [data-span-s^="3"] { --start: 3 }
+  .p-grid > [data-span-s^="4"] { --start: 4 }
+  .p-grid > [data-span-s^="5"] { --start: 5 }
+  .p-grid > [data-span-s^="6"] { --start: 6 }
+  .p-grid > [data-span-s^="7"] { --start: 7 }
+  .p-grid > [data-span-s^="8"] { --start: 8 }
+  .p-grid > [data-span-s^="9"] { --start: 9 }
+  .p-grid > [data-span-s^="10"] { --start: 10 }
+  .p-grid > [data-span-s^="11"] { --start: 11 }
+  .p-grid > [data-span-s^="12"] { --start: 12 }
+
+  .p-grid > [data-span-s="1"], .p-grid > [data-span-s$="+1"], .p-grid > [data-span-s$="-1"] { --size: 1; --end: 2 }
+  .p-grid > [data-span-s="2"], .p-grid > [data-span-s$="+2"], .p-grid > [data-span-s$="-2"] { --size: 2; --end: 3 }
+  .p-grid > [data-span-s="3"], .p-grid > [data-span-s$="+3"], .p-grid > [data-span-s$="-3"] { --size: 3; --end: 4 }
+  .p-grid > [data-span-s="4"], .p-grid > [data-span-s$="+4"], .p-grid > [data-span-s$="-4"] { --size: 4; --end: 5 }
+  .p-grid > [data-span-s="5"], .p-grid > [data-span-s$="+5"], .p-grid > [data-span-s$="-5"] { --size: 5; --end: 6 }
+  .p-grid > [data-span-s="6"], .p-grid > [data-span-s$="+6"], .p-grid > [data-span-s$="-6"] { --size: 6; --end: 7 }
+  .p-grid > [data-span-s="7"], .p-grid > [data-span-s$="+7"], .p-grid > [data-span-s$="-7"] { --size: 7; --end: 8 }
+  .p-grid > [data-span-s="8"], .p-grid > [data-span-s$="+8"], .p-grid > [data-span-s$="-8"] { --size: 8; --end: 9 }
+  .p-grid > [data-span-s="9"], .p-grid > [data-span-s$="+9"], .p-grid > [data-span-s$="-9"] { --size: 9; --end: 10 }
+  .p-grid > [data-span-s="10"], .p-grid > [data-span-s$="+10"], .p-grid > [data-span-s$="-10"] { --size: 10; --end: 11 }
+  .p-grid > [data-span-s="11"], .p-grid > [data-span-s$="+11"], .p-grid > [data-span-s$="-11"] { --size: 11; --end: 12 }
+  .p-grid > [data-span-s="12"], .p-grid > [data-span-s$="+12"], .p-grid > [data-span-s$="-12"] { --size: 12; --end: 13 }
+
+  .p-grid > [data-span-s] { grid-column: auto / span var(--size) }
+  .p-grid > [data-span-s*="+"] { grid-column: var(--start) / span var(--size) }
+  .p-grid > [data-span-s*="-"] { grid-column: var(--start) / var(--end) }
+  .p-grid > [data-span-s$=".."] { grid-column: var(--start) / -1 }
+  .p-grid > [data-span-s="row"] { grid-column: 1 / -1 }
+}
+
+@media only screen and (min-width: 1600px) {
+  .p-grid > [data-span-l^="1"] { --start: 1 }
+  .p-grid > [data-span-l^="2"] { --start: 2 }
+  .p-grid > [data-span-l^="3"] { --start: 3 }
+  .p-grid > [data-span-l^="4"] { --start: 4 }
+  .p-grid > [data-span-l^="5"] { --start: 5 }
+  .p-grid > [data-span-l^="6"] { --start: 6 }
+  .p-grid > [data-span-l^="7"] { --start: 7 }
+  .p-grid > [data-span-l^="8"] { --start: 8 }
+  .p-grid > [data-span-l^="9"] { --start: 9 }
+  .p-grid > [data-span-l^="10"] { --start: 10 }
+  .p-grid > [data-span-l^="11"] { --start: 11 }
+  .p-grid > [data-span-l^="12"] { --start: 12 }
+
+  .p-grid > [data-span-l="1"], .p-grid > [data-span-l$="+1"], .p-grid > [data-span-l$="-1"] { --size: 1; --end: 2 }
+  .p-grid > [data-span-l="2"], .p-grid > [data-span-l$="+2"], .p-grid > [data-span-l$="-2"] { --size: 2; --end: 3 }
+  .p-grid > [data-span-l="3"], .p-grid > [data-span-l$="+3"], .p-grid > [data-span-l$="-3"] { --size: 3; --end: 4 }
+  .p-grid > [data-span-l="4"], .p-grid > [data-span-l$="+4"], .p-grid > [data-span-l$="-4"] { --size: 4; --end: 5 }
+  .p-grid > [data-span-l="5"], .p-grid > [data-span-l$="+5"], .p-grid > [data-span-l$="-5"] { --size: 5; --end: 6 }
+  .p-grid > [data-span-l="6"], .p-grid > [data-span-l$="+6"], .p-grid > [data-span-l$="-6"] { --size: 6; --end: 7 }
+  .p-grid > [data-span-l="7"], .p-grid > [data-span-l$="+7"], .p-grid > [data-span-l$="-7"] { --size: 7; --end: 8 }
+  .p-grid > [data-span-l="8"], .p-grid > [data-span-l$="+8"], .p-grid > [data-span-l$="-8"] { --size: 8; --end: 9 }
+  .p-grid > [data-span-l="9"], .p-grid > [data-span-l$="+9"], .p-grid > [data-span-l$="-9"] { --size: 9; --end: 10 }
+  .p-grid > [data-span-l="10"], .p-grid > [data-span-l$="+10"], .p-grid > [data-span-l$="-10"] { --size: 10; --end: 11 }
+  .p-grid > [data-span-l="11"], .p-grid > [data-span-l$="+11"], .p-grid > [data-span-l$="-11"] { --size: 11; --end: 12 }
+  .p-grid > [data-span-l="12"], .p-grid > [data-span-l$="+12"], .p-grid > [data-span-l$="-12"] { --size: 12; --end: 13 }
+
+  .p-grid > [data-span-l] { grid-column: auto / span var(--size) }
+  .p-grid > [data-span-l*="+"] { grid-column: var(--start) / span var(--size) }
+  .p-grid > [data-span-l*="-"] { grid-column: var(--start) / var(--end) }
+  .p-grid > [data-span-l$=".."] { grid-column: var(--start) / -1 }
+  .p-grid > [data-span-l="row"] { grid-column: 1 / -1 }
+}

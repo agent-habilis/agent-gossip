@@ -1,0 +1,30 @@
+/* Page-only styles, from primitive/main/prototypes/agent-gossip.html. The nav,
+   the sidebar and the page width are the shared shell (styles/shell.css). */
+main section { margin-bottom: calc(var(--lineHeight) * 3); scroll-margin-top: var(--lineHeight); }
+/* Each card spans its title and body rows of the grid, so titles and bodies
+   line up across a row of cards. */
+.features { row-gap: calc(var(--lineHeight) * 2); }
+.features > [data-span] {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  row-gap: 0;
+}
+/* No text smaller than normal in the content. Scoped to main so the sidebar's
+   h6 keeps the size it has on the docs. */
+main :is(small, figcaption, h6, code, pre, kbd) { font-size: 1rem; }
+main :is(small, figcaption) { color: inherit; }
+.accent { color: var(--accent-color); }
+/* the chip and the brand read as one group; a static gap separates the brand from the title */
+.chip { margin-bottom: 0; }
+.hero-brand { display: block; margin-bottom: var(--lineHeight); }
+.mark { font-size: 8rem; line-height: calc(var(--lineHeight) * 6); text-align: right; }
+.install pre { padding: var(--baseline) var(--lineHeight); border-radius: var(--radius); background: var(--field-background); }
+#demo-video { display: block; width: 100%; height: auto; border-radius: 16px; }
+@media only screen and (max-width: 768px) {
+  .mark { display: block; order: -1; font-size: 5rem; line-height: calc(var(--lineHeight) * 2); text-align: left; margin-bottom: var(--lineHeight); }
+}
+/* Not in the prototype, which scrolls sideways on a phone: the one-line
+   command is wider than the column. Wrap it rather than scroll it, since the
+   tail is the part that matters; at a space first, mid-word only on a phone. */
+.install pre code { white-space: pre-wrap; overflow-wrap: anywhere; }

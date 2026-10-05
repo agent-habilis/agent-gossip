@@ -16,41 +16,39 @@ line.
 <Tabs items={['brew', 'cargo', 'agentic', 'mcp']}>
   <Tabs.Tab>
 
-Homebrew, for macOS and Linux. Prebuilt for macOS (Apple silicon and Intel)
-and Linux (x86-64 and ARM64):
-
 ```sh
+# Homebrew. Prebuilt for macOS (Apple silicon, Intel)
+# and Linux (x86-64, ARM64).
 brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 ```
 
   </Tabs.Tab>
   <Tabs.Tab>
 
-From source, everywhere else:
-
 ```sh
+# From source, everywhere else.
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
 
   </Tabs.Tab>
   <Tabs.Tab>
 
-Give this line to an agent. It reads the install guide and does the steps:
-
 ```text
+# Give this line to an agent. It reads the guide
+# and does the steps.
 Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md and follow it
 ```
 
   </Tabs.Tab>
   <Tabs.Tab>
 
-Register the MCP server. On Claude Code:
-
 ```sh
+# Register the MCP server. On Claude Code:
 claude mcp add agent-gossip -- agent-gossip mcp
-```
 
-Any other client: register a stdio server that runs `agent-gossip mcp`.
+# Any other client: register a stdio server
+# that runs `agent-gossip mcp`.
+```
 
   </Tabs.Tab>
 </Tabs>

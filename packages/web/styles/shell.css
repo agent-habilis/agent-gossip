@@ -1,0 +1,71 @@
+/* The shell the landing page and the docs share (components/Shell.tsx): one
+   width, one nav, one sidebar, so crossing between them moves only content. */
+body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
+
+.site-nav { margin-bottom: var(--pageMargin); }
+.site-nav a { text-decoration: none; }
+.nav-links [aria-current] { color: var(--accent-color); }
+.brand { color: var(--accent-color); }
+
+/* The sidebar stays in view while the content scrolls. */
+.sidebar { position: sticky; top: var(--lineHeight); align-self: start; }
+:is(.sidebar, .search-results) ul { list-style: none; padding: 0; }
+/* Plain links, accent on hover, in the sidebar and the footer alike. */
+:is(.sidebar, .site-footer) a { text-decoration: none; color: var(--foreground-color); }
+:is(.sidebar, .site-footer) a:hover { color: var(--accent-color); }
+.sidebar [aria-current] { color: var(--accent-color); font-weight: 700; }
+/* A list heading sits half a line above its links, in the sidebar and the footer alike. */
+:is(.sidebar, .site-footer) h6 { margin-bottom: var(--baseline); }
+
+.site-footer { margin-top: calc(var(--lineHeight) * 2); }
+
+/* Search sits in the nav's last columns. Its results open under it, on the
+   code-block fill, over the page. */
+.nav-links { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--lineHeight); }
+.search { position: relative; }
+/* Right-aligned like the "On this page" column under it; the left edge holds
+   our clear button. */
+.search input { text-align: right; padding-left: calc(var(--baseline) + var(--lineHeight)); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search-clear {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(var(--baseline) + var(--lineHeight));
+  height: calc(var(--baseline) * 3);
+  padding: 0;
+  background: none;
+  color: var(--muted-color);
+  cursor: pointer;
+}
+.search-clear:hover { color: var(--foreground-color); }
+.search-results {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + var(--baseline));
+  right: 0;
+  width: calc(var(--lineHeight) * 20);
+  max-width: calc(100vw - var(--pageMargin) * 2);
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+/* A rule between results, drawn as an inset line like table rows, so it adds
+   no height. */
+.search-results li + li { margin-top: var(--baseline); padding-top: var(--baseline); box-shadow: inset 0 1px 0 var(--line-color); }
+.search-results a { font-weight: 700; text-decoration: none; }
+.search-results p { margin: 0; max-width: none; color: var(--muted-color); }
+.search-results mark { background: none; color: var(--accent-color); }
+
+@media only screen and (max-width: 768px) {
+  /* Stacked, the brand, the links and the sidebar sit three lines apart:
+     --pageMargin shrinks to one line here, too tight for the stack. */
+  .site-nav { row-gap: calc(var(--lineHeight) * 3); margin-bottom: calc(var(--lineHeight) * 3); }
+  .sidebar { position: static; }
+  /* Two even columns, every cell one line: the longest title would otherwise
+     wrap and, with equal rows, make every row two lines tall. */
+  .sidebar ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 0 var(--baseline); }
+  .sidebar li { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .p-grid > * { min-width: 0; }
+  .search input { text-align: left; }
+}
