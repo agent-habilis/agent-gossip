@@ -6,4 +6,5 @@ export default {
   commands: 'Commands',
   a2a: 'A2A',
   networking: 'Networking',
+  changelog: 'Changelog',
 }

@@ -6,3 +6,5 @@ public/app/
 public/_pagefind/
 next-env.d.ts
 *.tsbuildinfo
+# CHANGELOG.md copied from the repo root by scripts/copy-changelog.ts.
+generated/
