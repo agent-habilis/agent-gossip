@@ -15,7 +15,7 @@ const SIBLINGS = ['agent-browse', 'agent-file', 'agent-graph', 'agent-inject', '
 
 // The landing page and the docs share one shell, so crossing between them
 // moves the content and nothing around it.
-export function SiteNav({ current }: { current?: 'docs' }) {
+export function SiteNav({ current }: { current?: 'docs' | 'blog' }) {
   return (
     <nav className="p-grid site-nav">
       <div data-span="3" data-span-s="row">

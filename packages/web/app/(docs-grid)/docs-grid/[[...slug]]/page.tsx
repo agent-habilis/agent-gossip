@@ -1,8 +1,6 @@
 import { importPage } from 'nextra/pages'
-import type { ReactNode } from 'react'
 
-import { useMDXComponents as getNextraComponents } from 'nextra/mdx-components'
-
+import { PLAIN_COMPONENTS } from '@/components/mdxComponents'
 import { SideNav, SiteNav } from '@/components/Shell'
 import meta from '@/content/docs/_meta'
 
@@ -16,17 +14,6 @@ const PAGES = Object.entries(meta).map(([key, title]) => ({
 }))
 
 const href = (slug: string) => (slug ? `${BASE}/${slug}/` : `${BASE}/`)
-
-// The compiled MDX also pulls the docs theme's components from
-// mdx-components.tsx — its wrapper alone brings the theme's TOC and layout.
-// Plain elements instead, styled by primitive like the landing page.
-const PLAIN = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'blockquote', 'hr', 'pre', 'code',
-  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary']
-const COMPONENTS = {
-  ...getNextraComponents(),
-  ...Object.fromEntries(PLAIN.map((tag) => [tag, tag])),
-  wrapper: ({ children }: { children: ReactNode }) => children,
-}
 
 type Props = { params: Promise<{ slug?: string[] }> }
 
@@ -62,7 +49,7 @@ export default async function DocsGridPage(props: Props) {
         />
 
         <article data-span="4-9" data-span-s="row">
-          <MDXContent {...props} components={COMPONENTS} />
+          <MDXContent {...props} components={PLAIN_COMPONENTS} />
 
           <hr />
           <p className="pager">

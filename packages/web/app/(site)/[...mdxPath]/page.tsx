@@ -2,7 +2,14 @@ import { generateStaticParamsFor, importPage } from 'nextra/pages'
 
 import { useMDXComponents as getMDXComponents } from '@/mdx-components'
 
-export const generateStaticParams = generateStaticParamsFor('mdxPath')
+const allParams = generateStaticParamsFor('mdxPath')
+
+// The blog renders on the primitive shell under app/(docs-grid)/blog, not in
+// the docs theme.
+export async function generateStaticParams() {
+  const params = await allParams()
+  return params.filter(({ mdxPath }) => mdxPath?.[0] !== 'blog')
+}
 
 type Props = { params: Promise<{ mdxPath?: string[] }> }
 
