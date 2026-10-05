@@ -55,12 +55,11 @@ pre span { color: var(--shiki-dark); }
   border-radius: var(--radius);
   background: var(--field-background);
 }
-/* The icon is a color emoji rather than Nextra's SVG, floated into the first
-   line so later lines wrap back under it. The kind is only told apart by
+/* The icon is a color emoji rather than Nextra's SVG, alone on the first
+   line, with the text starting below it. The kind is only told apart by
    Nextra's tint class; anything unmatched falls back to info. */
 .nextra-callout > div:first-child {
-  float: left;
-  margin-right: var(--baseline);
+  margin-bottom: var(--baseline);
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
 .nextra-callout > div:first-child svg { display: none; }
@@ -126,9 +125,25 @@ article a.nextra-card { color: var(--foreground-color); }
   font-weight: 700;
 }
 
+/* A file tree is a code block: same fill, padding and radius. Folders are
+   buttons, so they shed the form styles; the icons are UTF-8, not Nextra's
+   SVGs. */
+.nextra-filetree {
+  margin-bottom: var(--lineHeight);
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+  font-family: var(--monoFont);
+  list-style: none;
+}
 .nextra-filetree ul { list-style: none; padding-left: var(--lineHeight); }
-.nextra-filetree { margin-bottom: var(--lineHeight); font-family: var(--monoFont); }
-.nextra-filetree svg { display: inline; width: 1em; height: 1em; margin-right: calc(var(--baseline) / 2); }
+.nextra-filetree li { margin: 0; }
+.nextra-filetree button { padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.nextra-filetree svg { display: none; }
+.nextra-filetree button::before { content: "\1F4C1\FE0F"; margin-right: calc(var(--baseline) / 2); }
+/* An open folder renders its children as a sibling list. */
+.nextra-filetree li:has(> ul) > button::before { content: "\1F4C2\FE0F"; }
+.nextra-filetree li:not(:has(> button))::before { content: "\1F4C4\FE0F"; margin-right: calc(var(--baseline) / 2); }
 
 [role="tablist"] {
   display: flex;

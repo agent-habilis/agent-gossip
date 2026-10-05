@@ -153,12 +153,11 @@ html :not(pre) > code.nextra-code:not([class*='twoslash-']) {
   color: var(--foreground-color);
 }
 
-/* The icon is a color emoji rather than Nextra's SVG, floated into the first
-   line so later lines wrap back under it. The kind is only told apart by
+/* The icon is a color emoji rather than Nextra's SVG, alone on the first
+   line, with the text starting below it. The kind is only told apart by
    Nextra's tint class; anything unmatched falls back to info. */
 .nextra-callout > div:first-child {
-  float: left;
-  margin-right: var(--baseline);
+  margin-bottom: var(--baseline);
   padding: 0;
   font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   font-size: 1rem;
