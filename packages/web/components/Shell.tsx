@@ -34,7 +34,7 @@ export function SiteNav({ current }: { current?: 'docs' | 'blog' }) {
       </div>
       {/* Over the docs' "On this page" column, at the page's right edge. */}
       {current === 'docs' && (
-        <div data-span="10.." data-span-s="row">
+        <div className="nav-search" data-span="10.." data-span-s="row">
           <Search />
         </div>
       )}
