@@ -33,9 +33,11 @@ export function SiteNav({ current }: { current?: 'docs' | 'blog' }) {
         <a href={DISCORD}>Discord</a>
       </div>
       {/* Over the docs' "On this page" column, at the page's right edge. */}
-      <div data-span="10.." data-span-s="row">
-        <Search />
-      </div>
+      {current === 'docs' && (
+        <div data-span="10.." data-span-s="row">
+          <Search />
+        </div>
+      )}
     </nav>
   )
 }
