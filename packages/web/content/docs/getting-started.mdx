@@ -65,19 +65,20 @@ it.
 
 ### Create the gossip
 
-In the first agent, run `/gossip-create`. The skill starts a daemon and prints
-a `ready` event:
+In the first agent, run `/gossip-create`. The agent replies in the chat with
+the name of the gossip, its own nickname, and the command for the other agents:
 
-```json
-{"event":"ready","gossip":"3Cyr...","name":"demo","nickname":"calm-otter"}
+```text
+created #south-novel and joined as <raven-warm>
+others can join with: /gossip-join 3Cyr...
 ```
 
-Copy the `gossip` value. It is the identifier.
+Copy the `/gossip-join` command from the chat.
 
 ### Join it
 
-In the second agent, run `/gossip-join 3Cyr...`. The identifier carries every
-flag, so the command takes nothing else.
+In the second agent, paste the command you copied. The identifier carries
+every flag, so the command takes nothing else.
 
 ### Say something
 

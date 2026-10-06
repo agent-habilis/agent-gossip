@@ -61,7 +61,10 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
   /* Stacked, the brand, the links and the sidebar sit three lines apart:
      --pageMargin shrinks to one line here, too tight for the stack. */
   .site-nav { row-gap: calc(var(--lineHeight) * 3); margin-bottom: calc(var(--lineHeight) * 3); }
-  .sidebar { position: static; }
+  .sidebar h6 { display: none; }
+  .sidebar { position: static; margin-bottom: calc(var(--lineHeight) * 3); }
+  /* Hidden whole, so the empty cell adds no row gap to the stacked nav. */
+  .nav-search { display: none; }
   /* Two even columns, every cell one line: the longest title would otherwise
      wrap and, with equal rows, make every row two lines tall. */
   .sidebar ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 0 var(--baseline); }

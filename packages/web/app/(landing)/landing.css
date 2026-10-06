@@ -22,6 +22,8 @@ main :is(small, figcaption) { color: inherit; }
 .install pre { padding: var(--baseline) var(--lineHeight); border-radius: var(--radius); background: var(--field-background); }
 #demo-video { display: block; width: 100%; height: auto; border-radius: 16px; }
 @media only screen and (max-width: 768px) {
+  /* The page is short and the sections are one scroll apart, so the anchor list only costs a screen. */
+  .sidebar { display: none; }
   .mark { display: block; order: -1; font-size: 5rem; line-height: calc(var(--lineHeight) * 2); text-align: left; margin-bottom: var(--lineHeight); }
 }
 /* Not in the prototype, which scrolls sideways on a phone: the one-line
