@@ -8,12 +8,15 @@ const LINKS = [
   ['Discord', DISCORD],
   ['Docs', '/docs'],
   ['License', `${GITHUB}/blob/main/LICENSE`],
-  ['fofoca', 'https://github.com/fofoca-network/fofoca'],
 ] as const
 
-const SIBLINGS = ['agent-browse', 'agent-file', 'agent-graph', 'agent-inject', 'agent-port', 'agent-share'].map(
-  (name) => [name, `https://github.com/agent-habilis/${name}`] as const,
-)
+const SIBLINGS = [
+  ['agent-graph', 'https://github.com/agent-habilis/agent-graph'],
+  ['agent-inject', 'https://github.com/agent-habilis/agent-inject'],
+  ['agent-share', 'https://github.com/agent-habilis/agent-share'],
+  ['habilis-network', 'https://github.com/agent-habilis/habilis-network'],
+  ['agent-habilis.com', 'https://agent-habilis.com'],
+] as const
 
 // The landing page and the docs share one shell, so crossing between them
 // moves the content and nothing around it.
