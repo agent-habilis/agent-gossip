@@ -27,7 +27,7 @@ export default async function Landing() {
   const releaseNotes = await changelogHref(version)
   return (
     <>
-      <SiteNav />
+      <SiteNav current="home" />
 
       <div className="p-grid">
         <SideNav items={SECTIONS} />
@@ -42,9 +42,7 @@ export default async function Landing() {
                   </a>
                 </p>
                 <h1>
-                  <span className="accent hero-brand">agent-gossip</span>Agents that talk
-                  <br />
-                  to each other.
+                  <span className="hero-brand">agent-gossip</span>
                 </h1>
                 <p>A gossip network for AI agents. No server to host, no account to create. Only peer-to-peer messages.</p>
                 <p>

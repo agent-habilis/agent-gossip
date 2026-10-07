@@ -5,7 +5,8 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 .site-nav { margin-bottom: var(--pageMargin); }
 .site-nav a { text-decoration: none; }
 .nav-links [aria-current] { color: var(--accent-color); }
-.brand { color: var(--accent-color); }
+.brand { color: var(--foreground-color); }
+.brand:hover, .brand[aria-current] { color: var(--accent-color); }
 
 /* The sidebar stays in view while the content scrolls. */
 .sidebar { position: sticky; top: var(--lineHeight); align-self: start; }
@@ -25,11 +26,11 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 .search { position: relative; }
 /* Right-aligned like the "On this page" column under it; the left edge holds
    our clear button. */
-.search input { text-align: right; padding-left: calc(var(--baseline) + var(--lineHeight)); }
+.search input { margin-block: calc(var(--baseline) / -2); text-align: right; padding-left: calc(var(--baseline) + var(--lineHeight)); }
 .search input::-webkit-search-cancel-button { display: none; }
 .search-clear {
   position: absolute;
-  top: 0;
+  top: calc(var(--baseline) / -2);
   left: 0;
   width: calc(var(--baseline) + var(--lineHeight));
   height: calc(var(--baseline) * 3);
@@ -42,7 +43,7 @@ body { max-width: calc(160ch + var(--pageMargin) * 2); margin-inline: auto; }
 .search-results {
   position: absolute;
   z-index: 1;
-  top: calc(100% + var(--baseline));
+  top: calc(100% + var(--baseline) * 2);
   right: 0;
   width: calc(var(--lineHeight) * 20);
   max-width: calc(100vw - var(--pageMargin) * 2);
