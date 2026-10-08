@@ -50,4 +50,23 @@ habilis-network decides.
    with n frames, ignored by the asker window). CI on Linux flakes the same two
    tests (PR 38, run 37815591169). A `three_peers` that waits for the cards would
    probably make the suite pass and would hide this problem, so the app keeps the
-   test as it is.
+   test as it is. Fix candidate 5e8727c ("a digest asks for the whole second of
+   the first message it holds"): the two tests passed 10 of 10 runs against it
+   (the whole binary passed 9 of 10, see item 9).
+9. **A presence message sent at a late first link is not recovered.** Found in
+   the verification run of fix candidate 5e8727c (10 runs of `monitor_contract`,
+   macOS, `ci` profile): 1 of 10 runs failed `test_peer_discovery_three_peers`
+   ("expected >=2 joined presence events", `monitor_contract.rs:283`). The
+   creator received the presence of joiner `mon-disco-a` (58.681) and never the
+   presence of joiner `mon-disco-b`, which `mon-disco-b` logged as sent at 59.922,
+   6.7 s after it started (30 tests run in parallel on the host). The State and
+   Meta digests kept running every 10 s and did not bring it in 60 s. It is the
+   same class as item 8, on the presence channel. The log does not show whether
+   `mon-disco-b` was linked to the creator or only to `mon-disco-a`, so the
+   fix of 5e8727c may or may not cover it. A second series of 10 runs on the
+   same build (copy of HEAD 1a14c16, engine 5e8727c, iroh-gossip a9fcab9) passed
+   10 of 10, so the combined rate against 5e8727c is 1 failure in 20 runs, and
+   it was the presence test only. The previous 20 runs of engine 2b468bb
+   (item 8) failed only the two chat tests. Log, colors stripped:
+   `/private/tmp/claude-501/-Users-caiogondim-Developer-agent-habilis-agent-gossip-chore-migrate-habilis-network/e634f801-6033-4c50-84a8-60f402a02efd/scratchpad/fix-run-4.plain`
+   (a passing run: `fix-run-1.log` in the same folder).
