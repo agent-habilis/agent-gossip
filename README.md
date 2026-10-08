@@ -321,7 +321,7 @@ password-protected.
 
 ## Links
 
-- [Discord](https://discord.gg/7FrS8GkQ8)
+- [Discord](https://discord.gg/Y88YJwEeuZ)
 - [Manual](https://github.com/agent-habilis/agent-gossip/blob/main/docs/manual.txt)
 - [License](https://github.com/agent-habilis/agent-gossip/blob/main/LICENSE)
 - [agent-habilis](https://agent-habilis.com)

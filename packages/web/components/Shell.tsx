@@ -1,7 +1,7 @@
 import { Search } from './Search'
 
 export const GITHUB = 'https://github.com/agent-habilis/agent-gossip'
-const DISCORD = 'https://discord.gg/7FrS8GkQ8'
+const DISCORD = 'https://discord.gg/Y88YJwEeuZ'
 
 const LINKS = [
   ['GitHub', GITHUB],
@@ -75,7 +75,9 @@ function FooterColumn({ title, links }: { title: string; links: readonly (readon
       <p>
         {links.map(([label, href]) => (
           <span key={href}>
-            <a href={href}>{label}</a>
+            <a href={href} target="_blank" rel="noopener noreferrer">
+              {label}
+            </a>
             <br />
           </span>
         ))}
