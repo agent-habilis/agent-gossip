@@ -1,4 +1,4 @@
-use fofoca::protocol::{
+use habilis_network::protocol::{
     LookupOpts, LookupSet, RelayChoice, RelayLadder, TransportPolicy, resolve_lookups,
 };
 
@@ -42,7 +42,7 @@ pub(crate) fn resolve(
 
 #[cfg(test)]
 mod tests {
-    use fofoca::protocol::RelayChoice;
+    use habilis_network::protocol::RelayChoice;
 
     use super::resolve;
     use crate::cli::args::lookup::Lookup;

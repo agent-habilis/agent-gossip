@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use fofoca::iroh::endpoint::{Connection, RecvStream, SendStream};
-use fofoca::iroh::{Endpoint, EndpointAddr};
-use fofoca::net::{add_peer_addr, build_peer_endpoint};
-use fofoca::protocol::{Password, TicketAuth};
+use habilis_network::iroh::endpoint::{Connection, RecvStream, SendStream};
+use habilis_network::iroh::{Endpoint, EndpointAddr};
+use habilis_network::net::{add_peer_addr, build_peer_endpoint};
+use habilis_network::protocol::{Password, TicketAuth};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;

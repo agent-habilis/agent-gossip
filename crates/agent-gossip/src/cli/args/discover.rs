@@ -2,7 +2,7 @@
 //! (The JSON-streaming runtime is [`crate::cli::discover`].)
 
 use clap::Parser;
-use fofoca::protocol::MeshName;
+use habilis_network::protocol::MeshName;
 
 use super::legacy::LegacyOutput;
 use super::lookup::LookupArgs;
@@ -45,7 +45,7 @@ pub(crate) struct DiscoverOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use fofoca::protocol::MeshName;
+    use habilis_network::protocol::MeshName;
 
     use crate::cli::args::{Cli, Commands};
 

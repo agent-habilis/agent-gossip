@@ -1,5 +1,5 @@
 use clap::Parser;
-use fofoca::protocol::Nickname;
+use habilis_network::protocol::Nickname;
 
 use super::shared::SharedServerOpts;
 
@@ -72,7 +72,7 @@ mod tests {
         assert_eq!(
             opts.nickname
                 .as_ref()
-                .map(fofoca::protocol::Nickname::as_str),
+                .map(habilis_network::protocol::Nickname::as_str),
             Some("me")
         );
     }

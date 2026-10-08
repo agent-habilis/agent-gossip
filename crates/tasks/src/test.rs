@@ -21,7 +21,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // `cargo test` builds test targets plus the bins an integration test execs,
     // and the suite's subprocess layer runs the real `agent-gossip` binary. The
     // C-ABI cdylib this line also used to produce left with the engine — its
-    // conformance suite lives in the `fofoca` repo now.
+    // conformance suite lives in the `habilis-network` repo now.
     cmd!(sh, "cargo build --workspace --profile ci")
         .quiet()
         .run()?;

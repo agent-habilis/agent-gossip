@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use fofoca::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
-use fofoca::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
-use fofoca::protocol::{LookupOpts, LookupSet, MeshName};
-use fofoca::protocol::{MeshId, Nickname};
-use fofoca::runtime::CoHostPolicy;
-use fofoca::runtime::tuning::directory_expiry_secs;
+use habilis_network::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
+use habilis_network::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
+use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
+use habilis_network::protocol::{MeshId, Nickname};
+use habilis_network::runtime::CoHostPolicy;
+use habilis_network::runtime::tuning::directory_expiry_secs;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -16,7 +16,7 @@ use super::MeshSession;
 // ── Directory (directory consumer) ─────────────────────────────────────
 
 /// One live directory entry handed to embedders — the public, iroh-free
-/// projection of a `fofoca::ops::directory::Listing`.
+/// projection of a `habilis_network::ops::directory::Listing`.
 #[derive(Debug, Clone)]
 pub struct MeshListing {
     /// The advertised mesh's id — pass to [`MeshSession::join`] to join.
@@ -115,7 +115,7 @@ impl Directory {
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
         let resolved = resolve_lookups_or_public(
-            !fofoca::runtime::tuning::directory_private_for_test(),
+            !habilis_network::runtime::tuning::directory_private_for_test(),
             lookups,
         );
         let mesh = directory_mesh(&directory_name, resolved);
@@ -243,13 +243,13 @@ impl Drop for Directory {
     }
 }
 
-/// fofoca's `resolve_lookups` with the old `public` default: a networked
+/// habilis-network's `resolve_lookups` with the old `public` default: a networked
 /// surface (a directory, a bridge) that names no lookup gets the all-on public
-/// preset. fofoca #5 moved that choice out to its callers. The lookups are
+/// preset. habilis-network moved that choice out to its callers. The lookups are
 /// baked into the gossip id, so this must resolve exactly as before, or peers
 /// on an older version land in a different directory.
 pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> LookupOpts {
-    // Mirrors fofoca's private `LookupSet::any`.
+    // Mirrors habilis-network's private `LookupSet::any`.
     let names_none = !lookups.mdns && !lookups.dht && !lookups.relay_lookup.is_set();
     if public && names_none {
         LookupOpts::public_preset()
@@ -260,8 +260,8 @@ pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> Loo
 
 #[cfg(test)]
 mod lookup_tests {
-    use fofoca::ops::directory::directory_mesh;
-    use fofoca::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
+    use habilis_network::ops::directory::directory_mesh;
+    use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
     use super::resolve_lookups_or_public;
 
@@ -273,8 +273,8 @@ mod lookup_tests {
         )
     }
 
-    /// The directory's gossip id may not move when the fofoca pin moves: the
-    /// values were captured on fofoca d9434ee, before its `resolve_lookups`
+    /// The directory's gossip id may not move when the habilis-network pin moves: the
+    /// values were captured on engine rev d9434ee, before its `resolve_lookups`
     /// lost the `public` argument. A change here strands every peer on an
     /// older version in a different directory. Create, join and topic need no
     /// such pin: they never passed `public`, so they resolve as before by

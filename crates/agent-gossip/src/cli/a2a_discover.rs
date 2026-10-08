@@ -3,7 +3,7 @@
 //! The collector lives in [`crate::a2a::TicketDirectory`].
 
 use anyhow::Result;
-use fofoca::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
+use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
 use super::signal::{interrupted, sigterm_stream};
 use crate::a2a::{TicketDirectory, TicketDirectoryEvent};
@@ -28,7 +28,7 @@ pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
     // Route the directory session's logs to its per-member file so the JSON
     // stream stays clean.
     if let Some((mesh, nickname)) = discoverer.session_identity() {
-        fofoca::util::logging::attach(mesh, nickname);
+        habilis_network::util::logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()

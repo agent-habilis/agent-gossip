@@ -1,4 +1,4 @@
-use fofoca::protocol::TransportPolicy;
+use habilis_network::protocol::TransportPolicy;
 use rmcp::schemars;
 use serde::Deserialize;
 
@@ -30,6 +30,8 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
     Ok(TransportPolicy {
         udp: true,
         webrtc: true,
+        multihop: false,
+        gossip: false,
         relay_transport: transports.contains(&Transport::Relay),
     })
 }
@@ -37,7 +39,7 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use fofoca::protocol::TransportPolicy;
+    use habilis_network::protocol::TransportPolicy;
 
     use super::{Transport, transport_policy};
     use crate::cli::args::Cli;
@@ -50,6 +52,8 @@ mod tests {
             TransportPolicy {
                 udp: true,
                 webrtc: true,
+                multihop: false,
+                gossip: false,
                 relay_transport: false
             }
         );

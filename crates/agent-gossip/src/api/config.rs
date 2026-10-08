@@ -1,7 +1,7 @@
-use fofoca::protocol::JoinTarget;
-use fofoca::protocol::Nickname;
-use fofoca::protocol::{LookupSet, MeshName, TransportPolicy};
-use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use habilis_network::protocol::JoinTarget;
+use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{LookupSet, MeshName, TransportPolicy};
+use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
 /// How to join a mesh.
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use fofoca::protocol::Password;
+use habilis_network::protocol::Password;
 
 /// The `default_missing_value` a bare `--password` (no `=value`) resolves to.
 /// A lone NUL can't be typed on a command line — the shell terminates the

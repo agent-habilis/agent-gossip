@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 
-use fofoca::embed::EventLoopState;
-use fofoca::embed::HandlerCtx;
-use fofoca::embed::{AppClass, InboundApp, NodeApp};
-use fofoca::embed::{IpcRequest, NodeDriver};
-use fofoca::net::add_peer_addr;
-use fofoca::protocol::MessageBody;
-use fofoca::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
-use fofoca::runtime::state_file::StateFile;
+use habilis_network::embed::EventLoopState;
+use habilis_network::embed::HandlerCtx;
+use habilis_network::embed::{AppClass, InboundApp, NodeApp};
+use habilis_network::embed::{IpcRequest, NodeDriver};
+use habilis_network::net::add_peer_addr;
+use habilis_network::protocol::MessageBody;
+use habilis_network::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
+use habilis_network::runtime::state_file::StateFile;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::app::{A2aApp, A2aResponder};
@@ -302,9 +302,9 @@ async fn merge_own_meta_entry(
     merge: serde_json::Value,
     farewell: bool,
 ) {
-    match fofoca::ops::broadcast_state_merge(
+    match habilis_network::ops::broadcast_state_merge(
         state,
-        fofoca::ops::StateMergeParams {
+        habilis_network::ops::StateMergeParams {
             mesh: ctx.mesh,
             author: ctx.author,
             merge,
@@ -319,7 +319,7 @@ async fn merge_own_meta_entry(
     .await
     {
         Ok(Some(bytes)) if farewell => {
-            fofoca::ops::unicast_farewell(state, &bytes);
+            habilis_network::ops::unicast_farewell(state, &bytes);
         }
         Ok(_) => {}
         Err(error) => {
@@ -628,7 +628,7 @@ fn surface_chat(
 }
 
 fn is_replayed_chat(
-    surfaced: &fofoca::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
+    surfaced: &habilis_network::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
     message: &Message,
 ) -> bool {
     surfaced.contains(&message.dedup_key())
@@ -844,7 +844,7 @@ async fn handle_a2a_rpc(
 /// argument budget alongside its `state`/`app`/`ctx` handles.
 struct A2aReqParams<'a> {
     message: &'a Message,
-    corr: &'a fofoca::protocol::CorrId,
+    corr: &'a habilis_network::protocol::CorrId,
 }
 
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
@@ -951,7 +951,7 @@ async fn handle_a2a_req(
 /// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
 /// handles.
 struct ShardRepairParams<'a> {
-    group: &'a fofoca::protocol::ShardGroup,
+    group: &'a habilis_network::protocol::ShardGroup,
     missing: &'a [u32],
     requester: &'a Nickname,
 }
@@ -976,7 +976,7 @@ async fn resend_cached_shards(
         let Ok(msg) = Message::parse(&bytes) else {
             continue; // never: the cache holds frames we serialized ourselves
         };
-        if let Some(to) = fofoca::protocol::sole_addressee(&msg.kind)
+        if let Some(to) = habilis_network::protocol::sole_addressee(&msg.kind)
             && to != requester
         {
             continue;
@@ -984,7 +984,7 @@ async fn resend_cached_shards(
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
         // not start is asked for again on the requester's next tick.
-        if fofoca::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
+        if habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
             resent += 1;
         }
     }
@@ -1122,7 +1122,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
 
 #[cfg(test)]
 mod classify_tests {
-    use fofoca::protocol::{
+    use habilis_network::protocol::{
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
@@ -1310,7 +1310,7 @@ mod classify_tests {
     // Pre-fix it surfaced again as a new visible line, up to hours late.
     #[test]
     fn a_chat_line_surfaces_once() {
-        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
         let chat = chat_from("aa");
         surfaced.insert(chat.dedup_key());
         assert!(is_replayed_chat(&surfaced, &chat));
@@ -1320,7 +1320,7 @@ mod classify_tests {
     // (a signed forgery) must not hide the real line.
     #[test]
     fn the_same_id_from_another_author_still_surfaces() {
-        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
         let chat = chat_from("aa");
         surfaced.insert(chat.dedup_key());
         let mut forgery = chat.clone();

@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use fofoca::iroh::endpoint::ConnectionError;
-use fofoca::net::{add_peer_addr, build_peer_endpoint};
-use fofoca::protocol::LookupOpts;
-use fofoca::protocol::{Password, TicketAuth};
+use habilis_network::iroh::endpoint::ConnectionError;
+use habilis_network::net::{add_peer_addr, build_peer_endpoint};
+use habilis_network::protocol::LookupOpts;
+use habilis_network::protocol::{Password, TicketAuth};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -55,7 +55,7 @@ fn card_response(url: &str) -> Vec<u8> {
 async fn spawn_exposer(
     origin: String,
     password: Option<Password>,
-) -> (fofoca::iroh::Endpoint, A2aTicket) {
+) -> (habilis_network::iroh::Endpoint, A2aTicket) {
     let (endpoint, ticket, auth) = bind(LookupOpts::loopback(), password.as_ref())
         .await
         .expect("bind exposer");
@@ -123,7 +123,7 @@ async fn drive(
     drive_gated(&bridge_for(shared, auth, gate), request.as_bytes()).await
 }
 
-async fn consumer(ticket: &A2aTicket) -> (fofoca::iroh::Endpoint, SharedConnection) {
+async fn consumer(ticket: &A2aTicket) -> (habilis_network::iroh::Endpoint, SharedConnection) {
     let endpoint = build_peer_endpoint(&ticket.lookups)
         .await
         .expect("consumer endpoint");

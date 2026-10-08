@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use fofoca::iroh::Endpoint;
+use habilis_network::iroh::Endpoint;
 
 pub(crate) use self::connect::connect;
 pub(crate) use self::directory::{TicketDirectory, TicketDirectoryEvent};

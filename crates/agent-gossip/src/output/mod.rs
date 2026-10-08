@@ -1,5 +1,5 @@
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageKind, Nickname};
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, Message, MessageKind, Nickname};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 pub(crate) use self::json::is_visible;
@@ -41,7 +41,7 @@ pub(crate) struct ReadyParams<'a> {
 /// event, the freshly-derived document, and whether it was our own write.
 #[derive(Clone, Copy)]
 pub(crate) struct StateChangedParams<'a> {
-    pub channel: fofoca::protocol::Channel,
+    pub channel: habilis_network::protocol::Channel,
     pub event: &'a Message,
     pub document: &'a serde_json::Value,
     pub is_self: bool,
@@ -566,13 +566,13 @@ pub(crate) fn capture_events() -> (Output, mpsc::UnboundedReceiver<OutputEvent>)
 }
 
 /// The app renders the engine's generic
-/// [`NodeEvent`](fofoca::embed::NodeEvent)s by mapping each onto the
+/// [`NodeEvent`](habilis_network::embed::NodeEvent)s by mapping each onto the
 /// existing `Output` method, so the stdout JSON and tap forms stay
 /// byte-identical. This seam lets the engine emit surfacings without naming the
 /// concrete `Output`.
-impl fofoca::embed::NodeSink for Output {
-    fn emit(&self, event: fofoca::embed::NodeEvent) {
-        use fofoca::embed::NodeEvent;
+impl habilis_network::embed::NodeSink for Output {
+    fn emit(&self, event: habilis_network::embed::NodeEvent) {
+        use habilis_network::embed::NodeEvent;
         match event {
             // Bare identity: startup diagnostics (skill drift, the `--a2a-serve`
             // port) are ours, not the engine's, and are spliced in by

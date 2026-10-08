@@ -1,7 +1,7 @@
 use anyhow::Result;
-use fofoca::protocol::{LookupOpts, Mesh, MeshConfig, Nickname, TransportPolicy};
-use fofoca::runtime::{Resolved, SetupKind, derive_topic_mesh_config};
-use fofoca::util::tuning::topic_mdns_only_for_test;
+use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, Nickname, TransportPolicy};
+use habilis_network::runtime::{Resolved, SetupKind, derive_topic_mesh_config};
+use habilis_network::util::tuning::topic_mdns_only_for_test;
 
 // The engine's topic preset is p2p-only; a public gossip here also lets the
 // relay carry payload, so two peers behind strict NATs still exchange. The
@@ -10,7 +10,7 @@ use fofoca::util::tuning::topic_mdns_only_for_test;
 pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
     // The test lane has no relay lookup, and relay transport requires one.
     if topic_mdns_only_for_test() {
-        return fofoca::runtime::derive_topic_mesh(string);
+        return habilis_network::runtime::derive_topic_mesh(string);
     }
     derive_topic_mesh_config(
         string,
@@ -21,6 +21,8 @@ pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
             transport: TransportPolicy {
                 udp: true,
                 webrtc: true,
+                multihop: false,
+                gossip: false,
                 relay_transport: true,
             },
         },
@@ -41,18 +43,20 @@ pub(crate) fn resolve_topic(string: String, nickname: Option<Nickname>) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use fofoca::protocol::LookupOpts;
+    use habilis_network::protocol::LookupOpts;
 
     use super::derive_topic_mesh;
 
-    /// The id the 0.11.2 release derives for `standup`. A drift here splits a
-    /// topic into two gossips, one per version.
+    /// The id that habilis-network 2b468bb (mesh id v2) mints for `standup`. It
+    /// is a deliberate split from the 0.11.2 id, and Phase 2 changes it again
+    /// (the policy byte). A drift here splits a topic into two gossips, one per
+    /// version.
     #[test]
     fn topic_id_matches_the_released_derivation() {
         let mesh = derive_topic_mesh("standup").unwrap();
         assert_eq!(
             mesh.to_string(),
-            "AgBnTCvTVJaSL7KDGarW4RTM9keGyygT7znwDurPdHiYDbGXkExWHmqY5CUgAyqegj"
+            "L4rA2igekqYAiecUqXZpt3yPPEPPUwDF6UuaVXxT4QdHbsiKQHCcvAJbq37G9EaQmE"
         );
     }
 

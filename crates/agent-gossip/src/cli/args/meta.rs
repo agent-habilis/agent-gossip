@@ -4,7 +4,7 @@
 //! an RFC 7386 JSON Merge Patch; `meta get` reads the current document.
 
 use clap::{Parser, Subcommand};
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct MetaOpts {

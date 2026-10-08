@@ -664,7 +664,7 @@ fn create_mesh_relay_transport_is_in_the_id() {
     ))
     .expect("p2p,relay create should succeed");
 
-    let decoded: fofoca::protocol::Mesh = relayed["gossip"]
+    let decoded: habilis_network::protocol::Mesh = relayed["gossip"]
         .as_str()
         .unwrap()
         .parse()

@@ -46,11 +46,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use fofoca::embed::RosterEntry;
-use fofoca::protocol::JoinTarget;
-use fofoca::protocol::RelayLadder;
-use fofoca::protocol::{LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname};
-use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use habilis_network::embed::RosterEntry;
+use habilis_network::protocol::JoinTarget;
+use habilis_network::protocol::RelayLadder;
+use habilis_network::protocol::{
+    LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname,
+};
+use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,

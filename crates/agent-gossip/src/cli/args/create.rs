@@ -1,8 +1,8 @@
 //! `create` command args: mint and join a new gossip.
 
 use clap::Parser;
-use fofoca::protocol::Nickname;
-use fofoca::protocol::{DirectorySelection, MeshName};
+use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{DirectorySelection, MeshName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
@@ -83,8 +83,8 @@ impl CreateOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use fofoca::protocol::Nickname;
-    use fofoca::protocol::{DirectorySelection, MeshName};
+    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{DirectorySelection, MeshName};
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;

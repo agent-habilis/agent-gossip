@@ -5,14 +5,14 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-use fofoca::embed::EventLoopState;
-use fofoca::ops::MeshSender;
-use fofoca::protocol::Identity;
-use fofoca::protocol::{
+use habilis_network::embed::EventLoopState;
+use habilis_network::ops::MeshSender;
+use habilis_network::protocol::Identity;
+use habilis_network::protocol::{
     AppFrameParams, AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind,
     Nickname, Shard, ShardGroup,
 };
-use fofoca::util::consts::{
+use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
@@ -34,7 +34,7 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
             state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
         }
     }
-    fofoca::util::logging::log_out(msg);
+    habilis_network::util::logging::log_out(msg);
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
@@ -197,7 +197,7 @@ async fn send_msg_part(
         // unicast, a broadcast over gossip (see `transport::deliver`). Inline,
         // not `deliver_in_background`: the CLI needs the delivery verdict to
         // report an unreachable peer, and each IPC send is one-shot.
-        fofoca::ops::deliver(msg, bytes, state, sender).await?;
+        habilis_network::ops::deliver(msg, bytes, state, sender).await?;
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
@@ -299,7 +299,7 @@ pub(crate) async fn send_broadcast(
     // message log, anti-entropy) operates on the sealed frame; only the local
     // echo + the returned Message carry plaintext.
     let wire_body = match state.broadcast_key() {
-        Some(key) => fofoca::ops::doc::encrypt_body(&body, key)?,
+        Some(key) => habilis_network::ops::doc::encrypt_body(&body, key)?,
         None => body.clone(),
     };
     let encrypted = state.broadcast_key().is_some();
@@ -794,7 +794,7 @@ pub(crate) fn seal_directed(
             "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
         )
     })?;
-    fofoca::protocol::seal_to_body(&key, body.as_str())
+    habilis_network::protocol::seal_to_body(&key, body.as_str())
 }
 
 /// A worker-emitted status leg's identity, addressee, task, state/note, and
@@ -884,7 +884,7 @@ pub(crate) struct MsgParams<'a> {
 ///
 /// Three properties, each load-bearing and none of them incidental:
 ///
-/// - **Directed**, so [`fofoca::ops::deliver`] routes it unicast —
+/// - **Directed**, so [`habilis_network::ops::deliver`] routes it unicast —
 ///   a `to: Some(..)` frame structurally cannot ride gossip, so no other peer
 ///   receives the bytes at all.
 /// - **Sealed** to the addressee, so the multihop relays that *do* carry it
@@ -1070,7 +1070,7 @@ async fn build_offload_parts(
     };
     let parsed = mesh
         .as_str()
-        .parse::<fofoca::protocol::Mesh>()
+        .parse::<habilis_network::protocol::Mesh>()
         .map_err(|error| {
             anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
         })?;
@@ -1085,14 +1085,14 @@ async fn build_offload_parts(
     // Every offloaded blob inherits the mesh password (if any), so a scraped
     // ticket can't be redeemed without it.
     let password = state.mesh_password();
-    let ticket = fofoca::ops::blob::offload(
+    let ticket = habilis_network::ops::blob::offload(
         &mut app.blob_server,
         &lookups,
         relay_transport,
-        fofoca::ops::blob::OffloadRequest {
+        habilis_network::ops::blob::OffloadRequest {
             path: file.path,
             spool_dir: spool,
-            content_id: fofoca::ops::blob::ContentId::new(task_id.as_str()),
+            content_id: habilis_network::ops::blob::ContentId::new(task_id.as_str()),
             password: password.cloned(),
         },
     )
@@ -1153,7 +1153,7 @@ async fn send_directed_leg(
                 echo_as,
             },
         );
-        fofoca::ops::deliver(msg, bytes, state, sender).await?;
+        habilis_network::ops::deliver(msg, bytes, state, sender).await?;
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
@@ -1270,13 +1270,18 @@ pub(crate) async fn send_shard_repair_requests(
             },
         )
         .signed(state.identity());
-        fofoca::util::logging::log_out(&frame);
+        habilis_network::util::logging::log_out(&frame);
         match frame.serialize() {
             // In the background: this runs from `on_tick`, inline on the event
             // loop, where a cold `deliver` would stop the node for the dial.
             Ok(bytes) => {
-                if !fofoca::ops::deliver_in_background(&frame, Bytes::from(bytes), state, sender)
-                    .await
+                if !habilis_network::ops::deliver_in_background(
+                    &frame,
+                    Bytes::from(bytes),
+                    state,
+                    sender,
+                )
+                .await
                 {
                     tracing::debug!("shard repair request not sent; next tick retries");
                 }
@@ -1435,9 +1440,9 @@ pub(crate) async fn send_directed_rpc(
     let signer = state.identity().clone();
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        fofoca::util::logging::log_out(&single);
+        habilis_network::util::logging::log_out(&single);
         let bytes = Bytes::from(single.serialize()?);
-        return fofoca::ops::deliver(&single, bytes, state, sender).await;
+        return habilis_network::ops::deliver(&single, bytes, state, sender).await;
     }
     // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
     // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
@@ -1482,12 +1487,12 @@ pub(crate) async fn send_directed_rpc(
                 total,
             }))
             .signed(&signer);
-        fofoca::util::logging::log_out(&msg);
+        habilis_network::util::logging::log_out(&msg);
         let bytes = Bytes::from(msg.serialize()?);
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        fofoca::ops::deliver(&msg, bytes, state, sender).await?;
+        habilis_network::ops::deliver(&msg, bytes, state, sender).await?;
     }
     if !cache_frames.is_empty() {
         state.shard_cache_mut().insert(group, cache_frames);
@@ -1515,13 +1520,14 @@ async fn session_ping(
 ) -> bool {
     let SessionPingParams { mesh, author, resp } = params;
     let now = tokio::time::Instant::now();
-    state.arm_ping_round(fofoca::embed::PingRound {
+    state.arm_ping_round(habilis_network::embed::PingRound {
         t1: now,
-        deadline: now + std::time::Duration::from_secs(fofoca::runtime::tuning::ping_window_secs()),
+        deadline: now
+            + std::time::Duration::from_secs(habilis_network::runtime::tuning::ping_window_secs()),
         pongs: std::collections::HashMap::new(),
         resp: Some(resp),
     });
-    fofoca::ops::broadcast_msg(
+    habilis_network::ops::broadcast_msg(
         sender,
         &Message::new_ping(mesh, author).signed(state.identity()),
     )
@@ -1663,9 +1669,9 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::StateMerge { merge, resp } => {
-            let outcome = fofoca::ops::broadcast_state_merge(
+            let outcome = habilis_network::ops::broadcast_state_merge(
                 state,
-                fofoca::ops::StateMergeParams {
+                habilis_network::ops::StateMergeParams {
                     mesh,
                     author,
                     merge,
@@ -1685,9 +1691,9 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::MetaMerge { merge, resp } => {
-            let outcome = fofoca::ops::broadcast_state_merge(
+            let outcome = habilis_network::ops::broadcast_state_merge(
                 state,
-                fofoca::ops::StateMergeParams {
+                habilis_network::ops::StateMergeParams {
                     mesh,
                     author,
                     merge,
@@ -1760,7 +1766,7 @@ pub(crate) async fn handle_session_request(
 
 #[cfg(test)]
 mod split_body_tests {
-    use fofoca::util::consts::MAX_SHARD_TOTAL;
+    use habilis_network::util::consts::MAX_SHARD_TOTAL;
 
     use super::{escaped_char_len, split_body};
 

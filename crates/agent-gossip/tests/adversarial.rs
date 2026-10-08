@@ -232,7 +232,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         "the original never arrived"
     );
 
-    let fillers = fofoca::util::tuning::SEEN_IDS_CAP + 1;
+    let fillers = habilis_network::util::tuning::SEEN_IDS_CAP + 1;
     for index in 0..fillers {
         let filler = CraftedMsg::new(mesh, "replayer", &format!("filler {index}"))
             .wrap_a2a()

@@ -1,7 +1,7 @@
 //! Process tuning for the parts of the A2A layer the engine does not own: the
 //! task state machine and the long-poll park.
 //!
-//! Mirrors `fofoca::util::tuning` in shape — a `const` default per
+//! Mirrors `habilis_network::util::tuning` in shape — a `const` default per
 //! knob, one `OnceLock` installed from the hidden CLI flags — but deliberately
 //! separate. These govern behavior implemented entirely in `a2a`: the engine has
 //! no task state machine and no poll waiters, so it must not carry the dials for
@@ -27,7 +27,7 @@ pub(crate) const TASK_SKILL_SILENCE_MAX_SECS: u64 = 24 * 60 * 60;
 /// `--timeout-secs` default.
 ///
 /// **Must stay above the engine's heal interval**, currently 15s
-/// (`fofoca::util::tuning::HEAL_INTERVAL_SECS`). A directed request
+/// (`habilis_network::util::tuning::HEAL_INTERVAL_SECS`). A directed request
 /// rides the gossip overlay unlogged, so one sent while the overlay holds no
 /// live peer link is dropped outright and anti-entropy never heals it; the
 /// sender is rescued only when the next heal tick re-bridges the pair. This sat
@@ -113,7 +113,7 @@ pub(crate) const TASK_SURFACED_LEGS_CAP: usize = 64;
 /// reaches the app only after the engine's dedup FIFO has seen `SEEN_IDS_CAP`
 /// newer frames, so this must hold more than that; twice the FIFO, tied to the
 /// engine constant, stays ahead of it if the engine changes it.
-pub(crate) const CHAT_SURFACED_IDS_CAP: usize = fofoca::util::tuning::SEEN_IDS_CAP * 2;
+pub(crate) const CHAT_SURFACED_IDS_CAP: usize = habilis_network::util::tuning::SEEN_IDS_CAP * 2;
 
 /// The runtime-varied knobs, installed once at startup from the hidden flags.
 #[derive(Clone, Copy, Debug)]

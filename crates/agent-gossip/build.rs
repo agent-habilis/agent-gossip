@@ -14,7 +14,7 @@
 //! Also stamps the build's git identity into `VERGEN_GIT_SHA` /
 //! `VERGEN_GIT_DIRTY`, which [`agent_gossip::version`] splices into every
 //! version surface. This has to happen *here*: the engine moved to its own
-//! repo, so its stamp names a `fofoca` commit, and reading it would have
+//! repo, so its stamp names a `habilis-network` commit, and reading it would have
 //! `agent-gossip --version` report a SHA that does not exist in this history.
 //!
 //! Deliberately **not** `Emitter::idempotent()`: vergen emits the

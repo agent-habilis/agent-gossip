@@ -3,9 +3,9 @@
 
 use std::time::Duration;
 
-use fofoca::protocol::{Mesh, MeshConfig};
-use fofoca::protocol::{Message, MessageBody, Nickname};
-use fofoca::runtime::CoHostPolicy;
+use habilis_network::protocol::{Mesh, MeshConfig};
+use habilis_network::protocol::{Message, MessageBody, Nickname};
+use habilis_network::runtime::CoHostPolicy;
 use tokio::sync::broadcast;
 
 use super::{JoinError, MeshSession, TopicConfig};

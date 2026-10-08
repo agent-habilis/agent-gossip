@@ -2,7 +2,7 @@
 //! gossip graph) from a running daemon's point of view, as JSON.
 
 use clap::Parser;
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopologyOpts {

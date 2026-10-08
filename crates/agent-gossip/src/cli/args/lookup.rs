@@ -1,5 +1,5 @@
 use clap::Parser;
-use fofoca::protocol::{LookupSet, RelayLadder, RelaySelection};
+use habilis_network::protocol::{LookupSet, RelayLadder, RelaySelection};
 use rmcp::schemars;
 use serde::Deserialize;
 
@@ -77,7 +77,7 @@ pub(crate) fn lookup_set(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use fofoca::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
+    use habilis_network::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
 
     use super::{Lookup, lookup_set};
     use crate::cli::args::Cli;
