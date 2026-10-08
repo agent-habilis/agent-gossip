@@ -31,3 +31,23 @@ habilis-network decides.
    `a2a expose`, `a2a discover`) binds the multihop underlay, but agent-gossip
    wants multihop off. Let `directory_mesh` take a `TransportPolicy`, or make the
    directory default direct-only.
+8. **A chat broadcast sent before the creator's first real-peer link is not
+   recovered.** Repro: three in-process nodes, `create` plus two `join`s; both
+   joiners broadcast right after their join returns (2 to 15 ms later); the
+   creator waits for the messages (`tests/monitor_contract.rs`
+   `test_cross_peer_message_delivery` and `test_bidirectional_multi_peer`).
+   The creator links to its first real peer about 0.4 s later and logs "asked
+   for state and chat again on the first real-peer link" (`gossip/recv.rs:131`).
+   One message then arrives (0.5 s), the other never does, not in 60 s, although
+   the State and Meta digests keep running. Numbers, 30 tests in parallel, macOS,
+   `ci` profile, whole binary, 10 runs each: engine 2b468bb with gossip transport
+   on 5 fail; engine 2b468bb with gossip transport off (`udp,webrtc`) 5 fail;
+   previous engine (main 37e2135) 0 fail. So the cause is not the gossip
+   transport. The chat digest writes no log line, so a run cannot show whether
+   it was sent, answered or ignored (the Meta digest logs "ignored: this asker
+   was served within the window"). Suggested: add a debug line to
+   `antientropy::broadcast_digest` and to the chat answer path (sent, answered
+   with n frames, ignored by the asker window). CI on Linux flakes the same two
+   tests (PR 38, run 37815591169). A `three_peers` that waits for the cards would
+   probably make the suite pass and would hide this problem, so the app keeps the
+   test as it is.
