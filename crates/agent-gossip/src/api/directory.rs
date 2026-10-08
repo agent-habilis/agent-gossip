@@ -273,17 +273,16 @@ mod lookup_tests {
         )
     }
 
-    /// The directory's gossip id may not move when the habilis-network pin moves: the
-    /// values were captured on engine rev d9434ee, before its `resolve_lookups`
-    /// lost the `public` argument. A change here strands every peer on an
-    /// older version in a different directory. Create, join and topic need no
-    /// such pin: they never passed `public`, so they resolve as before by
-    /// construction.
+    /// The directory's gossip id may not move by accident when the habilis-network
+    /// pin moves. The values moved once on purpose, with mesh id version 2
+    /// (the release is breaking: a peer on version 1 lands in another
+    /// directory). Create, join and topic need no such pin: they never passed
+    /// `public`, so they resolve as before by construction.
     #[test]
     fn directory_ids_survive_the_lookup_api_change() {
         assert_eq!(
             directory_topic(true, LookupSet::default()),
-            "TopicId(78f11ae0bfaed76d7afd27a0dc1ce8d84ff3a25f6662376ca9075656552adf4a)"
+            "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)"
         );
         assert_eq!(
             directory_topic(
@@ -293,11 +292,11 @@ mod lookup_tests {
                     ..LookupSet::default()
                 }
             ),
-            "TopicId(219939de7b2233e62f9820bb7a34f352a060cf72767393e14483fb4424296351)"
+            "TopicId(aaef8fe2a5ca5560cdecc153d4ee18d446e6448d831e97e1639e1ef8b6b42eaa)"
         );
         assert_eq!(
             directory_topic(false, LookupSet::default()),
-            "TopicId(932e1377041f2796b0be49bc90e152abc42eef835d21ecd933a3a0cf0ac69897)"
+            "TopicId(14a8001b57bb1cbcc7b94f936c71cb94c2ab39a8c9b0423dbad0da809f93db8f)"
         );
     }
 }
