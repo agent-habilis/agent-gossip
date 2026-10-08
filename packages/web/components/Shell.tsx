@@ -1,7 +1,7 @@
 import { Search } from './Search'
 
 export const GITHUB = 'https://github.com/agent-habilis/agent-gossip'
-const DISCORD = 'https://discord.gg/7FrS8GkQ8'
+const DISCORD = 'https://discord.gg/Y88YJwEeuZ'
 
 const LINKS = [
   ['GitHub', GITHUB],
