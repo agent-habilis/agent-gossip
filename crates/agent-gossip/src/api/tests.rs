@@ -3,12 +3,12 @@
 
 use std::time::Duration;
 
-use habilis_network::protocol::{Mesh, MeshConfig};
+use habilis_network::protocol::{Mesh, MeshConfig, MeshName, TransportPolicy};
 use habilis_network::protocol::{Message, MessageBody, Nickname};
 use habilis_network::runtime::CoHostPolicy;
 use tokio::sync::broadcast;
 
-use super::{JoinError, MeshSession, TopicConfig};
+use super::{CreateConfig, JoinError, MeshSession, TopicConfig};
 
 /// Wait for alice's topic message on `bob_rx`, ignoring anything else
 /// (e.g. earlier retries' echoes) until the channel closes.
@@ -93,4 +93,20 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
 
     bob.leave().await.ok();
     alice.leave().await.ok();
+}
+
+/// The app default carries no multihop: a mesh that wants it names it.
+#[test]
+fn create_config_default_transport_is_udp_webrtc_gossip() {
+    let cfg = CreateConfig::new(MeshName::new("defaults").expect("valid name"));
+    assert_eq!(
+        cfg.transport,
+        TransportPolicy {
+            udp: true,
+            webrtc: true,
+            multihop: false,
+            gossip: true,
+            relay_transport: false,
+        }
+    );
 }

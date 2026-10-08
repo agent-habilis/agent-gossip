@@ -328,13 +328,11 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
     let password = password::resolve_password(opts.password.clone())?;
-    // `--public` no longer exists: create is always resolved as if it were
-    // absent, so naming no lookup is loopback and naming any restricts to it.
-    let mesh_parts = args::mesh_config::resolve(
-        &opts.lookups.lookup,
-        opts.lookups.relay_url.clone(),
-        &opts.transport,
-    )?;
+    // Naming no lookup is loopback and naming any restricts to it, except
+    // that `--advertise` needs a lookup that reaches other machines.
+    let lookups = args::lookup::lookups_or_public(&opts.lookups.lookup, opts.advertise.is_some());
+    let mesh_parts =
+        args::mesh_config::resolve(&lookups, opts.lookups.relay_url.clone(), &opts.transport)?;
     let config = MeshConfig {
         lookups: mesh_parts.lookups,
         // The verifier is baked in at setup: its salt is the seed, which is

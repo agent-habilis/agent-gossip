@@ -74,6 +74,7 @@ pub(crate) mod cli;
 pub mod events;
 pub(crate) mod mcp;
 pub(crate) mod output;
+pub(crate) mod policy;
 pub(crate) mod topic;
 
 pub mod api;

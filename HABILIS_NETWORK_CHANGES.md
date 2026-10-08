@@ -24,3 +24,10 @@ habilis-network decides.
    multihop is now ON by default" is not true after this migration.
    agent-gossip sets its own policy, `udp,webrtc,gossip` plus `relay` when the
    relay lookup is on, so multihop is off unless the user asks for it.
+7. **Directory meshes ignore the app's transport policy.**
+   `habilis_network_protocol::directory_config` (`protocol/directory.rs:69-76`)
+   hard-codes `TransportPolicy::default()`, which is `udp,webrtc,multihop,gossip`.
+   So every directory session of agent-gossip (`--advertise`, `discover`,
+   `a2a expose`, `a2a discover`) binds the multihop underlay, but agent-gossip
+   wants multihop off. Let `directory_mesh` take a `TransportPolicy`, or make the
+   directory default direct-only.

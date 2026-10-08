@@ -15,6 +15,7 @@
 use habilis_network::protocol::crypto;
 use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
 
+use crate::policy::app_policy;
 use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
@@ -50,11 +51,12 @@ impl BenchConfig {
 }
 
 fn cfg(lookups: LookupOpts) -> MeshConfig {
+    let transport = app_policy(lookups.relay_lookup != RelayChoice::Disabled);
     MeshConfig {
         lookups,
         password: None,
         issuer_pubkey: None,
-        transport: habilis_network::protocol::TransportPolicy::default(),
+        transport,
     }
 }
 

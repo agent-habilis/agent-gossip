@@ -3,6 +3,8 @@ use habilis_network::protocol::Nickname;
 use habilis_network::protocol::{LookupSet, MeshName, TransportPolicy};
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
+use crate::policy::app_policy;
+
 /// How to join a mesh.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
@@ -80,9 +82,9 @@ pub struct CreateConfig {
     /// loopback-only mesh. Default [`LookupSet::default`] (all off, i.e.
     /// loopback). Mirrors the CLI `--lookup`/`--relay-url` flags.
     pub lookups: LookupSet,
-    /// Which transports may carry mesh payload. Default
-    /// [`TransportPolicy::default`] (direct paths only). Mirrors the CLI
-    /// `--transport` flag.
+    /// Which transports may carry mesh payload. [`CreateConfig::new`] takes
+    /// `udp,webrtc,gossip`, with no multihop and no relay. Mirrors the CLI
+    /// `--transport` flag; a list set here is literal.
     pub transport: TransportPolicy,
     /// List this mesh in a directory so discoverers can find it
     /// without its id. Requires a lookup that reaches other machines.
@@ -109,7 +111,7 @@ impl CreateConfig {
             name,
             nickname: None,
             lookups: LookupSet::default(),
-            transport: TransportPolicy::default(),
+            transport: app_policy(false),
             advertise: false,
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,

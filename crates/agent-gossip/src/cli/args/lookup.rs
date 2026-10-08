@@ -1,12 +1,14 @@
 use clap::Parser;
 use habilis_network::protocol::{LookupSet, RelayLadder, RelaySelection};
+use habilis_network::runtime::tuning::directory_private_for_test;
 use rmcp::schemars;
 use serde::Deserialize;
 
 /// One networking lookup mechanism a gossip may use to find peers — the
 /// `--lookup` allowlist. Naming any restricts to exactly those; naming none
-/// falls back to the command's default (`create`: loopback; `discover`/`a2a
-/// expose`/`a2a discover`: the all-on public preset — see "NETWORKING").
+/// falls back to the command's default (`create`: loopback, or all three with
+/// `--advertise`; `discover`/`a2a expose`/`a2a discover`: the all-on public
+/// preset — see "NETWORKING").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Lookup {
@@ -45,6 +47,22 @@ impl LookupArgs {
     /// `--relay-url` was given without `relay` in `--lookup`.
     pub(crate) fn to_set(&self) -> anyhow::Result<LookupSet> {
         lookup_set(&self.lookup, self.relay_url.clone())
+    }
+}
+
+/// The lookups a `create` uses. Listing a gossip in a directory
+/// (`--advertise`) only makes sense for a mesh that other machines can reach,
+/// so naming no lookup there takes all three.
+///
+/// The hidden `--directory-private` keeps the loopback lookups: the advertiser
+/// reaches the directory over its own lookups, and those are baked into the
+/// directory's gossip id, so a discoverer on the loopback ladder would never
+/// meet an advertiser that took the public ones.
+pub(crate) fn lookups_or_public(lookups: &[Lookup], advertise: bool) -> Vec<Lookup> {
+    if advertise && lookups.is_empty() && !directory_private_for_test() {
+        vec![Lookup::Mdns, Lookup::Dht, Lookup::Relay]
+    } else {
+        lookups.to_vec()
     }
 }
 

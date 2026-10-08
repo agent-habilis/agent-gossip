@@ -69,7 +69,7 @@ use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
     TopicConfig,
 };
-use crate::cli::args::lookup::Lookup;
+use crate::cli::args::lookup::{Lookup, lookups_or_public};
 use crate::cli::args::mesh_config;
 use crate::cli::args::transport::Transport;
 use crate::topic::derive_topic_mesh;
@@ -117,17 +117,19 @@ struct CreateMeshArgs {
     #[serde(default)]
     nickname: Option<String>,
     /// Networking lookups: any of "mdns", "dht", "relay". Naming any
-    /// restricts to those; an empty list makes a loopback-only gossip (the
-    /// same model as the CLI `--lookup` flag).
+    /// restricts to those; an empty list makes a loopback-only gossip, or one
+    /// with all three when `advertise` is true (the same model as the CLI
+    /// `--lookup` flag).
     #[serde(default)]
     lookup: Vec<Lookup>,
     /// Ordered relay ladder. Requires "relay" in `lookup`; omit for the
     /// default relay set.
     #[serde(default)]
     relay_urls: Vec<String>,
-    /// Which transports may carry mesh payload: `["p2p"]` (default, direct
-    /// paths only) or `["p2p","relay"]` (also fall back to the relay, which
-    /// needs "relay" in `lookup`).
+    /// Which paths may carry mesh payload: any of "udp", "webrtc", "multihop",
+    /// "gossip", "relay". The list is literal and needs "udp" or "webrtc";
+    /// "relay" needs "relay" in `lookup`. Omit it for the default, `["udp",
+    /// "webrtc","gossip"]` plus "relay" when "relay" is in `lookup`.
     #[serde(default)]
     transport: Vec<Transport>,
     /// List this gossip in a directory so others can find it with
@@ -447,7 +449,8 @@ impl AgentGossipServer {
                     })?,
             )
         };
-        let resolved = mesh_config::resolve(&args.lookup, relay_urls, &args.transport)
+        let lookups = lookups_or_public(&args.lookup, args.advertise);
+        let resolved = mesh_config::resolve(&lookups, relay_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI
         // (`opts.name.unwrap_or_else(MeshName::random)`).
