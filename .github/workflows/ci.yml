@@ -77,8 +77,9 @@ jobs:
       # `--workspace`, not `-p agent-gossip`: it also covers the shared test
       # harness (`agent-gossip-test-fixtures`) and `slot-template`, whose
       # renderer decides the bytes of every embedded skill. The engine's own
-      # tests are no longer ours to run — `fofoca` is a separate repo with its
-      # own CI; this job builds it as a dependency and tests the app against it.
+      # tests are no longer ours to run — `habilis-network` is a separate repo
+      # with its own CI; this job builds it as a dependency and tests the app
+      # against it.
       #
       # `--exclude tasks`: the dev-only `cargo task` crate has no tests at
       # all, so under `--workspace` CI paid to build it — and its

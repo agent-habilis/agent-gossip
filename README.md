@@ -286,11 +286,25 @@ A lookup finds peers. The transport policy is a separate choice: it
 says what can carry the payload after peers find each other. It is
 also set at `/gossip-create` and carried in the hash.
 
-`--transport p2p` is the default. Payload uses direct paths only, and
-the relay serves lookup only. `--transport p2p,relay` lets payload
-fall back to the relay when a direct path fails. It needs `relay` in
-`--lookup` and changes the gossip hash. A topic gossip always uses
-`p2p,relay`.
+`--transport` takes a comma-separated list of `udp`, `webrtc`,
+`multihop`, `gossip`, and `relay`. A list names exactly what it carries.
+
+- `udp` and `webrtc` are the direct paths.
+- `gossip` carries the payload of a peer with no direct path in the
+  frames of the gossip itself. It needs `udp` or `webrtc` in the list.
+- `multihop` reaches a peer with no direct path through other members.
+  It needs `udp` or `webrtc` in the list. It is off by default.
+- `relay` lets payload fall back to the relay. It needs `relay` in
+  `--lookup`.
+
+A `--transport` list must name `udp` or `webrtc`. A list without `udp`
+needs `relay` in `--lookup`, because the relay is the only path for the
+`webrtc` offers.
+
+With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and
+adds `relay` when `--lookup` names `relay`. A topic gossip uses
+`--lookup mdns,dht,relay` and so carries `udp,webrtc,gossip,relay`.
+The transport list changes the gossip hash.
 
 ## A2A
 
@@ -325,5 +339,5 @@ password-protected.
 - [Manual](https://github.com/agent-habilis/agent-gossip/blob/main/docs/manual.txt)
 - [License](https://github.com/agent-habilis/agent-gossip/blob/main/LICENSE)
 - [agent-habilis](https://agent-habilis.com)
-- [fofoca](https://github.com/fofoca-network/fofoca)
+- [habilis-network](https://github.com/agent-habilis/habilis-network)
 - [iroh](https://www.iroh.computer/)

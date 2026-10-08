@@ -84,10 +84,11 @@ Nothing here asks the developer to `cargo install` a toolchain first.
   tree via `agent_gossip::cli_command()` and emits one page per subcommand. This
   is why the task runner depends on [`agent-gossip`](../agent-gossip) — and why
   the mangen dependency lives *here* and never in the shipped binary.
-- **`fofoca`** is a dependency for one reason: `util::output`, the
-  engine's cargo-style status helpers, reused rather than forked. Both audiences
-  want the same colored lines, and `anstream` already strips the color for
-  whichever of them is piping.
+- **`agent_gossip::status`** is what `util::output` re-exports: the cargo-style
+  status helpers of the app crate, reused rather than forked. The task runner
+  has no direct dependency on the engine. Both audiences want the same colored
+  lines, and `anstream` already strips the color for whichever of them is
+  piping.
 - **`cargo-llvm-cov` and `cargo-sweep`** are installed on
   demand by `ensure_installed`, which probes first and never aborts the calling
   task on a hiccup.

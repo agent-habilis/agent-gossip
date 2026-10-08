@@ -53,7 +53,7 @@ authenticate. `a2a/mod.rs` installs
 SelfWriteGate { map: "peers", field: "card" }
 ```
 
-and the engine's `fofoca-doc` implements it as: reject a change that alters any
+and the engine's `habilis-network-doc` implements it as: reject a change that alters any
 entry whose nickname differs from `frame.author`. So the gate stops *Mallory
 writing to alice's entry under her own name*. It does not stop *Mallory signing
 a frame that claims `author: "alice"`* — signature verification passes, because
@@ -98,7 +98,7 @@ of the right fix. It is a different and worse property.
 ## What the real fix looks like
 
 The gate has to authorize on the **writing key**, not the written name. In
-`fofoca-doc`, `SelfWriteGate` would carry the identity it is guarding rather
+`habilis-network-doc`, `SelfWriteGate` would carry the identity it is guarding rather
 than inferring it from the frame's self-declared author: the first change that
 creates `<map>/<nick>` binds that entry to the pubkey that authored it, and
 every later change touching it must come from the same key.
@@ -127,8 +127,8 @@ stops the app from leaning on a value the engine never promised.
 
 ## Scope
 
-`fofoca` is a separate repository with two other consumers, `agent-share` and
-`mallorca` (through `fofoca-ffi`'s C ABI). A change to the doc gate is a change
+`habilis-network` is a separate repository with two other consumers,
+`agent-share` and `mallorca` (through `habilis-network-ffi`'s C ABI). A change to the doc gate is a change
 to all three. That is why it is written up rather than done in passing here.
 
 ## What has landed, and what it does not cover

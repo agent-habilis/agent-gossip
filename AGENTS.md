@@ -75,16 +75,17 @@ dropping any of them changes the build silently:
 
 #### The engine lives in another repo
 
-The gossip engine is **`fofoca`**, developed at
-`github.com/fofoca-network/fofoca` and consumed here as a **git dependency
-pinned by rev** (`[workspace.dependencies]` in the root `Cargo.toml`). Two other
-consumers share it — `agent-share` (Rust) and `mallorca` (through `fofoca-ffi`'s
-C ABI) — so an engine change is never just an agent-gossip change.
+The gossip engine is **`habilis-network`**, developed at
+`github.com/agent-habilis/habilis-network` and consumed here as a **git
+dependency pinned by rev** (`[workspace.dependencies]` in the root
+`Cargo.toml`). Two other consumers share it — `agent-share` (Rust) and
+`mallorca` (through `habilis-network-ffi`'s C ABI) — so an engine change is
+never just an agent-gossip change.
 
-**The pin is the sharp edge.** Editing a local sibling checkout of `fofoca`
-changes nothing here: the build resolves the pinned rev from the git cache, so
-your change compiles against nothing and the app silently keeps the old
-behaviour. Carrying an engine fix across means pushing it and bumping the `rev`
+**The pin is the sharp edge.** Editing a local sibling checkout of
+`habilis-network` changes nothing here: the build resolves the pinned rev from
+the git cache, so your change compiles against nothing and the app silently
+keeps the old behaviour. Carrying an engine fix across means pushing it and bumping the `rev`
 in `Cargo.toml`, in step with `agent-share`, which pins the same rev.
 
 There is **no `[patch.crates-io]` table**, and re-adding one is the mistake to
@@ -93,21 +94,19 @@ dependency and the patch table together; the engine now owns every fork pin
 behind its own rev, and naming `iroh` here again puts two copies in one graph
 whose mismatch surfaces as `E0308` on types that look identical. `Cargo.toml`
 says so at the point of temptation. The fork rules and the `cargo tree -i` test
-for applying them live in `fofoca`'s `FORKED.md` under *Fork pins*.
+for applying them live in `habilis-network`'s `FORKED.md` under *Fork pins*.
 
 One exception: `benches/idle_cost.rs` names `netwatch` directly to time
 `interfaces::State::new()`, so that dev-dep points at the fork by `git` — a bare
 version would quietly measure the unfixed crates.io copy.
 
 `agent-gossip` enables the engine's `blob` feature (the offload side-channel);
-the other consumers do not. Note `fofoca::ops::blob` (an ALPN transfer) and the
-separate `fofoca-blobs` crate (a verified-range metadata store, no transport)
-are complements, not alternatives.
+the other consumers do not. `habilis_network::ops::blob` is an ALPN transfer.
 
 #### The engine's public surface
 
-`fofoca` groups its **six** modules by what a consumer needs rather than by the
-engine's internal topology.
+`habilis-network` groups its **seven** modules by what a consumer needs rather
+than by the engine's internal topology.
 
 | Module | What it is for |
 |---|---|
@@ -117,9 +116,10 @@ engine's internal topology.
 | `ops` | What a hook may *do*: `deliver`, `broadcast_*`, `doc`, `blob`, `directory`, `invite`. |
 | `net` | The quarantined `iroh` corner — endpoint construction and reachability probes. Every other module is iroh-free so a consumer's surface can be. |
 | `util` | Host helpers: runtime paths, clock, `logging`, process, version. |
+| `membership` | One embedded membership of a mesh, over `runtime`. `join` returns a `Membership` that sends and receives whole text messages. The app does not use it; the C ABI, the browser peer and the chat example do. |
 
-Those six are not the whole surface. `lib.rs` also re-exports the `iroh` crate
-whole (the app imports `fofoca::iroh` in eight-plus files), `async_trait`,
+Those seven are not the whole surface. `lib.rs` also re-exports the `iroh` crate
+whole (the app imports `habilis_network::iroh` in eight-plus files), `async_trait`,
 `VERSION`, the relay ladders, and the two address-lookup crates. Treat the table
 as the map of what a consumer normally reaches for, not as an exhaustive list of
 what is public.
@@ -240,9 +240,10 @@ for local debugging only. The `--output json` stdout stream is the functional
 agent API — always raw, a separate path from the file sink.
 
 Every log line carries an explicit `target:`, one per subsystem:
-`fofoca::{lookup,gossip,lifecycle,beacon,directory,messages}`
+`habilis_network::{lookup,gossip,lifecycle,beacon,messages}`, plus `directory`,
+which the engine pins but no line emits at the pinned rev
 (`EnvFilter` prefix-matches). Override at runtime, e.g.
-`RUST_LOG=fofoca::gossip=trace cargo run -- create`.
+`RUST_LOG=habilis_network::gossip=trace cargo run -- create`.
 
 `agent-gossip` emits under its **own** targets — `agent_gossip::{a2a,directory}`
 — never the engine's. Those are pinned separately, in `APP_LOG_PINS`
@@ -250,7 +251,7 @@ Every log line carries an explicit `target:`, one per subsystem:
 engine's list, and `tests/log_pins.rs` fails if a target is emitted without a
 pin.
 
-**Write `target: "fofoca::<subsystem>"` on every new `tracing` call
+**Write `target: "habilis_network::<subsystem>"` on every new `tracing` call
 in the engine.** The targets deliberately match the engine's own
 crate path, so a call sitting in the module that owns its subsystem is covered
 by the default target too — belt and braces rather than a single point of
@@ -331,7 +332,7 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 - `min_ident_chars` rejects single-char identifiers — rename closure params
   (`|e|` → `|error|`, `|m|` → `|msg|`).
 - Imports form one block at the top of the file, before any `mod`, in three
-  groups: std, then external crates (`fofoca` and the workspace crates
+  groups: std, then external crates (`habilis_network` and the workspace crates
   included), then `self`/`super`/`crate`. Write a child-module import as
   `self::child::…` so that it sorts into the last group. `cargo task fmt` runs
   nightly rustfmt (pinned in `crates/tasks/src/fmt.rs`) for the
