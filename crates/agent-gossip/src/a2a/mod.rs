@@ -37,9 +37,9 @@ pub(crate) mod wire;
 /// One home so the pair cannot drift between the four setup paths that install
 /// it — the engine needs it to plant the genesis entry and to refuse a forgery.
 ///
-/// [`SelfWriteGate`]: fofoca::embed::SelfWriteGate
-pub(crate) fn card_gate() -> fofoca::embed::SelfWriteGate {
-    fofoca::embed::SelfWriteGate {
+/// [`SelfWriteGate`]: habilis_network::embed::SelfWriteGate
+pub(crate) fn card_gate() -> habilis_network::embed::SelfWriteGate {
+    habilis_network::embed::SelfWriteGate {
         map: "peers".to_owned(),
         field: "card".to_owned(),
     }

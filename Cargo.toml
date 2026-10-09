@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*"]
 # The browser client builds for wasm32 and nowhere else — `web_sys::window()`
-# does not exist off it, and `fofoca` selects the *native* WebRTC backend on a
+# does not exist off it, and `habilis-network` selects the *native* WebRTC backend on a
 # host target, so a host build cannot type-check by construction. Left in
 # `members` (which `crates/*` would do), every unscoped host build would fail on
 # it. It carries its own `[workspace]` table and its own lockfile.
@@ -35,7 +35,7 @@ rust-version = "1.93"
 #
 # Pinned by **rev**, not a path to a sibling checkout. The path dep was faster to
 # iterate on — no push-and-bump round trip when the engine and this repo change
-# together — but it made "which fofoca is this built against?" unanswerable
+# together — but it made "which habilis-network is this built against?" unanswerable
 # except by looking at what happened to be on disk. A rev states it, so every
 # consumer can be checked for agreement instead of assumed to agree.
 #
@@ -44,7 +44,7 @@ rust-version = "1.93"
 #
 # Bumping this is what carries an engine fix into the app; keep it in step with
 # agent-share, which pins the same rev.
-fofoca = { git = "https://github.com/fofoca-network/fofoca", rev = "d2ead771ee9f0acfe8a563ef7770b15feef228fb" }
+habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "92a332a33a0daeb1f0a35e070e574b8a3022457c" }
 tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",
@@ -81,7 +81,7 @@ tracing-subscriber = { version = "0.3", features = [
 async-trait = "0.1.89"
 uuid = { version = "1", features = ["v4"] }
 # NOTE: no `iroh` entry, deliberately. This workspace names nothing from the
-# iroh family; `fofoca::iroh` is the only door, and `fofoca` owns which fork and
+# iroh family; `habilis_network::iroh` is the only door, and `habilis-network` owns which fork and
 # revision that is. Declaring iroh here would resolve the *published* crate
 # alongside the engine's fork — two `iroh` crates in one graph, surfacing as an
 # E0308 between types that look identical, and it would put this repo back in

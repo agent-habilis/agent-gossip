@@ -9,7 +9,7 @@ const ACQUIRE_RETRY_FOR: Duration = Duration::from_millis(500);
 const ACQUIRE_RETRY_EVERY: Duration = Duration::from_millis(10);
 
 fn lock_path(mesh: &str, nickname: &str) -> PathBuf {
-    fofoca::util::mesh_runtime_dir(&runtime_base(), mesh).join(format!("{nickname}.bell"))
+    habilis_network::util::mesh_runtime_dir(&runtime_base(), mesh).join(format!("{nickname}.bell"))
 }
 
 /// Hold the bell lock for as long as the returned file lives. `None` when a

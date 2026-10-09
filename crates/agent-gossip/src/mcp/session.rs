@@ -6,9 +6,9 @@
 use std::sync::Mutex;
 
 use anyhow::Result;
-use fofoca::embed::RosterSnapshot;
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
+use habilis_network::embed::RosterSnapshot;
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 
 use crate::a2a::TaskId;
 use crate::api::{
@@ -251,8 +251,8 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use fofoca::protocol::JoinTarget;
-    use fofoca::protocol::{MessageKind, PresenceSubtype};
+    use habilis_network::protocol::JoinTarget;
+    use habilis_network::protocol::{MessageKind, PresenceSubtype};
     use serde_json::json;
 
     use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};

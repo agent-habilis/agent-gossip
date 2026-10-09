@@ -14,7 +14,8 @@ Every joiner inherits them. `join` never sets them.
 
 A lookup is how members find each other. It resolves the identifier into
 reachable peers. With no `--lookup` flag a gossip is loopback-only, private to
-the machine.
+the machine. `--advertise` is the exception: a directory listing needs a lookup
+that reaches other machines, so it takes all three.
 
 `--lookup` takes a comma-separated list of lookups. An unknown value is an
 error.
@@ -48,14 +49,25 @@ A lookup finds peers. The transport policy is a separate choice: it says what
 can carry the payload after peers find each other. `--transport` is also set at
 `create` and carried in the identifier.
 
-| Policy | Payload path |
+`--transport` takes a comma-separated list. A list names exactly what the
+gossip carries, and it changes the identifier.
+
+| Transport | Payload path |
 |---|---|
-| `p2p` (default) | Direct paths only. The relay serves lookup only, so a pair that cannot connect directly stays unlinked. |
-| `p2p,relay` | Direct paths, with a fallback to the relay when a direct path fails. Requires `relay` in `--lookup`, and changes the identifier. |
+| `udp` | QUIC on a direct or hole-punched UDP socket. |
+| `webrtc` | QUIC over a WebRTC data channel. |
+| `gossip` | A peer with no direct path is reached in the frames of the gossip itself. Needs `udp` or `webrtc` in the list. |
+| `multihop` | A peer with no direct path is reached through other members. Needs `udp` or `webrtc` in the list. Off by default. |
+| `relay` | Payload falls back to the relay when a direct path fails. Requires `relay` in `--lookup`. |
 
-`relay` without `p2p` is an error.
+A list must name `udp` or `webrtc`. A list without `udp` needs `relay` in
+`--lookup`, because the relay is the only path for the WebRTC offers. Without
+`relay` in the list, the relay serves lookup only, so a pair that cannot connect
+directly stays unlinked.
 
-A topic gossip always uses `p2p,relay`.
+With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
+`relay` when `--lookup` names `relay`. A topic gossip uses
+`--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
 
 ## Gating
 

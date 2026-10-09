@@ -1,5 +1,5 @@
-use fofoca::iroh::{Endpoint, EndpointAddr, EndpointId};
-use fofoca::protocol::Nickname;
+use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
+use habilis_network::protocol::Nickname;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -165,7 +165,7 @@ pub(crate) fn peer_endpoint(
     peer: &Nickname,
 ) -> Option<(EndpointId, EndpointAddr)> {
     let hint = meta_doc.pointer(&format!("/peers/{peer}/card/endpoint"))?;
-    fofoca::net::endpoint_addr_from_json(hint).ok()
+    habilis_network::net::endpoint_addr_from_json(hint).ok()
 }
 
 /// The RFC 7386 merge that publishes `card` at `/peers/<nick>/card`.
@@ -225,7 +225,7 @@ pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use fofoca::protocol::Nickname;
+    use habilis_network::protocol::Nickname;
 
     use super::{own_card, publish_merge};
 

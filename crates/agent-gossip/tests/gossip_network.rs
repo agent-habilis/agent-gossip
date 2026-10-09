@@ -2449,7 +2449,7 @@ fn test_steady_state_no_resend_churn() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("RUST_LOG", "fofoca::gossip=debug"),
+        ("RUST_LOG", "habilis_network::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
         ("--antientropy-interval-secs", "2"),
     ];
@@ -3648,7 +3648,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
     let mut zombie = Command::new("true").spawn().unwrap();
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
-    while fofoca::util::process::live_start_time(zombie.id()).is_some() {
+    while habilis_network::util::process::live_start_time(zombie.id()).is_some() {
         assert!(Instant::now() < exited, "the zombie owner never exited");
         std::thread::sleep(POLL);
     }
@@ -3685,7 +3685,7 @@ fn owner_pid_launcher_reports_flag_errors() {
             .expect("failed to spawn the owner"),
     );
     let owner_pid = owner.0.id().to_string();
-    let mesh = fofoca::protocol::MeshId::from("owner-flag-error").to_string();
+    let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
     let bad_invocations: [&[&str]; 2] = [
         &["join", &mesh, "--name", "not-allowed"],
         &["create", "--name", "flag-error", "--transport", "relay"],

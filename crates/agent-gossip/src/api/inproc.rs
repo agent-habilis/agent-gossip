@@ -1,7 +1,7 @@
-use fofoca::embed::RosterSnapshot;
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
-use fofoca::runtime::{EventLoopConfig, Node};
+use habilis_network::embed::RosterSnapshot;
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, Message, MessageBody, Nickname};
+use habilis_network::runtime::{EventLoopConfig, Node};
 use tokio::sync::{broadcast, oneshot};
 
 use super::advertise::Advertiser;

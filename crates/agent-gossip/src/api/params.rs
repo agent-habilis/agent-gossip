@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use fofoca::protocol::Nickname;
+use habilis_network::protocol::Nickname;
 
 use crate::a2a::TaskId;
 

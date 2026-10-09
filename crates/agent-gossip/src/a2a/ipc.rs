@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use fofoca::embed::{EventLoopState, PingRound};
-use fofoca::iroh::Endpoint;
-use fofoca::ops::MeshSender;
-use fofoca::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
-use fofoca::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
-use fofoca::runtime::tuning::ping_window_secs;
+use habilis_network::embed::{EventLoopState, PingRound};
+use habilis_network::iroh::Endpoint;
+use habilis_network::ops::MeshSender;
+use habilis_network::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, Message, MessageBody, Nickname};
+use habilis_network::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
+use habilis_network::runtime::tuning::ping_window_secs;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -141,7 +141,7 @@ pub(crate) enum IpcCommand {
 
 impl Addressed for IpcCommand {
     /// The mesh a command is addressed to, used to derive the socket path in
-    /// [`fofoca::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
+    /// [`habilis_network::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
     /// sent by socket path directly (the daemon answers with its own id).
     fn mesh_id(&self) -> Option<&MeshId> {
         match self {
@@ -385,7 +385,7 @@ pub(crate) async fn handle_ipc_command(
                     merge,
                     sender,
                     sink: output,
-                    channel: fofoca::protocol::Channel::State,
+                    channel: habilis_network::protocol::Channel::State,
                     surface: true,
                 },
             )
@@ -395,7 +395,10 @@ pub(crate) async fn handle_ipc_command(
             broadcast
         }
         IpcCommand::StateGet { mesh: _ } => {
-            let _ = resp_tx.send(state_get_response(state, fofoca::protocol::Channel::State));
+            let _ = resp_tx.send(state_get_response(
+                state,
+                habilis_network::protocol::Channel::State,
+            ));
             false
         }
         IpcCommand::MetaMerge { mesh: _, merge } => {
@@ -407,7 +410,7 @@ pub(crate) async fn handle_ipc_command(
                     merge,
                     sender,
                     sink: output,
-                    channel: fofoca::protocol::Channel::Meta,
+                    channel: habilis_network::protocol::Channel::Meta,
                     surface: true,
                 },
             )
@@ -473,7 +476,7 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
         })
         .to_string();
     };
-    match fofoca::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
+    match habilis_network::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
@@ -527,7 +530,10 @@ fn topology_response(state: &EventLoopState) -> String {
 }
 
 /// The `agent-gossip state get` response: the derived document.
-fn state_get_response(state: &EventLoopState, channel: fofoca::protocol::Channel) -> String {
+fn state_get_response(
+    state: &EventLoopState,
+    channel: habilis_network::protocol::Channel,
+) -> String {
     let document = state.doc(channel).to_json();
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
@@ -548,7 +554,9 @@ fn state_get_response(state: &EventLoopState, channel: fofoca::protocol::Channel
 /// trimmed view back as if it were truth. `absent` is derived, so it cannot
 /// travel that path.
 fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
-    let document = state.doc(fofoca::protocol::Channel::Meta).to_json();
+    let document = state
+        .doc(habilis_network::protocol::Channel::Meta)
+        .to_json();
     let snapshot = state.roster_snapshot();
     // Active members only. The roster snapshot chains the *quiet* peers onto
     // the live ones, and a peer that died ungracefully lands exactly there —
@@ -567,7 +575,7 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
 
 #[cfg(test)]
 mod tests {
-    use fofoca::runtime::ipc::Addressed;
+    use habilis_network::runtime::ipc::Addressed;
 
     use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
 
@@ -811,26 +819,28 @@ mod tests {
                 let author = Nickname::new(author).unwrap();
                 let body = MessageBody::new(body).unwrap();
                 let expected_body = body.clone();
-                let identity = fofoca::protocol::Identity::generate();
-                let (bytes, built) = fofoca::protocol::build_msg_bytes(
-                    fofoca::protocol::BuildMsgParams {
-                        tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+                let identity = habilis_network::protocol::Identity::generate();
+                let (bytes, built) = habilis_network::protocol::build_msg_bytes(
+                    habilis_network::protocol::BuildMsgParams {
+                        tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                         mesh: &mesh,
                         author: &author,
                         body,
-                        chain: fofoca::protocol::ChainCtx::genesis(),
+                        chain: habilis_network::protocol::ChainCtx::genesis(),
                     },
                     &identity,
                 )
                 .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
-                let parsed = fofoca::protocol::Message::parse(&bytes).unwrap();
+                let parsed = habilis_network::protocol::Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.mesh, &mesh);
                 prop_assert_eq!(
                     parsed.kind,
-                    fofoca::protocol::MessageKind::app_broadcast(crate::a2a::wire::BROADCAST)
+                    habilis_network::protocol::MessageKind::app_broadcast(
+                        crate::a2a::wire::BROADCAST
+                    )
                 );
             }
         }

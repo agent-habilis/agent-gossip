@@ -1,8 +1,8 @@
 //! `join` command args: attach to an existing gossip by id/domain/repo.
 
 use clap::Parser;
-use fofoca::protocol::Nickname;
-use fofoca::protocol::{JoinTarget, JoinTargetError};
+use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{JoinTarget, JoinTargetError};
 
 use super::shared::SharedServerOpts;
 use crate::cli::password::PasswordFlag;
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn mistyped_gossip_hash_fails_during_cli_parsing() {
-        let mut mistyped = fofoca::protocol::MeshId::from("join-cli-test").to_string();
+        let mut mistyped = habilis_network::protocol::MeshId::from("join-cli-test").to_string();
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
 

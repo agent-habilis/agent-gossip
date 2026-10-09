@@ -21,10 +21,10 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use fofoca::embed::EventLoopState;
-use fofoca::embed::HandlerCtx;
-use fofoca::protocol::{Message, MessageId, MessageKind, Nickname};
-use fofoca::util::bounded_fifo_set::BoundedFifoSet;
+use habilis_network::embed::EventLoopState;
+use habilis_network::embed::HandlerCtx;
+use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname};
+use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
 use crate::a2a::app::A2aApp;
@@ -217,7 +217,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
 /// old beat after the peer died. The bound is coarse on purpose, to tolerate
 /// clock skew between hosts.
 fn is_stale(frame: &Message) -> bool {
-    let age_secs = fofoca::util::clock::unix_secs().saturating_sub(frame.timestamp);
+    let age_secs = habilis_network::util::clock::unix_secs().saturating_sub(frame.timestamp);
     u64::try_from(age_secs).is_ok_and(|age| age > task_timeout_secs())
 }
 
@@ -585,7 +585,9 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_content(&fofoca::ops::blob::ContentId::new(task_id.as_str()))
+                .evict_content(&habilis_network::ops::blob::ContentId::new(
+                    task_id.as_str(),
+                ))
                 .await;
         }
     }
@@ -762,7 +764,7 @@ async fn broadcast_status(
         return false;
     };
     let kind = MessageKind::App {
-        tag: fofoca::protocol::AppTag::from(wire::STATUS),
+        tag: habilis_network::protocol::AppTag::from(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
@@ -778,7 +780,7 @@ async fn broadcast_status(
     // background because this runs from `on_tick`, inline on the event loop:
     // a cold `deliver` dials there and stops the whole node for the dial and
     // path-select budgets, once per due task.
-    fofoca::ops::deliver_in_background(&msg, Bytes::from(bytes), state, ctx.sender).await
+    habilis_network::ops::deliver_in_background(&msg, Bytes::from(bytes), state, ctx.sender).await
 }
 
 #[cfg(test)]
@@ -786,7 +788,7 @@ mod tests {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
-    use fofoca::protocol::Nickname;
+    use habilis_network::protocol::Nickname;
 
     use super::{LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
@@ -906,7 +908,7 @@ mod tests {
     /// the peer died must not keep the task alive.
     #[test]
     fn a_stale_beat_does_not_refresh_the_peer_clock() {
-        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let now = Instant::now();
@@ -948,13 +950,13 @@ mod tests {
         assert_eq!(tasks[&tid()].last_peer_activity, peer_clock);
     }
 
-    fn closed() -> fofoca::util::bounded_fifo_set::BoundedFifoSet<TaskId> {
-        fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8)
+    fn closed() -> habilis_network::util::bounded_fifo_set::BoundedFifoSet<TaskId> {
+        habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8)
     }
 
     /// An inbound status frame for `tid()`; a beat when `beat` is true.
-    fn status_leg(beat: bool) -> fofoca::protocol::Message {
-        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+    fn status_leg(beat: bool) -> habilis_network::protocol::Message {
+        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let payload = crate::a2a::gossip::status_update(
@@ -1408,7 +1410,7 @@ mod tests {
     /// ciphertext) is not a valid payload.
     #[test]
     fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
-        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mut tasks = HashMap::new();
         let now = Instant::now();
@@ -1506,7 +1508,7 @@ mod tests {
     /// is actually observable.
     #[test]
     fn own_status_echo_completes_the_workers_own_record() {
-        use fofoca::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let task_id = tid();

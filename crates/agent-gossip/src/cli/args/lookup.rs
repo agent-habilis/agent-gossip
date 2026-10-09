@@ -1,12 +1,14 @@
 use clap::Parser;
-use fofoca::protocol::{LookupSet, RelayLadder, RelaySelection};
+use habilis_network::protocol::{LookupSet, RelayLadder, RelaySelection};
+use habilis_network::runtime::tuning::directory_private_for_test;
 use rmcp::schemars;
 use serde::Deserialize;
 
 /// One networking lookup mechanism a gossip may use to find peers — the
 /// `--lookup` allowlist. Naming any restricts to exactly those; naming none
-/// falls back to the command's default (`create`: loopback; `discover`/`a2a
-/// expose`/`a2a discover`: the all-on public preset — see "NETWORKING").
+/// falls back to the command's default (`create`: loopback, or all three with
+/// `--advertise`; `discover`/`a2a expose`/`a2a discover`: the all-on public
+/// preset — see "NETWORKING").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Lookup {
@@ -48,6 +50,22 @@ impl LookupArgs {
     }
 }
 
+/// The lookups a `create` uses. Listing a gossip in a directory
+/// (`--advertise`) only makes sense for a mesh that other machines can reach,
+/// so naming no lookup there takes all three.
+///
+/// The hidden `--directory-private` keeps the loopback lookups: the advertiser
+/// reaches the directory over its own lookups, and those are baked into the
+/// directory's gossip id, so a discoverer on the loopback ladder would never
+/// meet an advertiser that took the public ones.
+pub(crate) fn lookups_or_public(lookups: &[Lookup], advertise: bool) -> Vec<Lookup> {
+    if advertise && lookups.is_empty() && !directory_private_for_test() {
+        vec![Lookup::Mdns, Lookup::Dht, Lookup::Relay]
+    } else {
+        lookups.to_vec()
+    }
+}
+
 /// Resolve `--lookup`/`--relay-url` into the [`LookupSet`] the engine's
 /// `resolve_lookups` consumes. Shared by the CLI (via [`LookupArgs::to_set`])
 /// and the MCP `create_gossip` tool so the two surfaces cannot drift.
@@ -77,7 +95,7 @@ pub(crate) fn lookup_set(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use fofoca::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
+    use habilis_network::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
 
     use super::{Lookup, lookup_set};
     use crate::cli::args::Cli;

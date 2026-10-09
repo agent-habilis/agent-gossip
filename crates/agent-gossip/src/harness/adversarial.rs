@@ -11,15 +11,15 @@
     reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
 )]
 
-use fofoca::protocol::Message;
-use fofoca::protocol::PresenceSubtype;
-use fofoca::protocol::{
+use habilis_network::protocol::Message;
+use habilis_network::protocol::PresenceSubtype;
+use habilis_network::protocol::{
     AppFrameParams, AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname,
 };
-use fofoca::protocol::{Identity, encode_pubkey};
+use habilis_network::protocol::{Identity, encode_pubkey};
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
-pub use fofoca::util::consts::{
+pub use habilis_network::util::consts::{
     REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
 };
 
@@ -172,7 +172,7 @@ impl CraftedMsg {
     /// Unsigned until [`sign`](CraftedMsg::sign).
     pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
-        let body = fofoca::ops::doc::merge_body(merge)
+        let body = habilis_network::ops::doc::merge_body(merge)
             .expect("state merge envelope composes from any merge value");
         Self {
             msg: Message::new_state(mesh, &author, body),
@@ -201,13 +201,19 @@ impl CraftedMsg {
         // genesis — hence the same `peers` object id. Built on an *ungated* doc it
         // would be a different map, and whether the victim's gate even fires
         // would come down to which of two conflicting maps automerge keeps.
-        let change = fofoca::ops::doc::MeshDoc::new_gated(crate::a2a::card_gate())
+        let change = habilis_network::ops::doc::MeshDoc::new_gated(crate::a2a::card_gate())
             .build_change(&merge, author.as_str().as_bytes())
             .expect("forge change builds")
             .expect("forge merge is not a no-op");
-        let body = fofoca::ops::doc::change_body(&change, None).expect("change body composes");
+        let body =
+            habilis_network::ops::doc::change_body(&change, None).expect("change body composes");
         Self {
-            msg: Message::new_channel_event(mesh, &author, body, fofoca::protocol::Channel::Meta),
+            msg: Message::new_channel_event(
+                mesh,
+                &author,
+                body,
+                habilis_network::protocol::Channel::Meta,
+            ),
         }
     }
 
@@ -280,7 +286,7 @@ impl CraftedMsg {
             },
         );
         let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
-        let body = fofoca::protocol::seal_to_body(&seal_key, body.as_str())
+        let body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
         Self {
             msg: Message::new_app(
@@ -335,11 +341,11 @@ impl CraftedMsg {
     /// `total` are taken verbatim, valid or not (the receiver's parse gate is
     /// the thing under test).
     pub fn shard(mut self, group: &str, idx: u32, total: u32) -> Self {
-        let group =
-            fofoca::protocol::ShardGroup::from_uuid_str(group).expect("valid shard group uuid");
-        self.msg = self
-            .msg
-            .with_shard(Some(fofoca::protocol::Shard { group, idx, total }));
+        let group = habilis_network::protocol::ShardGroup::from_uuid_str(group)
+            .expect("valid shard group uuid");
+        self.msg =
+            self.msg
+                .with_shard(Some(habilis_network::protocol::Shard { group, idx, total }));
         self
     }
 

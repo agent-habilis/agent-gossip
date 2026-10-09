@@ -4,7 +4,7 @@
 //! current document.
 
 use clap::{Parser, Subcommand};
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct StateOpts {

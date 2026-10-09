@@ -81,7 +81,7 @@ dependencies = [
  "clap",
  "dhat",
  "divan",
- "fofoca",
+ "habilis-network",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -1582,163 +1582,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fofoca"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "anyhow",
- "argon2",
- "async-trait",
- "bs58",
- "bytes",
- "chacha20poly1305",
- "fofoca-doc",
- "fofoca-iroh-multihop-transport",
- "fofoca-iroh-webrtc-transport",
- "fofoca-logging",
- "fofoca-protocol",
- "fofoca-util",
- "futures-util",
- "interprocess",
- "iroh",
- "iroh-gossip",
- "iroh-mainline-address-lookup",
- "iroh-mdns-address-lookup",
- "libc",
- "n0-future",
- "rand 0.9.4",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tokio",
- "tracing",
- "uuid",
- "web-time",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "fofoca-doc"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "anyhow",
- "automerge",
- "bs58",
- "chacha20poly1305",
- "fofoca-protocol",
- "fofoca-util",
- "serde",
- "serde_json",
- "tracing",
- "zeroize",
-]
-
-[[package]]
-name = "fofoca-iroh-multihop-transport"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "anyhow",
- "bytes",
- "fofoca-iroh-transport-util",
- "iroh",
- "iroh-base",
- "n0-future",
- "n0-watcher",
- "noq-udp",
- "postcard",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "fofoca-iroh-transport-util"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "iroh",
-]
-
-[[package]]
-name = "fofoca-iroh-webrtc-transport"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "anyhow",
- "bytes",
- "fofoca-iroh-transport-util",
- "futures",
- "if-addrs",
- "iroh",
- "iroh-base",
- "js-sys",
- "n0-watcher",
- "noq-udp",
- "rand 0.9.4",
- "serde",
- "str0m",
- "str0m-aws-lc-rs",
- "tokio",
- "tracing",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "fofoca-logging"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "anyhow",
- "fofoca-protocol",
- "fofoca-util",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "fofoca-protocol"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "anyhow",
- "argon2",
- "bs58",
- "bytes",
- "chacha20poly1305",
- "fofoca-util",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "getrandom 0.4.3",
- "iroh-base",
- "rand 0.9.4",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tracing",
- "uuid",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "fofoca-util"
-version = "0.6.0"
-source = "git+https://github.com/fofoca-network/fofoca?rev=d2ead771ee9f0acfe8a563ef7770b15feef228fb#d2ead771ee9f0acfe8a563ef7770b15feef228fb"
-dependencies = [
- "libc",
- "tokio",
- "tracing",
- "vergen-gitcl",
- "web-time",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2017,6 +1860,182 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "habilis-network"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "async-trait",
+ "bs58",
+ "bytes",
+ "chacha20poly1305",
+ "futures-util",
+ "habilis-network-doc",
+ "habilis-network-iroh-gossip-transport",
+ "habilis-network-iroh-multihop-transport",
+ "habilis-network-iroh-webrtc-transport",
+ "habilis-network-logging",
+ "habilis-network-protocol",
+ "habilis-network-util",
+ "interprocess",
+ "iroh",
+ "iroh-gossip",
+ "iroh-mainline-address-lookup",
+ "iroh-mdns-address-lookup",
+ "libc",
+ "n0-future",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web-time",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "habilis-network-doc"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "anyhow",
+ "automerge",
+ "bs58",
+ "chacha20poly1305",
+ "habilis-network-protocol",
+ "habilis-network-util",
+ "serde",
+ "serde_json",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "habilis-network-iroh-gossip-transport"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "bytes",
+ "habilis-network-iroh-transport-util",
+ "iroh",
+ "iroh-base",
+ "iroh-gossip",
+ "n0-future",
+ "n0-watcher",
+ "noq-udp",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "habilis-network-iroh-multihop-transport"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "bytes",
+ "habilis-network-iroh-transport-util",
+ "iroh",
+ "iroh-base",
+ "n0-future",
+ "n0-watcher",
+ "noq-udp",
+ "postcard",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "habilis-network-iroh-transport-util"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "iroh",
+]
+
+[[package]]
+name = "habilis-network-iroh-webrtc-transport"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "habilis-network-iroh-transport-util",
+ "if-addrs",
+ "iroh",
+ "iroh-base",
+ "js-sys",
+ "n0-watcher",
+ "noq-udp",
+ "rand 0.9.4",
+ "serde",
+ "str0m",
+ "str0m-aws-lc-rs",
+ "tokio",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "habilis-network-logging"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "anyhow",
+ "habilis-network-protocol",
+ "habilis-network-util",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "habilis-network-protocol"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "bs58",
+ "bytes",
+ "chacha20poly1305",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "getrandom 0.4.3",
+ "habilis-network-util",
+ "iroh-base",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+ "uuid",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "habilis-network-util"
+version = "0.6.0"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=92a332a33a0daeb1f0a35e070e574b8a3022457c#92a332a33a0daeb1f0a35e070e574b8a3022457c"
+dependencies = [
+ "libc",
+ "tokio",
+ "tracing",
+ "vergen-gitcl",
+ "web-time",
 ]
 
 [[package]]
@@ -2525,7 +2544,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.3"
-source = "git+https://github.com/fofoca-network/iroh?rev=66003af753b5d221edb6f5407a4fda6a7a4d213c#66003af753b5d221edb6f5407a4fda6a7a4d213c"
+source = "git+https://github.com/agent-habilis/iroh?rev=8a248273eaa368073d3c755b6fd788420b004bed#8a248273eaa368073d3c755b6fd788420b004bed"
 dependencies = [
  "backon",
  "blake3",
@@ -2575,7 +2594,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.3"
-source = "git+https://github.com/fofoca-network/iroh?rev=66003af753b5d221edb6f5407a4fda6a7a4d213c#66003af753b5d221edb6f5407a4fda6a7a4d213c"
+source = "git+https://github.com/agent-habilis/iroh?rev=8a248273eaa368073d3c755b6fd788420b004bed#8a248273eaa368073d3c755b6fd788420b004bed"
 dependencies = [
  "curve25519-dalek 5.0.0-rc.0",
  "data-encoding",
@@ -2593,7 +2612,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.3"
-source = "git+https://github.com/fofoca-network/iroh?rev=66003af753b5d221edb6f5407a4fda6a7a4d213c#66003af753b5d221edb6f5407a4fda6a7a4d213c"
+source = "git+https://github.com/agent-habilis/iroh?rev=8a248273eaa368073d3c755b6fd788420b004bed#8a248273eaa368073d3c755b6fd788420b004bed"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2616,7 +2635,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.101.0"
-source = "git+https://github.com/fofoca-network/iroh-gossip?rev=e66061b298a350141938046e3a84b29628ebb899#e66061b298a350141938046e3a84b29628ebb899"
+source = "git+https://github.com/agent-habilis/iroh-gossip?rev=8175b6fe11f70ef5fb5d9e671dd0958714647548#8175b6fe11f70ef5fb5d9e671dd0958714647548"
 dependencies = [
  "blake3",
  "bytes",
@@ -2642,7 +2661,7 @@ dependencies = [
 [[package]]
 name = "iroh-mainline-address-lookup"
 version = "0.4.0"
-source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=556f5027c6a0abf228267305e5dd89d0c2a6f23d#556f5027c6a0abf228267305e5dd89d0c2a6f23d"
+source = "git+https://github.com/agent-habilis/iroh-address-lookups?rev=7aed69e506ea1a688333dcbe2ba760226803108b#7aed69e506ea1a688333dcbe2ba760226803108b"
 dependencies = [
  "derive_more",
  "iroh",
@@ -2659,7 +2678,7 @@ dependencies = [
 [[package]]
 name = "iroh-mdns-address-lookup"
 version = "0.4.0"
-source = "git+https://github.com/fofoca-network/iroh-address-lookups?rev=556f5027c6a0abf228267305e5dd89d0c2a6f23d#556f5027c6a0abf228267305e5dd89d0c2a6f23d"
+source = "git+https://github.com/agent-habilis/iroh-address-lookups?rev=7aed69e506ea1a688333dcbe2ba760226803108b#7aed69e506ea1a688333dcbe2ba760226803108b"
 dependencies = [
  "data-encoding",
  "derive_more",
@@ -2705,7 +2724,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.3"
-source = "git+https://github.com/fofoca-network/iroh?rev=66003af753b5d221edb6f5407a4fda6a7a4d213c#66003af753b5d221edb6f5407a4fda6a7a4d213c"
+source = "git+https://github.com/agent-habilis/iroh?rev=8a248273eaa368073d3c755b6fd788420b004bed#8a248273eaa368073d3c755b6fd788420b004bed"
 dependencies = [
  "blake3",
  "bytes",
@@ -3233,7 +3252,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.19.1"
-source = "git+https://github.com/fofoca-network/net-tools?rev=e02960255ef2f5b2ba4aa3d4cf195e0b8673f370#e02960255ef2f5b2ba4aa3d4cf195e0b8673f370"
+source = "git+https://github.com/agent-habilis/net-tools?rev=e02960255ef2f5b2ba4aa3d4cf195e0b8673f370#e02960255ef2f5b2ba4aa3d4cf195e0b8673f370"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3771,7 +3790,7 @@ dependencies = [
 [[package]]
 name = "portmapper"
 version = "0.19.1"
-source = "git+https://github.com/fofoca-network/net-tools?rev=e02960255ef2f5b2ba4aa3d4cf195e0b8673f370#e02960255ef2f5b2ba4aa3d4cf195e0b8673f370"
+source = "git+https://github.com/agent-habilis/net-tools?rev=e02960255ef2f5b2ba4aa3d4cf195e0b8673f370#e02960255ef2f5b2ba4aa3d4cf195e0b8673f370"
 dependencies = [
  "base64",
  "bytes",
@@ -4872,7 +4891,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swarm-discovery"
 version = "0.6.3"
-source = "git+https://github.com/rkuhn/swarm-discovery?rev=b41dbcc431f419ad0cd91f786d4d7c71ec6be9ce#b41dbcc431f419ad0cd91f786d4d7c71ec6be9ce"
+source = "git+https://github.com/agent-habilis/swarm-discovery?rev=b41dbcc431f419ad0cd91f786d4d7c71ec6be9ce#b41dbcc431f419ad0cd91f786d4d7c71ec6be9ce"
 dependencies = [
  "acto",
  "hickory-proto",

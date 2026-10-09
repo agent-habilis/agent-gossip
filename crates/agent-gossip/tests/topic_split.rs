@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
-use fofoca::runtime::tuning::{Tuning, init};
+use habilis_network::runtime::tuning::{Tuning, init};
 
 /// Serialize the two tests (the fixtures' `serial_guard` is a sync guard that
 /// can't be held across `await`): each spawns real mDNS responders and probes

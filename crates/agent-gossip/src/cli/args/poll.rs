@@ -2,7 +2,7 @@
 //! process via IPC.
 
 use clap::Parser;
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 

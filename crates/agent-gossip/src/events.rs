@@ -1,5 +1,5 @@
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageId, Nickname};
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, Message, MessageId, Nickname};
 
 use crate::a2a::{TaskId, TaskState};
 
@@ -67,7 +67,7 @@ pub enum OutputEvent {
         reason: TaskGoneReason,
     },
     StateChanged {
-        channel: fofoca::protocol::Channel,
+        channel: habilis_network::protocol::Channel,
         event: Box<Message>,
         document: serde_json::Value,
         is_self: bool,

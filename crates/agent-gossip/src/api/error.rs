@@ -20,7 +20,7 @@ impl fmt::Display for CreateError {
                 write!(
                     formatter,
                     "{}",
-                    fofoca::protocol::AdvertiseRequiresReachable
+                    habilis_network::protocol::AdvertiseRequiresReachable
                 )
             }
             CreateError::Setup(error) => write!(formatter, "{error}"),

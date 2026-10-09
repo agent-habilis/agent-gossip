@@ -1,8 +1,8 @@
-use fofoca::embed::EventLoopState;
-use fofoca::ops::MeshSender;
-use fofoca::ops::{StateMergeParams, broadcast_state_merge};
-use fofoca::protocol::MeshId;
-use fofoca::protocol::{Channel, MessageBody, Nickname};
+use habilis_network::embed::EventLoopState;
+use habilis_network::ops::MeshSender;
+use habilis_network::ops::{StateMergeParams, broadcast_state_merge};
+use habilis_network::protocol::MeshId;
+use habilis_network::protocol::{Channel, MessageBody, Nickname};
 use serde_json::Value;
 use tokio::sync::oneshot;
 

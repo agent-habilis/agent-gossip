@@ -1,6 +1,6 @@
 use anyhow::Result;
-use fofoca::embed::RosterSnapshot;
-use fofoca::protocol::{Message, MessageBody, Nickname};
+use habilis_network::embed::RosterSnapshot;
+use habilis_network::protocol::{Message, MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;

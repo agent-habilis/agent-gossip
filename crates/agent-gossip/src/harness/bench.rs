@@ -12,9 +12,10 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use fofoca::protocol::crypto;
-use fofoca::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
+use habilis_network::protocol::crypto;
+use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
 
+use crate::policy::app_policy;
 use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
@@ -50,11 +51,12 @@ impl BenchConfig {
 }
 
 fn cfg(lookups: LookupOpts) -> MeshConfig {
+    let transport = app_policy(lookups.relay_lookup != RelayChoice::Disabled);
     MeshConfig {
         lookups,
         password: None,
         issuer_pubkey: None,
-        transport: fofoca::protocol::TransportPolicy::default(),
+        transport,
     }
 }
 
@@ -120,8 +122,8 @@ impl BenchMessage {
         Self(Message::new_app(
             &mesh,
             &author,
-            fofoca::protocol::AppFrameParams {
-                tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+            habilis_network::protocol::AppFrameParams {
+                tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                 to: None,
                 corr: None,
                 body: MessageBody::new(body).expect("valid body"),
