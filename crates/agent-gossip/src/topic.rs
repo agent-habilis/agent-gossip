@@ -55,9 +55,10 @@ mod tests {
 
     use super::derive_topic_mesh;
 
-    /// The id that habilis-network 2b468bb (mesh id v2) mints for `standup` with
-    /// the policy `udp,webrtc,gossip,relay`. It is a deliberate split from the
-    /// 0.11.2 id. A drift here splits a topic into two gossips, one per version.
+    /// The id that habilis-network 2b468bb (mesh id v2) minted for `standup` with
+    /// the policy `udp,webrtc,gossip,relay`. It is unchanged at 92a332a. It is a
+    /// deliberate split from the 0.11.2 id. A drift here splits a topic into two
+    /// gossips, one per version.
     #[test]
     fn topic_id_matches_the_released_derivation() {
         let mesh = derive_topic_mesh("standup").unwrap();

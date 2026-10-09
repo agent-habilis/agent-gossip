@@ -3,7 +3,8 @@
 agent-gossip found these while it moved from fofoca to habilis-network
 (branch `chore-migrate-habilis-network`). They were seen against
 habilis-network PR #2 at `2b468bb`. Nothing here is applied: the squad that owns
-habilis-network decides.
+habilis-network decides. Items 8 and 9 are fixed in `92a332a`; I did not check
+the other items against that rev.
 
 1. **Re-export the transport ids.** Export `WEBRTC_TRANSPORT_ID`,
    `MULTIHOP_TRANSPORT_ID` and `GOSSIP_TRANSPORT_ID` from `habilis_network::net`.
@@ -53,6 +54,8 @@ habilis-network decides.
    test as it is. Fix candidate 5e8727c ("a digest asks for the whole second of
    the first message it holds"): the two tests passed 10 of 10 runs against it
    (the whole binary passed 9 of 10, see item 9).
+   **Fixed in `92a332a`.** Runs of the chat tests against it under load: 0
+   failures in 40 runs.
 9. **A presence message sent at a late first link is not recovered.** Found in
    the verification run of fix candidate 5e8727c (10 runs of `monitor_contract`,
    macOS, `ci` profile): 1 of 10 runs failed `test_peer_discovery_three_peers`
@@ -70,3 +73,27 @@ habilis-network decides.
    (item 8) failed only the two chat tests. Log, colors stripped:
    `/private/tmp/claude-501/-Users-caiogondim-Developer-agent-habilis-agent-gossip-chore-migrate-habilis-network/e634f801-6033-4c50-84a8-60f402a02efd/scratchpad/fix-run-4.plain`
    (a passing run: `fix-run-1.log` in the same folder).
+   **Fixed in `92a332a`.** Runs of the presence test against it under load: 0
+   failures in 20 runs.
+
+10. **`tests/topic_split` fails in 50 to 75 percent of its tests on this host,
+    on every engine rev tested.** It is the mdns-only topic lane (`udp,webrtc,gossip`,
+    hidden flag `topic_mdns_only`). Both tests
+    (`staggered_topic_joiners_converge`, `two_simultaneous_topic_joiners_converge`)
+    end with "the two topic joiners never merged within 75s". Numbers: 32
+    interleaved runs of the whole binary on one host, same `RUST_LOG`, 1-minute
+    load 2.1 to 43. Engine 2b468bb: 14 of 20 tests failed (all 10 runs had a
+    failure). Engine 92a332a: 11 of 20 (8 of 10 runs). 92a332a with iroh-gossip
+    a9fcab9: 6 of 12 (3 of 6 runs). 92a332a code with the fork pins of 2b468bb:
+    9 of 12 (5 of 6 runs). Load does not explain it: the median load was 3.8 in
+    the failing runs and 3.4 in the green runs. So it is not a regression of
+    92a332a. The engine squad reads the logs this way: the joiners stay in the
+    rendezvous connect-probe and "graft held until a webrtc session attaches"
+    loop, and the WebRTC signal dial to the same-id co-host stays in flight for
+    about 35 s and then fails. I did not verify that. What I counted: one failing
+    run (`V2_r1`) has 47 "graft held" lines and 34 "InFlight" lines, one green run
+    (`V2_r2`) has 27 and 14. Earlier, the same tests passed in two full runs on
+    2b468bb (31.9 s and 30.9 s); I do not know why they pass less often now. For
+    the engine squad to triage. Logs: `/private/tmp/claude-501/-Users-caiogondim-Developer-agent-habilis-agent-gossip-chore-migrate-habilis-network/d3f476ae-ad87-40cd-bb29-088fe4cc0661/scratchpad/bisect/results.txt` (one line per run, with
+    the load) and `/private/tmp/claude-501/-Users-caiogondim-Developer-agent-habilis-agent-gossip-chore-migrate-habilis-network/d3f476ae-ad87-40cd-bb29-088fe4cc0661/scratchpad/bisect/runs/<variant>_r<round>.log` (variants `V1` = 2b468bb,
+    `V2` = 92a332a, `B`, `A`).
