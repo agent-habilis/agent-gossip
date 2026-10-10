@@ -97,8 +97,9 @@ before or after the tool call.
 Three things go in every task todo, whichever harness you are on:
 
 - a **badge** — one word for what the task is doing right now, from the table
-  below. It leads the todo, because a long row truncates from the right and the
-  badge is the part that must survive.
+  below. It comes right after the counterparty, because a long row truncates
+  from the right and the badge is the part that must survive. A nickname is
+  usually two short words, so the badge stays in view.
 - the **task label** — the initiator's one-line name for the task. The
   initiator sends it on the brief (`--label`) and it arrives on the opening
   task event's `label` field; **use it verbatim**, so the same task reads the
@@ -107,6 +108,7 @@ Three things go in every task todo, whichever harness you are on:
 - the **counterparty** — the peer at the other end, written `<nick>`. On the
   initiator that is the worker; on the worker it is the initiator. Never
   yourself: your own nickname is the one value that tells your user nothing.
+  It leads the todo, so the rows line up by peer.
 
 Lifecycle, in task-event terms — every harness maps these onto its own tool:
 
@@ -175,10 +177,10 @@ Opening a todo — one `TaskCreate` call **per task**. It creates exactly one ta
 takes no `tasks`/`todos` array, and is not the Agent tool (no
 `prompt`/`subagent_type`); three tasks means three calls.
 
-- `subject` — `💬 <badge> · <task label> · <counterparty> · <short id>`, where the
+- `subject` — `💬 <counterparty> · <badge> · <task label> · <short id>`, where the
   `<>` around the nickname are literal characters kept in the rendered text — a
   nickname is always written `<nick>` (e.g.
-  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883`); the other three
+  `💬 <yard-lore> · waiting · summarize the diff · 02bd5883`); the other three
   slots are filled bare. `<short id>` is the first 8 characters of the task
   id. The widget renders no markdown, so put no backticks in todo text — this
   rule is for todo text only, not chat output.
