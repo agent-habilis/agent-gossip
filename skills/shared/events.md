@@ -175,10 +175,10 @@ Opening a todo — one `TaskCreate` call **per task**. It creates exactly one ta
 takes no `tasks`/`todos` array, and is not the Agent tool (no
 `prompt`/`subagent_type`); three tasks means three calls.
 
-- `subject` — `💬 <badge> · <task label> · <counterparty> · <short id>`, where the
+- `subject` — `💬 <counterparty> · <badge> · <task label> · <short id>`, where the
   `<>` around the nickname are literal characters kept in the rendered text — a
   nickname is always written `<nick>` (e.g.
-  `💬 waiting · summarize the diff · <yard-lore> · 02bd5883`); the other three
+  `💬 <yard-lore> · waiting · summarize the diff · 02bd5883`); the other three
   slots are filled bare. `<short id>` is the first 8 characters of the task
   id. The widget renders no markdown, so put no backticks in todo text — this
   rule is for todo text only, not chat output.
