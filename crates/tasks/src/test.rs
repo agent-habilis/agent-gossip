@@ -51,18 +51,33 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // stale engine snapshot stayed green. `--no-fail-fast` because cargo otherwise
     // stops at the first failing binary and leaves every later one unreported,
     // which reads as "only one thing broke".
-    cmd!(
+    //
+    // Both runs always happen and a red in either fails the task at the end. A
+    // `?` after the first run once returned early on a red there, so the
+    // adversarial binary never ran and its own red stayed hidden.
+    let workspace = cmd!(
         sh,
         "cargo test --workspace --profile ci --no-fail-fast -- --test-threads=2"
     )
     .quiet()
-    .run()?;
-    cmd!(
+    .run();
+    let adversarial = cmd!(
         sh,
         "cargo test -p agent-gossip --features adversarial --test adversarial --profile ci --no-fail-fast -- --test-threads=4"
     )
     .quiet()
-    .run()?;
+    .run();
+
+    let mut failed = Vec::new();
+    if workspace.is_err() {
+        failed.push("workspace");
+    }
+    if adversarial.is_err() {
+        failed.push("adversarial");
+    }
+    if !failed.is_empty() {
+        return Err(format!("test run failed: {}", failed.join(", ")).into());
+    }
 
     crate::util::sweep_stale_artifacts(sh);
     Ok(())
