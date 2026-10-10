@@ -170,7 +170,7 @@ impl NodeDriver for A2aApp {
                 app: self,
             },
             state,
-            ctx.sender,
+            ctx,
             &out,
         )
         .await
@@ -246,7 +246,7 @@ impl NodeDriver for A2aApp {
                 app: self,
             },
             state,
-            ctx.sender,
+            ctx,
             &out,
         )
         .await
@@ -1115,9 +1115,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
         return;
     }
     state.note_peer_endpoint(author.clone(), peer_addr.clone());
-    if let Err(error) = add_peer_addr(ctx.endpoint, peer_addr) {
-        tracing::debug!(%error, %author, "could not seed a meta-doc endpoint into the address book");
-    }
+    add_peer_addr(state.address_book(), peer_addr);
 }
 
 #[cfg(test)]

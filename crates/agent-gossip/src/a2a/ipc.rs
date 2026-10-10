@@ -1,14 +1,11 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
-use habilis_network::embed::{EventLoopState, PingRound};
+use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
-use habilis_network::ops::MeshSender;
-use habilis_network::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
+use habilis_network::ops::{StateMergeParams, broadcast_state_merge, start_ping_round};
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, Message, MessageBody, Nickname};
+use habilis_network::protocol::{MeshId, MessageBody, Nickname};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
-use habilis_network::runtime::tuning::ping_window_secs;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -186,9 +183,10 @@ pub(crate) struct IpcDispatchParams<'a> {
 pub(crate) async fn handle_ipc_command(
     params: IpcDispatchParams<'_>,
     state: &mut EventLoopState,
-    sender: &MeshSender,
+    ctx: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
+    let sender = ctx.sender;
     let IpcDispatchParams {
         cmd,
         resp_tx,
@@ -281,22 +279,12 @@ pub(crate) async fn handle_ipc_command(
             false
         }
         IpcCommand::Ping { mesh: _ } => {
-            // Arm a fresh round (replacing any in flight) and broadcast
-            // the probe. Pongs are collected by the gossip receive path;
-            // the round's deadline drives the `ping_report` emission.
-            let now = tokio::time::Instant::now();
-            state.arm_ping_round(PingRound {
-                t1: now,
-                deadline: now + Duration::from_secs(ping_window_secs()),
-                pongs: HashMap::new(),
-                // CLI/IPC consumes the `ping_report` event, not a channel.
-                resp: None,
-            });
-            broadcast_msg(
-                sender,
-                &Message::new_ping(mesh, author).signed(state.identity()),
-            )
-            .await;
+            // Start a fresh round (replacing any in flight): the engine arms
+            // it and broadcasts the first probe, and its event loop sends the
+            // second. Pongs are collected by the gossip receive path; the
+            // round's deadline drives the `ping_report` emission. CLI/IPC
+            // consumes that event, not a channel, so there is no responder.
+            start_ping_round(state, ctx, None).await;
             tracing::debug!("IPC ping command received; round armed");
             let _ = resp_tx.send(json_ack());
             true

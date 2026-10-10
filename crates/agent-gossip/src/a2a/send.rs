@@ -5,7 +5,7 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-use habilis_network::embed::EventLoopState;
+use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::MeshSender;
 use habilis_network::protocol::Identity;
 use habilis_network::protocol::{
@@ -1500,38 +1500,16 @@ pub(crate) async fn send_directed_rpc(
     Ok(())
 }
 
-/// A ping round's identity plus the responder the RTT rows are delivered
-/// through — grouped so `session_ping` stays within the argument budget
-/// alongside its state/sender handles.
-struct SessionPingParams<'a> {
-    mesh: &'a MeshId,
-    author: &'a Nickname,
-    resp: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
-}
-
-/// Arm a fresh ping round carrying the responder; the deadline-driven
+/// Start a fresh ping round carrying the responder; the deadline-driven
 /// `finalize_ping_round` delivers the RTT rows through it. Mirrors the IPC
-/// `Ping` handler, which leaves `resp` unset and emits the `ping_report`
+/// `Ping` handler, which passes no responder and emits the `ping_report`
 /// event instead.
 async fn session_ping(
-    params: SessionPingParams<'_>,
+    resp: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
     state: &mut EventLoopState,
-    sender: &MeshSender,
+    ctx: &HandlerCtx<'_>,
 ) -> bool {
-    let SessionPingParams { mesh, author, resp } = params;
-    let now = tokio::time::Instant::now();
-    state.arm_ping_round(habilis_network::embed::PingRound {
-        t1: now,
-        deadline: now
-            + std::time::Duration::from_secs(habilis_network::runtime::tuning::ping_window_secs()),
-        pongs: std::collections::HashMap::new(),
-        resp: Some(resp),
-    });
-    habilis_network::ops::broadcast_msg(
-        sender,
-        &Message::new_ping(mesh, author).signed(state.identity()),
-    )
-    .await;
+    habilis_network::ops::start_ping_round(state, ctx, Some(resp)).await;
     true
 }
 
@@ -1557,9 +1535,10 @@ pub(crate) struct SessionRequestParams<'a> {
 pub(crate) async fn handle_session_request(
     params: SessionRequestParams<'_>,
     state: &mut EventLoopState,
-    sender: &MeshSender,
+    ctx: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
+    let sender = ctx.sender;
     let SessionRequestParams {
         req,
         mesh,
@@ -1712,9 +1691,7 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.doc(Channel::Meta).to_json());
             false
         }
-        SessionRequest::Ping { resp } => {
-            session_ping(SessionPingParams { mesh, author, resp }, state, sender).await
-        }
+        SessionRequest::Ping { resp } => session_ping(resp, state, ctx).await,
         SessionRequest::A2aCall {
             peer,
             method,

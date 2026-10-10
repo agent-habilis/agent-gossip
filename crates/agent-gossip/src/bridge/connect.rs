@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use habilis_network::iroh::endpoint::{Connection, RecvStream, SendStream};
 use habilis_network::iroh::{Endpoint, EndpointAddr};
-use habilis_network::net::{add_peer_addr, build_peer_endpoint};
+use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
 use habilis_network::protocol::{Password, TicketAuth};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -43,7 +43,7 @@ pub(crate) async fn connect(
         _ => TicketAuth::derive(&ticket.secret, password.as_ref(), A2A_TICKET_LABEL),
     };
     let endpoint = build_peer_endpoint(&ticket.lookups).await?;
-    add_peer_addr(&endpoint, ticket.addr.clone())?;
+    add_peer_addr(&address_book(&endpoint), ticket.addr.clone());
     let bind_addr = format!("127.0.0.1:{}", local_port.unwrap_or(0));
     let listener = TcpListener::bind(&bind_addr)
         .await

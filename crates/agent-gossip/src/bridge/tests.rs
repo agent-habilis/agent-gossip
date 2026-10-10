@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use habilis_network::iroh::endpoint::ConnectionError;
-use habilis_network::net::{add_peer_addr, build_peer_endpoint};
+use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
 use habilis_network::protocol::LookupOpts;
 use habilis_network::protocol::{Password, TicketAuth};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -127,7 +127,7 @@ async fn consumer(ticket: &A2aTicket) -> (habilis_network::iroh::Endpoint, Share
     let endpoint = build_peer_endpoint(&ticket.lookups)
         .await
         .expect("consumer endpoint");
-    add_peer_addr(&endpoint, ticket.addr.clone()).expect("add peer addr");
+    add_peer_addr(&address_book(&endpoint), ticket.addr.clone());
     let shared = SharedConnection::new(endpoint.clone(), ticket.addr.clone());
     (endpoint, shared)
 }
