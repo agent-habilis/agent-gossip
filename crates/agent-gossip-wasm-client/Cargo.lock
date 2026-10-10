@@ -1409,7 +1409,7 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1442,7 +1442,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1459,7 +1459,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1476,7 +1476,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "iroh",
 ]
@@ -1484,7 +1484,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1510,7 +1510,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -1522,7 +1522,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1547,7 +1547,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=5005917e3ba8b53e13babfcf24c437c722f71561#5005917e3ba8b53e13babfcf24c437c722f71561"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=db1352a66d58661cae9c991ffaa928293c5c11d1#db1352a66d58661cae9c991ffaa928293c5c11d1"
 dependencies = [
  "tokio",
  "tracing",
@@ -2084,7 +2084,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.101.0"
-source = "git+https://github.com/agent-habilis/iroh-gossip?rev=6178808d02120f186e8b7ebd02caa8522a29c44a#6178808d02120f186e8b7ebd02caa8522a29c44a"
+source = "git+https://github.com/agent-habilis/iroh-gossip?rev=519e608b257561f089b0080c8a5371cd35c5d66c#519e608b257561f089b0080c8a5371cd35c5d66c"
 dependencies = [
  "blake3",
  "bytes",
