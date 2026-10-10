@@ -67,21 +67,6 @@ pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
     crypto::derive_secret(seed, label)
 }
 
-#[must_use]
-pub fn rendezvous_ports(seed: &[u8; 32]) -> [u16; crypto::RENDEZVOUS_LADDER] {
-    crypto::rendezvous_ports(seed)
-}
-
-/// Time the rendezvous-id derivation; the `EndpointId` is iroh-typed, so
-/// drop it rather than surface it across the bench boundary.
-pub fn rendezvous_id(seed: &[u8; 32]) {
-    let _ = crypto::rendezvous_id(seed);
-}
-
-pub fn derive_topic_id(seed: &[u8; 32], name: &MeshName, config: &BenchConfig) {
-    let _ = crypto::derive_topic_id(seed, name, &config.0.to_bytes());
-}
-
 // ── mesh id (token) round-trip — config is part of the id ──────────
 
 #[must_use]
