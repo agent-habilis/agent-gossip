@@ -13,7 +13,7 @@ use crate::a2a::app::A2aApp;
 use crate::a2a::peer_path::respond_with_paths;
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
-    emit_task_status, send_broadcast, send_msg,
+    emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState};
@@ -196,6 +196,7 @@ pub(crate) async fn handle_ipc_command(
         endpoint,
         app,
     } = params;
+    app.drain_delivered_legs();
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or
@@ -248,8 +249,14 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                Ok((msg_id, msg, pending)) => {
+                    let ok = json_ok_msg(&msg_id, &msg);
+                    when_sent(pending, move |verdict| {
+                        let _ = resp_tx.send(match verdict {
+                            Ok(()) => ok,
+                            Err(error) => json_error(&error.to_string()),
+                        });
+                    });
                     true
                 }
                 Err(error) => {
@@ -311,8 +318,14 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok(msg) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
+                Ok((msg, pending)) => {
+                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    when_sent(pending, move |verdict| {
+                        let _ = resp_tx.send(match verdict {
+                            Ok(()) => ok,
+                            Err(error) => json_error(&error.to_string()),
+                        });
+                    });
                     true
                 }
                 Err(error) => {
@@ -350,8 +363,14 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok(msg) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
+                Ok((msg, pending)) => {
+                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    when_sent(pending, move |verdict| {
+                        let _ = resp_tx.send(match verdict {
+                            Ok(()) => ok,
+                            Err(error) => json_error(&error.to_string()),
+                        });
+                    });
                     true
                 }
                 Err(error) => {

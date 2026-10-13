@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use habilis_network::embed::{
     AppClass, EventLoopState, HandlerCtx, InboundApp, NodeApp, NodeDriver,
 };
-use habilis_network::ops::deliver;
+use habilis_network::ops::{Delivered, deliver};
 use habilis_network::protocol::{
     AppFrameParams, AppTag, Message, MessageBody, MessageId, Nickname,
 };
@@ -271,13 +271,34 @@ impl NodeDriver for GossipDriver {
         let Ok(bytes) = frame.serialize() else {
             return false;
         };
-        if let Err(error) = deliver(&frame, bytes.into(), state, ctx.sender).await {
-            self.inbox.push(
-                "system".to_owned(),
-                format!("could not send: {error}"),
-                "system",
-            );
-            return false;
+        match deliver(&frame, bytes.into(), state, ctx.sender).await {
+            Ok(Delivered::Done) => {}
+            Ok(Delivered::Pending(pending)) => {
+                // A dial is awaited off the event loop. The frame is echoed now; a dial that
+                // fails is told to the inbox when it fails.
+                let inbox = self.inbox.clone();
+                n0_future::task::spawn(async move {
+                    let outcome = pending
+                        .await
+                        .map_err(anyhow::Error::from)
+                        .and_then(|result| result);
+                    if let Err(error) = outcome {
+                        inbox.push(
+                            "system".to_owned(),
+                            format!("could not send: {error}"),
+                            "system",
+                        );
+                    }
+                });
+            }
+            Err(error) => {
+                self.inbox.push(
+                    "system".to_owned(),
+                    format!("could not send: {error}"),
+                    "system",
+                );
+                return false;
+            }
         }
 
         // Echoed locally because a broadcast does not come back to its author:

@@ -28,6 +28,7 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
 futures = "0.3"
+n0-future = "0.3"
 async-trait = "0.1"
 send_wrapper = "0.6"
 web-sys = { version = "0.3", features = ["Window", "console", "Storage", "RtcPeerConnection", "RtcPeerConnectionState"] }

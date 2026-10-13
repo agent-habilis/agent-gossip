@@ -5,12 +5,13 @@
 //! transport/membership engine. Threaded alongside `EventLoopState` as its own
 //! `&mut` borrow.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{Message, Nickname};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::oneshot::error::TryRecvError;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::TaskId;
@@ -141,6 +142,22 @@ pub(crate) struct A2aApp {
     /// Receiver end of the `Output` tap, drained into [`surfaced`](Self::surfaced)
     /// each loop iteration. `None` for a detached test `A2aApp` (no live loop).
     pub(crate) surfaced_rx: Option<UnboundedReceiver<OutputEvent>>,
+    /// Our own task legs in the order they were sent, waiting to enter the task record. A leg
+    /// enters it when the peer got it, and never before an earlier leg has been settled: the
+    /// record then holds only what the peer got, in the order the peer got it.
+    own_legs: VecDeque<QueuedLeg>,
+}
+
+/// An own task leg to ingest into the task record once the peer got it.
+pub(crate) struct DeliveredLeg {
+    pub(crate) echo: Message,
+    pub(crate) task_id: TaskId,
+}
+
+struct QueuedLeg {
+    leg: DeliveredLeg,
+    /// Whether the send of the leg reached the peer. Resolved when the send has an outcome.
+    delivered: tokio::sync::oneshot::Receiver<bool>,
 }
 
 impl A2aApp {
@@ -171,6 +188,7 @@ impl A2aApp {
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
+            own_legs: VecDeque::new(),
         }
     }
 
@@ -189,6 +207,45 @@ impl A2aApp {
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
+            own_legs: VecDeque::new(),
+        }
+    }
+
+    /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
+    /// peer got the leg.
+    pub(crate) fn queue_own_leg(
+        &mut self,
+        leg: DeliveredLeg,
+        delivered: tokio::sync::oneshot::Receiver<bool>,
+    ) {
+        self.own_legs.push_back(QueuedLeg { leg, delivered });
+    }
+
+    /// The legs at the head of the queue that the peer got, in the order they were sent. A leg
+    /// whose send has no outcome yet holds back every leg behind it. A leg that was not delivered
+    /// is dropped.
+    fn take_delivered_legs(&mut self) -> Vec<DeliveredLeg> {
+        let mut ready = Vec::new();
+        while let Some(head) = self.own_legs.front_mut() {
+            let delivered = match head.delivered.try_recv() {
+                Ok(delivered) => delivered,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Closed) => false,
+            };
+            let Some(QueuedLeg { leg, .. }) = self.own_legs.pop_front() else {
+                break;
+            };
+            if delivered {
+                ready.push(leg);
+            }
+        }
+        ready
+    }
+
+    /// Ingest the own task legs that the peer got since the last call.
+    pub(crate) fn drain_delivered_legs(&mut self) {
+        for DeliveredLeg { echo, task_id } in self.take_delivered_legs() {
+            crate::a2a::send::ingest_own_leg(self, &echo, &task_id);
         }
     }
 
@@ -464,9 +521,84 @@ pub(crate) struct A2aWaiter {
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{AppTag, MeshId, Message, MessageBody, MessageKind, Nickname};
 
-    use super::{A2aResponder, rpc_result_from_body};
+    use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
+    use crate::a2a::TaskId;
+
+    fn leg(body: &str) -> DeliveredLeg {
+        let echo = Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::App {
+                tag: AppTag::from("status"),
+                to: None,
+                corr: None,
+            },
+            MessageBody::from(body),
+        );
+        DeliveredLeg {
+            echo,
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        }
+    }
+
+    fn bodies(legs: &[DeliveredLeg]) -> Vec<&str> {
+        legs.iter().map(|leg| leg.echo.body.as_str()).collect()
+    }
+
+    /// Two legs go to one cold peer and share its dial, so the verdict of the second can come
+    /// first. The record must still take the status before the artifact: the task ends in the
+    /// state of the last leg.
+    #[test]
+    fn own_legs_enter_the_record_in_send_order_when_a_later_verdict_comes_first() {
+        let mut app = super::A2aApp::new();
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
+        let (artifact_tx, artifact_rx) = tokio::sync::oneshot::channel();
+        app.queue_own_leg(leg("status"), status_rx);
+        app.queue_own_leg(leg("artifact"), artifact_rx);
+
+        artifact_tx
+            .send(true)
+            .expect("the queue holds the receiver");
+        assert!(
+            app.take_delivered_legs().is_empty(),
+            "the artifact waits behind the status, whose send has no outcome"
+        );
+
+        status_tx.send(true).expect("the queue holds the receiver");
+        let taken = app.take_delivered_legs();
+        assert_eq!(bodies(&taken), ["status", "artifact"]);
+        assert!(app.take_delivered_legs().is_empty(), "a leg enters once");
+    }
+
+    /// A leg that the dial did not send leaves no record, and does not hold back the next one.
+    #[test]
+    fn a_leg_that_was_not_delivered_leaves_no_record_and_does_not_block_the_next() {
+        let mut app = super::A2aApp::new();
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
+        let (artifact_tx, artifact_rx) = tokio::sync::oneshot::channel();
+        app.queue_own_leg(leg("status"), status_rx);
+        app.queue_own_leg(leg("artifact"), artifact_rx);
+
+        status_tx.send(false).expect("the queue holds the receiver");
+        artifact_tx
+            .send(true)
+            .expect("the queue holds the receiver");
+        let taken = app.take_delivered_legs();
+        assert_eq!(bodies(&taken), ["artifact"]);
+    }
+
+    /// A send whose task ended without an outcome is a failed send.
+    #[test]
+    fn a_leg_whose_send_task_was_dropped_is_not_delivered() {
+        let mut app = super::A2aApp::new();
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel::<bool>();
+        app.queue_own_leg(leg("status"), status_rx);
+        drop(status_tx);
+        assert!(app.take_delivered_legs().is_empty());
+        assert!(app.own_legs.is_empty(), "the failed leg left the queue");
+    }
 
     /// The localhost binding's `A2aResponder::Rpc` unwraps a peer's JSON-RPC
     /// response body into the `Result<Value, RpcError>` its HTTP handler

@@ -22,6 +22,12 @@ The relay carries payload when `relay` is in `--lookup`. A plain `create` is sti
 
 The hidden `--multihop` flag is removed. Multihop is now a part of the gossip id. Name it in `--transport` when you want it.
 
+#### Directed sends
+
+A directed message to a peer that has no live link no longer stops the daemon while it dials. The dial runs on a task, and the command gets its answer from that task. A message, a status, or an artifact that the dial cannot send is reported as an error, as before.
+
+A task status or artifact leg enters the task record when the peer got it, in the order the legs were sent. A leg that a failed dial did not send leaves no record. A cancel follows the same rule, and `CancelTask` no longer waits for the dial: it answers with the task as it is, and a failed notification of the peer is only logged.
+
 #### Known limit
 
 Directory sessions still use the default policy of the engine, which has multihop on. This stays so until habilis-network lets the app set the policy of a directory session.

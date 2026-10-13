@@ -137,6 +137,7 @@ impl NodeDriver for A2aApp {
     }
 
     fn drain_surfaced(&mut self) {
+        self.drain_delivered_legs();
         self.drain_surfaced_ring();
     }
 
