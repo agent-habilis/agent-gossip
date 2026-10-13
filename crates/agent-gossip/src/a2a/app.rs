@@ -377,6 +377,9 @@ impl A2aApp {
     /// cancelled. A follow-up on a task the worker already held opened nothing,
     /// so it is only adopted. Either way the blob goes with the task when the
     /// sweep reaps it.
+    ///
+    /// A followed-up task is then in the registry although the agent was told
+    /// the call timed out, and no task event shows it.
     fn adopt_late_reply(&mut self, orphan_index: usize, from: &Nickname, body: &str) {
         let Some(task_id) = self.adopt_returned_task(from, body) else {
             return;
@@ -385,9 +388,10 @@ impl A2aApp {
             return;
         }
         let orphan = self.orphan_blobs.swap_remove(orphan_index);
-        // A follow-up's group is named after the task it follows; a first
-        // call's group is named before the worker mints the task.
-        let opened = orphan.group != habilis_network::ops::blob::ContentId::new(task_id.as_str());
+        let opened = orphan
+            .late_reply
+            .as_ref()
+            .is_some_and(|late| late.opens_task);
         self.call_blobs.insert(task_id.clone(), orphan.group);
         if opened {
             if let Some(rec) = self.tasks.get_mut(&task_id) {
@@ -500,7 +504,11 @@ impl A2aApp {
                     // adopts the task.
                     let evict_at = Instant::now()
                         + std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
-                    let late_reply = Some((waiter.corr, waiter.peer));
+                    let late_reply = Some(LateReply {
+                        corr: waiter.corr,
+                        peer: waiter.peer,
+                        opens_task: waiter.opens_task,
+                    });
                     self.orphan_blobs
                         .extend(waiter.blob_group.map(|group| OrphanBlob {
                             group,
@@ -637,20 +645,27 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc
     Ok(value["result"].clone())
 }
 
-/// A first-call blob group whose call produced no task.
+/// A call blob group whose call produced no task of ours.
 struct OrphanBlob {
     group: habilis_network::ops::blob::ContentId,
     evict_at: Instant,
-    /// The `(corr, peer)` of a timed-out call, whose late reply can still
-    /// adopt the task and take the group.
-    late_reply: Option<(habilis_network::protocol::CorrId, Nickname)>,
+    /// A timed-out call, whose late reply can still adopt the task and take
+    /// the group.
+    late_reply: Option<LateReply>,
+}
+
+struct LateReply {
+    corr: habilis_network::protocol::CorrId,
+    peer: Nickname,
+    /// Whether the call opened the task: a first call did, a follow-up did not.
+    opens_task: bool,
 }
 
 impl OrphanBlob {
     fn awaits_reply(&self, corr: &habilis_network::protocol::CorrId, peer: &Nickname) -> bool {
         self.late_reply
             .as_ref()
-            .is_some_and(|(late_corr, late_peer)| late_corr == corr && late_peer == peer)
+            .is_some_and(|late| late.corr == *corr && late.peer == *peer)
     }
 }
 
@@ -661,9 +676,12 @@ pub(crate) struct A2aWaiter {
     pub(crate) peer: Nickname,
     pub(crate) deadline: TokioInstant,
     pub(crate) responder: A2aResponder,
-    /// The blob group of a first `a2a call --file`, owned by this call until a
-    /// task adopts it.
+    /// The blob group of an `a2a call --file` that no task of ours holds yet,
+    /// owned by this call until a task adopts it.
     pub(crate) blob_group: Option<habilis_network::ops::blob::ContentId>,
+    /// Whether this call creates the task, so that a late reply's task is
+    /// cancelled. A follow-up does not.
+    pub(crate) opens_task: bool,
 }
 
 #[cfg(test)]
@@ -805,6 +823,7 @@ mod tests {
             deadline: far,
             responder: A2aResponder::Typed(bob_tx),
             blob_group: None,
+            opens_task: true,
         });
         app.a2a_waiters.push(super::A2aWaiter {
             corr: habilis_network::protocol::CorrId::from("corr-carol"),
@@ -812,6 +831,7 @@ mod tests {
             deadline: far,
             responder: A2aResponder::Typed(carol_tx),
             blob_group: None,
+            opens_task: true,
         });
 
         app.fail_a2a_waiters_for_peer(&Nickname::from("bob"));
@@ -839,6 +859,7 @@ mod tests {
             deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
             responder: A2aResponder::Typed(tx),
             blob_group: Some(habilis_network::ops::blob::ContentId::new(group)),
+            opens_task: true,
         }
     }
 
@@ -1037,6 +1058,7 @@ mod tests {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
         let mut late = waiter_with_blob("corr-follow-up", task_id.as_str());
+        late.opens_task = false;
         late.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
@@ -1055,6 +1077,43 @@ mod tests {
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![habilis_network::ops::blob::ContentId::new(task_id.as_str())]
+        );
+    }
+
+    /// A follow-up times out and its retry is answered. The sweep that is due
+    /// for the timed-out call evicts only that call's group: the retry's blob
+    /// stays while the task is live.
+    #[test]
+    fn a_timed_out_follow_up_does_not_evict_its_retrys_blob() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let mut timed_out = waiter_with_blob("corr-first", "group-first");
+        timed_out.opens_task = false;
+        timed_out.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(timed_out);
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        let mut retry = waiter_with_blob("corr-retry", "group-retry");
+        retry.opens_task = false;
+        app.a2a_waiters.push(retry);
+        let accepted = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_WORKING" } } }
+        });
+        app.fulfill_a2a_waiter(
+            &habilis_network::protocol::CorrId::from("corr-retry"),
+            &Nickname::from("bob"),
+            &accepted.to_string(),
+        );
+
+        let timeout = std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
+        let evicted = app.take_call_blobs(&[], Instant::now() + timeout);
+
+        assert_eq!(
+            evicted,
+            vec![habilis_network::ops::blob::ContentId::new("group-first")]
+        );
+        assert_eq!(
+            app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
+            vec![habilis_network::ops::blob::ContentId::new("group-retry")]
         );
     }
 }

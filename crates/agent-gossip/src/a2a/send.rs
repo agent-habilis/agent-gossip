@@ -1189,30 +1189,37 @@ pub(crate) struct CallFile<'a> {
     pub(crate) file: FileRef,
 }
 
-/// The task id a call's blob is grouped under, and whether that group is new.
-/// A follow-up on a task we do not hold has no task of ours to reap its blob
-/// (the worker may reject it, or hold the task itself), so that call owns the
-/// group like a first call does.
+/// The id a call's blob group is named by, and whether that group is new.
+/// A follow-up on a task we hold joins that task's group. Any other call has
+/// no task of ours to reap its blob (a first call has none yet, and a follow-up
+/// on an unknown task may be rejected or accepted by the worker), so it owns a
+/// group under its own id: a retry's file must not share a group with the
+/// timed-out call that it replaces.
 fn call_blob_group(
     task_id: Option<crate::a2a::TaskId>,
     tasks: &std::collections::HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
 ) -> (crate::a2a::TaskId, bool) {
     match task_id {
-        Some(task_id) => {
-            let fresh_group = !tasks.contains_key(&task_id);
-            (task_id, fresh_group)
-        }
-        None => (crate::a2a::TaskId::random(), true),
+        Some(task_id) if tasks.contains_key(&task_id) => (task_id, false),
+        _ => (crate::a2a::TaskId::random(), true),
     }
+}
+
+/// The blob group a call owns until a task adopts it.
+pub(crate) struct CallBlob {
+    pub(crate) group: habilis_network::ops::blob::ContentId,
+    /// Whether the call creates the task, rather than follows up on one.
+    pub(crate) opens_task: bool,
 }
 
 /// Offload `file` and put its `Part.url` first among the parts of the
 /// `SendMessage` in `params` (`a2a call --file`). An empty text part — the
 /// `--text`-less sugar — is dropped, as `build_offload_parts` drops it.
 ///
-/// A follow-up's blob joins its task's content group, so the task sweep reaps
-/// it. A first call has no task id yet — the worker mints it — so its blob goes
-/// in a fresh group, which is returned: the caller owns its eviction.
+/// A follow-up's blob on a task we hold joins its task's content group, so the
+/// task sweep reaps it. Any other call's blob goes in a fresh group, which is
+/// returned: the caller owns its eviction. A first call has no task id yet —
+/// the worker mints it.
 ///
 /// # Errors
 /// When `params` carries no A2A `message`, or the offload fails.
@@ -1221,18 +1228,19 @@ pub(crate) async fn attach_call_file(
     attachment: CallFile<'_>,
     state: &EventLoopState,
     app: &mut A2aApp,
-) -> anyhow::Result<Option<habilis_network::ops::blob::ContentId>> {
+) -> anyhow::Result<Option<CallBlob>> {
     let CallFile { mesh, author, file } = attachment;
     let slot = params
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
-    let (task_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
+    let opens_task = message.task_id.is_none();
+    let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(
         OffloadTextParams {
             mesh,
             author,
-            task_id: &task_id,
+            task_id: &group_id,
             text: "",
             file: Some(file),
         },
@@ -1248,7 +1256,10 @@ pub(crate) async fn attach_call_file(
     );
     message.parts = parts;
     *slot = serde_json::to_value(message)?;
-    Ok(fresh_group.then(|| habilis_network::ops::blob::ContentId::new(task_id.as_str())))
+    Ok(fresh_group.then(|| CallBlob {
+        group: habilis_network::ops::blob::ContentId::new(group_id.as_str()),
+        opens_task,
+    }))
 }
 
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
@@ -1533,12 +1544,12 @@ pub(crate) async fn broadcast_a2a_call(
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
-    let blob_group = match file {
+    let blob = match file {
         None => None,
         Some(file) => {
             let attachment = CallFile { mesh, author, file };
             match attach_call_file(&mut params, attachment, state, app).await {
-                Ok(group) => group,
+                Ok(blob) => blob,
                 Err(error) => {
                     responder.send_response(&rpc_error(-32602, &error.to_string()));
                     return;
@@ -1546,6 +1557,8 @@ pub(crate) async fn broadcast_a2a_call(
             }
         }
     };
+    let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
+    let blob_group = blob.map(|blob| blob.group);
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::new(envelope.to_string()) else {
         app.orphan_blob(blob_group);
@@ -1589,6 +1602,7 @@ pub(crate) async fn broadcast_a2a_call(
         deadline,
         responder,
         blob_group,
+        opens_task,
     }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
@@ -2011,9 +2025,12 @@ mod call_blob_group_tests {
         let tasks = HashMap::new();
         let unknown = TaskId::random();
 
-        let (task_id, fresh_group) = call_blob_group(Some(unknown.clone()), &tasks);
+        let (group_id, fresh_group) = call_blob_group(Some(unknown.clone()), &tasks);
 
-        assert_eq!(task_id, unknown);
+        assert_ne!(
+            group_id, unknown,
+            "the group is not the content group of a task"
+        );
         assert!(fresh_group, "the blob has no task to be reaped with");
     }
 
@@ -2037,6 +2054,20 @@ mod call_blob_group_tests {
 
         assert_eq!(task_id, known);
         assert!(!fresh_group, "the task sweep reaps the blob");
+    }
+
+    /// Two timed-out follow-ups on the same unknown task are two calls with two
+    /// files. Each owns its group, so the eviction of one cannot take the blob
+    /// of a retry that the task now holds.
+    #[test]
+    fn a_retried_follow_up_on_an_unknown_task_gets_its_own_group() {
+        let tasks = HashMap::new();
+        let unknown = TaskId::random();
+
+        let (first, _) = call_blob_group(Some(unknown.clone()), &tasks);
+        let (retry, _) = call_blob_group(Some(unknown), &tasks);
+
+        assert_ne!(first, retry);
     }
 
     #[test]
