@@ -125,8 +125,8 @@ pub(crate) struct A2aApp {
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
     pub blob_server: Option<habilis_network::ops::blob::BlobServer>,
-    /// The blob group of each first `a2a call --file`, keyed by the task the
-    /// worker minted for it, so the task sweep reaps the blob with the task.
+    /// Every blob group of a task's calls, keyed by the task, so the task
+    /// sweep reaps them with the task.
     call_blobs: HashMap<TaskId, Vec<habilis_network::ops::blob::ContentId>>,
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
