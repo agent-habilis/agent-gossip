@@ -327,8 +327,8 @@ pub(crate) async fn handle_op(
         }
         A2aOp::PeerCard { peer } => {
             let doc = state.doc(Channel::Meta).to_json();
-            let mut card = doc
-                .pointer(&format!("/peers/{peer}/card"))
+            // A card that is still arriving, in pieces, is not served.
+            let mut card = super::card::complete_card(&doc, &peer)
                 .cloned()
                 .unwrap_or(Value::Null);
             if card.is_null() {

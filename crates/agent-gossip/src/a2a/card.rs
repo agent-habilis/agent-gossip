@@ -1,5 +1,6 @@
 use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
 use habilis_network::protocol::Nickname;
+use habilis_network::util::consts::MAX_MESSAGE_SIZE;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -168,14 +169,82 @@ pub(crate) fn peer_endpoint(
     habilis_network::net::endpoint_addr_from_json(hint).ok()
 }
 
-/// The RFC 7386 merge that publishes `card` at `/peers/<nick>/card`.
-#[must_use]
-pub(crate) fn publish_merge(nickname: &Nickname, card: &AgentCard) -> serde_json::Value {
-    serde_json::json!({
-        "peers": {
-            nickname.as_str(): { "card": card }
+/// What a frame can still grow by after it was measured: the dependency list and the sequence
+/// number of a later change are not in the merge that was measured.
+const FRAME_MARGIN: usize = 128;
+
+/// The merges that publish `card` (the card as JSON, endpoint hint included) at
+/// `/peers/<nick>/card`, each in a frame within [`MAX_MESSAGE_SIZE`]. `frame_len` measures the
+/// frame that a merge becomes on the wire, with the sealing of a passworded gossip, so that the
+/// split follows the real size and not an estimate of it. An RFC 7386 merge sets the keys of the
+/// card one by one, so the card in several merges is the same card as the card in one.
+///
+/// The capabilities go first: they carry the seal key, and a peer can send to us as soon as it
+/// has them. The other keys follow in key order. Nothing but the card is written: a reader tells
+/// a whole card from a partial one by the schema of the card, see [`complete_card`].
+///
+/// # Errors
+/// `card` is not a JSON object, a key of it does not fit a frame by itself, or `frame_len` failed.
+pub(crate) fn publish_merges(
+    nickname: &Nickname,
+    card: &serde_json::Value,
+    frame_len: impl Fn(&serde_json::Value) -> anyhow::Result<usize>,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let serde_json::Value::Object(fields) = card else {
+        anyhow::bail!("the agent card is not a JSON object");
+    };
+    let merge_of = |part: &serde_json::Map<String, serde_json::Value>| serde_json::json!({ "peers": { nickname.as_str(): { "card": part } } });
+    let fits = |merge: &serde_json::Value| -> anyhow::Result<bool> {
+        Ok(frame_len(merge)? + FRAME_MARGIN <= MAX_MESSAGE_SIZE)
+    };
+
+    let mut keys: Vec<&String> = fields.keys().collect();
+    keys.sort_by_key(|key| key.as_str() != "capabilities");
+
+    let mut merges = Vec::new();
+    let mut part = serde_json::Map::new();
+    for key in keys {
+        let mut with_key = part.clone();
+        with_key.insert(key.clone(), fields[key].clone());
+        if fits(&merge_of(&with_key))? {
+            part = with_key;
+            continue;
         }
-    })
+        if part.is_empty() {
+            anyhow::bail!("the card field '{key}' does not fit in one frame by itself");
+        }
+        merges.push(merge_of(&part));
+        part = serde_json::Map::new();
+        part.insert(key.clone(), fields[key].clone());
+        if !fits(&merge_of(&part))? {
+            anyhow::bail!("the card field '{key}' does not fit in one frame by itself");
+        }
+    }
+    if !part.is_empty() {
+        merges.push(merge_of(&part));
+    }
+    Ok(merges)
+}
+
+/// The card of `peer` in the meta document, when it is whole. A card that is still arriving, in
+/// pieces, or whose later merge failed, lacks fields that an [`AgentCard`] requires, and is not
+/// returned. The schema is the marker: the daemon writes nothing next to the card for this.
+#[must_use]
+pub(crate) fn complete_card<'doc>(
+    meta_doc: &'doc serde_json::Value,
+    peer: &Nickname,
+) -> Option<&'doc serde_json::Value> {
+    let card = meta_doc.pointer(&format!("/peers/{peer}/card"))?;
+    serde_json::from_value::<AgentCard>(card.clone())
+        .is_ok()
+        .then_some(card)
+}
+
+/// The RFC 7386 merge that tells the other members why our card is not published: a member that
+/// cannot seal to us then names the cause, not "cards still propagating". `None` clears it.
+#[must_use]
+pub(crate) fn card_error_merge(nickname: &Nickname, error: Option<&str>) -> serde_json::Value {
+    serde_json::json!({ "peers": { nickname.as_str(): { "card_error": error } } })
 }
 
 /// The `/peers` entries in `document` with no **active** member behind them.
@@ -227,7 +296,7 @@ pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
 mod tests {
     use habilis_network::protocol::Nickname;
 
-    use super::{own_card, publish_merge};
+    use super::{own_card, publish_merges};
 
     #[test]
     fn card_declares_the_mesh_extensions_and_identity() {
@@ -272,7 +341,11 @@ mod tests {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(&nickname, &"ab".repeat(32), &seal_b58);
-        let merge = publish_merge(&nickname, &card);
+        let card = serde_json::to_value(card).unwrap();
+        // A frame that is never full: the card is one merge.
+        let merges = publish_merges(&nickname, &card, |_| Ok(0)).unwrap();
+        assert_eq!(merges.len(), 1);
+        let merge = &merges[0];
         assert_eq!(merge["peers"]["calm-otter"]["card"]["name"], "calm-otter");
         assert!(
             merge["peers"]["calm-otter"].get("model").is_none(),
@@ -321,6 +394,157 @@ mod tests {
         assert!(
             super::absent_peers(&serde_json::json!({}), &live, &Nickname::from("print-onyx"))
                 .is_empty()
+        );
+    }
+
+    /// The frame that `merge` becomes on a passworded gossip: the automerge change, the `change`
+    /// envelope, the seal under the channel key, the signed channel event.
+    fn passworded_frame_len(merge: &serde_json::Value) -> anyhow::Result<usize> {
+        use habilis_network::ops::doc::{MeshDoc, change_body, encrypt_body};
+        use habilis_network::protocol::{Channel, Identity, MeshId, Message};
+
+        let doc = MeshDoc::new_ungated();
+        let Some(change) = doc.build_change(merge, &[9u8; 32])? else {
+            return Ok(0);
+        };
+        let sealed = encrypt_body(&change_body(&change, None)?, &[3u8; 32])?;
+        let frame = Message::new_channel_event(
+            &MeshId::from("test"),
+            &Nickname::from("calm-otter"),
+            sealed,
+            Channel::Meta,
+        )
+        .signed(&Identity::generate());
+        Ok(frame.wire_len())
+    }
+
+    /// The card of the longest nickname and a relay URL of the real kind.
+    fn worst_case_card(nickname: &Nickname) -> serde_json::Value {
+        let seal_b58 = bs58::encode([7u8; 32]).into_string();
+        let mut card =
+            serde_json::to_value(own_card(nickname, &"ab".repeat(32), &seal_b58)).unwrap();
+        card["endpoint"] = serde_json::json!({
+            "id": "ab".repeat(32),
+            "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
+        });
+        card
+    }
+
+    /// The bug of issue 41, measured: the card as one merge is a frame over the limit on a
+    /// passworded gossip. Cut by its real size, each piece fits, with the margin, and the pieces
+    /// together are the whole card.
+    #[test]
+    fn publish_merges_cut_the_card_by_the_measured_frame_and_make_the_same_card() {
+        let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
+        let card = worst_case_card(&nickname);
+        let whole = serde_json::json!({ "peers": { nickname.as_str(): { "card": card } } });
+        let whole_len = passworded_frame_len(&whole).unwrap();
+        assert!(
+            whole_len > habilis_network::util::consts::MAX_MESSAGE_SIZE,
+            "the premise of issue 41: the card as one merge is {whole_len} bytes on the wire"
+        );
+
+        let merges = publish_merges(&nickname, &card, passworded_frame_len)
+            .expect("every field fits a frame");
+
+        assert!(merges.len() > 1, "a card over the frame is in pieces");
+        for merge in &merges {
+            let len = passworded_frame_len(merge).unwrap();
+            assert!(
+                len + super::FRAME_MARGIN <= habilis_network::util::consts::MAX_MESSAGE_SIZE,
+                "a frame of {len} bytes leaves no margin"
+            );
+        }
+        let first = &merges[0]["peers"][nickname.as_str()]["card"];
+        assert!(
+            first.get("capabilities").is_some(),
+            "the capabilities, which carry the seal key, are published first"
+        );
+        let mut rebuilt = serde_json::Map::new();
+        for merge in &merges {
+            let part = merge["peers"][nickname.as_str()]["card"]
+                .as_object()
+                .unwrap();
+            for (key, value) in part {
+                assert!(
+                    rebuilt.insert(key.clone(), value.clone()).is_none(),
+                    "{key} twice"
+                );
+            }
+        }
+        assert_eq!(serde_json::Value::Object(rebuilt), card);
+    }
+
+    /// The pieces arrive in order. No prefix of them but the whole set is served as a card, so a
+    /// reader never takes a card that is still arriving. It holds because the keys of a JSON
+    /// object are sorted here and `version`, a required field, is the last of them.
+    #[test]
+    fn no_prefix_of_the_pieces_but_the_whole_set_is_a_complete_card() {
+        let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
+        let card = worst_case_card(&nickname);
+        let merges = publish_merges(&nickname, &card, passworded_frame_len)
+            .expect("every field fits a frame");
+        assert!(merges.len() > 1, "the premise: the card is in pieces");
+
+        let mut arrived = serde_json::Map::new();
+        for (index, merge) in merges.iter().enumerate() {
+            let part = merge["peers"][nickname.as_str()]["card"]
+                .as_object()
+                .unwrap();
+            arrived.extend(part.clone());
+            let doc = serde_json::json!({ "peers": { nickname.as_str(): { "card": arrived } } });
+            assert_eq!(
+                super::complete_card(&doc, &nickname).is_some(),
+                index + 1 == merges.len(),
+                "after piece {} of {}",
+                index + 1,
+                merges.len()
+            );
+        }
+    }
+
+    #[test]
+    fn publish_merges_refuse_a_field_that_does_not_fit_a_frame_by_itself() {
+        let nickname = Nickname::from("calm-otter");
+        let card = serde_json::json!({ "description": "x".repeat(4000) });
+        let error = publish_merges(&nickname, &card, passworded_frame_len)
+            .expect_err("one field over the frame");
+        assert!(error.to_string().contains("description"), "got: {error}");
+    }
+
+    /// A reader that needs the whole card must not get a card whose later merges are missing.
+    #[test]
+    fn complete_card_serves_a_card_only_when_the_schema_is_whole() {
+        let nickname = Nickname::from("calm-otter");
+        let seal_b58 = bs58::encode([7u8; 32]).into_string();
+        let whole_card =
+            serde_json::to_value(own_card(&nickname, &"ab".repeat(32), &seal_b58)).unwrap();
+        let whole = serde_json::json!({ "peers": { "calm-otter": { "card": whole_card } } });
+        assert!(super::complete_card(&whole, &nickname).is_some());
+
+        let only_capabilities = serde_json::json!({ "peers": { "calm-otter": { "card": {
+            "capabilities": whole_card["capabilities"],
+        } } } });
+        assert!(
+            super::complete_card(&only_capabilities, &nickname).is_none(),
+            "the first piece alone is not served as a card"
+        );
+
+        let none = serde_json::json!({ "peers": {} });
+        assert!(super::complete_card(&none, &nickname).is_none());
+    }
+
+    #[test]
+    fn card_error_merge_sets_and_clears_the_reason() {
+        let nickname = Nickname::from("calm-otter");
+        assert_eq!(
+            super::card_error_merge(&nickname, Some("too large")),
+            serde_json::json!({ "peers": { "calm-otter": { "card_error": "too large" } } })
+        );
+        assert_eq!(
+            super::card_error_merge(&nickname, None),
+            serde_json::json!({ "peers": { "calm-otter": { "card_error": null } } }),
+            "an RFC 7386 null removes the key"
         );
     }
 

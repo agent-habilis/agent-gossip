@@ -850,9 +850,19 @@ pub(crate) fn seal_directed(
 ) -> anyhow::Result<MessageBody> {
     let doc = state.doc(Channel::Meta).to_json();
     let key = crate::a2a::card::peer_seal_key(&doc, to).ok_or_else(|| {
-        anyhow::anyhow!(
-            "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
-        )
+        // A peer whose card did not publish says why in its own entry. Without that, the sender
+        // waits for cards that never come.
+        match doc
+            .pointer(&format!("/peers/{to}/card_error"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some(cause) => {
+                anyhow::anyhow!("cannot seal to '{to}': its card is not published ({cause})")
+            }
+            None => anyhow::anyhow!(
+                "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
+            ),
+        }
     })?;
     habilis_network::protocol::seal_to_body(&key, body.as_str())
 }

@@ -146,6 +146,14 @@ pub(crate) struct A2aApp {
     /// enters it when the peer got it, and never before an earlier leg has been settled: the
     /// record then holds only what the peer got, in the order the peer got it.
     own_legs: VecDeque<QueuedLeg>,
+    /// Why our own card is not published, while it is not: the last publish failed. Told to the
+    /// other members through `/peers/<nick>/card_error`, and retried on the ticks that the
+    /// backoff allows.
+    pub(crate) card_error: Option<String>,
+    /// Ticks to wait before the next retry of the card, and the wait of the retry after it,
+    /// which doubles at each failure.
+    pub(crate) card_retry_in: u32,
+    pub(crate) card_retry_wait: u32,
 }
 
 /// An own task leg to ingest into the task record once the peer got it.
@@ -189,6 +197,9 @@ impl A2aApp {
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
             own_legs: VecDeque::new(),
+            card_error: None,
+            card_retry_in: 0,
+            card_retry_wait: 0,
         }
     }
 
@@ -208,6 +219,9 @@ impl A2aApp {
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
             own_legs: VecDeque::new(),
+            card_error: None,
+            card_retry_in: 0,
+            card_retry_wait: 0,
         }
     }
 
