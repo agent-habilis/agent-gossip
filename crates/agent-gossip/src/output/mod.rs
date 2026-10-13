@@ -59,6 +59,7 @@ pub(crate) struct TaskMessageLeg<'a> {
     pub state: Option<crate::a2a::TaskState>,
     pub text: &'a str,
     pub label: Option<&'a str>,
+    pub message: Option<&'a crate::a2a::Message>,
     pub is_self: bool,
 }
 
@@ -309,6 +310,7 @@ impl Output {
             leg.text.to_owned(),
         );
         let label = leg.label.map(ToOwned::to_owned);
+        let message = leg.message.cloned().map(Box::new);
         self.dispatch(
             || OutputEvent::TaskMessage {
                 id: id.clone(),
@@ -319,6 +321,7 @@ impl Output {
                 state,
                 text: text.clone(),
                 label: label.clone(),
+                message: message.clone(),
                 is_self,
             },
             |mode| match mode {
@@ -331,6 +334,7 @@ impl Output {
                     state,
                     text: &text,
                     label: label.as_deref(),
+                    message: message.as_deref(),
                     is_self,
                 })),
                 OutputMode::Silent => {}

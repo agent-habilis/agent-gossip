@@ -1181,6 +1181,87 @@ async fn build_offload_parts(
     Ok(parts)
 }
 
+/// Who attaches which file to an `a2a call` — grouped so [`attach_call_file`]
+/// stays within the argument budget alongside its state/app handles.
+pub(crate) struct CallFile<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) file: FileRef,
+}
+
+/// The id a call's blob group is named by, and whether that group is new.
+/// A follow-up on a task we hold joins that task's group. Any other call has
+/// no task of ours to reap its blob (a first call has none yet, and a follow-up
+/// on an unknown task may be rejected or accepted by the worker), so it owns a
+/// group under its own id: a retry's file must not share a group with the
+/// timed-out call that it replaces.
+fn call_blob_group(
+    task_id: Option<crate::a2a::TaskId>,
+    tasks: &std::collections::HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
+) -> (crate::a2a::TaskId, bool) {
+    match task_id {
+        Some(task_id) if tasks.contains_key(&task_id) => (task_id, false),
+        _ => (crate::a2a::TaskId::random(), true),
+    }
+}
+
+/// The blob group a call owns until a task adopts it.
+pub(crate) struct CallBlob {
+    pub(crate) group: habilis_network::ops::blob::ContentId,
+    /// Whether the call creates the task, rather than follows up on one.
+    pub(crate) opens_task: bool,
+}
+
+/// Offload `file` and put its `Part.url` first among the parts of the
+/// `SendMessage` in `params` (`a2a call --file`). An empty text part — the
+/// `--text`-less sugar — is dropped, as `build_offload_parts` drops it.
+///
+/// A follow-up's blob on a task we hold joins its task's content group, so the
+/// task sweep reaps it. Any other call's blob goes in a fresh group, which is
+/// returned: the caller owns its eviction. A first call has no task id yet —
+/// the worker mints it.
+///
+/// # Errors
+/// When `params` carries no A2A `message`, or the offload fails.
+pub(crate) async fn attach_call_file(
+    params: &mut serde_json::Value,
+    attachment: CallFile<'_>,
+    state: &EventLoopState,
+    app: &mut A2aApp,
+) -> anyhow::Result<Option<CallBlob>> {
+    let CallFile { mesh, author, file } = attachment;
+    let slot = params
+        .get_mut("message")
+        .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
+    let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
+    let opens_task = message.task_id.is_none();
+    let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
+    let mut parts = build_offload_parts(
+        OffloadTextParams {
+            mesh,
+            author,
+            task_id: &group_id,
+            text: "",
+            file: Some(file),
+        },
+        state,
+        app,
+    )
+    .await?;
+    parts.extend(
+        message
+            .parts
+            .into_iter()
+            .filter(|part| part.text.as_deref() != Some("")),
+    );
+    message.parts = parts;
+    *slot = serde_json::to_value(message)?;
+    Ok(fresh_group.then(|| CallBlob {
+        group: habilis_network::ops::blob::ContentId::new(group_id.as_str()),
+        opens_task,
+    }))
+}
+
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
 /// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
 /// so the state/sender/out handles stay their own leading params.
@@ -1418,6 +1499,9 @@ pub(crate) struct BroadcastA2aCallParams<'a> {
     pub(crate) params: serde_json::Value,
     pub(crate) timeout: std::time::Duration,
     pub(crate) responder: crate::a2a::app::A2aResponder,
+    /// `a2a call --file`: attached only once the peer check passes, so a call
+    /// that cannot go out spools nothing.
+    pub(crate) file: Option<FileRef>,
 }
 
 /// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
@@ -1437,7 +1521,9 @@ pub(crate) async fn broadcast_a2a_call(
         params,
         timeout,
         responder,
+        file,
     } = call;
+    let mut params = params;
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
     };
@@ -1458,8 +1544,24 @@ pub(crate) async fn broadcast_a2a_call(
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
+    let blob = match file {
+        None => None,
+        Some(file) => {
+            let attachment = CallFile { mesh, author, file };
+            match attach_call_file(&mut params, attachment, state, app).await {
+                Ok(blob) => blob,
+                Err(error) => {
+                    responder.send_response(&rpc_error(-32602, &error.to_string()));
+                    return;
+                }
+            }
+        }
+    };
+    let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
+    let blob_group = blob.map(|blob| blob.group);
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::new(envelope.to_string()) else {
+        app.orphan_blob(blob_group);
         responder.send_response(&rpc_error(
             -32602,
             "request params contain control characters",
@@ -1470,6 +1572,7 @@ pub(crate) async fn broadcast_a2a_call(
     let body = match seal_directed(state, &peer, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
+            app.orphan_blob(blob_group);
             responder.send_response(&rpc_error(-32603, &error.to_string()));
             return;
         }
@@ -1498,6 +1601,8 @@ pub(crate) async fn broadcast_a2a_call(
         peer,
         deadline,
         responder,
+        blob_group,
+        opens_task,
     }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
@@ -1818,6 +1923,7 @@ pub(crate) async fn handle_session_request(
                     params: rpc_params,
                     timeout,
                     responder: crate::a2a::app::A2aResponder::Typed(resp),
+                    file: None,
                 },
                 state,
                 app,
@@ -1897,5 +2003,77 @@ mod split_body_tests {
         // `MAX_SHARD_TOTAL` therefore needs more than the cap and is refused.
         let body = "x".repeat(MAX_SHARD_TOTAL as usize + 1);
         assert!(split_body(&body, 1).is_none());
+    }
+}
+
+#[cfg(test)]
+mod call_blob_group_tests {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    use habilis_network::protocol::Nickname;
+
+    use super::call_blob_group;
+    use crate::a2a::task::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState};
+
+    /// A follow-up on a task this node does not hold has no task of ours to
+    /// reap its blob, whether the worker rejects it or holds the task itself:
+    /// the call must own a fresh group for the waiter to evict.
+    #[test]
+    fn a_follow_up_on_an_unknown_task_owns_a_fresh_group() {
+        let tasks = HashMap::new();
+        let unknown = TaskId::random();
+
+        let (group_id, fresh_group) = call_blob_group(Some(unknown.clone()), &tasks);
+
+        assert_ne!(
+            group_id, unknown,
+            "the group is not the content group of a task"
+        );
+        assert!(fresh_group, "the blob has no task to be reaped with");
+    }
+
+    /// A follow-up on a held task joins that task's group, which the task sweep
+    /// reaps.
+    #[test]
+    fn a_follow_up_on_a_known_task_joins_its_group() {
+        let mut tasks = HashMap::new();
+        let known = TaskId::random();
+        adopt_initiator(
+            &mut tasks,
+            AdoptInitiatorParams {
+                task_id: &known,
+                peer: &Nickname::from("bob"),
+                task_state: TaskState::Working,
+                now: Instant::now(),
+            },
+        );
+
+        let (task_id, fresh_group) = call_blob_group(Some(known.clone()), &tasks);
+
+        assert_eq!(task_id, known);
+        assert!(!fresh_group, "the task sweep reaps the blob");
+    }
+
+    /// Two timed-out follow-ups on the same unknown task are two calls with two
+    /// files. Each owns its group, so the eviction of one cannot take the blob
+    /// of a retry that the task now holds.
+    #[test]
+    fn a_retried_follow_up_on_an_unknown_task_gets_its_own_group() {
+        let tasks = HashMap::new();
+        let unknown = TaskId::random();
+
+        let (first, _) = call_blob_group(Some(unknown.clone()), &tasks);
+        let (retry, _) = call_blob_group(Some(unknown), &tasks);
+
+        assert_ne!(first, retry);
+    }
+
+    #[test]
+    fn a_first_call_owns_a_fresh_group() {
+        let (_, fresh_group) = call_blob_group(None, &HashMap::new());
+
+        assert!(fresh_group);
     }
 }

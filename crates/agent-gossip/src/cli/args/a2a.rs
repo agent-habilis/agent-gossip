@@ -163,6 +163,8 @@ pub(crate) enum A2aAction {
     /// to), `mesh/state.get`, `mesh/meta.get`, and `SendMessage` (task
     /// creation: no `--task-id` opens a task the peer mints and returns;
     /// `--task-id` is a follow-up). Mutating global ops are refused.
+    /// `--file` attaches a file to a `SendMessage`, as `a2a artifact --file`
+    /// does.
     ///
     /// This always opens or advances a **task**. For chat, use `a2a broadcast`
     /// or `a2a msg`. Exits non-zero when the response is an error or times out.
@@ -208,6 +210,19 @@ pub(crate) enum A2aAction {
         /// How long to wait for the peer's response, in seconds.
         #[arg(long, default_value_t = crate::a2a::tuning::CALL_TIMEOUT_SECS)]
         timeout_secs: u64,
+
+        /// Attach a file to the `SendMessage`, transferred peer-to-peer over
+        /// the blob channel and referenced as a Part.url. Works on a new task
+        /// and on a `--task-id` follow-up; the peer fetches it with
+        /// `agent-gossip a2a fetch <ticket>`.
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// Filename to advertise for --file (defaults to the file's own name).
+        #[arg(long, requires = "file")]
+        file_name: Option<String>,
+        /// MIME type to advertise for --file (e.g. application/x-tar).
+        #[arg(long, requires = "file")]
+        file_mime: Option<String>,
     },
 
     /// Worker-emit a task `TaskStatusUpdate` (the A2A streaming plane): move a
