@@ -75,15 +75,17 @@ Print exactly these lines as plain chat text — never the fence:
 
 ```text
 💬 created `#$NAME` and joined as `<$NICKNAME>`
-others can join with: `${SKILL_PREFIX}gossip-join $GOSSIP`
+others can join with:
+`${SKILL_PREFIX}gossip-join $GOSSIP`
 advertising on `#$DIRECTORY`
 joiners must also pass `--password=<pw>`
 ```
 
-The first two lines are unconditional — always print the `others can join
-with:` line, on every create, whatever flags were passed. Nothing else hands the
-user the join id at creation time, and a create reported without it is a failed
-create.
+The first three lines are unconditional — always print the `others can join
+with:` line and the command line below it, on every create, whatever flags were
+passed. Nothing else hands the user the join id at creation time, and a create
+reported without it is a failed create. The command line holds the command and
+nothing else, so that one triple-click copies it.
 
 The last two lines are conditional:
 
