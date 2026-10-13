@@ -127,7 +127,7 @@ pub(crate) struct A2aApp {
     pub blob_server: Option<habilis_network::ops::blob::BlobServer>,
     /// The blob group of each first `a2a call --file`, keyed by the task the
     /// worker minted for it, so the task sweep reaps the blob with the task.
-    call_blobs: HashMap<TaskId, habilis_network::ops::blob::ContentId>,
+    call_blobs: HashMap<TaskId, Vec<habilis_network::ops::blob::ContentId>>,
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
@@ -357,8 +357,8 @@ impl A2aApp {
             let waiter = self.a2a_waiters.swap_remove(index);
             let adopted = self.adopt_returned_task(from, body);
             match (waiter.blob_group, adopted) {
-                (Some(group), Some(task_id)) if !self.call_blobs.contains_key(&task_id) => {
-                    self.call_blobs.insert(task_id, group);
+                (Some(group), Some(task_id)) => {
+                    self.call_blobs.entry(task_id).or_default().push(group);
                 }
                 (group, _) => self.orphan_blob(group),
             }
@@ -375,16 +375,17 @@ impl A2aApp {
     /// The call timed out, but the worker accepted it anyway. When the call
     /// opened the task, the caller already reported a failure, so the task is
     /// cancelled. A follow-up on a task the worker already held opened nothing,
-    /// so it is only adopted. Either way the blob goes with the task when the
-    /// sweep reaps it.
+    /// so it is only adopted. Either way the blob group joins the task's other
+    /// groups and goes with the task when the sweep reaps it. A reply that
+    /// returns no task cannot take the group: the next sweep evicts it.
     ///
     /// A followed-up task is then in the registry although the agent was told
     /// the call timed out, and no task event shows it.
     fn adopt_late_reply(&mut self, orphan_index: usize, from: &Nickname, body: &str) {
         let adopted = self.adopt_returned_task(from, body);
-        let Some(task_id) = adopted.filter(|task_id| !self.call_blobs.contains_key(task_id)) else {
-            // The reply cannot take the group, and it answers the call once:
-            // the next sweep evicts the group and the call awaits nothing more.
+        let Some(task_id) = adopted else {
+            // The reply answers the call once: the next sweep evicts the group
+            // and the call awaits nothing more.
             if let Some(orphan) = self.orphan_blobs.get_mut(orphan_index) {
                 orphan.late_reply = None;
                 orphan.evict_at = Instant::now();
@@ -396,7 +397,10 @@ impl A2aApp {
             .late_reply
             .as_ref()
             .is_some_and(|late| late.opens_task);
-        self.call_blobs.insert(task_id.clone(), orphan.group);
+        self.call_blobs
+            .entry(task_id.clone())
+            .or_default()
+            .push(orphan.group);
         if opened {
             if let Some(rec) = self.tasks.get_mut(&task_id) {
                 rec.state = crate::a2a::TaskState::Canceled;
@@ -418,8 +422,8 @@ impl A2aApp {
         }));
     }
 
-    /// The blob groups the task sweep must evict at `now`: those of the
-    /// `reaped` tasks' first calls, and every orphan that is due.
+    /// The blob groups the task sweep must evict at `now`: every group of the
+    /// `reaped` tasks' calls, and every orphan that is due.
     pub(crate) fn take_call_blobs(
         &mut self,
         reaped: &[TaskId],
@@ -433,7 +437,8 @@ impl A2aApp {
         groups.extend(
             reaped
                 .iter()
-                .filter_map(|task_id| self.call_blobs.remove(task_id)),
+                .filter_map(|task_id| self.call_blobs.remove(task_id))
+                .flatten(),
         );
         groups
     }
@@ -1147,10 +1152,10 @@ mod tests {
         );
     }
 
-    /// A late reply for a task whose blob group is already held cannot take the
-    /// call's group either: the next sweep evicts it.
+    /// A late reply for a task that already holds a blob group adds its own
+    /// group: the task owns both and the sweep evicts neither while it is live.
     #[test]
-    fn a_late_reply_for_a_task_with_a_blob_evicts_the_orphan_at_once() {
+    fn a_late_reply_for_a_task_with_a_blob_adds_its_group_to_the_task() {
         let mut app = super::A2aApp::new();
         let task_id = TaskId::random();
         let created = serde_json::json!({
@@ -1172,15 +1177,77 @@ mod tests {
         app.fulfill_a2a_waiter(&corr, &Nickname::from("bob"), &created.to_string());
 
         assert!(!app.has_a2a_waiter(&corr, &Nickname::from("bob")));
-        assert_eq!(
-            app.take_call_blobs(&[], Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new(
-                "group-late-held"
-            )]
-        );
+        assert!(app.take_call_blobs(&[], Instant::now()).is_empty());
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-held")]
+            vec![
+                habilis_network::ops::blob::ContentId::new("group-held"),
+                habilis_network::ops::blob::ContentId::new("group-late-held"),
+            ]
+        );
+    }
+
+    /// Two follow-up calls on one task, each with its own file. The task owns
+    /// both groups, whichever reply comes first, and no sweep evicts one while
+    /// the task is live.
+    fn two_follow_ups_on_one_task(late_reply_first: bool) -> (super::A2aApp, TaskId) {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let accepted = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_WORKING" } } }
+        })
+        .to_string();
+        let reply = |target: &mut super::A2aApp, corr: &str| {
+            target.fulfill_a2a_waiter(
+                &habilis_network::protocol::CorrId::from(corr),
+                &Nickname::from("bob"),
+                &accepted,
+            );
+        };
+        let mut timed_out = waiter_with_blob("corr-first", "group-first");
+        timed_out.opens_task = false;
+        timed_out.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(timed_out);
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        let mut second = waiter_with_blob("corr-second", "group-second");
+        second.opens_task = false;
+        app.a2a_waiters.push(second);
+
+        if late_reply_first {
+            reply(&mut app, "corr-first");
+            reply(&mut app, "corr-second");
+        } else {
+            reply(&mut app, "corr-second");
+            reply(&mut app, "corr-first");
+        }
+        (app, task_id)
+    }
+
+    #[test]
+    fn a_task_keeps_both_groups_when_the_on_time_reply_comes_first() {
+        let (mut app, task_id) = two_follow_ups_on_one_task(false);
+
+        assert!(app.take_call_blobs(&[], Instant::now()).is_empty());
+        assert_eq!(
+            app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
+            vec![
+                habilis_network::ops::blob::ContentId::new("group-second"),
+                habilis_network::ops::blob::ContentId::new("group-first"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_task_keeps_both_groups_when_the_late_reply_comes_first() {
+        let (mut app, task_id) = two_follow_ups_on_one_task(true);
+
+        assert!(app.take_call_blobs(&[], Instant::now()).is_empty());
+        assert_eq!(
+            app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
+            vec![
+                habilis_network::ops::blob::ContentId::new("group-first"),
+                habilis_network::ops::blob::ContentId::new("group-second"),
+            ]
         );
     }
 }
