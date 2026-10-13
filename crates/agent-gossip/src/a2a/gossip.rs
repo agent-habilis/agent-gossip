@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
-use fofoca::protocol::MeshId;
-use fofoca::protocol::Message as Frame;
-use fofoca::protocol::MessageBody;
+use habilis_network::protocol::MeshId;
+use habilis_network::protocol::Message as Frame;
+use habilis_network::protocol::MessageBody;
 
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
@@ -398,7 +398,11 @@ pub fn frame_task_state(frame: &Frame) -> Option<TaskState> {
 /// or an artifact's parts.
 #[must_use]
 pub fn task_text(frame: &Frame) -> String {
-    match frame.kind.app_tag().map(fofoca::protocol::AppTag::as_str) {
+    match frame
+        .kind
+        .app_tag()
+        .map(habilis_network::protocol::AppTag::as_str)
+    {
         Some(wire::STATUS) => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
             .ok()
             .and_then(|payload| payload.status.message.map(|msg| display_text(&msg)))
@@ -416,7 +420,7 @@ pub fn task_text(frame: &Frame) -> String {
 pub(crate) fn test_status_frame(
     mesh: &MeshId,
     state: TaskState,
-    to: Option<fofoca::protocol::Nickname>,
+    to: Option<habilis_network::protocol::Nickname>,
 ) -> Frame {
     let status = status_update(
         mesh,
@@ -429,9 +433,9 @@ pub(crate) fn test_status_frame(
     );
     Frame::new_app(
         mesh,
-        &fofoca::protocol::Nickname::from("author"),
-        fofoca::protocol::AppFrameParams {
-            tag: fofoca::protocol::AppTag::from(wire::STATUS),
+        &habilis_network::protocol::Nickname::from("author"),
+        habilis_network::protocol::AppFrameParams {
+            tag: habilis_network::protocol::AppTag::from(wire::STATUS),
             to,
             corr: None,
             body: payload_body(&status).expect("status body"),
@@ -441,9 +445,9 @@ pub(crate) fn test_status_frame(
 
 #[cfg(test)]
 mod tests {
-    use fofoca::protocol::MeshId;
-    use fofoca::protocol::MessageId;
-    use fofoca::protocol::MessageKind;
+    use habilis_network::protocol::MeshId;
+    use habilis_network::protocol::MessageId;
+    use habilis_network::protocol::MessageKind;
 
     use super::{
         Frame, broadcast_payload, compose_broadcast, compose_msg, display_text, msg_payload,

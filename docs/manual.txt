@@ -192,22 +192,20 @@ COMMANDS
                      --lookup relay with no --relay-url uses the default
                      relay set.
 
-              --transport p2p|p2p,relay
-                     Payload path policy (see "TRANSPORT"), baked into the id
-                     and inherited by
-                     every joiner. p2p (the default) sends the payload over
-                     direct paths only; the relay serves lookup only
-                     (bootstrap dial, signalling, NAT traversal), so a pair
-                     that cannot connect directly stays unlinked. p2p,relay
-                     lets the payload also fall back to the relay when a
-                     direct path fails. It changes the gossip id and requires
-                     relay in --lookup. relay without p2p is an error.
+              --transport LIST
+                     Comma-separated paths that may carry the payload (see
+                     "TRANSPORT"): udp, webrtc, multihop, gossip, relay.
+                     Baked into the id and inherited by every joiner. The
+                     list is literal and must name udp or webrtc. Without
+                     it, a gossip carries udp,webrtc,gossip, plus relay when
+                     relay is in --lookup.
 
               --advertise[=DIRECTORY]
                      List this gossip in a directory so others find it with
                      discover. Bare --advertise uses the global directory; a
                      value names a specific directory. Requires a lookup that
-                     reaches other machines.
+                     reaches other machines: without --lookup, --advertise
+                     takes mdns,dht,relay.
                      Broadcasting the identifier makes the gossip OPEN:
                      anyone browsing that directory can join it — unless it is
                      also --password protected, in which case the listing alone
@@ -339,8 +337,8 @@ COMMANDS
               "#github.com/x". Capped at 32 chars (an over-long name ends in
               "…"), or "topic" if nothing valid survives. This affects the name
               only, never the seed. Networking is always the public preset
-              (mDNS + DHT + relay), with --transport p2p,relay: payload
-              falls back to the relay when a direct path fails.
+              (mDNS + DHT + relay), and the transport is udp,webrtc,gossip,relay:
+              payload falls back to the relay when a direct path fails.
 
               The string is the only coordination needed, so it is compared
               byte-for-byte after trimming surrounding whitespace — it is NOT
@@ -980,15 +978,24 @@ TRANSPORT
        separate choices. Both are create-time choices, carried in the
        identifier, and inherited by every joiner.
 
-       --transport p2p|p2p,relay
-                       create only. p2p (the default) sends the payload over
-                       direct paths only. The relay then serves lookup only
-                       (bootstrap dial, signalling, NAT traversal), so a pair
-                       that cannot connect directly stays unlinked.
-                       p2p,relay lets the payload also fall back to the
-                       relay when a direct path fails. It changes the gossip
-                       id and requires relay in --lookup. relay without p2p
-                       is an error.
+       --transport LIST
+                       create only. A comma-separated list of the paths that
+                       may carry the payload: udp, webrtc, multihop, gossip,
+                       relay. The list is literal: it names exactly what the
+                       gossip carries, and it changes the gossip id. It must
+                       name udp or webrtc, the direct paths.
+                       gossip carries the payload of a peer with no direct
+                       path in the frames of the gossip itself. multihop
+                       reaches a peer with no direct path through other
+                       members, and is off by default. Both need udp or
+                       webrtc in the list.
+                       relay lets the payload also fall back to the relay
+                       when a direct path fails. It requires relay in
+                       --lookup. Without relay, the relay serves lookup only
+                       (bootstrap dial, signalling, NAT traversal).
+                       Without --transport, a gossip carries
+                       udp,webrtc,gossip, plus relay when relay is in
+                       --lookup.
 
 DIRECTORIES
        A directory is a named, well-known public gossip that gossips advertise
@@ -1317,8 +1324,10 @@ MCP SERVER
               (string; advertise requires a lookup that reaches other
               machines), plus lookup (array of "mdns" | "dht" | "relay"),
               relay_urls (array of URL strings; requires "relay" in lookup),
-              and transport (array: ["p2p"] or ["p2p","relay"]). An empty
-              lookup makes a loopback-only gossip. An unknown param is
+              and transport (array of "udp" | "webrtc" | "multihop" | "gossip" |
+              "relay"; a literal list, omitted for the default). An empty
+              lookup makes a loopback-only gossip, or one with all three
+              lookups when advertise is true. An unknown param is
               rejected. The name, lookup and transport choices are baked into the
               identifier. Returns the gossip id, name, and your nickname.
               Advertised gossips are found with discover_gossips.

@@ -1,8 +1,8 @@
 //! `create` command args: mint and join a new gossip.
 
 use clap::Parser;
-use fofoca::protocol::Nickname;
-use fofoca::protocol::{DirectorySelection, MeshName};
+use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{DirectorySelection, MeshName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
@@ -29,10 +29,11 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub name: Option<MeshName>,
 
-    /// Which transports may carry mesh payload: `p2p` (direct paths only,
-    /// the default) or `p2p,relay` (also fall back to the relay). Baked into
-    /// the gossip id and inherited by every joiner. `relay` requires `relay`
-    /// in `--lookup`.
+    /// Which paths may carry mesh payload: any of `udp`, `webrtc`, `multihop`,
+    /// `gossip`, `relay`. The list is literal and needs `udp` or `webrtc`.
+    /// Absent, the default is `udp,webrtc,gossip`, plus `relay` when `relay` is
+    /// in `--lookup`. Baked into the gossip id and inherited by every joiner.
+    /// `relay` requires `relay` in `--lookup`.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub transport: Vec<Transport>,
 
@@ -83,8 +84,8 @@ impl CreateOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use fofoca::protocol::Nickname;
-    use fofoca::protocol::{DirectorySelection, MeshName};
+    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{DirectorySelection, MeshName};
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;

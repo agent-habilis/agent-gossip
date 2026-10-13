@@ -1,5 +1,5 @@
 use clap::Parser;
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 
@@ -24,7 +24,7 @@ pub(crate) struct LeaveOpts {
     /// Seconds to wait for a signalled daemon to drop its state file and stop
     /// answering its socket before reporting it unconfirmed. Hidden — a test
     /// knob. The default outlasts the engine's own leave budget.
-    #[arg(long, hide = true, default_value_t = fofoca::util::tuning::NODE_LEAVE_SECS + 2)]
+    #[arg(long, hide = true, default_value_t = habilis_network::util::tuning::NODE_LEAVE_SECS + 2)]
     pub confirm_timeout_secs: u64,
 
     #[command(flatten)]
@@ -50,7 +50,7 @@ mod tests {
         // rendezvous and drop its state file; confirming sooner reports a
         // live daemon as gone, and a relaunch then races it.
         assert!(
-            opts.confirm_timeout_secs > fofoca::util::tuning::NODE_LEAVE_SECS,
+            opts.confirm_timeout_secs > habilis_network::util::tuning::NODE_LEAVE_SECS,
             "leave gives up before the daemon's own leave budget: {}",
             opts.confirm_timeout_secs
         );
@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn leave_accepts_explicit_target() {
-        let expected = fofoca::protocol::MeshId::from("AbCdEf1234");
+        let expected = habilis_network::protocol::MeshId::from("AbCdEf1234");
         let cli = Cli::parse_from([
             "agent-gossip",
             "leave",

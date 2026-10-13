@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use fofoca::protocol::Nickname;
-use fofoca::runtime::state_file::read_session_entry;
-use fofoca::util::process;
+use habilis_network::protocol::Nickname;
+use habilis_network::runtime::state_file::read_session_entry;
+use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
 use super::bell;
@@ -165,9 +165,10 @@ struct Owner {
 /// tell apart from a live one.
 async fn live_owners() -> Vec<Owner> {
     let mut owners = Vec::new();
-    for path in fofoca::runtime::ipc::active_socket_paths(&runtime_base()) {
+    for path in habilis_network::runtime::ipc::active_socket_paths(&runtime_base()) {
         let Ok(response) =
-            fofoca::runtime::ipc::send_to_path(&path, &crate::a2a::ipc::IpcCommand::Info).await
+            habilis_network::runtime::ipc::send_to_path(&path, &crate::a2a::ipc::IpcCommand::Info)
+                .await
         else {
             continue;
         };
@@ -396,7 +397,7 @@ fn unarmed(
 }
 
 fn is_ready(target: &Target) -> bool {
-    fofoca::runtime::state_file::read_snapshot(&target.path)
+    habilis_network::runtime::state_file::read_snapshot(&target.path)
         .ok()
         .flatten()
         .is_some_and(|snapshot| snapshot.ready && super::ready_is_fresh(snapshot.last_updated))
@@ -508,7 +509,8 @@ mod tests {
     #[test]
     fn owned_by_follows_the_recorded_owner() {
         let own = std::process::id();
-        let parent = fofoca::util::process::parent_of(own).expect("test process has a parent");
+        let parent =
+            habilis_network::util::process::parent_of(own).expect("test process has a parent");
         let mut detached = target("aaaa", "one-two", u32::MAX);
         assert!(!owned_by(&detached, own), "no owner recorded");
         detached.owner_pid = Some(own);

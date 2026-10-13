@@ -1586,6 +1586,80 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     );
 }
 
+/// The `self_id` that the running daemon's `topology` reports. The daemon
+/// reads it from its multihop handle, so it is empty when the session has none.
+/// `node` names the daemon that is asked, for the failure text.
+fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
+    let out = common::test_cmd()
+        .args(["topology", "--gossip", mesh, "--nickname", nickname])
+        .output()
+        .expect("failed to run topology");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "topology of the {node} ({nickname}) failed: status {:?}\nstdout: {stdout}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let reply: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|error| {
+        panic!(
+            "topology of the {node} ({nickname}) printed no JSON object: {error}\nstdout: {stdout}"
+        )
+    });
+    reply["topology"]["self_id"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!("topology of the {node} ({nickname}) has no self_id\nstdout: {stdout}")
+        })
+        .to_owned()
+}
+
+/// Create a mesh with `create_args`, join it, and assert which sessions hold a
+/// multihop handle. The joiner takes no transport flag: its policy can come
+/// only from the mesh id.
+fn assert_joiner_multihop(name: &str, create_args: &[&str], expect_multihop: bool) {
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create_args(name, create_args, &[]);
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    let joiner = Node::join(&mesh, "policy-joiner");
+    assert!(
+        joiner.wait_ready(&mesh),
+        "joiner socket never appeared\nlog tail:\n{}",
+        joiner.log_tail(15),
+    );
+    // The creator is the control: it proves `topology` tells the two policies apart.
+    let creator_id = multihop_self_id(&mesh, &creator.nickname, "creator");
+    assert_eq!(
+        !creator_id.is_empty(),
+        expect_multihop,
+        "creator multihop handle, self_id {creator_id:?}"
+    );
+    let joiner_id = multihop_self_id(&mesh, &joiner.nickname, "joiner");
+    assert_eq!(
+        !joiner_id.is_empty(),
+        expect_multihop,
+        "the joiner must take its transport policy from the mesh id, self_id {joiner_id:?}"
+    );
+}
+
+/// A mesh id made with `udp,webrtc,multihop` gives its joiner a multihop
+/// handle, although the app default has none.
+#[test]
+fn test_joiner_takes_multihop_from_the_mesh_id() {
+    assert_joiner_multihop(
+        "join-policy-mh",
+        &["--transport", "udp,webrtc,multihop"],
+        true,
+    );
+}
+
+/// A mesh id made with the app default (`udp,webrtc,gossip`) gives its joiner
+/// no multihop handle.
+#[test]
+fn test_joiner_takes_no_multihop_from_the_app_default_id() {
+    assert_joiner_multihop("join-policy-default", &[], false);
+}
+
 /// The headline resilience guarantee: a mesh survives its creator's death
 /// as long as any member is still up. Creator + bystander form a mesh; the
 /// creator is hard-killed; a brand-new joiner must still bootstrap — proof
@@ -2449,7 +2523,7 @@ fn test_steady_state_no_resend_churn() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("RUST_LOG", "fofoca::gossip=debug"),
+        ("RUST_LOG", "habilis_network::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
         ("--antientropy-interval-secs", "2"),
     ];
@@ -3648,7 +3722,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
     let mut zombie = Command::new("true").spawn().unwrap();
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
-    while fofoca::util::process::live_start_time(zombie.id()).is_some() {
+    while habilis_network::util::process::live_start_time(zombie.id()).is_some() {
         assert!(Instant::now() < exited, "the zombie owner never exited");
         std::thread::sleep(POLL);
     }
@@ -3685,7 +3759,7 @@ fn owner_pid_launcher_reports_flag_errors() {
             .expect("failed to spawn the owner"),
     );
     let owner_pid = owner.0.id().to_string();
-    let mesh = fofoca::protocol::MeshId::from("owner-flag-error").to_string();
+    let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
     let bad_invocations: [&[&str]; 2] = [
         &["join", &mesh, "--name", "not-allowed"],
         &["create", "--name", "flag-error", "--transport", "relay"],

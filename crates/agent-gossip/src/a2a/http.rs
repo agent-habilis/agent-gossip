@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use fofoca::protocol::Nickname;
+use habilis_network::protocol::Nickname;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;

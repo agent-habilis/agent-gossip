@@ -6,13 +6,13 @@
 //! flattening the full server group would list `--state-file` / `--max-peers` /
 //! `--filter-self` / `--a2a-serve` in its `--help` as silent no-ops.
 //!
-//! Not in `--help`. Production runs on the `fofoca::util::tuning`
+//! Not in `--help`. Production runs on the `habilis_network::util::tuning`
 //! defaults; the subprocess test suite passes these to run with short timings.
 //! These replace the former env-var overrides — see
-//! `fofoca::util::tuning`.
+//! `habilis_network::util::tuning`.
 
 use clap::Parser;
-use fofoca::util::tuning as defaults;
+use habilis_network::util::tuning as defaults;
 
 #[derive(Parser, Debug)]
 pub(crate) struct TuningOpts {
@@ -103,18 +103,12 @@ pub(crate) struct TuningOpts {
     /// Narrow topic-mesh lookups to mDNS only (no DHT, no relay).
     #[arg(long, hide = true, default_value_t = false)]
     pub topic_mdns_only: bool,
-
-    /// Register the multi-hop transport on the peer endpoint: a directed
-    /// message to a peer with no direct path rides the multihop path (relayed
-    /// through peers). Stands up a second underlay endpoint.
-    #[arg(long, hide = true, default_value_t = false)]
-    pub multihop: bool,
 }
 
 impl TuningOpts {
-    /// The process tuning carried by these flags, for [`fofoca::runtime::tuning::init`].
-    pub(crate) fn tuning(&self) -> fofoca::runtime::tuning::Tuning {
-        fofoca::runtime::tuning::Tuning {
+    /// The process tuning carried by these flags, for [`habilis_network::runtime::tuning::init`].
+    pub(crate) fn tuning(&self) -> habilis_network::runtime::tuning::Tuning {
+        habilis_network::runtime::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
             heal_interval_secs: self.heal_interval_secs,

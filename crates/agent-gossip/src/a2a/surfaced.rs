@@ -495,7 +495,7 @@ impl SurfacedState {
 mod tests {
     use std::time::Duration;
 
-    use fofoca::protocol::{Channel, MeshId, Message, MessageKind, Nickname};
+    use habilis_network::protocol::{Channel, MeshId, Message, MessageKind, Nickname};
     use tokio::time::Instant as TokioInstant;
 
     use super::{

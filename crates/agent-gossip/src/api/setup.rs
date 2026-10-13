@@ -1,6 +1,6 @@
-use fofoca::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
-use fofoca::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved};
-use fofoca::runtime::{SetupParams, setup_mesh};
+use habilis_network::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
+use habilis_network::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved};
+use habilis_network::runtime::{SetupParams, setup_mesh};
 
 use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
@@ -54,7 +54,7 @@ pub(super) async fn create_setup(
         nickname: cfg.nickname,
         config,
         advertise,
-        password: cfg.password.map(fofoca::protocol::Password::new),
+        password: cfg.password.map(habilis_network::protocol::Password::new),
         // Invite-only is a CLI-driven feature; the library api does not expose
         // it yet (a documented follow-up).
         invite_only: false,
@@ -73,6 +73,7 @@ pub(super) async fn create_setup(
         SetupParams {
             author,
             max_peers,
+            max_direct: 0,
             runtime_base: Some(crate::runtime_base()),
             state_file: None,
             sink,
@@ -81,8 +82,7 @@ pub(super) async fn create_setup(
             // (see `bridge::expose`), so there is no accept() loop to share.
             endpoint: None,
             protocols: Vec::new(),
-            transports: fofoca::net::TransportOpts::default(),
-            multihop: false,
+            transports: habilis_network::net::TransportOpts::default(),
             per_peer_gate: Some(crate::a2a::card_gate()),
             cohost: None,
             live_count: live_count.clone(),
@@ -111,7 +111,7 @@ pub(super) async fn join_setup(
     let resolved = JoinParams {
         target: cfg.target,
         nickname: cfg.nickname,
-        password: cfg.password.map(fofoca::protocol::Password::new),
+        password: cfg.password.map(habilis_network::protocol::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
@@ -147,6 +147,7 @@ async fn resolved_setup(
         SetupParams {
             author,
             max_peers,
+            max_direct: 0,
             runtime_base: Some(crate::runtime_base()),
             state_file: None,
             sink,
@@ -155,8 +156,7 @@ async fn resolved_setup(
             // (see `bridge::expose`), so there is no accept() loop to share.
             endpoint: None,
             protocols: Vec::new(),
-            transports: fofoca::net::TransportOpts::default(),
-            multihop: false,
+            transports: habilis_network::net::TransportOpts::default(),
             per_peer_gate: Some(crate::a2a::card_gate()),
             cohost: None,
             live_count: None,

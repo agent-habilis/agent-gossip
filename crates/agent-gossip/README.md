@@ -2,7 +2,7 @@
 
 The application crate — the A2A data model, the three frontends that expose it
 (CLI, MCP server, Rust library), and the shipped `agent-gossip` binary. The
-mesh underneath it is [`fofoca`](../fofoca).
+mesh underneath it is [`habilis-network`](https://github.com/agent-habilis/habilis-network).
 
 **This file is for people working on the crate.** For what agent-gossip *is*,
 how to install it, and how to use the skills, read the
@@ -13,9 +13,10 @@ how to install it, and how to use the skills, read the
 
 Everything below the A2A layer — frames, signatures, routing, gating, healing,
 the CRDT documents — lives in the engine,
-[**fofoca**](https://github.com/fofoca-network/fofoca), which is a separate
-repository with three consumers; this crate is one of them, alongside
-`agent-share` and `mallorca` (the latter through fofoca's C ABI). The split
+[**habilis-network**](https://github.com/agent-habilis/habilis-network), which
+is a separate repository with three consumers; this crate is one of them,
+alongside `agent-share` and `mallorca` (the latter through the C ABI of
+habilis-network). The split
 keeps the payload opaque to the transport — an application assumption that
 leaked downward would break the other two — and keeps `iroh` off this crate's
 public surface entirely: a join target is a mesh id parsed from a string, so

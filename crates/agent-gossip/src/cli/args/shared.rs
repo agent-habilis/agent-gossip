@@ -6,7 +6,7 @@
 //! but not the daemon flags (`discover`) can take just those.
 
 use clap::Parser;
-use fofoca::util::tuning as defaults;
+use habilis_network::util::tuning as defaults;
 
 use super::legacy::LegacyOutput;
 use super::tuning::TuningOpts;

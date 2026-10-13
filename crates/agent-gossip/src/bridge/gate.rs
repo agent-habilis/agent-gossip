@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use fofoca::protocol::ct_eq;
+use habilis_network::protocol::ct_eq;
 
 use super::SECRET_LEN;
 

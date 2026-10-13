@@ -645,26 +645,26 @@ fn create_mesh_with_unknown_lookup_errors() {
 
 #[test]
 fn create_mesh_relay_transport_is_in_the_id() {
-    // `transport: ["p2p","relay"]` lets payload fall back to the relay,
+    // `relay` in the `transport` list lets payload fall back to the relay,
     // which is baked into the id — so it must differ from the same create
-    // with plain `["p2p"]`.
+    // without it.
     let mut client = McpClient::spawn();
     let p2p = tool_result_json(&client.tool_call(
         110,
         "create_gossip",
-        serde_json::json!({ "name": "transp2p", "lookup": ["relay"], "transport": ["p2p"] }),
+        serde_json::json!({ "name": "transp2p", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip"] }),
     ))
-    .expect("p2p create should succeed");
+    .expect("create without relay should succeed");
     let _ = client.tool_call(111, "leave_gossip", serde_json::json!({}));
 
     let relayed = tool_result_json(&client.tool_call(
         112,
         "create_gossip",
-        serde_json::json!({ "name": "transrelay", "lookup": ["relay"], "transport": ["p2p", "relay"] }),
+        serde_json::json!({ "name": "transrelay", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip", "relay"] }),
     ))
-    .expect("p2p,relay create should succeed");
+    .expect("create with relay should succeed");
 
-    let decoded: fofoca::protocol::Mesh = relayed["gossip"]
+    let decoded: habilis_network::protocol::Mesh = relayed["gossip"]
         .as_str()
         .unwrap()
         .parse()
@@ -680,6 +680,101 @@ fn create_mesh_relay_transport_is_in_the_id() {
     );
 }
 
+/// Create a gossip with `args` and decode the mesh id it returns.
+fn created_mesh(
+    client: &mut McpClient,
+    request_id: u64,
+    args: serde_json::Value,
+) -> habilis_network::protocol::Mesh {
+    let created = tool_result_json(&client.tool_call(request_id, "create_gossip", args))
+        .expect("create_gossip should succeed");
+    let mesh = created["gossip"]
+        .as_str()
+        .expect("the result names the gossip id")
+        .parse()
+        .expect("valid mesh id");
+    let _ = client.tool_call(request_id + 1, "leave_gossip", serde_json::json!({}));
+    mesh
+}
+
+fn app_policy(relay_transport: bool) -> habilis_network::protocol::TransportPolicy {
+    habilis_network::protocol::TransportPolicy {
+        udp: true,
+        webrtc: true,
+        multihop: false,
+        gossip: true,
+        relay_transport,
+    }
+}
+
+#[test]
+fn create_mesh_default_transport_is_udp_webrtc_gossip() {
+    let mut client = McpClient::spawn();
+    let mesh = created_mesh(
+        &mut client,
+        150,
+        serde_json::json!({ "name": "defaulttransport" }),
+    );
+    assert_eq!(
+        mesh.config.lookups,
+        habilis_network::protocol::LookupOpts::loopback()
+    );
+    assert_eq!(mesh.config.transport, app_policy(false));
+}
+
+#[test]
+fn create_mesh_relay_lookup_adds_relay_transport() {
+    let mut client = McpClient::spawn();
+    let mesh = created_mesh(
+        &mut client,
+        160,
+        serde_json::json!({ "name": "relaylookup", "lookup": ["relay"] }),
+    );
+    assert_eq!(mesh.config.transport, app_policy(true));
+}
+
+#[test]
+fn create_mesh_explicit_transport_list_is_literal() {
+    let mut client = McpClient::spawn();
+    let mesh = created_mesh(
+        &mut client,
+        170,
+        serde_json::json!({
+            "name": "literaltransport",
+            "lookup": ["relay"],
+            "transport": ["udp", "webrtc", "gossip"],
+        }),
+    );
+    assert_eq!(mesh.config.transport, app_policy(false));
+}
+
+#[test]
+fn create_mesh_transport_multihop_turns_multihop_on() {
+    let mut client = McpClient::spawn();
+    let mesh = created_mesh(
+        &mut client,
+        180,
+        serde_json::json!({ "name": "multihoptransport", "transport": ["udp", "webrtc", "multihop"] }),
+    );
+    assert!(mesh.config.transport.multihop);
+    assert!(!mesh.config.transport.gossip);
+}
+
+#[test]
+fn create_mesh_transport_p2p_is_rejected() {
+    let mut client = McpClient::spawn();
+    let resp = client.tool_call(
+        190,
+        "create_gossip",
+        serde_json::json!({ "name": "p2pword", "transport": ["p2p"] }),
+    );
+    let err = tool_error(&resp).expect("the removed `p2p` word should error");
+    assert!(
+        err.contains("udp") && err.contains("webrtc") && err.contains("gossip"),
+        "expected the error to name the valid transports, got: {err}"
+    );
+}
+
 #[test]
 fn create_mesh_transport_relay_alone_errors() {
     let mut client = McpClient::spawn();
@@ -688,10 +783,10 @@ fn create_mesh_transport_relay_alone_errors() {
         "create_gossip",
         serde_json::json!({ "name": "relayonly", "lookup": ["relay"], "transport": ["relay"] }),
     );
-    let err = tool_error(&resp).expect("p2p-disabled transport should error");
+    let err = tool_error(&resp).expect("a transport list with no direct path should error");
     assert!(
-        err.contains("p2p"),
-        "expected the error to name p2p, got: {err}"
+        err.contains("direct path"),
+        "expected the error to name the direct path requirement, got: {err}"
     );
 }
 
@@ -701,7 +796,7 @@ fn create_mesh_relay_transport_needs_relay_lookup() {
     let resp = client.tool_call(
         130,
         "create_gossip",
-        serde_json::json!({ "name": "norelaylookup", "transport": ["p2p", "relay"] }),
+        serde_json::json!({ "name": "norelaylookup", "transport": ["udp", "webrtc", "relay"] }),
     );
     let err = tool_error(&resp).expect("relay transport without a relay lookup should error");
     assert!(

@@ -9,7 +9,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use fofoca::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use habilis_network::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
@@ -545,7 +545,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             gossip: leg.mesh,
             author: leg.author,
             pubkey: None,
-            ts: fofoca::util::clock::unix_secs(),
+            ts: habilis_network::util::clock::unix_secs(),
             to: leg.peer,
             task_id: leg.task_id.to_owned(),
             kind: "message",
@@ -661,7 +661,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
-    channel: fofoca::protocol::Channel,
+    channel: habilis_network::protocol::Channel,
     event: &Message,
     document: &serde_json::Value,
     is_self: bool,
@@ -685,7 +685,7 @@ pub(super) fn format_state_json(
             // four peers, repeated on each change; readers take it on demand
             // with `meta get`. Only this JSON form drops it: the typed
             // `OutputEvent::StateChanged` keeps it for in-process readers.
-            document: (channel != fofoca::protocol::Channel::Meta).then_some(document),
+            document: (channel != habilis_network::protocol::Channel::Meta).then_some(document),
             display: state_display(event.author.as_str(), is_self, &what),
             is_self,
         })

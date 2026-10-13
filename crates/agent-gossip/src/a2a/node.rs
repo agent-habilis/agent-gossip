@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 
-use fofoca::embed::EventLoopState;
-use fofoca::embed::HandlerCtx;
-use fofoca::embed::{AppClass, InboundApp, NodeApp};
-use fofoca::embed::{IpcRequest, NodeDriver};
-use fofoca::net::add_peer_addr;
-use fofoca::protocol::MessageBody;
-use fofoca::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
-use fofoca::runtime::state_file::StateFile;
+use habilis_network::embed::EventLoopState;
+use habilis_network::embed::HandlerCtx;
+use habilis_network::embed::{AppClass, InboundApp, NodeApp};
+use habilis_network::embed::{IpcRequest, NodeDriver};
+use habilis_network::net::add_peer_addr;
+use habilis_network::protocol::MessageBody;
+use habilis_network::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
+use habilis_network::runtime::state_file::StateFile;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::app::{A2aApp, A2aResponder};
@@ -16,6 +16,9 @@ use crate::a2a::rpc::{A2aOp, A2aRequest};
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
+
+/// The longest wait, in ticks, between two tries to publish a card that did not publish.
+const CARD_RETRY_MAX_TICKS: u32 = 64;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
@@ -62,7 +65,7 @@ impl NodeApp for A2aApp {
         // this point, so the card's endpoint hint gets a real dial path (the
         // startup publish may have had none). A no-op if the address is
         // unchanged.
-        publish_own_card(state, ctx).await;
+        self.sync_own_card(state, ctx).await;
     }
 
     async fn on_peer_left(
@@ -100,13 +103,22 @@ impl NodeDriver for A2aApp {
     }
 
     async fn on_startup(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        publish_own_card(state, ctx).await;
+        self.sync_own_card(state, ctx).await;
     }
 
     async fn on_tick(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
+        // A card that did not publish is tried again, with a longer wait after each failure:
+        // no peer can send to us without it.
+        if self.card_error.is_some() {
+            if self.card_retry_in == 0 {
+                self.sync_own_card(state, ctx).await;
+            } else {
+                self.card_retry_in -= 1;
+            }
+        }
         crate::a2a::task::tick_task_sweep(state, self, ctx, &out).await;
         crate::a2a::task::tick_task_keepalive(state, self, ctx).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
@@ -137,6 +149,7 @@ impl NodeDriver for A2aApp {
     }
 
     fn drain_surfaced(&mut self) {
+        self.drain_delivered_legs();
         self.drain_surfaced_ring();
     }
 
@@ -170,7 +183,7 @@ impl NodeDriver for A2aApp {
                 app: self,
             },
             state,
-            ctx.sender,
+            ctx,
             &out,
         )
         .await
@@ -246,7 +259,7 @@ impl NodeDriver for A2aApp {
                 app: self,
             },
             state,
-            ctx.sender,
+            ctx,
             &out,
         )
         .await
@@ -258,17 +271,43 @@ impl NodeDriver for A2aApp {
 /// peer's canonical A2A self-description, architectural rather than app
 /// state). Unmeshed it buffers/backfills like any state event; agent-side
 /// facts (model/harness/host) stay the agent's merge.
-async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+///
+/// The card goes out in several merges, each within one frame: a frame of a passworded gossip
+/// is sealed, which makes it larger, and one merge of the whole card is then refused.
+///
+/// # Errors
+/// The card does not fit the frames, or a merge was refused.
+async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> anyhow::Result<()> {
     let seal_b58 = bs58::encode(state.identity().seal_public()).into_string();
     let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
     // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
     // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
     // Re-publishing with an unchanged address is a no-op (an automerge change
     // with no ops), so this is safe to call repeatedly.
-    let mut merge = crate::a2a::card::publish_merge(ctx.author, &card);
-    merge["peers"][ctx.author.as_str()]["card"]["endpoint"] =
-        crate::a2a::card::endpoint_hint(ctx.endpoint);
-    merge_own_meta_entry(state, ctx, merge, false).await;
+    let mut card = serde_json::to_value(&card)?;
+    card["endpoint"] = crate::a2a::card::endpoint_hint(ctx.endpoint);
+    // The cut follows the size of the frame that the gossip really sends: the merge becomes an
+    // automerge change, and a passworded gossip seals it. The same steps as the merge path.
+    let merges = {
+        let doc = state.doc(Channel::Meta);
+        let identity = state.identity().clone();
+        let actor_seed = *identity.public().as_bytes();
+        crate::a2a::card::publish_merges(ctx.author, &card, |merge| {
+            let Some(change) = doc.build_change(merge, &actor_seed)? else {
+                return Ok(0);
+            };
+            let (wire, _plain) = doc.compose_wire_body(&change, None)?;
+            Ok(
+                Message::new_channel_event(ctx.mesh, ctx.author, wire, Channel::Meta)
+                    .signed(&identity)
+                    .wire_len(),
+            )
+        })?
+    };
+    for merge in merges {
+        merge_own_meta_entry(state, ctx, merge, false).await?;
+    }
+    Ok(())
 }
 
 /// Delete this member's whole `/peers/<nick>` meta entry on graceful leave —
@@ -281,7 +320,32 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
 /// peers only ever write their own subtree.
 async fn retract_own_meta_entry(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let merge = crate::a2a::card::retract_merge(ctx.author);
-    merge_own_meta_entry(state, ctx, merge, true).await;
+    // Best effort at leave: the failure is logged by the merge.
+    let _ = merge_own_meta_entry(state, ctx, merge, true).await;
+}
+
+impl A2aApp {
+    /// Publish our card, and keep `card_error` and its `/peers/<nick>/card_error` mirror in step
+    /// with the outcome. A failure is retried on the ticks that the backoff allows (see
+    /// `on_tick`).
+    async fn sync_own_card(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+        let failure = publish_own_card(state, ctx).await.err().map(|error| {
+            // The reason is read by peers: one line, and no more than a line holds.
+            error.to_string().chars().take(200).collect::<String>()
+        });
+        if failure.is_some() {
+            self.card_retry_wait = (self.card_retry_wait.max(1) * 2).min(CARD_RETRY_MAX_TICKS);
+            self.card_retry_in = self.card_retry_wait;
+        } else {
+            self.card_retry_wait = 0;
+            self.card_retry_in = 0;
+        }
+        if failure != self.card_error {
+            let merge = crate::a2a::card::card_error_merge(ctx.author, failure.as_deref());
+            let _ = merge_own_meta_entry(state, ctx, merge, false).await;
+            self.card_error = failure;
+        }
+    }
 }
 
 /// The daemon's write path for its own `/peers/<nick>` meta entry. The daemon
@@ -296,15 +360,18 @@ async fn retract_own_meta_entry(state: &mut EventLoopState, ctx: &HandlerCtx<'_>
 /// retraction only: a leave-time frame dropped into a silently-linkless
 /// overlay dies with the leaver, and anti-entropy can never heal it (see
 /// `gossip::unicast_farewell`).
+///
+/// # Errors
+/// The merge was refused, for example because its frame is over the size limit.
 async fn merge_own_meta_entry(
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
     merge: serde_json::Value,
     farewell: bool,
-) {
-    match fofoca::ops::broadcast_state_merge(
+) -> anyhow::Result<()> {
+    match habilis_network::ops::broadcast_state_merge(
         state,
-        fofoca::ops::StateMergeParams {
+        habilis_network::ops::StateMergeParams {
             mesh: ctx.mesh,
             author: ctx.author,
             merge,
@@ -319,11 +386,13 @@ async fn merge_own_meta_entry(
     .await
     {
         Ok(Some(bytes)) if farewell => {
-            fofoca::ops::unicast_farewell(state, &bytes);
+            habilis_network::ops::unicast_farewell(state, &bytes);
+            Ok(())
         }
-        Ok(_) => {}
+        Ok(_) => Ok(()),
         Err(error) => {
             tracing::warn!(%error, "own /peers entry merge failed");
+            Err(error)
         }
     }
 }
@@ -628,7 +697,7 @@ fn surface_chat(
 }
 
 fn is_replayed_chat(
-    surfaced: &fofoca::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
+    surfaced: &habilis_network::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
     message: &Message,
 ) -> bool {
     surfaced.contains(&message.dedup_key())
@@ -844,7 +913,7 @@ async fn handle_a2a_rpc(
 /// argument budget alongside its `state`/`app`/`ctx` handles.
 struct A2aReqParams<'a> {
     message: &'a Message,
-    corr: &'a fofoca::protocol::CorrId,
+    corr: &'a habilis_network::protocol::CorrId,
 }
 
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
@@ -951,7 +1020,7 @@ async fn handle_a2a_req(
 /// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
 /// handles.
 struct ShardRepairParams<'a> {
-    group: &'a fofoca::protocol::ShardGroup,
+    group: &'a habilis_network::protocol::ShardGroup,
     missing: &'a [u32],
     requester: &'a Nickname,
 }
@@ -976,7 +1045,7 @@ async fn resend_cached_shards(
         let Ok(msg) = Message::parse(&bytes) else {
             continue; // never: the cache holds frames we serialized ourselves
         };
-        if let Some(to) = fofoca::protocol::sole_addressee(&msg.kind)
+        if let Some(to) = habilis_network::protocol::sole_addressee(&msg.kind)
             && to != requester
         {
             continue;
@@ -984,7 +1053,7 @@ async fn resend_cached_shards(
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
         // not start is asked for again on the requester's next tick.
-        if fofoca::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
+        if habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
             resent += 1;
         }
     }
@@ -1115,14 +1184,12 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
         return;
     }
     state.note_peer_endpoint(author.clone(), peer_addr.clone());
-    if let Err(error) = add_peer_addr(ctx.endpoint, peer_addr) {
-        tracing::debug!(%error, %author, "could not seed a meta-doc endpoint into the address book");
-    }
+    add_peer_addr(state.address_book(), peer_addr);
 }
 
 #[cfg(test)]
 mod classify_tests {
-    use fofoca::protocol::{
+    use habilis_network::protocol::{
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
@@ -1310,7 +1377,7 @@ mod classify_tests {
     // Pre-fix it surfaced again as a new visible line, up to hours late.
     #[test]
     fn a_chat_line_surfaces_once() {
-        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
         let chat = chat_from("aa");
         surfaced.insert(chat.dedup_key());
         assert!(is_replayed_chat(&surfaced, &chat));
@@ -1320,7 +1387,7 @@ mod classify_tests {
     // (a signed forgery) must not hide the real line.
     #[test]
     fn the_same_id_from_another_author_still_surfaces() {
-        let mut surfaced = fofoca::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
         let chat = chat_from("aa");
         surfaced.insert(chat.dedup_key());
         let mut forgery = chat.clone();

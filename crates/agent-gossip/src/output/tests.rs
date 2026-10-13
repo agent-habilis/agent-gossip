@@ -2,7 +2,7 @@
 //! snapshots + proptests). The wire serializers under test live in
 //! [`super::json`].
 
-use fofoca::protocol::{Message, MessageKind, PresenceSubtype};
+use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::json::{SimpleEvent, format_msg_json, format_presence_json};
 
@@ -12,26 +12,26 @@ fn parse(text: &str) -> serde_json::Value {
 
 // ── format_msg_json: msg type ──────────────────────────────
 
-fn nick(name: &str) -> fofoca::protocol::Nickname {
-    fofoca::protocol::Nickname::from(name)
+fn nick(name: &str) -> habilis_network::protocol::Nickname {
+    habilis_network::protocol::Nickname::from(name)
 }
 
-fn sid() -> fofoca::protocol::MeshId {
-    fofoca::protocol::MeshId::from("test")
+fn sid() -> habilis_network::protocol::MeshId {
+    habilis_network::protocol::MeshId::from("test")
 }
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn chat_frame(author: &str, text: &str) -> Message {
     let payload = crate::a2a::gossip::compose_broadcast(&sid(), text);
-    let frame_id = fofoca::protocol::MessageId::new(payload.message_id.as_str())
+    let frame_id = habilis_network::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
     Message::new_app(
         &sid(),
         &nick(author),
-        fofoca::protocol::AppFrameParams {
-            tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+        habilis_network::protocol::AppFrameParams {
+            tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
             to: None,
             corr: None,
             body,
@@ -67,7 +67,7 @@ fn json_message_has_all_fields() {
 fn json_signed_message_exposes_full_pubkey() {
     // A real (signed) message carries the author's full Ed25519 public key
     // (hex) in the JSON event — the identity behind the display nickname.
-    let identity = fofoca::protocol::Identity::generate();
+    let identity = habilis_network::protocol::Identity::generate();
     let msg = chat_frame("alice", "hi").signed(&identity);
     let parsed = parse(&format_msg_json(&msg, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
@@ -81,7 +81,7 @@ fn ready_event_drift_is_present_only_when_stale() {
     let make = |drift: Option<&str>| {
         super::json::event_json(&OutputEvent::Ready {
             mesh: sid(),
-            name: fofoca::protocol::MeshName::new("team").unwrap(),
+            name: habilis_network::protocol::MeshName::new("team").unwrap(),
             nickname: nick("alice"),
             drift: drift.map(str::to_owned),
             a2a_port: None,
@@ -374,7 +374,7 @@ fn json_output_is_single_line() {
 }
 
 mod snapshots {
-    use fofoca::protocol::{Message, MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
     use super::{format_msg_json, format_presence_json};
 
@@ -393,7 +393,7 @@ mod snapshots {
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::status_update(
-            &fofoca::protocol::MeshId::from("test"),
+            &habilis_network::protocol::MeshId::from("test"),
             crate::a2a::gossip::StatusUpdateParams {
                 task_id: &tid,
                 state,
@@ -410,7 +410,7 @@ mod snapshots {
         let frame = snap_frame(
             MessageKind::app_to(
                 crate::a2a::wire::STATUS,
-                fofoca::protocol::Nickname::from("calm-otter"),
+                habilis_network::protocol::Nickname::from("calm-otter"),
                 None,
             ),
             body.as_str(),
@@ -440,7 +440,7 @@ mod snapshots {
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::artifact_update(
-            &fofoca::protocol::MeshId::from("test"),
+            &habilis_network::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
@@ -449,7 +449,7 @@ mod snapshots {
         let frame = snap_frame(
             MessageKind::app_to(
                 crate::a2a::wire::ARTIFACT,
-                fofoca::protocol::Nickname::from("calm-otter"),
+                habilis_network::protocol::Nickname::from("calm-otter"),
                 None,
             ),
             body.as_str(),
@@ -461,8 +461,10 @@ mod snapshots {
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame(text: &str) -> Message {
-        let mut payload =
-            crate::a2a::gossip::compose_broadcast(&fofoca::protocol::MeshId::from("test"), text);
+        let mut payload = crate::a2a::gossip::compose_broadcast(
+            &habilis_network::protocol::MeshId::from("test"),
+            text,
+        );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
         Message::fixture(
@@ -474,13 +476,13 @@ mod snapshots {
     /// The directed twin of [`snap_chat_frame`].
     fn snap_msg_frame(text: &str) -> Message {
         let mut payload =
-            crate::a2a::gossip::compose_msg(&fofoca::protocol::MeshId::from("test"), text);
+            crate::a2a::gossip::compose_msg(&habilis_network::protocol::MeshId::from("test"), text);
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
         Message::fixture(
             MessageKind::app_to(
                 crate::a2a::wire::MSG,
-                fofoca::protocol::Nickname::from("addressed-nick"),
+                habilis_network::protocol::Nickname::from("addressed-nick"),
                 None,
             ),
             body.as_str(),
@@ -530,7 +532,7 @@ mod snapshots {
     fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
         let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
         super::super::json::format_state_json(
-            fofoca::protocol::Channel::State,
+            habilis_network::protocol::Channel::State,
             &Message::fixture(MessageKind::State, &body),
             document,
             is_self,
@@ -576,7 +578,7 @@ mod snapshots {
         );
         let document = four_card_meta_document();
         let line = super::super::json::format_state_json(
-            fofoca::protocol::Channel::Meta,
+            habilis_network::protocol::Channel::Meta,
             &msg,
             &document,
             false,
@@ -600,7 +602,7 @@ mod snapshots {
         );
         let document = serde_json::json!({"turn": "b"});
         let line = super::super::json::format_state_json(
-            fofoca::protocol::Channel::State,
+            habilis_network::protocol::Channel::State,
             &msg,
             &document,
             false,
@@ -646,7 +648,7 @@ mod snapshots {
 }
 
 mod prop {
-    use fofoca::protocol::Message;
+    use habilis_network::protocol::Message;
     use proptest::{
         collection::vec as arb_vec, prelude::any, prop_assert, prop_assert_eq, proptest,
         strategy::Strategy,
@@ -658,8 +660,9 @@ mod prop {
         arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
     }
 
-    fn arb_nickname() -> impl Strategy<Value = fofoca::protocol::Nickname> {
-        "[a-z]{3,8}-[a-z]{3,8}".prop_map(|raw| fofoca::protocol::Nickname::new(raw).unwrap())
+    fn arb_nickname() -> impl Strategy<Value = habilis_network::protocol::Nickname> {
+        "[a-z]{3,8}-[a-z]{3,8}"
+            .prop_map(|raw| habilis_network::protocol::Nickname::new(raw).unwrap())
     }
 
     proptest! {
@@ -684,7 +687,7 @@ mod prop {
 
         #[test]
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
-            let test_nick = fofoca::protocol::Nickname::from("test-nick");
+            let test_nick = habilis_network::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
                 (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
             } else {

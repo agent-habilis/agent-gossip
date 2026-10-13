@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use fofoca::iroh::Endpoint;
-use fofoca::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
-use fofoca::net::build_endpoint;
-use fofoca::protocol::{DirectorySelection, LookupOpts, LookupSet, validate_advertise};
-use fofoca::protocol::{Password, TicketAuth, ct_eq};
+use habilis_network::iroh::Endpoint;
+use habilis_network::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
+use habilis_network::net::build_endpoint;
+use habilis_network::protocol::{DirectorySelection, LookupOpts, LookupSet, validate_advertise};
+use habilis_network::protocol::{Password, TicketAuth, ct_eq};
 use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -113,7 +113,7 @@ pub(super) async fn bind(
         None,
         None,
         vec![A2A_ALPN.to_vec()],
-        fofoca::net::TransportHandles::default(),
+        habilis_network::net::TransportHandles::default(),
     )
     .await?;
     if !lookups.is_loopback() {
