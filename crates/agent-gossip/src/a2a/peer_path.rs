@@ -1,15 +1,15 @@
-use fofoca::embed::EventLoopState;
-use fofoca::iroh::endpoint::TransportAddrUsage;
-use fofoca::iroh::{Endpoint, TransportAddr};
+use habilis_network::embed::EventLoopState;
+use habilis_network::iroh::endpoint::TransportAddrUsage;
+use habilis_network::iroh::{Endpoint, TransportAddr};
 use tokio::sync::oneshot;
 
-// Copied from the engine's transport crates, which fofoca does not re-export:
-// `fofoca-iroh-webrtc-transport/src/addr.rs` and
-// `fofoca-iroh-multihop-transport/src/lib.rs`.
+// Copied from `habilis-network-iroh-transport-util/src/lib.rs`, which
+// habilis-network does not re-export.
 const WEBRTC_TRANSPORT_ID: u64 = 0x5752_5443;
 const MULTIHOP_TRANSPORT_ID: u64 = 0x6d68;
+const GOSSIP_TRANSPORT_ID: u64 = 0x6773;
 
-const KIND_ORDER: [&str; 5] = ["ip", "webrtc", "multihop", "custom", "relay"];
+const KIND_ORDER: [&str; 6] = ["ip", "webrtc", "multihop", "gossip", "custom", "relay"];
 
 // Built from the *active* addresses, not the one iroh selected: `remote_info`
 // cannot say which is selected, so a pair with both a direct path and the
@@ -32,6 +32,7 @@ fn kind_of(addr: &TransportAddr) -> Option<&'static str> {
         TransportAddr::Custom(custom) => Some(match custom.id() {
             WEBRTC_TRANSPORT_ID => "webrtc",
             MULTIHOP_TRANSPORT_ID => "multihop",
+            GOSSIP_TRANSPORT_ID => "gossip",
             _ => "custom",
         }),
         _ => None,
@@ -87,7 +88,7 @@ pub(crate) fn respond_with_paths(
     });
 }
 
-async fn active_path(endpoint: &Endpoint, peer: fofoca::iroh::EndpointId) -> String {
+async fn active_path(endpoint: &Endpoint, peer: habilis_network::iroh::EndpointId) -> String {
     let Some(info) = endpoint.remote_info(peer).await else {
         return "unknown".to_owned();
     };
@@ -103,7 +104,7 @@ async fn active_path(endpoint: &Endpoint, peer: fofoca::iroh::EndpointId) -> Str
 mod tests {
     use std::net::SocketAddr;
 
-    use fofoca::iroh::{RelayUrl, TransportAddr};
+    use habilis_network::iroh::{RelayUrl, TransportAddr};
 
     use super::path_label;
 
@@ -129,6 +130,7 @@ mod tests {
         assert_eq!(path_label(&[relay()]), "relay");
         assert_eq!(path_label(&[custom(0x5752_5443)]), "webrtc");
         assert_eq!(path_label(&[custom(0x6d68)]), "multihop");
+        assert_eq!(path_label(&[custom(0x6773)]), "gossip");
         assert_eq!(path_label(&[custom(7)]), "custom");
     }
 

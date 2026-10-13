@@ -1,0 +1,34 @@
+/* reset */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+* {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+/* document */
+html {
+  font-family: var(--sansFont);
+  font-size: var(--fontSize);
+  line-height: var(--lineHeight);
+  background: var(--background-color);
+  color: var(--foreground-color);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  caret-color: var(--foreground-color);
+}
+
+body {
+  padding: var(--pageMargin);
+  padding-bottom: calc(var(--pageMargin) + var(--lineHeight));
+}

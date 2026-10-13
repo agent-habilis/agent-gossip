@@ -2,10 +2,10 @@ use std::time::Duration;
 
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
-use fofoca::net::{self, NetworkCapability};
-use fofoca::protocol::MeshId;
-use fofoca::protocol::{Mesh, RelayChoice};
-use fofoca::runtime::ipc;
+use habilis_network::net::{self, NetworkCapability};
+use habilis_network::protocol::MeshId;
+use habilis_network::protocol::{Mesh, RelayChoice};
+use habilis_network::runtime::ipc;
 use serde::Serialize;
 
 use super::agent::{self, AgentState};
@@ -146,7 +146,7 @@ fn environment_section() -> Section {
         Check::new(
             "log dir",
             Verdict::Ok,
-            output::home_path(&fofoca::util::logs::log_dir()),
+            output::home_path(&habilis_network::util::logs::log_dir()),
         ),
         Check::new(
             "runtime dir",
@@ -516,7 +516,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     match net::build_peer_endpoint(lookups).await {
         Ok(endpoint) => {
             let rendezvous_id = mesh.rendezvous_id();
-            let mut addr = fofoca::iroh::EndpointAddr::new(rendezvous_id);
+            let mut addr = habilis_network::iroh::EndpointAddr::new(rendezvous_id);
             if mesh.is_loopback() {
                 for port in mesh.rendezvous_ports() {
                     addr = addr.with_ip_addr(std::net::SocketAddr::from((
@@ -600,7 +600,7 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 
 #[cfg(test)]
 mod tests {
-    use fofoca::protocol::{Mesh, MeshConfig, MeshName};
+    use habilis_network::protocol::{Mesh, MeshConfig, MeshName};
 
     use super::declared_methods_section;
 

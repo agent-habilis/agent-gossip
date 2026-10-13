@@ -35,7 +35,11 @@ jobs:
       # `--workspace`: clippy lints only the packages it is given. Naming the
       # app left the engine, the transport, the template crate and the shared
       # test harness compiled as dependencies but never linted.
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      #
+      # `--features agent-gossip/adversarial`, as in `cargo task ci`: the
+      # adversarial suite is `required-features`-gated, so without it clippy
+      # skips that file.
+      - run: cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -77,8 +81,9 @@ jobs:
       # `--workspace`, not `-p agent-gossip`: it also covers the shared test
       # harness (`agent-gossip-test-fixtures`) and `slot-template`, whose
       # renderer decides the bytes of every embedded skill. The engine's own
-      # tests are no longer ours to run — `fofoca` is a separate repo with its
-      # own CI; this job builds it as a dependency and tests the app against it.
+      # tests are no longer ours to run — `habilis-network` is a separate repo
+      # with its own CI; this job builds it as a dependency and tests the app
+      # against it.
       #
       # `--exclude tasks`: the dev-only `cargo task` crate has no tests at
       # all, so under `--workspace` CI paid to build it — and its
@@ -153,3 +158,17 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+
+  # The adversarial suite is `required-features`-gated, so the sharded `test`
+  # job above never builds it, and it wants `--test-threads=4` where the shards
+  # take 2 (the same split `cargo task test` makes locally). It gets its own
+  # job and build instead of a slot in a shard. Same command as the local run.
+  adversarial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: >-
+          cargo test -p agent-gossip --features adversarial --test adversarial
+          --profile ci --no-fail-fast -- --test-threads=4

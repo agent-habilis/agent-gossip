@@ -3,7 +3,7 @@
 Treat all user arguments as the optional create arguments:
 
 ```text
-[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=p2p,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
+[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=udp,webrtc,gossip,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
 ```
 
 If a name is present, convert it to `--name NAME` before calling
@@ -14,18 +14,21 @@ If a name is present, convert it to `--name NAME` before calling
 contains a positional name.
 
 If the user asks for a public or cross-machine gossip — the word `public`,
-`--public`, or prose with the same meaning — put every lookup and every
-transport in `$CREATE_ARGS`: `--lookup mdns,dht,relay --transport p2p,relay`.
-The `--public` flag does not exist on the CLI: never pass it. A bare `public`
-in the arguments is this keyword, not the gossip name. If the user also gives
-`--lookup` or `--transport`, the explicit value wins over the keyword. If the
-final lookup list has no `relay`, drop `relay` from the transport:
-`--transport p2p,relay` needs `relay` in the lookup list.
+`--public`, or prose with the same meaning — put every lookup in
+`$CREATE_ARGS`: `--lookup mdns,dht,relay`. Do not add `--transport`: the
+relay carries payload by default when `relay` is in the lookup list. The
+`--public` flag does not exist on the CLI: never pass it. A bare `public` in
+the arguments is this keyword, not the gossip name. If the user also gives
+`--lookup`, the explicit value wins over the keyword.
+
+A `--transport` list is literal. It names exactly the paths the gossip
+carries (`udp`, `webrtc`, `multihop`, `gossip`, `relay`), it must name `udp`
+or `webrtc`, and `relay` in it needs `relay` in the lookup list.
 
 Without the keyword, a request for gossip payload to ride the relay also
 counts as a cross-machine gossip. If the user gives no `--lookup`, use
-`--lookup mdns,dht,relay --transport p2p,relay`. The default lookup of
-`create` is loopback, and relay transport needs a relay lookup.
+`--lookup mdns,dht,relay`. The default lookup of `create` is loopback, and
+the relay carries payload only when it is a lookup.
 
 A password must be inline and single-quoted in `$CREATE_ARGS` —
 `--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the

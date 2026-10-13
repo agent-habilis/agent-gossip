@@ -1,9 +1,9 @@
 //! A gossip peer, in a browser tab.
 //!
-//! This is the same engine the CLI runs — `fofoca` with its `host` feature off
-//! — so a tab is a first-class member rather than a client of one. It creates
-//! or joins a mesh, appears on every other member's roster, and negotiates
-//! direct WebRTC data channels with them.
+//! This is the same engine the CLI runs — `habilis-network` without its
+//! host-only code — so a tab is a first-class member rather than a client of
+//! one. It creates or joins a mesh, appears on every other member's roster, and
+//! negotiates direct WebRTC data channels with them.
 //!
 //! Discovery needs no lookup service, which is what makes this work in a tab at
 //! all: the mesh id carries a seed, the seed derives a rendezvous identity, and
@@ -14,12 +14,12 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use fofoca::embed::SilentSink;
-use fofoca::net::TransportOpts;
-use fofoca::protocol::{
-    DirectorySelection, JoinTarget, LookupOpts, MeshConfig, MeshName, Nickname,
+use habilis_network::embed::SilentSink;
+use habilis_network::net::TransportOpts;
+use habilis_network::protocol::{
+    DirectorySelection, JoinTarget, LookupOpts, MeshConfig, MeshName, Nickname, TransportPolicy,
 };
-use fofoca::runtime::{CreateParams, JoinParams, Node, Resolved, SetupParams, setup_mesh};
+use habilis_network::runtime::{CreateParams, JoinParams, Node, Resolved, SetupParams, setup_mesh};
 use wasm_bindgen::prelude::*;
 
 use self::driver::{GossipDriver, Inbox, Request};
@@ -54,7 +54,10 @@ impl GossipPeer {
     ///
     /// # Errors
     /// Endpoint bind failure, or no reachable relay.
-    pub async fn create(nickname: Option<String>, path_mode: Option<String>) -> Result<GossipPeer, JsValue> {
+    pub async fn create(
+        nickname: Option<String>,
+        path_mode: Option<String>,
+    ) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
         let transports = parse_path_mode(path_mode.as_deref())?;
         let resolved = CreateParams {
@@ -66,7 +69,13 @@ impl GossipPeer {
                 lookups: LookupOpts::public_preset(),
                 password: None,
                 issuer_pubkey: None,
-                transport: fofoca::protocol::TransportPolicy::default(),
+                transport: TransportPolicy {
+                    udp: true,
+                    webrtc: true,
+                    multihop: false,
+                    gossip: true,
+                    relay_transport: true,
+                },
             },
             advertise: DirectorySelection::Unset,
             password: None,
@@ -152,7 +161,9 @@ impl GossipPeer {
         // JS, which is ordinary here: two clicks, or a send while polling.
         let sender = {
             let node = self.node.borrow();
-            let node = node.as_ref().ok_or_else(|| JsValue::from_str("peer has left"))?;
+            let node = node
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("peer has left"))?;
             node.sender()
         };
         sender
@@ -178,7 +189,11 @@ impl GossipPeer {
 }
 
 fn parse_nickname(nickname: Option<String>) -> Result<Option<Nickname>, JsValue> {
-    match nickname.as_deref().map(str::trim).filter(|nick| !nick.is_empty()) {
+    match nickname
+        .as_deref()
+        .map(str::trim)
+        .filter(|nick| !nick.is_empty())
+    {
         None => Ok(None),
         Some(nick) => nick
             .parse::<Nickname>()
@@ -188,10 +203,10 @@ fn parse_nickname(nickname: Option<String>) -> Result<Option<Nickname>, JsValue>
 }
 
 /// `dynamic` lets a failed ICE negotiation fall back to the relay, but only on
-/// a mesh whose id sets `relay_transport`. On a lookup-only mesh (what `create`
-/// mints, and the CLI's default) the pair stays unlinked instead. `webrtc`
-/// fails loudly. Named rather than inferred so the caller states the contract
-/// it is asserting.
+/// a mesh whose id sets `relay_transport` (what `create` mints here). On a
+/// lookup-only mesh the pair stays unlinked instead. `webrtc` fails loudly.
+/// Named rather than inferred so the caller states the contract it is
+/// asserting.
 fn parse_path_mode(mode: Option<&str>) -> Result<TransportOpts, JsValue> {
     match mode.map(str::trim).filter(|mode| !mode.is_empty()) {
         None | Some("dynamic") => Ok(TransportOpts::default()),
@@ -210,6 +225,7 @@ async fn spawn_peer(resolved: Resolved, transports: TransportOpts) -> Result<Gos
         SetupParams {
             author: author.clone(),
             max_peers: MAX_DIRECT_PEERS,
+            max_direct: MAX_DIRECT_PEERS,
             endpoint: None,
             protocols: Vec::new(),
             transports,
@@ -219,7 +235,6 @@ async fn spawn_peer(resolved: Resolved, transports: TransportOpts) -> Result<Gos
             runtime_base: None,
             state_file: None,
             sink: Arc::new(SilentSink),
-            multihop: false,
             per_peer_gate: None,
             cohost: None,
             live_count: None,
@@ -247,4 +262,3 @@ async fn spawn_peer(resolved: Resolved, transports: TransportOpts) -> Result<Gos
 fn err(context: &str, error: &impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&format!("{context}: {error}"))
 }
-

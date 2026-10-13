@@ -5,19 +5,19 @@
 use std::time::Instant;
 
 use bytes::Bytes;
-use fofoca::embed::EventLoopState;
-use fofoca::ops::MeshSender;
-use fofoca::protocol::Identity;
-use fofoca::protocol::{
+use habilis_network::embed::{EventLoopState, HandlerCtx};
+use habilis_network::ops::{Delivered, MeshSender, PendingSend};
+use habilis_network::protocol::Identity;
+use habilis_network::protocol::{
     AppFrameParams, AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind,
     Nickname, Shard, ShardGroup,
 };
-use fofoca::util::consts::{
+use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
 
-use crate::a2a::app::A2aApp;
+use crate::a2a::app::{A2aApp, DeliveredLeg};
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
@@ -34,7 +34,7 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
             state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
         }
     }
-    fofoca::util::logging::log_out(msg);
+    habilis_network::util::logging::log_out(msg);
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
@@ -172,6 +172,66 @@ fn build_msg(
         .signed(signer)
 }
 
+/// Wait for the sends that run on a task of their own. The first failure is the verdict.
+async fn settle(pending: Vec<PendingSend>) -> anyhow::Result<()> {
+    for handle in pending {
+        handle
+            .await
+            .map_err(|_| anyhow::anyhow!("a send task ended before it gave its outcome"))??;
+    }
+    Ok(())
+}
+
+/// Give the verdict of the sends to `then`, off the event loop. With nothing pending the verdict
+/// is known now, and `then` runs at once.
+pub(crate) fn when_sent(
+    pending: Vec<PendingSend>,
+    then: impl FnOnce(anyhow::Result<()>) + Send + 'static,
+) {
+    if pending.is_empty() {
+        then(Ok(()));
+        return;
+    }
+    tokio::spawn(async move { then(settle(pending).await) });
+}
+
+/// For a caller with no one to tell: a failure of a send on a task is only logged.
+pub(crate) fn log_pending(pending: Vec<PendingSend>) {
+    if pending.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        if let Err(error) = settle(pending).await {
+            tracing::warn!(target: "agent_gossip::a2a", %error, "directed send failed");
+        }
+    });
+}
+
+fn log_unless_done(delivered: Delivered) {
+    if let Delivered::Pending(pending) = delivered {
+        log_pending(vec![pending]);
+    }
+}
+
+/// Answer a session request once its sends have an outcome. Returns whether a send started.
+fn answer_when_sent(
+    outcome: anyhow::Result<(Message, Vec<PendingSend>)>,
+    resp: tokio::sync::oneshot::Sender<anyhow::Result<Message>>,
+) -> bool {
+    match outcome {
+        Ok((msg, pending)) => {
+            when_sent(pending, move |verdict| {
+                let _ = resp.send(verdict.map(|()| msg));
+            });
+            true
+        }
+        Err(error) => {
+            let _ = resp.send(Err(error));
+            false
+        }
+    }
+}
+
 /// One outbound wire frame plus its echo flag — the part
 /// [`send_msg_part`] commits/delivers, grouped so the state/sender/out handles
 /// stay their own leading params.
@@ -197,7 +257,7 @@ async fn send_msg_part(
         // unicast, a broadcast over gossip (see `transport::deliver`). Inline,
         // not `deliver_in_background`: the CLI needs the delivery verdict to
         // report an unreachable peer, and each IPC send is one-shot.
-        fofoca::ops::deliver(msg, bytes, state, sender).await?;
+        log_unless_done(habilis_network::ops::deliver(msg, bytes, state, sender).await?);
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
@@ -299,7 +359,7 @@ pub(crate) async fn send_broadcast(
     // message log, anti-entropy) operates on the sealed frame; only the local
     // echo + the returned Message carry plaintext.
     let wire_body = match state.broadcast_key() {
-        Some(key) => fofoca::ops::doc::encrypt_body(&body, key)?,
+        Some(key) => habilis_network::ops::doc::encrypt_body(&body, key)?,
         None => body.clone(),
     };
     let encrypted = state.broadcast_key().is_some();
@@ -523,7 +583,7 @@ async fn broadcast_directed_frame(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message)> {
+) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
     let DirectedFrameParams {
         mesh,
         author,
@@ -551,7 +611,7 @@ async fn broadcast_directed_frame(
         // cannot decrypt; surface *and ingest* the self-echo from a plaintext
         // twin instead (same id, never signed or sent).
         let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(id.clone());
-        send_directed_leg(
+        let pending = send_directed_leg(
             state,
             sender,
             out,
@@ -564,10 +624,9 @@ async fn broadcast_directed_frame(
             },
         )
         .await?;
-        if let Some(task_id) = task_id {
-            ingest_own_leg(app, &echo, task_id);
-        }
-        return Ok((id, single));
+        let pending =
+            ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending.into_iter().collect());
+        return Ok((id, single, pending));
     }
     // Only content legs are ever large enough to split; the beat is a tiny
     // liveness widget and is never retained/reassembled.
@@ -608,6 +667,7 @@ async fn broadcast_directed_frame(
     // A big group's shards skip the message log, so peers heal a lost shard via
     // the `shard/repair` RPC — served from this sender-side frame cache.
     let mut cache_frames = Vec::new();
+    let mut pending = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
@@ -622,19 +682,21 @@ async fn broadcast_directed_frame(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        send_directed_leg(
-            state,
-            sender,
-            out,
-            DirectedLegPart {
-                msg: &msg,
-                bytes,
-                echo: None,
-                content,
-                echo_as,
-            },
-        )
-        .await?;
+        pending.extend(
+            send_directed_leg(
+                state,
+                sender,
+                out,
+                DirectedLegPart {
+                    msg: &msg,
+                    bytes,
+                    echo: None,
+                    content,
+                    echo_as,
+                },
+            )
+            .await?,
+        );
     }
     if !cache_frames.is_empty() {
         state.shard_cache_mut().insert(group.clone(), cache_frames);
@@ -645,10 +707,8 @@ async fn broadcast_directed_frame(
         Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
     let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
     print_echo(out, &echo, echo_as);
-    if let Some(task_id) = task_id {
-        ingest_own_leg(app, &echo, task_id);
-    }
-    Ok((logical.id.clone(), logical))
+    let pending = ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending);
+    Ok((logical.id.clone(), logical, pending))
 }
 
 /// Print a directed leg's self-echo down the surface its kind belongs to.
@@ -692,7 +752,7 @@ pub(crate) async fn emit_task_status(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<Message> {
+) -> anyhow::Result<(Message, Vec<PendingSend>)> {
     let TaskStatusParams {
         mesh,
         author,
@@ -719,7 +779,7 @@ pub(crate) async fn emit_task_status(
         out,
     )
     .await
-    .map(|(_id, msg)| msg)
+    .map(|(_id, msg, pending)| (msg, pending))
 }
 
 /// A worker-emitted artifact leg's identity, task, result text/file, and the
@@ -745,7 +805,7 @@ pub(crate) async fn emit_task_artifact(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<Message> {
+) -> anyhow::Result<(Message, Vec<PendingSend>)> {
     let TaskArtifactEmitParams {
         mesh,
         author,
@@ -772,7 +832,7 @@ pub(crate) async fn emit_task_artifact(
         out,
     )
     .await
-    .map(|(_id, msg)| msg)
+    .map(|(_id, msg, pending)| (msg, pending))
 }
 
 /// Seal a directed payload `body` to `to`'s published X25519 key. A directed
@@ -790,11 +850,21 @@ pub(crate) fn seal_directed(
 ) -> anyhow::Result<MessageBody> {
     let doc = state.doc(Channel::Meta).to_json();
     let key = crate::a2a::card::peer_seal_key(&doc, to).ok_or_else(|| {
-        anyhow::anyhow!(
-            "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
-        )
+        // A peer whose card did not publish says why in its own entry. Without that, the sender
+        // waits for cards that never come.
+        match doc
+            .pointer(&format!("/peers/{to}/card_error"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some(cause) => {
+                anyhow::anyhow!("cannot seal to '{to}': its card is not published ({cause})")
+            }
+            None => anyhow::anyhow!(
+                "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
+            ),
+        }
     })?;
-    fofoca::protocol::seal_to_body(&key, body.as_str())
+    habilis_network::protocol::seal_to_body(&key, body.as_str())
 }
 
 /// A worker-emitted status leg's identity, addressee, task, state/note, and
@@ -821,7 +891,7 @@ pub(crate) async fn broadcast_task_status(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message)> {
+) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
     let BroadcastTaskStatusParams {
         mesh,
         author,
@@ -884,7 +954,7 @@ pub(crate) struct MsgParams<'a> {
 ///
 /// Three properties, each load-bearing and none of them incidental:
 ///
-/// - **Directed**, so [`fofoca::ops::deliver`] routes it unicast —
+/// - **Directed**, so [`habilis_network::ops::deliver`] routes it unicast —
 ///   a `to: Some(..)` frame structurally cannot ride gossip, so no other peer
 ///   receives the bytes at all.
 /// - **Sealed** to the addressee, so the multihop relays that *do* carry it
@@ -905,7 +975,7 @@ pub(crate) async fn send_msg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message)> {
+) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
     let MsgParams {
         mesh,
         author,
@@ -976,7 +1046,7 @@ pub(crate) async fn broadcast_task_artifact(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message)> {
+) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
     let BroadcastTaskArtifactParams {
         mesh,
         author,
@@ -1070,7 +1140,7 @@ async fn build_offload_parts(
     };
     let parsed = mesh
         .as_str()
-        .parse::<fofoca::protocol::Mesh>()
+        .parse::<habilis_network::protocol::Mesh>()
         .map_err(|error| {
             anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
         })?;
@@ -1085,14 +1155,14 @@ async fn build_offload_parts(
     // Every offloaded blob inherits the mesh password (if any), so a scraped
     // ticket can't be redeemed without it.
     let password = state.mesh_password();
-    let ticket = fofoca::ops::blob::offload(
+    let ticket = habilis_network::ops::blob::offload(
         &mut app.blob_server,
         &lookups,
         relay_transport,
-        fofoca::ops::blob::OffloadRequest {
+        habilis_network::ops::blob::OffloadRequest {
             path: file.path,
             spool_dir: spool,
-            content_id: fofoca::ops::blob::ContentId::new(task_id.as_str()),
+            content_id: habilis_network::ops::blob::ContentId::new(task_id.as_str()),
             password: password.cloned(),
         },
     )
@@ -1134,7 +1204,7 @@ pub(crate) async fn attach_call_file(
     attachment: CallFile<'_>,
     state: &EventLoopState,
     app: &mut A2aApp,
-) -> anyhow::Result<Option<fofoca::ops::blob::ContentId>> {
+) -> anyhow::Result<Option<habilis_network::ops::blob::ContentId>> {
     let CallFile { mesh, author, file } = attachment;
     let slot = params
         .get_mut("message")
@@ -1164,7 +1234,7 @@ pub(crate) async fn attach_call_file(
     );
     message.parts = parts;
     *slot = serde_json::to_value(message)?;
-    Ok(fresh_group.then(|| fofoca::ops::blob::ContentId::new(task_id.as_str())))
+    Ok(fresh_group.then(|| habilis_network::ops::blob::ContentId::new(task_id.as_str())))
 }
 
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
@@ -1187,7 +1257,7 @@ async fn send_directed_leg(
     sender: &MeshSender,
     out: &output::Output,
     part: DirectedLegPart<'_>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
         msg,
         bytes,
@@ -1209,7 +1279,10 @@ async fn send_directed_leg(
                 echo_as,
             },
         );
-        fofoca::ops::deliver(msg, bytes, state, sender).await?;
+        return match habilis_network::ops::deliver(msg, bytes, state, sender).await? {
+            Delivered::Done => Ok(None),
+            Delivered::Pending(pending) => Ok(Some(pending)),
+        };
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
@@ -1231,7 +1304,7 @@ async fn send_directed_leg(
             "pending outbound buffer full; message dropped"
         ));
     }
-    Ok(())
+    Ok(None)
 }
 
 /// A task leg's frame plus its echo twin and cap-tracking flag — the fields
@@ -1268,7 +1341,7 @@ fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLe
 /// body is sealed to the addressee, so a status leg's state could not be read
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
-fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
+pub(crate) fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
     crate::a2a::task::ingest(
         &mut app.tasks,
         crate::a2a::task::IngestLegParams {
@@ -1278,6 +1351,48 @@ fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId)
             now: Instant::now(),
         },
     );
+}
+
+/// One own task leg: its plaintext twin and its task. A chat msg has no task and no record.
+struct OwnLeg<'a> {
+    echo: Message,
+    task_id: Option<&'a crate::a2a::TaskId>,
+}
+
+/// Queue an own task leg for the task record, behind the legs sent before it. The record takes a
+/// leg when the peer got it, and in send order: a leg to a cold peer that waits on its dial holds
+/// back the later legs, and a leg whose dial failed leaves no record. A leg with nothing pending
+/// is delivered already. The handles are replaced by one that gives the same verdict, after the
+/// queue has it: the answer to the caller then comes after the record can take the leg.
+fn ingest_own_leg_when_sent(
+    app: &mut A2aApp,
+    leg: OwnLeg<'_>,
+    pending: Vec<PendingSend>,
+) -> Vec<PendingSend> {
+    let OwnLeg { echo, task_id } = leg;
+    let Some(task_id) = task_id else {
+        return pending;
+    };
+    let delivered = DeliveredLeg {
+        echo,
+        task_id: task_id.clone(),
+    };
+    if pending.is_empty() {
+        let (queue_tx, queue_rx) = tokio::sync::oneshot::channel();
+        let _ = queue_tx.send(true);
+        app.queue_own_leg(delivered, queue_rx);
+        app.drain_delivered_legs();
+        return pending;
+    }
+    let (queue_tx, queue_rx) = tokio::sync::oneshot::channel();
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    app.queue_own_leg(delivered, queue_rx);
+    tokio::spawn(async move {
+        let verdict = settle(pending).await;
+        let _ = queue_tx.send(verdict.is_ok());
+        let _ = verdict_tx.send(verdict);
+    });
+    vec![verdict_rx]
 }
 
 /// Client side of the gossip A2A request/response: mint an `rpc_id`, park a
@@ -1326,13 +1441,18 @@ pub(crate) async fn send_shard_repair_requests(
             },
         )
         .signed(state.identity());
-        fofoca::util::logging::log_out(&frame);
+        habilis_network::util::logging::log_out(&frame);
         match frame.serialize() {
             // In the background: this runs from `on_tick`, inline on the event
             // loop, where a cold `deliver` would stop the node for the dial.
             Ok(bytes) => {
-                if !fofoca::ops::deliver_in_background(&frame, Bytes::from(bytes), state, sender)
-                    .await
+                if !habilis_network::ops::deliver_in_background(
+                    &frame,
+                    Bytes::from(bytes),
+                    state,
+                    sender,
+                )
+                .await
                 {
                     tracing::debug!("shard repair request not sent; next tick retries");
                 }
@@ -1512,9 +1632,10 @@ pub(crate) async fn send_directed_rpc(
     let signer = state.identity().clone();
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        fofoca::util::logging::log_out(&single);
+        habilis_network::util::logging::log_out(&single);
         let bytes = Bytes::from(single.serialize()?);
-        return fofoca::ops::deliver(&single, bytes, state, sender).await;
+        log_unless_done(habilis_network::ops::deliver(&single, bytes, state, sender).await?);
+        return Ok(());
     }
     // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
     // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
@@ -1559,12 +1680,12 @@ pub(crate) async fn send_directed_rpc(
                 total,
             }))
             .signed(&signer);
-        fofoca::util::logging::log_out(&msg);
+        habilis_network::util::logging::log_out(&msg);
         let bytes = Bytes::from(msg.serialize()?);
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        fofoca::ops::deliver(&msg, bytes, state, sender).await?;
+        log_unless_done(habilis_network::ops::deliver(&msg, bytes, state, sender).await?);
     }
     if !cache_frames.is_empty() {
         state.shard_cache_mut().insert(group, cache_frames);
@@ -1572,37 +1693,16 @@ pub(crate) async fn send_directed_rpc(
     Ok(())
 }
 
-/// A ping round's identity plus the responder the RTT rows are delivered
-/// through — grouped so `session_ping` stays within the argument budget
-/// alongside its state/sender handles.
-struct SessionPingParams<'a> {
-    mesh: &'a MeshId,
-    author: &'a Nickname,
-    resp: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
-}
-
-/// Arm a fresh ping round carrying the responder; the deadline-driven
+/// Start a fresh ping round carrying the responder; the deadline-driven
 /// `finalize_ping_round` delivers the RTT rows through it. Mirrors the IPC
-/// `Ping` handler, which leaves `resp` unset and emits the `ping_report`
+/// `Ping` handler, which passes no responder and emits the `ping_report`
 /// event instead.
 async fn session_ping(
-    params: SessionPingParams<'_>,
+    resp: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
     state: &mut EventLoopState,
-    sender: &MeshSender,
+    ctx: &HandlerCtx<'_>,
 ) -> bool {
-    let SessionPingParams { mesh, author, resp } = params;
-    let now = tokio::time::Instant::now();
-    state.arm_ping_round(fofoca::embed::PingRound {
-        t1: now,
-        deadline: now + std::time::Duration::from_secs(fofoca::runtime::tuning::ping_window_secs()),
-        pongs: std::collections::HashMap::new(),
-        resp: Some(resp),
-    });
-    fofoca::ops::broadcast_msg(
-        sender,
-        &Message::new_ping(mesh, author).signed(state.identity()),
-    )
-    .await;
+    habilis_network::ops::start_ping_round(state, ctx, Some(resp)).await;
     true
 }
 
@@ -1628,15 +1728,17 @@ pub(crate) struct SessionRequestParams<'a> {
 pub(crate) async fn handle_session_request(
     params: SessionRequestParams<'_>,
     state: &mut EventLoopState,
-    sender: &MeshSender,
+    ctx: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
+    let sender = ctx.sender;
     let SessionRequestParams {
         req,
         mesh,
         author,
         app,
     } = params;
+    app.drain_delivered_legs();
     match req {
         SessionRequest::Broadcast { body, resp } => {
             let outcome = send_broadcast(
@@ -1668,11 +1770,8 @@ pub(crate) async fn handle_session_request(
                 sender,
                 output,
             )
-            .await
-            .map(|(_id, msg)| msg);
-            let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
-            sent_ok
+            .await;
+            answer_when_sent(outcome.map(|(_id, msg, pending)| (msg, pending)), resp)
         }
         SessionRequest::Poll { after, long, resp } => {
             // Same policy as the CLI/IPC `Poll` arm: respond now if events are
@@ -1707,9 +1806,7 @@ pub(crate) async fn handle_session_request(
                 output,
             )
             .await;
-            let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
-            sent_ok
+            answer_when_sent(outcome, resp)
         }
         SessionRequest::TaskArtifact {
             task_id,
@@ -1731,18 +1828,16 @@ pub(crate) async fn handle_session_request(
                 output,
             )
             .await;
-            let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
-            sent_ok
+            answer_when_sent(outcome, resp)
         }
         SessionRequest::Peers { resp } => {
             let _ = resp.send(state.roster_snapshot());
             false
         }
         SessionRequest::StateMerge { merge, resp } => {
-            let outcome = fofoca::ops::broadcast_state_merge(
+            let outcome = habilis_network::ops::broadcast_state_merge(
                 state,
-                fofoca::ops::StateMergeParams {
+                habilis_network::ops::StateMergeParams {
                     mesh,
                     author,
                     merge,
@@ -1762,9 +1857,9 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::MetaMerge { merge, resp } => {
-            let outcome = fofoca::ops::broadcast_state_merge(
+            let outcome = habilis_network::ops::broadcast_state_merge(
                 state,
-                fofoca::ops::StateMergeParams {
+                habilis_network::ops::StateMergeParams {
                     mesh,
                     author,
                     merge,
@@ -1783,9 +1878,7 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.doc(Channel::Meta).to_json());
             false
         }
-        SessionRequest::Ping { resp } => {
-            session_ping(SessionPingParams { mesh, author, resp }, state, sender).await
-        }
+        SessionRequest::Ping { resp } => session_ping(resp, state, ctx).await,
         SessionRequest::A2aCall {
             peer,
             method,
@@ -1838,7 +1931,7 @@ pub(crate) async fn handle_session_request(
 
 #[cfg(test)]
 mod split_body_tests {
-    use fofoca::util::consts::MAX_SHARD_TOTAL;
+    use habilis_network::util::consts::MAX_SHARD_TOTAL;
 
     use super::{escaped_char_len, split_body};
 

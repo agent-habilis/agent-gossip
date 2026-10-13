@@ -5,8 +5,8 @@
 //!   local A2A HTTP server to a peer over the gossip (a ticket, 1:1).
 
 use clap::{Parser, Subcommand};
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 use super::lookup::LookupArgs;

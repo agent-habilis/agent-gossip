@@ -3,9 +3,11 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use fofoca::embed::{AppClass, EventLoopState, HandlerCtx, InboundApp, NodeApp, NodeDriver};
-use fofoca::ops::deliver;
-use fofoca::protocol::{
+use habilis_network::embed::{
+    AppClass, EventLoopState, HandlerCtx, InboundApp, NodeApp, NodeDriver,
+};
+use habilis_network::ops::{Delivered, deliver};
+use habilis_network::protocol::{
     AppFrameParams, AppTag, Message, MessageBody, MessageId, Nickname,
 };
 use serde::Serialize;
@@ -65,7 +67,10 @@ impl Inbox {
     /// taking the tab down, and five hand-written `if let Ok` arms disagreeing
     /// about that is worse than one that does not.
     fn with<T>(&self, body: impl FnOnce(&mut Buffered) -> T) -> Option<T> {
-        self.inner.lock().ok().map(|mut buffered| body(&mut buffered))
+        self.inner
+            .lock()
+            .ok()
+            .map(|mut buffered| body(&mut buffered))
     }
 
     fn push(&self, from: String, text: String, kind: &'static str) {
@@ -103,7 +108,9 @@ impl Inbox {
             // The buffer is append-only and sorted by seq, so the fresh tail is
             // a binary search rather than a scan of everything ever received —
             // which the page asks for twice a second, forever.
-            let from = buffered.messages.partition_point(|message| message.seq <= after);
+            let from = buffered
+                .messages
+                .partition_point(|message| message.seq <= after);
             let fresh = &buffered.messages[from..];
             if fresh.is_empty() {
                 return "[]".to_owned();
@@ -264,10 +271,34 @@ impl NodeDriver for GossipDriver {
         let Ok(bytes) = frame.serialize() else {
             return false;
         };
-        if let Err(error) = deliver(&frame, bytes.into(), state, ctx.sender).await {
-            self.inbox
-                .push("system".to_owned(), format!("could not send: {error}"), "system");
-            return false;
+        match deliver(&frame, bytes.into(), state, ctx.sender).await {
+            Ok(Delivered::Done) => {}
+            Ok(Delivered::Pending(pending)) => {
+                // A dial is awaited off the event loop. The frame is echoed now; a dial that
+                // fails is told to the inbox when it fails.
+                let inbox = self.inbox.clone();
+                n0_future::task::spawn(async move {
+                    let outcome = pending
+                        .await
+                        .map_err(anyhow::Error::from)
+                        .and_then(|result| result);
+                    if let Err(error) = outcome {
+                        inbox.push(
+                            "system".to_owned(),
+                            format!("could not send: {error}"),
+                            "system",
+                        );
+                    }
+                });
+            }
+            Err(error) => {
+                self.inbox.push(
+                    "system".to_owned(),
+                    format!("could not send: {error}"),
+                    "system",
+                );
+                return false;
+            }
         }
 
         // Echoed locally because a broadcast does not come back to its author:

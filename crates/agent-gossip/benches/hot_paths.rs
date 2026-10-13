@@ -23,37 +23,11 @@ const SHORT_NAME: &str = "ab";
 const MAX_NAME: &str = "abcdefghijklmnopqrstuvwxyz012345";
 
 mod crypto {
-    use super::{BenchConfig, Bencher, MeshName, SEED, api, black_box};
+    use super::{SEED, api, black_box};
 
     #[divan::bench]
     fn derive_secret() -> [u8; 32] {
         api::derive_secret(black_box(&SEED), black_box(b"rendezvous"))
-    }
-
-    #[divan::bench]
-    fn rendezvous_ports() -> [u16; 8] {
-        api::rendezvous_ports(black_box(&SEED))
-    }
-
-    #[divan::bench]
-    fn rendezvous_id() {
-        api::rendezvous_id(black_box(&SEED));
-    }
-
-    fn bench_topic(bencher: Bencher<'_, '_>, config: &BenchConfig) {
-        let name = MeshName::new("bench-team").unwrap();
-        bencher
-            .bench(|| api::derive_topic_id(black_box(&SEED), black_box(&name), black_box(config)));
-    }
-
-    #[divan::bench]
-    fn derive_topic_id_loopback(bencher: Bencher<'_, '_>) {
-        bench_topic(bencher, &BenchConfig::loopback());
-    }
-
-    #[divan::bench]
-    fn derive_topic_id_public(bencher: Bencher<'_, '_>) {
-        bench_topic(bencher, &BenchConfig::public());
     }
 }
 

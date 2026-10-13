@@ -1,14 +1,14 @@
-use fofoca::embed::EventLoopState;
-use fofoca::ops::MeshSender;
-use fofoca::ops::{StateMergeParams, broadcast_state_merge};
-use fofoca::protocol::MeshId;
-use fofoca::protocol::{Channel, MessageBody, Nickname};
+use habilis_network::embed::EventLoopState;
+use habilis_network::ops::MeshSender;
+use habilis_network::ops::{StateMergeParams, broadcast_state_merge};
+use habilis_network::protocol::MeshId;
+use habilis_network::protocol::{Channel, MessageBody, Nickname};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
 use super::{TaskId, task::TaskRecord, task::TaskRole};
 use crate::a2a::app::A2aApp;
-use crate::a2a::send::{BroadcastParams, emit_task_status, send_broadcast};
+use crate::a2a::send::{BroadcastParams, emit_task_status, log_pending, send_broadcast};
 use crate::output;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
@@ -271,7 +271,7 @@ pub(crate) async fn handle_op(
             if !app.tasks.contains_key(&task_id) {
                 return Err(RpcError::task_not_found(&task_id));
             }
-            emit_task_status(
+            let (_echo, pending) = emit_task_status(
                 crate::a2a::send::TaskStatusParams {
                     mesh,
                     author,
@@ -286,6 +286,9 @@ pub(crate) async fn handle_op(
             )
             .await
             .map_err(|error| RpcError::internal(error.to_string()))?;
+            // The task is canceled in our record whether or not the peer is
+            // reached; awaiting the dial here would stop the event loop.
+            log_pending(pending);
             app.tasks
                 .get(&task_id)
                 .map(|rec| task_object(&task_id, rec, mesh))
@@ -324,8 +327,8 @@ pub(crate) async fn handle_op(
         }
         A2aOp::PeerCard { peer } => {
             let doc = state.doc(Channel::Meta).to_json();
-            let mut card = doc
-                .pointer(&format!("/peers/{peer}/card"))
+            // A card that is still arriving, in pieces, is not served.
+            let mut card = super::card::complete_card(&doc, &peer)
                 .cloned()
                 .unwrap_or(Value::Null);
             if card.is_null() {

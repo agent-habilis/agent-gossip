@@ -14,11 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use fofoca::ops::directory::directory_mesh;
-use fofoca::protocol::{LookupOpts, LookupSet, MeshName};
-use fofoca::protocol::{MeshId, MessageBody, Nickname};
-use fofoca::runtime::CoHostPolicy;
-use fofoca::runtime::tuning::{
+use habilis_network::ops::directory::directory_mesh;
+use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
+use habilis_network::protocol::{MeshId, MessageBody, Nickname};
+use habilis_network::runtime::CoHostPolicy;
+use habilis_network::runtime::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
 use serde::{Deserialize, Serialize};
@@ -334,8 +334,8 @@ impl Drop for TicketDirectory {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use fofoca::iroh::{EndpointAddr, SecretKey};
-    use fofoca::protocol::LookupOpts;
+    use habilis_network::iroh::{EndpointAddr, SecretKey};
+    use habilis_network::protocol::LookupOpts;
 
     use super::{TicketAd, TicketChange, TicketListings};
     use crate::bridge::ticket::A2aTicket;

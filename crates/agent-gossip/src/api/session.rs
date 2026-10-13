@@ -1,10 +1,10 @@
-use fofoca::embed::RosterSnapshot;
-use fofoca::protocol::{Mesh, MeshName};
-use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
-use fofoca::runtime::tuning::NODE_INBOUND_CAP;
-use fofoca::runtime::{CoHostPolicy, EventLoopConfig};
-use fofoca::runtime::{SetupKind, SetupParams, setup_mesh};
-use fofoca::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use habilis_network::embed::RosterSnapshot;
+use habilis_network::protocol::{Mesh, MeshName};
+use habilis_network::protocol::{MeshId, Message, MessageBody, Nickname};
+use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
+use habilis_network::runtime::{CoHostPolicy, EventLoopConfig};
+use habilis_network::runtime::{SetupKind, SetupParams, setup_mesh};
+use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
 use super::advertise::Advertiser;
@@ -98,6 +98,7 @@ impl MeshSession {
             SetupParams {
                 author,
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+                max_direct: 0,
                 runtime_base: Some(crate::runtime_base()),
                 state_file: None,
                 sink,
@@ -107,8 +108,7 @@ impl MeshSession {
                 // (see `bridge::expose`), so there is no accept() loop to share.
                 endpoint: None,
                 protocols: Vec::new(),
-                transports: fofoca::net::TransportOpts::default(),
-                multihop: false,
+                transports: habilis_network::net::TransportOpts::default(),
                 cohost: Some(cohost),
                 live_count: None,
             },

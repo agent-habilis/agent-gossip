@@ -3,7 +3,7 @@
 //! picker and nickname validation; also useful standalone.
 
 use clap::Parser;
-use fofoca::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 

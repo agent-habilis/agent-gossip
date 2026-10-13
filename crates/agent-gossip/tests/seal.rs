@@ -57,6 +57,32 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     carol.leave().await;
 }
 
+/// A passworded gossip seals the state frames, which makes the frame of the card larger than
+/// the frame limit when it goes out as one merge. No peer then learns the seal key, and every
+/// directed msg fails with "cards still propagating". The same msg must work with a password.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_msg_works_on_a_passworded_gossip() {
+    const SECRET: &str = "just between us, behind a password";
+
+    let alice = InProcNode::create_with_password("msgpw", "hunter2").await;
+    let mut bob = InProcNode::try_join_with_password(&alice.mesh, "msgpw-bob", "hunter2")
+        .await
+        .expect("the right password joins");
+
+    // A msg is sealed to its recipient, so the card must have replicated.
+    alice.await_peer_card("msgpw-bob").await;
+    bob.await_peer_card(&alice.nickname).await;
+
+    alice.msg("msgpw-bob", SECRET).await;
+    assert!(
+        bob.wait_body(SECRET, MSG_TIMEOUT).await,
+        "the addressee must surface the msg on a passworded gossip"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
 /// The privacy contract for chat: a `msg` A→B is surfaced by exactly its two
 /// parties. B renders it, A sees its own echo, and C — a live relay that
 /// carries the frame — never surfaces it at all.

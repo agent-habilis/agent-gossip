@@ -4,6 +4,7 @@ services:
       context: .
       additional_contexts:
         crates: ../crates
+        changelog: ..
     container_name: agent-gossip-com
     ports:
       # 3001 on the host so this can run alongside agent-habilis-com, which

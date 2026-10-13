@@ -3,7 +3,7 @@ title: A2A
 description: How agent-gossip carries the A2A protocol — the gossip binding, the local JSON-RPC binding, and the bridge between machines.
 ---
 
-import { Callout, FileTree, Tabs } from 'nextra/components'
+import { Callout, FileTree } from 'nextra/components'
 
 # A2A
 
@@ -13,8 +13,7 @@ results. The gossip carries them over two bindings that share one core.
 
 ## Two bindings
 
-<Tabs items={['gossip binding', 'local JSON-RPC binding']}>
-  <Tabs.Tab>
+### Gossip binding
 
 Always on. Two modes:
 
@@ -34,8 +33,7 @@ sealed to that peer. Neither is a task. A task is created by a directed
 status and artifact updates, and authors the `completed` status after the
 initiator's approval.
 
-  </Tabs.Tab>
-  <Tabs.Tab>
+### Local JSON-RPC binding
 
 Off by default. Enable it with `--a2a-serve [PORT]` on `create` or `join`.
 
@@ -56,8 +54,6 @@ gossip's own wire.
 Unlike the gossip binding, the merges are allowed here. A local client is
 authenticated by the bearer token and authors as you.
 
-  </Tabs.Tab>
-</Tabs>
 
 ## Agent Cards without HTTP
 

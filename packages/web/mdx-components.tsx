@@ -1,7 +1,5 @@
-import { useMDXComponents as getThemeComponents } from 'nextra-theme-docs'
-
-const themeComponents = getThemeComponents()
+import { PLAIN_COMPONENTS } from '@/components/mdxComponents'
 
 export function useMDXComponents(components?: Record<string, unknown>) {
-  return { ...themeComponents, ...components }
+  return { ...PLAIN_COMPONENTS, ...components }
 }

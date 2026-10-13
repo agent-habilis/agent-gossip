@@ -17,12 +17,12 @@ use crate::TaskOutcome;
 /// the release-build default and appends to it: `netwatch=debug` for the
 /// enumeration counter, `lookup=info` for the endpoint counter.
 const RUST_LOG: &str = "error,noq_proto::connection=off,mainline::rpc=off,\
-    fofoca::gossip=info,\
-    fofoca::lookup=info,\
-    fofoca::beacon=info,\
-    fofoca::lifecycle=info,\
-    fofoca::directory=info,\
-    fofoca::messages=info,\
+    habilis_network::gossip=info,\
+    habilis_network::lookup=info,\
+    habilis_network::beacon=info,\
+    habilis_network::lifecycle=info,\
+    habilis_network::directory=info,\
+    habilis_network::messages=info,\
     netwatch=debug";
 
 /// CPU charged to one process, split by where it went. The split is the
@@ -480,7 +480,7 @@ fn check_alive(
 
 /// The daemon's census cadence (`STATE_REFRESH_SECS`) — the divisor for the
 /// expected census count. A `const` here rather than a read of the engine's,
-/// because `tasks` deliberately does not depend on `fofoca`; if the
+/// because `tasks` deliberately does not depend on `habilis-network`; if the
 /// engine's cadence changes, the census-coverage check goes loud, which is the
 /// intended way to find out.
 const CENSUS_INTERVAL_SECS: f64 = 10.0;

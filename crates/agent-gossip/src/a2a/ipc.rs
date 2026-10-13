@@ -1,14 +1,11 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
-use fofoca::embed::{EventLoopState, PingRound};
-use fofoca::iroh::Endpoint;
-use fofoca::ops::MeshSender;
-use fofoca::ops::{StateMergeParams, broadcast_msg, broadcast_state_merge};
-use fofoca::protocol::MeshName;
-use fofoca::protocol::{MeshId, Message, MessageBody, Nickname};
-use fofoca::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
-use fofoca::runtime::tuning::ping_window_secs;
+use habilis_network::embed::{EventLoopState, HandlerCtx};
+use habilis_network::iroh::Endpoint;
+use habilis_network::ops::{StateMergeParams, broadcast_state_merge, start_ping_round};
+use habilis_network::protocol::MeshName;
+use habilis_network::protocol::{MeshId, MessageBody, Nickname};
+use habilis_network::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -16,7 +13,7 @@ use crate::a2a::app::A2aApp;
 use crate::a2a::peer_path::respond_with_paths;
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
-    emit_task_status, send_broadcast, send_msg,
+    emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState};
@@ -147,7 +144,7 @@ pub(crate) enum IpcCommand {
 
 impl Addressed for IpcCommand {
     /// The mesh a command is addressed to, used to derive the socket path in
-    /// [`fofoca::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
+    /// [`habilis_network::runtime::ipc::send`]. `None` for [`IpcCommand::Info`], which is
     /// sent by socket path directly (the daemon answers with its own id).
     fn mesh_id(&self) -> Option<&MeshId> {
         match self {
@@ -192,9 +189,10 @@ pub(crate) struct IpcDispatchParams<'a> {
 pub(crate) async fn handle_ipc_command(
     params: IpcDispatchParams<'_>,
     state: &mut EventLoopState,
-    sender: &MeshSender,
+    ctx: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
+    let sender = ctx.sender;
     let IpcDispatchParams {
         cmd,
         resp_tx,
@@ -204,6 +202,7 @@ pub(crate) async fn handle_ipc_command(
         endpoint,
         app,
     } = params;
+    app.drain_delivered_legs();
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or
@@ -256,8 +255,14 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                Ok((msg_id, msg, pending)) => {
+                    let ok = json_ok_msg(&msg_id, &msg);
+                    when_sent(pending, move |verdict| {
+                        let _ = resp_tx.send(match verdict {
+                            Ok(()) => ok,
+                            Err(error) => json_error(&error.to_string()),
+                        });
+                    });
                     true
                 }
                 Err(error) => {
@@ -287,22 +292,12 @@ pub(crate) async fn handle_ipc_command(
             false
         }
         IpcCommand::Ping { mesh: _ } => {
-            // Arm a fresh round (replacing any in flight) and broadcast
-            // the probe. Pongs are collected by the gossip receive path;
-            // the round's deadline drives the `ping_report` emission.
-            let now = tokio::time::Instant::now();
-            state.arm_ping_round(PingRound {
-                t1: now,
-                deadline: now + Duration::from_secs(ping_window_secs()),
-                pongs: HashMap::new(),
-                // CLI/IPC consumes the `ping_report` event, not a channel.
-                resp: None,
-            });
-            broadcast_msg(
-                sender,
-                &Message::new_ping(mesh, author).signed(state.identity()),
-            )
-            .await;
+            // Start a fresh round (replacing any in flight): the engine arms
+            // it and broadcasts the first probe, and its event loop sends the
+            // second. Pongs are collected by the gossip receive path; the
+            // round's deadline drives the `ping_report` emission. CLI/IPC
+            // consumes that event, not a channel, so there is no responder.
+            start_ping_round(state, ctx, None).await;
             tracing::debug!("IPC ping command received; round armed");
             let _ = resp_tx.send(json_ack());
             true
@@ -329,8 +324,14 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok(msg) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
+                Ok((msg, pending)) => {
+                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    when_sent(pending, move |verdict| {
+                        let _ = resp_tx.send(match verdict {
+                            Ok(()) => ok,
+                            Err(error) => json_error(&error.to_string()),
+                        });
+                    });
                     true
                 }
                 Err(error) => {
@@ -368,8 +369,14 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok(msg) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
+                Ok((msg, pending)) => {
+                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    when_sent(pending, move |verdict| {
+                        let _ = resp_tx.send(match verdict {
+                            Ok(()) => ok,
+                            Err(error) => json_error(&error.to_string()),
+                        });
+                    });
                     true
                 }
                 Err(error) => {
@@ -391,7 +398,7 @@ pub(crate) async fn handle_ipc_command(
                     merge,
                     sender,
                     sink: output,
-                    channel: fofoca::protocol::Channel::State,
+                    channel: habilis_network::protocol::Channel::State,
                     surface: true,
                 },
             )
@@ -401,7 +408,10 @@ pub(crate) async fn handle_ipc_command(
             broadcast
         }
         IpcCommand::StateGet { mesh: _ } => {
-            let _ = resp_tx.send(state_get_response(state, fofoca::protocol::Channel::State));
+            let _ = resp_tx.send(state_get_response(
+                state,
+                habilis_network::protocol::Channel::State,
+            ));
             false
         }
         IpcCommand::MetaMerge { mesh: _, merge } => {
@@ -413,7 +423,7 @@ pub(crate) async fn handle_ipc_command(
                     merge,
                     sender,
                     sink: output,
-                    channel: fofoca::protocol::Channel::Meta,
+                    channel: habilis_network::protocol::Channel::Meta,
                     surface: true,
                 },
             )
@@ -487,7 +497,7 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
         })
         .to_string();
     };
-    match fofoca::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
+    match habilis_network::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
@@ -541,7 +551,10 @@ fn topology_response(state: &EventLoopState) -> String {
 }
 
 /// The `agent-gossip state get` response: the derived document.
-fn state_get_response(state: &EventLoopState, channel: fofoca::protocol::Channel) -> String {
+fn state_get_response(
+    state: &EventLoopState,
+    channel: habilis_network::protocol::Channel,
+) -> String {
     let document = state.doc(channel).to_json();
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
@@ -562,7 +575,9 @@ fn state_get_response(state: &EventLoopState, channel: fofoca::protocol::Channel
 /// trimmed view back as if it were truth. `absent` is derived, so it cannot
 /// travel that path.
 fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
-    let document = state.doc(fofoca::protocol::Channel::Meta).to_json();
+    let document = state
+        .doc(habilis_network::protocol::Channel::Meta)
+        .to_json();
     let snapshot = state.roster_snapshot();
     // Active members only. The roster snapshot chains the *quiet* peers onto
     // the live ones, and a peer that died ungracefully lands exactly there —
@@ -581,7 +596,7 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
 
 #[cfg(test)]
 mod tests {
-    use fofoca::runtime::ipc::Addressed;
+    use habilis_network::runtime::ipc::Addressed;
 
     use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
 
@@ -825,26 +840,28 @@ mod tests {
                 let author = Nickname::new(author).unwrap();
                 let body = MessageBody::new(body).unwrap();
                 let expected_body = body.clone();
-                let identity = fofoca::protocol::Identity::generate();
-                let (bytes, built) = fofoca::protocol::build_msg_bytes(
-                    fofoca::protocol::BuildMsgParams {
-                        tag: fofoca::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+                let identity = habilis_network::protocol::Identity::generate();
+                let (bytes, built) = habilis_network::protocol::build_msg_bytes(
+                    habilis_network::protocol::BuildMsgParams {
+                        tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
                         mesh: &mesh,
                         author: &author,
                         body,
-                        chain: fofoca::protocol::ChainCtx::genesis(),
+                        chain: habilis_network::protocol::ChainCtx::genesis(),
                     },
                     &identity,
                 )
                 .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
-                let parsed = fofoca::protocol::Message::parse(&bytes).unwrap();
+                let parsed = habilis_network::protocol::Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.mesh, &mesh);
                 prop_assert_eq!(
                     parsed.kind,
-                    fofoca::protocol::MessageKind::app_broadcast(crate::a2a::wire::BROADCAST)
+                    habilis_network::protocol::MessageKind::app_broadcast(
+                        crate::a2a::wire::BROADCAST
+                    )
                 );
             }
         }

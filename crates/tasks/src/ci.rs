@@ -8,7 +8,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     crate::fmt::check(sh)?;
 
     // No layering gate any more: it checked that the engine crate named neither
-    // A2A nor the app, and the engine now lives in its own repo (`fofoca`), so
+    // A2A nor the app, and the engine now lives in its own repo (`habilis-network`), so
     // the boundary is enforced by the repo edge rather than by a grep.
 
     output::status("Running", "clippy");

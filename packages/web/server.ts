@@ -123,8 +123,8 @@ Bun.serve({
         })
       }
 
-      // Nothing on disk, and nothing owns paths dynamically any more: Nextra
-      // routes the whole site, so every URL that exists is a file the export
+      // Nothing on disk, and nothing owns paths dynamically any more: the site
+      // is a static export, so every URL that exists is a file the export
       // wrote. A mesh is joined at /app/?mesh=<id>, which is that one exported
       // page plus a query string the server never sees.
       console.log(`404 ${req.method} ${canonical}`)

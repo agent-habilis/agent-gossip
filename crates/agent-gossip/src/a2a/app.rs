@@ -1,16 +1,17 @@
 //! A2A-application state owned by the event loop, kept distinct from the
-//! generic mesh state in [`fofoca::embed::EventLoopState`]. Holds the
+//! generic mesh state in [`habilis_network::embed::EventLoopState`]. Holds the
 //! in-flight task registry, the outstanding gossip A2A-call waiters, and the
 //! lazily-bound blob server — the pieces that belong to the a2a layer, not the
 //! transport/membership engine. Threaded alongside `EventLoopState` as its own
 //! `&mut` borrow.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use fofoca::protocol::Nickname;
-use fofoca::util::bounded_fifo_set::BoundedFifoSet;
+use habilis_network::protocol::{Message, Nickname};
+use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::oneshot::error::TryRecvError;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::TaskId;
@@ -47,9 +48,9 @@ struct StartupSink {
     startup: Startup,
 }
 
-impl fofoca::embed::NodeSink for StartupSink {
-    fn emit(&self, event: fofoca::embed::NodeEvent) {
-        use fofoca::embed::NodeEvent;
+impl habilis_network::embed::NodeSink for StartupSink {
+    fn emit(&self, event: habilis_network::embed::NodeEvent) {
+        use habilis_network::embed::NodeEvent;
         if let NodeEvent::Ready {
             mesh,
             name,
@@ -91,7 +92,7 @@ impl SurfacedIo {
     /// renderer, wrapped as a [`NodeSink`] so the engine emits `NodeEvent`s
     /// through the *same* tap the app's own `Output` writes to. Both feed the
     /// surfaced-events ring in surfacing order.
-    pub(crate) fn sink(&self) -> std::sync::Arc<dyn fofoca::embed::NodeSink> {
+    pub(crate) fn sink(&self) -> std::sync::Arc<dyn habilis_network::embed::NodeSink> {
         std::sync::Arc::new(StartupSink {
             output: self.output.clone(),
             startup: self.startup.clone(),
@@ -123,10 +124,10 @@ pub(crate) struct A2aApp {
     /// lazily on the first large-file offload (an `a2a artifact`/`call --file`)
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
-    pub blob_server: Option<fofoca::ops::blob::BlobServer>,
+    pub blob_server: Option<habilis_network::ops::blob::BlobServer>,
     /// The blob group of each first `a2a call --file`, keyed by the task the
     /// worker minted for it, so the task sweep reaps the blob with the task.
-    call_blobs: HashMap<TaskId, fofoca::ops::blob::ContentId>,
+    call_blobs: HashMap<TaskId, habilis_network::ops::blob::ContentId>,
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
@@ -150,6 +151,30 @@ pub(crate) struct A2aApp {
     /// Receiver end of the `Output` tap, drained into [`surfaced`](Self::surfaced)
     /// each loop iteration. `None` for a detached test `A2aApp` (no live loop).
     pub(crate) surfaced_rx: Option<UnboundedReceiver<OutputEvent>>,
+    /// Our own task legs in the order they were sent, waiting to enter the task record. A leg
+    /// enters it when the peer got it, and never before an earlier leg has been settled: the
+    /// record then holds only what the peer got, in the order the peer got it.
+    own_legs: VecDeque<QueuedLeg>,
+    /// Why our own card is not published, while it is not: the last publish failed. Told to the
+    /// other members through `/peers/<nick>/card_error`, and retried on the ticks that the
+    /// backoff allows.
+    pub(crate) card_error: Option<String>,
+    /// Ticks to wait before the next retry of the card, and the wait of the retry after it,
+    /// which doubles at each failure.
+    pub(crate) card_retry_in: u32,
+    pub(crate) card_retry_wait: u32,
+}
+
+/// An own task leg to ingest into the task record once the peer got it.
+pub(crate) struct DeliveredLeg {
+    pub(crate) echo: Message,
+    pub(crate) task_id: TaskId,
+}
+
+struct QueuedLeg {
+    leg: DeliveredLeg,
+    /// Whether the send of the leg reached the peer. Resolved when the send has an outcome.
+    delivered: tokio::sync::oneshot::Receiver<bool>,
 }
 
 impl A2aApp {
@@ -183,6 +208,10 @@ impl A2aApp {
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
+            own_legs: VecDeque::new(),
+            card_error: None,
+            card_retry_in: 0,
+            card_retry_wait: 0,
         }
     }
 
@@ -204,6 +233,48 @@ impl A2aApp {
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
+            own_legs: VecDeque::new(),
+            card_error: None,
+            card_retry_in: 0,
+            card_retry_wait: 0,
+        }
+    }
+
+    /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
+    /// peer got the leg.
+    pub(crate) fn queue_own_leg(
+        &mut self,
+        leg: DeliveredLeg,
+        delivered: tokio::sync::oneshot::Receiver<bool>,
+    ) {
+        self.own_legs.push_back(QueuedLeg { leg, delivered });
+    }
+
+    /// The legs at the head of the queue that the peer got, in the order they were sent. A leg
+    /// whose send has no outcome yet holds back every leg behind it. A leg that was not delivered
+    /// is dropped.
+    fn take_delivered_legs(&mut self) -> Vec<DeliveredLeg> {
+        let mut ready = Vec::new();
+        while let Some(head) = self.own_legs.front_mut() {
+            let delivered = match head.delivered.try_recv() {
+                Ok(delivered) => delivered,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Closed) => false,
+            };
+            let Some(QueuedLeg { leg, .. }) = self.own_legs.pop_front() else {
+                break;
+            };
+            if delivered {
+                ready.push(leg);
+            }
+        }
+        ready
+    }
+
+    /// Ingest the own task legs that the peer got since the last call.
+    pub(crate) fn drain_delivered_legs(&mut self) {
+        for DeliveredLeg { echo, task_id } in self.take_delivered_legs() {
+            crate::a2a::send::ingest_own_leg(self, &echo, &task_id);
         }
     }
 
@@ -274,7 +345,7 @@ impl A2aApp {
     /// `a2a call --file` blob moves under that task, else it is orphaned.
     pub(crate) fn fulfill_a2a_waiter(
         &mut self,
-        corr: &fofoca::protocol::CorrId,
+        corr: &habilis_network::protocol::CorrId,
         from: &Nickname,
         body: &str,
     ) {
@@ -324,7 +395,7 @@ impl A2aApp {
         std::mem::take(&mut self.late_cancels)
     }
 
-    pub(crate) fn orphan_blob(&mut self, group: Option<fofoca::ops::blob::ContentId>) {
+    pub(crate) fn orphan_blob(&mut self, group: Option<habilis_network::ops::blob::ContentId>) {
         self.orphan_blobs.extend(group.map(|group| OrphanBlob {
             group,
             evict_at: Instant::now(),
@@ -338,7 +409,7 @@ impl A2aApp {
         &mut self,
         reaped: &[TaskId],
         now: Instant,
-    ) -> Vec<fofoca::ops::blob::ContentId> {
+    ) -> Vec<habilis_network::ops::blob::ContentId> {
         let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.orphan_blobs)
             .into_iter()
             .partition(|orphan| orphan.evict_at <= now);
@@ -355,7 +426,7 @@ impl A2aApp {
     /// Whether we have an outstanding A2A call to `peer` correlated by `corr`,
     /// or a timed-out `--file` call still open to a late reply — the gate that
     /// keeps an unsolicited/forged response from being acted on.
-    pub(crate) fn has_a2a_waiter(&self, corr: &fofoca::protocol::CorrId, peer: &Nickname) -> bool {
+    pub(crate) fn has_a2a_waiter(&self, corr: &habilis_network::protocol::CorrId, peer: &Nickname) -> bool {
         self.a2a_waiters
             .iter()
             .any(|waiter| waiter.corr == *corr && waiter.peer == *peer)
@@ -557,15 +628,15 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc
 
 /// A first-call blob group whose call produced no task.
 struct OrphanBlob {
-    group: fofoca::ops::blob::ContentId,
+    group: habilis_network::ops::blob::ContentId,
     evict_at: Instant,
     /// The `(corr, peer)` of a timed-out call, whose late reply can still
     /// adopt the task and take the group.
-    late_reply: Option<(fofoca::protocol::CorrId, Nickname)>,
+    late_reply: Option<(habilis_network::protocol::CorrId, Nickname)>,
 }
 
 impl OrphanBlob {
-    fn awaits_reply(&self, corr: &fofoca::protocol::CorrId, peer: &Nickname) -> bool {
+    fn awaits_reply(&self, corr: &habilis_network::protocol::CorrId, peer: &Nickname) -> bool {
         self.late_reply
             .as_ref()
             .is_some_and(|(late_corr, late_peer)| late_corr == corr && late_peer == peer)
@@ -575,22 +646,97 @@ impl OrphanBlob {
 /// An outstanding gossip A2A call, waiting for a response frame with a matching
 /// correlation id `corr` from `peer`, or for `deadline` to elapse.
 pub(crate) struct A2aWaiter {
-    pub(crate) corr: fofoca::protocol::CorrId,
+    pub(crate) corr: habilis_network::protocol::CorrId,
     pub(crate) peer: Nickname,
     pub(crate) deadline: TokioInstant,
     pub(crate) responder: A2aResponder,
     /// The blob group of a first `a2a call --file`, owned by this call until a
     /// task adopts it.
-    pub(crate) blob_group: Option<fofoca::ops::blob::ContentId>,
+    pub(crate) blob_group: Option<habilis_network::ops::blob::ContentId>,
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
 
-    use fofoca::protocol::Nickname;
+    use habilis_network::protocol::{AppTag, MeshId, Message, MessageBody, MessageKind, Nickname};
 
-    use super::{A2aResponder, rpc_result_from_body};
+    use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
+    use crate::a2a::TaskId;
+
+    fn leg(body: &str) -> DeliveredLeg {
+        let echo = Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::App {
+                tag: AppTag::from("status"),
+                to: None,
+                corr: None,
+            },
+            MessageBody::from(body),
+        );
+        DeliveredLeg {
+            echo,
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        }
+    }
+
+    fn bodies(legs: &[DeliveredLeg]) -> Vec<&str> {
+        legs.iter().map(|leg| leg.echo.body.as_str()).collect()
+    }
+
+    /// Two legs go to one cold peer and share its dial, so the verdict of the second can come
+    /// first. The record must still take the status before the artifact: the task ends in the
+    /// state of the last leg.
+    #[test]
+    fn own_legs_enter_the_record_in_send_order_when_a_later_verdict_comes_first() {
+        let mut app = super::A2aApp::new();
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
+        let (artifact_tx, artifact_rx) = tokio::sync::oneshot::channel();
+        app.queue_own_leg(leg("status"), status_rx);
+        app.queue_own_leg(leg("artifact"), artifact_rx);
+
+        artifact_tx
+            .send(true)
+            .expect("the queue holds the receiver");
+        assert!(
+            app.take_delivered_legs().is_empty(),
+            "the artifact waits behind the status, whose send has no outcome"
+        );
+
+        status_tx.send(true).expect("the queue holds the receiver");
+        let taken = app.take_delivered_legs();
+        assert_eq!(bodies(&taken), ["status", "artifact"]);
+        assert!(app.take_delivered_legs().is_empty(), "a leg enters once");
+    }
+
+    /// A leg that the dial did not send leaves no record, and does not hold back the next one.
+    #[test]
+    fn a_leg_that_was_not_delivered_leaves_no_record_and_does_not_block_the_next() {
+        let mut app = super::A2aApp::new();
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
+        let (artifact_tx, artifact_rx) = tokio::sync::oneshot::channel();
+        app.queue_own_leg(leg("status"), status_rx);
+        app.queue_own_leg(leg("artifact"), artifact_rx);
+
+        status_tx.send(false).expect("the queue holds the receiver");
+        artifact_tx
+            .send(true)
+            .expect("the queue holds the receiver");
+        let taken = app.take_delivered_legs();
+        assert_eq!(bodies(&taken), ["artifact"]);
+    }
+
+    /// A send whose task ended without an outcome is a failed send.
+    #[test]
+    fn a_leg_whose_send_task_was_dropped_is_not_delivered() {
+        let mut app = super::A2aApp::new();
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel::<bool>();
+        app.queue_own_leg(leg("status"), status_rx);
+        drop(status_tx);
+        assert!(app.take_delivered_legs().is_empty());
+        assert!(app.own_legs.is_empty(), "the failed leg left the queue");
+    }
 
     /// The localhost binding's `A2aResponder::Rpc` unwraps a peer's JSON-RPC
     /// response body into the `Result<Value, RpcError>` its HTTP handler
@@ -643,14 +789,14 @@ mod tests {
         let (bob_tx, bob_rx) = tokio::sync::oneshot::channel();
         let (carol_tx, carol_rx) = tokio::sync::oneshot::channel();
         app.a2a_waiters.push(super::A2aWaiter {
-            corr: fofoca::protocol::CorrId::from("corr-bob"),
+            corr: habilis_network::protocol::CorrId::from("corr-bob"),
             peer: Nickname::from("bob"),
             deadline: far,
             responder: A2aResponder::Typed(bob_tx),
             blob_group: None,
         });
         app.a2a_waiters.push(super::A2aWaiter {
-            corr: fofoca::protocol::CorrId::from("corr-carol"),
+            corr: habilis_network::protocol::CorrId::from("corr-carol"),
             peer: Nickname::from("carol"),
             deadline: far,
             responder: A2aResponder::Typed(carol_tx),
@@ -677,11 +823,11 @@ mod tests {
     fn waiter_with_blob(corr: &str, group: &str) -> super::A2aWaiter {
         let (tx, _rx) = tokio::sync::oneshot::channel();
         super::A2aWaiter {
-            corr: fofoca::protocol::CorrId::from(corr),
+            corr: habilis_network::protocol::CorrId::from(corr),
             peer: Nickname::from("bob"),
             deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
             responder: A2aResponder::Typed(tx),
-            blob_group: Some(fofoca::ops::blob::ContentId::new(group)),
+            blob_group: Some(habilis_network::ops::blob::ContentId::new(group)),
         }
     }
 
@@ -698,7 +844,7 @@ mod tests {
         });
 
         app.fulfill_a2a_waiter(
-            &fofoca::protocol::CorrId::from("corr-1"),
+            &habilis_network::protocol::CorrId::from("corr-1"),
             &Nickname::from("bob"),
             &created.to_string(),
         );
@@ -709,7 +855,7 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![fofoca::ops::blob::ContentId::new("group-1")]
+            vec![habilis_network::ops::blob::ContentId::new("group-1")]
         );
     }
 
@@ -718,12 +864,12 @@ mod tests {
     #[test]
     fn a_first_call_blob_without_a_task_is_orphaned() {
         let mut app = super::A2aApp::new();
-        let group = |name: &str| fofoca::ops::blob::ContentId::new(name);
+        let group = |name: &str| habilis_network::ops::blob::ContentId::new(name);
 
         app.a2a_waiters
             .push(waiter_with_blob("corr-err", "group-err"));
         app.fulfill_a2a_waiter(
-            &fofoca::protocol::CorrId::from("corr-err"),
+            &habilis_network::protocol::CorrId::from("corr-err"),
             &Nickname::from("bob"),
             r#"{"error":{"code":-32602,"message":"no"}}"#,
         );
@@ -768,7 +914,7 @@ mod tests {
         let timeout = std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
         assert_eq!(
             app.take_call_blobs(&[], Instant::now() + timeout),
-            vec![fofoca::ops::blob::ContentId::new("group-late")]
+            vec![habilis_network::ops::blob::ContentId::new("group-late")]
         );
     }
 
@@ -786,7 +932,7 @@ mod tests {
         to_carol.peer = Nickname::from("carol");
         app.a2a_waiters.push(to_carol);
         app.fulfill_a2a_waiter(
-            &fofoca::protocol::CorrId::from("corr-carol"),
+            &habilis_network::protocol::CorrId::from("corr-carol"),
             &Nickname::from("carol"),
             &created,
         );
@@ -794,12 +940,12 @@ mod tests {
         app.a2a_waiters
             .push(waiter_with_blob("corr-bob", "group-bob"));
         app.fulfill_a2a_waiter(
-            &fofoca::protocol::CorrId::from("corr-bob"),
+            &habilis_network::protocol::CorrId::from("corr-bob"),
             &Nickname::from("bob"),
             &created,
         );
 
-        let group = |name: &str| fofoca::ops::blob::ContentId::new(name);
+        let group = |name: &str| habilis_network::ops::blob::ContentId::new(name);
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
             vec![group("group-bob")]
@@ -820,7 +966,7 @@ mod tests {
         late.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
-        let corr = fofoca::protocol::CorrId::from("corr-slow");
+        let corr = habilis_network::protocol::CorrId::from("corr-slow");
         assert!(app.has_a2a_waiter(&corr, &Nickname::from("bob")));
 
         let task_id = crate::a2a::TaskId::random();
@@ -841,7 +987,7 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![fofoca::ops::blob::ContentId::new("group-slow")]
+            vec![habilis_network::ops::blob::ContentId::new("group-slow")]
         );
     }
 
@@ -860,7 +1006,7 @@ mod tests {
         });
 
         app.fulfill_a2a_waiter(
-            &fofoca::protocol::CorrId::from("corr-slow"),
+            &habilis_network::protocol::CorrId::from("corr-slow"),
             &Nickname::from("bob"),
             &created.to_string(),
         );

@@ -57,14 +57,14 @@ pub(crate) mod tuning;
 )]
 pub(crate) struct Cli {
     /// Per-member log directory (default: the per-user runtime base, see
-    /// `fofoca::util::runtime_base`, with a per-mesh `<prefix>/` subfolder).
+    /// `habilis_network::util::runtime_base`, with a per-mesh `<prefix>/` subfolder).
     /// Hidden — a test/ops knob.
     /// Global so it applies to any subcommand.
     #[arg(long, global = true, hide = true)]
     pub log_dir: Option<std::path::PathBuf>,
 
     /// Max log-file bytes before rotating to `<file>.1` (`0` disables).
-    /// Hidden test/ops knob; default `fofoca::util::tuning::LOG_FILE_MAX_BYTES`.
+    /// Hidden test/ops knob; default `habilis_network::util::tuning::LOG_FILE_MAX_BYTES`.
     #[arg(long, global = true, hide = true)]
     pub log_max_bytes: Option<u64>,
 
@@ -252,7 +252,7 @@ pub(crate) enum Commands {
 
         /// How long `ping` collects pongs (seconds). Hidden; tests shorten it
         /// so a `ping` round-trip doesn't wait the full window.
-        #[arg(long, hide = true, default_value_t = fofoca::util::tuning::PING_WINDOW_SECS)]
+        #[arg(long, hide = true, default_value_t = habilis_network::util::tuning::PING_WINDOW_SECS)]
         ping_window_secs: u64,
 
         /// How long a `long: true` fetch parks before returning empty (millis).

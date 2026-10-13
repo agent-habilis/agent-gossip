@@ -4,11 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "portless",
-    "predev:next": "NODE_ENV=development bun scripts/build-webapp.ts",
+    "predev:next": "NODE_ENV=development bun scripts/build-webapp.ts && bun scripts/copy-changelog.ts",
     "dev:next": "next dev",
-    "prebuild": "bun scripts/build-webapp.ts",
+    "prebuild": "bun scripts/build-webapp.ts && bun scripts/copy-changelog.ts",
     "build": "next build",
-    "postbuild": "pagefind --site .next/server/app --output-path out/_pagefind",
+    "postbuild": "pagefind --site out --output-subdir _pagefind",
     "build:webapp": "bun scripts/build-webapp.ts",
     "watch:webapp": "NODE_ENV=development bun scripts/build-webapp.ts --watch",
     "serve": "bun server.ts",
@@ -20,12 +20,11 @@
   },
   "dependencies": {
     "moonspace-dom": "workspace:*",
-    "visage-dom": "workspace:*",
     "next": "16.0.11",
     "nextra": "4.6.1",
-    "nextra-theme-docs": "4.6.1",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "visage-dom": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.5.1",

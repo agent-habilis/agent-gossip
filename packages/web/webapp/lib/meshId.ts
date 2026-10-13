@@ -1,10 +1,14 @@
 /**
- * Mesh ids, as `fofoca-protocol` encodes them: base58check over
+ * Mesh ids, as `habilis-network-protocol` encodes them: base58check over
  *
- *   [1] version=1 [32] seed [1] name len [N] name [2] config len LE [..] config
+ *   [1] version=2 [32] seed [1] name len [N] name [2] config len LE [..] config
  *
  * with a four-byte `SHA256(SHA256(payload))` tail. Bitcoin alphabet, no
- * prefix — a prefixed id is rejected engine-side too.
+ * prefix — a prefixed id is rejected engine-side too. The config starts with
+ * the lookup flags (and a relay ladder when they say so), then one byte for the
+ * transport policy: udp 0x01, webrtc 0x02, multihop 0x04, relay 0x08, gossip
+ * 0x10. A bit above those is a build this decoder does not know, and the engine
+ * refuses it with a request to upgrade.
  *
  * This is deliberately shared by the server's routing and the app's join form.
  * The server serves the app for any single path segment that validates, so a
@@ -17,13 +21,20 @@
  */
 
 /**
- * The vector pinned in fofoca's own suite (`fofoca-protocol` `src/mesh/mod.rs`,
- * seed `[7u8; 32]`, name "test", public preset). Exported so the unit test and
- * the e2e suite pin the same value — two copies means an engine change updates
- * one and leaves the other testing a stale vector while still looking green.
+ * The vector pinned in habilis-network's own suite (`habilis-network-protocol`
+ * `src/mesh/tests.rs`, seed `[7u8; 32]`, name "test", public preset). Exported
+ * so the unit test and the e2e suite pin the same value — two copies means an
+ * engine change updates one and leaves the other testing a stale vector while
+ * still looking green.
  */
 export const GOLDEN_MESH_ID =
-  '2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1'
+  'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqazmpTSgH'
+
+const VERSION = 2
+const SEED_BYTES = 32
+const KNOWN_TRANSPORT_BITS = 0x1f
+const LOOKUP_RELAY = 0b0100
+const LOOKUP_CUSTOM_RELAY = 0b1000
 
 const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
@@ -32,7 +43,7 @@ const INDEX: ReadonlyMap<string, number> = new Map(
 )
 
 /** Smallest possible payload (empty name, empty config) plus the checksum. */
-const MIN_BYTES = 1 + 32 + 1 + 2 + 4
+const MIN_BYTES = 1 + SEED_BYTES + 1 + 2 + 4
 
 export function decodeBase58(text: string): Uint8Array<ArrayBuffer> | null {
   if (text.length === 0) return null
@@ -78,6 +89,45 @@ async function sha256(input: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayB
   return new Uint8Array(await crypto.subtle.digest('SHA-256', input))
 }
 
+/** The bytes after the config length, or null when the lengths do not add up. */
+function configRegion(payload: Uint8Array): Uint8Array | null {
+  let position = 1 + SEED_BYTES
+  const nameLength = payload[position]
+  if (!nameLength) return null
+  position += 1 + nameLength
+
+  const low = payload[position]
+  const high = payload[position + 1]
+  if (low === undefined || high === undefined) return null
+  const configLength = low | (high << 8)
+  position += 2
+
+  // The engine refuses trailing bytes, so the region has to end the payload.
+  if (position + configLength !== payload.length) return null
+  return payload.subarray(position)
+}
+
+/** The transport policy byte of a config region, or null when it is missing. */
+function transportByte(config: Uint8Array): number | null {
+  const flags = config[0]
+  if (flags === undefined) return null
+  let position = 1
+
+  if (flags & LOOKUP_CUSTOM_RELAY) {
+    if (!(flags & LOOKUP_RELAY)) return null
+    const rungs = config[position]
+    if (!rungs) return null
+    position += 1
+    for (let rung = 0; rung < rungs; rung += 1) {
+      const low = config[position]
+      const high = config[position + 1]
+      if (low === undefined || high === undefined) return null
+      position += 2 + (low | (high << 8))
+    }
+  }
+  return config[position] ?? null
+}
+
 export async function isMeshId(candidate: string): Promise<boolean> {
   const raw = decodeBase58(candidate)
   if (!raw || raw.length < MIN_BYTES) return false
@@ -89,9 +139,14 @@ export async function isMeshId(candidate: string): Promise<boolean> {
   for (let index = 0; index < 4; index += 1) {
     if (checksum[index] !== expected[index]) return false
   }
-  // Version is the first byte and the only one we can check without decoding
-  // the rest; a future version would need its own parser anyway.
-  return payload[0] === 1
+  // A future version would need its own parser, so an unknown one is refused
+  // here just as the engine refuses it.
+  if (payload[0] !== VERSION) return false
+
+  const config = configRegion(payload)
+  if (!config) return false
+  const transport = transportByte(config)
+  return transport !== null && (transport & ~KNOWN_TRANSPORT_BITS) === 0
 }
 
 /**

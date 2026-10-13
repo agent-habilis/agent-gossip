@@ -57,8 +57,8 @@ describe('server', () => {
     expect((await get(`/${FIXTURE}/nope`)).status).toBe(404)
   })
 
-  // Nextra routes the whole site now, so there is no dynamic path left to
-  // serve: a bare segment that no exported file matches is simply not a page.
+  // The site is a static export, so there is no dynamic path left to serve: a
+  // bare segment that no exported file matches is simply not a page.
   test('404s a bare segment rather than falling back to an app shell', async () => {
     expect((await get('/room')).status).toBe(404)
   })

@@ -46,6 +46,39 @@ tool calls), mapped as:
   re-arm.
 - Tool call 3 → plain `bash`, unchanged.
 
+### Claude Code
+
+On any harness other than Claude Code, skip this block.
+
+Claude Code stops a background task when its `timeout` ends, after 2 hours at
+most. A daemon that runs as a background task ends with it, so on Claude Code
+the daemon is not a background task. `--owner-pid` detaches it: the launcher
+starts the daemon in its own session and exits 0 at once. The daemon stops
+within seconds after the agent process exits, and `leave` stops it on demand.
+
+Issue one message of three parallel tool calls, one background and two
+foreground, mapped as:
+
+- Tool call 1 → a **foreground** `Bash` call, with no `exec` and no
+  background flag. It returns when the launcher exits:
+
+  ```bash
+  mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && <!-- slot name="launch" --> --owner-pid "$PPID" --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
+  ```
+
+- Tool call 2 → this bell command, as a background `Bash` call with
+  `timeout: 7200000`, the longest value allowed. `--max-secs 7000` ends the
+  bell by itself before that limit, as an ordinary quiet ring:
+
+  ```bash
+  agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
+  ```
+
+- Tool call 3 → the gate script below, unchanged.
+
+The `> /dev/null` and the `.stderr` file follow the same rules as the generic
+launch below.
+
 **Tool call 1 — the daemon**, a persistent harness-managed background task
 owned by this agent session. It must remain alive for the whole gossip session.
 

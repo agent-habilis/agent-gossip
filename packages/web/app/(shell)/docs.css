@@ -1,0 +1,172 @@
+/* Docs and blog: primitive's grid and type, the landing page's theme.
+   The nav and sidebar are the shared shell (styles/shell.css). */
+
+/* The TOC stays in view while the article scrolls, like the sidebar. */
+/* Right-aligned, so it closes the page's right edge the way the sidebar
+   opens its left. */
+.toc { position: sticky; top: var(--lineHeight); align-self: start; text-align: right; }
+.toc ul { list-style: none; padding: 0; }
+/* The content's color, not muted: a heading here is often all code, and
+   muted code on its own fill read as disabled. */
+.toc a { text-decoration: none; color: var(--foreground-color); }
+.toc a:hover { color: var(--accent-color); }
+.toc code { color: inherit; }
+.toc h6 { margin-bottom: var(--baseline); }
+
+/* --------------------------------------------------------------- article */
+
+article { min-width: 0; }
+article h1 { margin-bottom: var(--lineHeight); }
+article h2 { margin-top: calc(var(--lineHeight) * 2); }
+article h3 { margin-top: calc(var(--lineHeight) * 1.5); margin-bottom: var(--baseline); }
+article h4 { margin-top: var(--lineHeight); }
+article :is(h2, h3, h4) { scroll-margin-top: var(--lineHeight); }
+article a { color: var(--accent-color); }
+article :is(p, li) { max-width: none; }
+article li + li { margin-top: calc(var(--baseline) / 2); }
+article table { margin-bottom: var(--lineHeight); }
+article hr { margin-top: calc(var(--lineHeight) * 2); }
+
+/* Heading anchors Nextra adds after the text. */
+article :is(h2, h3, h4) a[href^="#"] { display: none; }
+
+pre {
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+/* Shiki writes both themes into each token as variables; the docs theme's
+   stylesheet is what picks one, and it is not loaded here. */
+pre span { color: var(--shiki-dark); }
+:not(pre) > code {
+  padding: 0 calc(var(--baseline) / 2);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+
+.pager { display: flex; justify-content: space-between; max-width: none; }
+
+/* ------------------------------------------- nextra/components, restyled */
+
+.nextra-callout {
+  display: flow-root;
+  margin-bottom: var(--lineHeight);
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+}
+/* The icon is a color emoji rather than Nextra's SVG, alone on the first
+   line, with the text starting below it. The kind is only told apart by
+   Nextra's tint class; anything unmatched falls back to info. */
+.nextra-callout > div:first-child {
+  margin-bottom: var(--baseline);
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.nextra-callout > div:first-child svg { display: none; }
+.nextra-callout > div:first-child::before { content: "\2139\FE0F"; }
+.nextra-callout[class*="bg-yellow"] > div:first-child::before { content: "\26A0\FE0F"; }
+/* Inline code shares the callout's fill, so it steps one shade lighter to
+   stay visible. */
+.nextra-callout :not(pre) > code { background: var(--ts-gray-2); }
+
+/* Cards read like the landing's Features: no tile, just the title over its
+   text in a two-column grid. The whole card is a link, so hover colors the
+   title. */
+.nextra-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: calc(var(--lineHeight) * 2) var(--lineHeight);
+  margin-bottom: var(--lineHeight);
+}
+.nextra-card {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  text-decoration: none;
+}
+article a.nextra-card { color: var(--foreground-color); }
+.nextra-card > span {
+  display: flex;
+  gap: calc(var(--baseline) / 2);
+  font-size: var(--h4-size);
+  font-weight: 700;
+}
+.nextra-card:hover > span { color: var(--accent-color); }
+/* Cards render their children before the title span and flip the order with
+   column-reverse, so primitive's :last-child reset never reaches the text. */
+.nextra-card p { margin: 0; }
+
+/* Steps: numbered discs on a rule down the left. The disc's left edge is the
+   column's, so the rule runs through the disc's centre and the step content
+   starts half a line past the disc. */
+.nextra-steps {
+  --step-gutter: calc(var(--lineHeight) + var(--baseline));
+  counter-reset: step;
+  margin-bottom: var(--lineHeight);
+  padding-left: var(--step-gutter);
+  background: linear-gradient(var(--line-color), var(--line-color)) no-repeat
+    calc(var(--lineHeight) / 2 - 0.5px) 0 / 1px 100%;
+}
+.nextra-steps :is(h2, h3, h4) { position: relative; counter-increment: step; margin-top: var(--lineHeight); }
+.nextra-steps :is(h2, h3, h4)::before {
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: calc(var(--step-gutter) * -1);
+  display: grid;
+  place-items: center;
+  width: var(--lineHeight);
+  height: var(--lineHeight);
+  border-radius: 50%;
+  background: var(--accent-color);
+  color: var(--accent-contrast-color);
+  font-size: var(--small-size);
+  font-weight: 700;
+}
+
+/* A file tree is a code block: same fill, padding and radius. Folders are
+   buttons, so they shed the form styles; the icons are UTF-8, not Nextra's
+   SVGs. */
+.nextra-filetree {
+  margin-bottom: var(--lineHeight);
+  padding: var(--baseline) var(--lineHeight);
+  border-radius: var(--radius);
+  background: var(--field-background);
+  font-family: var(--monoFont);
+  list-style: none;
+}
+.nextra-filetree ul { list-style: none; padding-left: var(--lineHeight); }
+.nextra-filetree li { margin: 0; }
+.nextra-filetree button { padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.nextra-filetree svg { display: none; }
+.nextra-filetree button::before { content: "\1F4C1\FE0F"; margin-right: calc(var(--baseline) / 2); }
+/* An open folder renders its children as a sibling list. */
+.nextra-filetree li:has(> ul) > button::before { content: "\1F4C2\FE0F"; }
+.nextra-filetree li:not(:has(> button))::before { content: "\1F4C4\FE0F"; margin-right: calc(var(--baseline) / 2); }
+
+[role="tablist"] {
+  display: flex;
+  gap: var(--lineHeight);
+  box-shadow: inset 0 -1px 0 var(--line-color);
+}
+[role="tab"] { cursor: pointer; color: var(--muted-color); background: none; }
+[role="tab"][aria-selected="true"] {
+  color: var(--accent-color);
+  box-shadow: inset 0 calc(var(--hrThickness) * -1) 0 var(--accent-color);
+}
+/* Nextra plants a hidden h3 at the top of each panel, an anchor only; the
+   article's heading margins would still open a gap under the tabs. */
+[role="tabpanel"] > h3:first-child { margin: 0; }
+/* The panel ends on its last block (often a code block), which primitive's
+   :last-child reset leaves flush against whatever follows the tabs. */
+[role="tabpanel"] { margin-bottom: var(--lineHeight); }
+
+@media only screen and (max-width: 768px) {
+  .toc { display: none; }
+  pre code { white-space: pre-wrap; word-break: break-all; }
+}
+
+/* primitive sizes code at 0.9em, which compounds for code inside pre. */
+pre code { font-size: inherit; }
+.clip { margin-bottom: var(--lineHeight); }

@@ -1,0 +1,10 @@
+/* Vendored from primitive (primitive/main/primitive.css) on 2026-10-04; it ships
+   no package. Debug overlay left out. Edit upstream first, then copy. */
+@import "./tokens.css";
+@import "./base.css";
+@import "./grid.css";
+@import "./typography.css";
+@import "./button.css";
+@import "./forms.css";
+@import "./elements.css";
+@import "./theme-times-square.css";
