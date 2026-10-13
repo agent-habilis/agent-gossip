@@ -381,12 +381,16 @@ impl A2aApp {
     /// A followed-up task is then in the registry although the agent was told
     /// the call timed out, and no task event shows it.
     fn adopt_late_reply(&mut self, orphan_index: usize, from: &Nickname, body: &str) {
-        let Some(task_id) = self.adopt_returned_task(from, body) else {
+        let adopted = self.adopt_returned_task(from, body);
+        let Some(task_id) = adopted.filter(|task_id| !self.call_blobs.contains_key(task_id)) else {
+            // The reply cannot take the group, and it answers the call once:
+            // the next sweep evicts the group and the call awaits nothing more.
+            if let Some(orphan) = self.orphan_blobs.get_mut(orphan_index) {
+                orphan.late_reply = None;
+                orphan.evict_at = Instant::now();
+            }
             return;
         };
-        if self.call_blobs.contains_key(&task_id) {
-            return;
-        }
         let orphan = self.orphan_blobs.swap_remove(orphan_index);
         let opened = orphan
             .late_reply
@@ -1114,6 +1118,69 @@ mod tests {
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![habilis_network::ops::blob::ContentId::new("group-retry")]
+        );
+    }
+
+    /// A timed-out call answered late with no task: nothing can adopt its blob,
+    /// so the next sweep evicts it, and the call stops awaiting replies.
+    #[test]
+    fn a_late_reply_without_a_task_evicts_the_orphan_at_once() {
+        let mut app = super::A2aApp::new();
+        let mut late = waiter_with_blob("corr-late-error", "group-late-error");
+        late.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(late);
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        let corr = habilis_network::protocol::CorrId::from("corr-late-error");
+
+        app.fulfill_a2a_waiter(
+            &corr,
+            &Nickname::from("bob"),
+            r#"{"error":{"code":-32602,"message":"no"}}"#,
+        );
+
+        assert!(!app.has_a2a_waiter(&corr, &Nickname::from("bob")));
+        assert_eq!(
+            app.take_call_blobs(&[], Instant::now()),
+            vec![habilis_network::ops::blob::ContentId::new(
+                "group-late-error"
+            )]
+        );
+    }
+
+    /// A late reply for a task whose blob group is already held cannot take the
+    /// call's group either: the next sweep evicts it.
+    #[test]
+    fn a_late_reply_for_a_task_with_a_blob_evicts_the_orphan_at_once() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+        app.a2a_waiters
+            .push(waiter_with_blob("corr-held", "group-held"));
+        app.fulfill_a2a_waiter(
+            &habilis_network::protocol::CorrId::from("corr-held"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+        let mut late = waiter_with_blob("corr-late-held", "group-late-held");
+        late.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(late);
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        let corr = habilis_network::protocol::CorrId::from("corr-late-held");
+
+        app.fulfill_a2a_waiter(&corr, &Nickname::from("bob"), &created.to_string());
+
+        assert!(!app.has_a2a_waiter(&corr, &Nickname::from("bob")));
+        assert_eq!(
+            app.take_call_blobs(&[], Instant::now()),
+            vec![habilis_network::ops::blob::ContentId::new(
+                "group-late-held"
+            )]
+        );
+        assert_eq!(
+            app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
+            vec![habilis_network::ops::blob::ContentId::new("group-held")]
         );
     }
 }
