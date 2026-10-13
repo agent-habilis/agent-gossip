@@ -426,7 +426,11 @@ impl A2aApp {
     /// Whether we have an outstanding A2A call to `peer` correlated by `corr`,
     /// or a timed-out `--file` call still open to a late reply — the gate that
     /// keeps an unsolicited/forged response from being acted on.
-    pub(crate) fn has_a2a_waiter(&self, corr: &habilis_network::protocol::CorrId, peer: &Nickname) -> bool {
+    pub(crate) fn has_a2a_waiter(
+        &self,
+        corr: &habilis_network::protocol::CorrId,
+        peer: &Nickname,
+    ) -> bool {
         self.a2a_waiters
             .iter()
             .any(|waiter| waiter.corr == *corr && waiter.peer == *peer)
@@ -838,7 +842,7 @@ mod tests {
     fn a_first_call_blob_is_reaped_with_its_task() {
         let mut app = super::A2aApp::new();
         app.a2a_waiters.push(waiter_with_blob("corr-1", "group-1"));
-        let task_id = crate::a2a::TaskId::random();
+        let task_id = TaskId::random();
         let created = serde_json::json!({
             "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
         });
@@ -923,7 +927,7 @@ mod tests {
     #[test]
     fn a_task_id_from_the_wrong_peer_keeps_the_owner_blob() {
         let mut app = super::A2aApp::new();
-        let task_id = crate::a2a::TaskId::random();
+        let task_id = TaskId::random();
         let created = serde_json::json!({
             "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
         })
@@ -969,7 +973,7 @@ mod tests {
         let corr = habilis_network::protocol::CorrId::from("corr-slow");
         assert!(app.has_a2a_waiter(&corr, &Nickname::from("bob")));
 
-        let task_id = crate::a2a::TaskId::random();
+        let task_id = TaskId::random();
         let created = serde_json::json!({
             "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
         });
@@ -1000,7 +1004,7 @@ mod tests {
         late.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
-        let task_id = crate::a2a::TaskId::random();
+        let task_id = TaskId::random();
         let created = serde_json::json!({
             "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
         });
