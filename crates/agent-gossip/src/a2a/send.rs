@@ -1190,8 +1190,9 @@ pub(crate) struct CallFile<'a> {
 }
 
 /// The task id a call's blob is grouped under, and whether that group is new.
-/// A follow-up on a task we do not hold is rejected by the worker, so no task
-/// reaps its blob: that call owns the group like a first call does.
+/// A follow-up on a task we do not hold has no task of ours to reap its blob
+/// (the worker may reject it, or hold the task itself), so that call owns the
+/// group like a first call does.
 fn call_blob_group(
     task_id: Option<crate::a2a::TaskId>,
     tasks: &std::collections::HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
@@ -2002,9 +2003,9 @@ mod call_blob_group_tests {
     use crate::a2a::task::{AdoptInitiatorParams, adopt_initiator};
     use crate::a2a::{TaskId, TaskState};
 
-    /// A follow-up on a task this node does not hold is rejected by the worker,
-    /// so no task ever reaps its blob: the call must own a fresh group for the
-    /// waiter to evict.
+    /// A follow-up on a task this node does not hold has no task of ours to
+    /// reap its blob, whether the worker rejects it or holds the task itself:
+    /// the call must own a fresh group for the waiter to evict.
     #[test]
     fn a_follow_up_on_an_unknown_task_owns_a_fresh_group() {
         let tasks = HashMap::new();

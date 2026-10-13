@@ -372,9 +372,11 @@ impl A2aApp {
         }
     }
 
-    /// The call timed out, but the worker minted the task anyway. The caller
-    /// already reported a failure, so the task is cancelled; its blob goes
-    /// with the task when the sweep reaps it.
+    /// The call timed out, but the worker accepted it anyway. When the call
+    /// opened the task, the caller already reported a failure, so the task is
+    /// cancelled. A follow-up on a task the worker already held opened nothing,
+    /// so it is only adopted. Either way the blob goes with the task when the
+    /// sweep reaps it.
     fn adopt_late_reply(&mut self, orphan_index: usize, from: &Nickname, body: &str) {
         let Some(task_id) = self.adopt_returned_task(from, body) else {
             return;
@@ -383,12 +385,17 @@ impl A2aApp {
             return;
         }
         let orphan = self.orphan_blobs.swap_remove(orphan_index);
-        if let Some(rec) = self.tasks.get_mut(&task_id) {
-            rec.state = crate::a2a::TaskState::Canceled;
-            rec.last_activity = Instant::now();
-        }
+        // A follow-up's group is named after the task it follows; a first
+        // call's group is named before the worker mints the task.
+        let opened = orphan.group != habilis_network::ops::blob::ContentId::new(task_id.as_str());
         self.call_blobs.insert(task_id.clone(), orphan.group);
-        self.late_cancels.push((task_id, from.clone()));
+        if opened {
+            if let Some(rec) = self.tasks.get_mut(&task_id) {
+                rec.state = crate::a2a::TaskState::Canceled;
+                rec.last_activity = Instant::now();
+            }
+            self.late_cancels.push((task_id, from.clone()));
+        }
     }
 
     pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, Nickname)> {
@@ -1019,6 +1026,35 @@ mod tests {
         assert_eq!(
             app.take_late_cancels(),
             vec![(task_id, Nickname::from("bob"))]
+        );
+    }
+
+    /// A follow-up on a task this node does not hold can still be accepted: the
+    /// worker holds the task. Its late reply adopts the task and keeps the blob,
+    /// but the call did not open the task, so it is not cancelled.
+    #[test]
+    fn a_late_reply_keeps_a_task_it_did_not_open() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let mut late = waiter_with_blob("corr-follow-up", task_id.as_str());
+        late.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(late);
+        app.expire_a2a_waiters(tokio::time::Instant::now());
+        let accepted = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_WORKING" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &habilis_network::protocol::CorrId::from("corr-follow-up"),
+            &Nickname::from("bob"),
+            &accepted.to_string(),
+        );
+
+        assert_eq!(app.tasks[&task_id].state, crate::a2a::TaskState::Working);
+        assert!(app.take_late_cancels().is_empty());
+        assert_eq!(
+            app.take_call_blobs(&[task_id.clone()], Instant::now()),
+            vec![habilis_network::ops::blob::ContentId::new(task_id.as_str())]
         );
     }
 }
