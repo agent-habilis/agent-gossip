@@ -1,3 +1,17 @@
+## 0.12.1 (2026-10-13)
+
+### Features
+
+#### Attach a file to `a2a call` with `--file`
+
+`a2a call --file PATH [--file-name NAME] [--file-mime MIME]` sends a file with a new task or a follow-up, as `a2a artifact --file` does. The worker's `message` event carries the file as a `Part.url` in `payload`, and `a2a fetch` gets it. A relative path resolves against the caller's directory. The file lives as long as its task; a call that times out keeps no task. This bumps habilis-network to 88f8c3d, where one file sent on several tasks stays until the last of them ends.
+
+### Fixes
+
+#### Print the join command of `gossip-create` on its own line
+
+`/gossip-create` now prints `others can join with:` on one line and the `/gossip-join` command alone on the next, so that one triple-click copies the command.
+
 ## 0.12.0 (2026-10-13)
 
 ### Breaking Changes
