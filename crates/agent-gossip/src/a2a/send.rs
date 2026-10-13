@@ -1189,6 +1189,22 @@ pub(crate) struct CallFile<'a> {
     pub(crate) file: FileRef,
 }
 
+/// The task id a call's blob is grouped under, and whether that group is new.
+/// A follow-up on a task we do not hold is rejected by the worker, so no task
+/// reaps its blob: that call owns the group like a first call does.
+fn call_blob_group(
+    task_id: Option<crate::a2a::TaskId>,
+    tasks: &std::collections::HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
+) -> (crate::a2a::TaskId, bool) {
+    match task_id {
+        Some(task_id) => {
+            let fresh_group = !tasks.contains_key(&task_id);
+            (task_id, fresh_group)
+        }
+        None => (crate::a2a::TaskId::random(), true),
+    }
+}
+
 /// Offload `file` and put its `Part.url` first among the parts of the
 /// `SendMessage` in `params` (`a2a call --file`). An empty text part — the
 /// `--text`-less sugar — is dropped, as `build_offload_parts` drops it.
@@ -1210,10 +1226,7 @@ pub(crate) async fn attach_call_file(
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
-    let (task_id, fresh_group) = match message.task_id.clone() {
-        Some(task_id) => (task_id, false),
-        None => (crate::a2a::TaskId::random(), true),
-    };
+    let (task_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1975,5 +1988,60 @@ mod split_body_tests {
         // `MAX_SHARD_TOTAL` therefore needs more than the cap and is refused.
         let body = "x".repeat(MAX_SHARD_TOTAL as usize + 1);
         assert!(split_body(&body, 1).is_none());
+    }
+}
+
+#[cfg(test)]
+mod call_blob_group_tests {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    use habilis_network::protocol::Nickname;
+
+    use super::call_blob_group;
+    use crate::a2a::task::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState};
+
+    /// A follow-up on a task this node does not hold is rejected by the worker,
+    /// so no task ever reaps its blob: the call must own a fresh group for the
+    /// waiter to evict.
+    #[test]
+    fn a_follow_up_on_an_unknown_task_owns_a_fresh_group() {
+        let tasks = HashMap::new();
+        let unknown = TaskId::random();
+
+        let (task_id, fresh_group) = call_blob_group(Some(unknown.clone()), &tasks);
+
+        assert_eq!(task_id, unknown);
+        assert!(fresh_group, "the blob has no task to be reaped with");
+    }
+
+    /// A follow-up on a held task joins that task's group, which the task sweep
+    /// reaps.
+    #[test]
+    fn a_follow_up_on_a_known_task_joins_its_group() {
+        let mut tasks = HashMap::new();
+        let known = TaskId::random();
+        adopt_initiator(
+            &mut tasks,
+            AdoptInitiatorParams {
+                task_id: &known,
+                peer: &Nickname::from("bob"),
+                task_state: TaskState::Working,
+                now: Instant::now(),
+            },
+        );
+
+        let (task_id, fresh_group) = call_blob_group(Some(known.clone()), &tasks);
+
+        assert_eq!(task_id, known);
+        assert!(!fresh_group, "the task sweep reaps the blob");
+    }
+
+    #[test]
+    fn a_first_call_owns_a_fresh_group() {
+        let (_, fresh_group) = call_blob_group(None, &HashMap::new());
+
+        assert!(fresh_group);
     }
 }
