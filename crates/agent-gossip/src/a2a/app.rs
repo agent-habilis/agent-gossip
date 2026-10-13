@@ -1053,7 +1053,7 @@ mod tests {
         assert_eq!(app.tasks[&task_id].state, crate::a2a::TaskState::Working);
         assert!(app.take_late_cancels().is_empty());
         assert_eq!(
-            app.take_call_blobs(&[task_id.clone()], Instant::now()),
+            app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![habilis_network::ops::blob::ContentId::new(task_id.as_str())]
         );
     }
