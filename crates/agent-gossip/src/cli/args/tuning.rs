@@ -100,6 +100,10 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_ALONE_SECS)]
     pub rival_recheck_alone_secs: u64,
 
+    /// How long a member that let go of the rendezvous waits before it comes back to it (seconds).
+    #[arg(long, hide = true, default_value_t = defaults::RENDEZVOUS_PERIODIC_RETURN_SECS)]
+    pub rendezvous_periodic_return_secs: u64,
+
     /// Narrow topic-mesh lookups to mDNS only (no DHT, no relay).
     #[arg(long, hide = true, default_value_t = false)]
     pub topic_mdns_only: bool,
@@ -126,6 +130,7 @@ impl TuningOpts {
             rival_recheck_secs: self.rival_recheck_secs,
             rival_recheck_meshed_secs: self.rival_recheck_meshed_secs,
             rival_recheck_alone_secs: self.rival_recheck_alone_secs,
+            rendezvous_periodic_return_secs: self.rendezvous_periodic_return_secs,
             topic_mdns_only: self.topic_mdns_only,
         }
     }
