@@ -1865,7 +1865,7 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1903,7 +1903,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1920,7 +1920,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1937,7 +1937,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-multihop-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1957,7 +1957,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "iroh",
 ]
@@ -1965,7 +1965,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1992,7 +1992,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -2005,7 +2005,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2030,7 +2030,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=c2526d6768fbc389e2ddfe6c050fb6b35a0b7667#c2526d6768fbc389e2ddfe6c050fb6b35a0b7667"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=86fc629d8b83a783246dc82489a59a34510b0743#86fc629d8b83a783246dc82489a59a34510b0743"
 dependencies = [
  "libc",
  "tokio",
