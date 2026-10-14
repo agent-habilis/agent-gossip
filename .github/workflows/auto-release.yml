@@ -3,6 +3,7 @@ name: auto-release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -31,31 +32,36 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       # knope fails when it has nothing to release, so skip instead of
-      # swallowing every error with `continue-on-error`. The release commit
-      # deletes the change files, so its own push to main stops here.
-      - id: changes
+      # swallowing every error with `continue-on-error`. `publish` recovers a
+      # run that pushed the bump but failed before the tag: the bump deleted
+      # the change files, so only the missing tag shows that work is left.
+      # The push of the bump itself starts that check.
+      - id: plan
         run: |
+          tag="v$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/agent-gossip/Cargo.toml)"
           if compgen -G '.changeset/*.md' > /dev/null; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "workflow=release" >> "$GITHUB_OUTPUT"
+          elif [ -z "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
+            echo "workflow=publish" >> "$GITHUB_OUTPUT"
           fi
-      - if: steps.changes.outputs.found == 'true'
+      - if: steps.plan.outputs.workflow
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-      - if: steps.changes.outputs.found == 'true'
+      - if: steps.plan.outputs.workflow
         uses: knope-dev/action@v2.1.2
         with:
           version: 0.23.0
       # The push goes through the App credentials of the checkout. The tag
       # comes from GITHUB_TOKEN on purpose: it does not fire `release.yml`'s
       # `push: tags`, so the `build` job below is the only build.
-      - if: steps.changes.outputs.found == 'true'
-        run: knope release --verbose
+      - if: steps.plan.outputs.workflow
+        run: knope ${{ steps.plan.outputs.workflow }} --verbose
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - id: version
-        if: steps.changes.outputs.found == 'true'
-        run: echo "tag=v$(cargo pkgid -p agent-gossip | sed -E 's/.*[@#]//')" >> "$GITHUB_OUTPUT"
+        if: steps.plan.outputs.workflow
+        run: echo "tag=v$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/agent-gossip/Cargo.toml)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: release

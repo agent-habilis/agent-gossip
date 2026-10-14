@@ -320,7 +320,11 @@ A release is declared by a change file and cut by merging a PR. `knope`
    only in the tap; edit it there.
 
 If a second merge lands during a run, the push to `main` fails and the next
-push to `main` releases the change files that are still there.
+push to `main` releases the change files that are still there. If the bump
+reaches `main` but the release step fails, the next run finds no change files
+and no `v<version>` tag, and runs `knope publish` (the `Release` step only).
+The push of the bump starts that run. To retry by hand, start
+`auto-release.yml` with **Run workflow**.
 
 Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 

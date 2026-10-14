@@ -28,6 +28,12 @@ command = "git push origin HEAD:main"
 [[workflows.steps]]
 type = "Release"
 
+[[workflows]]
+name = "publish"
+
+[[workflows.steps]]
+type = "Release"
+
 [changes]
 ignore_conventional_commits = true
 
