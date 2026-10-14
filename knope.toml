@@ -12,35 +12,18 @@ name = "document-change"
 type = "CreateChangeFile"
 
 [[workflows]]
-name = "prepare-release"
-
-[[workflows.steps]]
-type = "Command"
-command = "git switch -c release"
+name = "release"
 
 [[workflows.steps]]
 type = "PrepareRelease"
 
 [[workflows.steps]]
 type = "Command"
-command = "git commit -m \"chore: prepare release $version\""
+command = "git commit -m \"chore: release $version\""
 
 [[workflows.steps]]
 type = "Command"
-command = "git push --force --set-upstream origin release"
-
-[[workflows.steps]]
-type = "CreatePullRequest"
-base = "main"
-
-[workflows.steps.title]
-template = "chore: prepare release $version"
-
-[workflows.steps.body]
-template = "Merging this PR releases $version.\n\n$changelog"
-
-[[workflows]]
-name = "release"
+command = "git push origin HEAD:main"
 
 [[workflows.steps]]
 type = "Release"

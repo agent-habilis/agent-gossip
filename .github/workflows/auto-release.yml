@@ -1,0 +1,66 @@
+name: auto-release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Never cancel: a run stopped between the push to main and the tag leaves a
+# bumped version with no tag and no change files left to start a new run.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      # The App is a bypass actor on the "Protect main" ruleset, so the
+      # version bump can go straight to main. GITHUB_TOKEN cannot bypass it.
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      # knope fails when it has nothing to release, so skip instead of
+      # swallowing every error with `continue-on-error`. The release commit
+      # deletes the change files, so its own push to main stops here.
+      - id: changes
+        run: |
+          if compgen -G '.changeset/*.md' > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.found == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - if: steps.changes.outputs.found == 'true'
+        uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+      # The push goes through the App credentials of the checkout. The tag
+      # comes from GITHUB_TOKEN on purpose: it does not fire `release.yml`'s
+      # `push: tags`, so the `build` job below is the only build.
+      - if: steps.changes.outputs.found == 'true'
+        run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - id: version
+        if: steps.changes.outputs.found == 'true'
+        run: echo "tag=v$(cargo pkgid -p agent-gossip | sed -E 's/.*[@#]//')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit
