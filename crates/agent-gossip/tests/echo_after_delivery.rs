@@ -75,3 +75,64 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
     }
     panic!("no send to the killed peer failed in 90 seconds");
 }
+
+/// A send that reported an error must not reach the peer later through
+/// anti-entropy: the user was told it failed, and may send it again.
+#[test]
+fn a_msg_whose_send_failed_never_arrives_later() {
+    let _serial = common::serial_guard();
+    let flags = [
+        ("--alive-timeout-secs", "60"),
+        ("--antientropy-interval-secs", "2"),
+    ];
+    let (alice, mesh) = Node::create_flags("echo-late", &flags);
+    let bob = Node::join_flags(&mesh, "echo-late-bob", &flags);
+    assert!(alice.wait_ready(&mesh), "alice never ready");
+    assert!(bob.wait_ready(&mesh), "bob never ready");
+    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
+
+    bob.stop();
+    let mut failed = None;
+    for attempt in 0..30 {
+        let body = format!("reported as failed {attempt}");
+        if !common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, &body)
+            .status
+            .success()
+        {
+            failed = Some(body);
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    bob.cont();
+    let failed = failed.expect("no send to the stopped peer failed in 60 seconds");
+
+    let marker = "sent after the resume";
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, marker)
+        .status
+        .success()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "alice never reached bob again"
+        );
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    // Several anti-entropy rounds after the link is back: a retained frame
+    // would be re-sent to bob within them.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut served = String::new();
+    while std::time::Instant::now() < deadline {
+        served.push_str(&common::cli_poll(&mesh, &bob.nickname, None));
+        assert!(
+            !served.contains(&failed),
+            "a msg reported as failed arrived later: {served}"
+        );
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    assert!(
+        served.contains(marker),
+        "the marker never arrived: {served}"
+    );
+}

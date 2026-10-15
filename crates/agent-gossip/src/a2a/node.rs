@@ -121,6 +121,7 @@ impl NodeDriver for A2aApp {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
+        crate::a2a::send::retain_sent_legs(self, state);
         // A card that did not publish is tried again, with a longer wait after each failure:
         // no peer can send to us without it.
         if self.card_error.is_some() {

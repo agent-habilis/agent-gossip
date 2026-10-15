@@ -615,6 +615,7 @@ async fn broadcast_directed_frame(
             state,
             sender,
             out,
+            app,
             DirectedLegPart {
                 msg: &single,
                 bytes,
@@ -687,6 +688,7 @@ async fn broadcast_directed_frame(
                 state,
                 sender,
                 out,
+                app,
                 DirectedLegPart {
                     msg: &msg,
                     bytes,
@@ -1281,6 +1283,7 @@ async fn send_directed_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
+    app: &mut A2aApp,
     part: DirectedLegPart<'_>,
 ) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
@@ -1291,18 +1294,23 @@ async fn send_directed_leg(
         echo_as,
     } = part;
     if state.is_meshed() {
-        // Meshed: retain locally, then hit the wire (a transient send error
-        // still leaves a content leg in our log for anti-entropy). Directed
-        // legs go unicast, broadcasts gossip (see `transport::deliver`).
-        retain_leg(state, msg, content);
+        // Meshed: a leg enters our log for anti-entropy only once it was sent
+        // (see `A2aApp::unsent_legs`). Directed legs go unicast, broadcasts
+        // gossip (see `transport::deliver`).
         return match habilis_network::ops::deliver(msg, bytes, state, sender).await? {
             Delivered::Done => {
+                retain_leg(state, msg, content);
                 if let Some(echo) = echo {
                     print_echo(out, echo, echo_as);
                 }
                 Ok(None)
             }
             Delivered::Pending(pending) => {
+                let pending = if content {
+                    retain_when_sent(app, msg.clone(), pending)
+                } else {
+                    pending
+                };
                 let pending = match echo {
                     Some(echo) => echo_when_sent(out, echo.clone(), echo_as, vec![pending]),
                     None => vec![pending],
@@ -1334,6 +1342,33 @@ fn retain_leg(state: &mut EventLoopState, msg: &Message, content: bool) {
     if content {
         retain_outbound(state, msg);
     }
+}
+
+/// Queue `msg` for the message log, behind the verdict of its send. The handle is replaced by
+/// one that gives the same verdict.
+fn retain_when_sent(app: &mut A2aApp, msg: Message, pending: PendingSend) -> PendingSend {
+    let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    app.unsent_legs.push((msg, sent_rx));
+    tokio::spawn(async move {
+        let verdict = settle(vec![pending]).await;
+        let _ = sent_tx.send(verdict.is_ok());
+        let _ = verdict_tx.send(verdict);
+    });
+    verdict_rx
+}
+
+/// Move the own legs that were sent into the message log, and forget the legs whose send failed.
+pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
+    app.unsent_legs
+        .retain_mut(|(msg, sent)| match sent.try_recv() {
+            Ok(true) => {
+                retain_outbound(state, msg);
+                false
+            }
+            Ok(false) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+        });
 }
 
 /// Print `echo` once the sends in `pending` all succeed, and give the verdict on
@@ -1772,6 +1807,7 @@ pub(crate) async fn handle_session_request(
         app,
     } = params;
     app.drain_delivered_legs();
+    retain_sent_legs(app, state);
     match req {
         SessionRequest::Broadcast { body, resp } => {
             let outcome = send_broadcast(

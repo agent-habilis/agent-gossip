@@ -204,6 +204,7 @@ pub(crate) async fn handle_ipc_command(
         app,
     } = params;
     app.drain_delivered_legs();
+    crate::a2a::send::retain_sent_legs(app, state);
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or

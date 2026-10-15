@@ -155,6 +155,10 @@ pub(crate) struct A2aApp {
     /// enters it when the peer got it, and never before an earlier leg has been settled: the
     /// record then holds only what the peer got, in the order the peer got it.
     own_legs: VecDeque<QueuedLeg>,
+    /// Our own content legs whose send has no outcome yet. Each enters the message log only if
+    /// it was sent: anti-entropy re-sends what the log holds, so a leg whose send failed would
+    /// otherwise reach the peer after the user was told it failed.
+    pub(crate) unsent_legs: Vec<(Message, tokio::sync::oneshot::Receiver<bool>)>,
     /// Why our own card is not published, while it is not: the last publish failed. Told to the
     /// other members through `/peers/<nick>/card_error`, and retried on the ticks that the
     /// backoff allows.
@@ -209,6 +213,7 @@ impl A2aApp {
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
             own_legs: VecDeque::new(),
+            unsent_legs: Vec::new(),
             card_error: None,
             card_retry_in: 0,
             card_retry_wait: 0,
@@ -234,6 +239,7 @@ impl A2aApp {
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
             own_legs: VecDeque::new(),
+            unsent_legs: Vec::new(),
             card_error: None,
             card_retry_in: 0,
             card_retry_wait: 0,
