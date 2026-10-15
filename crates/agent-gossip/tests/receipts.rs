@@ -1,5 +1,5 @@
-use agent_gossip::TaskState;
 use agent_gossip::events::OutputEvent;
+use agent_gossip::{MAX_MESSAGE_SIZE, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
 
@@ -117,6 +117,34 @@ async fn status_leg_returns_a_delivered_receipt() {
     assert!(
         wait_receipt(&mut bob, "rc-leg-alice", &leg_id).await,
         "no receipt for the status leg"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
+    let (mut alice, bob) = meshed_pair("rc-big", "rc-big-bob").await;
+
+    let id = alice
+        .msg("rc-big-bob", &"abcd ".repeat(MAX_MESSAGE_SIZE))
+        .await;
+
+    assert!(
+        wait_receipt(&mut alice, "rc-big-bob", id.as_str()).await,
+        "no receipt for the sharded msg"
+    );
+    // The control msg follows the big one on the same path: once its receipt
+    // is in, a second receipt for the big msg would have arrived as well.
+    let control = alice.msg("rc-big-bob", "control").await;
+    assert!(wait_receipt(&mut alice, "rc-big-bob", control.as_str()).await);
+    assert_eq!(
+        receipts_from(&mut alice, "rc-big-bob"),
+        vec![
+            (id.as_str().to_owned(), "delivered".to_owned()),
+            (control.as_str().to_owned(), "delivered".to_owned()),
+        ]
     );
 
     alice.leave().await;
