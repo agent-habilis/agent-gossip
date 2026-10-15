@@ -305,21 +305,26 @@ A release is declared by a change file and cut by merging a PR. `knope`
    While the version is `0.x`, knope shifts the levels down one, as Cargo's
    semver does: `major` gives `0.10.0`, and `minor` and `patch` both give
    `0.9.1`.
-2. On each push to `main` with change files,
-   `.github/workflows/prepare-release.yml` force-pushes the `release` branch
-   (version bump in `Cargo.toml`/`Cargo.lock`, `CHANGELOG.md`, change files
-   deleted) and opens or updates the "chore: prepare release" PR.
-3. Merge that PR with the admin bypass. CI does not run on it: a PR opened
-   with `GITHUB_TOKEN` triggers no workflows.
-4. `.github/workflows/knope-release.yml` then creates the GitHub Release and
-   its `v<version>` tag at the merge commit, and calls `release.yml` through
-   `workflow_call` — a tag created with `GITHUB_TOKEN` does not fire
-   `release.yml`'s `push: tags`. `release.yml` builds the binaries, **opens a
-   `formula/v<version>` PR** with the Homebrew formula bump, and mirrors the
-   formula to the `agent-habilis/homebrew-tap` repo (needs the
-   `TAP_PUSH_TOKEN` Actions secret — a fine-grained PAT with contents
-   read/write on that repo).
-5. Merge the formula PR with the admin bypass.
+2. Merge the feature PR. Nothing else needs a human. On each push to `main`
+   with change files, `.github/workflows/auto-release.yml` runs
+   `knope release`: it commits the version bump (`Cargo.toml`/`Cargo.lock`,
+   `CHANGELOG.md`, change files deleted) as "chore: release <version>",
+   pushes it straight to `main`, and creates the GitHub Release and its
+   `v<version>` tag. The push uses the release GitHub App (secrets
+   `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`), which is a bypass actor on
+   the "Protect main" ruleset. CI does not gate the bump commit.
+3. `auto-release.yml` then calls `release.yml` through `workflow_call` — the
+   tag comes from `GITHUB_TOKEN`, which does not fire `release.yml`'s
+   `push: tags`. `release.yml` builds the binaries and pushes the formula bump
+   to `agent-habilis/homebrew-tap`, again through the App. The formula lives
+   only in the tap; edit it there.
+
+If a second merge lands during a run, the push to `main` fails and the next
+push to `main` releases the change files that are still there. If the bump
+reaches `main` but the release step fails, the next run finds no change files
+and no `v<version>` tag, and runs `knope publish` (the `Release` step only).
+The push of the bump starts that run. To retry by hand, start
+`auto-release.yml` with **Run workflow**.
 
 Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 

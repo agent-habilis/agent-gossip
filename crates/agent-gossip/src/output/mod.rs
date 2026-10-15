@@ -26,6 +26,15 @@ pub(crate) enum OutputMode {
     Silent,
 }
 
+/// The value cluster for [`Output::receipt`].
+#[derive(Clone, Copy)]
+pub(crate) struct ReceiptParams<'a> {
+    pub(crate) from: &'a Nickname,
+    pub(crate) ref_id: &'a str,
+    pub(crate) state: &'a str,
+    pub(crate) ts: u64,
+}
+
 /// The value cluster for [`Output::ready`]: the mesh identity fields plus
 /// optional startup diagnostics (skill drift, `--a2a-serve` port).
 #[derive(Clone, Copy)]
@@ -490,6 +499,37 @@ impl Output {
                         display: peer_return_display(nickname.as_str()),
                     },
                     true,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// A receipt is proof for the sender, not work for the agent, so it is
+    /// pollable but never wakes the bell.
+    pub(crate) fn receipt(&self, params: ReceiptParams<'_>) {
+        let ReceiptParams {
+            from,
+            ref_id,
+            state,
+            ts,
+        } = params;
+        self.dispatch(
+            || OutputEvent::Receipt {
+                from: from.clone(),
+                ref_id: ref_id.to_owned(),
+                state: state.to_owned(),
+                ts,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::Receipt {
+                        from: from.as_str(),
+                        ref_id,
+                        state,
+                        ts,
+                    },
+                    false,
                 ),
                 OutputMode::Silent => {}
             },

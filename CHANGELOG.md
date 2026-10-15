@@ -1,3 +1,27 @@
+## 0.12.4 (2026-10-15)
+
+### Features
+
+#### Add delivery receipts and reader liveness
+
+A directed msg or task leg now earns a `receipt` event from the recipient: `delivered` when its daemon got the frame, `read` when its agent polled it. The echo of a directed msg or task leg prints only after the send succeeds. `peers` rows show a `reader` key with the bell state and the time of the last poll. Peers on an older version send no receipts and drop the receipts they get.
+
+## 0.12.3 (2026-10-15)
+
+### Fixes
+
+#### Release with no human merge
+
+The merge of a PR with a change file now runs the full release. The version bump goes straight to `main`, and the Homebrew formula goes straight to `agent-habilis/homebrew-tap`. No release PR and no formula PR wait for an admin merge. This release is the first one that the new flow cuts.
+
+## 0.12.2 (2026-10-14)
+
+### Fixes
+
+#### Loopback rooms heal after a split
+
+A loopback room no longer splits into meshes that never meet, and a holder sheds a beacon that stopped answering. A member that let go of the rendezvous comes back to it once in a while, and the hidden flag `--rendezvous-periodic-return-secs` sets the wait. When every port of a private room is held, a member prints one `Info` line, at most once in five minutes. This bumps habilis-network to 795c4f8, the commit on habilis main that holds PR #16.
+
 ## 0.12.1 (2026-10-13)
 
 ### Features

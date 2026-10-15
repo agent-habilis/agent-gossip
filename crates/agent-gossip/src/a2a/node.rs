@@ -12,6 +12,7 @@ use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::app::{A2aApp, A2aResponder};
 use crate::a2a::ipc::IpcCommand;
+use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
 use crate::a2a::rpc::{A2aOp, A2aRequest};
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
@@ -44,11 +45,17 @@ impl NodeApp for A2aApp {
             handle_a2a_rpc(message, state, self, ctx).await;
             return false;
         }
-        route_content(message, surfaceable, self, ctx)
-    }
-
-    fn surface_logical(&mut self, logical: &Message, surfaceable: bool, ctx: &HandlerCtx<'_>) {
-        surface_logical(logical, surfaceable, self, ctx);
+        let routed = route_content(message, surfaceable, self, ctx);
+        if routed.fresh_for_us {
+            let receipt = Receipt {
+                ref_id: message.id.as_str().to_owned(),
+                state: ReceiptState::Delivered,
+            };
+            // Best effort: `send_receipt` logs its own failure, and a lost
+            // receipt only leaves the sender without a delivery proof.
+            let _ = send_receipt(state, ctx, &message.author, &receipt).await;
+        }
+        routed.loggable
     }
 
     fn on_meta_applied(
@@ -110,6 +117,7 @@ impl NodeDriver for A2aApp {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
+        crate::a2a::send::retain_sent_legs(self, state);
         // A card that did not publish is tried again, with a longer wait after each failure:
         // no peer can send to us without it.
         if self.card_error.is_some() {
@@ -460,6 +468,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskMessage { .. }
+        | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Fork { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
@@ -510,6 +519,7 @@ fn classify(message: &Message) -> AppClass {
         Some(wire::STATUS) => directed && crate::a2a::gossip::status_payload(message).is_ok(),
         Some(wire::ARTIFACT) => directed && crate::a2a::gossip::artifact_payload(message).is_ok(),
         Some(wire::REQ | wire::RESP) => directed,
+        Some(wire::RECEIPT) => directed && parse_receipt(message).is_some(),
         None => true,
         Some(_) => false,
     };
@@ -527,7 +537,7 @@ fn classify(message: &Message) -> AppClass {
     // public by definition, and an unknown tag is never sealed.
     let sealed = matches!(
         tag,
-        Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP)
+        Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
     );
     AppClass {
         loggable,
@@ -539,27 +549,33 @@ fn classify(message: &Message) -> AppClass {
 }
 
 /// Route a content frame — chat, or one of the three task shapes — to its
-/// lifecycle handler. Returns whether the frame is loggable (a directed
-/// frame addressed elsewhere, or a liveness beat, is not).
+/// lifecycle handler. `loggable` is false for a directed frame addressed
+/// elsewhere or a liveness beat. `fresh_for_us` is true for a directed msg or
+/// task leg that reached us for the first time, inside our join horizon: the
+/// only frames that earn a delivery receipt. A frame from before the horizon is
+/// never surfaced, so a receipt for it would claim a delivery nobody sees.
 fn route_content(
     message: &Message,
     surfaceable: bool,
     app: &mut A2aApp,
     ctx: &HandlerCtx<'_>,
-) -> bool {
+) -> Routed {
     match &message.kind {
         // Each chat tag is pinned to its addressing here as well as in
         // `classify`: a directed BROADCAST or a broadcast MSG falls through to
         // the no-op arm rather than being surfaced/logged by a relay.
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            surface_chat(message, surfaceable, app, |out, surface| {
+        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => Routed {
+            loggable: surface_chat(message, surfaceable, app, |out, surface| {
                 handle_broadcast(out, message, surface)
-            })
-        }
+            }),
+            fresh_for_us: false,
+        },
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::MSG => {
-            surface_chat(message, surfaceable, app, |out, surface| {
+            let fresh_for_us =
+                surfaceable && to == ctx.author && !is_replayed_chat(&app.surfaced_chat, message);
+            let loggable = surface_chat(message, surfaceable, app, |out, surface| {
                 handle_msg(
                     out,
                     MsgParams {
@@ -569,19 +585,37 @@ fn route_content(
                         self_author: ctx.author,
                     },
                 )
-            })
+            });
+            Routed {
+                loggable,
+                fresh_for_us,
+            }
         }
         MessageKind::App {
             tag, to: Some(to), ..
-        } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => handle_task_leg(
-            TaskLegParams {
-                message,
-                to,
-                surfaceable,
-            },
-            app,
-            ctx,
-        ),
+        } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => {
+            let leg = handle_task_leg(
+                TaskLegParams {
+                    message,
+                    to,
+                    surfaceable,
+                },
+                app,
+                ctx,
+            );
+            Routed {
+                loggable: leg.loggable,
+                fresh_for_us: leg.fresh_for_us,
+            }
+        }
+        MessageKind::App {
+            tag, to: Some(to), ..
+        } if tag.as_str() == wire::RECEIPT => {
+            if to == ctx.author {
+                surface_receipt(message, app);
+            }
+            Routed::default()
+        }
         MessageKind::App { .. }
         | MessageKind::Presence { .. }
         | MessageKind::PeerInfo
@@ -592,12 +626,52 @@ fn route_content(
         | MessageKind::Pong { .. }
         | MessageKind::State
         | MessageKind::Meta
-        | MessageKind::LinkState => false,
+        | MessageKind::LinkState => Routed::default(),
     }
 }
 
+#[derive(Default)]
+struct Routed {
+    loggable: bool,
+    fresh_for_us: bool,
+}
+
+fn parse_receipt(message: &Message) -> Option<Receipt> {
+    serde_json::from_str(message.body.as_str()).ok()
+}
+
+/// A receipt we did not author reaches this hook only: the engine drops our own
+/// frames by pubkey before it, and `route_content` checks the addressee.
+fn surface_receipt(message: &Message, app: &A2aApp) {
+    let Some(receipt) = parse_receipt(message) else {
+        return;
+    };
+    if !app
+        .sent_refs
+        .contains(&(receipt.ref_id.clone(), message.author.clone()))
+    {
+        tracing::debug!(
+            target: "agent_gossip::a2a",
+            author = %message.author,
+            "receipt for a frame we did not send to its author dropped"
+        );
+        return;
+    }
+    let out = &app.output;
+    let state = match receipt.state {
+        ReceiptState::Delivered => "delivered",
+        ReceiptState::Read => "read",
+    };
+    out.receipt(output::ReceiptParams {
+        from: &message.author,
+        ref_id: &receipt.ref_id,
+        state,
+        ts: u64::try_from(message.timestamp.as_secs()).unwrap_or_default(),
+    });
+}
+
 /// The value cluster [`handle_task_leg`] needs beyond its `app`/`ctx` handles
-/// — shared by both call sites ([`route_content`] and [`surface_logical`]).
+/// — the input of [`route_content`]'s task-leg arm.
 #[derive(Clone, Copy)]
 struct TaskLegParams<'a> {
     message: &'a Message,
@@ -608,13 +682,14 @@ struct TaskLegParams<'a> {
 /// Process an inbound task leg (a task-related `a2a_status` or `a2a_artifact`)
 /// for its addressee: advance the coarse state machine (addressee only — a
 /// third-party relay tracks nothing), then surface it via the lifecycle layer.
-fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_>) -> bool {
+fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_>) -> Routed {
     let TaskLegParams {
         message,
         to,
         surfaceable,
     } = leg;
     let mut surface = surfaceable;
+    let mut replay = false;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
     if to == ctx.author
@@ -631,7 +706,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             .get(&task_id)
             .is_some_and(|rec| rec.peer != message.author)
         {
-            return false;
+            return Routed::default();
         }
         let prior = app.tasks.get(&task_id).map(|rec| rec.state);
         surface &= !is_empty_working_repeat(prior, message);
@@ -644,6 +719,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
                 "replayed task leg kept off the surface"
             );
             surface = false;
+            replay = true;
         }
         crate::a2a::task::ingest(
             &mut app.tasks,
@@ -658,7 +734,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
         }
     }
-    handle_task(
+    let loggable = handle_task(
         &app.output,
         TaskDisplayParams {
             message,
@@ -666,7 +742,12 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             surfaceable: surface,
             self_author: ctx.author,
         },
-    )
+    );
+    // A beat is liveness plumbing and never logged, so it earns no receipt.
+    Routed {
+        loggable,
+        fresh_for_us: surfaceable && to == ctx.author && loggable && !replay,
+    }
 }
 
 /// Run a chat handler with a replayed line kept off the surface, and remember
@@ -797,63 +878,6 @@ fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
         .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload))
 }
 
-/// Surface a reassembled multipart body (a `Msg` or a `Task` content leg)
-/// through the same lifecycle path an unsplit message of that kind takes. The
-/// raw shards were already retained; this only surfaces the logical view, so it
-/// does **not** re-retain or re-index.
-fn surface_logical(logical: &Message, surfaceable: bool, app: &mut A2aApp, ctx: &HandlerCtx<'_>) {
-    match &logical.kind {
-        // Both chat tags shard (a long msg as readily as a long broadcast); task
-        // legs never do — `message/send` rides RPC, status/artifact are small.
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            surface_chat(logical, surfaceable, app, |out, surface| {
-                handle_broadcast(out, logical, surface)
-            });
-        }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::MSG => {
-            surface_chat(logical, surfaceable, app, |out, surface| {
-                handle_msg(
-                    out,
-                    MsgParams {
-                        message: logical,
-                        to,
-                        surfaceable: surface,
-                        self_author: ctx.author,
-                    },
-                )
-            });
-        }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => {
-            handle_task_leg(
-                TaskLegParams {
-                    message: logical,
-                    to,
-                    surfaceable,
-                },
-                app,
-                ctx,
-            );
-        }
-        // Only content frames are ever split (the sender refuses to split
-        // anything else), so other kinds never reach here.
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => {}
-    }
-}
-
 /// Route an A2A RPC frame: a request addressed to us is served (and a response
 /// broadcast back); a response to one of our calls resolves its waiter (matched
 /// by `corr` *and* the responding peer). Frames addressed to another peer are
@@ -970,6 +994,15 @@ async fn handle_a2a_req(
                     )
                     .await
                 }
+                Served::ReaderGet => Ok(serde_json::json!({
+                    // A CLI bell holds the OS lock. An MCP or in-process reader
+                    // holds none, but parks a long fetch.
+                    "bell": crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
+                        || app.surfaced.has_parked_bell(),
+                    "last_poll_secs_ago": app
+                        .surfaced
+                        .last_poll_secs_ago(tokio::time::Instant::now()),
+                })),
                 Served::Reject(error) => Err(error),
             }
         }
@@ -1320,6 +1353,46 @@ mod classify_tests {
         assert!(
             wakes(&task_message(false)),
             "a peer's task message still wakes"
+        );
+    }
+
+    fn receipt_event() -> OutputEvent {
+        OutputEvent::Receipt {
+            from: Nickname::from("peer"),
+            ref_id: "abc".to_owned(),
+            state: "delivered".to_owned(),
+            ts: 1,
+        }
+    }
+
+    #[test]
+    fn a_receipt_is_pollable_but_never_wakes_the_bell() {
+        assert!(super::is_pollable(&receipt_event()));
+        assert!(!wakes(&receipt_event()));
+    }
+
+    fn receipt_frame(to: Option<Nickname>, body: &str) -> Message {
+        Message::new_app(
+            &mesh(),
+            &Nickname::from("author"),
+            AppFrameParams {
+                tag: AppTag::from(wire::RECEIPT),
+                to,
+                corr: None,
+                body: MessageBody::from(body),
+            },
+        )
+    }
+
+    #[test]
+    fn a_receipt_is_valid_only_when_directed_with_a_parseable_body() {
+        let body = r#"{"ref":"abc","state":"delivered"}"#;
+        let directed = classify(&receipt_frame(Some(Nickname::from("peer")), body));
+        assert!(directed.valid && directed.sealed && !directed.loggable);
+        assert!(!classify(&receipt_frame(None, body)).valid, "broadcast");
+        assert!(
+            !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid,
+            "no ref or state"
         );
     }
 

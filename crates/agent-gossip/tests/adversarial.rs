@@ -645,6 +645,124 @@ async fn a_bystanders_task_status_is_dropped() {
     attacker.leave().await;
 }
 
+fn has_receipt_for(events: &[OutputEvent], ref_id: &str) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, OutputEvent::Receipt { ref_id: seen, .. } if seen == ref_id))
+}
+
+/// A directed msg from before our join horizon is never surfaced, so a
+/// `delivered` receipt for it would claim a delivery the agent never sees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
+    let (mut victim, mut attacker) = meshed_pair("prejoin-receipt").await;
+    attacker.await_peer_card(&victim.nickname).await;
+    victim.await_peer_card(&attacker.nickname).await;
+    let seal_key = adversarial::peer_seal_key(&attacker.meta_get().await, &victim.nickname)
+        .expect("the victim's seal key is published in the meta doc");
+
+    let old = CraftedMsg::sealed_msg(
+        attacker.session.mesh_id(),
+        adversarial::SealedMsgParams {
+            author: &attacker.nickname,
+            to: &victim.nickname,
+            text: "from before the join",
+            seal_key,
+        },
+    )
+    .timestamp(habilis_network::protocol::UnixSecs::from_secs(
+        1_000_000_000,
+    ))
+    .sign(&adversarial::new_key());
+    let old_id = old.frame_id();
+    attacker
+        .session
+        .inject_raw(old.bytes())
+        .await
+        .expect("inject");
+
+    // Barriers: a broadcast on the gossip path the injection took, then a real
+    // msg. Once the msg's receipt is back, a receipt for the injected frame
+    // was sent a full round trip before it.
+    attacker.broadcast("after the injection").await;
+    assert!(
+        victim.wait_body("after the injection", T).await,
+        "the gossip barrier was lost"
+    );
+    let barrier = attacker.msg(&victim.nickname, "barrier").await;
+    assert!(
+        attacker
+            .wait_for(T, |events| has_receipt_for(events, barrier.as_str()))
+            .await,
+        "the barrier msg earned no receipt"
+    );
+    assert!(
+        !has_receipt_for(attacker.events(), &old_id),
+        "a msg from before the join horizon must earn no delivered receipt"
+    );
+
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// Frame ids ride in cleartext headers, so any member can name the id of a msg
+/// we sent to someone else. A receipt counts only from the peer the frame went
+/// to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bystanders_forged_receipt_is_dropped() {
+    let mut sender = InProcNode::create("adv-forged-receipt").await;
+    let mut addressee = InProcNode::join(&sender.mesh, "adv-forged-receipt-to").await;
+    let attacker = InProcNode::join(&sender.mesh, "adv-forged-receipt-atk").await;
+    attacker.broadcast("warmup").await;
+    assert!(
+        sender.wait_body("warmup", T).await && addressee.wait_body("warmup", T).await,
+        "nodes never meshed"
+    );
+    sender.await_peer_card(&addressee.nickname).await;
+    attacker.await_peer_card(&sender.nickname).await;
+
+    let id = sender.msg(&addressee.nickname, "for your eyes").await;
+    assert!(
+        sender
+            .wait_for(T, |events| has_receipt_for(events, id.as_str()))
+            .await,
+        "the real delivered receipt never came"
+    );
+
+    let seal_key = adversarial::peer_seal_key(&attacker.meta_get().await, &sender.nickname)
+        .expect("the sender's seal key is published in the meta doc");
+    let forged = CraftedMsg::sealed_receipt(
+        attacker.session.mesh_id(),
+        adversarial::SealedMsgParams {
+            author: &attacker.nickname,
+            to: &sender.nickname,
+            text: id.as_str(),
+            seal_key,
+        },
+    )
+    .sign(&adversarial::new_key())
+    .bytes();
+    attacker.session.inject_raw(forged).await.expect("inject");
+    attacker.broadcast("after the forgery").await;
+    assert!(
+        sender.wait_body("after the forgery", T).await,
+        "the gossip barrier was lost"
+    );
+
+    let forged_landed = sender.events().iter().any(|event| {
+        matches!(
+            event,
+            OutputEvent::Receipt { from, ref_id, .. }
+                if from.as_str() == attacker.nickname && ref_id == id.as_str()
+        )
+    });
+    assert!(!forged_landed, "a receipt from a bystander must be dropped");
+
+    sender.leave().await;
+    addressee.leave().await;
+    attacker.leave().await;
+}
+
 // ── Open-gap tripwires: scenarios we are currently OPEN TO ─────────────
 //
 // Green today (the defensive assert fails → panics → should_panic catches

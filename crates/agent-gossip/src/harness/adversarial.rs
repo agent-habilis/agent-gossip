@@ -70,6 +70,15 @@ pub struct SealedTaskStatusParams<'a> {
     pub seal_key: PublicKey,
 }
 
+/// The value cluster for [`CraftedMsg::sealed_msg`].
+#[derive(Clone, Copy)]
+pub struct SealedMsgParams<'a> {
+    pub author: &'a str,
+    pub to: &'a str,
+    pub text: &'a str,
+    pub seal_key: PublicKey,
+}
+
 /// The addressee's public X25519 mesh-seal key, read out of a meta document
 /// exactly as the daemon's own send path reads it. Any mesh member holds this
 /// document, which is the point: sealing to a peer needs no secret.
@@ -301,6 +310,73 @@ impl CraftedMsg {
                 },
             ),
         }
+    }
+
+    /// A directed `a2a_msg` with a valid payload, sealed to the addressee.
+    pub fn sealed_msg(mesh: &MeshId, params: SealedMsgParams<'_>) -> Self {
+        let SealedMsgParams {
+            author,
+            to,
+            text,
+            seal_key,
+        } = params;
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let to = Nickname::new(to.to_owned()).expect("valid target");
+        let mut frame = Message::new_app(
+            mesh,
+            &author,
+            AppFrameParams {
+                tag: AppTag::from(wire::MSG),
+                to: Some(to),
+                corr: None,
+                body: MessageBody::new(String::new()).expect("empty body is valid"),
+            },
+        );
+        let mut payload = crate::a2a::gossip::compose_msg(mesh, text);
+        payload.message_id =
+            crate::a2a::MessageId::from_uuid_str(frame.id.as_str()).expect("frame id is a uuid");
+        let body = crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        frame.body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
+            .expect("sealing to a published key succeeds");
+        Self { msg: frame }
+    }
+
+    /// A sealed `a2a_receipt` that says `to` sent frame `ref_id` and that it
+    /// was read: what a bystander forges with a frame id it saw in a header.
+    pub fn sealed_receipt(mesh: &MeshId, params: SealedMsgParams<'_>) -> Self {
+        let SealedMsgParams {
+            author,
+            to,
+            text: ref_id,
+            seal_key,
+        } = params;
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let to = Nickname::new(to.to_owned()).expect("valid target");
+        let receipt = crate::a2a::receipt::Receipt {
+            ref_id: ref_id.to_owned(),
+            state: crate::a2a::receipt::ReceiptState::Read,
+        };
+        let plain = serde_json::to_string(&receipt).expect("a receipt serializes");
+        let body = habilis_network::protocol::seal_to_body(&seal_key, &plain)
+            .expect("sealing to a published key succeeds");
+        Self {
+            msg: Message::new_app(
+                mesh,
+                &author,
+                AppFrameParams {
+                    tag: AppTag::from(wire::RECEIPT),
+                    to: Some(to),
+                    corr: None,
+                    body,
+                },
+            ),
+        }
+    }
+
+    /// The id that a receipt for this frame names in its `ref`.
+    #[must_use]
+    pub fn frame_id(&self) -> String {
+        self.msg.id.as_str().to_owned()
     }
 
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.

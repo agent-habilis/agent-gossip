@@ -293,7 +293,8 @@ mod tests {
             | OutputEvent::PingReport { .. }
             | OutputEvent::StateChanged { .. }
             | OutputEvent::TaskMessage { .. }
-            | OutputEvent::TaskTimeout { .. } => None,
+            | OutputEvent::TaskTimeout { .. }
+            | OutputEvent::Receipt { .. } => None,
         }
     }
 

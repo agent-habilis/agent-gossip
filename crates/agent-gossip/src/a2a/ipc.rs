@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::a2a::app::A2aApp;
-use crate::a2a::peer_path::respond_with_paths;
+use crate::a2a::peer_path::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::receipt::send_read_receipts;
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
     emit_task_status, send_broadcast, send_msg, when_sent,
@@ -203,6 +204,7 @@ pub(crate) async fn handle_ipc_command(
         app,
     } = params;
     app.drain_delivered_legs();
+    crate::a2a::send::retain_sent_legs(app, state);
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or
@@ -283,6 +285,9 @@ pub(crate) async fn handle_ipc_command(
             // buffered, else (with `long`) parks a waiter the loop fulfills
             // on the next surfaced event or expires at the park cap. A parked
             // waiter broadcasts nothing → `false`.
+            if !long {
+                send_read_receipts(app, state, ctx, after).await;
+            }
             app.surfaced.poll_or_register(PollOrRegisterParams {
                 after,
                 long,
@@ -386,7 +391,17 @@ pub(crate) async fn handle_ipc_command(
             }
         }
         IpcCommand::Peers { mesh: _ } => {
-            respond_with_paths(state, endpoint, resp_tx);
+            let readers = ask_readers(
+                ReaderAskParams {
+                    mesh,
+                    author,
+                    sender,
+                },
+                state,
+                app,
+            )
+            .await;
+            respond_with_paths(state, endpoint, readers, resp_tx);
             false
         }
         IpcCommand::StateMerge { mesh: _, merge } => {

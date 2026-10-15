@@ -17,7 +17,7 @@ use habilis_network::util::consts::{
     MAX_SHARD_TOTAL,
 };
 
-use crate::a2a::app::{A2aApp, DeliveredLeg};
+use crate::a2a::app::{A2aApp, DeliveredLeg, UnsentLeg};
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
@@ -601,6 +601,10 @@ async fn broadcast_directed_frame(
         single = single.with_id(pinned_id);
     }
     let single = single.signed(&signer);
+    // The logical id: a sharded leg's group carries it, so its receipt names it too.
+    if let MessageKind::App { to: Some(to), .. } = &kind {
+        app.note_sent_ref(single.id.as_str(), to);
+    }
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
@@ -613,6 +617,7 @@ async fn broadcast_directed_frame(
             sender,
             out,
             DirectedLegPart {
+                app,
                 msg: &single,
                 bytes,
                 echo: Some(&echo),
@@ -664,7 +669,8 @@ async fn broadcast_directed_frame(
     // A big group's shards skip the message log, so peers heal a lost shard via
     // the `shard/repair` RPC — served from this sender-side frame cache.
     let mut cache_frames = Vec::new();
-    let mut pending = Vec::new();
+    let mut frames = Vec::new();
+    let mut shard_pending = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
@@ -679,31 +685,33 @@ async fn broadcast_directed_frame(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        pending.extend(
+        // The shards enter the log as one group below, not one by one.
+        shard_pending.push(
             send_directed_leg(
                 state,
                 sender,
                 out,
                 DirectedLegPart {
+                    app,
                     msg: &msg,
                     bytes,
                     echo: None,
-                    content,
+                    content: false,
                     echo_as,
                 },
             )
             .await?,
         );
+        frames.push(msg);
     }
-    if !cache_frames.is_empty() {
-        state.shard_cache_mut().insert(group.clone(), cache_frames);
-    }
+    let cache = (!cache_frames.is_empty()).then(|| (group.clone(), cache_frames));
+    let pending = queue_sharded_leg(app, frames, cache, shard_pending);
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
     let logical =
         Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
     let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
-    print_echo(out, &echo, echo_as);
+    let pending = echo_when_sent(out, echo.clone(), echo_as, pending);
     let pending = ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending);
     Ok((logical.id.clone(), logical, pending))
 }
@@ -1263,6 +1271,7 @@ pub(crate) async fn attach_call_file(
 /// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
 /// so the state/sender/out handles stay their own leading params.
 struct DirectedLegPart<'a> {
+    app: &'a mut A2aApp,
     echo_as: EchoAs,
     msg: &'a Message,
     bytes: Bytes,
@@ -1281,6 +1290,7 @@ async fn send_directed_leg(
     part: DirectedLegPart<'_>,
 ) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
+        app,
         msg,
         bytes,
         echo,
@@ -1288,38 +1298,39 @@ async fn send_directed_leg(
         echo_as,
     } = part;
     if state.is_meshed() {
-        // Meshed: retain locally, then hit the wire (a transient send error
-        // still leaves a content leg in our log for anti-entropy). Directed
-        // legs go unicast, broadcasts gossip (see `transport::deliver`).
-        retain_leg(
-            state,
-            out,
-            RetainLegParams {
-                msg,
-                echo,
-                content,
-                echo_as,
-            },
-        );
+        // Meshed: a leg enters our log for anti-entropy only once it was sent
+        // (see `A2aApp::unsent_legs`). Directed legs go unicast, broadcasts
+        // gossip (see `transport::deliver`).
         return match habilis_network::ops::deliver(msg, bytes, state, sender).await? {
-            Delivered::Done => Ok(None),
-            Delivered::Pending(pending) => Ok(Some(pending)),
+            Delivered::Done => {
+                retain_leg(state, msg, content);
+                if let Some(echo) = echo {
+                    print_echo(out, echo, echo_as);
+                }
+                Ok(None)
+            }
+            Delivered::Pending(pending) => {
+                let pending = if content {
+                    retain_when_sent(app, msg.clone(), pending)
+                } else {
+                    pending
+                };
+                let pending = match echo {
+                    Some(echo) => echo_when_sent(out, echo.clone(), echo_as, vec![pending]),
+                    None => vec![pending],
+                };
+                Ok(pending.into_iter().next())
+            }
         };
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
     {
         // Buffered until the meshed edge flushes it through the send decision.
-        retain_leg(
-            state,
-            out,
-            RetainLegParams {
-                msg,
-                echo,
-                content,
-                echo_as,
-            },
-        );
+        retain_leg(state, msg, content);
+        if let Some(echo) = echo {
+            print_echo(out, echo, echo_as);
+        }
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
@@ -1329,33 +1340,118 @@ async fn send_directed_leg(
     Ok(None)
 }
 
-/// A task leg's frame plus its echo twin and cap-tracking flag — the fields
-/// [`retain_leg`] needs beyond its state/out handles.
-#[derive(Clone, Copy)]
-struct RetainLegParams<'a> {
-    msg: &'a Message,
-    echo: Option<&'a Message>,
-    content: bool,
-    echo_as: EchoAs,
-}
-
-/// Retain a task leg locally, echoing the operator line from the plaintext
-/// twin when given (`None` for the raw shards of a split leg — the wire
-/// frame's directed body is sealed, so it cannot be surfaced). Content legs
-/// retain; the beat doesn't.
-fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLegParams<'_>) {
-    let RetainLegParams {
-        msg,
-        echo,
-        content,
-        echo_as,
-    } = params;
-    if let Some(echo) = echo {
-        print_echo(out, echo, echo_as);
-    }
+/// Retain a task leg locally. Content legs retain; the beat doesn't. The echo
+/// is the caller's, and it waits for the delivery verdict.
+fn retain_leg(state: &mut EventLoopState, msg: &Message, content: bool) {
     if content {
         retain_outbound(state, msg);
     }
+}
+
+/// Queue `msg` for the message log, behind the verdict of its send. The handle is replaced by
+/// one that gives the same verdict.
+fn retain_when_sent(app: &mut A2aApp, msg: Message, pending: PendingSend) -> PendingSend {
+    let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    app.unsent_legs.push(UnsentLeg {
+        frames: vec![msg],
+        cache: None,
+        sent: sent_rx,
+    });
+    tokio::spawn(async move {
+        let verdict = settle(vec![pending]).await;
+        let _ = sent_tx.send(verdict.is_ok());
+        let _ = verdict_tx.send(verdict);
+    });
+    verdict_rx
+}
+
+/// Queue the shards of one leg for the message log and the shard cache, as one group: they
+/// enter only when every shard was sent. One shard in the log lets anti-entropy and
+/// `shard/repair` rebuild a leg whose send failed. `pending` holds the handle of each shard,
+/// `None` for a shard already sent. The handles are replaced by one that gives the verdict of
+/// the whole leg.
+fn queue_sharded_leg(
+    app: &mut A2aApp,
+    frames: Vec<Message>,
+    cache: Option<(ShardGroup, Vec<Bytes>)>,
+    pending: Vec<Option<PendingSend>>,
+) -> Vec<PendingSend> {
+    let pending: Vec<PendingSend> = pending.into_iter().flatten().collect();
+    let (sent_tx, sent) = tokio::sync::oneshot::channel();
+    app.unsent_legs.push(UnsentLeg {
+        frames,
+        cache,
+        sent,
+    });
+    if pending.is_empty() {
+        let _ = sent_tx.send(true);
+        return pending;
+    }
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let verdict = settle(pending).await;
+        let _ = sent_tx.send(verdict.is_ok());
+        let _ = verdict_tx.send(verdict);
+    });
+    vec![verdict_rx]
+}
+
+/// Take the own legs whose send has an outcome. The legs that failed are dropped.
+fn take_sent_legs(app: &mut A2aApp) -> Vec<UnsentLeg> {
+    let mut sent = Vec::new();
+    app.unsent_legs.retain_mut(|leg| match leg.sent.try_recv() {
+        Ok(true) => {
+            sent.push(UnsentLeg {
+                frames: std::mem::take(&mut leg.frames),
+                cache: leg.cache.take(),
+                sent: tokio::sync::oneshot::channel().1,
+            });
+            false
+        }
+        Ok(false) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+    });
+    sent
+}
+
+/// Move the own legs that were sent into the message log and the shard cache, and forget the
+/// legs whose send failed.
+pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
+    for leg in take_sent_legs(app) {
+        for frame in &leg.frames {
+            retain_outbound(state, frame);
+        }
+        if let Some((group, frames)) = leg.cache {
+            state.shard_cache_mut().insert(group, frames);
+        }
+    }
+}
+
+/// Print `echo` once the sends in `pending` all succeed, and give the verdict on
+/// to the caller. A failed send prints nothing: the sender must not read a
+/// message that never arrived as sent. With nothing pending the verdict is known
+/// now, and the echo prints at once.
+fn echo_when_sent(
+    out: &output::Output,
+    echo: Message,
+    echo_as: EchoAs,
+    pending: Vec<PendingSend>,
+) -> Vec<PendingSend> {
+    if pending.is_empty() {
+        print_echo(out, &echo, echo_as);
+        return pending;
+    }
+    let out = out.clone();
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let verdict = settle(pending).await;
+        if verdict.is_ok() {
+            print_echo(&out, &echo, echo_as);
+        }
+        let _ = verdict_tx.send(verdict);
+    });
+    vec![verdict_rx]
 }
 
 /// Advance our own coarse task state machine for a leg we just sent. `msg`
@@ -1556,6 +1652,9 @@ pub(crate) async fn broadcast_a2a_call(
     };
     let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
     let blob_group = blob.map(|blob| blob.group);
+    if let Some(message_id) = params["message"]["messageId"].as_str() {
+        app.note_sent_ref(message_id, &peer);
+    }
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::new(envelope.to_string()) else {
         app.orphan_blob(blob_group);
@@ -1618,7 +1717,11 @@ pub(crate) async fn broadcast_a2a_call(
     )
     .await
     {
-        tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+        if method == crate::a2a::gossip_rpc::READER_GET {
+            tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
+        } else {
+            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+        }
     }
 }
 
@@ -1764,6 +1867,7 @@ pub(crate) async fn handle_session_request(
         app,
     } = params;
     app.drain_delivered_legs();
+    retain_sent_legs(app, state);
     match req {
         SessionRequest::Broadcast { body, resp } => {
             let outcome = send_broadcast(
@@ -1802,6 +1906,9 @@ pub(crate) async fn handle_session_request(
             // Same policy as the CLI/IPC `Poll` arm: respond now if events are
             // buffered, else (with `long`) park a typed waiter the loop
             // fulfills/expires. A parked waiter broadcasts nothing → `false`.
+            if !long {
+                crate::a2a::receipt::send_read_receipts(app, state, ctx, after).await;
+            }
             app.surfaced
                 .poll_or_register(crate::a2a::surfaced::PollOrRegisterParams {
                     after,
@@ -2072,5 +2179,143 @@ mod call_blob_group_tests {
         let (_, fresh_group) = call_blob_group(None, &HashMap::new());
 
         assert!(fresh_group);
+    }
+}
+
+#[cfg(test)]
+mod echo_when_sent_tests {
+    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use tokio::sync::oneshot;
+
+    use super::{EchoAs, PendingSend, echo_when_sent};
+    use crate::events::OutputEvent;
+    use crate::output::capture_events;
+
+    fn echo() -> Message {
+        Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::app_to(crate::a2a::wire::MSG, Nickname::from("bob"), None),
+            MessageBody::new("hi").expect("valid body"),
+        )
+    }
+
+    fn echoes(events: &mut tokio::sync::mpsc::UnboundedReceiver<OutputEvent>) -> usize {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .filter(|event| matches!(event, OutputEvent::Message { is_self: true, .. }))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_delivered_send_prints_the_echo() {
+        let (out, mut events) = capture_events();
+        let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
+
+        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        verdict_tx.send(Ok(())).expect("receiver is held");
+        pending
+            .into_iter()
+            .next()
+            .expect("verdict handle")
+            .await
+            .expect("verdict")
+            .expect("ok");
+
+        assert_eq!(echoes(&mut events), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_prints_no_echo_and_passes_the_error_on() {
+        let (out, mut events) = capture_events();
+        let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
+
+        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        verdict_tx
+            .send(Err(anyhow::anyhow!("unicast dial failed")))
+            .expect("receiver is held");
+        let verdict = pending
+            .into_iter()
+            .next()
+            .expect("verdict handle")
+            .await
+            .expect("verdict");
+
+        assert!(verdict.is_err(), "the caller still sees the failure");
+        assert_eq!(echoes(&mut events), 0);
+    }
+}
+
+#[cfg(test)]
+mod sharded_leg_tests {
+    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use tokio::sync::oneshot;
+
+    use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
+    use crate::a2a::app::A2aApp;
+
+    fn shard(text: &str) -> Message {
+        Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::app_to(crate::a2a::wire::MSG, Nickname::from("bob"), None),
+            MessageBody::new(text).expect("valid body"),
+        )
+    }
+
+    fn verdict(outcome: anyhow::Result<()>) -> PendingSend {
+        let (verdict_tx, verdict_rx) = oneshot::channel();
+        verdict_tx.send(outcome).expect("receiver is held");
+        verdict_rx
+    }
+
+    #[tokio::test]
+    async fn a_sharded_leg_with_one_failed_shard_enters_no_log() {
+        let mut app = A2aApp::new();
+        let pending = vec![
+            Some(verdict(Ok(()))),
+            Some(verdict(Err(anyhow::anyhow!("dial failed")))),
+        ];
+
+        let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
+        assert!(settle(handles).await.is_err(), "the leg failed");
+
+        let logged: usize = take_sent_legs(&mut app)
+            .iter()
+            .map(|leg| leg.frames.len())
+            .sum();
+        assert_eq!(logged, 0, "no shard of a failed leg may enter the log");
+    }
+
+    #[tokio::test]
+    async fn a_leg_whose_send_task_ended_without_a_verdict_is_dropped() {
+        let mut app = A2aApp::new();
+        let (sent_tx, sent) = oneshot::channel::<bool>();
+        drop(sent_tx);
+        app.unsent_legs.push(crate::a2a::app::UnsentLeg {
+            frames: vec![shard("a")],
+            cache: None,
+            sent,
+        });
+
+        assert!(
+            take_sent_legs(&mut app).is_empty(),
+            "nothing enters the log"
+        );
+        assert!(app.unsent_legs.is_empty(), "the leg is not kept waiting");
+    }
+
+    #[tokio::test]
+    async fn a_sharded_leg_whose_shards_were_all_sent_enters_the_log_whole() {
+        let mut app = A2aApp::new();
+        let pending = vec![None, Some(verdict(Ok(())))];
+
+        let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
+        assert!(settle(handles).await.is_ok(), "the leg was sent");
+
+        let logged: usize = take_sent_legs(&mut app)
+            .iter()
+            .map(|leg| leg.frames.len())
+            .sum();
+        assert_eq!(logged, 2);
     }
 }

@@ -1,8 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
+use habilis_network::protocol::{MessageKind, Nickname};
 use tokio::time::Instant as TokioInstant;
 
+use crate::a2a::wire;
 use crate::output::OutputEvent;
 
 /// One surfaced event tagged with its daemon-local sequence number. The `seq`
@@ -66,6 +68,12 @@ impl SurfacedEvents {
             self.events.pop_front();
         }
         seq
+    }
+
+    /// `None` when the ring is empty. The set of receipted seqs is pruned to
+    /// this, so it can never grow past the ring.
+    pub(crate) fn oldest_seq(&self) -> Option<u64> {
+        self.events.front().map(|item| item.seq)
     }
 
     /// The newest assigned seq, or 0 when nothing has been surfaced yet
@@ -279,6 +287,60 @@ pub(crate) struct SurfacedState {
     /// bell's output is discarded by contract, so nothing was "served".
     /// In-memory only — a fresh daemon starts at 0 (nothing served).
     last_served: u64,
+    /// The seqs whose read receipt was already sent, so a re-read with
+    /// `--after` cannot send a second one. A set, not a high-water mark: a
+    /// read that jumps ahead with `--after` leaves the frames it skipped owed.
+    /// Pruned to the ring.
+    receipted: BTreeSet<u64>,
+    /// When a foreground poll last ran.
+    last_foreground_poll: Option<TokioInstant>,
+}
+
+/// The author and frame id a `read` receipt goes back to.
+pub(crate) type ReadTarget = (Nickname, String);
+
+/// A task brief comes by request/response and has no frame id, so its target
+/// names the A2A messageId instead.
+fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
+    let directed_to_us = |msg: &habilis_network::protocol::Message, tags: &[&str]| {
+        matches!(
+            &msg.kind,
+            MessageKind::App { tag, to: Some(to), .. }
+                if tags.contains(&tag.as_str()) && to == me
+        )
+        .then(|| (msg.author.clone(), msg.id.as_str().to_owned()))
+    };
+    match event {
+        OutputEvent::Message {
+            msg,
+            is_self: false,
+        } => directed_to_us(msg, &[wire::MSG]),
+        OutputEvent::Task {
+            msg,
+            is_self: false,
+        } => directed_to_us(msg, &[wire::STATUS, wire::ARTIFACT]),
+        OutputEvent::TaskMessage {
+            id,
+            author,
+            is_self: false,
+            ..
+        } => Some((Nickname::new(author.clone()).ok()?, id.clone())),
+        OutputEvent::Message { .. }
+        | OutputEvent::Task { .. }
+        | OutputEvent::TaskMessage { .. }
+        | OutputEvent::Ready { .. }
+        | OutputEvent::Presence { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::Receipt { .. }
+        | OutputEvent::StateChanged { .. } => None,
+    }
 }
 
 impl SurfacedState {
@@ -287,6 +349,8 @@ impl SurfacedState {
             surfaced_events: SurfacedEvents::new(crate::a2a::tuning::SURFACED_EVENTS_CAP),
             poll_waiters: Vec::new(),
             last_served: 0,
+            receipted: BTreeSet::new(),
+            last_foreground_poll: None,
         }
     }
 
@@ -354,6 +418,45 @@ impl SurfacedState {
         None
     }
 
+    /// The frames a foreground poll with this cursor is about to serve that
+    /// are owed a `read` receipt, each reported once. Call it before
+    /// [`poll_or_register`](Self::poll_or_register), never for a long poll:
+    /// the bell is not a reader.
+    pub(crate) fn take_read_targets(
+        &mut self,
+        after: Option<u64>,
+        me: &Nickname,
+    ) -> Vec<ReadTarget> {
+        let batch = self.poll_since(Some(after.unwrap_or(self.last_served)));
+        let mut targets = Vec::new();
+        for item in &batch.events {
+            if !self.receipted.contains(&item.seq)
+                && let Some(target) = read_target(&item.event, me)
+            {
+                self.receipted.insert(item.seq);
+                targets.push(target);
+            }
+        }
+        if let Some(oldest) = self.surfaced_events.oldest_seq() {
+            self.receipted = self.receipted.split_off(&oldest);
+        }
+        targets
+    }
+
+    /// Whether a cursor-less long poll (a bell) is parked here.
+    pub(crate) fn has_parked_bell(&self) -> bool {
+        self.poll_waiters
+            .iter()
+            .any(|waiter| matches!(waiter.baseline, PollBaseline::Served))
+    }
+
+    /// Whole seconds since a foreground poll last ran, or `None` before the
+    /// first one.
+    pub(crate) fn last_poll_secs_ago(&self, now: TokioInstant) -> Option<u64> {
+        self.last_foreground_poll
+            .map(|polled| now.saturating_duration_since(polled).as_secs())
+    }
+
     /// Advance the read cursor past everything a foreground poll just served.
     /// `max` keeps a replay (hidden `--after 0`) from regressing it.
     fn advance_last_served(&mut self, batch: &PollBatch) {
@@ -387,6 +490,9 @@ impl SurfacedState {
             now,
             responder,
         } = params;
+        if !long {
+            self.last_foreground_poll = Some(now);
+        }
         let (batch, baseline) = match after {
             None => (
                 self.poll_since(Some(self.last_served)),
@@ -495,14 +601,16 @@ impl SurfacedState {
 mod tests {
     use std::time::Duration;
 
-    use habilis_network::protocol::{Channel, MeshId, Message, MessageKind, Nickname};
+    use habilis_network::protocol::{
+        AppFrameParams, AppTag, Channel, MeshId, Message, MessageKind, Nickname,
+    };
     use tokio::time::Instant as TokioInstant;
 
     use super::{
         PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
         render_poll_array,
     };
-    use crate::a2a::{TaskState, gossip};
+    use crate::a2a::{TaskState, gossip, wire};
     use crate::output::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
@@ -535,6 +643,87 @@ mod tests {
             msg: Box::new(msg),
             is_self: true,
         }
+    }
+
+    fn directed_frame(tag: &str, author: &str, to: &str) -> Message {
+        Message::new_app(
+            &MeshId::from("test"),
+            &nick(author),
+            AppFrameParams {
+                tag: AppTag::from(tag),
+                to: Some(nick(to)),
+                corr: None,
+                body: "{}".into(),
+            },
+        )
+    }
+
+    fn directed_msg_event(author: &str, to: &str, is_self: bool) -> OutputEvent {
+        OutputEvent::Message {
+            msg: Box::new(directed_frame(wire::MSG, author, to)),
+            is_self,
+        }
+    }
+
+    #[test]
+    fn foreground_read_targets_a_directed_msg_to_us_once() {
+        let mut state = SurfacedState::new();
+        let event = directed_msg_event("alice", "me", false);
+        let OutputEvent::Message { msg, .. } = &event else {
+            unreachable!()
+        };
+        let expected = (nick("alice"), msg.id.as_str().to_owned());
+        state.push(event);
+
+        let first = state.take_read_targets(None, &nick("me"));
+        assert_eq!(first, vec![expected]);
+        let again = state.take_read_targets(Some(0), &nick("me"));
+        assert!(again.is_empty(), "a re-read must not receipt twice");
+    }
+
+    #[test]
+    fn a_jump_with_after_leaves_the_skipped_frames_owed_a_receipt() {
+        let mut state = SurfacedState::new();
+        state.push(directed_msg_event("alice", "me", false));
+        state.push(directed_msg_event("bob", "me", false));
+
+        let jumped = state.take_read_targets(Some(1), &nick("me"));
+        assert_eq!(jumped.len(), 1, "only the frame after the cursor is read");
+        let skipped = state.take_read_targets(Some(0), &nick("me"));
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|(to, _)| to.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alice"],
+            "the frame the jump skipped is read now"
+        );
+    }
+
+    #[test]
+    fn read_targets_skip_broadcasts_own_echoes_and_other_addressees() {
+        let mut state = SurfacedState::new();
+        state.push(directed_msg_event("alice", "me", true));
+        state.push(directed_msg_event("alice", "someone-else", false));
+        state.push(OutputEvent::Message {
+            msg: Box::new(directed_frame(wire::BROADCAST, "alice", "me")),
+            is_self: false,
+        });
+        state.push(peer_return("alice"));
+
+        assert!(state.take_read_targets(None, &nick("me")).is_empty());
+    }
+
+    #[test]
+    fn read_targets_cover_status_and_artifact_legs() {
+        let mut state = SurfacedState::new();
+        for tag in [wire::STATUS, wire::ARTIFACT] {
+            state.push(OutputEvent::Task {
+                msg: Box::new(directed_frame(tag, "worker", "me")),
+                is_self: false,
+            });
+        }
+        assert_eq!(state.take_read_targets(None, &nick("me")).len(), 2);
     }
 
     #[test]
@@ -752,6 +941,38 @@ mod tests {
         assert_eq!(
             surfaced.poll_waiters.len(),
             crate::a2a::tuning::POLL_WAITERS_CAP
+        );
+    }
+
+    #[tokio::test]
+    async fn last_poll_age_counts_foreground_polls_only() {
+        let mut surfaced = SurfacedState::new();
+        let start = TokioInstant::now();
+        assert_eq!(surfaced.last_poll_secs_ago(start), None, "no poll yet");
+
+        let (bell_tx, _bell_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: start,
+            responder: PollResponder::Json(bell_tx),
+        });
+        assert_eq!(
+            surfaced.last_poll_secs_ago(start),
+            None,
+            "a bell is no poll"
+        );
+
+        let (read_tx, _read_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: start,
+            responder: PollResponder::Json(read_tx),
+        });
+        assert_eq!(
+            surfaced.last_poll_secs_ago(start + Duration::from_secs(42)),
+            Some(42)
         );
     }
 

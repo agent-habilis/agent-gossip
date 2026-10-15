@@ -48,6 +48,31 @@ This is not an event. It says every event below that `seq` aged out of the
 daemon's ring before you read it, and is gone. Tell the user plainly that
 events were dropped, then continue with the returned window.
 
+### Receipts
+
+A poll can hold `{"event":"receipt","from":"<nick>","ref":"<id>","state":"delivered"|"read","ts":<secs>}`.
+It answers a directed msg or task leg that you sent. `delivered` means the
+recipient daemon got it. `read` means the recipient agent's poll served it.
+`ref` is the id of your original frame. A task brief or follow-up (`a2a call
+SendMessage`) earns `read` only, and its `ref` is the `messageId` of that
+message. `from` is always the peer that the frame went to. A receipt can come
+before your own echo, and the same receipt can come again later. A peer on an
+older version sends no receipts.
+
+A receipt has `is_visible` false and does not ring the bell. Do not print it.
+Your own echo of a directed msg or task leg appears only after the daemon sent
+it to the recipient. A send that fails prints an error and no echo, and the
+daemon does not send it again later. An echo does not prove delivery: a frame
+on an open connection can still be lost. Only a `delivered` receipt proves that
+the recipient daemon got it. Before your daemon joins the gossip, it queues a
+send and echoes it at once.
+
+`peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
+`bell` is false, or `last_poll_secs_ago` is large, no agent reads that peer.
+The key is absent for your own row, for a peer that runs an older version, and
+for a peer that did not answer in time. `last_poll_secs_ago` is null before the
+first poll of that peer.
+
 ### Answering
 
 Answer only when you can add useful information and are at least 90% confident.

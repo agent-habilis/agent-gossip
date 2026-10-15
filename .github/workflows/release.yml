@@ -90,7 +90,8 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       # Pull the once-built man pages into ./man so the archive can bundle
-      # them; Homebrew installs them from there (see Formula/agent-gossip.rb).
+      # them; Homebrew installs them from there (see Formula/agent-gossip.rb in
+      # agent-habilis/homebrew-tap).
       - name: Download man pages
         uses: actions/download-artifact@v4
         with:
@@ -117,14 +118,23 @@ jobs:
     needs: upload
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
+      # The formula lives only in the org tap. GITHUB_TOKEN is scoped to this
+      # repo, so the push there goes through the release App.
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: homebrew-tap
       - uses: actions/checkout@v5
         with:
-          ref: main # commit the formula bump onto main, not the tag
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: agent-habilis/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
       - name: Bump Formula/agent-gossip.rb to the released version + checksums
+        working-directory: tap
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -140,37 +150,9 @@ jobs:
             # Replace the sha256 line immediately following this target's url line.
             perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/agent-gossip.rb
           done
-      # A PR, not a push: the "Protect main" ruleset requires one, and the
-      # GitHub Actions app cannot be a bypass actor on a repo ruleset. A PR
-      # opened with GITHUB_TOKEN does not trigger CI, so an admin merges it
-      # through the ruleset bypass.
-      - name: Open a PR with the formula bump
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Push the formula to the org tap
+        working-directory: tap
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/agent-gossip.rb
-          git diff --cached --quiet && exit 0
-          branch="formula/${TAG}"
-          git switch -c "$branch"
-          git commit -m "chore: update Homebrew formula for ${TAG}"
-          git push origin "$branch"
-          gh pr create --base main --head "$branch" \
-            --title "chore: update Homebrew formula for ${TAG}" \
-            --body "Formula bump from the ${TAG} release workflow."
-      # The GITHUB_TOKEN is scoped to this repo, so mirroring into the org
-      # tap needs the TAP_PUSH_TOKEN secret (fine-grained PAT, contents
-      # read/write on homebrew-tap only).
-      - uses: actions/checkout@v5
-        with:
-          repository: agent-habilis/homebrew-tap
-          token: ${{ secrets.TAP_PUSH_TOKEN }}
-          path: tap
-      - name: Mirror the formula to the org tap
-        run: |
-          cp Formula/agent-gossip.rb tap/Formula/agent-gossip.rb
-          cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/agent-gossip.rb

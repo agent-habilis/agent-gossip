@@ -62,6 +62,13 @@ pub(super) enum SimpleEvent<'a> {
         task_id: &'a str,
         reason: TaskGoneReason,
     },
+    Receipt {
+        from: &'a str,
+        #[serde(rename = "ref")]
+        ref_id: &'a str,
+        state: &'a str,
+        ts: u64,
+    },
     Info {
         message: &'a str,
     },
@@ -349,6 +356,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Fork { .. }
         | OutputEvent::Info { .. }
@@ -777,6 +785,17 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 reason: *reason,
             })
         }
+        OutputEvent::Receipt {
+            from,
+            ref_id,
+            state,
+            ts,
+        } => serde_json::to_string(&SimpleEvent::Receipt {
+            from: from.as_str(),
+            ref_id,
+            state,
+            ts: *ts,
+        }),
         OutputEvent::Presence { msg } => {
             let MessageKind::Presence { subtype } = &msg.kind else {
                 return None;
