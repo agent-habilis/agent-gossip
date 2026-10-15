@@ -345,6 +345,17 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   job fail on drift. rustfmt does not move a `use` that comes after a `mod`.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
+- Use the typestate pattern only when one function or one builder drives a
+  fixed sequence that is known at compile time. Then add a `compile_fail` doc
+  test for each illegal transition.
+- Keep an `enum` when peer events, wire data, or the filesystem drive the
+  state. `TaskState` (`a2a/model/mod.rs`) is the reference: legs from peers
+  move it, and it sits in a map on the wire as `TASK_STATE_*`.
+- A chain of distinct types already gives a compile-time order, so do not wrap
+  it again. `run_session` (`cli/mod.rs`) is the reference: `CreateParams` or
+  `JoinParams` resolve to `Resolved`, which `setup_mesh` turns into the config.
+- For a CLI request, prefer a typed `enum` over a `String` plus `Option` flags,
+  so that an illegal combination is an error and not a silent default.
 
 ## Agent Restrictions
 
