@@ -108,13 +108,13 @@ fn a_msg_whose_send_failed_never_arrives_later() {
     let failed = failed.expect("no send to the stopped peer failed in 60 seconds");
 
     let marker = "sent after the resume";
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let relink_deadline = std::time::Instant::now() + Duration::from_mins(1);
     while !common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, marker)
         .status
         .success()
     {
         assert!(
-            std::time::Instant::now() < deadline,
+            std::time::Instant::now() < relink_deadline,
             "alice never reached bob again"
         );
         std::thread::sleep(Duration::from_secs(2));

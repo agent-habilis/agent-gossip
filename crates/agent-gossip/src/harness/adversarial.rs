@@ -69,6 +69,15 @@ pub struct SealedTaskStatusParams<'a> {
     pub seal_key: [u8; 32],
 }
 
+/// The value cluster for [`CraftedMsg::sealed_msg`].
+#[derive(Clone, Copy)]
+pub struct SealedMsgParams<'a> {
+    pub author: &'a str,
+    pub to: &'a str,
+    pub text: &'a str,
+    pub seal_key: [u8; 32],
+}
+
 /// The addressee's public X25519 mesh-seal key, read out of a meta document
 /// exactly as the daemon's own send path reads it. Any mesh member holds this
 /// document, which is the point: sealing to a peer needs no secret.
@@ -303,13 +312,13 @@ impl CraftedMsg {
     }
 
     /// A directed `a2a_msg` with a valid payload, sealed to the addressee.
-    pub fn sealed_msg(
-        mesh: &MeshId,
-        author: &str,
-        to: &str,
-        text: &str,
-        seal_key: [u8; 32],
-    ) -> Self {
+    pub fn sealed_msg(mesh: &MeshId, params: SealedMsgParams<'_>) -> Self {
+        let SealedMsgParams {
+            author,
+            to,
+            text,
+            seal_key,
+        } = params;
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let to = Nickname::new(to.to_owned()).expect("valid target");
         let mut frame = Message::new_app(

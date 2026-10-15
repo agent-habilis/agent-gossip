@@ -663,10 +663,12 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
 
     let old = CraftedMsg::sealed_msg(
         attacker.session.mesh_id(),
-        &attacker.nickname,
-        &victim.nickname,
-        "from before the join",
-        seal_key,
+        adversarial::SealedMsgParams {
+            author: &attacker.nickname,
+            to: &victim.nickname,
+            text: "from before the join",
+            seal_key,
+        },
     )
     .timestamp(1_000_000_000)
     .sign(&adversarial::new_key());

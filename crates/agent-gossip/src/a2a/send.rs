@@ -615,8 +615,8 @@ async fn broadcast_directed_frame(
             state,
             sender,
             out,
-            app,
             DirectedLegPart {
+                app,
                 msg: &single,
                 bytes,
                 echo: Some(&echo),
@@ -688,8 +688,8 @@ async fn broadcast_directed_frame(
                 state,
                 sender,
                 out,
-                app,
                 DirectedLegPart {
+                    app,
                     msg: &msg,
                     bytes,
                     echo: None,
@@ -1268,6 +1268,7 @@ pub(crate) async fn attach_call_file(
 /// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
 /// so the state/sender/out handles stay their own leading params.
 struct DirectedLegPart<'a> {
+    app: &'a mut A2aApp,
     echo_as: EchoAs,
     msg: &'a Message,
     bytes: Bytes,
@@ -1283,10 +1284,10 @@ async fn send_directed_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-    app: &mut A2aApp,
     part: DirectedLegPart<'_>,
 ) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
+        app,
         msg,
         bytes,
         echo,
