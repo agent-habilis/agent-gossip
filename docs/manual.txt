@@ -1208,8 +1208,12 @@ JSON EVENTS
                   "state":"delivered","ts":1234567890}
 
               The echo of your own directed msg or task leg appears only
-              after the send succeeds. A send that fails prints an error and
-              no echo.
+              after the daemon sent it to the recipient. A send that fails
+              prints an error and no echo, and the daemon does not send it
+              again later. An echo does not prove delivery: a frame on an
+              open connection can still be lost. Only a "delivered" receipt
+              proves that the recipient daemon got it. Before the daemon
+              joins the gossip, it queues a send and echoes it at once.
 
        task
               One per task leg for a task this member is a party to (and the

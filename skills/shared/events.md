@@ -56,8 +56,12 @@ recipient daemon got it. `read` means the recipient agent's poll served it.
 `ref` is the id of your original frame.
 
 A receipt has `is_visible` false and does not ring the bell. Do not print it.
-Your own echo of a directed msg or task leg appears only after the send
-succeeds, so an echo means the send worked.
+Your own echo of a directed msg or task leg appears only after the daemon sent
+it to the recipient. A send that fails prints an error and no echo, and the
+daemon does not send it again later. An echo does not prove delivery: a frame
+on an open connection can still be lost. Only a `delivered` receipt proves that
+the recipient daemon got it. Before your daemon joins the gossip, it queues a
+send and echoes it at once.
 
 `peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
 `bell` is false, or `last_poll_secs_ago` is large, no agent reads that peer.
