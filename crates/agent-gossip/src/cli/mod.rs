@@ -747,17 +747,17 @@ impl<'a> A2aCallRequest<'a> {
 
 /// Query the running daemon's live peer roster. Always emits the
 /// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
-async fn poll(opts: PollOpts) -> Result<()> {
+async fn poll(mut opts: PollOpts) -> Result<()> {
     // First, so `--max-secs` counts from the process start like the harness
     // clock does, readiness wait included.
     let poll_started = tokio::time::Instant::now();
+    let identity = opts.identity()?;
     let PollOpts {
-        identity,
         after,
         long,
         settle_secs,
         max_secs,
-        legacy_output: _,
+        ..
     } = opts;
     // The state-file form waits for readiness first so a poll can be armed
     // before the daemon has minted its identity.

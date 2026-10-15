@@ -1,103 +1,32 @@
 //! `poll` command args: retrieve buffered messages from a running gossip
 //! process via IPC.
 
-use clap::{Arg, ArgMatches, Args, Command, FromArgMatches, Parser, value_parser};
+use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 
-/// Who polls: a named session, or whatever a `--state-file` resolves to.
-#[derive(Debug)]
 pub(crate) enum PollIdentity {
-    Session {
-        gossip: MeshId,
-        nickname: Nickname,
-    },
-    /// Resolve --gossip/--nickname from a create/join --state-file instead:
-    /// wait until that file reports the daemon serving (like `agent-gossip ready`),
-    /// then poll as the identity it carries. Lets a poll be armed before the
-    /// daemon has minted its identity.
+    Session { gossip: MeshId, nickname: Nickname },
     StateFile(std::path::PathBuf),
-}
-
-// Hand-written because clap's derive cannot build one enum from several flags.
-// The `Err` arms below are unreachable while the `required_unless_present` and
-// `conflicts_with` rules hold; they return an error instead of panicking.
-impl Args for PollIdentity {
-    fn augment_args(cmd: Command) -> Command {
-        cmd.arg(
-            Arg::new("gossip")
-                .long("gossip")
-                .alias("room")
-                .value_name("GOSSIP")
-                .help("Gossip identifier")
-                .value_parser(value_parser!(MeshId))
-                .required_unless_present("state_file")
-                .conflicts_with("state_file"),
-        )
-        .arg(
-            Arg::new("nickname")
-                .long("nickname")
-                .value_name("NICKNAME")
-                .help("Nickname of the local agent (must have a running join/create session)")
-                .value_parser(value_parser!(Nickname))
-                .required_unless_present("state_file")
-                .conflicts_with("state_file"),
-        )
-        .arg(
-            Arg::new("state_file")
-                .long("state-file")
-                .value_name("PATH")
-                .help(
-                    "Resolve --gossip/--nickname from a create/join --state-file instead: \
-                     wait until that file reports the daemon serving (like `agent-gossip \
-                     ready`), then poll as the identity it carries. Lets a poll be armed \
-                     before the daemon has minted its identity.",
-                )
-                .value_parser(value_parser!(std::path::PathBuf)),
-        )
-    }
-
-    fn augment_args_for_update(cmd: Command) -> Command {
-        Self::augment_args(cmd)
-    }
-}
-
-impl FromArgMatches for PollIdentity {
-    fn from_arg_matches(matches: &ArgMatches) -> Result<Self, clap::Error> {
-        Self::from_arg_matches_mut(&mut matches.clone())
-    }
-
-    fn from_arg_matches_mut(matches: &mut ArgMatches) -> Result<Self, clap::Error> {
-        let missing = |flag: &str| {
-            clap::Error::raw(
-                clap::error::ErrorKind::MissingRequiredArgument,
-                format!("--{flag} is required without --state-file\n"),
-            )
-        };
-        if let Some(path) = matches.remove_one::<std::path::PathBuf>("state_file") {
-            return Ok(Self::StateFile(path));
-        }
-        Ok(Self::Session {
-            gossip: matches
-                .remove_one("gossip")
-                .ok_or_else(|| missing("gossip"))?,
-            nickname: matches
-                .remove_one("nickname")
-                .ok_or_else(|| missing("nickname"))?,
-        })
-    }
-
-    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), clap::Error> {
-        *self = Self::from_arg_matches(matches)?;
-        Ok(())
-    }
 }
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
-    #[command(flatten)]
-    pub identity: PollIdentity,
+    /// Gossip identifier
+    #[arg(long, alias = "room", required_unless_present = "state_file")]
+    pub gossip: Option<MeshId>,
+
+    /// Nickname of the local agent (must have a running join/create session)
+    #[arg(long, required_unless_present = "state_file")]
+    pub nickname: Option<Nickname>,
+
+    /// Resolve --gossip/--nickname from a create/join --state-file instead:
+    /// wait until that file reports the daemon serving (like `agent-gossip ready`),
+    /// then poll as the identity it carries. Lets a poll be armed before the
+    /// daemon has minted its identity.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["gossip", "nickname"])]
+    pub state_file: Option<std::path::PathBuf>,
 
     /// Debug/recovery read: only return events surfaced after this sequence
     /// number, without touching the daemon's read cursor. Hidden — a plain
@@ -134,11 +63,26 @@ pub(crate) struct PollOpts {
     pub legacy_output: LegacyOutput,
 }
 
+impl PollOpts {
+    // clap's `required_unless_present` and `conflicts_with` already rule out the
+    // error arm; it exists so the caller needs no `expect`.
+    pub(crate) fn identity(&mut self) -> anyhow::Result<PollIdentity> {
+        match (
+            self.state_file.take(),
+            self.gossip.take(),
+            self.nickname.take(),
+        ) {
+            (Some(path), None, None) => Ok(PollIdentity::StateFile(path)),
+            (None, Some(gossip), Some(nickname)) => Ok(PollIdentity::Session { gossip, nickname }),
+            _ => anyhow::bail!("poll needs --state-file, or --gossip with --nickname"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use super::PollIdentity;
     use crate::cli::args::{Cli, Commands};
 
     fn parse(argv: &[&str]) -> Result<Cli, clap::Error> {
@@ -205,7 +149,9 @@ mod tests {
         let Commands::Poll { opts } = cli.command else {
             panic!("expected poll");
         };
-        assert!(matches!(opts.identity, PollIdentity::Session { .. }));
+        assert!(opts.gossip.is_some());
+        assert!(opts.nickname.is_some());
+        assert!(opts.state_file.is_none());
     }
 
     #[test]
@@ -221,7 +167,9 @@ mod tests {
         let Commands::Poll { opts } = cli.command else {
             panic!("expected poll");
         };
-        assert!(matches!(opts.identity, PollIdentity::StateFile(_)));
+        assert!(opts.gossip.is_none());
+        assert!(opts.nickname.is_none());
+        assert!(opts.state_file.is_some());
         assert!(opts.long);
     }
 
