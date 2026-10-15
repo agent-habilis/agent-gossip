@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 
 use crate::a2a::app::A2aApp;
 use crate::a2a::peer_path::respond_with_paths;
+use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
     emit_task_status, send_broadcast, send_msg, when_sent,
@@ -282,7 +283,17 @@ pub(crate) async fn handle_ipc_command(
             // advances `--after`. `poll_or_register` responds now if events are
             // buffered, else (with `long`) parks a waiter the loop fulfills
             // on the next surfaced event or expires at the park cap. A parked
-            // waiter broadcasts nothing → `false`.
+            // waiter broadcasts nothing → `false`. A foreground read tells each
+            // sender its frame was read; the bell is not a reader.
+            if !long {
+                for (to, ref_id) in app.surfaced.take_read_targets(after, author) {
+                    let receipt = Receipt {
+                        ref_id,
+                        state: ReceiptState::Read,
+                    };
+                    let _ = send_receipt(state, ctx, &to, &receipt).await;
+                }
+            }
             app.surfaced.poll_or_register(PollOrRegisterParams {
                 after,
                 long,

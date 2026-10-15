@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use habilis_network::protocol::{MessageKind, Nickname};
 use tokio::time::Instant as TokioInstant;
 
+use crate::a2a::wire;
 use crate::output::OutputEvent;
 
 /// One surfaced event tagged with its daemon-local sequence number. The `seq`
@@ -279,6 +281,69 @@ pub(crate) struct SurfacedState {
     /// bell's output is discarded by contract, so nothing was "served".
     /// In-memory only — a fresh daemon starts at 0 (nothing served).
     last_served: u64,
+    /// The highest seq a read receipt was already owed for. A seq above it is
+    /// receipted once and then covered, so a re-read with `--after` cannot
+    /// send a second receipt.
+    receipted_through: u64,
+    /// When a foreground poll last ran, in unix seconds.
+    last_foreground_poll: Option<u64>,
+    /// When a bell last parked or fired. The CLI re-issues the bell between two
+    /// parks, so a short gap does not mean the bell is gone.
+    last_bell_seen: Option<TokioInstant>,
+    /// The `(bell, last_poll)` pair last written to the meta document.
+    published_reader: Option<(bool, u64)>,
+}
+
+/// What a peer can read about this reader in the meta document.
+pub(crate) fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// The author and frame id a `read` receipt goes back to.
+pub(crate) type ReadTarget = (Nickname, String);
+
+fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
+    let directed_to_us = |msg: &habilis_network::protocol::Message, tags: &[&str]| {
+        matches!(
+            &msg.kind,
+            MessageKind::App { tag, to: Some(to), .. }
+                if tags.contains(&tag.as_str()) && to == me
+        )
+        .then(|| (msg.author.clone(), msg.id.as_str().to_owned()))
+    };
+    match event {
+        OutputEvent::Message {
+            msg,
+            is_self: false,
+        } => directed_to_us(msg, &[wire::MSG]),
+        OutputEvent::Task {
+            msg,
+            is_self: false,
+        } => directed_to_us(msg, &[wire::STATUS, wire::ARTIFACT]),
+        OutputEvent::TaskMessage {
+            id,
+            author,
+            is_self: false,
+            ..
+        } => Some((Nickname::new(author.clone()).ok()?, id.clone())),
+        OutputEvent::Message { .. }
+        | OutputEvent::Task { .. }
+        | OutputEvent::TaskMessage { .. }
+        | OutputEvent::Ready { .. }
+        | OutputEvent::Presence { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::Receipt { .. }
+        | OutputEvent::StateChanged { .. } => None,
+    }
 }
 
 impl SurfacedState {
@@ -287,6 +352,10 @@ impl SurfacedState {
             surfaced_events: SurfacedEvents::new(crate::a2a::tuning::SURFACED_EVENTS_CAP),
             poll_waiters: Vec::new(),
             last_served: 0,
+            receipted_through: 0,
+            last_foreground_poll: None,
+            last_bell_seen: None,
+            published_reader: None,
         }
     }
 
@@ -354,6 +423,62 @@ impl SurfacedState {
         None
     }
 
+    /// The frames a foreground poll with this cursor is about to serve that
+    /// are owed a `read` receipt, each reported once. Call it before
+    /// [`poll_or_register`](Self::poll_or_register), never for a long poll:
+    /// the bell is not a reader.
+    pub(crate) fn take_read_targets(
+        &mut self,
+        after: Option<u64>,
+        me: &Nickname,
+    ) -> Vec<ReadTarget> {
+        let batch = self.poll_since(Some(after.unwrap_or(self.last_served)));
+        let floor = self.receipted_through;
+        let targets = batch
+            .events
+            .iter()
+            .filter(|item| item.seq > floor)
+            .filter_map(|item| read_target(&item.event, me))
+            .collect();
+        if let Some(newest) = batch.events.last().map(|item| item.seq) {
+            self.receipted_through = floor.max(newest);
+        }
+        targets
+    }
+
+    /// Whether a bell is parked now, or was parked within two park caps.
+    pub(crate) fn bell_armed(&self, now: TokioInstant) -> bool {
+        let parked = self
+            .poll_waiters
+            .iter()
+            .any(|waiter| matches!(waiter.baseline, PollBaseline::Served));
+        let grace = Duration::from_millis(2 * crate::a2a::tuning::longpoll_max_ms());
+        parked
+            || self
+                .last_bell_seen
+                .is_some_and(|seen| now.saturating_duration_since(seen) <= grace)
+    }
+
+    /// The `(bell, last_poll)` pair to publish, or `None` when it equals the
+    /// pair already published. `last_poll` rounds down to 60 s so a busy
+    /// reader does not write the document on every poll.
+    pub(crate) fn reader_to_publish(&mut self, now: TokioInstant) -> Option<(bool, u64)> {
+        let current = (
+            self.bell_armed(now),
+            self.last_foreground_poll.map_or(0, |secs| secs - secs % 60),
+        );
+        if self.published_reader == Some(current) {
+            return None;
+        }
+        self.published_reader = Some(current);
+        Some(current)
+    }
+
+    /// Let the next tick publish again after a merge that failed.
+    pub(crate) fn forget_published_reader(&mut self) {
+        self.published_reader = None;
+    }
+
     /// Advance the read cursor past everything a foreground poll just served.
     /// `max` keeps a replay (hidden `--after 0`) from regressing it.
     fn advance_last_served(&mut self, batch: &PollBatch) {
@@ -387,6 +512,11 @@ impl SurfacedState {
             now,
             responder,
         } = params;
+        if long {
+            self.last_bell_seen = Some(now);
+        } else {
+            self.last_foreground_poll = Some(unix_secs());
+        }
         let (batch, baseline) = match after {
             None => (
                 self.poll_since(Some(self.last_served)),
@@ -495,14 +625,16 @@ impl SurfacedState {
 mod tests {
     use std::time::Duration;
 
-    use habilis_network::protocol::{Channel, MeshId, Message, MessageKind, Nickname};
+    use habilis_network::protocol::{
+        AppFrameParams, AppTag, Channel, MeshId, Message, MessageKind, Nickname,
+    };
     use tokio::time::Instant as TokioInstant;
 
     use super::{
         PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
         render_poll_array,
     };
-    use crate::a2a::{TaskState, gossip};
+    use crate::a2a::{TaskState, gossip, wire};
     use crate::output::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
@@ -535,6 +667,68 @@ mod tests {
             msg: Box::new(msg),
             is_self: true,
         }
+    }
+
+    fn directed_frame(tag: &str, author: &str, to: &str) -> Message {
+        Message::new_app(
+            &MeshId::from("test"),
+            &nick(author),
+            AppFrameParams {
+                tag: AppTag::from(tag),
+                to: Some(nick(to)),
+                corr: None,
+                body: "{}".into(),
+            },
+        )
+    }
+
+    fn directed_msg_event(author: &str, to: &str, is_self: bool) -> OutputEvent {
+        OutputEvent::Message {
+            msg: Box::new(directed_frame(wire::MSG, author, to)),
+            is_self,
+        }
+    }
+
+    #[test]
+    fn foreground_read_targets_a_directed_msg_to_us_once() {
+        let mut state = SurfacedState::new();
+        let event = directed_msg_event("alice", "me", false);
+        let OutputEvent::Message { msg, .. } = &event else {
+            unreachable!()
+        };
+        let expected = (nick("alice"), msg.id.as_str().to_owned());
+        state.push(event);
+
+        let first = state.take_read_targets(None, &nick("me"));
+        assert_eq!(first, vec![expected]);
+        let again = state.take_read_targets(Some(0), &nick("me"));
+        assert!(again.is_empty(), "a re-read must not receipt twice");
+    }
+
+    #[test]
+    fn read_targets_skip_broadcasts_own_echoes_and_other_addressees() {
+        let mut state = SurfacedState::new();
+        state.push(directed_msg_event("alice", "me", true));
+        state.push(directed_msg_event("alice", "someone-else", false));
+        state.push(OutputEvent::Message {
+            msg: Box::new(directed_frame(wire::BROADCAST, "alice", "me")),
+            is_self: false,
+        });
+        state.push(peer_return("alice"));
+
+        assert!(state.take_read_targets(None, &nick("me")).is_empty());
+    }
+
+    #[test]
+    fn read_targets_cover_status_and_artifact_legs() {
+        let mut state = SurfacedState::new();
+        for tag in [wire::STATUS, wire::ARTIFACT] {
+            state.push(OutputEvent::Task {
+                msg: Box::new(directed_frame(tag, "worker", "me")),
+                is_self: false,
+            });
+        }
+        assert_eq!(state.take_read_targets(None, &nick("me")).len(), 2);
     }
 
     #[test]
