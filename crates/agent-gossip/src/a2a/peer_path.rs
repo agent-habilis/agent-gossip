@@ -1,7 +1,10 @@
 use habilis_network::embed::EventLoopState;
 use habilis_network::iroh::endpoint::TransportAddrUsage;
 use habilis_network::iroh::{Endpoint, TransportAddr};
+use habilis_network::protocol::Channel;
 use tokio::sync::oneshot;
+
+use crate::a2a::surfaced::unix_secs;
 
 // Copied from `habilis-network-iroh-transport-util/src/lib.rs`, which
 // habilis-network does not re-export.
@@ -66,6 +69,16 @@ pub(crate) fn respond_with_paths(
         Ok(serde_json::Value::Array(rows)) => rows,
         _ => Vec::new(),
     };
+    let readers = state.doc(Channel::Meta).to_json();
+    for row in &mut rows {
+        let reader = row
+            .get("nickname")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|nickname| reader_row(&readers, nickname, unix_secs()));
+        if let (Some(reader), Some(fields)) = (reader, row.as_object_mut()) {
+            fields.insert("reader".to_owned(), reader);
+        }
+    }
     let endpoint = endpoint.clone();
     tokio::spawn(async move {
         for (row, peer) in rows.iter_mut().zip(endpoints) {
@@ -88,6 +101,16 @@ pub(crate) fn respond_with_paths(
     });
 }
 
+fn reader_row(meta: &serde_json::Value, nickname: &str, now: u64) -> Option<serde_json::Value> {
+    let reader = meta.get("peers")?.get(nickname)?.get("reader")?;
+    let bell = reader.get("bell")?.as_bool()?;
+    let last_poll = reader.get("last_poll")?.as_u64()?;
+    Some(serde_json::json!({
+        "bell": bell,
+        "last_poll_secs_ago": now.saturating_sub(last_poll),
+    }))
+}
+
 async fn active_path(endpoint: &Endpoint, peer: habilis_network::iroh::EndpointId) -> String {
     let Some(info) = endpoint.remote_info(peer).await else {
         return "unknown".to_owned();
@@ -106,7 +129,7 @@ mod tests {
 
     use habilis_network::iroh::{RelayUrl, TransportAddr};
 
-    use super::path_label;
+    use super::{path_label, reader_row};
 
     fn ip() -> TransportAddr {
         TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], 4433)))
@@ -138,6 +161,24 @@ mod tests {
     fn joins_several_kinds_in_a_fixed_order_without_repeats() {
         assert_eq!(path_label(&[relay(), ip(), ip()]), "ip+relay");
         assert_eq!(path_label(&[relay(), custom(0x5752_5443)]), "webrtc+relay");
+    }
+
+    #[test]
+    fn reader_row_reports_seconds_since_the_last_poll() {
+        let meta = serde_json::json!({
+            "peers": { "ana": { "reader": { "bell": true, "last_poll": 940 } } }
+        });
+        assert_eq!(
+            reader_row(&meta, "ana", 1000),
+            Some(serde_json::json!({ "bell": true, "last_poll_secs_ago": 60 }))
+        );
+    }
+
+    #[test]
+    fn reader_row_is_absent_without_an_entry() {
+        let meta = serde_json::json!({ "peers": { "ana": { "status": "idle" } } });
+        assert_eq!(reader_row(&meta, "ana", 1000), None);
+        assert_eq!(reader_row(&meta, "bo", 1000), None);
     }
 
     #[test]
