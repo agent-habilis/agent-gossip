@@ -49,6 +49,27 @@ fn wait_for_read_receipt(mesh: &str, nickname: &str, id: &str) -> bool {
     false
 }
 
+/// Foreground-poll `nickname` with `after` until a served batch holds `body`.
+/// The send returns on its own verdict, not on the peer's ingest, so a single
+/// poll can run before the frame arrives.
+fn poll_until_served(mesh: &str, nickname: &str, after: Option<&str>, body: &str) {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    while !cli_poll(mesh, nickname, after).contains(body) {
+        assert!(
+            Instant::now() < deadline,
+            "{nickname} was never served {body}"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+fn reads_of(mesh: &str, nickname: &str, id: &str) -> usize {
+    receipts(mesh, nickname, Some("0"))
+        .iter()
+        .filter(|(seen, state)| seen == id && state == "read")
+        .count()
+}
+
 fn reader_of(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
     let out: serde_json::Value =
         serde_json::from_str(&cli_peers(mesh, asker)).expect("peers prints JSON");
@@ -65,9 +86,8 @@ fn polling_a_directed_msg_sends_the_author_a_read_receipt() {
     let (alice, bob, mesh) = pair("rl-read");
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
 
-    let served = cli_poll(&mesh, &bob.nickname, None);
+    poll_until_served(&mesh, &bob.nickname, None, "ping");
 
-    assert!(served.contains("ping"), "bob never got the msg: {served}");
     assert!(
         wait_for_read_receipt(&mesh, &alice.nickname, &id),
         "alice never got a read receipt for {id}"
@@ -82,14 +102,24 @@ fn a_long_poll_alone_sends_no_read_receipt() {
     let mut bell = park_bell(&mesh, &bob.nickname);
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
     // The directed msg rings the bell. A bell is not a reader.
-    common::wait_bell_output(&mut bell);
+    let rang: Vec<serde_json::Value> =
+        serde_json::from_str(&common::wait_bell_output(&mut bell)).expect("bell prints JSON");
+    let ping_seq = rang
+        .iter()
+        .find(|event| event["id"] == id.as_str())
+        .and_then(|event| event["seq"].as_u64())
+        .expect("the bell served the ping")
+        .to_string();
 
-    std::thread::sleep(Duration::from_secs(3));
+    // Barrier: a msg read past the ping. Its read receipt is sent after any
+    // receipt the bell could have caused.
+    let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
+    poll_until_served(&mesh, &bob.nickname, Some(&ping_seq), "barrier");
+    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &barrier));
 
-    assert!(
-        !receipts(&mesh, &alice.nickname, Some("0"))
-            .iter()
-            .any(|(seen, state)| *seen == id && state == "read"),
+    assert_eq!(
+        reads_of(&mesh, &alice.nickname, &id),
+        0,
         "a bell must not send a read receipt"
     );
 }
@@ -98,17 +128,21 @@ fn a_long_poll_alone_sends_no_read_receipt() {
 fn a_re_read_with_after_sends_no_second_read_receipt() {
     let (alice, bob, mesh) = pair("rl-reread");
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
-    cli_poll(&mesh, &bob.nickname, None);
+    poll_until_served(&mesh, &bob.nickname, None, "ping");
     assert!(wait_for_read_receipt(&mesh, &alice.nickname, &id));
 
     cli_poll(&mesh, &bob.nickname, Some("0"));
-    std::thread::sleep(Duration::from_secs(3));
+    // Barrier: a later msg, read after the re-read. Its read receipt is sent
+    // after any second receipt the re-read could have caused.
+    let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
+    poll_until_served(&mesh, &bob.nickname, None, "barrier");
+    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &barrier));
 
-    let reads = receipts(&mesh, &alice.nickname, Some("0"))
-        .into_iter()
-        .filter(|(seen, state)| *seen == id && state == "read")
-        .count();
-    assert_eq!(reads, 1, "a re-read must not receipt twice");
+    assert_eq!(
+        reads_of(&mesh, &alice.nickname, &id),
+        1,
+        "a re-read must not receipt twice"
+    );
 }
 
 fn wait_for_reader(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {

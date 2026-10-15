@@ -59,11 +59,11 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
     // Whether the first sends find a closed connection depends on timing. Send
     // until one fails: the failure is the case under test, and a send that
     // still goes out over the old connection may rightly echo.
-    for attempt in 0..9 {
-        std::thread::sleep(Duration::from_secs(10));
+    for attempt in 0..45 {
         let body = format!("into the void {attempt}");
         let sent = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, &body);
         if sent.status.success() {
+            std::thread::sleep(Duration::from_secs(2));
             continue;
         }
         let polled = common::cli_poll(&mesh, &alice.nickname, None);

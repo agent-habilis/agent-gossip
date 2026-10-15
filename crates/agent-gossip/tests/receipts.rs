@@ -64,11 +64,16 @@ async fn directed_msg_returns_a_delivered_receipt_whose_ref_is_the_msg_id() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn broadcast_produces_no_receipt() {
-    let (mut alice, bob) = meshed_pair("rc-bcast", "rc-bcast-bob").await;
+    let (mut alice, mut bob) = meshed_pair("rc-bcast", "rc-bcast-bob").await;
 
     alice.broadcast("to everyone").await;
-    // The msg after the broadcast is the control: once its receipt is in,
-    // a receipt for the broadcast would have arrived as well.
+    // The broadcast rides gossip and the control msg goes unicast, so the two
+    // have no order. Wait for bob to take the broadcast first: a receipt for
+    // it would then go out before the control's.
+    assert!(
+        bob.wait_body("to everyone", MSG_TIMEOUT).await,
+        "broadcast lost"
+    );
     let id = alice.msg("rc-bcast-bob", "control").await;
     assert!(wait_receipt(&mut alice, "rc-bcast-bob", id.as_str()).await);
 
