@@ -691,9 +691,12 @@ COMMANDS
 
               reader shows whether an agent reads that peer: {"bell":true,
               "last_poll_secs_ago":30}. bell is true when the peer has a
-              parked poll --long. last_poll_secs_ago is rounded down to 60
-              seconds. The key is absent for a peer that runs an older
-              version.
+              parked poll --long. last_poll_secs_ago is the seconds since
+              the peer last ran a poll without --long, or null before the
+              first one. peers asks each live peer when you run it, and
+              waits at most 0.5 seconds. The key is absent for a peer that
+              runs an older version, or that did not answer in time. Your
+              own row never has the key.
 
               reach is "direct" when a live gossip link to that peer exists,
               else "gossip" (relayed).
