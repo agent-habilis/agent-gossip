@@ -352,6 +352,35 @@ fn peer_return_json_shape() {
     assert_eq!(parsed["display"], "💬️ `<ball-blue>` came back");
 }
 
+#[test]
+fn receipt_json_shape() {
+    let json = serde_json::to_string(&SimpleEvent::Receipt {
+        from: "ball-blue",
+        ref_id: "7a1c",
+        state: "delivered",
+        ts: 1_792_000_000,
+    })
+    .unwrap();
+    assert_eq!(
+        json,
+        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#
+    );
+}
+
+#[test]
+fn receipt_event_is_invisible_and_stamped_so() {
+    let event = crate::output::OutputEvent::Receipt {
+        from: nick("ball-blue"),
+        ref_id: "7a1c".to_owned(),
+        state: "read".to_owned(),
+        ts: 1,
+    };
+    assert!(!crate::output::is_visible(&event));
+    let line = crate::output::event_json(&event).unwrap();
+    assert_eq!(parse(&line)["is_visible"], false);
+    assert_eq!(parse(&line)["state"], "read");
+}
+
 // ── all outputs are valid single-line JSON ─────────────────────
 
 #[test]

@@ -69,6 +69,12 @@ pub enum OutputEvent {
         task_id: TaskId,
         reason: TaskGoneReason,
     },
+    Receipt {
+        from: Nickname,
+        ref_id: String,
+        state: String,
+        ts: u64,
+    },
     StateChanged {
         channel: habilis_network::protocol::Channel,
         event: Box<Message>,

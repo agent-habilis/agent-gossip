@@ -26,7 +26,7 @@ use crate::topic::resolve_topic;
 mod a2a_discover;
 pub(crate) mod agent;
 pub(crate) mod args;
-mod bell;
+pub(crate) mod bell;
 mod discover;
 mod doctor;
 mod ipc;

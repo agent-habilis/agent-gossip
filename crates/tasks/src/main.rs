@@ -18,6 +18,7 @@ mod proptest;
 mod release;
 mod run;
 mod test;
+mod uninstall;
 mod util;
 
 /// Task result; any `Err` is printed and turns into a non-zero exit.
@@ -72,6 +73,8 @@ enum Task {
     },
     /// Install the binary.
     Install,
+    /// Uninstall the binary.
+    Uninstall,
     /// Run tests with coverage.
     Coverage,
     /// Run the CI gate.
@@ -160,6 +163,7 @@ fn main() -> ExitCode {
         Task::Release => release::run(&sh),
         Task::Run { args } => run::run(&sh, &args),
         Task::Install => install::run(&sh),
+        Task::Uninstall => uninstall::run(&sh),
         Task::Coverage => coverage::run(&sh),
         Task::Ci => ci::run(&sh),
         Task::Fmt => fmt::run(&sh),

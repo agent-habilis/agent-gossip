@@ -18,6 +18,9 @@ use super::TaskId;
 use super::rpc::{A2aOp, RpcError};
 use crate::a2a::app::A2aApp;
 
+/// The internal method `peers` uses to ask a peer whether it has a reader.
+pub(crate) const READER_GET: &str = "mesh/reader.get";
+
 /// What a classified gossip request resolves to. Kept separate from
 /// execution so the safe-set decision is a pure, unit-testable function; the
 /// receive path (`gossip::recv`) runs the resulting action.
@@ -34,6 +37,9 @@ pub(crate) enum Served {
         group: habilis_network::protocol::ShardGroup,
         missing: Vec<u32>,
     },
+    /// A `mesh/reader.get` ask: answered from memory and the bell lock, with
+    /// no event and no ring entry.
+    ReaderGet,
     /// Not permitted over gossip (unknown method, or one that would author on
     /// the caller's behalf).
     Reject(RpcError),
@@ -156,6 +162,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
                 )),
             }
         }
+        READER_GET => Served::ReaderGet,
         // Authoring global state on the caller's behalf, or anything else.
         "mesh/state.merge" | "mesh/meta.merge" => Served::Reject(RpcError::not_permitted(method)),
         other => Served::Reject(RpcError::method_not_found(other)),
@@ -234,6 +241,19 @@ mod tests {
             ),
             Served::Ingest(_)
         ));
+    }
+
+    #[test]
+    fn a_reader_ask_is_served_to_any_member_and_has_no_op() {
+        let st = state();
+        for caller in ["alice", "bob"] {
+            assert!(matches!(
+                classify("mesh/reader.get", &json!({}), &Nickname::from(caller), &st),
+                Served::ReaderGet
+            ));
+        }
+        // Not an `A2aOp`, so the localhost HTTP binding cannot reach it.
+        assert!(crate::a2a::rpc::parse_op("mesh/reader.get", &json!({}), None).is_err());
     }
 
     #[test]
@@ -318,7 +338,10 @@ mod tests {
         let reject =
             |wanted: &str| match classify("GetTask", &json!({"id": wanted}), &outsider, &st) {
                 Served::Reject(error) => (error.code, error.message.replace(wanted, "<id>")),
-                Served::Op(_) | Served::Ingest(_) | Served::ShardRepair { .. } => {
+                Served::Op(_)
+                | Served::Ingest(_)
+                | Served::ShardRepair { .. }
+                | Served::ReaderGet => {
                     panic!("expected a rejection")
                 }
             };
