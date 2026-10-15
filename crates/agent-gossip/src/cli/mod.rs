@@ -16,7 +16,8 @@ use serde::Deserialize;
 pub(crate) use self::args::Cli;
 use self::args::{
     A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, PeersOpts, PingOpts,
-    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
+    PollIdentity, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts,
+    TopologyOpts,
 };
 use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
@@ -751,35 +752,30 @@ async fn poll(opts: PollOpts) -> Result<()> {
     // clock does, readiness wait included.
     let poll_started = tokio::time::Instant::now();
     let PollOpts {
-        gossip,
-        nickname,
-        state_file,
+        identity,
         after,
         long,
         settle_secs,
         max_secs,
         legacy_output: _,
     } = opts;
-    // clap enforces exactly one form: `--state-file`, or `--gossip` +
-    // `--nickname`. The state-file form waits for readiness first so a poll
-    // can be armed before the daemon has minted its identity.
-    let (mesh, nickname) = if let Some(path) = state_file {
-        wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
-        let identity = habilis_network::runtime::state_file::read_identity(&path);
-        let missing = |field: &'static str| {
-            anyhow::anyhow!("state file {} carries no {field}", path.display())
-        };
-        let mesh: MeshId = identity.mesh.ok_or_else(|| missing("gossip id"))?.parse()?;
-        let nick: Nickname = identity
-            .nickname
-            .ok_or_else(|| missing("nickname"))?
-            .parse()?;
-        (mesh, nick)
-    } else {
-        (
-            gossip.expect("clap: --gossip required without --state-file"),
-            nickname.expect("clap: --nickname required without --state-file"),
-        )
+    // The state-file form waits for readiness first so a poll can be armed
+    // before the daemon has minted its identity.
+    let (mesh, nickname) = match identity {
+        PollIdentity::StateFile(path) => {
+            wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
+            let carried = habilis_network::runtime::state_file::read_identity(&path);
+            let missing = |field: &'static str| {
+                anyhow::anyhow!("state file {} carries no {field}", path.display())
+            };
+            let mesh: MeshId = carried.mesh.ok_or_else(|| missing("gossip id"))?.parse()?;
+            let nick: Nickname = carried
+                .nickname
+                .ok_or_else(|| missing("nickname"))?
+                .parse()?;
+            (mesh, nick)
+        }
+        PollIdentity::Session { gossip, nickname } => (gossip, nickname),
     };
     let bell_mesh = mesh.to_string();
     let mut bell_lock = None;
