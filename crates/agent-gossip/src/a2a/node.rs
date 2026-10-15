@@ -555,8 +555,9 @@ fn classify(message: &Message) -> AppClass {
 /// Route a content frame — chat, or one of the three task shapes — to its
 /// lifecycle handler. `loggable` is false for a directed frame addressed
 /// elsewhere or a liveness beat. `fresh_for_us` is true for a directed msg or
-/// task leg that reached us for the first time, the only frames that earn a
-/// delivery receipt.
+/// task leg that reached us for the first time, inside our join horizon: the
+/// only frames that earn a delivery receipt. A frame from before the horizon is
+/// never surfaced, so a receipt for it would claim a delivery nobody sees.
 fn route_content(
     message: &Message,
     surfaceable: bool,
@@ -576,7 +577,8 @@ fn route_content(
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::MSG => {
-            let fresh_for_us = to == ctx.author && !is_replayed_chat(&app.surfaced_chat, message);
+            let fresh_for_us =
+                surfaceable && to == ctx.author && !is_replayed_chat(&app.surfaced_chat, message);
             let loggable = surface_chat(message, surfaceable, app, |out, surface| {
                 handle_msg(
                     out,
@@ -736,7 +738,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
     // A beat is liveness plumbing and never logged, so it earns no receipt.
     Routed {
         loggable,
-        fresh_for_us: to == ctx.author && loggable && !replay,
+        fresh_for_us: surfaceable && to == ctx.author && loggable && !replay,
     }
 }
 

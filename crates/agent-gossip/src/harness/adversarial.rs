@@ -302,6 +302,40 @@ impl CraftedMsg {
         }
     }
 
+    /// A directed `a2a_msg` with a valid payload, sealed to the addressee.
+    pub fn sealed_msg(
+        mesh: &MeshId,
+        author: &str,
+        to: &str,
+        text: &str,
+        seal_key: [u8; 32],
+    ) -> Self {
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let to = Nickname::new(to.to_owned()).expect("valid target");
+        let mut frame = Message::new_app(
+            mesh,
+            &author,
+            AppFrameParams {
+                tag: AppTag::from(wire::MSG),
+                to: Some(to),
+                corr: None,
+                body: MessageBody::new(String::new()).expect("empty body is valid"),
+            },
+        );
+        let mut payload = crate::a2a::gossip::compose_msg(mesh, text);
+        payload.message_id =
+            crate::a2a::MessageId::from_uuid_str(frame.id.as_str()).expect("frame id is a uuid");
+        let body = crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        frame.body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
+            .expect("sealing to a published key succeeds");
+        Self { msg: frame }
+    }
+
+    #[must_use]
+    pub fn frame_id(&self) -> String {
+        self.msg.id.as_str().to_owned()
+    }
+
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
     pub fn chain(mut self, seq: u64, prev: Option<String>) -> Self {
         self.msg = self.msg.with_chain(seq, prev);

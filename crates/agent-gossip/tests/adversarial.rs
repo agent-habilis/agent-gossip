@@ -645,6 +645,62 @@ async fn a_bystanders_task_status_is_dropped() {
     attacker.leave().await;
 }
 
+fn has_receipt_for(events: &[OutputEvent], ref_id: &str) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, OutputEvent::Receipt { ref_id: seen, .. } if seen == ref_id))
+}
+
+/// A directed msg from before our join horizon is never surfaced, so a
+/// `delivered` receipt for it would claim a delivery the agent never sees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
+    let (mut victim, mut attacker) = meshed_pair("prejoin-receipt").await;
+    attacker.await_peer_card(&victim.nickname).await;
+    victim.await_peer_card(&attacker.nickname).await;
+    let seal_key = adversarial::peer_seal_key(&attacker.meta_get().await, &victim.nickname)
+        .expect("the victim's seal key is published in the meta doc");
+
+    let old = CraftedMsg::sealed_msg(
+        attacker.session.mesh_id(),
+        &attacker.nickname,
+        &victim.nickname,
+        "from before the join",
+        seal_key,
+    )
+    .timestamp(1_000_000_000)
+    .sign(&adversarial::new_key());
+    let old_id = old.frame_id();
+    attacker
+        .session
+        .inject_raw(old.bytes())
+        .await
+        .expect("inject");
+
+    // Barriers: a broadcast on the gossip path the injection took, then a real
+    // msg. Once the msg's receipt is back, a receipt for the injected frame
+    // was sent a full round trip before it.
+    attacker.broadcast("after the injection").await;
+    assert!(
+        victim.wait_body("after the injection", T).await,
+        "the gossip barrier was lost"
+    );
+    let barrier = attacker.msg(&victim.nickname, "barrier").await;
+    assert!(
+        attacker
+            .wait_for(T, |events| has_receipt_for(events, barrier.as_str()))
+            .await,
+        "the barrier msg earned no receipt"
+    );
+    assert!(
+        !has_receipt_for(attacker.events(), &old_id),
+        "a msg from before the join horizon must earn no delivered receipt"
+    );
+
+    victim.leave().await;
+    attacker.leave().await;
+}
+
 // ── Open-gap tripwires: scenarios we are currently OPEN TO ─────────────
 //
 // Green today (the defensive assert fails → panics → should_panic catches
