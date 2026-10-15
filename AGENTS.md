@@ -357,7 +357,21 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   `JoinParams` resolve to `Resolved`, which `setup_mesh` turns into an
   `EventLoopConfig`.
 - For a CLI request, prefer a typed `enum` over a `String` plus `Option` flags,
-  so that an illegal combination is an error and not a silent default.
+  so that an illegal combination is an error and not a silent default. Each
+  variant holds only the fields it needs (`A2aCallRequest` in `cli/mod.rs`).
+- Parse, do not validate. Build a type only through a checked parse or
+  constructor, so that every value of the type is valid (`Nickname`, `TaskId`
+  from `uuid_id!` in `a2a/model/mod.rs`, `MessageBody::new`).
+- Do not write a `_` arm on an `enum` match. `wildcard_enum_match_arm` in
+  `[workspace.lints.clippy]` already enforces this, and CI runs clippy with
+  `-D warnings`. Do not `#[allow]` it without a `reason`.
+- A state owns its data: put the data of each state inside its `enum` variant,
+  take the state by value, and return the next one. Do not use `unreachable!`
+  on a state mismatch, and do not keep side flags next to the state `enum`
+  (`State` in `bridge/card_rewrite.rs`).
+- When a struct holds values that must agree, keep its fields private and give
+  it one constructor that derives them. A `#[cfg(test)]` constructor is the only
+  other way in (`Bridge::new` in `bridge/connect.rs`).
 
 ## Agent Restrictions
 
