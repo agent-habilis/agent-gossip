@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use habilis_network::protocol::{MessageKind, Nickname};
@@ -68,6 +68,10 @@ impl SurfacedEvents {
             self.events.pop_front();
         }
         seq
+    }
+
+    pub(crate) fn oldest_seq(&self) -> Option<u64> {
+        self.events.front().map(|item| item.seq)
     }
 
     /// The newest assigned seq, or 0 when nothing has been surfaced yet
@@ -281,10 +285,11 @@ pub(crate) struct SurfacedState {
     /// bell's output is discarded by contract, so nothing was "served".
     /// In-memory only — a fresh daemon starts at 0 (nothing served).
     last_served: u64,
-    /// The highest seq a read receipt was already owed for. A seq above it is
-    /// receipted once and then covered, so a re-read with `--after` cannot
-    /// send a second receipt.
-    receipted_through: u64,
+    /// The seqs whose read receipt was already sent, so a re-read with
+    /// `--after` cannot send a second one. A set, not a high-water mark: a
+    /// read that jumps ahead with `--after` leaves the frames it skipped owed.
+    /// Pruned to the ring.
+    receipted: BTreeSet<u64>,
     /// When a foreground poll last ran.
     last_foreground_poll: Option<TokioInstant>,
 }
@@ -340,7 +345,7 @@ impl SurfacedState {
             surfaced_events: SurfacedEvents::new(crate::a2a::tuning::SURFACED_EVENTS_CAP),
             poll_waiters: Vec::new(),
             last_served: 0,
-            receipted_through: 0,
+            receipted: BTreeSet::new(),
             last_foreground_poll: None,
         }
     }
@@ -419,15 +424,17 @@ impl SurfacedState {
         me: &Nickname,
     ) -> Vec<ReadTarget> {
         let batch = self.poll_since(Some(after.unwrap_or(self.last_served)));
-        let floor = self.receipted_through;
-        let targets = batch
-            .events
-            .iter()
-            .filter(|item| item.seq > floor)
-            .filter_map(|item| read_target(&item.event, me))
-            .collect();
-        if let Some(newest) = batch.events.last().map(|item| item.seq) {
-            self.receipted_through = floor.max(newest);
+        let mut targets = Vec::new();
+        for item in &batch.events {
+            if !self.receipted.contains(&item.seq)
+                && let Some(target) = read_target(&item.event, me)
+            {
+                self.receipted.insert(item.seq);
+                targets.push(target);
+            }
+        }
+        if let Some(oldest) = self.surfaced_events.oldest_seq() {
+            self.receipted = self.receipted.split_off(&oldest);
         }
         targets
     }
@@ -661,6 +668,25 @@ mod tests {
         assert_eq!(first, vec![expected]);
         let again = state.take_read_targets(Some(0), &nick("me"));
         assert!(again.is_empty(), "a re-read must not receipt twice");
+    }
+
+    #[test]
+    fn a_jump_with_after_leaves_the_skipped_frames_owed_a_receipt() {
+        let mut state = SurfacedState::new();
+        state.push(directed_msg_event("alice", "me", false));
+        state.push(directed_msg_event("bob", "me", false));
+
+        let jumped = state.take_read_targets(Some(1), &nick("me"));
+        assert_eq!(jumped.len(), 1, "only the frame after the cursor is read");
+        let skipped = state.take_read_targets(Some(0), &nick("me"));
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|(to, _)| to.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alice"],
+            "the frame the jump skipped is read now"
+        );
     }
 
     #[test]
