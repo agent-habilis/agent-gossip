@@ -37,11 +37,11 @@ pub(crate) async fn connect(
     anonymous: bool,
 ) -> Result<()> {
     let ticket = A2aTicket::decode(ticket)?;
-    let auth = match (&password, ticket.password) {
+    match (&password, ticket.password) {
         (None, true) => bail!("this ticket is password-protected — pass --password"),
         (Some(_), false) => bail!("this ticket has no password — drop --password"),
-        _ => TicketAuth::derive(&ticket.secret, password.as_ref(), A2A_TICKET_LABEL),
-    };
+        _ => {}
+    }
     let endpoint = build_peer_endpoint(&ticket.lookups).await?;
     add_peer_addr(&address_book(&endpoint), ticket.addr.clone());
     let bind_addr = format!("127.0.0.1:{}", local_port.unwrap_or(0));
@@ -59,12 +59,15 @@ pub(crate) async fn connect(
         Some(token) => println!("token: {token}"),
         None => println!("token: none (--allow-anonymous)"),
     }
-    let bridge = Bridge {
-        shared: SharedConnection::new(endpoint.clone(), ticket.addr.clone()),
-        auth: Arc::new(auth),
-        local_base: Arc::new(local_base),
-        gate: Arc::new(gate),
-    };
+    let bridge = Bridge::new(
+        &ticket,
+        password.as_ref(),
+        SharedConnection::new(endpoint.clone(), ticket.addr.clone()),
+        LocalSide {
+            base: local_base,
+            gate,
+        },
+    );
     let result = accept_loop(&bridge, &listener).await;
     endpoint.close().await;
     result
@@ -74,10 +77,39 @@ pub(crate) async fn connect(
 /// `a2a connect` invocation.
 #[derive(Clone)]
 pub(super) struct Bridge {
-    pub(super) shared: SharedConnection,
-    pub(super) auth: Arc<TicketAuth>,
-    pub(super) local_base: Arc<String>,
-    pub(super) gate: Arc<LocalGate>,
+    shared: SharedConnection,
+    auth: Arc<TicketAuth>,
+    local_base: Arc<String>,
+    gate: Arc<LocalGate>,
+}
+
+/// What the bridge serves on its local side: the base URL clients reach it at,
+/// and the gate that screens them.
+pub(super) struct LocalSide {
+    pub(super) base: String,
+    pub(super) gate: LocalGate,
+}
+
+impl Bridge {
+    /// The only way to build a `Bridge`: the auth is derived here from the
+    /// ticket the bridge connects with, so it cannot belong to another ticket.
+    pub(super) fn new(
+        ticket: &A2aTicket,
+        password: Option<&Password>,
+        shared: SharedConnection,
+        local: LocalSide,
+    ) -> Self {
+        Self {
+            shared,
+            auth: Arc::new(TicketAuth::derive(
+                &ticket.secret,
+                password,
+                A2A_TICKET_LABEL,
+            )),
+            local_base: Arc::new(local.base),
+            gate: Arc::new(local.gate),
+        }
+    }
 }
 
 async fn accept_loop(bridge: &Bridge, listener: &TcpListener) -> Result<()> {

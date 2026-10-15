@@ -9,15 +9,15 @@ use std::sync::atomic::AtomicBool;
 use habilis_network::iroh::endpoint::ConnectionError;
 use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
 use habilis_network::protocol::LookupOpts;
-use habilis_network::protocol::{Password, TicketAuth};
+use habilis_network::protocol::Password;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use super::connect::{Bridge, SharedConnection, forward_one};
+use super::A2A_ALPN;
+use super::connect::{Bridge, LocalSide, SharedConnection, forward_one};
 use super::expose::{bind, serve_connection};
 use super::gate::{LocalGate, TOKEN_HEADER};
 use super::ticket::A2aTicket;
-use super::{A2A_ALPN, A2A_TICKET_LABEL};
 
 /// A local HTTP origin that answers every connection with the same
 /// `Content-Length`-framed response. Returns its `host:port`.
@@ -79,13 +79,16 @@ async fn spawn_exposer(
 const LOCAL_BASE: &str = "http://127.0.0.1:7777";
 const LOCAL_AUTHORITY: &str = "127.0.0.1:7777";
 
-fn bridge_for(shared: &SharedConnection, auth: &TicketAuth, gate: LocalGate) -> Bridge {
-    Bridge {
-        shared: shared.clone(),
-        auth: Arc::new(auth.clone()),
-        local_base: Arc::new(LOCAL_BASE.to_owned()),
-        gate: Arc::new(gate),
-    }
+fn bridge_for(shared: &SharedConnection, ticket: &A2aTicket, gate: LocalGate) -> Bridge {
+    Bridge::new(
+        ticket,
+        None,
+        shared.clone(),
+        LocalSide {
+            base: LOCAL_BASE.to_owned(),
+            gate,
+        },
+    )
 }
 
 /// Drive one HTTP request through `forward_one` (a local listener stands in for
@@ -111,7 +114,7 @@ async fn drive_gated(bridge: &Bridge, request: &[u8]) -> Vec<u8> {
 /// bridging itself rather than the gate.
 async fn drive(
     shared: &SharedConnection,
-    auth: &TicketAuth,
+    ticket: &A2aTicket,
     method_and_path: &str,
     extra: &str,
 ) -> Vec<u8> {
@@ -120,7 +123,7 @@ async fn drive(
     let request = format!(
         "{method_and_path} HTTP/1.1\r\nHost: {LOCAL_AUTHORITY}\r\n{TOKEN_HEADER}: {token}\r\n{extra}\r\n"
     );
-    drive_gated(&bridge_for(shared, auth, gate), request.as_bytes()).await
+    drive_gated(&bridge_for(shared, ticket, gate), request.as_bytes()).await
 }
 
 async fn consumer(ticket: &A2aTicket) -> (habilis_network::iroh::Endpoint, SharedConnection) {
@@ -137,9 +140,8 @@ async fn bridge_rewrites_the_agent_card_url_to_the_local_base() {
     let origin = spawn_origin(card_response("http://origin.internal:9999/a2a")).await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
-    let response = drive(&shared, &auth, "GET /.well-known/agent-card.json", "").await;
+    let response = drive(&shared, &ticket, "GET /.well-known/agent-card.json", "").await;
 
     let text = String::from_utf8_lossy(&response);
     assert!(
@@ -159,9 +161,8 @@ async fn bridge_forwards_a_non_card_exchange_byte_for_byte() {
     let origin = spawn_origin(response.clone()).await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
-    let got = drive(&shared, &auth, "POST /message", "Content-Length: 0\r\n").await;
+    let got = drive(&shared, &ticket, "POST /message", "Content-Length: 0\r\n").await;
     assert_eq!(got, response, "non-card response forwarded verbatim");
 
     consumer_endpoint.close().await;
@@ -184,11 +185,10 @@ async fn an_anonymous_local_client_never_reaches_the_origin() {
     .await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
     let (gate, _token) = LocalGate::new(LOCAL_AUTHORITY.to_owned(), false);
     let got = drive_gated(
-        &bridge_for(&shared, &auth, gate),
+        &bridge_for(&shared, &ticket, gate),
         b"POST /message HTTP/1.1\r\nHost: 127.0.0.1:7777\r\nContent-Length: 0\r\n\r\n",
     )
     .await;
@@ -219,14 +219,13 @@ async fn a_cross_origin_request_is_refused_even_anonymously() {
     .await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
 
     let (gate, token) = LocalGate::new(LOCAL_AUTHORITY.to_owned(), true);
     assert!(token.is_none(), "--allow-anonymous mints no token");
     let request = format!(
         "POST /message HTTP/1.1\r\nHost: {LOCAL_AUTHORITY}\r\nOrigin: https://evil.example\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n"
     );
-    let got = drive_gated(&bridge_for(&shared, &auth, gate), request.as_bytes()).await;
+    let got = drive_gated(&bridge_for(&shared, &ticket, gate), request.as_bytes()).await;
 
     let text = String::from_utf8_lossy(&got);
     assert!(
@@ -280,8 +279,7 @@ async fn a_second_consumer_is_refused_while_the_bridge_is_paired() {
     // Consumer A drives a request — that guarantees the exposer accepted and
     // claimed the 1:1 slot. Keeping A's endpoint + connection alive holds it.
     let (endpoint_a, shared_a) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None, A2A_TICKET_LABEL);
-    let _ = drive(&shared_a, &auth, "GET /", "").await;
+    let _ = drive(&shared_a, &ticket, "GET /", "").await;
     let conn_a = shared_a.get().await.expect("A's connection stays live");
     assert!(conn_a.close_reason().is_none(), "A holds the pairing");
 
