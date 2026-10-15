@@ -372,6 +372,10 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 - When a struct holds values that must agree, keep its fields private and give
   it one constructor that derives them. A `#[cfg(test)]` constructor is the only
   other way in (`Bridge::new` in `bridge/connect.rs`).
+- When a step must pass before a later read or action, make the step return a
+  value that only it can build: a private field, in its own module. Make the
+  later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
+  `wait_for_ready` returns).
 
 ## Agent Restrictions
 
