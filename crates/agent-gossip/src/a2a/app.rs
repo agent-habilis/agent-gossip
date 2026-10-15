@@ -8,7 +8,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use habilis_network::protocol::{Message, Nickname};
+use habilis_network::protocol::{Message, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -158,7 +158,7 @@ pub(crate) struct A2aApp {
     /// Our own content legs whose send has no outcome yet. Each enters the message log only if
     /// it was sent: anti-entropy re-sends what the log holds, so a leg whose send failed would
     /// otherwise reach the peer after the user was told it failed.
-    pub(crate) unsent_legs: Vec<(Message, tokio::sync::oneshot::Receiver<bool>)>,
+    pub(crate) unsent_legs: Vec<UnsentLeg>,
     /// The id and the addressee of each directed frame and task message we sent.
     /// Frame ids ride in cleartext headers, so any member can name one: a
     /// receipt counts only from the peer the frame went to.
@@ -171,6 +171,14 @@ pub(crate) struct A2aApp {
     /// which doubles at each failure.
     pub(crate) card_retry_in: u32,
     pub(crate) card_retry_wait: u32,
+}
+
+/// Own frames that enter the message log once `sent` resolves to true.
+pub(crate) struct UnsentLeg {
+    pub(crate) frames: Vec<Message>,
+    /// A big shard group's wire frames, for the `shard/repair` cache.
+    pub(crate) cache: Option<(ShardGroup, Vec<bytes::Bytes>)>,
+    pub(crate) sent: tokio::sync::oneshot::Receiver<bool>,
 }
 
 /// An own task leg to ingest into the task record once the peer got it.
