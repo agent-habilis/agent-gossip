@@ -58,10 +58,6 @@ impl NodeApp for A2aApp {
         routed.loggable
     }
 
-    fn surface_logical(&mut self, logical: &Message, surfaceable: bool, ctx: &HandlerCtx<'_>) {
-        surface_logical(logical, surfaceable, self, ctx);
-    }
-
     fn on_meta_applied(
         &mut self,
         author: &Nickname,
@@ -675,7 +671,7 @@ fn surface_receipt(message: &Message, app: &A2aApp) {
 }
 
 /// The value cluster [`handle_task_leg`] needs beyond its `app`/`ctx` handles
-/// — shared by both call sites ([`route_content`] and [`surface_logical`]).
+/// — the input of [`route_content`]'s task-leg arm.
 #[derive(Clone, Copy)]
 struct TaskLegParams<'a> {
     message: &'a Message,
@@ -880,63 +876,6 @@ fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
     // plumbing — surfaced as a `task_progress` widget event but never retained.
     !crate::a2a::gossip::status_payload(message)
         .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload))
-}
-
-/// Surface a reassembled multipart body (a `Msg` or a `Task` content leg)
-/// through the same lifecycle path an unsplit message of that kind takes. The
-/// raw shards were already retained; this only surfaces the logical view, so it
-/// does **not** re-retain or re-index.
-fn surface_logical(logical: &Message, surfaceable: bool, app: &mut A2aApp, ctx: &HandlerCtx<'_>) {
-    match &logical.kind {
-        // Both chat tags shard (a long msg as readily as a long broadcast); task
-        // legs never do — `message/send` rides RPC, status/artifact are small.
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => {
-            surface_chat(logical, surfaceable, app, |out, surface| {
-                handle_broadcast(out, logical, surface)
-            });
-        }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::MSG => {
-            surface_chat(logical, surfaceable, app, |out, surface| {
-                handle_msg(
-                    out,
-                    MsgParams {
-                        message: logical,
-                        to,
-                        surfaceable: surface,
-                        self_author: ctx.author,
-                    },
-                )
-            });
-        }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => {
-            handle_task_leg(
-                TaskLegParams {
-                    message: logical,
-                    to,
-                    surfaceable,
-                },
-                app,
-                ctx,
-            );
-        }
-        // Only content frames are ever split (the sender refuses to split
-        // anything else), so other kinds never reach here.
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => {}
-    }
 }
 
 /// Route an A2A RPC frame: a request addressed to us is served (and a response
