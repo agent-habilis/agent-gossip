@@ -1846,6 +1846,9 @@ pub(crate) async fn handle_session_request(
             // Same policy as the CLI/IPC `Poll` arm: respond now if events are
             // buffered, else (with `long`) park a typed waiter the loop
             // fulfills/expires. A parked waiter broadcasts nothing → `false`.
+            if !long {
+                crate::a2a::receipt::send_read_receipts(app, state, ctx, after).await;
+            }
             app.surfaced
                 .poll_or_register(crate::a2a::surfaced::PollOrRegisterParams {
                     after,

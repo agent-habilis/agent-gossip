@@ -37,6 +37,24 @@ pub(crate) async fn send_receipt(
     outcome
 }
 
+/// Send a `read` receipt for each directed frame that a foreground read with
+/// this cursor is about to serve. The bell is not a reader, so a long poll
+/// sends none.
+pub(crate) async fn send_read_receipts(
+    app: &mut crate::a2a::app::A2aApp,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+    after: Option<u64>,
+) {
+    for (to, ref_id) in app.surfaced.take_read_targets(after, ctx.author) {
+        let receipt = Receipt {
+            ref_id,
+            state: ReceiptState::Read,
+        };
+        let _ = send_receipt(state, ctx, &to, &receipt).await;
+    }
+}
+
 async fn send_sealed(
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,

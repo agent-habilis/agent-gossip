@@ -150,3 +150,35 @@ async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
     alice.leave().await;
     bob.leave().await;
 }
+
+/// An agent that reads through the in-process API (MCP `fetch_messages`) is a
+/// reader too: the fetch that serves a directed msg sends its `read` receipt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_in_process_fetch_sends_the_read_receipt() {
+    let (mut alice, mut bob) = meshed_pair("rc-fetch", "rc-fetch-bob").await;
+    bob.await_peer_card(&alice.nickname).await;
+
+    let id = alice.msg("rc-fetch-bob", "read me in process").await;
+    assert!(
+        bob.wait_body("read me in process", MSG_TIMEOUT).await,
+        "bob never got the msg"
+    );
+    let batch = bob.session.fetch(None, false).await.expect("fetch");
+    assert!(!batch.events.is_empty(), "the fetch served nothing to read");
+
+    let read = alice
+        .wait_for(MSG_TIMEOUT, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Receipt { ref_id, state, .. }
+                        if ref_id == id.as_str() && state == "read"
+                )
+            })
+        })
+        .await;
+    assert!(read, "an in-process fetch sent no read receipt");
+
+    alice.leave().await;
+    bob.leave().await;
+}
