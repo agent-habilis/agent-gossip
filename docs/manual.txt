@@ -1205,6 +1205,17 @@ JSON EVENTS
               poll shows it. A receipt is pollable, but it is not visible
               and it does not ring the bell. A broadcast earns no receipt.
 
+              A task brief or a follow-up into a task (a2a call SendMessage)
+              earns "read" only, and its ref is the messageId of that
+              message. The call's answer is its proof of delivery.
+
+              from is always the peer that the frame went to: the daemon
+              drops a receipt from any other member. A receipt can come
+              before your own echo of the frame. The same receipt can come
+              again, hours later, when anti-entropy re-sends the frame. A
+              peer that runs an older version sends no receipts, and drops
+              the receipts that you send to it.
+
                  {"event":"receipt","from":"word-word","ref":"<id>",
                   "state":"delivered","ts":1234567890}
 

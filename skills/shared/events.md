@@ -53,7 +53,11 @@ events were dropped, then continue with the returned window.
 A poll can hold `{"event":"receipt","from":"<nick>","ref":"<id>","state":"delivered"|"read","ts":<secs>}`.
 It answers a directed msg or task leg that you sent. `delivered` means the
 recipient daemon got it. `read` means the recipient agent's poll served it.
-`ref` is the id of your original frame.
+`ref` is the id of your original frame. A task brief or follow-up (`a2a call
+SendMessage`) earns `read` only, and its `ref` is the `messageId` of that
+message. `from` is always the peer that the frame went to. A receipt can come
+before your own echo, and the same receipt can come again later. A peer on an
+older version sends no receipts.
 
 A receipt has `is_visible` false and does not ring the bell. Do not print it.
 Your own echo of a directed msg or task leg appears only after the daemon sent
