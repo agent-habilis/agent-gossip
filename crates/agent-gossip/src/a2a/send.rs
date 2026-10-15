@@ -706,7 +706,7 @@ async fn broadcast_directed_frame(
     let logical =
         Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
     let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
-    print_echo(out, &echo, echo_as);
+    let pending = echo_when_sent(out, echo.clone(), echo_as, pending);
     let pending = ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending);
     Ok((logical.id.clone(), logical, pending))
 }
@@ -1294,35 +1294,31 @@ async fn send_directed_leg(
         // Meshed: retain locally, then hit the wire (a transient send error
         // still leaves a content leg in our log for anti-entropy). Directed
         // legs go unicast, broadcasts gossip (see `transport::deliver`).
-        retain_leg(
-            state,
-            out,
-            RetainLegParams {
-                msg,
-                echo,
-                content,
-                echo_as,
-            },
-        );
+        retain_leg(state, msg, content);
         return match habilis_network::ops::deliver(msg, bytes, state, sender).await? {
-            Delivered::Done => Ok(None),
-            Delivered::Pending(pending) => Ok(Some(pending)),
+            Delivered::Done => {
+                if let Some(echo) = echo {
+                    print_echo(out, echo, echo_as);
+                }
+                Ok(None)
+            }
+            Delivered::Pending(pending) => {
+                let pending = match echo {
+                    Some(echo) => echo_when_sent(out, echo.clone(), echo_as, vec![pending]),
+                    None => vec![pending],
+                };
+                Ok(pending.into_iter().next())
+            }
         };
     } else if state
         .pending_outbound_mut()
         .push((msg.clone(), bytes.clone()))
     {
         // Buffered until the meshed edge flushes it through the send decision.
-        retain_leg(
-            state,
-            out,
-            RetainLegParams {
-                msg,
-                echo,
-                content,
-                echo_as,
-            },
-        );
+        retain_leg(state, msg, content);
+        if let Some(echo) = echo {
+            print_echo(out, echo, echo_as);
+        }
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
@@ -1332,33 +1328,38 @@ async fn send_directed_leg(
     Ok(None)
 }
 
-/// A task leg's frame plus its echo twin and cap-tracking flag — the fields
-/// [`retain_leg`] needs beyond its state/out handles.
-#[derive(Clone, Copy)]
-struct RetainLegParams<'a> {
-    msg: &'a Message,
-    echo: Option<&'a Message>,
-    content: bool,
-    echo_as: EchoAs,
-}
-
-/// Retain a task leg locally, echoing the operator line from the plaintext
-/// twin when given (`None` for the raw shards of a split leg — the wire
-/// frame's directed body is sealed, so it cannot be surfaced). Content legs
-/// retain; the beat doesn't.
-fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLegParams<'_>) {
-    let RetainLegParams {
-        msg,
-        echo,
-        content,
-        echo_as,
-    } = params;
-    if let Some(echo) = echo {
-        print_echo(out, echo, echo_as);
-    }
+/// Retain a task leg locally. Content legs retain; the beat doesn't. The echo
+/// is the caller's, and it waits for the delivery verdict.
+fn retain_leg(state: &mut EventLoopState, msg: &Message, content: bool) {
     if content {
         retain_outbound(state, msg);
     }
+}
+
+/// Print `echo` once the sends in `pending` all succeed, and give the verdict on
+/// to the caller. A failed send prints nothing: the sender must not read a
+/// message that never arrived as sent. With nothing pending the verdict is known
+/// now, and the echo prints at once.
+fn echo_when_sent(
+    out: &output::Output,
+    echo: Message,
+    echo_as: EchoAs,
+    pending: Vec<PendingSend>,
+) -> Vec<PendingSend> {
+    if pending.is_empty() {
+        print_echo(out, &echo, echo_as);
+        return pending;
+    }
+    let out = out.clone();
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let verdict = settle(pending).await;
+        if verdict.is_ok() {
+            print_echo(&out, &echo, echo_as);
+        }
+        let _ = verdict_tx.send(verdict);
+    });
+    vec![verdict_rx]
 }
 
 /// Advance our own coarse task state machine for a leg we just sent. `msg`
@@ -2075,5 +2076,68 @@ mod call_blob_group_tests {
         let (_, fresh_group) = call_blob_group(None, &HashMap::new());
 
         assert!(fresh_group);
+    }
+}
+
+#[cfg(test)]
+mod echo_when_sent_tests {
+    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use tokio::sync::oneshot;
+
+    use super::{EchoAs, PendingSend, echo_when_sent};
+    use crate::events::OutputEvent;
+    use crate::output::capture_events;
+
+    fn echo() -> Message {
+        Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::app_to(crate::a2a::wire::MSG, Nickname::from("bob"), None),
+            MessageBody::new("hi").expect("valid body"),
+        )
+    }
+
+    fn echoes(events: &mut tokio::sync::mpsc::UnboundedReceiver<OutputEvent>) -> usize {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .filter(|event| matches!(event, OutputEvent::Message { is_self: true, .. }))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_delivered_send_prints_the_echo() {
+        let (out, mut events) = capture_events();
+        let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
+
+        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        verdict_tx.send(Ok(())).expect("receiver is held");
+        pending
+            .into_iter()
+            .next()
+            .expect("verdict handle")
+            .await
+            .expect("verdict")
+            .expect("ok");
+
+        assert_eq!(echoes(&mut events), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_prints_no_echo_and_passes_the_error_on() {
+        let (out, mut events) = capture_events();
+        let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
+
+        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        verdict_tx
+            .send(Err(anyhow::anyhow!("unicast dial failed")))
+            .expect("receiver is held");
+        let verdict = pending
+            .into_iter()
+            .next()
+            .expect("verdict handle")
+            .await
+            .expect("verdict");
+
+        assert!(verdict.is_err(), "the caller still sees the failure");
+        assert_eq!(echoes(&mut events), 0);
     }
 }
