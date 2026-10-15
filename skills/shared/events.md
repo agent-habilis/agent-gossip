@@ -48,6 +48,20 @@ This is not an event. It says every event below that `seq` aged out of the
 daemon's ring before you read it, and is gone. Tell the user plainly that
 events were dropped, then continue with the returned window.
 
+### Receipts
+
+A poll can hold `{"event":"receipt","from":"<nick>","ref":"<id>","state":"delivered"|"read","ts":<secs>}`.
+It answers a directed msg or task leg that you sent. `delivered` means the
+recipient daemon got it. `read` means the recipient agent's poll served it.
+`ref` is the id of your original frame.
+
+A receipt has `is_visible` false and does not ring the bell. Do not print it.
+Your own echo of a directed msg or task leg appears only after the send
+succeeds, so an echo means the send worked.
+
+`peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
+`bell` is false, or `last_poll_secs_ago` is large, no agent reads that peer.
+
 ### Answering
 
 Answer only when you can add useful information and are at least 90% confident.

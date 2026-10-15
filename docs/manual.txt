@@ -689,6 +689,12 @@ COMMANDS
               whenever one is quiet. Count the entries with quiet false to
               get the live peers without self.
 
+              reader shows whether an agent reads that peer: {"bell":true,
+              "last_poll_secs_ago":30}. bell is true when the peer has a
+              parked poll --long. last_poll_secs_ago is rounded down to 60
+              seconds. The key is absent for a peer that runs an older
+              version.
+
               reach is "direct" when a live gossip link to that peer exists,
               else "gossip" (relayed).
 
@@ -1186,6 +1192,21 @@ JSON EVENTS
                  {"event":"ping_report",
                   "peers":[{"nickname":"word-word","rtt_ms":42}],
                   "responded":1,"known":2}
+
+       receipt
+              The recipient daemon confirms a directed msg or task leg you
+              sent. state "delivered" means the recipient daemon got the
+              frame. state "read" means the recipient agent's poll served
+              it. ref is the id of the original frame, as your own echo or
+              poll shows it. A receipt is pollable, but it is not visible
+              and it does not ring the bell. A broadcast earns no receipt.
+
+                 {"event":"receipt","from":"word-word","ref":"<id>",
+                  "state":"delivered","ts":1234567890}
+
+              The echo of your own directed msg or task leg appears only
+              after the send succeeds. A send that fails prints an error and
+              no echo.
 
        task
               One per task leg for a task this member is a party to (and the
