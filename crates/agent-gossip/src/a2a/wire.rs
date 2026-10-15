@@ -8,3 +8,4 @@ pub(crate) const STATUS: &str = "a2a_status";
 pub(crate) const ARTIFACT: &str = "a2a_artifact";
 pub(crate) const REQ: &str = "a2a_req";
 pub(crate) const RESP: &str = "a2a_resp";
+pub(crate) const RECEIPT: &str = "a2a_receipt";
