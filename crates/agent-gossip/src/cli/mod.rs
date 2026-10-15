@@ -130,7 +130,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
             habilis_network::runtime::tuning::init(habilis_network::runtime::tuning::Tuning {
-                ping_window_secs,
+                ping_window: std::time::Duration::from_secs(ping_window_secs),
                 directory_private,
                 ..habilis_network::runtime::tuning::Tuning::DEFAULTS
             });
@@ -733,7 +733,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
     // `--nickname`. The state-file form waits for readiness first so a poll
     // can be armed before the daemon has minted its identity.
     let (mesh, nickname) = if let Some(path) = state_file {
-        wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
+        wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX.as_secs()).await?;
         let identity = habilis_network::runtime::state_file::read_identity(&path);
         let missing = |field: &'static str| {
             anyhow::anyhow!("state file {} carries no {field}", path.display())
@@ -804,9 +804,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // degrading long reads to immediate empties (waiter registry full)
         // can't spin this loop hot — the unchanged cursor re-reads anything
         // that lands during the sleep.
-        let min_cycle = std::time::Duration::from_millis(
-            habilis_network::runtime::tuning::POLL_LONG_MIN_CYCLE_MS,
-        );
+        let min_cycle = habilis_network::runtime::tuning::POLL_LONG_MIN_CYCLE;
         if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
             tokio::time::sleep(remaining).await;
         }
@@ -850,7 +848,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
 /// suffixed duration, or `none`/`0` for no expiry. Absent ⇒ the 24h default.
 fn parse_ttl(raw: Option<&str>) -> Result<u64> {
     let Some(raw) = raw.map(str::trim) else {
-        return Ok(habilis_network::util::consts::INVITE_DEFAULT_TTL_SECS);
+        return Ok(habilis_network::util::consts::INVITE_DEFAULT_TTL.as_secs());
     };
     if raw.eq_ignore_ascii_case("none") {
         return Ok(0);
@@ -1005,9 +1003,7 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
     let now = tokio::time::Instant::now();
     let deadline = now
         .checked_add(std::time::Duration::from_secs(timeout_secs))
-        .unwrap_or_else(|| {
-            now + std::time::Duration::from_secs(habilis_network::runtime::tuning::READY_MAX_SECS)
-        });
+        .unwrap_or_else(|| now + habilis_network::runtime::tuning::READY_MAX);
     loop {
         // Read off the runtime's blocking pool: a `--state-file` on a hung
         // mount must not block a worker thread. A read error (malformed/torn/
@@ -1035,10 +1031,7 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
                 state_file.display()
             );
         }
-        tokio::time::sleep(std::time::Duration::from_millis(
-            habilis_network::runtime::tuning::READY_POLL_INTERVAL_MS,
-        ))
-        .await;
+        tokio::time::sleep(habilis_network::runtime::tuning::READY_POLL_INTERVAL).await;
     }
 }
 
@@ -1077,19 +1070,19 @@ fn drift_warning() -> Option<String> {
 }
 
 /// True when a `ready: true` state-file write is recent enough to trust —
-/// `last_updated` within `READY_FRESH_SECS` of now in *either* direction. A
+/// `last_updated` within `READY_FRESH` of now in *either* direction. A
 /// live daemon refreshes `last_updated` every `STATE_REFRESH_SECS`, so a value
 /// older than the window means the writer is gone (e.g. a leftover file from a
 /// daemon killed by SIGKILL). A value far in the *future* is equally
 /// untrustworthy — a stale file whose age only looks recent because the wall
 /// clock stepped backward (NTP correction, VM restore) — so it is rejected
-/// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
+/// too. `UnixSecs::now` is non-negative, so the `i64` math below cannot
 /// underflow into the past.
 pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
-    let now = habilis_network::util::clock::unix_secs();
+    let now = habilis_network::protocol::UnixSecs::now().as_secs();
     let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
     let skew = now - last_updated; // >0: file is in the past; <0: in the future
     let window =
-        i64::try_from(habilis_network::runtime::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
+        i64::try_from(habilis_network::runtime::tuning::READY_FRESH.as_secs()).unwrap_or(i64::MAX);
     skew.abs() <= window
 }

@@ -661,7 +661,9 @@ async fn gap_future_timestamp_is_accepted() {
     let key = adversarial::new_key();
     let evil = CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future")
         .wrap_a2a()
-        .timestamp(4_102_444_800) // 2100-01-01
+        .timestamp(habilis_network::protocol::UnixSecs::from_secs(
+            4_102_444_800,
+        )) // 2100-01-01
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");

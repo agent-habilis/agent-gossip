@@ -9,8 +9,8 @@ use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::{Delivered, MeshSender, PendingSend};
 use habilis_network::protocol::Identity;
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind,
-    Nickname, Shard, ShardGroup,
+    AppFrameParams, AppTag, Channel, ContentHash, CorrId, MeshId, Message, MessageBody, MessageId,
+    MessageKind, Nickname, Shard, ShardGroup,
 };
 use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
@@ -28,10 +28,10 @@ use crate::output;
 /// (`print_message_ex` for `Msg`, `print_task` for `Task`).
 fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
     if let Some(evicted) = state.message_log_mut().push(msg.clone()) {
-        let evicted_hash = evicted.content_hash_hex();
+        let evicted_hash = evicted.content_hash();
         state.forget_hash(&evicted_hash);
-        if let Some(seq) = evicted.seq {
-            state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
+        if let (Some(seq), Some(author)) = (evicted.seq, evicted.author_key()) {
+            state.forget_msg_seq(&author, seq, &evicted_hash);
         }
     }
     habilis_network::util::logging::log_out(msg);
@@ -48,8 +48,8 @@ fn commit_outbound_part(
     out: &output::Output,
     echo: bool,
 ) {
-    let hash = msg.content_hash_hex();
-    state.advance_chain(hash.clone());
+    let hash = msg.content_hash();
+    state.advance_chain(hash);
     state.note_dag(hash, &msg.parents, msg.timestamp);
     if echo {
         out.print_message_ex(msg, true);
@@ -122,8 +122,8 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
 /// [`build_msg`] stays within the argument budget.
 struct ChainStamp {
     seq: u64,
-    prev: Option<String>,
-    parents: Vec<String>,
+    prev: Option<ContentHash>,
+    parents: Vec<ContentHash>,
 }
 
 /// The identity + payload of one outbound chat frame — the fields `build_msg`
@@ -366,10 +366,7 @@ pub(crate) async fn send_broadcast(
     // Read the chain position once: every frame this call emits — the single
     // frame, the probe, and each shard — stamps the *same* position, and only
     // `note_own` advances it afterwards.
-    let (chain_seq, chain_prev) = {
-        let (seq, prev) = state.chain_head();
-        (seq, prev.map(str::to_owned))
-    };
+    let (chain_seq, chain_prev) = state.chain_head();
     // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
         ChatFrameParams {
@@ -380,7 +377,7 @@ pub(crate) async fn send_broadcast(
         },
         ChainStamp {
             seq: chain_seq,
-            prev: chain_prev.clone(),
+            prev: chain_prev,
             parents: state.dag_parents(),
         },
         None,
@@ -433,9 +430,9 @@ pub(crate) async fn send_broadcast(
     // every shard after the first carries a 64-char `prev` and one parent hash.
     // Worst-case both: a full-length `prev` and as many parent hashes as the first
     // shard could hold (its current tips, never fewer than the one-hash link later
-    // shards carry). A 64-char zero string stands in for any content hash.
-    let hash_stub = "0".repeat(64);
-    let probe_parents = vec![hash_stub.clone(); state.dag_parents().len().max(1)];
+    // shards carry). The all-zero hash stands in for any content hash.
+    let hash_stub = ContentHash::from_bytes([0; 32]);
+    let probe_parents = vec![hash_stub; state.dag_parents().len().max(1)];
     let probe = build_msg(
         ChatFrameParams {
             mesh,
@@ -502,7 +499,7 @@ pub(crate) async fn send_broadcast(
             },
             ChainStamp {
                 seq: chain_seq,
-                prev: chain_prev.clone(),
+                prev: chain_prev,
                 parents: state.dag_parents(),
             },
             Some(shard),

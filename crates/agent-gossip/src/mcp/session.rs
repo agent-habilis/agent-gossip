@@ -525,7 +525,10 @@ mod tests {
             crate::a2a::gossip::chat_text(&echo).as_deref(),
             Some("self-echo")
         );
-        assert!(echo.timestamp > 0, "echo must carry a unix timestamp");
+        assert!(
+            echo.timestamp > habilis_network::protocol::UnixSecs::ZERO,
+            "echo must carry a unix timestamp"
+        );
 
         // The self-send surfaces in a fetch, marked `self:true`.
         let deadline = tokio::time::Instant::now() + DELIVER;

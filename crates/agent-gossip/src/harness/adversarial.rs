@@ -11,17 +11,18 @@
     reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
 )]
 
-use habilis_network::protocol::Message;
 use habilis_network::protocol::PresenceSubtype;
 use habilis_network::protocol::{
     AppFrameParams, AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname,
 };
+use habilis_network::protocol::{ContentHash, Message, UnixSecs};
 use habilis_network::protocol::{Identity, encode_pubkey};
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
 pub use habilis_network::util::consts::{
     REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
 };
+use habilis_network::x25519_dalek::PublicKey;
 
 use crate::a2a::wire;
 
@@ -66,14 +67,14 @@ pub struct SealedTaskStatusParams<'a> {
     pub beat: bool,
     /// The addressee's public mesh-seal key, as any member can read it from
     /// the meta document — see [`peer_seal_key`].
-    pub seal_key: [u8; 32],
+    pub seal_key: PublicKey,
 }
 
 /// The addressee's public X25519 mesh-seal key, read out of a meta document
 /// exactly as the daemon's own send path reads it. Any mesh member holds this
 /// document, which is the point: sealing to a peer needs no secret.
 #[must_use]
-pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<[u8; 32]> {
+pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicKey> {
     let peer = Nickname::new(peer.to_owned()).ok()?;
     crate::a2a::card::peer_seal_key(meta_doc, &peer)
 }
@@ -303,7 +304,7 @@ impl CraftedMsg {
     }
 
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
-    pub fn chain(mut self, seq: u64, prev: Option<String>) -> Self {
+    pub fn chain(mut self, seq: u64, prev: Option<ContentHash>) -> Self {
         self.msg = self.msg.with_chain(seq, prev);
         self
     }
@@ -350,13 +351,13 @@ impl CraftedMsg {
     }
 
     /// Stamp the cross-author DAG `parents` (Phase 3).
-    pub fn parents(mut self, parents: Vec<String>) -> Self {
+    pub fn parents(mut self, parents: Vec<ContentHash>) -> Self {
         self.msg = self.msg.with_parents(parents);
         self
     }
 
     /// Set the timestamp (e.g. an implausibly old or future value).
-    pub fn timestamp(mut self, ts: i64) -> Self {
+    pub fn timestamp(mut self, ts: UnixSecs) -> Self {
         self.msg.timestamp = ts;
         self
     }
@@ -407,8 +408,8 @@ impl CraftedMsg {
 
     /// This message's content hash — use as another message's `prev`/parent.
     #[must_use]
-    pub fn content_hash_hex(&self) -> String {
-        self.msg.content_hash_hex()
+    pub fn content_hash(&self) -> ContentHash {
+        self.msg.content_hash()
     }
 
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.

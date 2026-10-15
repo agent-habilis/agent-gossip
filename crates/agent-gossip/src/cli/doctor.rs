@@ -600,7 +600,7 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::{Mesh, MeshConfig, MeshName};
+    use habilis_network::protocol::{Mesh, MeshConfig, MeshName, Seed};
 
     use super::declared_methods_section;
 
@@ -610,7 +610,7 @@ mod tests {
         // the bare hash, so deriving the loopback ladder used to panic in
         // `effective_seed`. `doctor` must report the reason instead of crashing.
         let mut mesh = Mesh::new(
-            [1u8; 32],
+            Seed::from_bytes([1u8; 32]),
             MeshName::new("t").unwrap(),
             MeshConfig::loopback(),
         );

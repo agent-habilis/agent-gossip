@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use habilis_network::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
 use habilis_network::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
 use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
 use habilis_network::protocol::{MeshId, Nickname};
 use habilis_network::runtime::CoHostPolicy;
-use habilis_network::runtime::tuning::directory_expiry_secs;
+use habilis_network::runtime::tuning::directory_expiry;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -53,7 +53,7 @@ fn public_listing(listing: &Listing) -> MeshListing {
         public: listing.public,
         password: listing.password,
         peers: listing.peers,
-        first_seen_unix: listing.first_seen_unix,
+        first_seen_unix: listing.first_seen_unix.as_secs(),
     }
 }
 
@@ -128,7 +128,7 @@ impl Directory {
 
         let collector = listings.clone();
         let task = tokio::spawn(async move {
-            let ttl = Duration::from_secs(directory_expiry_secs());
+            let ttl = directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
             loop {

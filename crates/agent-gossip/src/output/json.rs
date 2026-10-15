@@ -9,7 +9,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use habilis_network::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use habilis_network::protocol::{Message, MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
@@ -92,7 +92,7 @@ struct MessageHeader<'a> {
     /// `None` (omitted) only for unsigned test fixtures. Agents should key
     /// trust/disambiguation on this, not the nickname.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pubkey: Option<&'a str>,
+    pub pubkey: Option<String>,
     pub ts: i64,
 }
 
@@ -141,7 +141,7 @@ struct TaskLine<'a> {
     pub gossip: &'a str,
     pub author: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pubkey: Option<&'a str>,
+    pub pubkey: Option<String>,
     pub ts: i64,
     pub to: &'a str,
     pub task_id: String,
@@ -198,7 +198,7 @@ struct StateLine<'a> {
     gossip: &'a str,
     author: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pubkey: Option<&'a str>,
+    pubkey: Option<String>,
     ts: i64,
     merge: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -215,8 +215,8 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
         ty,
         gossip: msg.mesh.as_str(),
         author: msg.author.as_str(),
-        pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
-        ts: msg.timestamp,
+        pubkey: msg.author_key().map(|key| key.to_string()),
+        ts: msg.timestamp.as_secs(),
     }
 }
 
@@ -489,7 +489,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
                 id: msg.id.as_str(),
                 gossip: msg.mesh.as_str(),
                 author: msg.author.as_str(),
-                ts: msg.timestamp,
+                ts: msg.timestamp.as_secs(),
                 to: to.as_str(),
                 task_id,
                 done,
@@ -510,8 +510,8 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             id: msg.id.as_str(),
             gossip: msg.mesh.as_str(),
             author: msg.author.as_str(),
-            pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
-            ts: msg.timestamp,
+            pubkey: msg.author_key().map(|key| key.to_string()),
+            ts: msg.timestamp.as_secs(),
             to: to.as_str(),
             task_id,
             kind,
@@ -554,7 +554,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             gossip: leg.mesh,
             author: leg.author,
             pubkey: None,
-            ts: habilis_network::util::clock::unix_secs(),
+            ts: UnixSecs::now().as_secs(),
             to: leg.peer,
             task_id: leg.task_id.to_owned(),
             kind: "message",
@@ -687,8 +687,8 @@ pub(super) fn format_state_json(
             ty: channel.label(),
             gossip: event.mesh.as_str(),
             author: event.author.as_str(),
-            pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
-            ts: event.timestamp,
+            pubkey: event.author_key().map(|key| key.to_string()),
+            ts: event.timestamp.as_secs(),
             merge: merge.unwrap_or(serde_json::Value::Null),
             // The meta document is every peer's agent card, ~4k tokens with
             // four peers, repeated on each change; readers take it on demand

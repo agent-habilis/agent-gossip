@@ -1,7 +1,7 @@
 use habilis_network::embed::EventLoopState;
 use habilis_network::ops::MeshSender;
 use habilis_network::ops::{StateMergeParams, broadcast_state_merge};
-use habilis_network::protocol::MeshId;
+use habilis_network::protocol::{AuthorKey, MeshId};
 use habilis_network::protocol::{Channel, MessageBody, Nickname};
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -224,7 +224,7 @@ pub(crate) struct HandleOpParams<'a> {
     pub(crate) op: A2aOp,
     pub(crate) mesh: &'a MeshId,
     pub(crate) author: &'a Nickname,
-    pub(crate) our_pubkey: &'a str,
+    pub(crate) our_pubkey: AuthorKey,
     pub(crate) a2a_port: u16,
     pub(crate) app: &'a mut A2aApp,
 }
@@ -313,7 +313,7 @@ pub(crate) async fn handle_op(
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
-            let seal_b58 = bs58::encode(state.identity().seal_public()).into_string();
+            let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
             let mut card = super::card::own_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
