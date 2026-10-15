@@ -187,3 +187,32 @@ async fn an_in_process_fetch_sends_the_read_receipt() {
     alice.leave().await;
     bob.leave().await;
 }
+
+/// A task brief comes over the request/response binding, so it earns no
+/// `delivered` receipt. The worker's read of it still sends `read`, with the
+/// messageId of the brief as its ref.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_a_task_brief_sends_a_read_receipt() {
+    let (mut alice, mut bob) = meshed_pair("rc-brief", "rc-brief-bob").await;
+    bob.await_peer_card(&alice.nickname).await;
+    alice.create_task("rc-brief-bob", "read this brief").await;
+    assert!(bob.wait_task_message(MSG_TIMEOUT).await, "brief surfaced");
+
+    bob.session.fetch(None, false).await.expect("fetch");
+
+    let read = alice
+        .wait_for(MSG_TIMEOUT, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Receipt { from, state, .. }
+                        if from.as_str() == "rc-brief-bob" && state == "read"
+                )
+            })
+        })
+        .await;
+    assert!(read, "reading a task brief sent no read receipt");
+
+    alice.leave().await;
+    bob.leave().await;
+}

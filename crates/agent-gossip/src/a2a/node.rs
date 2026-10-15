@@ -616,7 +616,7 @@ fn route_content(
             tag, to: Some(to), ..
         } if tag.as_str() == wire::RECEIPT => {
             if to == ctx.author {
-                surface_receipt(message, &app.output);
+                surface_receipt(message, app);
             }
             Routed::default()
         }
@@ -646,10 +646,22 @@ fn parse_receipt(message: &Message) -> Option<Receipt> {
 
 /// A receipt we did not author reaches this hook only: the engine drops our own
 /// frames by pubkey before it, and `route_content` checks the addressee.
-fn surface_receipt(message: &Message, out: &output::Output) {
+fn surface_receipt(message: &Message, app: &A2aApp) {
     let Some(receipt) = parse_receipt(message) else {
         return;
     };
+    if !app
+        .sent_refs
+        .contains(&(receipt.ref_id.clone(), message.author.clone()))
+    {
+        tracing::debug!(
+            target: "agent_gossip::a2a",
+            author = %message.author,
+            "receipt for a frame we did not send to its author dropped"
+        );
+        return;
+    }
+    let out = &app.output;
     let state = match receipt.state {
         ReceiptState::Delivered => "delivered",
         ReceiptState::Read => "read",

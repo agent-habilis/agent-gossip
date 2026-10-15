@@ -604,6 +604,10 @@ async fn broadcast_directed_frame(
         single = single.with_id(pinned_id);
     }
     let single = single.signed(&signer);
+    // The logical id: a sharded leg's group carries it, so its receipt names it too.
+    if let MessageKind::App { to: Some(to), .. } = &kind {
+        app.note_sent_ref(single.id.as_str(), to);
+    }
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
@@ -1596,6 +1600,9 @@ pub(crate) async fn broadcast_a2a_call(
     };
     let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
     let blob_group = blob.map(|blob| blob.group);
+    if let Some(message_id) = params["message"]["messageId"].as_str() {
+        app.note_sent_ref(message_id, &peer);
+    }
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::new(envelope.to_string()) else {
         app.orphan_blob(blob_group);

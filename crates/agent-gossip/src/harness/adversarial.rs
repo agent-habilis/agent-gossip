@@ -340,6 +340,38 @@ impl CraftedMsg {
         Self { msg: frame }
     }
 
+    /// A sealed `a2a_receipt` that says `to` sent frame `ref_id` and that it
+    /// was read: what a bystander forges with a frame id it saw in a header.
+    pub fn sealed_receipt(mesh: &MeshId, params: SealedMsgParams<'_>) -> Self {
+        let SealedMsgParams {
+            author,
+            to,
+            text: ref_id,
+            seal_key,
+        } = params;
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let to = Nickname::new(to.to_owned()).expect("valid target");
+        let receipt = crate::a2a::receipt::Receipt {
+            ref_id: ref_id.to_owned(),
+            state: crate::a2a::receipt::ReceiptState::Read,
+        };
+        let plain = serde_json::to_string(&receipt).expect("a receipt serializes");
+        let body = habilis_network::protocol::seal_to_body(&seal_key, &plain)
+            .expect("sealing to a published key succeeds");
+        Self {
+            msg: Message::new_app(
+                mesh,
+                &author,
+                AppFrameParams {
+                    tag: AppTag::from(wire::RECEIPT),
+                    to: Some(to),
+                    corr: None,
+                    body,
+                },
+            ),
+        }
+    }
+
     #[must_use]
     pub fn frame_id(&self) -> String {
         self.msg.id.as_str().to_owned()

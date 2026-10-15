@@ -159,6 +159,10 @@ pub(crate) struct A2aApp {
     /// it was sent: anti-entropy re-sends what the log holds, so a leg whose send failed would
     /// otherwise reach the peer after the user was told it failed.
     pub(crate) unsent_legs: Vec<(Message, tokio::sync::oneshot::Receiver<bool>)>,
+    /// The id and the addressee of each directed frame and task message we sent.
+    /// Frame ids ride in cleartext headers, so any member can name one: a
+    /// receipt counts only from the peer the frame went to.
+    pub(crate) sent_refs: BoundedFifoSet<(String, Nickname)>,
     /// Why our own card is not published, while it is not: the last publish failed. Told to the
     /// other members through `/peers/<nick>/card_error`, and retried on the ticks that the
     /// backoff allows.
@@ -214,6 +218,7 @@ impl A2aApp {
             surfaced_rx: Some(surfaced_rx),
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
+            sent_refs: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             card_error: None,
             card_retry_in: 0,
             card_retry_wait: 0,
@@ -240,6 +245,7 @@ impl A2aApp {
             surfaced_rx: None,
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
+            sent_refs: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             card_error: None,
             card_retry_in: 0,
             card_retry_wait: 0,
@@ -275,6 +281,11 @@ impl A2aApp {
             }
         }
         ready
+    }
+
+    /// Remember that `ref_id` went to `to`, so its receipts can be checked.
+    pub(crate) fn note_sent_ref(&mut self, ref_id: &str, to: &Nickname) {
+        self.sent_refs.insert((ref_id.to_owned(), to.clone()));
     }
 
     /// Ingest the own task legs that the peer got since the last call.
