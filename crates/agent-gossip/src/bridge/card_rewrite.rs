@@ -495,6 +495,34 @@ mod tests {
     }
 
     #[test]
+    fn flushes_an_unfinished_card_verbatim_on_finish() {
+        let response = card_response("http://origin:9999/a2a");
+        let truncated = &response[..response.len() - 5];
+        assert_eq!(run(truncated), truncated, "partial card is not dropped");
+    }
+
+    #[test]
+    fn streams_everything_after_a_chunked_response_verbatim() {
+        let mut response =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".to_vec();
+        response.extend(card_response("http://origin:9999/a2a"));
+        assert_eq!(run(&response), response, "the raw latch never releases");
+    }
+
+    #[test]
+    fn streams_an_overlong_header_block_verbatim() {
+        let mut response = b"HTTP/1.1 200 OK\r\nX-Pad: ".to_vec();
+        response.extend(vec![b'a'; super::MAX_HEAD_BYTES + 1]);
+        response.extend(b"\r\n\r\n");
+        response.extend(card_response("http://origin:9999/a2a"));
+        let mut rewriter = CardRewriter::new(BASE.to_owned());
+        let mut out = rewriter.feed(&response[..super::MAX_HEAD_BYTES + 100]);
+        out.extend(rewriter.feed(&response[super::MAX_HEAD_BYTES + 100..]));
+        out.extend(rewriter.finish());
+        assert_eq!(out, response, "unframeable header latches raw");
+    }
+
+    #[test]
     fn rewrite_url_leaves_non_http_targets_alone() {
         assert_eq!(rewrite_url("grpc://origin:9999", BASE), None);
         assert_eq!(
