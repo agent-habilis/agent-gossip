@@ -2290,6 +2290,24 @@ mod sharded_leg_tests {
     }
 
     #[tokio::test]
+    async fn a_leg_whose_send_task_ended_without_a_verdict_is_dropped() {
+        let mut app = A2aApp::new();
+        let (sent_tx, sent) = oneshot::channel::<bool>();
+        drop(sent_tx);
+        app.unsent_legs.push(crate::a2a::app::UnsentLeg {
+            frames: vec![shard("a")],
+            cache: None,
+            sent,
+        });
+
+        assert!(
+            take_sent_legs(&mut app).is_empty(),
+            "nothing enters the log"
+        );
+        assert!(app.unsent_legs.is_empty(), "the leg is not kept waiting");
+    }
+
+    #[tokio::test]
     async fn a_sharded_leg_whose_shards_were_all_sent_enters_the_log_whole() {
         let mut app = A2aApp::new();
         let pending = vec![None, Some(verdict(Ok(())))];
