@@ -285,20 +285,8 @@ pub(crate) struct SurfacedState {
     /// receipted once and then covered, so a re-read with `--after` cannot
     /// send a second receipt.
     receipted_through: u64,
-    /// When a foreground poll last ran, in unix seconds.
-    last_foreground_poll: Option<u64>,
-    /// When a bell last parked or fired. The CLI re-issues the bell between two
-    /// parks, so a short gap does not mean the bell is gone.
-    last_bell_seen: Option<TokioInstant>,
-    /// The `(bell, last_poll)` pair last written to the meta document.
-    published_reader: Option<(bool, u64)>,
-}
-
-/// What a peer can read about this reader in the meta document.
-pub(crate) fn unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
+    /// When a foreground poll last ran.
+    last_foreground_poll: Option<TokioInstant>,
 }
 
 /// The author and frame id a `read` receipt goes back to.
@@ -354,8 +342,6 @@ impl SurfacedState {
             last_served: 0,
             receipted_through: 0,
             last_foreground_poll: None,
-            last_bell_seen: None,
-            published_reader: None,
         }
     }
 
@@ -446,37 +432,11 @@ impl SurfacedState {
         targets
     }
 
-    /// Whether a bell is parked now, or was parked within two park caps.
-    pub(crate) fn bell_armed(&self, now: TokioInstant) -> bool {
-        let parked = self
-            .poll_waiters
-            .iter()
-            .any(|waiter| matches!(waiter.baseline, PollBaseline::Served));
-        let grace = Duration::from_millis(2 * crate::a2a::tuning::longpoll_max_ms());
-        parked
-            || self
-                .last_bell_seen
-                .is_some_and(|seen| now.saturating_duration_since(seen) <= grace)
-    }
-
-    /// The `(bell, last_poll)` pair to publish, or `None` when it equals the
-    /// pair already published. `last_poll` rounds down to 60 s so a busy
-    /// reader does not write the document on every poll.
-    pub(crate) fn reader_to_publish(&mut self, now: TokioInstant) -> Option<(bool, u64)> {
-        let current = (
-            self.bell_armed(now),
-            self.last_foreground_poll.map_or(0, |secs| secs - secs % 60),
-        );
-        if self.published_reader == Some(current) {
-            return None;
-        }
-        self.published_reader = Some(current);
-        Some(current)
-    }
-
-    /// Let the next tick publish again after a merge that failed.
-    pub(crate) fn forget_published_reader(&mut self) {
-        self.published_reader = None;
+    /// Whole seconds since a foreground poll last ran, or `None` before the
+    /// first one.
+    pub(crate) fn last_poll_secs_ago(&self, now: TokioInstant) -> Option<u64> {
+        self.last_foreground_poll
+            .map(|polled| now.saturating_duration_since(polled).as_secs())
     }
 
     /// Advance the read cursor past everything a foreground poll just served.
@@ -512,10 +472,8 @@ impl SurfacedState {
             now,
             responder,
         } = params;
-        if long {
-            self.last_bell_seen = Some(now);
-        } else {
-            self.last_foreground_poll = Some(unix_secs());
+        if !long {
+            self.last_foreground_poll = Some(now);
         }
         let (batch, baseline) = match after {
             None => (
@@ -946,6 +904,38 @@ mod tests {
         assert_eq!(
             surfaced.poll_waiters.len(),
             crate::a2a::tuning::POLL_WAITERS_CAP
+        );
+    }
+
+    #[tokio::test]
+    async fn last_poll_age_counts_foreground_polls_only() {
+        let mut surfaced = SurfacedState::new();
+        let start = TokioInstant::now();
+        assert_eq!(surfaced.last_poll_secs_ago(start), None, "no poll yet");
+
+        let (bell_tx, _bell_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: start,
+            responder: PollResponder::Json(bell_tx),
+        });
+        assert_eq!(
+            surfaced.last_poll_secs_ago(start),
+            None,
+            "a bell is no poll"
+        );
+
+        let (read_tx, _read_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: start,
+            responder: PollResponder::Json(read_tx),
+        });
+        assert_eq!(
+            surfaced.last_poll_secs_ago(start + Duration::from_secs(42)),
+            Some(42)
         );
     }
 

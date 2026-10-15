@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::a2a::app::A2aApp;
-use crate::a2a::peer_path::respond_with_paths;
+use crate::a2a::peer_path::{ReaderAskParams, ask_readers, respond_with_paths};
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
 use crate::a2a::send::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
@@ -397,7 +397,17 @@ pub(crate) async fn handle_ipc_command(
             }
         }
         IpcCommand::Peers { mesh: _ } => {
-            respond_with_paths(state, endpoint, resp_tx);
+            let readers = ask_readers(
+                ReaderAskParams {
+                    mesh,
+                    author,
+                    sender,
+                },
+                state,
+                app,
+            )
+            .await;
+            respond_with_paths(state, endpoint, readers, resp_tx);
             false
         }
         IpcCommand::StateMerge { mesh: _, merge } => {

@@ -2,7 +2,8 @@ use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
 use common::{
-    MSG_TIMEOUT, Node, POLL, await_peer_card_cli, cli_msg_checked, cli_peers, cli_poll, park_bell,
+    MSG_TIMEOUT, Node, POLL, assert_bell_parked, await_peer_card_cli, cli_msg_checked, cli_peers,
+    cli_poll, park_bell,
 };
 
 fn pair(name: &str) -> (Node, Node, String) {
@@ -110,26 +111,73 @@ fn a_re_read_with_after_sends_no_second_read_receipt() {
     assert_eq!(reads, 1, "a re-read must not receipt twice");
 }
 
+fn wait_for_reader(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    while Instant::now() < deadline {
+        // The first call after a join can miss the key while a cold dial runs.
+        if let Some(reader) = reader_of(mesh, asker, target).filter(|reader| reader["bell"] == true)
+        {
+            return Some(reader);
+        }
+        std::thread::sleep(POLL);
+    }
+    None
+}
+
 #[test]
 fn peers_shows_the_bell_and_the_last_poll_of_a_reader() {
     let (alice, bob, mesh) = pair("rl-peers");
     cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
 
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut seen = None;
-    while Instant::now() < deadline {
-        seen = reader_of(&mesh, &alice.nickname, &bob.nickname)
-            .filter(|reader| reader["bell"] == true);
-        if seen.is_some() {
-            break;
-        }
-        std::thread::sleep(POLL);
-    }
+    let seen = wait_for_reader(&mesh, &alice.nickname, &bob.nickname);
     bell.kill().expect("stop the bell");
     bell.wait().expect("reap the bell");
 
     let seen = seen.expect("alice never saw bob's bell armed");
     let ago = seen["last_poll_secs_ago"].as_u64().expect("secs ago");
-    assert!(ago < 180, "last poll should be recent, got {ago}s");
+    assert!(ago < 60, "last poll should be recent, got {ago}s");
+}
+
+#[test]
+fn the_reader_query_leaves_the_bell_parked_and_the_poll_unchanged() {
+    let (alice, bob, mesh) = pair("rl-quiet");
+    cli_poll(&mesh, &bob.nickname, None);
+    let mut bell = park_bell(&mesh, &bob.nickname);
+    let before = poll_len(&mesh, &bob.nickname);
+
+    let seen = wait_for_reader(&mesh, &alice.nickname, &bob.nickname);
+
+    assert!(seen.is_some(), "alice never saw bob's bell armed");
+    assert_bell_parked(&mut bell, "a reader query must not ring the bell");
+    assert_eq!(
+        poll_len(&mesh, &bob.nickname),
+        before,
+        "a reader query must add no event to bob's poll"
+    );
+    bell.kill().expect("stop the bell");
+    bell.wait().expect("reap the bell");
+}
+
+#[test]
+fn a_peer_that_does_not_answer_gets_no_reader_and_peers_stays_fast() {
+    let (alice, bob, mesh) = pair("rl-mute");
+    bob.stop();
+
+    let started = Instant::now();
+    let reader = reader_of(&mesh, &alice.nickname, &bob.nickname);
+    let took = started.elapsed();
+    bob.cont();
+
+    assert_eq!(reader, None, "a frozen peer must get no reader key");
+    assert!(
+        took < Duration::from_secs(2),
+        "peers must not wait on a mute peer, took {took:?}"
+    );
+}
+
+fn poll_len(mesh: &str, nickname: &str) -> usize {
+    let events: Vec<serde_json::Value> = serde_json::from_str(&cli_poll(mesh, nickname, Some("0")))
+        .expect("poll prints a JSON array");
+    events.len()
 }

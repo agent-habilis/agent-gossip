@@ -1622,7 +1622,11 @@ pub(crate) async fn broadcast_a2a_call(
     )
     .await
     {
-        tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+        if method == crate::a2a::gossip_rpc::READER_GET {
+            tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
+        } else {
+            tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
+        }
     }
 }
 

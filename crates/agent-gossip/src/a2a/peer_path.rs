@@ -1,10 +1,17 @@
+use std::time::Duration;
+
 use habilis_network::embed::EventLoopState;
 use habilis_network::iroh::endpoint::TransportAddrUsage;
 use habilis_network::iroh::{Endpoint, TransportAddr};
-use habilis_network::protocol::Channel;
+use habilis_network::ops::MeshSender;
+use habilis_network::protocol::{MeshId, Nickname};
 use tokio::sync::oneshot;
+use tokio::time::Instant as TokioInstant;
 
-use crate::a2a::surfaced::unix_secs;
+use crate::a2a::app::{A2aApp, A2aResponder};
+use crate::a2a::gossip_rpc::READER_GET;
+use crate::a2a::send::{BroadcastA2aCallParams, broadcast_a2a_call};
+use crate::a2a::tuning::POLL_WAITERS_CAP;
 
 // Copied from `habilis-network-iroh-transport-util/src/lib.rs`, which
 // habilis-network does not re-export.
@@ -53,6 +60,7 @@ fn kind_of(addr: &TransportAddr) -> Option<&'static str> {
 pub(crate) fn respond_with_paths(
     state: &EventLoopState,
     endpoint: &Endpoint,
+    readers: ReaderAsks,
     resp_tx: oneshot::Sender<String>,
 ) {
     let snapshot = state.roster_snapshot();
@@ -69,16 +77,6 @@ pub(crate) fn respond_with_paths(
         Ok(serde_json::Value::Array(rows)) => rows,
         _ => Vec::new(),
     };
-    let readers = state.doc(Channel::Meta).to_json();
-    for row in &mut rows {
-        let reader = row
-            .get("nickname")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|nickname| reader_row(&readers, nickname, unix_secs()));
-        if let (Some(reader), Some(fields)) = (reader, row.as_object_mut()) {
-            fields.insert("reader".to_owned(), reader);
-        }
-    }
     let endpoint = endpoint.clone();
     tokio::spawn(async move {
         for (row, peer) in rows.iter_mut().zip(endpoints) {
@@ -90,6 +88,7 @@ pub(crate) fn respond_with_paths(
                 fields.insert("path".to_owned(), label.into());
             }
         }
+        add_readers(&mut rows, readers).await;
         let _ = resp_tx.send(
             serde_json::json!({
                 "ok": true,
@@ -101,14 +100,98 @@ pub(crate) fn respond_with_paths(
     });
 }
 
-fn reader_row(meta: &serde_json::Value, nickname: &str, now: u64) -> Option<serde_json::Value> {
-    let reader = meta.get("peers")?.get(nickname)?.get("reader")?;
-    let bell = reader.get("bell")?.as_bool()?;
-    let last_poll = reader.get("last_poll")?.as_u64()?;
-    Some(serde_json::json!({
-        "bell": bell,
-        "last_poll_secs_ago": now.saturating_sub(last_poll),
-    }))
+/// How long `peers` waits for the answers to its reader queries, all together.
+const READER_ASK_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// The reader queries `peers` sent, with the one deadline they all share.
+pub(crate) struct ReaderAsks {
+    pending: Vec<(Nickname, oneshot::Receiver<serde_json::Value>)>,
+    deadline: TokioInstant,
+}
+
+/// The values `ask_readers` needs beyond its `state` and `app` handles.
+pub(crate) struct ReaderAskParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) sender: &'a MeshSender,
+}
+
+/// Send `mesh/reader.get` to each live peer that has a known endpoint.
+///
+/// Real `a2a call`s share the waiter registry, so `peers` stops at half of it.
+pub(crate) async fn ask_readers(
+    params: ReaderAskParams<'_>,
+    state: &mut EventLoopState,
+    app: &mut A2aApp,
+) -> ReaderAsks {
+    let ReaderAskParams {
+        mesh,
+        author,
+        sender,
+    } = params;
+    let room = (POLL_WAITERS_CAP / 2).saturating_sub(app.a2a_waiters.len());
+    let askable: Vec<Nickname> = state
+        .roster_snapshot()
+        .peers
+        .iter()
+        .filter(|entry| !entry.quiet && entry.nickname != *author)
+        .filter(|entry| state.peer_endpoint(&entry.nickname).is_some())
+        .take(room)
+        .map(|entry| entry.nickname.clone())
+        .collect();
+    let deadline = TokioInstant::now() + READER_ASK_TIMEOUT;
+    let mut pending = Vec::with_capacity(askable.len());
+    for peer in askable {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        broadcast_a2a_call(
+            BroadcastA2aCallParams {
+                mesh,
+                author,
+                peer: peer.clone(),
+                method: READER_GET,
+                params: serde_json::json!({}),
+                timeout: READER_ASK_TIMEOUT,
+                responder: A2aResponder::Typed(reply_tx),
+                file: None,
+            },
+            state,
+            app,
+            sender,
+        )
+        .await;
+        pending.push((peer, reply_rx));
+    }
+    ReaderAsks { pending, deadline }
+}
+
+async fn add_readers(rows: &mut [serde_json::Value], asks: ReaderAsks) {
+    let ReaderAsks { pending, deadline } = asks;
+    for (peer, reply_rx) in pending {
+        let Ok(Ok(reply)) = tokio::time::timeout_at(deadline, reply_rx).await else {
+            continue;
+        };
+        let Some(reader) = reader_from_reply(&reply) else {
+            continue;
+        };
+        let row = rows.iter_mut().find(|row| {
+            row.get("nickname").and_then(serde_json::Value::as_str) == Some(peer.as_str())
+        });
+        if let Some(fields) = row.and_then(serde_json::Value::as_object_mut) {
+            fields.insert("reader".to_owned(), reader);
+        }
+    }
+}
+
+/// The `reader` object of a row, from a peer's reply. An error reply (an older
+/// daemon answers `-32601`) or a malformed result gives `None`.
+fn reader_from_reply(reply: &serde_json::Value) -> Option<serde_json::Value> {
+    let result = reply.get("result")?;
+    let bell = result.get("bell")?.as_bool()?;
+    let last_poll_secs_ago = result.get("last_poll_secs_ago")?;
+    if !last_poll_secs_ago.is_null() && !last_poll_secs_ago.is_u64() {
+        return None;
+    }
+    Some(serde_json::json!({ "bell": bell, "last_poll_secs_ago": last_poll_secs_ago }))
 }
 
 async fn active_path(endpoint: &Endpoint, peer: habilis_network::iroh::EndpointId) -> String {
@@ -129,7 +212,7 @@ mod tests {
 
     use habilis_network::iroh::{RelayUrl, TransportAddr};
 
-    use super::{path_label, reader_row};
+    use super::{path_label, reader_from_reply};
 
     fn ip() -> TransportAddr {
         TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], 4433)))
@@ -164,21 +247,31 @@ mod tests {
     }
 
     #[test]
-    fn reader_row_reports_seconds_since_the_last_poll() {
-        let meta = serde_json::json!({
-            "peers": { "ana": { "reader": { "bell": true, "last_poll": 940 } } }
-        });
+    fn a_reply_with_a_result_gives_a_reader() {
+        let reply = serde_json::json!({ "result": { "bell": true, "last_poll_secs_ago": 7 } });
         assert_eq!(
-            reader_row(&meta, "ana", 1000),
-            Some(serde_json::json!({ "bell": true, "last_poll_secs_ago": 60 }))
+            reader_from_reply(&reply),
+            Some(serde_json::json!({ "bell": true, "last_poll_secs_ago": 7 }))
+        );
+        let before_any_poll =
+            serde_json::json!({ "result": { "bell": false, "last_poll_secs_ago": null } });
+        assert_eq!(
+            reader_from_reply(&before_any_poll),
+            Some(serde_json::json!({ "bell": false, "last_poll_secs_ago": null }))
         );
     }
 
     #[test]
-    fn reader_row_is_absent_without_an_entry() {
-        let meta = serde_json::json!({ "peers": { "ana": { "status": "idle" } } });
-        assert_eq!(reader_row(&meta, "ana", 1000), None);
-        assert_eq!(reader_row(&meta, "bo", 1000), None);
+    fn an_error_or_malformed_reply_gives_no_reader() {
+        for reply in [
+            serde_json::json!({ "error": { "code": -32601, "message": "method not found" } }),
+            serde_json::json!({ "result": { "bell": "yes", "last_poll_secs_ago": 1 } }),
+            serde_json::json!({ "result": { "bell": true } }),
+            serde_json::json!({ "result": { "bell": true, "last_poll_secs_ago": -1 } }),
+            serde_json::Value::Null,
+        ] {
+            assert_eq!(reader_from_reply(&reply), None, "{reply}");
+        }
     }
 
     #[test]

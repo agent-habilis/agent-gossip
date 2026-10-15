@@ -132,7 +132,6 @@ impl NodeDriver for A2aApp {
         }
         crate::a2a::task::tick_task_sweep(state, self, ctx, &out).await;
         crate::a2a::task::tick_task_keepalive(state, self, ctx).await;
-        crate::a2a::reader::tick(state, self, ctx).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
         // to re-send the missing shards from their sender-side cache.
         crate::a2a::send::send_shard_repair_requests(ctx.mesh, ctx.author, state, ctx.sender).await;
@@ -1041,6 +1040,12 @@ async fn handle_a2a_req(
                     )
                     .await
                 }
+                Served::ReaderGet => Ok(serde_json::json!({
+                    "bell": crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str()),
+                    "last_poll_secs_ago": app
+                        .surfaced
+                        .last_poll_secs_ago(tokio::time::Instant::now()),
+                })),
                 Served::Reject(error) => Err(error),
             }
         }
