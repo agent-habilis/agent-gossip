@@ -6,6 +6,8 @@ use common::{
     cli_poll, park_bell,
 };
 
+/// Each side waits for the card of the other: a directed msg is sealed to that
+/// card, so without it the first send can fail.
 fn pair(name: &str) -> (Node, Node, String) {
     let (alice, mesh) = Node::create_named(name);
     let bob = Node::join(&mesh, &format!("{name}-bob"));
@@ -20,6 +22,8 @@ fn msg_id(mesh: &str, from: &str, to: &str, body: &str) -> String {
     cli_msg_checked(mesh, from, to, body)
 }
 
+/// With `after`, the poll re-reads the ring and leaves the read cursor where
+/// it is, so a test can count receipts more than once.
 fn receipts(mesh: &str, nickname: &str, after: Option<&str>) -> Vec<(String, String)> {
     let events: Vec<serde_json::Value> =
         serde_json::from_str(&cli_poll(mesh, nickname, after)).expect("poll prints a JSON array");
@@ -70,6 +74,8 @@ fn reads_of(mesh: &str, nickname: &str, id: &str) -> usize {
         .count()
 }
 
+/// `None` when the row has no `reader` key: the peer did not answer in time,
+/// or it runs an older version.
 fn reader_of(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
     let out: serde_json::Value =
         serde_json::from_str(&cli_peers(mesh, asker)).expect("peers prints JSON");
@@ -224,6 +230,7 @@ fn a_peer_that_does_not_answer_gets_no_reader_and_peers_stays_fast() {
     );
 }
 
+/// Counts from seq 0, so the count does not depend on what was served before.
 fn poll_len(mesh: &str, nickname: &str) -> usize {
     let events: Vec<serde_json::Value> = serde_json::from_str(&cli_poll(mesh, nickname, Some("0")))
         .expect("poll prints a JSON array");

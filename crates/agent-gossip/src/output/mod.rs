@@ -505,6 +505,8 @@ impl Output {
         );
     }
 
+    /// A receipt is proof for the sender, not work for the agent, so it is
+    /// pollable but never wakes the bell.
     pub(crate) fn receipt(&self, params: ReceiptParams<'_>) {
         let ReceiptParams {
             from,

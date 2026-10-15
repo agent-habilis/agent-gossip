@@ -55,6 +55,8 @@ pub(crate) async fn send_read_receipts(
     }
 }
 
+/// Sealed to the addressee and sent unicast only, so no third member learns
+/// who got or read which frame.
 async fn send_sealed(
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,

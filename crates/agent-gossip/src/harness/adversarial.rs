@@ -372,6 +372,7 @@ impl CraftedMsg {
         }
     }
 
+    /// The id that a receipt for this frame names in its `ref`.
     #[must_use]
     pub fn frame_id(&self) -> String {
         self.msg.id.as_str().to_owned()

@@ -164,6 +164,8 @@ pub(crate) async fn ask_readers(
     ReaderAsks { pending, deadline }
 }
 
+/// All asks share one deadline, so one slow peer cannot delay `peers`. A peer
+/// that misses it, or answers with an error, keeps its row with no `reader` key.
 async fn add_readers(rows: &mut [serde_json::Value], asks: ReaderAsks) {
     let ReaderAsks { pending, deadline } = asks;
     for (peer, reply_rx) in pending {

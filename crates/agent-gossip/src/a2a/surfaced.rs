@@ -70,6 +70,8 @@ impl SurfacedEvents {
         seq
     }
 
+    /// `None` when the ring is empty. The set of receipted seqs is pruned to
+    /// this, so it can never grow past the ring.
     pub(crate) fn oldest_seq(&self) -> Option<u64> {
         self.events.front().map(|item| item.seq)
     }
@@ -297,6 +299,8 @@ pub(crate) struct SurfacedState {
 /// The author and frame id a `read` receipt goes back to.
 pub(crate) type ReadTarget = (Nickname, String);
 
+/// A task brief comes by request/response and has no frame id, so its target
+/// names the A2A messageId instead.
 fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
     let directed_to_us = |msg: &habilis_network::protocol::Message, tags: &[&str]| {
         matches!(

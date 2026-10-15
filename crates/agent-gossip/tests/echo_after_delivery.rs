@@ -20,6 +20,8 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
     })
 }
 
+/// The warmup proves that the mesh formed, and the peer card is what a
+/// directed msg is sealed to: without both, the first send can fail.
 async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
     let alice = InProcNode::create_with_nick(name, &format!("{name}-alice")).await;
     let mut bob = InProcNode::join(&alice.mesh, bob_nick).await;
