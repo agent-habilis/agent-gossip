@@ -145,6 +145,20 @@ fn a_re_read_with_after_sends_no_second_read_receipt() {
     );
 }
 
+/// The last reader row seen within 20 seconds, or the first with the bell armed.
+fn last_reader_until_bell(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut last = None;
+    while Instant::now() < deadline {
+        last = reader_of(mesh, asker, target);
+        if last.as_ref().is_some_and(|reader| reader["bell"] == true) {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    last
+}
+
 fn wait_for_reader(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
     let deadline = Instant::now() + MSG_TIMEOUT;
     while Instant::now() < deadline {
@@ -240,18 +254,8 @@ async fn a_parked_in_process_fetch_counts_as_a_bell() {
 
     let alice_nick = alice.nickname.clone();
     // Shorter than the park cap, so the fetch is still parked when it ends.
-    let query = tokio::task::spawn_blocking(move || {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let mut last = None;
-        while Instant::now() < deadline {
-            last = reader_of(&mesh, &alice_nick, &bob_nick);
-            if last.as_ref().is_some_and(|reader| reader["bell"] == true) {
-                break;
-            }
-            std::thread::sleep(POLL);
-        }
-        last
-    });
+    let query =
+        tokio::task::spawn_blocking(move || last_reader_until_bell(&mesh, &alice_nick, &bob_nick));
     let seen = tokio::select! {
         _ = bob.session.fetch(None, true) => panic!("the long fetch returned before the query"),
         seen = query => seen.expect("the query ran"),
