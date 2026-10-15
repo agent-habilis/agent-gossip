@@ -350,10 +350,12 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   test for each illegal transition.
 - Keep an `enum` when peer events, wire data, or the filesystem drive the
   state. `TaskState` (`a2a/model/mod.rs`) is the reference: legs from peers
-  move it, and it sits in a map on the wire as `TASK_STATE_*`.
+  move it, it is stored per task in a map, and it goes on the wire as
+  `TASK_STATE_*`.
 - A chain of distinct types already gives a compile-time order, so do not wrap
   it again. `run_session` (`cli/mod.rs`) is the reference: `CreateParams` or
-  `JoinParams` resolve to `Resolved`, which `setup_mesh` turns into the config.
+  `JoinParams` resolve to `Resolved`, which `setup_mesh` turns into an
+  `EventLoopConfig`.
 - For a CLI request, prefer a typed `enum` over a `String` plus `Option` flags,
   so that an illegal combination is an error and not a silent default.
 
