@@ -528,7 +528,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             let params: serde_json::Value = match params {
                 Some(raw) => serde_json::from_str(&raw)
                     .map_err(|error| anyhow::anyhow!("--params must be valid JSON: {error}"))?,
-                None => compose_a2a_params(
+                None => A2aCallRequest::parse(
                     &method,
                     &A2aCallSugar {
                         mesh: &mesh,
@@ -536,7 +536,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
                         task_id: task_id.as_ref(),
                         label: label.as_deref(),
                     },
-                ),
+                )?
+                .params(),
             };
             // The daemon runs in its own directory, so a relative path must
             // resolve here, against the caller's.
@@ -688,28 +689,58 @@ struct A2aCallSugar<'a> {
     label: Option<&'a str>,
 }
 
-fn compose_a2a_params(method: &str, sugar: &A2aCallSugar<'_>) -> serde_json::Value {
-    let A2aCallSugar {
-        mesh,
-        text,
-        task_id,
-        label,
-    } = *sugar;
-    match method {
-        "SendMessage" | "SendStreamingMessage" => {
-            let message = crate::a2a::gossip::send_message_payload(
+/// An `a2a call` request typed by method, so a task method cannot exist
+/// without its task id.
+enum A2aCallRequest<'a> {
+    SendMessage {
+        mesh: &'a MeshId,
+        task_id: Option<&'a crate::a2a::TaskId>,
+        text: &'a str,
+        label: Option<&'a str>,
+    },
+    TaskById {
+        task_id: &'a crate::a2a::TaskId,
+    },
+    /// A method the CLI has no sugar for; `--params` is its only input.
+    Unsugared,
+}
+
+impl<'a> A2aCallRequest<'a> {
+    fn parse(method: &str, sugar: &A2aCallSugar<'a>) -> Result<Self> {
+        let A2aCallSugar {
+            mesh,
+            text,
+            task_id,
+            label,
+        } = *sugar;
+        match method {
+            "SendMessage" | "SendStreamingMessage" => Ok(Self::SendMessage {
                 mesh,
                 task_id,
-                text.unwrap_or_default(),
+                text: text.unwrap_or_default(),
                 label,
-            );
-            serde_json::json!({ "message": message })
+            }),
+            "GetTask" | "CancelTask" | "SubscribeToTask" => task_id
+                .map(|task_id| Self::TaskById { task_id })
+                .ok_or_else(|| anyhow::anyhow!("--method {method} requires --task-id")),
+            _ => Ok(Self::Unsugared),
         }
-        "GetTask" | "CancelTask" | "SubscribeToTask" => task_id.map_or_else(
-            || serde_json::json!({}),
-            |id| serde_json::json!({ "id": id }),
-        ),
-        _ => serde_json::json!({}),
+    }
+
+    fn params(&self) -> serde_json::Value {
+        match *self {
+            Self::SendMessage {
+                mesh,
+                task_id,
+                text,
+                label,
+            } => {
+                let message = crate::a2a::gossip::send_message_payload(mesh, task_id, text, label);
+                serde_json::json!({ "message": message })
+            }
+            Self::TaskById { task_id } => serde_json::json!({ "id": task_id }),
+            Self::Unsugared => serde_json::json!({}),
+        }
     }
 }
 
@@ -1092,4 +1123,68 @@ pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
     let window =
         i64::try_from(habilis_network::runtime::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
     skew.abs() <= window
+}
+
+#[cfg(test)]
+mod tests {
+    use habilis_network::protocol::MeshId;
+    use serde_json::json;
+
+    use super::{A2aCallRequest, A2aCallSugar};
+    use crate::a2a::TaskId;
+
+    const MESH: &str = "test";
+    const TASK: &str = "913f33fd-ef60-4dff-82f2-37bc1fd48bfe";
+
+    fn params(
+        method: &str,
+        text: Option<&str>,
+        task_id: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mesh = MeshId::from(MESH);
+        let task_id: Option<TaskId> = task_id.map(|raw| raw.parse().unwrap());
+        let request = A2aCallRequest::parse(
+            method,
+            &A2aCallSugar {
+                mesh: &mesh,
+                text,
+                task_id: task_id.as_ref(),
+                label,
+            },
+        )?;
+        Ok(request.params())
+    }
+
+    #[test]
+    fn a_task_method_with_a_task_id_sends_only_the_id() {
+        for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
+            let sent = params(method, None, Some(TASK), None).unwrap();
+            assert_eq!(sent, json!({ "id": TASK }), "{method}");
+        }
+    }
+
+    #[test]
+    fn a_task_method_without_a_task_id_is_an_error() {
+        for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
+            let error = params(method, None, None, None).unwrap_err().to_string();
+            assert_eq!(error, format!("--method {method} requires --task-id"));
+        }
+    }
+
+    #[test]
+    fn send_message_carries_text_task_id_and_label() {
+        let sent = params("SendMessage", Some("hi"), Some(TASK), Some("name")).unwrap();
+        let message = &sent["message"];
+        assert_eq!(message["parts"][0]["text"], "hi");
+        assert_eq!(message["taskId"], TASK);
+        assert_eq!(message["contextId"], MeshId::from(MESH).as_str());
+        assert_eq!(sent.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_method_without_sugar_sends_an_empty_object() {
+        let sent = params("ListTasks", Some("ignored"), Some(TASK), None).unwrap();
+        assert_eq!(sent, json!({}));
+    }
 }
