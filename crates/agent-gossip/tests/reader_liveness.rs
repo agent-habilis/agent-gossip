@@ -215,3 +215,50 @@ fn poll_len(mesh: &str, nickname: &str) -> usize {
         .expect("poll prints a JSON array");
     events.len()
 }
+
+/// An agent that waits through MCP or the in-process api parks a long fetch
+/// and holds no OS lock. It reads that peer all the same, so `bell` is true.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_parked_in_process_fetch_counts_as_a_bell() {
+    let bob = common::InProcNode::create("rl-mcp").await;
+    let mesh = bob.mesh.clone();
+    let bob_nick = bob.nickname.clone();
+    let alice = {
+        let mesh = mesh.clone();
+        let bob_nick = bob_nick.clone();
+        tokio::task::spawn_blocking(move || {
+            let alice = Node::join(&mesh, "rl-mcp-alice");
+            assert!(alice.wait_ready(&mesh), "alice socket never appeared");
+            await_peer_card_cli(&mesh, &alice.nickname, &bob_nick);
+            alice
+        })
+        .await
+        .expect("alice joins")
+    };
+    // Serve the backlog, so the long fetch below parks.
+    bob.session.fetch(None, false).await.expect("fetch");
+
+    let alice_nick = alice.nickname.clone();
+    // Shorter than the park cap, so the fetch is still parked when it ends.
+    let query = tokio::task::spawn_blocking(move || {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut last = None;
+        while Instant::now() < deadline {
+            last = reader_of(&mesh, &alice_nick, &bob_nick);
+            if last.as_ref().is_some_and(|reader| reader["bell"] == true) {
+                break;
+            }
+            std::thread::sleep(POLL);
+        }
+        last
+    });
+    let seen = tokio::select! {
+        _ = bob.session.fetch(None, true) => panic!("the long fetch returned before the query"),
+        seen = query => seen.expect("the query ran"),
+    };
+    assert_eq!(
+        seen.as_ref().map(|reader| reader["bell"].clone()),
+        Some(serde_json::Value::Bool(true)),
+        "a parked in-process fetch must read as bell:true, got {seen:?}"
+    );
+}

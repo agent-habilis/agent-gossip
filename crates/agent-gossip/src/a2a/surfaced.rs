@@ -439,6 +439,13 @@ impl SurfacedState {
         targets
     }
 
+    /// Whether a cursor-less long poll (a bell) is parked here.
+    pub(crate) fn has_parked_bell(&self) -> bool {
+        self.poll_waiters
+            .iter()
+            .any(|waiter| matches!(waiter.baseline, PollBaseline::Served))
+    }
+
     /// Whole seconds since a foreground poll last ran, or `None` before the
     /// first one.
     pub(crate) fn last_poll_secs_ago(&self, now: TokioInstant) -> Option<u64> {

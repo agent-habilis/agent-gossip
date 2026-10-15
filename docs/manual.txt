@@ -691,7 +691,8 @@ COMMANDS
 
               reader shows whether an agent reads that peer: {"bell":true,
               "last_poll_secs_ago":30}. bell is true when the peer has a
-              parked poll --long. last_poll_secs_ago is the seconds since
+              parked poll --long, or a parked long fetch through MCP or the
+              in-process api. last_poll_secs_ago is the seconds since
               the peer last ran a poll without --long, or null before the
               first one. peers asks each live peer when you run it, and
               waits at most 0.5 seconds. The key is absent for a peer that

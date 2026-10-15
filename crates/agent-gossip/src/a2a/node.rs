@@ -1056,7 +1056,10 @@ async fn handle_a2a_req(
                     .await
                 }
                 Served::ReaderGet => Ok(serde_json::json!({
-                    "bell": crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str()),
+                    // A CLI bell holds the OS lock. An MCP or in-process reader
+                    // holds none, but parks a long fetch.
+                    "bell": crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
+                        || app.surfaced.has_parked_bell(),
                     "last_poll_secs_ago": app
                         .surfaced
                         .last_poll_secs_ago(tokio::time::Instant::now()),
