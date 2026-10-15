@@ -763,8 +763,9 @@ async fn poll(mut opts: PollOpts) -> Result<()> {
     // before the daemon has minted its identity.
     let (mesh, nickname) = match identity {
         PollIdentity::StateFile(path) => {
-            wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
-            let carried = habilis_network::runtime::state_file::read_identity(&path);
+            let ready =
+                wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
+            let carried = ready.identity();
             let missing = |field: &'static str| {
                 anyhow::anyhow!("state file {} carries no {field}", path.display())
             };
@@ -1018,14 +1019,27 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         timeout_secs,
         legacy_output: _,
     } = opts;
-    wait_for_ready(&state_file, timeout_secs).await?;
-    print_ready_identity(&state_file);
+    let ready = wait_for_ready(&state_file, timeout_secs).await?;
+    print_ready_identity(&ready);
     Ok(())
+}
+
+/// A state file that `wait_for_ready` saw report a fresh `ready: true`. Only
+/// `wait_for_ready` builds one, so an identity read through it follows a passed
+/// readiness check.
+struct ReadyStateFile {
+    path: std::path::PathBuf,
+}
+
+impl ReadyStateFile {
+    fn identity(&self) -> habilis_network::runtime::state_file::SessionIdentity {
+        habilis_network::runtime::state_file::read_identity(&self.path)
+    }
 }
 
 /// Block until `state_file` reports a fresh `ready: true`, or fail at the
 /// deadline. The wait behind both the `ready` gate and `poll --state-file`.
-async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Result<()> {
+async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Result<ReadyStateFile> {
     // Saturating add: an absurd `--timeout-secs` must not panic the gate
     // (`Instant + Duration` panics on overflow); clamp to a far-future
     // deadline instead.
@@ -1049,7 +1063,9 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
         .await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
-                return Ok(());
+                return Ok(ReadyStateFile {
+                    path: state_file.to_path_buf(),
+                });
             }
             Ok(_) => {}
             Err(error) => {
@@ -1073,8 +1089,8 @@ async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Resu
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"gossip":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
-fn print_ready_identity(state_file: &std::path::Path) {
-    let identity = habilis_network::runtime::state_file::read_identity(state_file);
+fn print_ready_identity(ready: &ReadyStateFile) {
+    let identity = ready.identity();
     let mut obj = serde_json::Map::new();
     for (key, value) in [
         ("gossip", identity.mesh),
