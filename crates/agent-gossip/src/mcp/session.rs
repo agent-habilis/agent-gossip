@@ -10,10 +10,9 @@ use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::MeshName;
 use habilis_network::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 
-use crate::a2a::TaskId;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
-    TaskArtifactParams, TopicConfig,
+    TaskArtifactParams, TaskStatusParams, TopicConfig,
 };
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
@@ -109,15 +108,9 @@ impl Session {
     /// Fails if the event loop has stopped.
     pub(super) async fn task_status(
         &self,
-        task_id: TaskId,
-        state: crate::a2a::TaskState,
-        note: Option<String>,
-        waiting: Option<String>,
+        status: TaskStatusParams,
     ) -> Result<(MessageId, Message)> {
-        let msg = self
-            .inner
-            .task_status(task_id, state, note, waiting)
-            .await?;
+        let msg = self.inner.task_status(status).await?;
         Ok((msg.id.clone(), msg))
     }
 

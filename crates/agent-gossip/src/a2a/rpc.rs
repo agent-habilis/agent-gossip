@@ -6,7 +6,7 @@ use habilis_network::protocol::{Channel, MessageBody, Nickname};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use super::{TaskId, task::TaskRecord, task::TaskRole};
+use super::{TaskId, extensions::META_WAITING, task::TaskRecord, task::TaskRole};
 use crate::a2a::app::A2aApp;
 use crate::a2a::send::{BroadcastParams, emit_task_status, log_pending, send_broadcast};
 use crate::output;
@@ -204,16 +204,20 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
         TaskRole::Initiator => "initiator",
         TaskRole::Receiver => "worker",
     };
+    let mut metadata = serde_json::json!({
+        "mesh:peer": rec.peer.as_str(),
+        "mesh:role": role(rec.role),
+        "mesh:ball": role(rec.ball),
+        "mesh:review": rec.review,
+    });
+    if let Some(reason) = &rec.waiting {
+        metadata[META_WAITING] = Value::from(reason.as_str());
+    }
     serde_json::json!({
         "id": task_id.as_str(),
         "contextId": mesh.as_str(),
         "status": { "state": rec.state },
-        "metadata": {
-            "mesh:peer": rec.peer.as_str(),
-            "mesh:role": role(rec.role),
-            "mesh:ball": role(rec.ball),
-            "mesh:review": rec.review,
-        },
+        "metadata": metadata,
     })
 }
 
@@ -293,6 +297,7 @@ pub(crate) async fn handle_op(
                     task_id: &task_id,
                     task_state: super::TaskState::Canceled,
                     note: Some("canceled"),
+                    waiting: None,
                     app,
                 },
                 state,

@@ -26,7 +26,9 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_gossip::api::{A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams};
+use agent_gossip::api::{
+    A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams, TaskStatusParams,
+};
 // The single source of truth for the runtime base dir lives in the app crate;
 // re-export it so test code resolves the same per-user base the daemon uses
 // without a divergent copy.
@@ -1203,9 +1205,27 @@ impl InProcNode {
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
     pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
         self.session
-            .task_status(task_id.clone(), state, note.map(str::to_owned))
+            .task_status(TaskStatusParams {
+                task_id: task_id.clone(),
+                state,
+                note: note.map(str::to_owned),
+                waiting: None,
+            })
             .await
             .expect("in-process task_status failed");
+    }
+
+    /// Worker-emit a `working` status that says the worker waits on its user.
+    pub async fn task_waiting(&self, task_id: &TaskId, reason: &str) {
+        self.session
+            .task_status(TaskStatusParams {
+                task_id: task_id.clone(),
+                state: TaskState::Working,
+                note: None,
+                waiting: Some(reason.to_owned()),
+            })
+            .await
+            .expect("in-process task_waiting failed");
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
