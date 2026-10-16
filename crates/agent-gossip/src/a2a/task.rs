@@ -101,7 +101,9 @@ pub(crate) struct TaskRecord {
     /// last status leg. Any other status leg clears it.
     pub waiting: Option<String>,
     /// Wire time of the status leg that last set or cleared `waiting`. A leg
-    /// older than this is a replay and changes nothing.
+    /// older than this is a replay and changes nothing. A worker clock that
+    /// steps back drops newer waiting updates until it passes this time again,
+    /// the same exposure as `is_stale`, accepted.
     pub waiting_at: Option<UnixSecs>,
     /// When this node last told its agent that the worker's reader is silent,
     /// so one task raises one event per interval.
@@ -279,15 +281,19 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         now,
     );
     // Every status leg restates whether the worker waits, so a plain one clears
-    // it. Anti-entropy replays old legs, and the empty `working` ones never
-    // reach `surfaced_legs`, so the worker's own clock orders them. A finished
-    // task waits for nothing.
+    // it. Anti-entropy replays old legs, so two checks gate the waiting update
+    // only: the worker's clock drops a leg older than the last answer, and
+    // `surfaced_legs` drops a leg already shown, which covers a replay in the
+    // same second as the answer. `apply` above still runs for every leg and
+    // `advance` is idempotent. A finished task waits for nothing.
     if matches!(kind, LegKind::Status(_))
         && let Some(rec) = tasks.get_mut(task_id)
     {
         if rec.state.is_terminal() {
             rec.waiting = None;
-        } else if rec.waiting_at.is_none_or(|at| frame.timestamp >= at) {
+        } else if rec.waiting_at.is_none_or(|at| frame.timestamp >= at)
+            && !rec.surfaced_legs.contains(&frame.id)
+        {
             rec.waiting = waiting;
             rec.waiting_at = Some(frame.timestamp);
         }
@@ -1297,20 +1303,34 @@ mod tests {
     }
 
     /// Anti-entropy re-serves old status legs hours late. Both the `--waiting`
-    /// leg and the plain leg that clears it are empty `working` legs that never
-    /// reach the surfaced-leg set, so only their wire time can tell a replay from
-    /// news. A replay must not set or clear the reason again.
+    /// leg and the plain leg that clears it surface once, so the node records
+    /// their ids; their wire time covers the rest. A replay must not set or clear
+    /// the reason again, also when the leg shares its second with the clear.
     #[test]
     fn a_replayed_status_leg_does_not_undo_a_newer_waiting_answer() {
         let first = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
+        // As the node does after it ingests a leg that surfaces.
+        let deliver = |registry: &mut HashMap<TaskId, TaskRecord>, frame| {
+            ingest_inbound(registry, frame);
+            super::note_surfaced(registry, &tid(), frame);
+        };
         let waiting = waiting_leg(Some("asks its user"), first);
+        let clear_same_second = waiting_leg(None, first);
         let clear = waiting_leg(None, first + Duration::from_secs(10));
         let waiting_again = waiting_leg(Some("asks again"), first + Duration::from_secs(20));
 
-        ingest_inbound(&mut tasks, &waiting);
-        ingest_inbound(&mut tasks, &clear);
+        deliver(&mut tasks, &waiting);
+        deliver(&mut tasks, &clear_same_second);
         assert_eq!(tasks[&tid()].waiting, None);
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a replayed --waiting leg of the same second must not set the reason again"
+        );
+
+        deliver(&mut tasks, &clear);
         ingest_inbound(&mut tasks, &waiting);
         assert_eq!(
             tasks[&tid()].waiting,
@@ -1318,7 +1338,7 @@ mod tests {
             "a replayed --waiting leg must not set the reason again"
         );
 
-        ingest_inbound(&mut tasks, &waiting_again);
+        deliver(&mut tasks, &waiting_again);
         assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks again"));
         ingest_inbound(&mut tasks, &clear);
         assert_eq!(
