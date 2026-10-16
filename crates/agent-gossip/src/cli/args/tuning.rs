@@ -43,6 +43,10 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_SKILL_SILENCE_MAX_SECS)]
     pub task_skill_silence_max_secs: u64,
 
+    /// Worker-agent silence after which the initiator's daemon raises `task_stalled` (seconds).
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_STALL_CHECK_SECS)]
+    pub task_stall_check_secs: u64,
+
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = defaults::BEACON_COHOST_GRACE.as_secs())]
     pub beacon_cohost_grace_secs: u64,
@@ -147,6 +151,7 @@ impl TuningOpts {
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
             task_skill_silence_max_secs: self.task_skill_silence_max_secs,
+            task_stall_check_secs: self.task_stall_check_secs,
             longpoll_max_ms: self.longpoll_max_ms,
         }
     }
