@@ -1,6 +1,7 @@
 use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
-use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{AuthorKey, Nickname};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
+use habilis_network::x25519_dalek::PublicKey;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -13,8 +14,8 @@ use super::{
 /// interface with a `url`; a mesh peer has no HTTP endpoint, so its gossip
 /// interface is addressed by public key alone.
 #[must_use]
-pub(crate) fn peer_url(pubkey_hex: &str) -> String {
-    pubkey_hex.to_owned()
+pub(crate) fn peer_url(author_key: AuthorKey) -> String {
+    author_key.to_string()
 }
 
 /// This peer's `AgentCard` — the canonical A2A self-description every
@@ -32,7 +33,11 @@ pub(crate) fn peer_url(pubkey_hex: &str) -> String {
 /// under `/peers/<nick>` — the card is the daemon's contribution, not the whole
 /// peer entry.
 #[must_use]
-pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &str) -> AgentCard {
+pub(crate) fn own_card(
+    nickname: &Nickname,
+    author_key: AuthorKey,
+    seal_pubkey_b58: &str,
+) -> AgentCard {
     let extension = |uri: &str, description: &str| AgentExtension {
         uri: uri.to_string(),
         description: Some(description.to_string()),
@@ -46,7 +51,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
              mesh's A2A gossip binding"
         ),
         supported_interfaces: vec![AgentInterface {
-            url: peer_url(pubkey_hex),
+            url: peer_url(author_key),
             protocol_binding: GOSSIP_BINDING.to_string(),
             tenant: None,
             protocol_version: PROTOCOL_VERSION.to_string(),
@@ -124,7 +129,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
 /// the peer's card or key hasn't replicated yet. The card is bound to its author
 /// (foreign-card merges are dropped), so this key is authenticated by the same
 /// forgery protection as the rest of the card.
-pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Option<[u8; 32]> {
+pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Option<PublicKey> {
     let extensions = meta_doc
         .pointer(&format!("/peers/{peer}/card/capabilities/extensions"))?
         .as_array()?;
@@ -137,7 +142,8 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
         })?
         .pointer("/params/x25519")?
         .as_str()?;
-    bs58::decode(b58).into_vec().ok()?.try_into().ok()
+    let bytes: [u8; 32] = bs58::decode(b58).into_vec().ok()?.try_into().ok()?;
+    Some(PublicKey::from(bytes))
 }
 
 /// The stable dial hint published *inside* the card at
@@ -294,14 +300,18 @@ pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{AuthorKey, Nickname};
 
     use super::{own_card, publish_merges};
 
     #[test]
     fn card_declares_the_mesh_extensions_and_identity() {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let card = own_card(&Nickname::from("calm-otter"), &"ab".repeat(32), &seal_b58);
+        let card = own_card(
+            &Nickname::from("calm-otter"),
+            AuthorKey::from_bytes([0xab; 32]),
+            &seal_b58,
+        );
         assert_eq!(card.name, "calm-otter");
         assert_eq!(card.capabilities.streaming, Some(true));
         let uris: Vec<&str> = card
@@ -340,7 +350,7 @@ mod tests {
     fn publish_merge_targets_the_peer_card_path() {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let card = own_card(&nickname, &"ab".repeat(32), &seal_b58);
+        let card = own_card(&nickname, AuthorKey::from_bytes([0xab; 32]), &seal_b58);
         let card = serde_json::to_value(card).unwrap();
         // A frame that is never full: the card is one merge.
         let merges = publish_merges(&nickname, &card, |_| Ok(0)).unwrap();
@@ -401,13 +411,16 @@ mod tests {
     /// envelope, the seal under the channel key, the signed channel event.
     fn passworded_frame_len(merge: &serde_json::Value) -> anyhow::Result<usize> {
         use habilis_network::ops::doc::{MeshDoc, change_body, encrypt_body};
-        use habilis_network::protocol::{Channel, Identity, MeshId, Message};
+        use habilis_network::protocol::{Channel, Identity, MeshId, Message, SymmetricKey};
 
         let doc = MeshDoc::new_ungated();
         let Some(change) = doc.build_change(merge, &[9u8; 32])? else {
             return Ok(0);
         };
-        let sealed = encrypt_body(&change_body(&change, None)?, &[3u8; 32])?;
+        let sealed = encrypt_body(
+            &change_body(&change, None)?,
+            &SymmetricKey::from_bytes([3u8; 32]),
+        )?;
         let frame = Message::new_channel_event(
             &MeshId::from("test"),
             &Nickname::from("calm-otter"),
@@ -421,8 +434,12 @@ mod tests {
     /// The card of the longest nickname and a relay URL of the real kind.
     fn worst_case_card(nickname: &Nickname) -> serde_json::Value {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let mut card =
-            serde_json::to_value(own_card(nickname, &"ab".repeat(32), &seal_b58)).unwrap();
+        let mut card = serde_json::to_value(own_card(
+            nickname,
+            AuthorKey::from_bytes([0xab; 32]),
+            &seal_b58,
+        ))
+        .unwrap();
         card["endpoint"] = serde_json::json!({
             "id": "ab".repeat(32),
             "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
@@ -517,8 +534,12 @@ mod tests {
     fn complete_card_serves_a_card_only_when_the_schema_is_whole() {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let whole_card =
-            serde_json::to_value(own_card(&nickname, &"ab".repeat(32), &seal_b58)).unwrap();
+        let whole_card = serde_json::to_value(own_card(
+            &nickname,
+            AuthorKey::from_bytes([0xab; 32]),
+            &seal_b58,
+        ))
+        .unwrap();
         let whole = serde_json::json!({ "peers": { "calm-otter": { "card": whole_card } } });
         assert!(super::complete_card(&whole, &nickname).is_some());
 

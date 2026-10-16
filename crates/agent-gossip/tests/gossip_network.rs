@@ -2675,10 +2675,9 @@ async fn same_nickname_peers_communicate() {
         .into_iter()
         .find(|msg| chat_text(msg) == "from-alpha")
         .expect("alpha's message is present");
-    assert_eq!(
-        from_alpha.pubkey.len(),
-        64,
-        "a surfaced message carries the author's full 32-byte key as hex"
+    assert!(
+        from_alpha.author_key().is_some(),
+        "a surfaced message carries the author's key"
     );
 
     alpha.leave().await;

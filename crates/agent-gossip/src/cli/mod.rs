@@ -133,7 +133,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
             habilis_network::runtime::tuning::init(habilis_network::runtime::tuning::Tuning {
-                ping_window_secs,
+                ping_window: std::time::Duration::from_secs(ping_window_secs),
                 directory_private,
                 ..habilis_network::runtime::tuning::Tuning::DEFAULTS
             });
@@ -766,7 +766,8 @@ async fn poll(mut opts: PollOpts) -> Result<()> {
     let (mesh, nickname) = match identity {
         PollIdentity::StateFile(path) => {
             let ready =
-                wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
+                wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX.as_secs())
+                    .await?;
             let carried = ready.identity();
             let missing = |field: &'static str| {
                 anyhow::anyhow!("state file {} carries no {field}", path.display())
@@ -834,9 +835,7 @@ async fn poll(mut opts: PollOpts) -> Result<()> {
         // degrading long reads to immediate empties (waiter registry full)
         // can't spin this loop hot — the unchanged cursor re-reads anything
         // that lands during the sleep.
-        let min_cycle = std::time::Duration::from_millis(
-            habilis_network::runtime::tuning::POLL_LONG_MIN_CYCLE_MS,
-        );
+        let min_cycle = habilis_network::runtime::tuning::POLL_LONG_MIN_CYCLE;
         if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
             tokio::time::sleep(remaining).await;
         }
@@ -880,7 +879,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
 /// suffixed duration, or `none`/`0` for no expiry. Absent ⇒ the 24h default.
 fn parse_ttl(raw: Option<&str>) -> Result<u64> {
     let Some(raw) = raw.map(str::trim) else {
-        return Ok(habilis_network::util::consts::INVITE_DEFAULT_TTL_SECS);
+        return Ok(habilis_network::util::consts::INVITE_DEFAULT_TTL.as_secs());
     };
     if raw.eq_ignore_ascii_case("none") {
         return Ok(0);

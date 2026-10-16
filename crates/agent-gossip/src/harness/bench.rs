@@ -12,8 +12,7 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use habilis_network::protocol::crypto;
-use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice};
+use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice, Seed};
 
 use crate::policy::app_policy;
 use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
@@ -64,14 +63,14 @@ fn cfg(lookups: LookupOpts) -> MeshConfig {
 
 #[must_use]
 pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
-    crypto::derive_secret(seed, label)
+    *Seed::from_bytes(*seed).derive(label).as_bytes()
 }
 
 // ── mesh id (token) round-trip — config is part of the id ──────────
 
 #[must_use]
 pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
-    Mesh::new([7u8; 32], name.clone(), config.0.clone()).to_string()
+    Mesh::new(Seed::from_bytes([7u8; 32]), name.clone(), config.0.clone()).to_string()
 }
 
 pub fn mesh_decode(token: &str) {

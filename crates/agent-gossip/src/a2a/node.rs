@@ -6,7 +6,7 @@ use habilis_network::embed::{AppClass, InboundApp, NodeApp};
 use habilis_network::embed::{IpcRequest, NodeDriver};
 use habilis_network::net::add_peer_addr;
 use habilis_network::protocol::MessageBody;
-use habilis_network::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
+use habilis_network::protocol::{AppTag, Channel, DedupKey, Message, MessageKind, Nickname};
 use habilis_network::runtime::state_file::StateFile;
 use tokio::time::Instant as TokioInstant;
 
@@ -287,7 +287,7 @@ impl NodeDriver for A2aApp {
 /// # Errors
 /// The card does not fit the frames, or a merge was refused.
 async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> anyhow::Result<()> {
-    let seal_b58 = bs58::encode(state.identity().seal_public()).into_string();
+    let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
     let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
     // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
     // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
@@ -666,7 +666,7 @@ fn surface_receipt(message: &Message, app: &A2aApp) {
         from: &message.author,
         ref_id: &receipt.ref_id,
         state,
-        ts: u64::try_from(message.timestamp).unwrap_or_default(),
+        ts: u64::try_from(message.timestamp.as_secs()).unwrap_or_default(),
     });
 }
 
@@ -779,7 +779,7 @@ fn surface_chat(
 }
 
 fn is_replayed_chat(
-    surfaced: &habilis_network::util::bounded_fifo_set::BoundedFifoSet<[u8; 16]>,
+    surfaced: &habilis_network::util::bounded_fifo_set::BoundedFifoSet<DedupKey>,
     message: &Message,
 ) -> bool {
     surfaced.contains(&message.dedup_key())
@@ -1443,10 +1443,8 @@ mod classify_tests {
         );
     }
 
-    fn chat_from(pubkey: &str) -> Message {
-        let mut chat = msg_frame(None);
-        chat.pubkey = pubkey.to_owned();
-        chat
+    fn chat_from(identity: &habilis_network::protocol::Identity) -> Message {
+        msg_frame(None).signed(identity)
     }
 
     // Anti-entropy re-sends a chat line once the engine has forgotten its key.
@@ -1454,7 +1452,7 @@ mod classify_tests {
     #[test]
     fn a_chat_line_surfaces_once() {
         let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
-        let chat = chat_from("aa");
+        let chat = chat_from(&habilis_network::protocol::Identity::generate());
         surfaced.insert(chat.dedup_key());
         assert!(is_replayed_chat(&surfaced, &chat));
     }
@@ -1464,10 +1462,11 @@ mod classify_tests {
     #[test]
     fn the_same_id_from_another_author_still_surfaces() {
         let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
-        let chat = chat_from("aa");
+        let chat = chat_from(&habilis_network::protocol::Identity::generate());
         surfaced.insert(chat.dedup_key());
-        let mut forgery = chat.clone();
-        forgery.pubkey = "bb".to_owned();
+        let forgery = chat
+            .clone()
+            .signed(&habilis_network::protocol::Identity::generate());
         assert!(!is_replayed_chat(&surfaced, &forgery));
     }
 
@@ -1477,7 +1476,7 @@ mod classify_tests {
     #[test]
     fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
         let mut app = crate::a2a::app::A2aApp::detached(crate::output::Output::silent());
-        let chat = chat_from("aa");
+        let chat = chat_from(&habilis_network::protocol::Identity::generate());
 
         // A msg addressed to someone else: the handler declines, nothing recorded.
         assert!(!surface_chat(&chat, true, &mut app, |_, _| false));

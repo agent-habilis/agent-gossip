@@ -146,7 +146,7 @@ pub(super) async fn forward_one(bridge: &Bridge, tcp: TcpStream) -> Result<()> {
     };
     let conn = bridge.shared.get().await?;
     let (mut send, recv) = conn.open_bi().await?;
-    send.write_all(&bridge.auth.token)
+    send.write_all(bridge.auth.token.as_bytes())
         .await
         .context("sending the auth token failed")?;
     send.write_all(&opening)

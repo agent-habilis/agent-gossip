@@ -71,7 +71,13 @@ fn json_signed_message_exposes_full_pubkey() {
     let msg = chat_frame("alice", "hi").signed(&identity);
     let parsed = parse(&format_msg_json(&msg, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
-    assert_eq!(pubkey, msg.pubkey, "event pubkey must be the message's key");
+    assert_eq!(
+        pubkey,
+        msg.author_key()
+            .expect("signed message has a key")
+            .to_string(),
+        "event pubkey must be the message's key"
+    );
     assert_eq!(pubkey.len(), 64, "full 32-byte key as hex");
 }
 

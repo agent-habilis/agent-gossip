@@ -11,7 +11,7 @@
 use anyhow::{Context, Result, bail};
 use habilis_network::iroh::EndpointAddr;
 use habilis_network::net::{endpoint_addr_from_json, endpoint_addr_to_json};
-use habilis_network::protocol::LookupOpts;
+use habilis_network::protocol::{LookupOpts, TicketSecret};
 use sha2::{Digest, Sha256};
 
 use super::SECRET_LEN;
@@ -30,7 +30,7 @@ const PASSWORD_BIT: u8 = 0b0000_0001;
 /// A decoded a2a bridge ticket.
 pub(crate) struct A2aTicket {
     pub addr: EndpointAddr,
-    pub secret: [u8; SECRET_LEN],
+    pub secret: TicketSecret,
     pub lookups: LookupOpts,
     /// Password-protected: the consumer must present the Argon2id stretch of
     /// the password (salted by `secret`) in the stream header instead of the
@@ -43,7 +43,7 @@ impl A2aTicket {
     /// Encode as a bare base58 a2a bridge token.
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
-        payload.extend_from_slice(&self.secret);
+        payload.extend_from_slice(self.secret.as_bytes());
         payload.push(if self.password { PASSWORD_BIT } else { 0 });
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
@@ -72,9 +72,12 @@ impl A2aTicket {
             bail!("not an a2a ticket: wrong ticket kind");
         }
         let payload = &framed[2..];
-        let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
-        let mut secret = [0u8; SECRET_LEN];
-        secret.copy_from_slice(secret_slice);
+        let secret = TicketSecret::from_bytes(
+            payload
+                .get(..SECRET_LEN)
+                .context("ticket too short")?
+                .try_into()?,
+        );
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let password = flags & PASSWORD_BIT != 0;
         let mut pos = SECRET_LEN + 1;
@@ -123,7 +126,7 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use habilis_network::iroh::{EndpointAddr, SecretKey};
-    use habilis_network::protocol::LookupOpts;
+    use habilis_network::protocol::{LookupOpts, TicketSecret};
 
     use super::{A2aTicket, SECRET_LEN};
 
@@ -137,7 +140,7 @@ mod tests {
         let addr = sample_addr(3);
         let ticket = A2aTicket {
             addr: addr.clone(),
-            secret: [9u8; SECRET_LEN],
+            secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
         };
@@ -146,7 +149,7 @@ mod tests {
         assert!(!encoded.contains("://"));
         let decoded = A2aTicket::decode(&encoded).expect("decode");
         assert_eq!(decoded.addr.id, addr.id);
-        assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
+        assert_eq!(decoded.secret.as_bytes(), &[9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
         assert!(!decoded.password);
     }
@@ -155,7 +158,7 @@ mod tests {
     fn password_flag_round_trips() {
         let ticket = A2aTicket {
             addr: sample_addr(11),
-            secret: [9u8; SECRET_LEN],
+            secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: true,
         };
@@ -168,7 +171,7 @@ mod tests {
         // A bare mesh id shares the base58 shape but frames a different
         // payload, so it fails ticket decode on the checksum/kind check.
         let mesh = habilis_network::protocol::Mesh::new(
-            [1u8; 32],
+            habilis_network::protocol::Seed::from_bytes([1u8; 32]),
             habilis_network::protocol::MeshName::new("t").unwrap(),
             habilis_network::protocol::MeshConfig::loopback(),
         )
@@ -182,8 +185,10 @@ mod tests {
         // kind byte, so it must not decode as an a2a ticket — and vice versa.
         let blob = habilis_network::ops::blob::BlobTicket {
             addr: sample_addr(3),
-            secret: [9u8; habilis_network::ops::blob::SECRET_LEN],
-            sha256: [7u8; habilis_network::ops::blob::HASH_LEN],
+            secret: TicketSecret::from_bytes([9u8; habilis_network::ops::blob::SECRET_LEN]),
+            sha256: habilis_network::ops::blob::BlobDigest::from_bytes(
+                [7u8; habilis_network::ops::blob::HASH_LEN],
+            ),
             size: 1_234_567,
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -191,7 +196,7 @@ mod tests {
         };
         let a2a = A2aTicket {
             addr: sample_addr(4),
-            secret: [9u8; SECRET_LEN],
+            secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
         };
@@ -203,7 +208,7 @@ mod tests {
     fn rejects_bad_checksum() {
         let ticket = A2aTicket {
             addr: sample_addr(5),
-            secret: [1u8; SECRET_LEN],
+            secret: TicketSecret::from_bytes([1u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: false,
         };

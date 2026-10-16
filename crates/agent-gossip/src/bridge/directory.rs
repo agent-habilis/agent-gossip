@@ -19,7 +19,7 @@ use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
 use habilis_network::protocol::{MeshId, MessageBody, Nickname};
 use habilis_network::runtime::CoHostPolicy;
 use habilis_network::runtime::tuning::{
-    advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
+    advertise_interval, directory_expiry, directory_private_for_test,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
@@ -194,7 +194,7 @@ pub(crate) fn spawn_ticket_advertiser(
                 return;
             }
         };
-        let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
+        let mut ticker = tokio::time::interval(advertise_interval());
         loop {
             ticker.tick().await;
             if let Err(error) = session.broadcast(body.clone()).await {
@@ -243,7 +243,7 @@ impl TicketDirectory {
 
         let collector = Arc::clone(&listings);
         let task = tokio::spawn(async move {
-            let ttl = Duration::from_secs(directory_expiry_secs());
+            let ttl = directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
             loop {
@@ -345,7 +345,7 @@ mod tests {
             .with_ip_addr("127.0.0.1:4242".parse().unwrap());
         A2aTicket {
             addr,
-            secret: [secret; 32],
+            secret: habilis_network::protocol::TicketSecret::from_bytes([secret; 32]),
             lookups: LookupOpts::loopback(),
             password,
         }

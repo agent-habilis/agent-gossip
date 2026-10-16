@@ -12,8 +12,7 @@ use habilis_network::iroh::Endpoint;
 use habilis_network::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use habilis_network::net::build_endpoint;
 use habilis_network::protocol::{DirectorySelection, LookupOpts, LookupSet, validate_advertise};
-use habilis_network::protocol::{Password, TicketAuth, ct_eq};
-use rand::RngCore;
+use habilis_network::protocol::{Password, TicketAuth, TicketSecret, ct_eq};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
@@ -119,8 +118,7 @@ pub(super) async fn bind(
     if !lookups.is_loopback() {
         wait_online(&endpoint).await;
     }
-    let mut secret = [0u8; SECRET_LEN];
-    rand::rng().fill_bytes(&mut secret);
+    let secret = TicketSecret::from_bytes(rand::random());
     let auth = TicketAuth::derive(&secret, password, A2A_TICKET_LABEL);
     let ticket = A2aTicket {
         addr: endpoint.addr(),
@@ -190,7 +188,7 @@ async fn serve_stream(
     if recv.read_exact(&mut token).await.is_err() {
         return Ok(());
     }
-    if !ct_eq(&token, &auth.token) {
+    if !ct_eq(&token, auth.token.as_bytes()) {
         let code = if auth.password_protected {
             WRONG_PASSWORD
         } else {

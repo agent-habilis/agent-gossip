@@ -670,7 +670,9 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
             seal_key,
         },
     )
-    .timestamp(1_000_000_000)
+    .timestamp(habilis_network::protocol::UnixSecs::from_secs(
+        1_000_000_000,
+    ))
     .sign(&adversarial::new_key());
     let old_id = old.frame_id();
     attacker
@@ -777,7 +779,9 @@ async fn gap_future_timestamp_is_accepted() {
     let key = adversarial::new_key();
     let evil = CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future")
         .wrap_a2a()
-        .timestamp(4_102_444_800) // 2100-01-01
+        .timestamp(habilis_network::protocol::UnixSecs::from_secs(
+            4_102_444_800,
+        )) // 2100-01-01
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");

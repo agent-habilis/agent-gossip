@@ -256,7 +256,9 @@ async fn raw_secret_is_rejected_on_a_passworded_bridge() {
         .await
         .expect("dial");
     let (mut send, mut recv) = conn.open_bi().await.expect("open stream");
-    send.write_all(&ticket.secret).await.expect("write token");
+    send.write_all(ticket.secret.as_bytes())
+        .await
+        .expect("write token");
     let _ = recv.read_to_end(64).await;
     let closed = conn.close_reason();
     assert!(

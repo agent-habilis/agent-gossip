@@ -512,7 +512,11 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
         })
         .to_string();
     };
-    match habilis_network::ops::invite::mint(mesh, Some(ttl), state.mesh_password()) {
+    match habilis_network::ops::invite::mint(
+        mesh,
+        Some(Duration::from_secs(ttl)),
+        state.mesh_password(),
+    ) {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }

@@ -1,14 +1,13 @@
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use habilis_network::ops::directory;
 use habilis_network::ops::directory::directory_mesh;
 use habilis_network::protocol::{LookupOpts, MeshName};
 pub(crate) use habilis_network::runtime::DIRECTORY_ADVERTISER_COHOST;
 use habilis_network::runtime::EventLoopConfig;
-use habilis_network::runtime::tuning::advertise_interval_secs;
+use habilis_network::runtime::tuning::advertise_interval;
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
@@ -67,7 +66,7 @@ pub(crate) fn spawn_advertiser(
                 return;
             }
         };
-        let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
+        let mut ticker = tokio::time::interval(advertise_interval());
         loop {
             ticker.tick().await;
             let ad = directory::Ad {

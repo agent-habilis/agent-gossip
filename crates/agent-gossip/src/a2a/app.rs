@@ -8,7 +8,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use habilis_network::protocol::{Message, Nickname, ShardGroup};
+use habilis_network::protocol::{DedupKey, Message, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -114,7 +114,7 @@ pub(crate) struct A2aApp {
     /// `Message::dedup_key` of every chat line surfaced, the same
     /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
     /// a bounded count of frames, and anti-entropy then serves the line again.
-    pub surfaced_chat: BoundedFifoSet<[u8; 16]>,
+    pub surfaced_chat: BoundedFifoSet<DedupKey>,
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
     /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
     /// call's deadline. Fulfilled directly by the matching response frame.

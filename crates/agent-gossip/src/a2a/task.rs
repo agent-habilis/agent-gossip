@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use habilis_network::embed::EventLoopState;
 use habilis_network::embed::HandlerCtx;
-use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname};
+use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
@@ -217,8 +217,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
 /// old beat after the peer died. The bound is coarse on purpose, to tolerate
 /// clock skew between hosts.
 fn is_stale(frame: &Message) -> bool {
-    let age_secs = habilis_network::util::clock::unix_secs().saturating_sub(frame.timestamp);
-    u64::try_from(age_secs).is_ok_and(|age| age > task_timeout_secs())
+    UnixSecs::now().since(frame.timestamp).as_secs() > task_timeout_secs()
 }
 
 /// Whether an inbound leg was already shown, and must stay off the surface: its
@@ -956,7 +955,7 @@ mod tests {
                 body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
             },
         );
-        beat.timestamp -= 3600;
+        beat.timestamp = beat.timestamp - Duration::from_hours(1);
 
         let later = now.checked_add(Duration::from_mins(1)).unwrap();
         super::ingest(
