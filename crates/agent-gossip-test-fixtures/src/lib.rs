@@ -1807,7 +1807,7 @@ impl Node {
                 .output()
                 .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
                 .unwrap_or_default();
-            if last_state.starts_with('T') == want_stopped {
+            if !last_state.is_empty() && last_state.starts_with('T') == want_stopped {
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
