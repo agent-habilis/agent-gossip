@@ -139,9 +139,10 @@ worker acknowledged the task, but its agent has not polled for 30 minutes or
 more. The daemon cancels nothing. Probe the task with `GetTask`. If
 `mesh:waiting` is in its metadata, the worker waits for its own user: keep the
 task and move on. Otherwise send one follow-up with `--task-id` that asks for a
-status. If the worker sends no leg within one more interval and a second
-`task_stalled` arrives, cancel the task as in the next paragraph, and treat it
-as a drop of the subtask for the second-drop rule.
+status. If a second `task_stalled` arrives, put the choice to the user per the
+**Decisions** section: wait, ask the worker again, or reassign the subtask.
+Send `CancelTask` only when the user picks reassign, and only then count it as
+a drop of the subtask for the second-drop rule.
 
 **Don't idle behind a stalled pickup.** When a worker frees up and the queue
 has nothing ready for it, probe each sibling task still unacknowledged with
