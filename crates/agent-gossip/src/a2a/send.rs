@@ -734,6 +734,9 @@ pub(crate) struct TaskStatusParams<'a> {
     pub(crate) task_id: &'a crate::a2a::TaskId,
     pub(crate) task_state: crate::a2a::TaskState,
     pub(crate) note: Option<&'a str>,
+    /// Why a `working` task waits on the worker's own user; rides the leg as
+    /// `mesh:waiting`.
+    pub(crate) waiting: Option<&'a str>,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -764,6 +767,7 @@ pub(crate) async fn emit_task_status(
         task_id,
         task_state,
         note,
+        waiting,
         app,
     } = params;
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
@@ -777,6 +781,7 @@ pub(crate) async fn emit_task_status(
             task_id,
             task_state,
             note,
+            waiting,
             app,
         },
         state,
@@ -883,6 +888,9 @@ pub(crate) struct BroadcastTaskStatusParams<'a> {
     pub(crate) task_id: &'a crate::a2a::TaskId,
     pub(crate) task_state: crate::a2a::TaskState,
     pub(crate) note: Option<&'a str>,
+    /// Why a `working` task waits on the worker's own user; rides the leg as
+    /// `mesh:waiting`.
+    pub(crate) waiting: Option<&'a str>,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -904,6 +912,7 @@ pub(crate) async fn broadcast_task_status(
         task_id,
         task_state,
         note,
+        waiting,
         app,
     } = params;
     let update = crate::a2a::gossip::status_update(
@@ -912,7 +921,7 @@ pub(crate) async fn broadcast_task_status(
             task_id,
             state: task_state,
             note,
-            metadata: None,
+            metadata: crate::a2a::gossip::waiting_metadata(waiting),
         },
     );
     let plain = crate::a2a::gossip::payload_body(&update)?;
@@ -1922,6 +1931,7 @@ pub(crate) async fn handle_session_request(
             task_id,
             state: task_state,
             note,
+            waiting,
             resp,
         } => {
             let outcome = emit_task_status(
@@ -1931,6 +1941,7 @@ pub(crate) async fn handle_session_request(
                     task_id: &task_id,
                     task_state,
                     note: note.as_deref(),
+                    waiting: waiting.as_deref(),
                     app,
                 },
                 state,
