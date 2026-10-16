@@ -134,6 +134,15 @@ above is the escalation. When re-dispatching, prefer a worker other than the
 one that stalled. Preference only: the stalling peer stays a full candidate
 for every other subtask, with no ranking demotion.
 
+A `task_stalled` on a task that already has `working` is a different case: the
+worker acknowledged the task, but its agent has not polled for 30 minutes or
+more. The daemon cancels nothing. Probe the task with `GetTask`. If
+`mesh:waiting` is in its metadata, the worker waits for its own user: keep the
+task and move on. Otherwise send one follow-up with `--task-id` that asks for a
+status. If the worker sends no leg within one more interval and a second
+`task_stalled` arrives, cancel the task as in the next paragraph, and treat it
+as a drop of the subtask for the second-drop rule.
+
 **Don't idle behind a stalled pickup.** When a worker frees up and the queue
 has nothing ready for it, probe each sibling task still unacknowledged with
 `GetTask` (see the initiator flow). One still `TASK_STATE_SUBMITTED` ~2

@@ -41,6 +41,7 @@ SYNOPSIS
 
        agent-gossip a2a status --gossip GOSSIP --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
+                  [--waiting REASON]
 
        agent-gossip a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                   [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -435,13 +436,21 @@ COMMANDS
               from a peer that does not send one.
 
        a2a status --gossip GOSSIP --nickname NAME --task-id UUID
-                  --state STATE [--text TEXT]
+                  --state STATE [--text TEXT] [--waiting REASON]
               As the WORKER on a task you're serving, emit a TaskStatusUpdate
               (the A2A streaming plane): STATE is working (accept/resume),
               input-required (a question, or "please review" after an
               artifact), completed (close it after the initiator approves),
               failed, or canceled. --text becomes the status message. Pushed
               fire-and-forget to the other party.
+
+              --waiting REASON (only with --state working) tells the
+              initiator that the agent waits for its own user. It sets the
+              key mesh:waiting on the task, which GetTask shows in the task
+              metadata. While the key is set, the initiator's daemon does
+              not send task_stalled for the task. The next status leg of any
+              other kind clears the key, so when the user has answered, send
+              a plain `--state working`.
 
        a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -523,7 +532,7 @@ COMMANDS
               shape the live JSON stream emits — chat, presence
               joined/left, task legs, state/meta document echoes, AND the
               transient events (ping_report, peer_timeout/return,
-              task_timeout, fork) — each carrying its pre-built display
+              task_timeout, task_stalled, fork) — each carrying its pre-built display
               string, its is_visible print decision, its self flag, and a
               leading seq. So a poller and a stream reader parse one shape
               and can echo display verbatim either way (see "JSON EVENTS").
@@ -638,6 +647,17 @@ COMMANDS
               on an older version, which beats only while it owes the next
               move, is not timed out for silence until its first keepalive
               arrives.
+
+              The keepalive proves that the worker's daemon is up, not that
+              its agent works. So the worker's keepalive also carries
+              mesh:bell (whether the agent has a bell armed) and
+              mesh:last_poll (seconds since its last foreground poll). When
+              the task is working, the worker did not send --waiting, the bell
+              is not armed, and the last poll is 30 minutes old or more
+              (hidden flag --task-stall-check-secs), the initiator's daemon
+              emits task_stalled, once for each interval. A worker with no
+              bell, for example in a long build, can match this rule while it
+              works. Nothing is canceled: the initiator decides.
 
        ORCHESTRATION
               A skill-level convention layered on tasks: one agent (the
@@ -1281,6 +1301,19 @@ JSON EVENTS
 
                  {"event":"task_timeout","task_id":"<uuid>",
                   "reason":"timeout"|"peer-left"}
+
+       task_stalled
+              The initiator's daemon saw that the worker's agent has no armed
+              bell and has not polled for check_secs or more (30 minutes by
+              default), while the task is working and the worker did not send
+              --waiting. It states a fact and cancels nothing. The daemon
+              emits it once for each interval and for each task. The event is
+              visible: print its display line. A worker on an older version
+              sends no bell data, so it never raises this event.
+
+                 {"event":"task_stalled","task_id":"<uuid>","peer":"word-word",
+                  "last_poll_secs_ago":2100,"check_secs":1800,
+                  "display":"💬️ task stalled · <peer> has not polled for 35 min"}
 
        state  The gossip's shared state changed (see the state command). Carries
               the change (merge — the applied merge document) AND the newly-
