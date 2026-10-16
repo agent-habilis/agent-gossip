@@ -17,7 +17,7 @@
 //! record is frozen. Local triggers (the timeout) *broadcast* a terminal
 //! `canceled` status so the other side converges.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -220,6 +220,46 @@ fn is_stale(frame: &Message) -> bool {
     UnixSecs::now().since(frame.timestamp).as_secs() > task_timeout_secs()
 }
 
+/// What a reaped task keeps: enough to answer its own peer's `GetTask`, not
+/// the full record.
+pub(crate) struct ClosedTask {
+    pub peer: Nickname,
+    pub state: TaskState,
+}
+
+/// The reaped tasks, oldest dropped first once `cap` is reached. A map, because
+/// `BoundedFifoSet` keeps only ids and does not say what it evicted.
+pub(crate) struct ClosedTasks {
+    cap: usize,
+    order: VecDeque<TaskId>,
+    by_id: HashMap<TaskId, ClosedTask>,
+}
+
+impl ClosedTasks {
+    pub(crate) fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            order: VecDeque::new(),
+            by_id: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, task_id: TaskId, closed: ClosedTask) {
+        if self.by_id.insert(task_id.clone(), closed).is_none() {
+            self.order.push_back(task_id);
+        }
+        while self.order.len() > self.cap {
+            if let Some(oldest) = self.order.pop_front() {
+                self.by_id.remove(&oldest);
+            }
+        }
+    }
+
+    pub(crate) fn get(&self, task_id: &TaskId) -> Option<&ClosedTask> {
+        self.by_id.get(task_id)
+    }
+}
+
 /// Whether an inbound leg was already shown, and must stay off the surface: its
 /// task closed (live record terminal, or reaped and remembered in `closed`), or
 /// this leg id was surfaced before. An unknown task still surfaces: the
@@ -227,11 +267,11 @@ fn is_stale(frame: &Message) -> bool {
 /// can arrive ahead of it.
 pub(crate) fn is_replay(
     tasks: &HashMap<TaskId, TaskRecord>,
-    closed: &BoundedFifoSet<TaskId>,
+    closed: &ClosedTasks,
     task_id: &TaskId,
     leg_id: &MessageId,
 ) -> bool {
-    if closed.contains(task_id) {
+    if closed.get(task_id).is_some() {
         return true;
     }
     tasks
@@ -630,7 +670,7 @@ pub(crate) async fn tick_task_sweep(
 /// cancel.
 fn sweep_registry(
     tasks: &mut HashMap<TaskId, TaskRecord>,
-    closed: &mut BoundedFifoSet<TaskId>,
+    closed: &mut ClosedTasks,
     now: Instant,
     timeout: Duration,
 ) -> (Vec<(TaskId, Nickname)>, Vec<TaskId>) {
@@ -655,11 +695,16 @@ fn sweep_registry(
         })
         .map(|(task_id, _)| task_id.clone())
         .collect();
-    tasks.retain(|_, rec| {
-        !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
-    });
     for task_id in &reaped {
-        closed.insert(task_id.clone());
+        if let Some(rec) = tasks.remove(task_id) {
+            closed.insert(
+                task_id.clone(),
+                ClosedTask {
+                    peer: rec.peer,
+                    state: rec.state,
+                },
+            );
+        }
     }
     (expired, reaped)
 }
@@ -970,8 +1015,8 @@ mod tests {
         assert_eq!(tasks[&tid()].last_peer_activity, peer_clock);
     }
 
-    fn closed() -> habilis_network::util::bounded_fifo_set::BoundedFifoSet<TaskId> {
-        habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8)
+    fn closed() -> super::ClosedTasks {
+        super::ClosedTasks::new(8)
     }
 
     /// An inbound status frame for `tid()`; a beat when `beat` is true.
@@ -1031,6 +1076,74 @@ mod tests {
         assert!(tasks.is_empty());
         let late = status_leg(false);
         assert!(super::is_replay(&tasks, &reaped_ids, &tid(), &late.id));
+    }
+
+    /// After the sweep reaps a finished task, its own peer can still read it
+    /// over gossip. Pre-fix the record was gone and only the id was kept, so a
+    /// peer that missed the terminal event got "task not found" and could not
+    /// tell a finished task from a lost one. A bystander still gets the refusal.
+    #[test]
+    fn a_reaped_task_is_still_served_to_its_own_peer() {
+        use habilis_network::protocol::MeshId;
+        use serde_json::json;
+
+        use crate::a2a::app::A2aApp;
+        use crate::a2a::gossip_rpc::{Served, classify};
+        use crate::a2a::rpc::A2aOp;
+
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let mut app = A2aApp::new();
+        apply(&mut app.tasks, &leg(LegKind::Offer, true), now);
+        let rec = app.tasks.get_mut(&tid()).unwrap();
+        rec.state = TaskState::Completed;
+        rec.last_activity = now.checked_sub(timeout * 2).unwrap();
+        super::sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
+        assert!(app.tasks.is_empty());
+
+        let params = json!({"id": tid().as_str()});
+        assert!(
+            matches!(
+                classify("GetTask", &params, &Nickname::from("calm-otter"), &app),
+                Served::Op(A2aOp::GetTask { .. })
+            ),
+            "the task's own peer must still be served"
+        );
+        assert!(
+            matches!(
+                classify("GetTask", &params, &Nickname::from("wire-thistle"), &app),
+                Served::Reject(_)
+            ),
+            "another peer must still get task not found"
+        );
+
+        let task = crate::a2a::rpc::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
+        assert_eq!(task["id"], tid().as_str());
+        assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED");
+        assert_eq!(task["metadata"]["mesh:peer"], "calm-otter");
+    }
+
+    /// The closed set stays bounded: past `cap`, the oldest task is forgotten.
+    #[test]
+    fn closed_tasks_drop_the_oldest_past_the_cap() {
+        let mut closed = super::ClosedTasks::new(2);
+        let ids = [
+            TaskId::from("550e8400-e29b-41d4-a716-446655440001"),
+            TaskId::from("550e8400-e29b-41d4-a716-446655440002"),
+            TaskId::from("550e8400-e29b-41d4-a716-446655440003"),
+        ];
+        for id in &ids {
+            closed.insert(
+                id.clone(),
+                super::ClosedTask {
+                    peer: Nickname::from("calm-otter"),
+                    state: TaskState::Failed,
+                },
+            );
+        }
+        assert!(closed.get(&ids[0]).is_none());
+        assert!(closed.get(&ids[1]).is_some());
+        assert!(closed.get(&ids[2]).is_some());
     }
 
     #[test]

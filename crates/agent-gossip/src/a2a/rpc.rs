@@ -217,6 +217,25 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
     })
 }
 
+/// A reaped task answers with its last state and peer only: the record is gone,
+/// and keeping the role and review flag would grow the closed set.
+pub(crate) fn get_task(app: &A2aApp, task_id: &TaskId, mesh: &MeshId) -> Result<Value, RpcError> {
+    if let Some(rec) = app.tasks.get(task_id) {
+        return Ok(task_object(task_id, rec, mesh));
+    }
+    app.closed_tasks
+        .get(task_id)
+        .map(|closed| {
+            serde_json::json!({
+                "id": task_id.as_str(),
+                "contextId": mesh.as_str(),
+                "status": { "state": closed.state },
+                "metadata": { "mesh:peer": closed.peer.as_str() },
+            })
+        })
+        .ok_or_else(|| RpcError::task_not_found(task_id))
+}
+
 /// One JSON-RPC op's identity (mesh/author/pubkey/local port) plus the app
 /// state it's resolved against — grouped so `handle_op` stays within the
 /// argument budget alongside its state/sender/output handles.
@@ -261,11 +280,7 @@ pub(crate) async fn handle_op(
             )
             .await
         }
-        A2aOp::GetTask { task_id } => app
-            .tasks
-            .get(&task_id)
-            .map(|rec| task_object(&task_id, rec, mesh))
-            .ok_or_else(|| RpcError::task_not_found(&task_id)),
+        A2aOp::GetTask { task_id } => get_task(app, &task_id, mesh),
         A2aOp::ListTasks { peer } => Ok(list_tasks(app, peer.as_ref(), mesh)),
         A2aOp::CancelTask { task_id } => {
             if !app.tasks.contains_key(&task_id) {
