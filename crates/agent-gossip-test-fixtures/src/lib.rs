@@ -1772,17 +1772,50 @@ impl Node {
     /// alive-timeout. Resume with [`cont`](Self::cont).
     pub fn stop(&self) {
         self.signal("-STOP");
+        self.await_stopped(true);
     }
 
     /// SIGCONT — wake a [`stop`](Self::stop)ped process.
     pub fn cont(&self) {
         self.signal("-CONT");
+        self.await_stopped(false);
     }
 
+    // A STOP or CONT that does not land leaves a live process where the test
+    // expects a frozen one (or the reverse), which fails much later with a
+    // timing symptom. INT and KILL stay lenient: a test may signal a child
+    // that has already exited.
     fn signal(&self, sig: &str) {
-        let _ = Command::new("kill")
-            .args([sig, &self.child.id().to_string()])
-            .status();
+        let pid = self.child.id();
+        let status = Command::new("kill").args([sig, &pid.to_string()]).status();
+        if matches!(sig, "-STOP" | "-CONT") {
+            assert!(
+                status.as_ref().is_ok_and(std::process::ExitStatus::success),
+                "kill {sig} {pid} failed: {status:?}"
+            );
+        }
+    }
+
+    fn await_stopped(&self, want_stopped: bool) {
+        const DEADLINE: Duration = Duration::from_secs(5);
+        let pid = self.child.id();
+        let started = Instant::now();
+        let mut last_state = String::new();
+        while started.elapsed() < DEADLINE {
+            last_state = Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+                .unwrap_or_default();
+            if !last_state.is_empty() && last_state.starts_with('T') == want_stopped {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!(
+            "pid {pid} never {} (last ps stat: {last_state:?})",
+            if want_stopped { "stopped" } else { "resumed" }
+        );
     }
 }
 

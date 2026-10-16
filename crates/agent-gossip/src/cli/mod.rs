@@ -16,8 +16,10 @@ use serde::Deserialize;
 pub(crate) use self::args::Cli;
 use self::args::{
     A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, PeersOpts, PingOpts,
-    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
+    PollIdentity, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts,
+    TopologyOpts,
 };
+use self::ready::{ReadyStateFile, wait_for_ready};
 use crate::a2a::ipc::IpcCommand;
 use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
@@ -32,6 +34,7 @@ mod doctor;
 mod ipc;
 mod password;
 mod plug;
+mod ready;
 mod session;
 mod signal;
 
@@ -528,7 +531,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             let params: serde_json::Value = match params {
                 Some(raw) => serde_json::from_str(&raw)
                     .map_err(|error| anyhow::anyhow!("--params must be valid JSON: {error}"))?,
-                None => compose_a2a_params(
+                None => A2aCallRequest::parse(
                     &method,
                     &A2aCallSugar {
                         mesh: &mesh,
@@ -536,7 +539,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
                         task_id: task_id.as_ref(),
                         label: label.as_deref(),
                     },
-                ),
+                )?
+                .params(),
             };
             // The daemon runs in its own directory, so a relative path must
             // resolve here, against the caller's.
@@ -688,67 +692,93 @@ struct A2aCallSugar<'a> {
     label: Option<&'a str>,
 }
 
-fn compose_a2a_params(method: &str, sugar: &A2aCallSugar<'_>) -> serde_json::Value {
-    let A2aCallSugar {
-        mesh,
-        text,
-        task_id,
-        label,
-    } = *sugar;
-    match method {
-        "SendMessage" | "SendStreamingMessage" => {
-            let message = crate::a2a::gossip::send_message_payload(
+/// An `a2a call` request typed by method, so a task method cannot exist
+/// without its task id.
+enum A2aCallRequest<'a> {
+    SendMessage {
+        mesh: &'a MeshId,
+        task_id: Option<&'a crate::a2a::TaskId>,
+        text: &'a str,
+        label: Option<&'a str>,
+    },
+    TaskById {
+        task_id: &'a crate::a2a::TaskId,
+    },
+    /// A method the CLI has no sugar for; `--params` is its only input.
+    Unsugared,
+}
+
+impl<'a> A2aCallRequest<'a> {
+    fn parse(method: &str, sugar: &A2aCallSugar<'a>) -> Result<Self> {
+        let A2aCallSugar {
+            mesh,
+            text,
+            task_id,
+            label,
+        } = *sugar;
+        match method {
+            "SendMessage" | "SendStreamingMessage" => Ok(Self::SendMessage {
                 mesh,
                 task_id,
-                text.unwrap_or_default(),
+                text: text.unwrap_or_default(),
                 label,
-            );
-            serde_json::json!({ "message": message })
+            }),
+            "GetTask" | "CancelTask" | "SubscribeToTask" => task_id
+                .map(|task_id| Self::TaskById { task_id })
+                .ok_or_else(|| anyhow::anyhow!("--method {method} requires --task-id")),
+            _ => Ok(Self::Unsugared),
         }
-        "GetTask" | "CancelTask" | "SubscribeToTask" => task_id.map_or_else(
-            || serde_json::json!({}),
-            |id| serde_json::json!({ "id": id }),
-        ),
-        _ => serde_json::json!({}),
+    }
+
+    fn params(&self) -> serde_json::Value {
+        match *self {
+            Self::SendMessage {
+                mesh,
+                task_id,
+                text,
+                label,
+            } => {
+                let message = crate::a2a::gossip::send_message_payload(mesh, task_id, text, label);
+                serde_json::json!({ "message": message })
+            }
+            Self::TaskById { task_id } => serde_json::json!({ "id": task_id }),
+            Self::Unsugared => serde_json::json!({}),
+        }
     }
 }
 
 /// Query the running daemon's live peer roster. Always emits the
 /// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
-async fn poll(opts: PollOpts) -> Result<()> {
+async fn poll(mut opts: PollOpts) -> Result<()> {
     // First, so `--max-secs` counts from the process start like the harness
     // clock does, readiness wait included.
     let poll_started = tokio::time::Instant::now();
+    let identity = opts.identity()?;
     let PollOpts {
-        gossip,
-        nickname,
-        state_file,
         after,
         long,
         settle_secs,
         max_secs,
-        legacy_output: _,
+        ..
     } = opts;
-    // clap enforces exactly one form: `--state-file`, or `--gossip` +
-    // `--nickname`. The state-file form waits for readiness first so a poll
-    // can be armed before the daemon has minted its identity.
-    let (mesh, nickname) = if let Some(path) = state_file {
-        wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
-        let identity = habilis_network::runtime::state_file::read_identity(&path);
-        let missing = |field: &'static str| {
-            anyhow::anyhow!("state file {} carries no {field}", path.display())
-        };
-        let mesh: MeshId = identity.mesh.ok_or_else(|| missing("gossip id"))?.parse()?;
-        let nick: Nickname = identity
-            .nickname
-            .ok_or_else(|| missing("nickname"))?
-            .parse()?;
-        (mesh, nick)
-    } else {
-        (
-            gossip.expect("clap: --gossip required without --state-file"),
-            nickname.expect("clap: --nickname required without --state-file"),
-        )
+    // The state-file form waits for readiness first so a poll can be armed
+    // before the daemon has minted its identity.
+    let (mesh, nickname) = match identity {
+        PollIdentity::StateFile(path) => {
+            let ready =
+                wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX_SECS).await?;
+            let carried = ready.identity();
+            let missing = |field: &'static str| {
+                anyhow::anyhow!("state file {} carries no {field}", path.display())
+            };
+            let mesh: MeshId = carried.mesh.ok_or_else(|| missing("gossip id"))?.parse()?;
+            let nick: Nickname = carried
+                .nickname
+                .ok_or_else(|| missing("nickname"))?
+                .parse()?;
+            (mesh, nick)
+        }
+        PollIdentity::Session { gossip, nickname } => (gossip, nickname),
     };
     let bell_mesh = mesh.to_string();
     let mut bell_lock = None;
@@ -991,63 +1021,17 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         timeout_secs,
         legacy_output: _,
     } = opts;
-    wait_for_ready(&state_file, timeout_secs).await?;
-    print_ready_identity(&state_file);
+    let ready = wait_for_ready(&state_file, timeout_secs).await?;
+    print_ready_identity(&ready);
     Ok(())
-}
-
-/// Block until `state_file` reports a fresh `ready: true`, or fail at the
-/// deadline. The wait behind both the `ready` gate and `poll --state-file`.
-async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Result<()> {
-    // Saturating add: an absurd `--timeout-secs` must not panic the gate
-    // (`Instant + Duration` panics on overflow); clamp to a far-future
-    // deadline instead.
-    let now = tokio::time::Instant::now();
-    let deadline = now
-        .checked_add(std::time::Duration::from_secs(timeout_secs))
-        .unwrap_or_else(|| {
-            now + std::time::Duration::from_secs(habilis_network::runtime::tuning::READY_MAX_SECS)
-        });
-    loop {
-        // Read off the runtime's blocking pool: a `--state-file` on a hung
-        // mount must not block a worker thread. A read error (malformed/torn/
-        // old-schema file) is treated as not-ready, not a hard failure — the
-        // daemon may be mid-overwrite. A *persistent* error (e.g. a bad path)
-        // can't self-heal and just spins to the deadline, so log it so the
-        // cause is recoverable.
-        let path = state_file.to_path_buf();
-        let read = tokio::task::spawn_blocking(move || {
-            habilis_network::runtime::state_file::read_snapshot(&path)
-        })
-        .await?;
-        match read {
-            Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
-                return Ok(());
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "agent-gossip ready: state-file read failed; retrying");
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!(
-                "daemon at {} not ready within {timeout_secs}s",
-                state_file.display()
-            );
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(
-            habilis_network::runtime::tuning::READY_POLL_INTERVAL_MS,
-        ))
-        .await;
-    }
 }
 
 /// Print the session identity as a JSON object for `agent-gossip ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"gossip":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
-fn print_ready_identity(state_file: &std::path::Path) {
-    let identity = habilis_network::runtime::state_file::read_identity(state_file);
+fn print_ready_identity(ready: &ReadyStateFile) {
+    let identity = ready.identity();
     let mut obj = serde_json::Map::new();
     for (key, value) in [
         ("gossip", identity.mesh),
@@ -1076,20 +1060,66 @@ fn drift_warning() -> Option<String> {
         .and_then(|home| agent::drift_warning(&home))
 }
 
-/// True when a `ready: true` state-file write is recent enough to trust —
-/// `last_updated` within `READY_FRESH_SECS` of now in *either* direction. A
-/// live daemon refreshes `last_updated` every `STATE_REFRESH_SECS`, so a value
-/// older than the window means the writer is gone (e.g. a leftover file from a
-/// daemon killed by SIGKILL). A value far in the *future* is equally
-/// untrustworthy — a stale file whose age only looks recent because the wall
-/// clock stepped backward (NTP correction, VM restore) — so it is rejected
-/// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
-/// underflow into the past.
-pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
-    let now = habilis_network::util::clock::unix_secs();
-    let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
-    let skew = now - last_updated; // >0: file is in the past; <0: in the future
-    let window =
-        i64::try_from(habilis_network::runtime::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
-    skew.abs() <= window
+#[cfg(test)]
+mod tests {
+    use habilis_network::protocol::MeshId;
+    use serde_json::json;
+
+    use super::{A2aCallRequest, A2aCallSugar};
+    use crate::a2a::TaskId;
+
+    const MESH: &str = "test";
+    const TASK: &str = "913f33fd-ef60-4dff-82f2-37bc1fd48bfe";
+
+    fn params(
+        method: &str,
+        text: Option<&str>,
+        task_id: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mesh = MeshId::from(MESH);
+        let task_id: Option<TaskId> = task_id.map(|raw| raw.parse().unwrap());
+        let request = A2aCallRequest::parse(
+            method,
+            &A2aCallSugar {
+                mesh: &mesh,
+                text,
+                task_id: task_id.as_ref(),
+                label,
+            },
+        )?;
+        Ok(request.params())
+    }
+
+    #[test]
+    fn a_task_method_with_a_task_id_sends_only_the_id() {
+        for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
+            let sent = params(method, None, Some(TASK), None).unwrap();
+            assert_eq!(sent, json!({ "id": TASK }), "{method}");
+        }
+    }
+
+    #[test]
+    fn a_task_method_without_a_task_id_is_an_error() {
+        for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
+            let error = params(method, None, None, None).unwrap_err().to_string();
+            assert_eq!(error, format!("--method {method} requires --task-id"));
+        }
+    }
+
+    #[test]
+    fn send_message_carries_text_task_id_and_label() {
+        let sent = params("SendMessage", Some("hi"), Some(TASK), Some("name")).unwrap();
+        let message = &sent["message"];
+        assert_eq!(message["parts"][0]["text"], "hi");
+        assert_eq!(message["taskId"], TASK);
+        assert_eq!(message["contextId"], MeshId::from(MESH).as_str());
+        assert_eq!(sent.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_method_without_sugar_sends_an_empty_object() {
+        let sent = params("ListTasks", Some("ignored"), Some(TASK), None).unwrap();
+        assert_eq!(sent, json!({}));
+    }
 }
