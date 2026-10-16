@@ -428,6 +428,19 @@ fn is_empty_working_repeat(prior: Option<super::TaskState>, message: &Message) -
 /// The agent's own task echoes are quiet for the same reason: it already holds
 /// the id of every leg it sent, and an echo landing right after a re-arm rang
 /// the bell for nothing and made the Stop hook refuse the turn.
+/// Whether the local agent is reading: `(bell armed, seconds since its last
+/// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
+pub(crate) fn reader_liveness(app: &A2aApp, ctx: &HandlerCtx<'_>) -> (bool, Option<u64>) {
+    // A CLI bell holds the OS lock. An MCP or in-process reader holds none, but
+    // parks a long fetch.
+    let bell = crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
+        || app.surfaced.has_parked_bell();
+    (
+        bell,
+        app.surfaced.last_poll_secs_ago(tokio::time::Instant::now()),
+    )
+}
+
 pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
     if is_self_task_echo(event) {
@@ -439,6 +452,7 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
             OutputEvent::Task { .. }
                 | OutputEvent::TaskMessage { .. }
                 | OutputEvent::TaskTimeout { .. }
+                | OutputEvent::TaskStalled { .. }
         )
 }
 
@@ -467,6 +481,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
@@ -730,6 +745,11 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
                 now: Instant::now(),
             },
         );
+        if let Some(notice) =
+            crate::a2a::task::stall_notice(&mut app.tasks, message, &task_id, Instant::now())
+        {
+            app.output.task_stalled(&notice);
+        }
         if surface {
             crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
         }
@@ -994,15 +1014,13 @@ async fn handle_a2a_req(
                     )
                     .await
                 }
-                Served::ReaderGet => Ok(serde_json::json!({
-                    // A CLI bell holds the OS lock. An MCP or in-process reader
-                    // holds none, but parks a long fetch.
-                    "bell": crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
-                        || app.surfaced.has_parked_bell(),
-                    "last_poll_secs_ago": app
-                        .surfaced
-                        .last_poll_secs_ago(tokio::time::Instant::now()),
-                })),
+                Served::ReaderGet => {
+                    let (bell, last_poll_secs_ago) = reader_liveness(app, ctx);
+                    Ok(serde_json::json!({
+                        "bell": bell,
+                        "last_poll_secs_ago": last_poll_secs_ago,
+                    }))
+                }
                 Served::Reject(error) => Err(error),
             }
         }

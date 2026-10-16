@@ -112,8 +112,12 @@ impl Session {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
+        waiting: Option<String>,
     ) -> Result<(MessageId, Message)> {
-        let msg = self.inner.task_status(task_id, state, note).await?;
+        let msg = self
+            .inner
+            .task_status(task_id, state, note, waiting)
+            .await?;
         Ok((msg.id.clone(), msg))
     }
 
@@ -294,6 +298,7 @@ mod tests {
             | OutputEvent::StateChanged { .. }
             | OutputEvent::TaskMessage { .. }
             | OutputEvent::TaskTimeout { .. }
+            | OutputEvent::TaskStalled { .. }
             | OutputEvent::Receipt { .. } => None,
         }
     }

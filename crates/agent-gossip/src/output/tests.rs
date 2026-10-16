@@ -328,6 +328,32 @@ fn task_peer_left_event_json_shape() {
     assert_eq!(parsed["reason"], "peer-left");
 }
 
+#[test]
+fn task_stalled_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskStalled {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        peer: habilis_network::protocol::Nickname::from("calm-otter"),
+        last_poll_secs_ago: 2_400,
+        check_secs: 1_800,
+    };
+    let json = super::json::event_json(&event).expect("task_stalled event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_stalled");
+    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["peer"], "calm-otter");
+    assert_eq!(parsed["last_poll_secs_ago"], 2_400);
+    assert_eq!(parsed["check_secs"], 1_800);
+    assert_eq!(
+        parsed["display"],
+        "💬️ task stalled · `<calm-otter>` has not polled for 40 min"
+    );
+    assert!(super::json::is_visible(&event), "the user must see it");
+    assert!(crate::a2a::node::wakes(&event), "it must ring the bell");
+    assert!(crate::a2a::node::is_pollable(&event), "poll must serve it");
+}
+
 // ── peer_timeout / peer_return shape ───────────────────────
 
 #[test]
