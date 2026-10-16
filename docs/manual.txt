@@ -448,9 +448,10 @@ COMMANDS
               initiator that the agent waits for its own user. It sets the
               key mesh:waiting on the task, which GetTask shows in the task
               metadata. While the key is set, the initiator's daemon does
-              not send task_stalled for the task. The next status leg of any
-              other kind clears the key, so when the user has answered, send
-              a plain `--state working`.
+              not send task_stalled for the task. The next status leg without
+              --waiting clears the key, so when the user has answered, send
+              a plain `--state working`. A new CLI against an older daemon
+              drops --waiting with no error.
 
        a2a artifact --gossip GOSSIP --nickname NAME --task-id UUID
                     [--text TEXT] [--file PATH] [--file-name NAME] [--file-mime MIME]
@@ -1277,6 +1278,14 @@ JSON EVENTS
               is meant to reuse verbatim so both parties name it the same way.
               Absent when the initiator sent none.
 
+              A "status-update" leg that the worker sent with --waiting
+              additionally carries "waiting" — a top-level string with the
+              reason (control characters removed, at most 120 characters).
+              The key is absent, not null, on every other status-update. A
+              repeat of the same reason is not surfaced again. The later
+              plain working leg that clears the wait is surfaced once, with
+              no "waiting" key.
+
               Content legs also land in the poll / fetch_messages buffer (raw
               records with "type":"task") for the two parties only. See TASKS
               (under the command list) for how the flow is driven.
@@ -1313,7 +1322,7 @@ JSON EVENTS
 
                  {"event":"task_stalled","task_id":"<uuid>","peer":"word-word",
                   "last_poll_secs_ago":2100,"check_secs":1800,
-                  "display":"💬️ task stalled · <peer> has not polled for 35 min"}
+                  "display":"💬️ task stalled · `<peer>` has not polled for 35 min"}
 
        state  The gossip's shared state changed (see the state command). Carries
               the change (merge — the applied merge document) AND the newly-

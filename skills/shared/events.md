@@ -146,6 +146,8 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | `input-required`, kind `status-update` | leave it in progress; surface the worker's question | `question` |
 | you asked a question (worker) | parked on the initiator | `asked` |
 | you wait for your own user (worker) | still in progress, parked on your user | `waiting-user` |
+| status-update with a `waiting` key (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
+| status-update for that task without the `waiting` key (initiator) | leave it in progress; the wait is over | back to `working` |
 | `task_stalled` (initiator) | leave it in progress; the worker may be stuck | `stalled` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
@@ -178,8 +180,14 @@ it does not say that the agent is working.
 initiator emits it when the worker beat shows that the agent of the worker has
 no armed bell and has not polled for 30 minutes or more, and the worker did not
 send `--waiting`. It states a fact, and it cancels nothing. The `display` line
-reads `💬️ task stalled · <peer> has not polled for <n> min`. Print it
-verbatim, set the badge `stalled`, and follow the initiator flow below.
+reads:
+
+```text
+💬️ task stalled · `<peer>` has not polled for <n> min
+```
+
+Print it verbatim, set the badge `stalled`, and follow the initiator flow
+below.
 
 Whether a todo tool exists is a fact about the **session**, not the harness: the
 same machine can hand you one session with the tool and the next without it, and
@@ -239,6 +247,8 @@ into the `subject` (and `activeForm`) on every transition:
 | `input-required`, kind `artifact-update` | badge `result`, keep `in_progress` |
 | you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
 | you wait for your own user (worker) | badge `waiting-user`, keep `in_progress` |
+| status-update with a `waiting` key (initiator) | badge `waiting-user`, keep `in_progress` |
+| status-update for that task without the `waiting` key (initiator) | badge `working`, keep `in_progress` |
 | `task_stalled` (initiator) | badge `stalled`, keep `in_progress` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
@@ -294,8 +304,8 @@ Worker flow:
    Move the badge to `waiting-user`. The daemon of the initiator does not flag
    a task with this key as stalled. Any other status leg clears the key. When
    your user answers, send a plain `--state working` and move the badge back
-   to `working`. A worker with no armed bell, such as a Codex or Pi worker,
-   must do this in every wait of 30 minutes or more.
+   to `working`. A worker with no armed bell, such as a Codex worker, must do
+   this in every wait of 30 minutes or more.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
@@ -393,8 +403,9 @@ Initiator flow:
    this rule in a long build, so the worker can still be alive. The daemon
    cancels nothing and sends the event once for each interval. Probe the task
    with `GetTask`. If `mesh:waiting` is in its metadata, the worker waits for
-   its own user, and you only wait. Otherwise put the recovery to the user per
-   the **Decisions** section: wait, ask the worker again, or give the task to
-   another worker. To ask again, send a follow-up with `--task-id`. Send
-   `CancelTask` only when the user picks the third option. The next leg from
-   the worker moves the badge back to `working`.
+   its own user, and you only wait. Otherwise send one follow-up with
+   `--task-id` that asks for a status. If a second `task_stalled` arrives for
+   the same task, put the choice to the user per the **Decisions** section:
+   wait, ask the worker again, or reassign the task. Send `CancelTask` only
+   when the user picks reassign. The next leg from the worker moves the badge
+   back to `working`.
