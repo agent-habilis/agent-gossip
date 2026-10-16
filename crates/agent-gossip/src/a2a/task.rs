@@ -1265,9 +1265,9 @@ mod tests {
     fn a_status_leg_sets_and_clears_the_waiting_reason() {
         let now = Instant::now();
         let mut tasks = working_task_we_opened(now);
-        let ingest_leg = |tasks: &mut HashMap<TaskId, TaskRecord>, frame| {
+        let ingest_leg = |registry: &mut HashMap<TaskId, TaskRecord>, frame| {
             super::ingest(
-                tasks,
+                registry,
                 IngestLegParams {
                     frame: &frame,
                     task_id: &tid(),
