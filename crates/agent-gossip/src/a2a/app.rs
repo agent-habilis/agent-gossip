@@ -108,9 +108,10 @@ pub(crate) struct A2aApp {
     /// task timers (debounce sweep, keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
     pub tasks: HashMap<TaskId, crate::a2a::task::TaskRecord>,
-    /// Ids of tasks the sweep reaped after they closed. The record goes 2 min
-    /// after close, but anti-entropy can serve a leg of it hours later.
-    pub closed_tasks: BoundedFifoSet<TaskId>,
+    /// Tasks the sweep reaped after they closed, with their peer and last
+    /// state. The record goes 2 min after close, but anti-entropy can serve a
+    /// leg of it hours later, and the peer can still ask for the task.
+    pub closed_tasks: crate::a2a::task::ClosedTasks,
     /// `Message::dedup_key` of every chat line surfaced, the same
     /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
     /// a bounded count of frames, and anti-entropy then serves the line again.
@@ -212,7 +213,7 @@ impl A2aApp {
         } = io;
         Self {
             tasks: HashMap::new(),
-            closed_tasks: BoundedFifoSet::new(crate::a2a::tuning::TASKS_CAP),
+            closed_tasks: crate::a2a::task::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
             surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
@@ -239,7 +240,7 @@ impl A2aApp {
     pub(crate) fn detached(output: Output) -> Self {
         Self {
             tasks: HashMap::new(),
-            closed_tasks: BoundedFifoSet::new(crate::a2a::tuning::TASKS_CAP),
+            closed_tasks: crate::a2a::task::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
             surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,

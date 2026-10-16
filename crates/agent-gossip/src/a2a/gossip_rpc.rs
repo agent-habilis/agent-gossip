@@ -61,11 +61,13 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
     // task-plane attack needs. `CancelTask` has always made this check; the
     // reads did not, which left the reconnaissance step open.
     let party_only = |wanted: TaskId, op: A2aOp| {
-        if app
+        let is_peer = app
             .tasks
             .get(&wanted)
-            .is_some_and(|rec| rec.peer == *requester)
-        {
+            .map(|rec| &rec.peer)
+            .or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer))
+            .is_some_and(|peer| peer == requester);
+        if is_peer {
             Served::Op(op)
         } else {
             // Same shape whether the task is absent or someone else's, so the
