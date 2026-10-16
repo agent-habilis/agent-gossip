@@ -147,7 +147,7 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | you asked a question (worker) | parked on the initiator | `asked` |
 | you wait for your own user (worker) | still in progress, parked on your user | `waiting-user` |
 | status-update with a `waiting` key (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
-| status-update for that task without the `waiting` key (initiator) | leave it in progress; the wait is over | back to `working` |
+| a `working` status-update without the `waiting` key, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
 | `task_stalled` (initiator) | leave it in progress; the worker may be stuck | `stalled` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
@@ -248,7 +248,7 @@ into the `subject` (and `activeForm`) on every transition:
 | you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
 | you wait for your own user (worker) | badge `waiting-user`, keep `in_progress` |
 | status-update with a `waiting` key (initiator) | badge `waiting-user`, keep `in_progress` |
-| status-update for that task without the `waiting` key (initiator) | badge `working`, keep `in_progress` |
+| a `working` status-update without the `waiting` key, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
 | `task_stalled` (initiator) | badge `stalled`, keep `in_progress` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
