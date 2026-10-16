@@ -1,6 +1,6 @@
 ---
 type: Graph
-description: One leader and three workers per git branch.
+description: One leader, three workers, and one advisor per git branch.
 title: crew
 scope: branch
 icon: 󰡉
@@ -11,8 +11,11 @@ flowchart LR
   subgraph crew
     leader(("leader")):::lead
     worker(("worker"))
+    advisor(("advisor"))
     leader assign@-->|"assign a part"| worker
     worker part-result@-->|"part result"| leader
+    leader ask-review@-->|"ask for review"| advisor
+    advisor review-result@-->|"review result"| leader
   end
   outside[["user or other graph"]]
   outside external@<--> leader
@@ -51,6 +54,16 @@ the leader.
 
 The worker also uses this edge to ask a question, to ask for a file that is
 not its file, or to report an error in a file that is not its file.
+
+### ask-review
+
+The leader sends the plan, or the diff from the base commit, to the
+advisor. Then it waits for `review-result`.
+
+### review-result
+
+The advisor sends its findings to the leader, one per line, the most
+severe first. Each finding has a severity: `blocker`, `concern`, or `nit`.
 
 ### external
 
