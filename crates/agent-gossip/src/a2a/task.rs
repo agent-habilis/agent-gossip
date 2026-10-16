@@ -100,6 +100,9 @@ pub(crate) struct TaskRecord {
     /// Why the worker waits on its own user, from the `mesh:waiting` key of its
     /// last status leg. Any other status leg clears it.
     pub waiting: Option<String>,
+    /// Wire time of the status leg that last set or cleared `waiting`. A leg
+    /// older than this is a replay and changes nothing.
+    pub waiting_at: Option<UnixSecs>,
     /// When this node last told its agent that the worker's reader is silent,
     /// so one task raises one event per interval.
     pub last_stall_event: Option<Instant>,
@@ -276,12 +279,18 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         now,
     );
     // Every status leg restates whether the worker waits, so a plain one clears
-    // it. A leg already surfaced is a replay and must not undo a newer answer.
+    // it. Anti-entropy replays old legs, and the empty `working` ones never
+    // reach `surfaced_legs`, so the worker's own clock orders them. A finished
+    // task waits for nothing.
     if matches!(kind, LegKind::Status(_))
         && let Some(rec) = tasks.get_mut(task_id)
-        && !rec.surfaced_legs.contains(&frame.id)
     {
-        rec.waiting = waiting;
+        if rec.state.is_terminal() {
+            rec.waiting = None;
+        } else if rec.waiting_at.is_none_or(|at| frame.timestamp >= at) {
+            rec.waiting = waiting;
+            rec.waiting_at = Some(frame.timestamp);
+        }
     }
 }
 
@@ -443,6 +452,7 @@ pub(crate) fn adopt_initiator(
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 waiting: None,
+                waiting_at: None,
                 last_stall_event: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -518,6 +528,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 waiting: None,
+                waiting_at: None,
                 last_stall_event: None,
                 ball: TaskRole::Receiver,
             });
@@ -935,7 +946,7 @@ mod tests {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{Nickname, UnixSecs};
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
@@ -1256,6 +1267,86 @@ mod tests {
         let now = Instant::now();
         let mut tasks = working_task_we_opened(now);
         let beat = beat_from_worker(None);
+        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), now), None);
+    }
+
+    /// A working status leg for `tid()` at wire time `at`, with a waiting reason
+    /// when one is given.
+    fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> habilis_network::protocol::Message {
+        let mut frame = status_frame(
+            TaskState::Working,
+            crate::a2a::gossip::waiting_metadata(reason),
+        );
+        frame.timestamp = at;
+        frame
+    }
+
+    fn ingest_inbound(
+        registry: &mut HashMap<TaskId, TaskRecord>,
+        frame: &habilis_network::protocol::Message,
+    ) {
+        super::ingest(
+            registry,
+            IngestLegParams {
+                frame,
+                task_id: &tid(),
+                mine: false,
+                now: Instant::now(),
+            },
+        );
+    }
+
+    /// Anti-entropy re-serves old status legs hours late. Both the `--waiting`
+    /// leg and the plain leg that clears it are empty `working` legs that never
+    /// reach the surfaced-leg set, so only their wire time can tell a replay from
+    /// news. A replay must not set or clear the reason again.
+    #[test]
+    fn a_replayed_status_leg_does_not_undo_a_newer_waiting_answer() {
+        let first = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        let waiting = waiting_leg(Some("asks its user"), first);
+        let clear = waiting_leg(None, first + Duration::from_secs(10));
+        let waiting_again = waiting_leg(Some("asks again"), first + Duration::from_secs(20));
+
+        ingest_inbound(&mut tasks, &waiting);
+        ingest_inbound(&mut tasks, &clear);
+        assert_eq!(tasks[&tid()].waiting, None);
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a replayed --waiting leg must not set the reason again"
+        );
+
+        ingest_inbound(&mut tasks, &waiting_again);
+        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks again"));
+        ingest_inbound(&mut tasks, &clear);
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks again"),
+            "a replayed older plain leg must not clear the reason"
+        );
+    }
+
+    /// A finished task is frozen: a late `--waiting` leg sets nothing.
+    #[test]
+    fn a_late_waiting_leg_on_a_finished_task_sets_nothing() {
+        let mut tasks = working_task_we_opened(Instant::now());
+        ingest_inbound(&mut tasks, &status_frame(TaskState::Completed, None));
+        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+
+        ingest_inbound(&mut tasks, &waiting_leg(Some("too late"), UnixSecs::now()));
+        assert_eq!(tasks[&tid()].waiting, None);
+    }
+
+    /// A beat older than one idle timeout proves nothing about the worker now: a
+    /// relay can re-inject it after the worker died.
+    #[test]
+    fn a_stale_beat_raises_no_notice() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let mut beat = beat_from_worker(Some(silent_reader()));
+        beat.timestamp = UnixSecs::now() - Duration::from_secs(super::task_timeout_secs() + 1);
         assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), now), None);
     }
 
