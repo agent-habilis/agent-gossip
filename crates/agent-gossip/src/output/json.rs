@@ -171,6 +171,10 @@ struct TaskLine<'a> {
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<&'a str>,
+    /// Why the worker waits on its own user, from the leg's `mesh:waiting`.
+    /// Absent on every other leg, so the leg that clears it carries no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -557,6 +561,9 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
+            waiting: crate::a2a::gossip::status_payload(msg)
+                .ok()
+                .and_then(|payload| crate::a2a::gossip::status_waiting(&payload)),
             display: task_display(TaskDisplayParams {
                 author: msg.author.as_str(),
                 to: to.as_str(),
@@ -598,6 +605,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             kind: "message",
             state: leg.state.map(crate::a2a::TaskState::as_str),
             label: leg.label,
+            waiting: None,
             display: task_display(TaskDisplayParams {
                 author: leg.author,
                 to: leg.peer,

@@ -268,6 +268,34 @@ fn task_self_echo_flag() {
 }
 
 #[test]
+fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
+    use super::OutputEvent;
+    let line = |metadata| {
+        let msg = status_frame(
+            "calm-otter",
+            "drift-oak",
+            StatusFrameArgs {
+                task_id: "550e8400-e29b-41d4-a716-446655440000",
+                state: crate::a2a::TaskState::Working,
+                note: None,
+                metadata,
+            },
+        );
+        let json = super::json::event_json(&OutputEvent::Task {
+            msg: Box::new(msg),
+            is_self: false,
+        })
+        .expect("task event produces a JSON line");
+        parse(&json)
+    };
+    let waiting = line(crate::a2a::gossip::waiting_metadata(Some("asks its user")));
+    assert_eq!(waiting["event"], "task");
+    assert_eq!(waiting["waiting"], "asks its user");
+    let plain = line(None);
+    assert!(plain.get("waiting").is_none(), "got: {plain}");
+}
+
+#[test]
 fn task_progress_event_json_shape() {
     use super::OutputEvent;
     let msg = status_frame(
