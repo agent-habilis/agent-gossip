@@ -17,7 +17,7 @@ pub(crate) use self::leave::LeaveOpts;
 pub(crate) use self::meta::{MetaAction, MetaOpts};
 pub(crate) use self::peers::PeersOpts;
 pub(crate) use self::ping::PingOpts;
-pub(crate) use self::poll::PollOpts;
+pub(crate) use self::poll::{PollIdentity, PollOpts};
 pub(crate) use self::ready::ReadyOpts;
 pub(crate) use self::session::{BellCheckOpts, SessionOpts};
 pub(crate) use self::shared::SharedServerOpts;

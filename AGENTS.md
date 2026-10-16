@@ -345,6 +345,37 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   job fail on drift. rustfmt does not move a `use` that comes after a `mod`.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
+- Use the typestate pattern only when one function or one builder drives a
+  fixed sequence that is known at compile time. Then add a `compile_fail` doc
+  test for each illegal transition.
+- Keep an `enum` when peer events, wire data, or the filesystem drive the
+  state. `TaskState` (`a2a/model/mod.rs`) is the reference: legs from peers
+  move it, it is stored per task in a map, and it goes on the wire as
+  `TASK_STATE_*`.
+- A chain of distinct types already gives a compile-time order, so do not wrap
+  it again. `run_session` (`cli/mod.rs`) is the reference: `CreateParams` or
+  `JoinParams` resolve to `Resolved`, which `setup_mesh` turns into an
+  `EventLoopConfig`.
+- For a CLI request, prefer a typed `enum` over a `String` plus `Option` flags,
+  so that an illegal combination is an error and not a silent default. Each
+  variant holds only the fields it needs (`A2aCallRequest` in `cli/mod.rs`).
+- Parse, do not validate. Build a type only through a checked parse or
+  constructor, so that every value of the type is valid (`Nickname`, `TaskId`
+  from `uuid_id!` in `a2a/model/mod.rs`, `MessageBody::new`).
+- Do not write a `_` arm on an `enum` match. `wildcard_enum_match_arm` in
+  `[workspace.lints.clippy]` already enforces this, and CI runs clippy with
+  `-D warnings`. Do not `#[allow]` it without a `reason`.
+- A state owns its data: put the data of each state inside its `enum` variant,
+  take the state by value, and return the next one. Do not use `unreachable!`
+  on a state mismatch, and do not keep side flags next to the state `enum`
+  (`State` in `bridge/card_rewrite.rs`).
+- When a struct holds values that must agree, keep its fields private and give
+  it one constructor that derives them. A `#[cfg(test)]` constructor is the only
+  other way in (`Bridge::new` in `bridge/connect.rs`).
+- When a step must pass before a later read or action, make the step return a
+  value that only it can build: a private field, in its own module. Make the
+  later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
+  `wait_for_ready` returns).
 
 ## Agent Restrictions
 

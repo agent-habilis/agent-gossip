@@ -6,6 +6,11 @@ use habilis_network::protocol::{MeshId, Nickname};
 
 use super::legacy::LegacyOutput;
 
+pub(crate) enum PollIdentity {
+    Session { gossip: MeshId, nickname: Nickname },
+    StateFile(std::path::PathBuf),
+}
+
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
     /// Gossip identifier
@@ -56,6 +61,22 @@ pub(crate) struct PollOpts {
 
     #[command(flatten)]
     pub legacy_output: LegacyOutput,
+}
+
+impl PollOpts {
+    // clap's `required_unless_present` and `conflicts_with` already rule out the
+    // error arm; it exists so the caller needs no `expect`.
+    pub(crate) fn identity(&mut self) -> anyhow::Result<PollIdentity> {
+        match (
+            self.state_file.take(),
+            self.gossip.take(),
+            self.nickname.take(),
+        ) {
+            (Some(path), None, None) => Ok(PollIdentity::StateFile(path)),
+            (None, Some(gossip), Some(nickname)) => Ok(PollIdentity::Session { gossip, nickname }),
+            _ => anyhow::bail!("poll needs --state-file, or --gossip with --nickname"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -204,5 +225,28 @@ mod tests {
         assert!(parse(&["agent-gossip", "poll"]).is_err());
         assert!(parse(&["agent-gossip", "poll", "--gossip", "abc"]).is_err());
         assert!(parse(&["agent-gossip", "poll", "--nickname", "calm-fox"]).is_err());
+    }
+
+    #[test]
+    fn gossip_without_nickname_is_rejected() {
+        let err = parse(&["agent-gossip", "poll", "--gossip", "abc"])
+            .expect_err("--gossip alone must be rejected");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn state_file_with_gossip_is_rejected() {
+        let err = parse(&[
+            "agent-gossip",
+            "poll",
+            "--state-file",
+            "/tmp/s.json",
+            "--gossip",
+            "abc",
+            "--nickname",
+            "calm-fox",
+        ])
+        .expect_err("--state-file together with --gossip must be rejected");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }

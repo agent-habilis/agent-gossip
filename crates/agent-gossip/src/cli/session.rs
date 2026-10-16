@@ -400,7 +400,9 @@ fn is_ready(target: &Target) -> bool {
     habilis_network::runtime::state_file::read_snapshot(&target.path)
         .ok()
         .flatten()
-        .is_some_and(|snapshot| snapshot.ready && super::ready_is_fresh(snapshot.last_updated))
+        .is_some_and(|snapshot| {
+            snapshot.ready && super::ready::ready_is_fresh(snapshot.last_updated)
+        })
 }
 
 /// The Claude Code Stop hook's probe. It answers in the hook's JSON protocol

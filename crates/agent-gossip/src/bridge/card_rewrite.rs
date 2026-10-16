@@ -30,14 +30,22 @@ enum State {
     Head,
     /// A card candidate (`application/json`, `Content-Length` ≤ cap): collect
     /// the whole body, then rewrite and emit with a corrected length.
-    BufferBody {
-        header: Vec<u8>,
-        body: Vec<u8>,
-        remaining: usize,
-    },
+    BufferBody(Buffered),
     /// A framed, non-card body: pass exactly `remaining` bytes through, then
     /// look for the next response.
     StreamBody { remaining: usize },
+    /// Latched once we hit a response we cannot cleanly frame (chunked,
+    /// close-delimited, over-long header): everything after streams verbatim.
+    /// Safe because the card is fetched first, on its own framed response.
+    Raw,
+}
+
+/// A card candidate being collected: its header, the body so far, and how many
+/// body bytes are still to come.
+struct Buffered {
+    header: Vec<u8>,
+    body: Vec<u8>,
+    remaining: usize,
 }
 
 /// A streaming rewriter for one bi-stream's response direction. Fed response
@@ -48,10 +56,6 @@ pub(super) struct CardRewriter {
     local_base: String,
     state: State,
     pending: Vec<u8>,
-    /// Latched once we hit a response we cannot cleanly frame (chunked,
-    /// close-delimited, over-long header): everything after streams verbatim.
-    /// Safe because the card is fetched first, on its own framed response.
-    raw: bool,
 }
 
 impl CardRewriter {
@@ -60,7 +64,6 @@ impl CardRewriter {
             local_base,
             state: State::Head,
             pending: Vec::new(),
-            raw: false,
         }
     }
 
@@ -77,33 +80,29 @@ impl CardRewriter {
     /// whose body never completed is emitted verbatim rather than dropped).
     pub(super) fn finish(&mut self) -> Vec<u8> {
         let mut out = std::mem::take(&mut self.pending);
-        if let State::BufferBody { header, body, .. } =
-            std::mem::replace(&mut self.state, State::Head)
-        {
-            let mut flushed = header;
-            flushed.extend_from_slice(&body);
+        if let State::BufferBody(buffered) = std::mem::replace(&mut self.state, State::Head) {
+            let mut flushed = buffered.header;
+            flushed.extend_from_slice(&buffered.body);
             flushed.extend_from_slice(&out);
             out = flushed;
         }
         out
     }
 
+    /// Each arm takes the state by value and returns the next one, so it owns
+    /// the data it needs and can call `&mut self` helpers freely.
     fn process(&mut self, out: &mut Vec<u8>) {
         loop {
-            if self.raw {
-                out.append(&mut self.pending);
-                return;
-            }
-            // Dispatched by hand (not a `match` on `&mut self.state`) so each
-            // branch can call a `&mut self` helper without holding a borrow
-            // of `self.state` across it.
-            let keep_going = if matches!(self.state, State::Head) {
-                self.advance_head(out)
-            } else if matches!(self.state, State::StreamBody { .. }) {
-                self.advance_stream_body(out)
-            } else {
-                self.advance_buffer_body(out)
+            let (next, keep_going) = match std::mem::replace(&mut self.state, State::Head) {
+                State::Raw => {
+                    out.append(&mut self.pending);
+                    (State::Raw, false)
+                }
+                State::Head => self.advance_head(out),
+                State::StreamBody { remaining } => self.advance_stream_body(remaining, out),
+                State::BufferBody(buffered) => self.advance_buffer_body(buffered, out),
             };
+            self.state = next;
             if !keep_going {
                 return;
             }
@@ -112,92 +111,78 @@ impl CardRewriter {
 
     /// Wait for the header block, then dispatch on its content. `false` means
     /// more bytes are needed before progress can continue.
-    fn advance_head(&mut self, out: &mut Vec<u8>) -> bool {
+    fn advance_head(&mut self, out: &mut Vec<u8>) -> (State, bool) {
         let Some(end) = find_header_end(&self.pending) else {
-            self.raw = self.pending.len() > MAX_HEAD_BYTES;
-            return false;
+            let next = if self.pending.len() > MAX_HEAD_BYTES {
+                State::Raw
+            } else {
+                State::Head
+            };
+            return (next, false);
         };
         let header: Vec<u8> = self.pending.drain(..end).collect();
-        self.dispatch_header(header, out);
-        true
+        (Self::dispatch_header(header, out), true)
     }
 
     /// Pass framed bytes straight through until `remaining` is exhausted.
-    fn advance_stream_body(&mut self, out: &mut Vec<u8>) -> bool {
-        let State::StreamBody { remaining } = &mut self.state else {
-            unreachable!("advance_stream_body called outside StreamBody state")
-        };
-        let take = (*remaining).min(self.pending.len());
+    fn advance_stream_body(&mut self, mut remaining: usize, out: &mut Vec<u8>) -> (State, bool) {
+        let take = remaining.min(self.pending.len());
         out.extend(self.pending.drain(..take));
-        *remaining -= take;
-        if *remaining > 0 {
-            return false;
+        remaining -= take;
+        if remaining > 0 {
+            return (State::StreamBody { remaining }, false);
         }
-        self.state = State::Head;
-        true
+        (State::Head, true)
     }
 
     /// Accumulate framed bytes into the buffered body until `remaining` is
     /// exhausted, then emit the (possibly rewritten) card.
-    fn advance_buffer_body(&mut self, out: &mut Vec<u8>) -> bool {
-        let State::BufferBody {
-            body, remaining, ..
-        } = &mut self.state
-        else {
-            unreachable!("advance_buffer_body called outside BufferBody state")
-        };
-        let take = (*remaining).min(self.pending.len());
-        body.extend(self.pending.drain(..take));
-        *remaining -= take;
-        if *remaining > 0 {
-            return false;
+    fn advance_buffer_body(&mut self, mut buffered: Buffered, out: &mut Vec<u8>) -> (State, bool) {
+        let take = buffered.remaining.min(self.pending.len());
+        buffered.body.extend(self.pending.drain(..take));
+        buffered.remaining -= take;
+        if buffered.remaining > 0 {
+            return (State::BufferBody(buffered), false);
         }
-        self.emit_buffered(out);
-        true
+        self.emit_buffered(&buffered.header, &buffered.body, out);
+        (State::Head, true)
     }
 
-    /// Classify a just-completed header block and set the next state.
-    fn dispatch_header(&mut self, header: Vec<u8>, out: &mut Vec<u8>) {
+    /// Classify a just-completed header block and pick the next state.
+    fn dispatch_header(header: Vec<u8>, out: &mut Vec<u8>) -> State {
         let info = HeaderInfo::parse(&header);
         if info.chunked || (info.content_length.is_none() && info.has_body()) {
             // Un-frameable for keep-alive purposes: emit the header and stream
             // the rest of the connection verbatim.
             out.extend_from_slice(&header);
-            self.raw = true;
-            return;
+            return State::Raw;
         }
         let Some(len) = info.content_length else {
             // No body (204/304/1xx, or Content-Length: 0 implied) — header only.
             out.extend_from_slice(&header);
-            self.state = State::Head;
-            return;
+            return State::Head;
         };
         if info.json && len <= MAX_CARD_BYTES {
-            self.state = State::BufferBody {
+            State::BufferBody(Buffered {
                 header,
                 body: Vec::with_capacity(len),
                 remaining: len,
-            };
+            })
         } else {
             out.extend_from_slice(&header);
-            self.state = State::StreamBody { remaining: len };
+            State::StreamBody { remaining: len }
         }
     }
 
     /// A buffered card candidate is complete: rewrite if it is a card, else
     /// emit it verbatim.
-    fn emit_buffered(&mut self, out: &mut Vec<u8>) {
-        let State::BufferBody { header, body, .. } =
-            std::mem::replace(&mut self.state, State::Head)
-        else {
-            return;
-        };
-        if let Some(rewritten) = rewrite_card_body(&body, &self.local_base) {
-            out.extend_from_slice(&with_content_length(&header, rewritten.len()));
+    fn emit_buffered(&self, header: &[u8], body: &[u8], out: &mut Vec<u8>) {
+        if let Some(rewritten) = rewrite_card_body(body, &self.local_base) {
+            out.extend_from_slice(&with_content_length(header, rewritten.len()));
             out.extend_from_slice(&rewritten);
         } else {
-            out.extend_from_slice(&header);
-            out.extend_from_slice(&body);
+            out.extend_from_slice(header);
+            out.extend_from_slice(body);
         }
     }
 }
@@ -492,6 +477,34 @@ mod tests {
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("http://127.0.0.1:8080/a2a"), "card rewritten");
         assert!(text.contains("204 No Content"), "trailing 204 survives");
+    }
+
+    #[test]
+    fn flushes_an_unfinished_card_verbatim_on_finish() {
+        let response = card_response("http://origin:9999/a2a");
+        let truncated = &response[..response.len() - 5];
+        assert_eq!(run(truncated), truncated, "partial card is not dropped");
+    }
+
+    #[test]
+    fn streams_everything_after_a_chunked_response_verbatim() {
+        let mut response =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".to_vec();
+        response.extend(card_response("http://origin:9999/a2a"));
+        assert_eq!(run(&response), response, "the raw latch never releases");
+    }
+
+    #[test]
+    fn streams_an_overlong_header_block_verbatim() {
+        let mut response = b"HTTP/1.1 200 OK\r\nX-Pad: ".to_vec();
+        response.extend(vec![b'a'; super::MAX_HEAD_BYTES + 1]);
+        response.extend(b"\r\n\r\n");
+        response.extend(card_response("http://origin:9999/a2a"));
+        let mut rewriter = CardRewriter::new(BASE.to_owned());
+        let mut out = rewriter.feed(&response[..super::MAX_HEAD_BYTES + 100]);
+        out.extend(rewriter.feed(&response[super::MAX_HEAD_BYTES + 100..]));
+        out.extend(rewriter.finish());
+        assert_eq!(out, response, "unframeable header latches raw");
     }
 
     #[test]

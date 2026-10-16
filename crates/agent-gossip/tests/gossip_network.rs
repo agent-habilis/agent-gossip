@@ -2332,12 +2332,24 @@ fn test_directed_msg_backfills_to_its_addressee() {
     assert!(bob.wait_ready(&mesh), "bob never ready");
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
+    // Warm the link first: a send whose dial fails is dropped on purpose (see
+    // `a_msg_whose_send_failed_never_arrives_later`), so a cold dial to the
+    // frozen bob would fail the send and nothing would be left to backfill.
+    let warmup = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "backfill-warmup");
+    assert!(warmup.status.success(), "warm-up msg failed: {warmup:?}");
+    assert_received(&bob, &alice.nickname, "backfill-warmup", reconcile);
+
     // Freeze bob, then msg him: QUIC buffers the unicast leg locally, and the
     // freeze outlasts iroh's direct-path idle timeout, so the leg dies with the
     // frame still in flight. `commit_outbound_part` retained it before
     // `deliver`, so alice can still serve it — through anti-entropy only.
     bob.stop();
-    let _ = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "backfill-secret");
+    let secret = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "backfill-secret");
+    assert!(
+        secret.status.success(),
+        "the send to the frozen bob failed, so there is nothing to backfill \
+         (no open link before SIGSTOP?): {secret:?}"
+    );
     std::thread::sleep(LINK_DEATH_FREEZE);
     bob.cont();
 
