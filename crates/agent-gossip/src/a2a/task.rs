@@ -153,23 +153,15 @@ fn stalled(reader: ReaderBeat, rec: &TaskRecord, interval: Duration, now: Instan
             .is_none_or(|at| now.duration_since(at) >= interval)
 }
 
-/// Check an inbound beat frame for a silent worker reader, and mark the task so
-/// the next notice waits one interval. `None` for anything but a beat that
-/// carries the reader keys, so an old peer is never flagged.
+/// Check the reader keys of a fresh inbound beat (the value [`ingest`] returns)
+/// for a silent worker, and mark the task so the next notice waits one
+/// interval. A beat from an old peer carries no keys, so it never gets here.
 pub(crate) fn stall_notice(
     tasks: &mut HashMap<TaskId, TaskRecord>,
-    frame: &Message,
     task_id: &TaskId,
+    reader: ReaderBeat,
     now: Instant,
 ) -> Option<StallNotice> {
-    if is_stale(frame) {
-        return None;
-    }
-    let payload = gossip::status_payload(frame).ok()?;
-    if !gossip::is_beat(&payload) {
-        return None;
-    }
-    let reader = gossip::beat_reader(&payload)?;
     let rec = tasks.get_mut(task_id)?;
     let check_secs = task_stall_check_secs();
     if !stalled(reader, rec, Duration::from_secs(check_secs), now) {
@@ -227,7 +219,14 @@ pub(crate) struct IngestLegParams<'a> {
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
 /// peer and the beat fraction) and advances the machine. A frame that
 /// belongs to no task is a no-op.
-pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegParams<'_>) {
+///
+/// Returns the worker's [`ReaderBeat`] when the frame is a fresh inbound beat
+/// that carries one, so the caller can check it with [`stall_notice`] without
+/// parsing the frame again.
+pub(crate) fn ingest(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    params: IngestLegParams<'_>,
+) -> Option<ReaderBeat> {
     let IngestLegParams {
         frame,
         task_id,
@@ -247,15 +246,17 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         tag, to: Some(to), ..
     } = &frame.kind
     else {
-        return;
+        return None;
     };
     let mut waiting = None;
+    let mut reader = None;
     let (kind, fraction) = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = gossip::status_payload(frame) else {
-                return;
+                return None;
             };
             if gossip::is_beat(&payload) {
+                reader = gossip::beat_reader(&payload);
                 (LegKind::Beat, gossip::beat_fraction(&payload))
             } else {
                 if payload.status.state == TaskState::Working {
@@ -265,10 +266,10 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             }
         }
         wire::ARTIFACT => (LegKind::Artifact, None),
-        _ => return,
+        _ => return None,
     };
     if kind == LegKind::Beat && !mine && is_stale(frame) {
-        return;
+        return None;
     }
     let peer = if mine { to } else { &frame.author };
     apply(
@@ -303,6 +304,8 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             rec.surfaced_legs.insert(frame.id.clone());
         }
     }
+    // Only a beat from the other party says anything about its reader.
+    reader.filter(|_| !mine)
 }
 
 /// A beat older than one idle timeout proves nothing about the peer now. The
@@ -1190,6 +1193,25 @@ mod tests {
         )
     }
 
+    /// The node's path for an inbound beat: `ingest` hands back the reader keys,
+    /// and `stall_notice` checks them.
+    fn notice_for(
+        tasks: &mut HashMap<TaskId, TaskRecord>,
+        beat: &habilis_network::protocol::Message,
+        now: Instant,
+    ) -> Option<super::StallNotice> {
+        let reader = super::ingest(
+            tasks,
+            IngestLegParams {
+                frame: beat,
+                task_id: &tid(),
+                mine: false,
+                now,
+            },
+        )?;
+        super::stall_notice(tasks, &tid(), reader, now)
+    }
+
     /// The initiator flags a worker whose agent has not polled for a check
     /// interval with no bell armed. Pre-fix nothing read the reader keys, so a
     /// wedged agent behind a live daemon looked alive for up to 24 h.
@@ -1256,7 +1278,7 @@ mod tests {
         let mut tasks = working_task_we_opened(now);
         let beat = beat_from_worker(Some(silent_reader()));
 
-        let first = super::stall_notice(&mut tasks, &beat, &tid(), now);
+        let first = notice_for(&mut tasks, &beat, now);
         assert_eq!(
             first,
             Some(super::StallNotice {
@@ -1267,9 +1289,9 @@ mod tests {
             })
         );
         let soon = now + Duration::from_secs(30);
-        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), soon), None);
+        assert_eq!(notice_for(&mut tasks, &beat, soon), None);
         let later = now + STALL_CHECK;
-        assert!(super::stall_notice(&mut tasks, &beat, &tid(), later).is_some());
+        assert!(notice_for(&mut tasks, &beat, later).is_some());
     }
 
     /// A beat from an old peer carries no reader keys, so it is never flagged.
@@ -1278,7 +1300,7 @@ mod tests {
         let now = Instant::now();
         let mut tasks = working_task_we_opened(now);
         let beat = beat_from_worker(None);
-        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), now), None);
+        assert_eq!(notice_for(&mut tasks, &beat, now), None);
     }
 
     /// A working status leg for `tid()` at wire time `at`, with a waiting reason
@@ -1412,7 +1434,7 @@ mod tests {
         let mut tasks = working_task_we_opened(now);
         let mut beat = beat_from_worker(Some(silent_reader()));
         beat.timestamp = UnixSecs::now() - Duration::from_secs(super::task_timeout_secs() + 1);
-        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), now), None);
+        assert_eq!(notice_for(&mut tasks, &beat, now), None);
     }
 
     /// A working leg with `mesh:waiting` records the reason, and the next

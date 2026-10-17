@@ -747,17 +747,19 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             surface = false;
             replay = true;
         }
-        crate::a2a::task::ingest(
+        let now = Instant::now();
+        let reader = crate::a2a::task::ingest(
             &mut app.tasks,
             crate::a2a::task::IngestLegParams {
                 frame: message,
                 task_id: &task_id,
                 mine: false,
-                now: Instant::now(),
+                now,
             },
         );
-        if let Some(notice) =
-            crate::a2a::task::stall_notice(&mut app.tasks, message, &task_id, Instant::now())
+        if let Some(reader) = reader
+            && let Some(notice) =
+                crate::a2a::task::stall_notice(&mut app.tasks, &task_id, reader, now)
         {
             app.output.task_stalled(&notice);
         }
