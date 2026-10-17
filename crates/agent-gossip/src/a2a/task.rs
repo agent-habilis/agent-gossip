@@ -298,6 +298,9 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         {
             rec.waiting = waiting;
             rec.waiting_at = Some(frame.timestamp);
+            // Remembered here, not only by `note_surfaced`: a replay in the
+            // same second as this leg must not pass the clock check again.
+            rec.surfaced_legs.insert(frame.id.clone());
         }
     }
 }
@@ -1347,6 +1350,28 @@ mod tests {
             tasks[&tid()].waiting.as_deref(),
             Some("asks again"),
             "a replayed older plain leg must not clear the reason"
+        );
+    }
+
+    /// `ingest` guards the same-second replay itself: a caller that does not
+    /// call `note_surfaced` (only the node's task path does) gets it too.
+    #[test]
+    fn ingest_alone_ignores_a_same_second_waiting_replay() {
+        let at = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        let waiting = waiting_leg(Some("asks its user"), at);
+        let clear = waiting_leg(None, at);
+
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+        ingest_inbound(&mut tasks, &clear);
+        assert_eq!(tasks[&tid()].waiting, None);
+
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the replayed --waiting leg must not set the reason again"
         );
     }
 
