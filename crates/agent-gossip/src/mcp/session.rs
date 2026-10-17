@@ -245,10 +245,11 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::JoinTarget;
+    use habilis_network::protocol::{Channel, JoinTarget};
     use habilis_network::protocol::{MessageKind, PresenceSubtype};
     use serde_json::json;
 
@@ -303,6 +304,46 @@ mod tests {
             event,
             crate::output::OutputEvent::Message { msg, is_self }
                 if *is_self && msg.id == *sent
+        )
+    }
+
+    /// One cursor-less fetch of the baseline wait: remember the seq before
+    /// bob-cursor's join and whether his card merge has been seen. `Some` once
+    /// both have, across all the fetches so far.
+    async fn baseline_step(
+        alice: &Session,
+        replay_from: &Cell<Option<u64>>,
+        saw_card: &Cell<bool>,
+    ) -> Option<()> {
+        let events = alice
+            .fetch_messages(None, false)
+            .await
+            .expect("first fetch")
+            .events;
+        if replay_from.get().is_none() {
+            replay_from.set(seq_before_bob_join(&events));
+        }
+        saw_card.set(saw_card.get() || events.iter().any(|item| is_bob_card_merge(&item.event)));
+        (replay_from.get().is_some() && saw_card.get()).then_some(())
+    }
+
+    /// The seq strictly before bob-cursor's join in `events` (0 if the join is
+    /// the first event) — replaying from here re-includes the join and
+    /// everything after.
+    fn seq_before_bob_join(events: &[crate::a2a::surfaced::SurfacedEvent]) -> Option<u64> {
+        let join_idx = events.iter().position(|item| is_bob_join(&item.event))?;
+        Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
+    }
+
+    /// Whether `event` is the merge of bob-cursor's card into the meta document.
+    fn is_bob_card_merge(event: &crate::output::OutputEvent) -> bool {
+        matches!(
+            event,
+            crate::output::OutputEvent::StateChanged {
+                channel: Channel::Meta,
+                event: change,
+                ..
+            } if change.author.as_str() == "bob-cursor"
         )
     }
 
@@ -563,25 +604,24 @@ mod tests {
             .await
             .expect("join");
 
-        // Drive alice's first cursor-less fetch until bob's join presence lands.
-        // That first non-empty fetch advances the implicit cursor past
-        // everything currently buffered — which is exactly what we test next.
+        // Drive alice's first cursor-less fetches until bob's join presence AND
+        // the merge of bob's card into the meta document have both landed. They
+        // are two events that gossip delivers independently, so the second can
+        // arrive after the first fetch that saw the join; stopping at the join
+        // alone left that meta event to show up as a false delta below.
+        // The fetches advance the implicit cursor past everything currently
+        // buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
+        let replay_from = Cell::new(None);
+        let saw_card = Cell::new(false);
         let deadline = tokio::time::Instant::now() + DELIVER;
-        let replay_from = poll_until(deadline, Duration::from_millis(150), || async {
-            let events = alice
-                .fetch_messages(None, false)
-                .await
-                .expect("first fetch")
-                .events;
-            let bob_join_idx = events.iter().position(|item| is_bob_join(&item.event));
-            // The seq strictly before bob's join (0 if it's the first event) —
-            // replaying from here re-includes the join and everything after.
-            bob_join_idx.map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
+        poll_until(deadline, Duration::from_millis(150), || {
+            baseline_step(&alice, &replay_from, &saw_card)
         })
         .await
-        .expect("first fetch should see bob's join presence");
+        .expect("first fetches should see bob's join presence and his card merge");
+        let replay_from = replay_from.get().expect("set with the join");
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
