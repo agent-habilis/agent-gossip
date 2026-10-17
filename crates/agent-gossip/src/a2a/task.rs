@@ -258,7 +258,9 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             if gossip::is_beat(&payload) {
                 (LegKind::Beat, gossip::beat_fraction(&payload))
             } else {
-                waiting = gossip::status_waiting(&payload);
+                if payload.status.state == TaskState::Working {
+                    waiting = gossip::status_waiting(&payload);
+                }
                 (LegKind::Status(payload.status.state), None)
             }
         }
@@ -1345,6 +1347,24 @@ mod tests {
             tasks[&tid()].waiting.as_deref(),
             Some("asks again"),
             "a replayed older plain leg must not clear the reason"
+        );
+    }
+
+    /// The contract: only a `working` leg carries the reason. A leg for any
+    /// other live state clears it, even when it carries `mesh:waiting`.
+    #[test]
+    fn only_a_working_leg_sets_the_waiting_reason() {
+        let first = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        let metadata = || crate::a2a::gossip::waiting_metadata(Some("asks its user"));
+        let mut leg = status_frame(TaskState::InputRequired, metadata());
+        leg.timestamp = first;
+        ingest_inbound(&mut tasks, &leg);
+        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "an input-required leg must not set the reason"
         );
     }
 
