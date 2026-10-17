@@ -561,8 +561,10 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
+            // Only a `working` leg carries the reason, as in the record.
             waiting: crate::a2a::gossip::status_payload(msg)
                 .ok()
+                .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
                 .and_then(|payload| crate::a2a::gossip::status_waiting(&payload)),
             display: task_display(TaskDisplayParams {
                 author: msg.author.as_str(),

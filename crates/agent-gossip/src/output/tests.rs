@@ -295,6 +295,32 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
     assert!(plain.get("waiting").is_none(), "got: {plain}");
 }
 
+/// The record keeps the reason from a `working` leg only, so the event key
+/// follows: a peer that sends `input-required` with `mesh:waiting` must not
+/// make the initiator badge a task that is not working.
+#[test]
+fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
+    use super::OutputEvent;
+    let msg = status_frame(
+        "calm-otter",
+        "drift-oak",
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::InputRequired,
+            note: None,
+            metadata: crate::a2a::gossip::waiting_metadata(Some("asks its user")),
+        },
+    );
+    let json = super::json::event_json(&OutputEvent::Task {
+        msg: Box::new(msg),
+        is_self: false,
+    })
+    .expect("task event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["state"], "input-required");
+    assert!(parsed.get("waiting").is_none(), "got: {parsed}");
+}
+
 #[test]
 fn task_progress_event_json_shape() {
     use super::OutputEvent;
