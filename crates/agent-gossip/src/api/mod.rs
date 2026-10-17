@@ -13,7 +13,7 @@ pub use self::config::{CreateConfig, JoinConfig, TopicConfig};
 pub use self::directory::{Directory, DirectoryEvent, MeshListing};
 pub use self::error::{CreateError, JoinError};
 pub(crate) use self::inproc::InProcessSession;
-pub use self::params::{A2aCallParams, TaskArtifactParams};
+pub use self::params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
 pub use self::session::MeshSession;
 
 mod advertise;

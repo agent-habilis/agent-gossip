@@ -570,12 +570,17 @@ async fn a2a(action: A2aAction) -> Result<()> {
             task_id,
             state,
             note,
+            waiting,
         } => {
+            if waiting.is_some() && state != crate::a2a::TaskState::Working {
+                anyhow::bail!("--waiting requires --state working");
+            }
             let cmd = IpcCommand::A2aStatus {
                 mesh,
                 task_id,
                 state,
                 note,
+                waiting,
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task status")?;

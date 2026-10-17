@@ -67,6 +67,8 @@ pub(crate) enum IpcCommand {
         state: TaskState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<String>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
     /// An optional `file` is offloaded over the blob channel and referenced as a
@@ -312,6 +314,7 @@ pub(crate) async fn handle_ipc_command(
             task_id,
             state: task_state,
             note,
+            waiting,
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
             match emit_task_status(
@@ -321,6 +324,7 @@ pub(crate) async fn handle_ipc_command(
                     task_id: &task_id,
                     task_state,
                     note: note.as_deref(),
+                    waiting: waiting.as_deref(),
                     app,
                 },
                 state,
@@ -750,15 +754,22 @@ mod tests {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
+            waiting: Some("asks its user".to_string()),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"a2a_status\""));
         assert!(json.contains("\"state\":\"working\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::A2aStatus { state, note, .. } => {
+            IpcCommand::A2aStatus {
+                state,
+                note,
+                waiting,
+                ..
+            } => {
                 assert_eq!(state, TaskState::Working);
                 assert_eq!(note.as_deref(), Some("on it"));
+                assert_eq!(waiting.as_deref(), Some("asks its user"));
             }
             IpcCommand::Broadcast { .. }
             | IpcCommand::Msg { .. }
@@ -775,6 +786,25 @@ mod tests {
             | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected A2aStatus"),
         }
+    }
+
+    /// An older CLI sends no `waiting`; the daemon must still accept the line.
+    #[test]
+    fn ipc_command_a2a_status_without_waiting_still_parses() {
+        let cmd = IpcCommand::A2aStatus {
+            mesh: MeshId::from("test"),
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            state: TaskState::Working,
+            note: None,
+            waiting: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(!json.contains("waiting"), "the key must be absent: {json}");
+        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            parsed,
+            IpcCommand::A2aStatus { waiting: None, .. }
+        ));
     }
 
     #[test]

@@ -410,14 +410,34 @@ async fn merge_own_meta_entry(
 /// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
 /// keep the task alive, and each one woke the initiator's bell, so it is kept
 /// off the surface like a beat. It still reaches the state machine, which
-/// counts it as the peer's activity.
-fn is_empty_working_repeat(prior: Option<super::TaskState>, message: &Message) -> bool {
+/// counts it as the peer's activity. A leg that sets or clears the waiting
+/// reason (`prior_waiting` is the record's current one) is news and surfaces.
+fn is_empty_working_repeat(
+    prior: Option<super::TaskState>,
+    prior_waiting: Option<&str>,
+    message: &Message,
+) -> bool {
     use super::TaskState;
     prior == Some(TaskState::Working)
         && super::gossip::status_payload(message).is_ok_and(|payload| {
-            !super::gossip::is_beat(&payload) && payload.status.state == TaskState::Working
+            !super::gossip::is_beat(&payload)
+                && payload.status.state == TaskState::Working
+                && super::gossip::status_waiting(&payload).as_deref() == prior_waiting
         })
         && super::gossip::task_text(message).trim().is_empty()
+}
+
+/// Whether the local agent is reading: `(bell armed, seconds since its last
+/// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
+pub(crate) fn reader_liveness(app: &A2aApp, ctx: &HandlerCtx<'_>) -> (bool, Option<u64>) {
+    // A CLI bell holds the OS lock. An MCP or in-process reader holds none, but
+    // parks a long fetch.
+    let bell = crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
+        || app.surfaced.has_parked_bell();
+    (
+        bell,
+        app.surfaced.last_poll_secs_ago(tokio::time::Instant::now()),
+    )
 }
 
 /// Whether a surfaced event should wake a parked `poll --long` bell: anything
@@ -439,6 +459,7 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
             OutputEvent::Task { .. }
                 | OutputEvent::TaskMessage { .. }
                 | OutputEvent::TaskTimeout { .. }
+                | OutputEvent::TaskStalled { .. }
         )
 }
 
@@ -467,6 +488,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
@@ -709,7 +731,11 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             return Routed::default();
         }
         let prior = app.tasks.get(&task_id).map(|rec| rec.state);
-        surface &= !is_empty_working_repeat(prior, message);
+        let prior_waiting = app
+            .tasks
+            .get(&task_id)
+            .and_then(|rec| rec.waiting.as_deref());
+        surface &= !is_empty_working_repeat(prior, prior_waiting, message);
         if crate::a2a::task::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
             tracing::info!(
                 target: "agent_gossip::a2a",
@@ -730,6 +756,11 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
                 now: Instant::now(),
             },
         );
+        if let Some(notice) =
+            crate::a2a::task::stall_notice(&mut app.tasks, message, &task_id, Instant::now())
+        {
+            app.output.task_stalled(&notice);
+        }
         if surface {
             crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
         }
@@ -994,15 +1025,13 @@ async fn handle_a2a_req(
                     )
                     .await
                 }
-                Served::ReaderGet => Ok(serde_json::json!({
-                    // A CLI bell holds the OS lock. An MCP or in-process reader
-                    // holds none, but parks a long fetch.
-                    "bell": crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
-                        || app.surfaced.has_parked_bell(),
-                    "last_poll_secs_ago": app
-                        .surfaced
-                        .last_poll_secs_ago(tokio::time::Instant::now()),
-                })),
+                Served::ReaderGet => {
+                    let (bell, last_poll_secs_ago) = reader_liveness(app, ctx);
+                    Ok(serde_json::json!({
+                        "bell": bell,
+                        "last_poll_secs_ago": last_poll_secs_ago,
+                    }))
+                }
                 Served::Reject(error) => Err(error),
             }
         }
@@ -1423,23 +1452,58 @@ mod classify_tests {
     #[test]
     fn only_an_empty_working_on_a_working_task_is_a_repeat() {
         let working = Some(TaskState::Working);
-        assert!(is_empty_working_repeat(working, &working_with(None, None)));
+        assert!(is_empty_working_repeat(
+            working,
+            None,
+            &working_with(None, None)
+        ));
         assert!(
-            !is_empty_working_repeat(Some(TaskState::Submitted), &working_with(None, None)),
+            !is_empty_working_repeat(Some(TaskState::Submitted), None, &working_with(None, None)),
             "the accept surfaces"
         );
         assert!(
-            !is_empty_working_repeat(working, &working_with(Some("tests pass"), None)),
+            !is_empty_working_repeat(working, None, &working_with(Some("tests pass"), None)),
             "a progress note surfaces"
         );
         let beat = working_with(None, Some(crate::a2a::gossip::beat_metadata(None)));
         assert!(
-            !is_empty_working_repeat(working, &beat),
+            !is_empty_working_repeat(working, None, &beat),
             "a beat keeps its own path"
         );
         assert!(
-            !is_empty_working_repeat(working, &status_frame_in(TaskState::InputRequired, None)),
+            !is_empty_working_repeat(
+                working,
+                None,
+                &status_frame_in(TaskState::InputRequired, None)
+            ),
             "a question surfaces"
+        );
+    }
+
+    /// The `--waiting` leg and the leg that clears it change what the initiator
+    /// can act on, so each surfaces once. Pre-fix both were empty `working`
+    /// repeats and stayed off the surface, so the initiator agent never saw
+    /// that the worker waits on its user.
+    #[test]
+    fn a_waiting_leg_and_its_clear_each_surface_once() {
+        let working = Some(TaskState::Working);
+        let reason = "asks its user";
+        let waiting = working_with(None, crate::a2a::gossip::waiting_metadata(Some(reason)));
+        assert!(
+            !is_empty_working_repeat(working, None, &waiting),
+            "the --waiting leg surfaces"
+        );
+        assert!(
+            is_empty_working_repeat(working, Some(reason), &waiting),
+            "the same reason again stays off the surface"
+        );
+        assert!(
+            !is_empty_working_repeat(working, Some(reason), &working_with(None, None)),
+            "the clear surfaces"
+        );
+        assert!(
+            is_empty_working_repeat(working, None, &working_with(None, None)),
+            "a plain repeat stays off the surface"
         );
     }
 

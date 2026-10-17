@@ -268,6 +268,34 @@ fn task_self_echo_flag() {
 }
 
 #[test]
+fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
+    use super::OutputEvent;
+    let line = |metadata| {
+        let msg = status_frame(
+            "calm-otter",
+            "drift-oak",
+            StatusFrameArgs {
+                task_id: "550e8400-e29b-41d4-a716-446655440000",
+                state: crate::a2a::TaskState::Working,
+                note: None,
+                metadata,
+            },
+        );
+        let json = super::json::event_json(&OutputEvent::Task {
+            msg: Box::new(msg),
+            is_self: false,
+        })
+        .expect("task event produces a JSON line");
+        parse(&json)
+    };
+    let waiting = line(crate::a2a::gossip::waiting_metadata(Some("asks its user")));
+    assert_eq!(waiting["event"], "task");
+    assert_eq!(waiting["waiting"], "asks its user");
+    let plain = line(None);
+    assert!(plain.get("waiting").is_none(), "got: {plain}");
+}
+
+#[test]
 fn task_progress_event_json_shape() {
     use super::OutputEvent;
     let msg = status_frame(
@@ -326,6 +354,32 @@ fn task_peer_left_event_json_shape() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "task_timeout");
     assert_eq!(parsed["reason"], "peer-left");
+}
+
+#[test]
+fn task_stalled_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskStalled {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        peer: habilis_network::protocol::Nickname::from("calm-otter"),
+        last_poll_secs_ago: 2_400,
+        check_secs: 1_800,
+    };
+    let json = super::json::event_json(&event).expect("task_stalled event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_stalled");
+    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["peer"], "calm-otter");
+    assert_eq!(parsed["last_poll_secs_ago"], 2_400);
+    assert_eq!(parsed["check_secs"], 1_800);
+    assert_eq!(
+        parsed["display"],
+        "💬️ task stalled · `<calm-otter>` has not polled for 40 min"
+    );
+    assert!(super::json::is_visible(&event), "the user must see it");
+    assert!(crate::a2a::node::wakes(&event), "it must ring the bell");
+    assert!(crate::a2a::node::is_pollable(&event), "poll must serve it");
 }
 
 // ── peer_timeout / peer_return shape ───────────────────────

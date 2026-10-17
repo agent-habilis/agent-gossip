@@ -38,3 +38,18 @@ pub struct TaskArtifactParams {
     /// `file`'s MIME type, if any.
     pub file_mime: Option<String>,
 }
+
+/// The status leg for [`MeshSession::task_status`](super::MeshSession::task_status):
+/// the new state, plus an optional note and an optional reason that the
+/// worker waits on its own user (only meaningful with `working`).
+#[derive(Debug)]
+pub struct TaskStatusParams {
+    /// The task this status belongs to.
+    pub task_id: TaskId,
+    /// The new state.
+    pub state: crate::a2a::TaskState,
+    /// The status message text, if any.
+    pub note: Option<String>,
+    /// Why the worker waits on its own user, if it does.
+    pub waiting: Option<String>,
+}

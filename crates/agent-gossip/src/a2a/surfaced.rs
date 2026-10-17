@@ -338,6 +338,7 @@ fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
         | OutputEvent::Error { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
     }

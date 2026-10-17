@@ -67,7 +67,7 @@ use self::session::Session;
 use crate::a2a::TaskId;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
-    TopicConfig,
+    TaskStatusParams, TopicConfig,
 };
 use crate::cli::args::lookup::{Lookup, lookups_or_public};
 use crate::cli::args::mesh_config;
@@ -228,6 +228,10 @@ struct TaskStatusArgs {
     /// a failure reason), or a `done/total` progress fraction like "35/100".
     #[serde(default)]
     note: Option<String>,
+    /// Set this before you ask your own user something, with the reason. Only
+    /// valid with state "working"; the next status clears it.
+    #[serde(default)]
+    waiting: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -759,7 +763,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept/resume, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\" to end it. A directed task is created by `a2a_call` message/send (the worker mints the id and returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason)."
+        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept/resume, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\" to end it. A directed task is created by `a2a_call` message/send (the worker mints the id and returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason). Before you ask your own user something, send \"working\" with `waiting` set to the reason, so the initiator can tell a wait from a stall; the next status clears it."
     )]
     async fn task_status(
         &self,
@@ -769,7 +773,21 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
         let state = parse_task_state(&args.state)?;
-        match session.task_status(task_id, state, args.note).await {
+        if args.waiting.is_some() && state != crate::a2a::TaskState::Working {
+            return Err(McpError::invalid_params(
+                "waiting requires state \"working\"",
+                None,
+            ));
+        }
+        match session
+            .task_status(TaskStatusParams {
+                task_id,
+                state,
+                note: args.note,
+                waiting: args.waiting,
+            })
+            .await
+        {
             Ok((id, message)) => ok_json(SendResult { id, message }),
             Err(error) => Err(to_mcp_error(error)),
         }

@@ -26,10 +26,12 @@ use habilis_network::embed::HandlerCtx;
 use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
+use super::gossip::ReaderBeat;
 use super::{META_REASON, TaskId, TaskState, gossip, wire};
 use crate::a2a::app::A2aApp;
 use crate::a2a::tuning::{
-    TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs, task_timeout_secs,
+    TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs,
+    task_stall_check_secs, task_timeout_secs,
 };
 use crate::output;
 
@@ -95,6 +97,17 @@ pub(crate) struct TaskRecord {
     pub last_fraction: Option<(u64, u64)>,
     /// Which role currently owes the next move.
     pub ball: TaskRole,
+    /// Why the worker waits on its own user, from the `mesh:waiting` key of its
+    /// last status leg. Any other status leg clears it.
+    pub waiting: Option<String>,
+    /// Wire time of the status leg that last set or cleared `waiting`. A leg
+    /// older than this is a replay and changes nothing. A worker clock that
+    /// steps back drops newer waiting updates until it passes this time again,
+    /// the same exposure as `is_stale`, accepted.
+    pub waiting_at: Option<UnixSecs>,
+    /// When this node last told its agent that the worker's reader is silent,
+    /// so one task raises one event per interval.
+    pub last_stall_event: Option<Instant>,
 }
 
 impl TaskRecord {
@@ -114,6 +127,61 @@ impl TaskRecord {
         now.duration_since(self.last_skill_activity)
             > Duration::from_secs(task_skill_silence_max_secs())
     }
+}
+
+/// What the initiator's daemon tells its agent when the worker's reader is
+/// silent: facts only, nothing is canceled.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct StallNotice {
+    pub task_id: TaskId,
+    pub peer: Nickname,
+    pub last_poll_secs: u64,
+    pub check_secs: u64,
+}
+
+/// Whether a worker beat shows a silent reader on a task we opened. A worker
+/// that waits on its own user (`waiting`) or holds a bell is reading, so it
+/// never matches. One notice per task per interval.
+fn stalled(reader: ReaderBeat, rec: &TaskRecord, interval: Duration, now: Instant) -> bool {
+    rec.role == TaskRole::Initiator
+        && rec.state == TaskState::Working
+        && rec.waiting.is_none()
+        && !reader.bell
+        && reader.last_poll_secs >= interval.as_secs()
+        && rec
+            .last_stall_event
+            .is_none_or(|at| now.duration_since(at) >= interval)
+}
+
+/// Check an inbound beat frame for a silent worker reader, and mark the task so
+/// the next notice waits one interval. `None` for anything but a beat that
+/// carries the reader keys, so an old peer is never flagged.
+pub(crate) fn stall_notice(
+    tasks: &mut HashMap<TaskId, TaskRecord>,
+    frame: &Message,
+    task_id: &TaskId,
+    now: Instant,
+) -> Option<StallNotice> {
+    if is_stale(frame) {
+        return None;
+    }
+    let payload = gossip::status_payload(frame).ok()?;
+    if !gossip::is_beat(&payload) {
+        return None;
+    }
+    let reader = gossip::beat_reader(&payload)?;
+    let rec = tasks.get_mut(task_id)?;
+    let check_secs = task_stall_check_secs();
+    if !stalled(reader, rec, Duration::from_secs(check_secs), now) {
+        return None;
+    }
+    rec.last_stall_event = Some(now);
+    Some(StallNotice {
+        task_id: task_id.clone(),
+        peer: rec.peer.clone(),
+        last_poll_secs: reader.last_poll_secs,
+        check_secs,
+    })
 }
 
 /// What one applied leg *is*, reduced from its wire form.
@@ -181,6 +249,7 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     else {
         return;
     };
+    let mut waiting = None;
     let (kind, fraction) = match tag.as_str() {
         wire::STATUS => {
             let Ok(payload) = gossip::status_payload(frame) else {
@@ -189,6 +258,9 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
             if gossip::is_beat(&payload) {
                 (LegKind::Beat, gossip::beat_fraction(&payload))
             } else {
+                if payload.status.state == TaskState::Working {
+                    waiting = gossip::status_waiting(&payload);
+                }
                 (LegKind::Status(payload.status.state), None)
             }
         }
@@ -210,6 +282,24 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         },
         now,
     );
+    // Every status leg restates whether the worker waits, so a plain one clears
+    // it. Anti-entropy replays old legs, so two checks gate the waiting update
+    // only: the worker's clock drops a leg older than the last answer, and
+    // `surfaced_legs` drops a leg already shown, which covers a replay in the
+    // same second as the answer. `apply` above still runs for every leg and
+    // `advance` is idempotent. A finished task waits for nothing.
+    if matches!(kind, LegKind::Status(_))
+        && let Some(rec) = tasks.get_mut(task_id)
+    {
+        if rec.state.is_terminal() {
+            rec.waiting = None;
+        } else if rec.waiting_at.is_none_or(|at| frame.timestamp >= at)
+            && !rec.surfaced_legs.contains(&frame.id)
+        {
+            rec.waiting = waiting;
+            rec.waiting_at = Some(frame.timestamp);
+        }
+    }
 }
 
 /// A beat older than one idle timeout proves nothing about the peer now. The
@@ -369,6 +459,9 @@ pub(crate) fn adopt_initiator(
                 peer_beats: false,
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
+                waiting: None,
+                waiting_at: None,
+                last_stall_event: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
                 ball: if task_state == TaskState::InputRequired {
@@ -442,6 +535,9 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 peer_beats: false,
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
+                waiting: None,
+                waiting_at: None,
+                last_stall_event: None,
                 ball: TaskRole::Receiver,
             });
     }
@@ -750,6 +846,11 @@ pub(crate) async fn tick_task_keepalive(
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
+    let (bell, last_poll) = super::node::reader_liveness(app, ctx);
+    let reader = last_poll.map(|last_poll_secs| ReaderBeat {
+        bell,
+        last_poll_secs,
+    });
     let due: Vec<KeepaliveDue> = app
         .tasks
         .iter()
@@ -771,7 +872,7 @@ pub(crate) async fn tick_task_keepalive(
                 task_id: &task_id,
                 state: task_state,
                 note: None,
-                metadata: Some(gossip::beat_metadata(fraction)),
+                metadata: Some(gossip::beat_metadata_with_reader(fraction, reader)),
             },
         );
         let sent = broadcast_status(
@@ -853,10 +954,11 @@ mod tests {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{Nickname, UnixSecs};
 
-    use super::{LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
+    use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
+    use crate::a2a::gossip::ReaderBeat;
 
     fn tid() -> TaskId {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
@@ -1005,7 +1107,7 @@ mod tests {
         let later = now.checked_add(Duration::from_mins(1)).unwrap();
         super::ingest(
             &mut tasks,
-            super::IngestLegParams {
+            IngestLegParams {
                 frame: &beat,
                 task_id: &tid(),
                 mine: false,
@@ -1021,6 +1123,17 @@ mod tests {
 
     /// An inbound status frame for `tid()`; a beat when `beat` is true.
     fn status_leg(beat: bool) -> habilis_network::protocol::Message {
+        status_frame(
+            TaskState::Working,
+            beat.then(|| crate::a2a::gossip::beat_metadata(None)),
+        )
+    }
+
+    /// An inbound status frame for `tid()` in `state`, carrying `metadata`.
+    fn status_frame(
+        state: TaskState,
+        metadata: Option<serde_json::Value>,
+    ) -> habilis_network::protocol::Message {
         use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
@@ -1028,9 +1141,9 @@ mod tests {
             &mesh,
             crate::a2a::gossip::StatusUpdateParams {
                 task_id: &tid(),
-                state: TaskState::Working,
+                state,
                 note: None,
-                metadata: beat.then(|| crate::a2a::gossip::beat_metadata(None)),
+                metadata,
             },
         );
         Message::new_app(
@@ -1043,6 +1156,264 @@ mod tests {
                 body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
             },
         )
+    }
+
+    /// A task we opened (initiator) whose worker reported `working`.
+    fn working_task_we_opened(now: Instant) -> HashMap<TaskId, TaskRecord> {
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), false),
+            now,
+        );
+        assert_eq!(tasks[&tid()].state, TaskState::Working);
+        tasks
+    }
+
+    const STALL_CHECK: Duration = Duration::from_mins(30);
+
+    fn silent_reader() -> ReaderBeat {
+        ReaderBeat {
+            bell: false,
+            last_poll_secs: STALL_CHECK.as_secs(),
+        }
+    }
+
+    fn beat_from_worker(reader: Option<ReaderBeat>) -> habilis_network::protocol::Message {
+        status_frame(
+            TaskState::Working,
+            Some(crate::a2a::gossip::beat_metadata_with_reader(None, reader)),
+        )
+    }
+
+    /// The initiator flags a worker whose agent has not polled for a check
+    /// interval with no bell armed. Pre-fix nothing read the reader keys, so a
+    /// wedged agent behind a live daemon looked alive for up to 24 h.
+    #[test]
+    fn a_silent_reader_on_a_working_task_we_opened_is_stalled() {
+        let now = Instant::now();
+        let tasks = working_task_we_opened(now);
+        assert!(super::stalled(
+            silent_reader(),
+            &tasks[&tid()],
+            STALL_CHECK,
+            now
+        ));
+    }
+
+    /// Anything that shows the worker agent reading, or that the beat cannot
+    /// speak for, is never flagged.
+    #[test]
+    fn a_reading_or_waiting_worker_is_not_stalled() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let rec = tasks.get_mut(&tid()).unwrap();
+
+        let bell = ReaderBeat {
+            bell: true,
+            ..silent_reader()
+        };
+        assert!(!super::stalled(bell, rec, STALL_CHECK, now), "bell armed");
+
+        let recent = ReaderBeat {
+            last_poll_secs: STALL_CHECK.as_secs() - 1,
+            ..silent_reader()
+        };
+        assert!(
+            !super::stalled(recent, rec, STALL_CHECK, now),
+            "polled lately"
+        );
+
+        rec.waiting = Some("asking its user".to_owned());
+        assert!(
+            !super::stalled(silent_reader(), rec, STALL_CHECK, now),
+            "waiting on its own user"
+        );
+        rec.waiting = None;
+
+        rec.role = TaskRole::Receiver;
+        assert!(
+            !super::stalled(silent_reader(), rec, STALL_CHECK, now),
+            "only the initiator raises the event"
+        );
+        rec.role = TaskRole::Initiator;
+
+        rec.state = TaskState::InputRequired;
+        assert!(
+            !super::stalled(silent_reader(), rec, STALL_CHECK, now),
+            "the ball is ours, not the worker's"
+        );
+    }
+
+    /// One notice per task per interval, then again once the interval passes.
+    #[test]
+    fn a_stalled_task_raises_one_notice_per_interval() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let beat = beat_from_worker(Some(silent_reader()));
+
+        let first = super::stall_notice(&mut tasks, &beat, &tid(), now);
+        assert_eq!(
+            first,
+            Some(super::StallNotice {
+                task_id: tid(),
+                peer: Nickname::from("calm-otter"),
+                last_poll_secs: STALL_CHECK.as_secs(),
+                check_secs: STALL_CHECK.as_secs(),
+            })
+        );
+        let soon = now + Duration::from_secs(30);
+        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), soon), None);
+        let later = now + STALL_CHECK;
+        assert!(super::stall_notice(&mut tasks, &beat, &tid(), later).is_some());
+    }
+
+    /// A beat from an old peer carries no reader keys, so it is never flagged.
+    #[test]
+    fn a_beat_without_reader_keys_raises_no_notice() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let beat = beat_from_worker(None);
+        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), now), None);
+    }
+
+    /// A working status leg for `tid()` at wire time `at`, with a waiting reason
+    /// when one is given.
+    fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> habilis_network::protocol::Message {
+        let mut frame = status_frame(
+            TaskState::Working,
+            crate::a2a::gossip::waiting_metadata(reason),
+        );
+        frame.timestamp = at;
+        frame
+    }
+
+    fn ingest_inbound(
+        registry: &mut HashMap<TaskId, TaskRecord>,
+        frame: &habilis_network::protocol::Message,
+    ) {
+        super::ingest(
+            registry,
+            IngestLegParams {
+                frame,
+                task_id: &tid(),
+                mine: false,
+                now: Instant::now(),
+            },
+        );
+    }
+
+    /// Anti-entropy re-serves old status legs hours late. Both the `--waiting`
+    /// leg and the plain leg that clears it surface once, so the node records
+    /// their ids; their wire time covers the rest. A replay must not set or clear
+    /// the reason again, also when the leg shares its second with the clear.
+    #[test]
+    fn a_replayed_status_leg_does_not_undo_a_newer_waiting_answer() {
+        let first = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        // As the node does after it ingests a leg that surfaces.
+        let deliver = |registry: &mut HashMap<TaskId, TaskRecord>, frame| {
+            ingest_inbound(registry, frame);
+            super::note_surfaced(registry, &tid(), frame);
+        };
+        let waiting = waiting_leg(Some("asks its user"), first);
+        let clear_same_second = waiting_leg(None, first);
+        let clear = waiting_leg(None, first + Duration::from_secs(10));
+        let waiting_again = waiting_leg(Some("asks again"), first + Duration::from_secs(20));
+
+        deliver(&mut tasks, &waiting);
+        deliver(&mut tasks, &clear_same_second);
+        assert_eq!(tasks[&tid()].waiting, None);
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a replayed --waiting leg of the same second must not set the reason again"
+        );
+
+        deliver(&mut tasks, &clear);
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a replayed --waiting leg must not set the reason again"
+        );
+
+        deliver(&mut tasks, &waiting_again);
+        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks again"));
+        ingest_inbound(&mut tasks, &clear);
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks again"),
+            "a replayed older plain leg must not clear the reason"
+        );
+    }
+
+    /// The contract: only a `working` leg carries the reason. A leg for any
+    /// other live state clears it, even when it carries `mesh:waiting`.
+    #[test]
+    fn only_a_working_leg_sets_the_waiting_reason() {
+        let first = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        let metadata = || crate::a2a::gossip::waiting_metadata(Some("asks its user"));
+        let mut leg = status_frame(TaskState::InputRequired, metadata());
+        leg.timestamp = first;
+        ingest_inbound(&mut tasks, &leg);
+        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "an input-required leg must not set the reason"
+        );
+    }
+
+    /// A finished task is frozen: a late `--waiting` leg sets nothing.
+    #[test]
+    fn a_late_waiting_leg_on_a_finished_task_sets_nothing() {
+        let mut tasks = working_task_we_opened(Instant::now());
+        ingest_inbound(&mut tasks, &status_frame(TaskState::Completed, None));
+        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+
+        ingest_inbound(&mut tasks, &waiting_leg(Some("too late"), UnixSecs::now()));
+        assert_eq!(tasks[&tid()].waiting, None);
+    }
+
+    /// A beat older than one idle timeout proves nothing about the worker now: a
+    /// relay can re-inject it after the worker died.
+    #[test]
+    fn a_stale_beat_raises_no_notice() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let mut beat = beat_from_worker(Some(silent_reader()));
+        beat.timestamp = UnixSecs::now() - Duration::from_secs(super::task_timeout_secs() + 1);
+        assert_eq!(super::stall_notice(&mut tasks, &beat, &tid(), now), None);
+    }
+
+    /// A working leg with `mesh:waiting` records the reason, and the next
+    /// status leg clears it.
+    #[test]
+    fn a_status_leg_sets_and_clears_the_waiting_reason() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let ingest_leg = |registry: &mut HashMap<TaskId, TaskRecord>, frame| {
+            super::ingest(
+                registry,
+                IngestLegParams {
+                    frame: &frame,
+                    task_id: &tid(),
+                    mine: false,
+                    now,
+                },
+            );
+        };
+
+        let waiting = serde_json::json!({ crate::a2a::extensions::META_WAITING: "asks its user" });
+        ingest_leg(&mut tasks, status_frame(TaskState::Working, Some(waiting)));
+        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+
+        ingest_leg(&mut tasks, status_frame(TaskState::Working, None));
+        assert_eq!(tasks[&tid()].waiting, None);
     }
 
     /// A leg on a task that already closed is a replay: anti-entropy served an
@@ -1579,7 +1950,7 @@ mod tests {
         // ②: the self-echo still advances the record (id threaded, not parsed).
         super::ingest(
             &mut tasks,
-            super::IngestLegParams {
+            IngestLegParams {
                 frame: &sealed,
                 task_id: &task_id,
                 mine: true,
@@ -1678,7 +2049,7 @@ mod tests {
         let ingest_own = |tasks: &mut HashMap<_, _>, frame: &Message| {
             super::ingest(
                 tasks,
-                super::IngestLegParams {
+                IngestLegParams {
                     frame,
                     task_id: &task_id,
                     mine: true,
