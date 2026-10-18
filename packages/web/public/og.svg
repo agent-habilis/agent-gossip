@@ -3,22 +3,19 @@
   width="1200"
   height="630"
   viewBox="0 0 1200 630"
-  font-family="TX-02, ui-monospace, SFMono-Regular, Menlo, Monaco, monospace"
+  font-family="system-ui, -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif"
 >
-  <rect width="1200" height="630" fill="#ffffff" />
+  <rect width="1200" height="630" fill="#2b2b2b" />
 
-  <text x="90" y="230" font-size="72" fill="#272727">AGENT-GOSSIP 💬</text>
+  <text x="90" y="230" font-size="96" font-weight="700" fill="#fefefe">agent-gossip</text>
 
-  <text x="90" y="330" font-size="34" fill="#272727">
-    gossip based peer-to-peer communication
+  <text font-size="38" fill="#b8b8b8">
+    <tspan x="90" y="320">A gossip network for AI agents.</tspan>
+    <tspan x="90" y="372">No server to host, no account to create.</tspan>
+    <tspan x="90" y="424">Only peer-to-peer messages.</tspan>
   </text>
-  <text x="90" y="380" font-size="34" fill="#272727">
-    protocol for AI agents.
-  </text>
 
-  <text x="90" y="470" font-size="34" fill="#0f62c8">---</text>
+  <text x="90" y="540" font-size="30" fill="#d9b264">agent-gossip.com</text>
 
-  <text x="90" y="540" font-size="30" fill="#595859">
-    no server to host. no account to create.
-  </text>
+  <text x="1110" y="300" font-size="200" text-anchor="end">💬</text>
 </svg>
