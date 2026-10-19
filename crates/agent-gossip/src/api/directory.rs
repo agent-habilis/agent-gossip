@@ -249,9 +249,7 @@ impl Drop for Directory {
 /// baked into the gossip id, so this must resolve exactly as before, or peers
 /// on an older version land in a different directory.
 pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> LookupOpts {
-    // Mirrors habilis-network's private `LookupSet::any`.
-    let names_none = !lookups.mdns && !lookups.dht && !lookups.relay_lookup.is_set();
-    if public && names_none {
+    if public && !lookups.any() {
         LookupOpts::public_preset()
     } else {
         resolve_lookups(lookups)

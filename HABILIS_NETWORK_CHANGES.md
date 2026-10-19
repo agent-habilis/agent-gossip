@@ -10,8 +10,10 @@ the other items against that rev.
    `MULTIHOP_TRANSPORT_ID` and `GOSSIP_TRANSPORT_ID` from `habilis_network::net`.
    agent-gossip copies them by hand in `a2a/peer_path.rs` to name the path of a
    peer. A copied value drifts silently if the engine changes it.
+   **Fixed in `1c59e9c`** (habilis-network #9). `a2a/peer_path.rs` imports them.
 2. **Make `LookupSet::any` public.** agent-gossip reimplements it in
    `api/directory.rs` (`resolve_lookups_or_public`).
+   **Fixed in `1c59e9c`** (habilis-network #9). `resolve_lookups_or_public` calls it.
 3. **`FORKED.md` is stale.** Lines 23-40 list crates that no longer exist
    (`-blobs`, `-reassembly`, `-directory`). Lines 365-414 tell consumers to
    carry a `[patch.crates-io]` table. The root `Cargo.toml` says that no patch
