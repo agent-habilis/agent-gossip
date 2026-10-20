@@ -1,3 +1,11 @@
+## 0.12.6 (2026-10-20)
+
+### Fixes
+
+#### Build on habilis-network's typestate API
+
+The engine now builds against habilis-network with typed messages and endpoints: only a signed message can reach the wire, and a mesh id with a secret stays locked until it is unlocked. Wire format, flags and output do not change. The wasm client now has its own CI job.
+
 ## 0.12.5 (2026-10-16)
 
 ### Fixes
