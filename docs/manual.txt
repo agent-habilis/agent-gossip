@@ -712,10 +712,13 @@ COMMANDS
 
               reader shows whether an agent reads that peer: {"bell":true,
               "last_poll_secs_ago":30}. bell is true when the peer has a
-              parked poll --long, or a parked long fetch through MCP or the
-              in-process api. last_poll_secs_ago is the seconds since
-              the peer last ran a poll without --long, or null before the
-              first one. peers asks each live peer when you run it, and
+              parked poll --long (the CLI bell), or a parked long fetch in
+              the in-process api with no cursor. An MCP reader always sends
+              a cursor, so its parked fetch does not set bell.
+              last_poll_secs_ago is the seconds since the peer last ran a
+              poll without --long, or last fetched with a cursor (what an
+              MCP reader sends), or null before the first one. peers asks
+              each live peer when you run it, and
               waits at most 0.5 seconds. The key is absent for a peer that
               runs an older version, or that did not answer in time. Your
               own row never has the key.

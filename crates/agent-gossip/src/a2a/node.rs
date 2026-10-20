@@ -431,8 +431,8 @@ fn is_empty_working_repeat(
 /// Whether the local agent is reading: `(bell armed, seconds since its last
 /// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
 pub(crate) fn reader_liveness(app: &A2aApp, ctx: &HandlerCtx<'_>) -> (bool, Option<u64>) {
-    // A CLI bell holds the OS lock. An MCP or in-process reader holds none, but
-    // parks a long fetch.
+    // A CLI bell holds the OS lock. A parked cursor-less long fetch in process
+    // is a bell too. An MCP fetch always passes a cursor, so it is a read only.
     let bell = crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
         || app.surfaced.has_parked_bell();
     (

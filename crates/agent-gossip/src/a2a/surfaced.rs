@@ -492,7 +492,10 @@ impl SurfacedState {
             responder,
         } = params;
         // Only a cursor-less long poll is the bell. An explicit `after` is an
-        // MCP read, even when it parks.
+        // MCP read, even when it parks. The legacy CLI `poll --after N --long`
+        // also passes here; that is harmless, because every CLI `--long` poll
+        // holds the bell lock, so the bell is already armed and the task is
+        // not stalled.
         if !long || after.is_some() {
             self.last_foreground_poll = Some(now);
         }
