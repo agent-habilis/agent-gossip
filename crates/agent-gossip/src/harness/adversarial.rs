@@ -491,22 +491,18 @@ impl CraftedMsg {
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
     #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
-        // A frame that still verifies is the genuine signed frame: the engine's own serializer writes it,
-        // with its valid signature. Only a tampered frame takes the unchecked path below.
-        if let Ok(verified) = self.msg.clone().verify() {
-            return verified
-                .serialize()
-                .expect("crafted message serializes")
-                .as_bytes()
-                .to_vec();
-        }
-        // A tampered frame keeps its stale signature only through a test-fixtures constructor that
-        // preserves the signer; until the engine has one, this unchecked form is what the adversary sends.
-        let key = self.msg.signer.as_ref().map_or_else(
-            || habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
-            habilis_network::protocol::Signer::key,
-        );
-        habilis_network::protocol::message::Verified::fixture_unchecked(self.msg.clone(), key)
+        // A signed frame keeps its signature as built, or as stale after a tamper: the fixture keeps
+        // the signer, and the engine's own serializer writes the bytes. An unsigned frame has no
+        // signature to keep.
+        let frame = if self.msg.signer.is_some() {
+            habilis_network::protocol::message::Verified::fixture_with_signature(self.msg.clone())
+        } else {
+            habilis_network::protocol::message::Verified::fixture_unchecked(
+                self.msg.clone(),
+                habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+            )
+        };
+        frame
             .serialize()
             .expect("crafted message serializes")
             .as_bytes()

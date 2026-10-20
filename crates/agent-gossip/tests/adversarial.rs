@@ -81,7 +81,9 @@ async fn tampered_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("tampered").await;
     let key = adversarial::new_key();
     // Sign "honest", then mutate the body → signature no longer matches.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "honest")
+    // The same shape as the control below: a nickname the victim surfaces, a2a-wrapped.
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
+        .wrap_a2a()
         .sign(&key)
         .tamper_body("tampered-after-sign")
         .bytes();
@@ -94,6 +96,25 @@ async fn tampered_message_is_dropped() {
     assert!(
         !surfaced(&mut victim, "tampered-after-sign") && !surfaced(&mut victim, "honest"),
         "a tampered message must be dropped (signature mismatch)"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// The control for `tampered_message_is_dropped`: the same signed frame, without the mutation, is
+/// surfaced. The drop above is therefore the signature check, not a frame lost in transit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
+    let (mut victim, attacker) = meshed_pair("tamper-control").await;
+    let key = adversarial::new_key();
+    let honest = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
+        .wrap_a2a()
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(honest).await.expect("inject");
+    assert!(
+        victim.wait_body("honest", T).await,
+        "a correctly signed frame must surface: the control of the tamper test"
     );
     victim.leave().await;
     attacker.leave().await;

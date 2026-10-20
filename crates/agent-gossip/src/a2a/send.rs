@@ -2022,12 +2022,19 @@ pub(crate) async fn handle_session_request(
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
         SessionRequest::InjectRaw { bytes } => {
-            // Only a frame whose signature verifies can become a WireFrame: the engine has no raw
-            // constructor, and a re-wrap would zero the signature.
-            let Ok(verified) = Message::parse(&bytes)
-                .and_then(|message| message.verify().map_err(|_| anyhow::anyhow!("unverified")))
-            else {
+            // The bytes reach the wire as they are: the receiver's own verification decides what
+            // happens to a frame whose signature does not match. Only the engine can make a WireFrame,
+            // so the parsed frame goes back through the fixture that keeps its signer.
+            let Ok(message) = Message::parse(&bytes) else {
                 return false;
+            };
+            let verified = if message.signer.is_some() {
+                Verified::fixture_with_signature(message)
+            } else {
+                Verified::fixture_unchecked(
+                    message,
+                    habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+                )
             };
             let Ok(frame) = verified.serialize() else {
                 return false;
