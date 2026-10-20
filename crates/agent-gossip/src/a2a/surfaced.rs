@@ -491,7 +491,9 @@ impl SurfacedState {
             now,
             responder,
         } = params;
-        if !long {
+        // Only a cursor-less long poll is the bell. An explicit `after` is an
+        // MCP read, even when it parks.
+        if !long || after.is_some() {
             self.last_foreground_poll = Some(now);
         }
         let (batch, baseline) = match after {
@@ -991,6 +993,28 @@ mod tests {
         assert_eq!(
             surfaced.last_poll_secs_ago(start + Duration::from_secs(42)),
             Some(42)
+        );
+    }
+
+    /// An MCP reader sends an explicit `after` on every fetch, long or not. Its
+    /// parked fetch is a read, not the discarded CLI bell, so it counts as a
+    /// reader and keeps a task from reading as stalled.
+    #[tokio::test]
+    async fn explicit_after_long_fetch_counts_as_a_reader() {
+        let mut surfaced = SurfacedState::new();
+        let start = TokioInstant::now();
+
+        let (mcp_tx, _mcp_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: Some(0),
+            long: true,
+            now: start,
+            responder: PollResponder::Json(mcp_tx),
+        });
+        assert_eq!(
+            surfaced.last_poll_secs_ago(start),
+            Some(0),
+            "a parked MCP fetch with an explicit after is a foreground read"
         );
     }
 
