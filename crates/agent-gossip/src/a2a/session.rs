@@ -93,7 +93,11 @@ pub(crate) enum SessionRequest {
     /// suite can prove receivers reject/flag them. Reachable only through
     /// the adversarial-gated `MeshSession::inject_raw`.
     #[cfg(feature = "adversarial")]
-    InjectRaw { bytes: bytes::Bytes },
+    InjectRaw {
+        bytes: bytes::Bytes,
+        /// Answers with an error when the bytes do not parse, do not serialize, or do not broadcast.
+        resp: oneshot::Sender<Result<()>>,
+    },
     /// Simulate the gossip event stream terminally ending (flips
     /// `gossip_open` off, exactly what the real `None` arm does — the
     /// orphaned receiver is dropped when the heal arm resubscribes).

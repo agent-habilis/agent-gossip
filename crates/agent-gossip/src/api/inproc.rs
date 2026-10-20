@@ -287,7 +287,8 @@ impl InProcessSession {
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
     pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> anyhow::Result<()> {
-        self.node.send(SessionRequest::InjectRaw { bytes }).await
+        self.call(|resp| SessionRequest::InjectRaw { bytes, resp })
+            .await?
     }
 
     /// Simulate the gossip stream terminally ending. Adversarial-suite

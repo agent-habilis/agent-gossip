@@ -101,6 +101,20 @@ async fn tampered_message_is_dropped() {
     attacker.leave().await;
 }
 
+/// Bytes that do not parse as a message are refused to the caller: the injection is an error,
+/// never a silent accept that makes a test pass without a frame on the wire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unparseable_injection_is_an_error_to_the_caller() {
+    let node = InProcNode::create("adv-unparseable").await;
+    let garbage = b"\x00\xffnot a message frame".to_vec();
+    let outcome = node.session.inject_raw(garbage).await;
+    assert!(
+        outcome.is_err(),
+        "injected bytes that do not parse must fail the inject call, not succeed silently"
+    );
+    node.leave().await;
+}
+
 /// The control for `tampered_message_is_dropped`: the same signed frame, without the mutation, is
 /// surfaced. The drop above is therefore the signature check, not a frame lost in transit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1025,6 +1039,13 @@ async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
 /// A crafted shard with an out-of-range header (`idx >= total`, or a `total`
 /// past the sanity tripwire) is rejected at `Message::parse` and never
 /// reaches the reassembly store.
+///
+/// Coverage note: the injector parses with the same `Message::parse` before it
+/// builds a frame, so these headers are refused at injection and the frames
+/// never reach the victim. The inject calls assert that refusal. The victim-side
+/// checks below are therefore weaker than before; a raw-bytes fixture in the
+/// engine (a `WireFrame` built from unparsed bytes) would restore the end-to-end
+/// path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn out_of_range_shard_headers_never_reach_the_store() {
     const GROUP: &str = "550e8400-e29b-41d4-a716-446655440000";
@@ -1035,21 +1056,21 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .shard(GROUP, 3, 3)
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(idx_outside)
-        .await
-        .expect("inject");
+    let refused_idx = attacker.session.inject_raw(idx_outside).await;
+    assert!(
+        refused_idx.is_err(),
+        "an out-of-range shard header must be refused at parse"
+    );
     // total past the header tripwire.
     let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
         .shard(GROUP, 0, agent_gossip::MAX_SHARD_TOTAL + 1)
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(absurd_total)
-        .await
-        .expect("inject");
+    let refused_total = attacker.session.inject_raw(absurd_total).await;
+    assert!(
+        refused_total.is_err(),
+        "a shard total past the tripwire must be refused at parse"
+    );
 
     attacker.broadcast("barrier-shard-hdr").await;
     assert!(

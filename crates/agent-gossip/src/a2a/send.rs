@@ -1826,6 +1826,29 @@ pub(crate) struct SessionRequestParams<'a> {
     pub(crate) app: &'a mut A2aApp,
 }
 
+/// Raw injection (adversarial only): parse the bytes, keep the signer as parsed, serialize
+/// through the engine, and broadcast. Each step that fails is an error for the caller.
+#[cfg(feature = "adversarial")]
+async fn inject_raw_frame(bytes: &[u8], sender: &MeshSender) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let message = Message::parse(bytes).context("injected bytes do not parse as a message")?;
+    let verified = if message.signer.is_some() {
+        Verified::fixture_with_signature(message)
+    } else {
+        Verified::fixture_unchecked(
+            message,
+            habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+        )
+    };
+    let frame = verified
+        .serialize()
+        .context("injected frame does not serialize")?;
+    sender
+        .broadcast(frame)
+        .await
+        .map_err(|err| anyhow::anyhow!("injected frame did not broadcast: {err}"))
+}
+
 /// Handle one typed in-process [`SessionRequest`] (in-process). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
@@ -2021,26 +2044,14 @@ pub(crate) async fn handle_session_request(
         // Raw injection (adversarial only): broadcast the bytes verbatim, no
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
-        SessionRequest::InjectRaw { bytes } => {
+        SessionRequest::InjectRaw { bytes, resp } => {
             // The bytes reach the wire as they are: the receiver's own verification decides what
             // happens to a frame whose signature does not match. Only the engine can make a WireFrame,
-            // so the parsed frame goes back through the fixture that keeps its signer.
-            let Ok(message) = Message::parse(&bytes) else {
-                return false;
-            };
-            let verified = if message.signer.is_some() {
-                Verified::fixture_with_signature(message)
-            } else {
-                Verified::fixture_unchecked(
-                    message,
-                    habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
-                )
-            };
-            let Ok(frame) = verified.serialize() else {
-                return false;
-            };
-            let _ = sender.broadcast(frame).await;
-            true
+            // so the parsed frame goes back through the fixture that keeps its signer. A failure
+            // here is the caller's error, never a silent drop.
+            let outcome = inject_raw_frame(&bytes, sender).await;
+            let _ = resp.send(outcome);
+            false
         }
         // Simulated stream end (adversarial only): indistinguishable from
         // the real `None` arm as far as the event loop is concerned.
