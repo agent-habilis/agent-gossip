@@ -1,6 +1,7 @@
 import { changelogHref } from '@/components/changelog'
 import { crateVersion } from '@/components/crateVersion'
 import { GITHUB, SideNav, SiteFooter, SiteNav } from '@/components/Shell'
+import { VersionChip } from '@/components/VersionChip'
 
 const SECTIONS = [
   { href: '#overview', label: 'Overview' },
@@ -37,9 +38,7 @@ export default async function Landing() {
             <div className="p-grid">
               <div data-span="6" data-span-s="row">
                 <p className="chip">
-                  <a className="p-button" data-variant="secondary" data-size="small" href={releaseNotes}>
-                    v{version}
-                  </a>
+                  <VersionChip fallback={version} href={releaseNotes} />
                 </p>
                 <h1>
                   <span className="hero-brand">agent-gossip</span>
