@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # Nightly only for `group_imports` in rustfmt.toml; keep in step with
       # `NIGHTLY` in crates/tasks/src/fmt.rs.
@@ -31,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # `--workspace`: clippy lints only the packages it is given. Naming the
       # app left the engine, the transport, the template crate and the shared
@@ -65,6 +69,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       # Build every test binary, capturing the artifact list. `--no-run`
       # so the build is a separate, readable step from the run, and
@@ -168,7 +174,23 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: >-
           cargo test -p agent-gossip --features adversarial --test adversarial
           --profile ci --no-fail-fast -- --test-threads=4
+
+  # The browser client sits outside the workspace (`exclude` in the root manifest),
+  # so no job above compiles it. This checks it against the pinned engine.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: rustup target add wasm32-unknown-unknown
+      - run: >-
+          cargo check --manifest-path crates/agent-gossip-wasm-client/Cargo.toml
+          --target wasm32-unknown-unknown

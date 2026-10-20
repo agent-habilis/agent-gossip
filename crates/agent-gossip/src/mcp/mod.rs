@@ -49,9 +49,7 @@ use anyhow::Result;
 use habilis_network::embed::RosterEntry;
 use habilis_network::protocol::JoinTarget;
 use habilis_network::protocol::RelayLadder;
-use habilis_network::protocol::{
-    LookupSet, MeshId, MeshName, Message, MessageBody, MessageId, Nickname,
-};
+use habilis_network::protocol::{LookupSet, MeshId, MeshName, MessageBody, MessageId, Nickname};
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use rmcp::{
     ServerHandler, ServiceExt,
@@ -379,7 +377,16 @@ struct SendResult {
     /// `to`, and `body` carrying the serialized A2A Message payload).
     /// Agents should read this instead of issuing a follow-up fetch just
     /// to learn their own timestamp.
-    message: Message,
+    #[serde(serialize_with = "serialize_message_view")]
+    message: habilis_network::protocol::message::Authored,
+}
+
+/// The tool output reports the sent frame as the IPC record does: a read-only view, not a sender.
+fn serialize_message_view<S: serde::Serializer>(
+    message: &habilis_network::protocol::message::Authored,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    crate::a2a::ipc::message_record(message).serialize(serializer)
 }
 
 #[derive(Debug, Serialize)]

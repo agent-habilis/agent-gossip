@@ -168,7 +168,7 @@ impl GossipDriver {
 
 #[async_trait::async_trait]
 impl NodeApp for GossipDriver {
-    fn classify(&self, message: &Message) -> AppClass {
+    fn classify(&self, message: &habilis_network::protocol::message::Authored) -> AppClass {
         let tag = message.kind.app_tag().map(AppTag::as_str);
         let is_broadcast = tag == Some(wire::BROADCAST);
         AppClass {
@@ -266,7 +266,7 @@ impl NodeDriver for GossipDriver {
             },
         )
         .with_id(id)
-        .signed(ctx.identity);
+        .sign(ctx.identity);
 
         let Ok(bytes) = frame.serialize() else {
             return false;

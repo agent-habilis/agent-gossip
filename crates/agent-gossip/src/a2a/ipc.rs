@@ -4,8 +4,9 @@ use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
 use habilis_network::ops::{StateMergeParams, broadcast_state_merge, start_ping_round};
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, MessageBody, Nickname};
-use habilis_network::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
+use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -232,7 +233,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                    let _ = resp_tx.send(json_ok_record(&msg_id, &msg));
                     true
                 }
                 Err(error) => {
@@ -258,7 +259,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg_id, msg, pending)) => {
-                    let ok = json_ok_msg(&msg_id, &msg);
+                    let ok = json_ok_record(&msg_id, &msg);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -330,7 +331,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg, pending)) => {
-                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    let ok = json_ok_record(&msg.id.clone(), &msg);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -375,7 +376,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg, pending)) => {
-                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    let ok = json_ok_record(&msg.id.clone(), &msg);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -611,6 +612,65 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
+}
+
+/// The record of a message as the IPC and MCP surfaces report it: the wire form, with the
+/// author's key and no signature, because an `Authored` view carries no signature. A body that
+/// was sealed on the wire is reported plaintext here, as the operator sees it.
+pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
+    let mut record = serde_json::Map::new();
+    record.insert("v".into(), message.version.clone().into());
+    record.insert(
+        "id".into(),
+        serde_json::to_value(&message.id).expect("an id serializes"),
+    );
+    if let serde_json::Value::Object(kind) =
+        serde_json::to_value(&message.kind).expect("a kind serializes")
+    {
+        record.extend(kind);
+    }
+    record.insert(
+        "mesh".into(),
+        serde_json::to_value(&message.mesh).expect("a mesh id serializes"),
+    );
+    record.insert(
+        "author".into(),
+        serde_json::to_value(&message.author).expect("a nickname serializes"),
+    );
+    record.insert("ts".into(), message.timestamp.as_secs().into());
+    record.insert(
+        "body".into(),
+        serde_json::to_value(&message.body).expect("a body serializes"),
+    );
+    record.insert("pubkey".into(), message.key().to_string().into());
+    if let Some(seq) = message.seq {
+        record.insert("seq".into(), seq.into());
+    }
+    if let Some(prev) = &message.prev {
+        record.insert(
+            "prev".into(),
+            serde_json::to_value(prev).expect("a hash serializes"),
+        );
+    }
+    if !message.parents.is_empty() {
+        record.insert(
+            "parents".into(),
+            serde_json::to_value(&message.parents).expect("hashes serialize"),
+        );
+    }
+    if let Some(shard) = &message.shard {
+        record.insert(
+            "shard".into(),
+            serde_json::to_value(shard).expect("a shard serializes"),
+        );
+    }
+    record.insert("ext".into(), message.ext.clone());
+    serde_json::Value::Object(record)
+}
+
+/// The `msg` IPC answer: the id and the record of the message just sent.
+fn json_ok_record(id: &MessageId, msg: &Authored) -> String {
+    serde_json::json!({"ok": true, "id": id, "message": message_record(msg)}).to_string()
 }
 
 #[cfg(test)]
@@ -872,7 +932,7 @@ mod tests {
                 )
                 .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
-                let parsed = habilis_network::protocol::Message::parse(&bytes).unwrap();
+                let parsed = habilis_network::protocol::Message::parse(bytes.as_bytes()).unwrap();
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.mesh, &mesh);

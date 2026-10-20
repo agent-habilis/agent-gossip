@@ -20,7 +20,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use habilis_network::embed::EventLoopState;
 use habilis_network::embed::HandlerCtx;
 use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
@@ -833,7 +832,7 @@ async fn broadcast_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(state.identity());
+    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).sign(state.identity());
     let Ok(bytes) = msg.serialize() else {
         return false;
     };
@@ -845,7 +844,7 @@ async fn broadcast_status(
     // background because this runs from `on_tick`, inline on the event loop:
     // a cold `deliver` dials there and stops the whole node for the dial and
     // path-select budgets, once per due task.
-    habilis_network::ops::deliver_in_background(&msg, Bytes::from(bytes), state, ctx.sender).await
+    habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await
 }
 
 #[cfg(test)]
@@ -1611,7 +1610,11 @@ mod tests {
             },
         );
         let line = crate::output::event_json(&crate::output::OutputEvent::Task {
-            msg: Box::new(plaintext),
+            msg: Box::new(
+                plaintext
+                    .sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
             is_self: true,
         })
         .expect("a task event renders a JSON line");

@@ -3,8 +3,9 @@
 
 use std::time::Duration;
 
+use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{Mesh, MeshConfig, MeshName, TransportPolicy};
-use habilis_network::protocol::{Message, MessageBody, Nickname};
+use habilis_network::protocol::{MessageBody, Nickname};
 use habilis_network::runtime::CoHostPolicy;
 use tokio::sync::broadcast;
 
@@ -12,7 +13,7 @@ use super::{CreateConfig, JoinError, MeshSession, TopicConfig};
 
 /// Wait for alice's topic message on `bob_rx`, ignoring anything else
 /// (e.g. earlier retries' echoes) until the channel closes.
-async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Message>) -> bool {
+async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Authored>) -> bool {
     loop {
         match bob_rx.recv().await {
             Ok(msg)
@@ -49,8 +50,8 @@ async fn topic_rejects_empty_string() {
 #[tokio::test]
 async fn topic_peers_from_same_string_converge_and_exchange() {
     let topic = "agent-habilis";
-    let first = Mesh::from_topic(topic, MeshConfig::loopback());
-    let second = Mesh::from_topic(topic, MeshConfig::loopback());
+    let first = Mesh::from_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
+    let second = Mesh::from_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
     assert_eq!(
         first.to_string(),
         second.to_string(),

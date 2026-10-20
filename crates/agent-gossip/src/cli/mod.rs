@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use habilis_network::protocol::JoinTarget;
-use habilis_network::protocol::{Mesh, MeshConfig, MeshName};
+use habilis_network::protocol::{LockedMesh, MeshConfig, MeshName};
 use habilis_network::protocol::{MeshId, MessageId, Nickname};
 use habilis_network::runtime::run as run_event_loop;
 use habilis_network::runtime::{CreateParams, JoinParams, Resolved};
@@ -383,7 +383,7 @@ async fn join(
         let requires = match &target {
             JoinTarget::Mesh(id) => id
                 .as_str()
-                .parse::<Mesh>()
+                .parse::<LockedMesh>()
                 .is_ok_and(|mesh| mesh.requires_password())
                 .then_some("gossip"),
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),

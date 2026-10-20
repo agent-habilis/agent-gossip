@@ -6,6 +6,7 @@ use habilis_network::embed::{AppClass, InboundApp, NodeApp};
 use habilis_network::embed::{IpcRequest, NodeDriver};
 use habilis_network::net::add_peer_addr;
 use habilis_network::protocol::MessageBody;
+use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{AppTag, Channel, DedupKey, Message, MessageKind, Nickname};
 use habilis_network::runtime::state_file::StateFile;
 use tokio::time::Instant as TokioInstant;
@@ -23,7 +24,7 @@ const CARD_RETRY_MAX_TICKS: u32 = 64;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
-    fn classify(&self, message: &Message) -> AppClass {
+    fn classify(&self, message: &Authored) -> AppClass {
         classify(message)
     }
 
@@ -308,7 +309,7 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> a
             let (wire, _plain) = doc.compose_wire_body(&change, None)?;
             Ok(
                 Message::new_channel_event(ctx.mesh, ctx.author, wire, Channel::Meta)
-                    .signed(&identity)
+                    .sign(&identity)
                     .wire_len(),
             )
         })?
@@ -411,7 +412,7 @@ async fn merge_own_meta_entry(
 /// keep the task alive, and each one woke the initiator's bell, so it is kept
 /// off the surface like a beat. It still reaches the state machine, which
 /// counts it as the peer's activity.
-fn is_empty_working_repeat(prior: Option<super::TaskState>, message: &Message) -> bool {
+fn is_empty_working_repeat(prior: Option<super::TaskState>, message: &Authored) -> bool {
     use super::TaskState;
     prior == Some(TaskState::Working)
         && super::gossip::status_payload(message).is_ok_and(|payload| {
@@ -484,7 +485,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
 /// Per-tag/payload classification of an inbound a2a `App` frame — see
 /// [`AppClass`]. Encodes in one place the wire policy the engine used to derive
 /// from hardcoded tag checks.
-fn classify(message: &Message) -> AppClass {
+fn classify(message: &Authored) -> AppClass {
     let tag = message.kind.app_tag().map(AppTag::as_str);
     // App payloads log (chat/status/artifact) only. RPC request/response frames
     // are plumbing: the result reaches the requester via its parked waiter,
@@ -555,7 +556,7 @@ fn classify(message: &Message) -> AppClass {
 /// only frames that earn a delivery receipt. A frame from before the horizon is
 /// never surfaced, so a receipt for it would claim a delivery nobody sees.
 fn route_content(
-    message: &Message,
+    message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
     ctx: &HandlerCtx<'_>,
@@ -636,13 +637,13 @@ struct Routed {
     fresh_for_us: bool,
 }
 
-fn parse_receipt(message: &Message) -> Option<Receipt> {
+fn parse_receipt(message: &Authored) -> Option<Receipt> {
     serde_json::from_str(message.body.as_str()).ok()
 }
 
 /// A receipt we did not author reaches this hook only: the engine drops our own
 /// frames by pubkey before it, and `route_content` checks the addressee.
-fn surface_receipt(message: &Message, app: &A2aApp) {
+fn surface_receipt(message: &Authored, app: &A2aApp) {
     let Some(receipt) = parse_receipt(message) else {
         return;
     };
@@ -674,7 +675,7 @@ fn surface_receipt(message: &Message, app: &A2aApp) {
 /// — the input of [`route_content`]'s task-leg arm.
 #[derive(Clone, Copy)]
 struct TaskLegParams<'a> {
-    message: &'a Message,
+    message: &'a Authored,
     to: &'a Nickname,
     surfaceable: bool,
 }
@@ -756,7 +757,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
 /// completes again is covered too. Loggability stays the handler's answer: a
 /// line we refuse to log is one every peer's digest re-offers.
 fn surface_chat(
-    message: &Message,
+    message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
     handler: impl FnOnce(&output::Output, bool) -> bool,
@@ -780,7 +781,7 @@ fn surface_chat(
 
 fn is_replayed_chat(
     surfaced: &habilis_network::util::bounded_fifo_set::BoundedFifoSet<DedupKey>,
-    message: &Message,
+    message: &Authored,
 ) -> bool {
     surfaced.contains(&message.dedup_key())
 }
@@ -789,7 +790,7 @@ fn is_replayed_chat(
 /// `a2a_broadcast` is mesh broadcast chat — always loggable. `surfaceable`
 /// gates only the *display*: a pre-join message is still logged/relayed but not
 /// printed.
-fn handle_broadcast(out: &output::Output, message: &Message, surfaceable: bool) -> bool {
+fn handle_broadcast(out: &output::Output, message: &Authored, surfaceable: bool) -> bool {
     if message.kind.is_app(wire::BROADCAST) {
         if surfaceable {
             out.print_message(message);
@@ -803,7 +804,7 @@ fn handle_broadcast(out: &output::Output, message: &Message, surfaceable: bool) 
 /// The value cluster [`handle_msg`] needs beyond its `out` sink handle.
 #[derive(Clone, Copy)]
 struct MsgParams<'a> {
-    message: &'a Message,
+    message: &'a Authored,
     to: &'a Nickname,
     surfaceable: bool,
     self_author: &'a Nickname,
@@ -847,7 +848,7 @@ fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
 /// The value cluster [`handle_task`] needs beyond its `out` sink handle.
 #[derive(Clone, Copy)]
 struct TaskDisplayParams<'a> {
-    message: &'a Message,
+    message: &'a Authored,
     to: &'a Nickname,
     surfaceable: bool,
     self_author: &'a Nickname,
@@ -883,7 +884,7 @@ fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
 /// by `corr` *and* the responding peer). Frames addressed to another peer are
 /// relayed only. Plumbing — never logged/retained.
 async fn handle_a2a_rpc(
-    message: &Message,
+    message: &Authored,
     state: &mut EventLoopState,
     app: &mut A2aApp,
     ctx: &HandlerCtx<'_>,
@@ -937,7 +938,7 @@ async fn handle_a2a_rpc(
 /// `a2a_resp` must echo back — grouped so [`handle_a2a_req`] stays within the
 /// argument budget alongside its `state`/`app`/`ctx` handles.
 struct A2aReqParams<'a> {
-    message: &'a Message,
+    message: &'a Authored,
     corr: &'a habilis_network::protocol::CorrId,
 }
 
@@ -1076,7 +1077,10 @@ async fn resend_cached_shards(
     let frames = state.shard_cache_mut().frames(group, missing);
     let mut resent = 0usize;
     for bytes in frames {
-        let Ok(msg) = Message::parse(&bytes) else {
+        let Some(msg) = Message::parse(bytes.as_bytes())
+            .ok()
+            .and_then(|msg| msg.verify().ok())
+        else {
             continue; // never: the cache holds frames we serialized ourselves
         };
         if let Some(to) = habilis_network::protocol::sole_addressee(&msg.kind)
@@ -1224,6 +1228,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
 
 #[cfg(test)]
 mod classify_tests {
+    use habilis_network::protocol::message::Authored;
     use habilis_network::protocol::{
         AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
@@ -1236,7 +1241,14 @@ mod classify_tests {
         MeshId::from("test")
     }
 
-    fn app_frame(tag: &str) -> Message {
+    /// The author's view of a test frame: signed by a throwaway key, then opened as a view.
+    fn view(message: Message) -> Authored {
+        message
+            .sign(&habilis_network::protocol::Identity::generate())
+            .authored()
+    }
+
+    fn app_frame_raw(tag: &str) -> Message {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
@@ -1249,10 +1261,14 @@ mod classify_tests {
         )
     }
 
+    fn app_frame(tag: &str) -> Authored {
+        view(app_frame_raw(tag))
+    }
+
     // A well-formed broadcast chat frame: its frame id equals the payload's
     // messageId, so `broadcast_payload` accepts it — the `to` is the only
     // variable.
-    fn chat_frame(to: Option<Nickname>) -> Message {
+    fn chat_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
         let id = MessageId::new(payload.message_id.as_str()).unwrap();
@@ -1270,8 +1286,12 @@ mod classify_tests {
         .with_id(id)
     }
 
+    fn chat_frame(to: Option<Nickname>) -> Authored {
+        view(chat_frame_raw(to))
+    }
+
     // The directed twin of [`chat_frame`]: a well-formed msg, `to` the variable.
-    fn msg_frame(to: Option<Nickname>) -> Message {
+    fn msg_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let payload = crate::a2a::gossip::compose_msg(&sw, "hi");
         let id = MessageId::new(payload.message_id.as_str()).unwrap();
@@ -1289,16 +1309,24 @@ mod classify_tests {
         .with_id(id)
     }
 
+    fn msg_frame(to: Option<Nickname>) -> Authored {
+        view(msg_frame_raw(to))
+    }
+
     // A well-formed task-status frame (its payload's contextId names the mesh).
-    fn status_frame(to: Option<Nickname>) -> Message {
+    fn status_frame(to: Option<Nickname>) -> Authored {
         status_frame_in(TaskState::Working, to)
     }
 
-    fn status_frame_in(state: TaskState, to: Option<Nickname>) -> Message {
+    fn status_frame_in_raw(state: TaskState, to: Option<Nickname>) -> Message {
         crate::a2a::gossip::test_status_frame(&mesh(), state, to)
     }
 
-    fn task_event(msg: Message, is_self: bool) -> OutputEvent {
+    fn status_frame_in(state: TaskState, to: Option<Nickname>) -> Authored {
+        view(status_frame_in_raw(state, to))
+    }
+
+    fn task_event(msg: Authored, is_self: bool) -> OutputEvent {
         OutputEvent::Task {
             msg: Box::new(msg),
             is_self,
@@ -1371,7 +1399,7 @@ mod classify_tests {
         assert!(!wakes(&receipt_event()));
     }
 
-    fn receipt_frame(to: Option<Nickname>, body: &str) -> Message {
+    fn receipt_frame_raw(to: Option<Nickname>, body: &str) -> Message {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
@@ -1382,6 +1410,10 @@ mod classify_tests {
                 body: MessageBody::from(body),
             },
         )
+    }
+
+    fn receipt_frame(to: Option<Nickname>, body: &str) -> Authored {
+        view(receipt_frame_raw(to, body))
     }
 
     #[test]
@@ -1396,7 +1428,7 @@ mod classify_tests {
         );
     }
 
-    fn working_with(note: Option<&str>, metadata: Option<serde_json::Value>) -> Message {
+    fn working_with_raw(note: Option<&str>, metadata: Option<serde_json::Value>) -> Message {
         let status = crate::a2a::gossip::status_update(
             &mesh(),
             crate::a2a::gossip::StatusUpdateParams {
@@ -1416,6 +1448,10 @@ mod classify_tests {
                 body: crate::a2a::gossip::payload_body(&status).unwrap(),
             },
         )
+    }
+
+    fn working_with(note: Option<&str>, metadata: Option<serde_json::Value>) -> Authored {
+        view(working_with_raw(note, metadata))
     }
 
     // Only an empty `working` on a task already `working` is a repeat: the
@@ -1443,8 +1479,8 @@ mod classify_tests {
         );
     }
 
-    fn chat_from(identity: &habilis_network::protocol::Identity) -> Message {
-        msg_frame(None).signed(identity)
+    fn chat_from(identity: &habilis_network::protocol::Identity) -> Authored {
+        msg_frame_raw(None).sign(identity).authored()
     }
 
     // Anti-entropy re-sends a chat line once the engine has forgotten its key.
@@ -1464,9 +1500,10 @@ mod classify_tests {
         let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
         surfaced.insert(chat.dedup_key());
-        let forgery = chat
+        let forgery = (*chat)
             .clone()
-            .signed(&habilis_network::protocol::Identity::generate());
+            .sign(&habilis_network::protocol::Identity::generate())
+            .authored();
         assert!(!is_replayed_chat(&surfaced, &forgery));
     }
 
@@ -1535,11 +1572,11 @@ mod classify_tests {
 
     #[test]
     fn non_app_kinds_have_no_classification_effect() {
-        let peer_info = classify(&Message::new_peer_info(
+        let peer_info = classify(&view(Message::new_peer_info(
             &mesh(),
             &Nickname::from("author"),
             MessageBody::from("{}"),
-        ));
+        )));
         assert!(!peer_info.loggable);
         let _ = MessageKind::PeerInfo;
     }
@@ -1597,7 +1634,7 @@ mod classify_tests {
             },
         )
         .with_id(id);
-        assert!(!classify(&frame).valid);
+        assert!(!classify(&view(frame)).valid);
     }
 
     // No regression: legitimate addressing still classifies valid.

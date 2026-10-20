@@ -8,7 +8,8 @@ use std::sync::Mutex;
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
 
 use crate::a2a::TaskId;
 use crate::api::{
@@ -83,7 +84,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Message)> {
+    pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Authored)> {
         let msg = self.inner.broadcast(body).await?;
         Ok((msg.id.clone(), msg))
     }
@@ -98,7 +99,7 @@ impl Session {
         &self,
         to: Nickname,
         body: MessageBody,
-    ) -> Result<(MessageId, Message)> {
+    ) -> Result<(MessageId, Authored)> {
         let msg = self.inner.msg(to, body).await?;
         Ok((msg.id.clone(), msg))
     }
@@ -112,7 +113,7 @@ impl Session {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
-    ) -> Result<(MessageId, Message)> {
+    ) -> Result<(MessageId, Authored)> {
         let msg = self.inner.task_status(task_id, state, note).await?;
         Ok((msg.id.clone(), msg))
     }
@@ -124,7 +125,7 @@ impl Session {
     pub(super) async fn task_artifact(
         &self,
         artifact: TaskArtifactParams,
-    ) -> Result<(MessageId, Message)> {
+    ) -> Result<(MessageId, Authored)> {
         let TaskArtifactParams {
             task_id,
             text,
@@ -252,10 +253,11 @@ mod tests {
     use std::time::Duration;
 
     use habilis_network::protocol::JoinTarget;
+    use habilis_network::protocol::Message;
     use habilis_network::protocol::{MessageKind, PresenceSubtype};
     use serde_json::json;
 
-    use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};
+    use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
     use crate::api::{CreateConfig, JoinConfig};
 
     // All tests use the private network (loopback) so they work on
@@ -322,6 +324,52 @@ mod tests {
         })
     }
 
+    /// Fetch alice's cursor-less batches until bob's join presence and his Meta state
+    /// change have both been fetched, and return the seq the explicit replay starts
+    /// from. Returns only once both are consumed, so the implicit cursor is past
+    /// everything bob wrote on join.
+    async fn first_fetch_past_bob_join(alice: &Session) -> u64 {
+        let deadline = tokio::time::Instant::now() + DELIVER;
+        let mut replay_from = None;
+        let mut saw_meta = false;
+        while tokio::time::Instant::now() < deadline {
+            let events = alice
+                .fetch_messages(None, false)
+                .await
+                .expect("first fetch")
+                .events;
+            // The seq strictly before bob's join (0 if it's the first event) —
+            // replaying from here re-includes the join and everything after.
+            if replay_from.is_none() {
+                replay_from = events
+                    .iter()
+                    .position(|item| is_bob_join(&item.event))
+                    .map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq));
+            }
+            saw_meta |= events.iter().any(|item| is_bob_meta_change(&item.event));
+            if replay_from.is_some() && saw_meta {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        let replay_from = replay_from.expect("first fetch should see bob's join presence");
+        assert!(saw_meta, "first fetch should see bob's meta state change");
+        replay_from
+    }
+
+    /// Bob's own Meta state change, the presence document he writes on join. It is
+    /// the event that can land after his join presence, so the cursor test waits
+    /// for it before it asserts that the delta is empty.
+    fn is_bob_meta_change(event: &crate::output::OutputEvent) -> bool {
+        use crate::output::OutputEvent;
+        matches!(
+            event,
+            OutputEvent::StateChanged { channel, event, .. }
+                if *channel == habilis_network::protocol::Channel::Meta
+                    && event.author.as_str() == "bob-cursor"
+        )
+    }
+
     /// Generous in-process delivery budget. Every mesh wait below is adaptive —
     /// it breaks the instant the condition holds — so a healthy run returns in
     /// milliseconds and only a genuinely stalled link pays this ceiling. Set
@@ -349,7 +397,15 @@ mod tests {
     }
 
     async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
-        let deadline = tokio::time::Instant::now() + DELIVER;
+        wait_for_gossip_until(session, author, body, tokio::time::Instant::now() + DELIVER).await
+    }
+
+    async fn wait_for_gossip_until(
+        session: &Session,
+        author: &str,
+        body: &str,
+        deadline: tokio::time::Instant,
+    ) -> Option<MessageId> {
         poll_until(deadline, Duration::from_millis(200), || async {
             let events = session.fetch_messages(None, false).await.ok()?.events;
             events.iter().find_map(|entry| {
@@ -360,6 +416,31 @@ mod tests {
             })
         })
         .await
+    }
+
+    /// Bring up the link from `from` to `to`: send a warmup and resend it until `to`
+    /// fetches it. One send can land before the gossip link exists, and nothing
+    /// resends it, so a lone warmup can be lost. This is only a precondition: the
+    /// assertions that follow are unchanged, and the resends are bounded by the
+    /// same delivery budget as every other wait here.
+    async fn establish_link(from: &Session, to: &Session, from_nick: &str) {
+        let deadline = tokio::time::Instant::now() + DELIVER;
+        loop {
+            from.send_broadcast(MessageBody::from("warmup"))
+                .await
+                .expect("send warmup");
+            let window = (tokio::time::Instant::now() + Duration::from_secs(2)).min(deadline);
+            if wait_for_gossip_until(to, from_nick, "warmup", window)
+                .await
+                .is_some()
+            {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "mesh established: warmup from {from_nick} never reached the other session"
+            );
+        }
     }
 
     /// Long-poll `session` (an `after`-anchored fetch, so it parks rather
@@ -404,6 +485,9 @@ mod tests {
             .expect("join");
         assert_eq!(joiner.name().as_str(), "two");
 
+        establish_link(&creator, &joiner, "alice-two").await;
+        establish_link(&joiner, &creator, "bob-two").await;
+
         // Send from creator → joiner should see it.
         let (sent_id, _) = creator
             .send_broadcast(MessageBody::from("hi bob"))
@@ -441,16 +525,7 @@ mod tests {
 
         // Mesh first (a delivered message proves the link) so the long-poll
         // below is waiting on a *fresh* event, not racing initial bootstrap.
-        creator
-            .send_broadcast(MessageBody::from("warmup"))
-            .await
-            .expect("send warmup");
-        assert!(
-            wait_for_gossip(&joiner, "alice-lp", "warmup")
-                .await
-                .is_some(),
-            "mesh established"
-        );
+        establish_link(&creator, &joiner, "alice-lp").await;
 
         // Baseline the joiner's cursor past the warmup, then block on a fetch
         // with a generous wait while the creator sends after a short delay.
@@ -570,20 +645,12 @@ mod tests {
         // everything currently buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
-        let deadline = tokio::time::Instant::now() + DELIVER;
-        let replay_from = poll_until(deadline, Duration::from_millis(150), || async {
-            let events = alice
-                .fetch_messages(None, false)
-                .await
-                .expect("first fetch")
-                .events;
-            let bob_join_idx = events.iter().position(|item| is_bob_join(&item.event));
-            // The seq strictly before bob's join (0 if it's the first event) —
-            // replaying from here re-includes the join and everything after.
-            bob_join_idx.map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
-        })
-        .await
-        .expect("first fetch should see bob's join presence");
+        // The wait ends only once bob's join presence AND his Meta state change
+        // have both been fetched, so the cursor is past everything bob wrote on
+        // join before the empty-delta assertion runs. Waiting for the join alone
+        // races the Meta change: it can arrive in a later batch and show up in the
+        // "empty" delta.
+        let replay_from = first_fetch_past_bob_join(&alice).await;
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
