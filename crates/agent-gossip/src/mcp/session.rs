@@ -246,7 +246,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::future::Future;
     use std::time::Duration;
 
@@ -315,6 +315,7 @@ mod tests {
         alice: &Session,
         replay_from: &Cell<Option<u64>>,
         saw_card: &Cell<bool>,
+        meta_doc: &RefCell<serde_json::Value>,
     ) -> Option<()> {
         let events = alice
             .fetch_messages(None, false)
@@ -324,7 +325,10 @@ mod tests {
         if replay_from.get().is_none() {
             replay_from.set(seq_before_bob_join(&events));
         }
-        saw_card.set(saw_card.get() || events.iter().any(|item| is_bob_card_merge(&item.event)));
+        for (author, document) in events.iter().filter_map(|item| meta_change(&item.event)) {
+            let before = meta_doc.replace(document.clone());
+            saw_card.set(saw_card.get() || is_bob_card_merge(author, &before, document));
+        }
         (replay_from.get().is_some() && saw_card.get()).then_some(())
     }
 
@@ -336,16 +340,29 @@ mod tests {
         Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
     }
 
-    /// Whether `event` is the merge of bob-cursor's card into the meta document.
-    fn is_bob_card_merge(event: &crate::output::OutputEvent) -> bool {
-        matches!(
-            event,
-            crate::output::OutputEvent::StateChanged {
-                channel: Channel::Meta,
-                event: change,
-                ..
-            } if change.author.as_str() == "bob-cursor"
-        )
+    /// The author and the document after a meta change, if `event` is one.
+    fn meta_change(event: &crate::output::OutputEvent) -> Option<(&str, &serde_json::Value)> {
+        let crate::output::OutputEvent::StateChanged {
+            channel: Channel::Meta,
+            event: change,
+            document,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        Some((change.author.as_str(), document))
+    }
+
+    /// Whether a meta change by `author`, taking the document from `before` to
+    /// `after`, is the merge of bob-cursor's card.
+    fn is_bob_card_merge(
+        author: &str,
+        before: &serde_json::Value,
+        after: &serde_json::Value,
+    ) -> bool {
+        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
+        author == "bob-cursor" && !card(before) && card(after)
     }
 
     /// Whether `event` is bob-cursor's join presence — the marker
@@ -618,6 +635,28 @@ mod tests {
         alice.leave().await;
     }
 
+    #[test]
+    fn bob_card_merge_is_the_absent_to_present_transition() {
+        // A failed card publish writes `card_error` under bob-cursor's own entry.
+        // It has his author but no card, so it must not count as the card merge.
+        let empty = json!({ "peers": {} });
+        let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
+        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+
+        assert!(
+            !is_bob_card_merge("bob-cursor", &empty, &card_error),
+            "a card_error merge by bob-cursor is not his card merge"
+        );
+        assert!(
+            is_bob_card_merge("bob-cursor", &empty, &card),
+            "the merge that adds bob-cursor's card is the card merge"
+        );
+        assert!(
+            !is_bob_card_merge("bob-cursor", &card, &card),
+            "a later meta change with the card already present is not the card merge"
+        );
+    }
+
     #[tokio::test]
     async fn implicit_cursor_returns_delta_on_subsequent_fetches() {
         // First `fetch_messages(None)` sees full history. Subsequent
@@ -643,9 +682,10 @@ mod tests {
         // later explicit replay from there re-reads bob's join + send.
         let replay_from = Cell::new(None);
         let saw_card = Cell::new(false);
+        let meta_doc = RefCell::new(serde_json::Value::Null);
         let deadline = tokio::time::Instant::now() + DELIVER;
         poll_until(deadline, Duration::from_millis(150), || {
-            baseline_step(&alice, &replay_from, &saw_card)
+            baseline_step(&alice, &replay_from, &saw_card, &meta_doc)
         })
         .await
         .expect("first fetches should see bob's join presence and his card merge");
