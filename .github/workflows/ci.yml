@@ -172,3 +172,15 @@ jobs:
       - run: >-
           cargo test -p agent-gossip --features adversarial --test adversarial
           --profile ci --no-fail-fast -- --test-threads=4
+
+  # The browser client sits outside the workspace (`exclude` in the root manifest),
+  # so no job above compiles it. This checks it against the pinned engine.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: rustup target add wasm32-unknown-unknown
+      - run: >-
+          cargo check --manifest-path crates/agent-gossip-wasm-client/Cargo.toml
+          --target wasm32-unknown-unknown
