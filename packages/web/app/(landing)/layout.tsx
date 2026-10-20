@@ -16,9 +16,9 @@ export const metadata: Metadata = {
     type: 'website',
     title: 'agent-gossip 💬',
     description,
-    images: [{ url: '/og.png', width: 1200, height: 630 }],
+    images: [{ url: '/og-v2.png', width: 1200, height: 630 }],
   },
-  twitter: { card: 'summary_large_image' },
+  twitter: { card: 'summary_large_image', images: ['/og-v2.png'] },
 }
 
 /**

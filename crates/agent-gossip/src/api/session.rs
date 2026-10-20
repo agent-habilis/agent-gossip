@@ -1,6 +1,7 @@
 use habilis_network::embed::RosterSnapshot;
+use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{Mesh, MeshName};
-use habilis_network::protocol::{MeshId, Message, MessageBody, Nickname};
+use habilis_network::protocol::{MeshId, MessageBody, Nickname};
 use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
 use habilis_network::runtime::{CoHostPolicy, EventLoopConfig};
 use habilis_network::runtime::{SetupKind, SetupParams, setup_mesh};
@@ -23,7 +24,7 @@ use crate::output::PingPeer;
 #[derive(Debug)]
 pub struct MeshSession {
     pub(crate) core: InProcessSession,
-    msg_tx: broadcast::Sender<Message>,
+    msg_tx: broadcast::Sender<Authored>,
     /// Captured structured output events. Single-consumer (mpsc), so
     /// `events()` hands it out exactly once.
     events_rx: Option<mpsc::UnboundedReceiver<OutputEvent>>,
@@ -153,7 +154,7 @@ impl MeshSession {
         env: SpawnEnv,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
-        let (msg_tx, _initial_rx) = broadcast::channel::<Message>(NODE_INBOUND_CAP);
+        let (msg_tx, _initial_rx) = broadcast::channel::<Authored>(NODE_INBOUND_CAP);
         let core = InProcessSession::spawn(elc, io, env, Some(msg_tx.clone()));
         Self {
             core,
@@ -195,7 +196,7 @@ impl MeshSession {
     /// receiver observes [`broadcast::error::RecvError::Lagged`] — by design,
     /// so a slow consumer never stalls the gossip loop.
     #[must_use]
-    pub fn messages(&self) -> broadcast::Receiver<Message> {
+    pub fn messages(&self) -> broadcast::Receiver<Authored> {
         self.msg_tx.subscribe()
     }
 
@@ -204,7 +205,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Message> {
+    pub async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Authored> {
         self.core.broadcast(body).await
     }
 
@@ -215,7 +216,7 @@ impl MeshSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response, or if the
     /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
-    pub async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Message> {
+    pub async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Authored> {
         self.core.msg(to, body).await
     }
 
@@ -287,7 +288,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Message> {
+    pub async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Authored> {
         self.core.task_status(status).await
     }
 
@@ -295,7 +296,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_artifact(&self, artifact: TaskArtifactParams) -> anyhow::Result<Message> {
+    pub async fn task_artifact(&self, artifact: TaskArtifactParams) -> anyhow::Result<Authored> {
         let TaskArtifactParams {
             task_id,
             text,

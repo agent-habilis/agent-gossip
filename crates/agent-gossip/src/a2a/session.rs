@@ -1,6 +1,7 @@
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::{Message, MessageBody, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
@@ -13,13 +14,13 @@ pub(crate) enum SessionRequest {
     /// Broadcast a mesh chat message; echoes back the canonical [`Message`].
     Broadcast {
         body: MessageBody,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     /// Send a chat message to one peer; echoes back the canonical [`Message`].
     Msg {
         to: Nickname,
         body: MessageBody,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     Poll {
         after: Option<u64>,
@@ -35,7 +36,7 @@ pub(crate) enum SessionRequest {
         state: crate::a2a::TaskState,
         note: Option<String>,
         waiting: Option<String>,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving
     /// (`a2a artifact`).
@@ -43,7 +44,7 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         text: String,
         file: Option<crate::a2a::send::FileRef>,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).
     Peers {
@@ -93,7 +94,11 @@ pub(crate) enum SessionRequest {
     /// suite can prove receivers reject/flag them. Reachable only through
     /// the adversarial-gated `MeshSession::inject_raw`.
     #[cfg(feature = "adversarial")]
-    InjectRaw { bytes: bytes::Bytes },
+    InjectRaw {
+        bytes: bytes::Bytes,
+        /// Answers with an error when the bytes do not parse, do not serialize, or do not broadcast.
+        resp: oneshot::Sender<Result<()>>,
+    },
     /// Simulate the gossip event stream terminally ending (flips
     /// `gossip_open` off, exactly what the real `None` arm does — the
     /// orphaned receiver is dropped when the heal arm resubscribes).

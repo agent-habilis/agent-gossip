@@ -1,6 +1,7 @@
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, Message, MessageBody, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageBody, Nickname};
 use habilis_network::runtime::{EventLoopConfig, Node};
 use tokio::sync::{broadcast, oneshot};
 
@@ -37,7 +38,7 @@ impl InProcessSession {
         elc: EventLoopConfig,
         io: crate::a2a::app::SurfacedIo,
         env: SpawnEnv,
-        push: Option<broadcast::Sender<Message>>,
+        push: Option<broadcast::Sender<Authored>>,
     ) -> Self {
         let SpawnEnv {
             advertiser,
@@ -140,7 +141,7 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Message> {
+    pub(crate) async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Authored> {
         // Two Results: the outer `?` is the channel, the inner is the loop's answer.
         self.call(|resp| SessionRequest::Broadcast { body, resp })
             .await?
@@ -152,7 +153,7 @@ impl InProcessSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response, or if the
     /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
-    pub(crate) async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Message> {
+    pub(crate) async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Authored> {
         self.call(|resp| SessionRequest::Msg { to, body, resp })
             .await?
     }
@@ -178,7 +179,7 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Message> {
+    pub(crate) async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Authored> {
         let TaskStatusParams {
             task_id,
             state,
@@ -204,7 +205,7 @@ impl InProcessSession {
         task_id: TaskId,
         text: String,
         file: Option<crate::a2a::send::FileRef>,
-    ) -> anyhow::Result<Message> {
+    ) -> anyhow::Result<Authored> {
         self.call(|resp| SessionRequest::TaskArtifact {
             task_id,
             text,
@@ -288,7 +289,8 @@ impl InProcessSession {
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
     pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> anyhow::Result<()> {
-        self.node.send(SessionRequest::InjectRaw { bytes }).await
+        self.call(|resp| SessionRequest::InjectRaw { bytes, resp })
+            .await?
     }
 
     /// Simulate the gossip stream terminally ending. Adversarial-suite

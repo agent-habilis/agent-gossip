@@ -4,10 +4,12 @@
 
 use std::time::Instant;
 
-use bytes::Bytes;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::{Delivered, MeshSender, PendingSend};
 use habilis_network::protocol::Identity;
+use habilis_network::protocol::message::WireFrame;
+use habilis_network::protocol::message::{Authored, Verified};
+use habilis_network::protocol::reassembly::synthesize_from;
 use habilis_network::protocol::{
     AppFrameParams, AppTag, Channel, ContentHash, CorrId, MeshId, Message, MessageBody, MessageId,
     MessageKind, Nickname, Shard, ShardGroup,
@@ -26,12 +28,12 @@ use crate::output;
 /// fork/DAG indexes on any eviction) and write the dev log. The operator
 /// echo is the caller's responsibility — it differs by kind
 /// (`print_message_ex` for `Msg`, `print_task` for `Task`).
-fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
+fn retain_outbound(state: &mut EventLoopState, msg: &Verified) {
     if let Some(evicted) = state.message_log_mut().push(msg.clone()) {
         let evicted_hash = evicted.content_hash();
         state.forget_hash(&evicted_hash);
-        if let (Some(seq), Some(author)) = (evicted.seq, evicted.author_key()) {
-            state.forget_msg_seq(&author, seq, &evicted_hash);
+        if let Some(seq) = evicted.seq {
+            state.forget_msg_seq(&evicted.key(), seq, &evicted_hash);
         }
     }
     habilis_network::util::logging::log_out(msg);
@@ -44,7 +46,7 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
 /// silently (`echo == false`); only the reassembled logical message is echoed.
 fn commit_outbound_part(
     state: &mut EventLoopState,
-    msg: &Message,
+    msg: &Verified,
     out: &output::Output,
     echo: bool,
 ) {
@@ -52,7 +54,7 @@ fn commit_outbound_part(
     state.advance_chain(hash);
     state.note_dag(hash, &msg.parents, msg.timestamp);
     if echo {
-        out.print_message_ex(msg, true);
+        out.print_message_ex(&msg.authored(), true);
     }
     retain_outbound(state, msg);
 }
@@ -146,7 +148,7 @@ fn build_msg(
     stamp: ChainStamp,
     shard: Option<Shard>,
     signer: &Identity,
-) -> Message {
+) -> Verified {
     let ChatFrameParams {
         mesh,
         author,
@@ -169,7 +171,7 @@ fn build_msg(
     msg.with_chain(stamp.seq, stamp.prev)
         .with_parents(stamp.parents)
         .with_shard(shard)
-        .signed(signer)
+        .sign(signer)
 }
 
 /// Wait for the sends that run on a task of their own. The first failure is the verdict.
@@ -215,8 +217,8 @@ fn log_unless_done(delivered: Delivered) {
 
 /// Answer a session request once its sends have an outcome. Returns whether a send started.
 fn answer_when_sent(
-    outcome: anyhow::Result<(Message, Vec<PendingSend>)>,
-    resp: tokio::sync::oneshot::Sender<anyhow::Result<Message>>,
+    outcome: anyhow::Result<(Authored, Vec<PendingSend>)>,
+    resp: tokio::sync::oneshot::Sender<anyhow::Result<Authored>>,
 ) -> bool {
     match outcome {
         Ok((msg, pending)) => {
@@ -236,8 +238,8 @@ fn answer_when_sent(
 /// [`send_msg_part`] commits/delivers, grouped so the state/sender/out handles
 /// stay their own leading params.
 struct OutboundPart<'a> {
-    msg: &'a Message,
-    bytes: Bytes,
+    msg: &'a Verified,
+    bytes: WireFrame,
     echo: bool,
 }
 
@@ -275,31 +277,6 @@ async fn send_msg_part(
     Ok(())
 }
 
-/// The reassembled logical chat frame to echo + return after a sharded send.
-/// Its `id` is the shard `group` — which the chat path pins to the payload's
-/// A2A `messageId` — so the sender and every receiver name the reassembled
-/// body identically. Unsigned / unchained — a local view, not a wire message
-/// (the shards carry the wire bytes and the chain entries).
-fn synthesize_logical_msg(
-    mesh: &MeshId,
-    author: &Nickname,
-    body: MessageBody,
-    group: &ShardGroup,
-) -> Message {
-    let mut msg = Message::new_app(
-        mesh,
-        author,
-        AppFrameParams {
-            tag: AppTag::from(wire::BROADCAST),
-            to: None,
-            corr: None,
-            body,
-        },
-    );
-    msg.id = MessageId::new(group.as_str()).expect("a shard group is a valid message id");
-    msg
-}
-
 /// The identity + text of one outbound chat broadcast — grouped so
 /// `send_broadcast` stays within the argument budget alongside its
 /// state/sender/out handles.
@@ -334,7 +311,7 @@ pub(crate) async fn send_broadcast(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message)> {
+) -> anyhow::Result<(MessageId, Authored)> {
     let BroadcastParams { mesh, author, text } = params;
     // Gate the caller's *logical* body up front. Downstream only ever sees the
     // composed, sealed, shard-split wire body, so without this an oversized
@@ -384,7 +361,7 @@ pub(crate) async fn send_broadcast(
         &signer,
     );
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        let bytes = Bytes::from(single.serialize()?);
+        let bytes = single.serialize()?;
         let id = single.id.clone();
         if encrypted {
             // Commit + gossip the sealed frame silently, then echo/return a
@@ -400,8 +377,9 @@ pub(crate) async fn send_broadcast(
                 },
             )
             .await?;
-            let mut plain = single.clone();
-            plain.body = body;
+            let plain = single.open_with(|_| Some(body.clone())).ok_or_else(|| {
+                anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
+            })?;
             out.print_message_ex(&plain, true);
             return Ok((id, plain));
         }
@@ -416,7 +394,7 @@ pub(crate) async fn send_broadcast(
             },
         )
         .await?;
-        return Ok((id, single));
+        return Ok((id, single.authored()));
     }
     // Too big: split the payload across shard-tagged frames. Each shard is an
     // ordinary chained frame with its own minted id, retained for
@@ -483,6 +461,7 @@ pub(crate) async fn send_broadcast(
     // sender-side frame cache. Small groups heal through anti-entropy instead,
     // which re-sends a directed shard point-to-point to its addressee.
     let mut cache_frames = Vec::new();
+    let mut header = None;
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
@@ -505,7 +484,10 @@ pub(crate) async fn send_broadcast(
             Some(shard),
             &signer,
         );
-        let bytes = Bytes::from(msg.serialize()?);
+        if idx == 0 {
+            header = Some(msg.clone());
+        }
+        let bytes = msg.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -524,7 +506,8 @@ pub(crate) async fn send_broadcast(
     if !cache_frames.is_empty() {
         state.shard_cache_mut().insert(group.clone(), cache_frames);
     }
-    let logical = synthesize_logical_msg(mesh, author, body, &group);
+    let header = header.expect("a split body has a first shard");
+    let logical = synthesize_from(&header, body, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
 }
@@ -575,12 +558,16 @@ enum EchoAs {
 /// # Errors
 /// Propagates a [`Message::serialize`] failure, a gossip broadcast error, and
 /// a full unmeshed pending-outbound buffer.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one straight-line sign/echo/deliver pipeline shared by the single and the sharded directed leg; splitting it would scatter a single sequential path across helpers"
+)]
 async fn broadcast_directed_frame(
     frame: DirectedFrameParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
+) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let DirectedFrameParams {
         mesh,
         author,
@@ -600,18 +587,20 @@ async fn broadcast_directed_frame(
     if let Some(pinned_id) = pinned_id {
         single = single.with_id(pinned_id);
     }
-    let single = single.signed(&signer);
+    let single = single.sign(&signer);
     // The logical id: a sharded leg's group carries it, so its receipt names it too.
     if let MessageKind::App { to: Some(to), .. } = &kind {
         app.note_sent_ref(single.id.as_str(), to);
     }
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        let bytes = Bytes::from(single.serialize()?);
+        let bytes = single.serialize()?;
         let id = single.id.clone();
         // The wire frame's directed body is sealed to the addressee, which we
         // cannot decrypt; surface *and ingest* the self-echo from a plaintext
         // twin instead (same id, never signed or sent).
-        let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(id.clone());
+        let echo = single
+            .open_with(|_| Some(echo_body.clone()))
+            .expect("a frame opens to the twin it was signed for");
         let pending = send_directed_leg(
             state,
             sender,
@@ -628,7 +617,7 @@ async fn broadcast_directed_frame(
         .await?;
         let pending =
             ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending.into_iter().collect());
-        return Ok((id, single, pending));
+        return Ok((id, single.authored(), pending));
     }
     // Only content legs are ever large enough to split; the beat is a tiny
     // liveness widget and is never retained/reassembled.
@@ -652,7 +641,7 @@ async fn broadcast_directed_frame(
         idx: max_parts - 1,
         total: max_parts,
     }))
-    .signed(&signer);
+    .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!(
@@ -680,8 +669,8 @@ async fn broadcast_directed_frame(
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
         let msg = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
-            .signed(&signer);
-        let bytes = Bytes::from(msg.serialize()?);
+            .sign(&signer);
+        let bytes = msg.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -705,19 +694,18 @@ async fn broadcast_directed_frame(
         frames.push(msg);
     }
     let cache = (!cache_frames.is_empty()).then(|| (group.clone(), cache_frames));
+    let logical = synthesize_from(&frames[0], payload_body, &group);
+    let echo = synthesize_from(&frames[0], echo_body, &group);
     let pending = queue_sharded_leg(app, frames, cache, shard_pending);
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
-    let logical =
-        Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
-    let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
     let pending = echo_when_sent(out, echo.clone(), echo_as, pending);
     let pending = ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending);
     Ok((logical.id.clone(), logical, pending))
 }
 
 /// Print a directed leg's self-echo down the surface its kind belongs to.
-fn print_echo(out: &output::Output, echo: &Message, echo_as: EchoAs) {
+fn print_echo(out: &output::Output, echo: &Authored, echo_as: EchoAs) {
     match echo_as {
         EchoAs::Task => out.print_task(echo, true),
         EchoAs::Chat => out.print_message_ex(echo, true),
@@ -761,7 +749,7 @@ pub(crate) async fn emit_task_status(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(Message, Vec<PendingSend>)> {
+) -> anyhow::Result<(Authored, Vec<PendingSend>)> {
     let TaskStatusParams {
         mesh,
         author,
@@ -828,7 +816,7 @@ pub(crate) async fn emit_task_artifact(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(Message, Vec<PendingSend>)> {
+) -> anyhow::Result<(Authored, Vec<PendingSend>)> {
     let TaskArtifactEmitParams {
         mesh,
         author,
@@ -917,7 +905,7 @@ pub(crate) async fn broadcast_task_status(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
+) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let BroadcastTaskStatusParams {
         mesh,
         author,
@@ -1002,7 +990,7 @@ pub(crate) async fn send_msg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
+) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let MsgParams {
         mesh,
         author,
@@ -1073,7 +1061,7 @@ pub(crate) async fn broadcast_task_artifact(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message, Vec<PendingSend>)> {
+) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let BroadcastTaskArtifactParams {
         mesh,
         author,
@@ -1167,12 +1155,12 @@ async fn build_offload_parts(
     };
     let parsed = mesh
         .as_str()
-        .parse::<habilis_network::protocol::Mesh>()
+        .parse::<habilis_network::protocol::LockedMesh>()
         .map_err(|error| {
             anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
         })?;
-    let lookups = parsed.lookups().clone();
-    let relay_transport = parsed.transport().relay_transport;
+    let lookups = parsed.config().lookups.clone();
+    let relay_transport = parsed.config().transport.relay_transport;
     // Route through the choke point so the base is validated (0700, ours) before
     // this attachment payload spool is created — bypassing it could birth the
     // shared base at a world-traversable 0755.
@@ -1295,9 +1283,9 @@ pub(crate) async fn attach_call_file(
 struct DirectedLegPart<'a> {
     app: &'a mut A2aApp,
     echo_as: EchoAs,
-    msg: &'a Message,
-    bytes: Bytes,
-    echo: Option<&'a Message>,
+    msg: &'a Verified,
+    bytes: WireFrame,
+    echo: Option<&'a Authored>,
     content: bool,
 }
 
@@ -1364,7 +1352,7 @@ async fn send_directed_leg(
 
 /// Retain a task leg locally. Content legs retain; the beat doesn't. The echo
 /// is the caller's, and it waits for the delivery verdict.
-fn retain_leg(state: &mut EventLoopState, msg: &Message, content: bool) {
+fn retain_leg(state: &mut EventLoopState, msg: &Verified, content: bool) {
     if content {
         retain_outbound(state, msg);
     }
@@ -1372,7 +1360,7 @@ fn retain_leg(state: &mut EventLoopState, msg: &Message, content: bool) {
 
 /// Queue `msg` for the message log, behind the verdict of its send. The handle is replaced by
 /// one that gives the same verdict.
-fn retain_when_sent(app: &mut A2aApp, msg: Message, pending: PendingSend) -> PendingSend {
+fn retain_when_sent(app: &mut A2aApp, msg: Verified, pending: PendingSend) -> PendingSend {
     let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
     let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
     app.unsent_legs.push(UnsentLeg {
@@ -1395,8 +1383,8 @@ fn retain_when_sent(app: &mut A2aApp, msg: Message, pending: PendingSend) -> Pen
 /// the whole leg.
 fn queue_sharded_leg(
     app: &mut A2aApp,
-    frames: Vec<Message>,
-    cache: Option<(ShardGroup, Vec<Bytes>)>,
+    frames: Vec<Verified>,
+    cache: Option<(ShardGroup, Vec<WireFrame>)>,
     pending: Vec<Option<PendingSend>>,
 ) -> Vec<PendingSend> {
     let pending: Vec<PendingSend> = pending.into_iter().flatten().collect();
@@ -1456,7 +1444,7 @@ pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
 /// now, and the echo prints at once.
 fn echo_when_sent(
     out: &output::Output,
-    echo: Message,
+    echo: Authored,
     echo_as: EchoAs,
     pending: Vec<PendingSend>,
 ) -> Vec<PendingSend> {
@@ -1495,7 +1483,7 @@ pub(crate) fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a
 
 /// One own task leg: its plaintext twin and its task. A chat msg has no task and no record.
 struct OwnLeg<'a> {
-    echo: Message,
+    echo: Authored,
     task_id: Option<&'a crate::a2a::TaskId>,
 }
 
@@ -1580,19 +1568,13 @@ pub(crate) async fn send_shard_repair_requests(
                 body: sealed,
             },
         )
-        .signed(state.identity());
+        .sign(state.identity());
         habilis_network::util::logging::log_out(&frame);
         match frame.serialize() {
             // In the background: this runs from `on_tick`, inline on the event
             // loop, where a cold `deliver` would stop the node for the dial.
             Ok(bytes) => {
-                if !habilis_network::ops::deliver_in_background(
-                    &frame,
-                    Bytes::from(bytes),
-                    state,
-                    sender,
-                )
-                .await
+                if !habilis_network::ops::deliver_in_background(&frame, bytes, state, sender).await
                 {
                     tracing::debug!("shard repair request not sent; next tick retries");
                 }
@@ -1780,10 +1762,10 @@ pub(crate) async fn send_directed_rpc(
         body,
     } = params;
     let signer = state.identity().clone();
-    let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).signed(&signer);
+    let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).sign(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         habilis_network::util::logging::log_out(&single);
-        let bytes = Bytes::from(single.serialize()?);
+        let bytes = single.serialize()?;
         log_unless_done(habilis_network::ops::deliver(&single, bytes, state, sender).await?);
         return Ok(());
     }
@@ -1809,7 +1791,7 @@ pub(crate) async fn send_directed_rpc(
         idx: MAX_SHARD_TOTAL - 1,
         total: MAX_SHARD_TOTAL,
     }))
-    .signed(&signer);
+    .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!("rpc body too large: needs more than {MAX_SHARD_TOTAL} shards")
@@ -1829,9 +1811,9 @@ pub(crate) async fn send_directed_rpc(
                 idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
                 total,
             }))
-            .signed(&signer);
+            .sign(&signer);
         habilis_network::util::logging::log_out(&msg);
-        let bytes = Bytes::from(msg.serialize()?);
+        let bytes = msg.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -1864,6 +1846,17 @@ pub(crate) struct SessionRequestParams<'a> {
     pub(crate) mesh: &'a MeshId,
     pub(crate) author: &'a Nickname,
     pub(crate) app: &'a mut A2aApp,
+}
+
+/// Raw injection (adversarial only): the bytes go on the wire exactly as given. Nothing parses
+/// them and nothing re-signs them, so the receiver's own checks decide what happens to them. A
+/// failure to broadcast is the caller's error.
+#[cfg(feature = "adversarial")]
+async fn inject_raw_frame(bytes: bytes::Bytes, sender: &MeshSender) -> anyhow::Result<()> {
+    sender
+        .broadcast(WireFrame::fixture_raw(bytes))
+        .await
+        .map_err(|err| anyhow::anyhow!("injected frame did not broadcast: {err}"))
 }
 
 /// Handle one typed in-process [`SessionRequest`] (in-process). `Send`
@@ -2063,9 +2056,11 @@ pub(crate) async fn handle_session_request(
         // Raw injection (adversarial only): broadcast the bytes verbatim, no
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
-        SessionRequest::InjectRaw { bytes } => {
-            let _ = sender.broadcast(bytes).await;
-            true
+        SessionRequest::InjectRaw { bytes, resp } => {
+            // The bytes go on the wire as given; see `inject_raw_frame`.
+            let outcome = inject_raw_frame(bytes, sender).await;
+            let _ = resp.send(outcome);
+            false
         }
         // Simulated stream end (adversarial only): indistinguishable from
         // the real `None` arm as far as the event loop is concerned.
@@ -2215,7 +2210,13 @@ mod echo_when_sent_tests {
     use crate::events::OutputEvent;
     use crate::output::capture_events;
 
-    fn echo() -> Message {
+    fn echo() -> habilis_network::protocol::message::Authored {
+        echo_raw()
+            .sign(&habilis_network::protocol::Identity::generate())
+            .authored()
+    }
+
+    fn echo_raw() -> Message {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
@@ -2277,7 +2278,11 @@ mod sharded_leg_tests {
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
     use crate::a2a::app::A2aApp;
 
-    fn shard(text: &str) -> Message {
+    fn shard(text: &str) -> habilis_network::protocol::message::Verified {
+        shard_raw(text).sign(&habilis_network::protocol::Identity::generate())
+    }
+
+    fn shard_raw(text: &str) -> Message {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),

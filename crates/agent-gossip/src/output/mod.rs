@@ -1,5 +1,6 @@
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, Message, MessageKind, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageKind, Nickname};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 pub(crate) use self::json::is_visible;
@@ -51,7 +52,7 @@ pub(crate) struct ReadyParams<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct StateChangedParams<'a> {
     pub channel: habilis_network::protocol::Channel,
-    pub event: &'a Message,
+    pub event: &'a Authored,
     pub document: &'a serde_json::Value,
     pub is_self: bool,
 }
@@ -229,14 +230,14 @@ impl Output {
         );
     }
 
-    pub(crate) fn print_message(&self, msg: &Message) {
+    pub(crate) fn print_message(&self, msg: &Authored) {
         self.print_message_ex(msg, false);
     }
 
     /// Print a message with an optional self flag (for echo-back).
     /// When `filter_self` is enabled, self-authored messages are
     /// suppressed. Presence events should use `print_presence` instead.
-    pub(crate) fn print_message_ex(&self, msg: &Message, is_self: bool) {
+    pub(crate) fn print_message_ex(&self, msg: &Authored, is_self: bool) {
         if matches!(
             msg.kind,
             MessageKind::PeerInfo
@@ -267,7 +268,7 @@ impl Output {
     /// Distinct top-level `task` event (not the `message` family) so skills
     /// branch on `event`. When `filter_self` is enabled, self-authored legs are
     /// suppressed.
-    pub(crate) fn print_task(&self, msg: &Message, is_self: bool) {
+    pub(crate) fn print_task(&self, msg: &Authored, is_self: bool) {
         // Only worker-pushed status/artifact frames surface as a `task` event.
         match &msg.kind {
             MessageKind::App { tag, to, .. } => match (tag.as_str(), to) {
@@ -446,7 +447,7 @@ impl Output {
         }
     }
 
-    pub(crate) fn print_presence(&self, msg: &Message) {
+    pub(crate) fn print_presence(&self, msg: &Authored) {
         let MessageKind::Presence { subtype } = &msg.kind else {
             return;
         };
@@ -670,7 +671,7 @@ impl habilis_network::embed::NodeSink for Output {
                 last_seen_secs_ago,
             } => self.peer_timeout(&nickname, last_seen_secs_ago),
             NodeEvent::PeerReturn { nickname } => self.peer_return(&nickname),
-            NodeEvent::Presence { msg } => self.print_presence(&msg),
+            NodeEvent::Presence { msg, .. } => self.print_presence(&msg),
             NodeEvent::PingReport { peers, known } => self.ping_report(
                 peers
                     .into_iter()
