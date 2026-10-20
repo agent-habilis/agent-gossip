@@ -895,6 +895,41 @@ pub(crate) struct BroadcastTaskStatusParams<'a> {
     pub(crate) app: &'a mut A2aApp,
 }
 
+/// The status leg a worker emits: its state and note, the order value that
+/// tells it apart from the other legs of its second, and the waiting reason.
+fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
+    let StatusLegParams {
+        mesh,
+        task_id,
+        state,
+        note,
+        waiting,
+    } = leg;
+    crate::a2a::gossip::status_update(
+        mesh,
+        crate::a2a::gossip::StatusUpdateParams {
+            task_id,
+            state,
+            note,
+            metadata: Some(crate::a2a::gossip::status_metadata(
+                waiting,
+                crate::a2a::gossip::leg_order_ms(),
+            )),
+        },
+    )
+}
+
+/// The fields of one worker status leg, grouped so [`worker_status_leg`] stays
+/// within the argument budget.
+#[derive(Clone, Copy)]
+struct StatusLegParams<'a> {
+    mesh: &'a MeshId,
+    task_id: &'a crate::a2a::TaskId,
+    state: crate::a2a::TaskState,
+    note: Option<&'a str>,
+    waiting: Option<&'a str>,
+}
+
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
 /// payload and push it to `peer` fire-and-forget.
 ///
@@ -916,18 +951,13 @@ pub(crate) async fn broadcast_task_status(
         waiting,
         app,
     } = params;
-    let update = crate::a2a::gossip::status_update(
+    let update = worker_status_leg(StatusLegParams {
         mesh,
-        crate::a2a::gossip::StatusUpdateParams {
-            task_id,
-            state: task_state,
-            note,
-            metadata: Some(crate::a2a::gossip::status_metadata(
-                waiting,
-                crate::a2a::gossip::leg_order_ms(),
-            )),
-        },
-    );
+        task_id,
+        state: task_state,
+        note,
+        waiting,
+    });
     let plain = crate::a2a::gossip::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
@@ -2374,5 +2404,31 @@ mod waiting_tests {
                 .expect_err("a reason with a non-working state must be refused");
             assert_eq!(error.to_string(), "waiting requires state working");
         }
+    }
+}
+
+#[cfg(test)]
+mod status_leg_tests {
+    use super::{StatusLegParams, worker_status_leg};
+    use crate::a2a::TaskState;
+    use crate::a2a::gossip::{status_order, status_waiting};
+    use habilis_network::protocol::MeshId;
+
+    /// The worker's status leg carries the order value next to the waiting
+    /// reason. Without the order value the initiator cannot tell two legs of one
+    /// second apart.
+    #[test]
+    fn a_worker_status_leg_carries_its_order_value_and_reason() {
+        let mesh = MeshId::from("test");
+        let task_id = crate::a2a::TaskId::random();
+        let leg = worker_status_leg(StatusLegParams {
+            mesh: &mesh,
+            task_id: &task_id,
+            state: TaskState::Working,
+            note: None,
+            waiting: Some("asks its user"),
+        });
+        assert!(status_order(&leg).is_some(), "the leg has no mesh:order_ms");
+        assert_eq!(status_waiting(&leg).as_deref(), Some("asks its user"));
     }
 }

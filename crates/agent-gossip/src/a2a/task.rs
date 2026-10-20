@@ -1392,6 +1392,45 @@ mod tests {
         );
     }
 
+    /// An MCP reader fetches with an explicit `after`, long or not. Its parked
+    /// fetch is a read: a plain poll long ago must not make a reader that has
+    /// just fetched look stalled.
+    #[tokio::test]
+    async fn an_explicit_after_long_fetch_keeps_a_reader_from_stalling() {
+        use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder, SurfacedState};
+
+        let mut surfaced = SurfacedState::new();
+        let plain_at = tokio::time::Instant::now();
+        let (plain_tx, _plain_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: plain_at,
+            responder: PollResponder::Json(plain_tx),
+        });
+        let fetch_at = plain_at + STALL_CHECK;
+        let (mcp_tx, _mcp_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: Some(0),
+            long: true,
+            now: fetch_at,
+            responder: PollResponder::Json(mcp_tx),
+        });
+        let reader = ReaderBeat {
+            bell: surfaced.has_parked_bell(),
+            last_poll_secs: surfaced
+                .last_poll_secs_ago(fetch_at)
+                .expect("the plain poll set a first poll time"),
+        };
+
+        let mut tasks = working_task_we_opened(Instant::now());
+        assert_eq!(
+            notice_for(&mut tasks, &beat_from_worker(Some(reader)), Instant::now()),
+            None,
+            "a reader that just made an explicit-after fetch is not stalled"
+        );
+    }
+
     /// `ingest` guards the same-second replay itself: a caller that does not
     /// call `note_surfaced` (only the node's task path does) gets it too.
     #[test]
@@ -1468,6 +1507,50 @@ mod tests {
             Some("asks its user"),
             "an older second must not clear the reason"
         );
+    }
+
+    /// The clock steps back between two legs: the clear carries a higher order
+    /// value but an older wire second. The order value decides, so the clear wins.
+    #[test]
+    fn a_higher_order_value_wins_over_an_older_wire_second() {
+        let at = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        ingest_inbound(
+            &mut tasks,
+            &ordered_leg(Some("asks its user"), at + Duration::from_secs(1), 1_000),
+        );
+        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+
+        ingest_inbound(&mut tasks, &ordered_leg(None, at, 2_000));
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the clear with the higher order value must win"
+        );
+    }
+
+    /// A reason set by a leg without an order value is ordered by its second
+    /// against a later leg that does carry one.
+    #[test]
+    fn an_ordered_leg_falls_back_to_the_second_after_an_unordered_waiting_leg() {
+        let at = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        ingest_inbound(
+            &mut tasks,
+            &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
+        );
+
+        ingest_inbound(&mut tasks, &ordered_leg(None, at, 5_000));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks its user"),
+            "an older second with an order value must not clear a reason set without one"
+        );
+        ingest_inbound(
+            &mut tasks,
+            &ordered_leg(None, at + Duration::from_secs(2), 6_000),
+        );
+        assert_eq!(tasks[&tid()].waiting, None);
     }
 
     /// The contract: only a `working` leg carries the reason. A leg for any
