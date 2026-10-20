@@ -20,7 +20,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use habilis_network::embed::EventLoopState;
 use habilis_network::embed::HandlerCtx;
 use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
@@ -845,7 +844,7 @@ async fn broadcast_status(
     // background because this runs from `on_tick`, inline on the event loop:
     // a cold `deliver` dials there and stops the whole node for the dial and
     // path-select budgets, once per due task.
-    habilis_network::ops::deliver_in_background(&msg, Bytes::from(bytes), state, ctx.sender).await
+    habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await
 }
 
 #[cfg(test)]

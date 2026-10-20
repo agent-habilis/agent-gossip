@@ -178,7 +178,10 @@ pub(crate) struct A2aApp {
 pub(crate) struct UnsentLeg {
     pub(crate) frames: Vec<habilis_network::protocol::message::Verified>,
     /// A big shard group's wire frames, for the `shard/repair` cache.
-    pub(crate) cache: Option<(ShardGroup, Vec<bytes::Bytes>)>,
+    pub(crate) cache: Option<(
+        ShardGroup,
+        Vec<habilis_network::protocol::message::WireFrame>,
+    )>,
     pub(crate) sent: tokio::sync::oneshot::Receiver<bool>,
 }
 

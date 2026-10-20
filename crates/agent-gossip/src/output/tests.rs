@@ -24,9 +24,11 @@ fn sid() -> habilis_network::protocol::MeshId {
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn view(message: Message) -> Authored {
-    message
-        .sign(&habilis_network::protocol::Identity::generate())
-        .authored()
+    habilis_network::protocol::message::Verified::fixture_unchecked(
+        message,
+        habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+    )
+    .authored()
 }
 
 fn chat_frame_raw(author: &str, text: &str) -> Message {
@@ -70,8 +72,8 @@ fn json_message_has_all_fields() {
     assert_eq!(parsed["message"]["messageId"], parsed["id"]);
     assert_eq!(parsed["message"]["role"], "ROLE_USER");
     assert_eq!(parsed["message"]["parts"][0]["text"], "hello");
-    // Unsigned (test fixture): the pubkey field is omitted.
-    assert!(parsed.get("pubkey").is_none());
+    // An author view always has a key: the fixture's zero key here, never an omitted field.
+    assert_eq!(parsed["pubkey"], "0".repeat(64));
 }
 
 #[test]

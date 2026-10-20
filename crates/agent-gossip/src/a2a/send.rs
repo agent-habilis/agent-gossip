@@ -4,10 +4,10 @@
 
 use std::time::Instant;
 
-use bytes::Bytes;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::{Delivered, MeshSender, PendingSend};
 use habilis_network::protocol::Identity;
+use habilis_network::protocol::message::WireFrame;
 use habilis_network::protocol::message::{Authored, Verified};
 use habilis_network::protocol::reassembly::synthesize_from;
 use habilis_network::protocol::{
@@ -239,7 +239,7 @@ fn answer_when_sent(
 /// stay their own leading params.
 struct OutboundPart<'a> {
     msg: &'a Verified,
-    bytes: Bytes,
+    bytes: WireFrame,
     echo: bool,
 }
 
@@ -361,7 +361,7 @@ pub(crate) async fn send_broadcast(
         &signer,
     );
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        let bytes = Bytes::from(single.serialize()?);
+        let bytes = single.serialize()?;
         let id = single.id.clone();
         if encrypted {
             // Commit + gossip the sealed frame silently, then echo/return a
@@ -487,7 +487,7 @@ pub(crate) async fn send_broadcast(
         if idx == 0 {
             header = Some(msg.clone());
         }
-        let bytes = Bytes::from(msg.serialize()?);
+        let bytes = msg.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -593,7 +593,7 @@ async fn broadcast_directed_frame(
         app.note_sent_ref(single.id.as_str(), to);
     }
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        let bytes = Bytes::from(single.serialize()?);
+        let bytes = single.serialize()?;
         let id = single.id.clone();
         // The wire frame's directed body is sealed to the addressee, which we
         // cannot decrypt; surface *and ingest* the self-echo from a plaintext
@@ -670,7 +670,7 @@ async fn broadcast_directed_frame(
         let msg = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
             .sign(&signer);
-        let bytes = Bytes::from(msg.serialize()?);
+        let bytes = msg.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -1262,7 +1262,7 @@ struct DirectedLegPart<'a> {
     app: &'a mut A2aApp,
     echo_as: EchoAs,
     msg: &'a Verified,
-    bytes: Bytes,
+    bytes: WireFrame,
     echo: Option<&'a Authored>,
     content: bool,
 }
@@ -1362,7 +1362,7 @@ fn retain_when_sent(app: &mut A2aApp, msg: Verified, pending: PendingSend) -> Pe
 fn queue_sharded_leg(
     app: &mut A2aApp,
     frames: Vec<Verified>,
-    cache: Option<(ShardGroup, Vec<Bytes>)>,
+    cache: Option<(ShardGroup, Vec<WireFrame>)>,
     pending: Vec<Option<PendingSend>>,
 ) -> Vec<PendingSend> {
     let pending: Vec<PendingSend> = pending.into_iter().flatten().collect();
@@ -1552,13 +1552,7 @@ pub(crate) async fn send_shard_repair_requests(
             // In the background: this runs from `on_tick`, inline on the event
             // loop, where a cold `deliver` would stop the node for the dial.
             Ok(bytes) => {
-                if !habilis_network::ops::deliver_in_background(
-                    &frame,
-                    Bytes::from(bytes),
-                    state,
-                    sender,
-                )
-                .await
+                if !habilis_network::ops::deliver_in_background(&frame, bytes, state, sender).await
                 {
                     tracing::debug!("shard repair request not sent; next tick retries");
                 }
@@ -1749,7 +1743,7 @@ pub(crate) async fn send_directed_rpc(
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).sign(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         habilis_network::util::logging::log_out(&single);
-        let bytes = Bytes::from(single.serialize()?);
+        let bytes = single.serialize()?;
         log_unless_done(habilis_network::ops::deliver(&single, bytes, state, sender).await?);
         return Ok(());
     }
@@ -1797,7 +1791,7 @@ pub(crate) async fn send_directed_rpc(
             }))
             .sign(&signer);
         habilis_network::util::logging::log_out(&msg);
-        let bytes = Bytes::from(msg.serialize()?);
+        let bytes = msg.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -2028,7 +2022,19 @@ pub(crate) async fn handle_session_request(
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
         SessionRequest::InjectRaw { bytes } => {
-            let _ = sender.broadcast(bytes).await;
+            // The engine's frame has no constructor from raw bytes, so the adversary's bytes are
+            // parsed and re-wrapped as the unchecked frame they are.
+            let Ok(message) = Message::parse(&bytes) else {
+                return false;
+            };
+            let key = message.signer.as_ref().map_or_else(
+                || habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+                habilis_network::protocol::Signer::key,
+            );
+            let Ok(frame) = Verified::fixture_unchecked(message, key).serialize() else {
+                return false;
+            };
+            let _ = sender.broadcast(frame).await;
             true
         }
         // Simulated stream end (adversarial only): indistinguishable from

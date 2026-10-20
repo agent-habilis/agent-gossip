@@ -499,5 +499,7 @@ impl CraftedMsg {
         habilis_network::protocol::message::Verified::fixture_unchecked(self.msg.clone(), key)
             .serialize()
             .expect("crafted message serializes")
+            .as_bytes()
+            .to_vec()
     }
 }

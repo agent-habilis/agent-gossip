@@ -1077,7 +1077,7 @@ async fn resend_cached_shards(
     let frames = state.shard_cache_mut().frames(group, missing);
     let mut resent = 0usize;
     for bytes in frames {
-        let Some(msg) = Message::parse(&bytes)
+        let Some(msg) = Message::parse(bytes.as_bytes())
             .ok()
             .and_then(|msg| msg.verify().ok())
         else {

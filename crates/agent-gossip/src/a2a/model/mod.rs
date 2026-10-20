@@ -579,7 +579,9 @@ mod tests {
                 ),
                 habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
             );
-            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
+            insta::assert_snapshot!(
+                String::from_utf8(msg.serialize().unwrap().as_bytes().to_vec()).unwrap()
+            );
         }
 
         /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
@@ -598,7 +600,9 @@ mod tests {
                 ),
                 habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
             );
-            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
+            insta::assert_snapshot!(
+                String::from_utf8(msg.serialize().unwrap().as_bytes().to_vec()).unwrap()
+            );
         }
 
         #[test]

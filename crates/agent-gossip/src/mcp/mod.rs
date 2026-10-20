@@ -381,13 +381,12 @@ struct SendResult {
     message: habilis_network::protocol::message::Authored,
 }
 
-/// The tool output is a read-only view of the sent frame, so it serializes the message the
-/// view wraps. `Authored` itself has no `Serialize`: it is not a sender.
+/// The tool output reports the sent frame as the IPC record does: a read-only view, not a sender.
 fn serialize_message_view<S: serde::Serializer>(
     message: &habilis_network::protocol::message::Authored,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    Serialize::serialize(&**message, serializer)
+    crate::a2a::ipc::message_record(message).serialize(serializer)
 }
 
 #[derive(Debug, Serialize)]
