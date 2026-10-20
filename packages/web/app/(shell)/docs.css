@@ -105,7 +105,7 @@ article a.nextra-card { color: var(--foreground-color); }
   counter-reset: step;
   margin-bottom: var(--lineHeight);
   padding-left: var(--step-gutter);
-  background: linear-gradient(var(--line-color), var(--line-color)) no-repeat
+  background: linear-gradient(var(--accent-color), var(--accent-color)) no-repeat
     calc(var(--lineHeight) / 2 - 0.5px) 0 / 1px 100%;
 }
 .nextra-steps :is(h2, h3, h4) { position: relative; counter-increment: step; margin-top: var(--lineHeight); }
@@ -147,13 +147,18 @@ article a.nextra-card { color: var(--foreground-color); }
 
 [role="tablist"] {
   display: flex;
-  gap: var(--lineHeight);
-  box-shadow: inset 0 -1px 0 var(--line-color);
+  gap: calc(var(--baseline) / 2);
+  box-shadow: inset 0 -1px 0 var(--accent-color);
 }
-[role="tab"] { cursor: pointer; color: var(--muted-color); background: none; }
+/* Every tab carries the padding, so selecting one fills it without moving the row.
+   The margin stops the fill above the list's 1px rule instead of painting over it. */
+[role="tab"] { cursor: pointer; color: var(--foreground-color); background: none; padding: calc(var(--baseline) / 4) calc(var(--baseline) * 0.75); margin-bottom: 1px; }
 [role="tab"][aria-selected="true"] {
-  color: var(--accent-color);
-  box-shadow: inset 0 calc(var(--hrThickness) * -1) 0 var(--accent-color);
+  color: var(--accent-contrast-color);
+  background: var(--accent-color);
+  /* Bold by stroke, not weight: a heavier weight widens the label and slides
+     every tab after it, while a stroke only paints. */
+  -webkit-text-stroke: 0.04em currentColor;
 }
 /* Nextra plants a hidden h3 at the top of each panel, an anchor only; the
    article's heading margins would still open a gap under the tabs. */

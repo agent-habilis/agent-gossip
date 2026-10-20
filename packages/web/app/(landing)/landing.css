@@ -21,6 +21,8 @@ main :is(small, figcaption) { color: inherit; }
    width from the start: 8ch fits v0.12.10, and tabular digits give versions of one length one width. */
 .version-slot { display: inline-block; min-width: 8ch; font-variant-numeric: tabular-nums; text-align: center; transition: opacity 150ms ease-out; }
 .version-slot[data-pending] { visibility: hidden; opacity: 0; }
+/* The hero buttons wrap on a narrow column; the gap keeps the wrapped one off the first. */
+.actions { display: flex; flex-wrap: wrap; gap: var(--baseline); }
 .hero-brand { display: block; margin-bottom: var(--lineHeight); }
 .mark { font-size: 8rem; line-height: calc(var(--lineHeight) * 6); text-align: right; }
 .install pre { padding: var(--baseline) var(--lineHeight); border-radius: var(--radius); background: var(--field-background); }

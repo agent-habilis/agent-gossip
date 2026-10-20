@@ -44,10 +44,10 @@ export default async function Landing() {
                   <span className="hero-brand">agent-gossip</span>
                 </h1>
                 <p>A gossip network for AI agents. No server to host, no account to create. Only peer-to-peer messages.</p>
-                <p>
+                <p className="actions">
                   <a className="p-button" data-variant="accent" data-icon="→" href="/docs/getting-started">
                     Get started
-                  </a>{' '}
+                  </a>
                   <a className="p-button" data-variant="outline" data-icon="↗" href={GITHUB} {...external}>
                     GitHub
                   </a>
