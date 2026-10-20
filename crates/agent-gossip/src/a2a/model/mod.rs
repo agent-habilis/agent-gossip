@@ -566,33 +566,39 @@ mod tests {
         /// inside a real frame) is pinned by the layer that owns the payload.
         #[test]
         fn snap_a2a_req_frame_wire() {
-            let msg = habilis_network::protocol::Message::fixture(
-                habilis_network::protocol::MessageKind::app_to(
-                    crate::a2a::wire::REQ,
-                    habilis_network::protocol::Nickname::from("addressed-nick"),
-                    Some(habilis_network::protocol::CorrId::from(
-                        "00000000-0000-0000-0000-0000000000aa",
-                    )),
+            let msg = habilis_network::protocol::message::Verified::fixture_unchecked(
+                habilis_network::protocol::Message::fixture(
+                    habilis_network::protocol::MessageKind::app_to(
+                        crate::a2a::wire::REQ,
+                        habilis_network::protocol::Nickname::from("addressed-nick"),
+                        Some(habilis_network::protocol::CorrId::from(
+                            "00000000-0000-0000-0000-0000000000aa",
+                        )),
+                    ),
+                    r#"{"method":"tasks/list","params":{}}"#,
                 ),
-                r#"{"method":"tasks/list","params":{}}"#,
+                habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
             );
-            insta::assert_snapshot!(String::from_utf8(serde_json::to_vec(&msg).unwrap()).unwrap());
+            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
         }
 
         /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
         #[test]
         fn snap_a2a_resp_frame_wire() {
-            let msg = habilis_network::protocol::Message::fixture(
-                habilis_network::protocol::MessageKind::app_to(
-                    crate::a2a::wire::RESP,
-                    habilis_network::protocol::Nickname::from("addressed-nick"),
-                    Some(habilis_network::protocol::CorrId::from(
-                        "00000000-0000-0000-0000-0000000000aa",
-                    )),
+            let msg = habilis_network::protocol::message::Verified::fixture_unchecked(
+                habilis_network::protocol::Message::fixture(
+                    habilis_network::protocol::MessageKind::app_to(
+                        crate::a2a::wire::RESP,
+                        habilis_network::protocol::Nickname::from("addressed-nick"),
+                        Some(habilis_network::protocol::CorrId::from(
+                            "00000000-0000-0000-0000-0000000000aa",
+                        )),
+                    ),
+                    r#"{"result":{"tasks":[]}}"#,
                 ),
-                r#"{"result":{"tasks":[]}}"#,
+                habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
             );
-            insta::assert_snapshot!(String::from_utf8(serde_json::to_vec(&msg).unwrap()).unwrap());
+            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
         }
 
         #[test]
