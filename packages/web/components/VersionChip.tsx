@@ -21,16 +21,25 @@ export function VersionChip({ fallback, href }: Props) {
 
   useEffect(() => {
     const unmount = new AbortController()
-    fetchFormulaVersion(AbortSignal.any([unmount.signal, AbortSignal.timeout(TIMEOUT_MS)]))
-      .catch(() => undefined)
-      .then((fetched) => {
-        // A timeout reveals the fallback; an unmount (Strict Mode's rehearsal
-        // included) must not, or the fetch that follows would swap the text twice.
-        if (!unmount.signal.aborted) setVersion(fetched ?? fallback)
-      })
+    // Inside the async body so that a browser without AbortSignal.any throws
+    // into the catch and shows the fallback, not a chip that stays hidden.
+    const read = async () => {
+      try {
+        return await fetchFormulaVersion(AbortSignal.any([unmount.signal, AbortSignal.timeout(TIMEOUT_MS)]))
+      } catch {
+        return undefined
+      }
+    }
+    read().then((fetched) => {
+      // A timeout reveals the fallback; an unmount (Strict Mode's rehearsal
+      // included) must not, or the fetch that follows would swap the text twice.
+      if (!unmount.signal.aborted) setVersion(fetched ?? fallback)
+    })
     return () => unmount.abort()
   }, [fallback])
 
+  // The formula is the truth, even when the tap lags this build: the chip names
+  // what `brew install` gives today.
   const shown = version ?? fallback
   // A release newer than this build has no anchor on the deployed page yet.
   const releaseNotes = shown === fallback ? href : href.replace(/#.*/, '')

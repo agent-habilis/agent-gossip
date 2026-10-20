@@ -18,9 +18,12 @@ main :is(small, figcaption) { color: inherit; }
 /* the chip and the brand read as one group; a static gap separates the brand from the title */
 .chip { margin-bottom: 0; }
 /* The chip's text arrives after first paint (VersionChip). Its slot keeps its
-   width from the start: 8ch fits v0.12.10, and tabular digits give versions of one length one width. */
-.version-slot { display: inline-block; min-width: 8ch; font-variant-numeric: tabular-nums; text-align: center; transition: opacity 150ms ease-out; }
-.version-slot[data-pending] { visibility: hidden; opacity: 0; }
+   width from the start: 9ch fits v0.100.10, and tabular digits give versions of one length one width. */
+.version-slot { display: inline-block; min-width: 9ch; font-variant-numeric: tabular-nums; text-align: center; transition: opacity 150ms ease-out; }
+/* Without JavaScript, or when hydration fails, data-pending is never cleared;
+   the animation reveals the build-time version just after the 3 s fetch timeout. */
+.version-slot[data-pending] { visibility: hidden; opacity: 0; animation: version-reveal 0s 3.5s forwards; }
+@keyframes version-reveal { to { visibility: visible; opacity: 1; } }
 /* The hero buttons wrap on a narrow column; the gap keeps the wrapped one off the first. */
 .actions { display: flex; flex-wrap: wrap; gap: var(--baseline); }
 .hero-brand { display: block; margin-bottom: var(--lineHeight); }
