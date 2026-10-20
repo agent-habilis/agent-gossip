@@ -397,7 +397,15 @@ mod tests {
     }
 
     async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
-        let deadline = tokio::time::Instant::now() + DELIVER;
+        wait_for_gossip_until(session, author, body, tokio::time::Instant::now() + DELIVER).await
+    }
+
+    async fn wait_for_gossip_until(
+        session: &Session,
+        author: &str,
+        body: &str,
+        deadline: tokio::time::Instant,
+    ) -> Option<MessageId> {
         poll_until(deadline, Duration::from_millis(200), || async {
             let events = session.fetch_messages(None, false).await.ok()?.events;
             events.iter().find_map(|entry| {
@@ -408,6 +416,31 @@ mod tests {
             })
         })
         .await
+    }
+
+    /// Bring up the link from `from` to `to`: send a warmup and resend it until `to`
+    /// fetches it. One send can land before the gossip link exists, and nothing
+    /// resends it, so a lone warmup can be lost. This is only a precondition: the
+    /// assertions that follow are unchanged, and the resends are bounded by the
+    /// same delivery budget as every other wait here.
+    async fn establish_link(from: &Session, to: &Session, from_nick: &str) {
+        let deadline = tokio::time::Instant::now() + DELIVER;
+        loop {
+            from.send_broadcast(MessageBody::from("warmup"))
+                .await
+                .expect("send warmup");
+            let window = (tokio::time::Instant::now() + Duration::from_secs(2)).min(deadline);
+            if wait_for_gossip_until(to, from_nick, "warmup", window)
+                .await
+                .is_some()
+            {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "mesh established: warmup from {from_nick} never reached the other session"
+            );
+        }
     }
 
     /// Long-poll `session` (an `after`-anchored fetch, so it parks rather
@@ -452,6 +485,9 @@ mod tests {
             .expect("join");
         assert_eq!(joiner.name().as_str(), "two");
 
+        establish_link(&creator, &joiner, "alice-two").await;
+        establish_link(&joiner, &creator, "bob-two").await;
+
         // Send from creator → joiner should see it.
         let (sent_id, _) = creator
             .send_broadcast(MessageBody::from("hi bob"))
@@ -489,16 +525,7 @@ mod tests {
 
         // Mesh first (a delivered message proves the link) so the long-poll
         // below is waiting on a *fresh* event, not racing initial bootstrap.
-        creator
-            .send_broadcast(MessageBody::from("warmup"))
-            .await
-            .expect("send warmup");
-        assert!(
-            wait_for_gossip(&joiner, "alice-lp", "warmup")
-                .await
-                .is_some(),
-            "mesh established"
-        );
+        establish_link(&creator, &joiner, "alice-lp").await;
 
         // Baseline the joiner's cursor past the warmup, then block on a fetch
         // with a generous wait while the creator sends after a short delay.
