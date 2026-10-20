@@ -627,7 +627,11 @@ mod tests {
     fn meta_changed() -> OutputEvent {
         OutputEvent::StateChanged {
             channel: Channel::Meta,
-            event: Box::new(Message::fixture(MessageKind::Meta, "{}")),
+            event: Box::new(
+                Message::fixture(MessageKind::Meta, "{}")
+                    .sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
             document: serde_json::json!({}),
             is_self: true,
         }
@@ -640,12 +644,25 @@ mod tests {
             Some(nick("initiator")),
         );
         OutputEvent::Task {
-            msg: Box::new(msg),
+            msg: Box::new(
+                msg.sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
             is_self: true,
         }
     }
 
-    fn directed_frame(tag: &str, author: &str, to: &str) -> Message {
+    fn directed_frame(
+        tag: &str,
+        author: &str,
+        to: &str,
+    ) -> habilis_network::protocol::message::Authored {
+        directed_frame_raw(tag, author, to)
+            .sign(&habilis_network::protocol::Identity::generate())
+            .authored()
+    }
+
+    fn directed_frame_raw(tag: &str, author: &str, to: &str) -> Message {
         Message::new_app(
             &MeshId::from("test"),
             &nick(author),

@@ -8,7 +8,8 @@ use std::sync::Mutex;
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
 
 use crate::a2a::TaskId;
 use crate::api::{
@@ -83,7 +84,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Message)> {
+    pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Authored)> {
         let msg = self.inner.broadcast(body).await?;
         Ok((msg.id.clone(), msg))
     }
@@ -98,7 +99,7 @@ impl Session {
         &self,
         to: Nickname,
         body: MessageBody,
-    ) -> Result<(MessageId, Message)> {
+    ) -> Result<(MessageId, Authored)> {
         let msg = self.inner.msg(to, body).await?;
         Ok((msg.id.clone(), msg))
     }
@@ -112,7 +113,7 @@ impl Session {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
-    ) -> Result<(MessageId, Message)> {
+    ) -> Result<(MessageId, Authored)> {
         let msg = self.inner.task_status(task_id, state, note).await?;
         Ok((msg.id.clone(), msg))
     }
@@ -124,7 +125,7 @@ impl Session {
     pub(super) async fn task_artifact(
         &self,
         artifact: TaskArtifactParams,
-    ) -> Result<(MessageId, Message)> {
+    ) -> Result<(MessageId, Authored)> {
         let TaskArtifactParams {
             task_id,
             text,
@@ -252,10 +253,11 @@ mod tests {
     use std::time::Duration;
 
     use habilis_network::protocol::JoinTarget;
+    use habilis_network::protocol::Message;
     use habilis_network::protocol::{MessageKind, PresenceSubtype};
     use serde_json::json;
 
-    use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};
+    use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
     use crate::api::{CreateConfig, JoinConfig};
 
     // All tests use the private network (loopback) so they work on

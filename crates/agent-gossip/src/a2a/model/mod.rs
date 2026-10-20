@@ -576,7 +576,7 @@ mod tests {
                 ),
                 r#"{"method":"tasks/list","params":{}}"#,
             );
-            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
+            insta::assert_snapshot!(String::from_utf8(serde_json::to_vec(&msg).unwrap()).unwrap());
         }
 
         /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
@@ -592,7 +592,7 @@ mod tests {
                 ),
                 r#"{"result":{"tasks":[]}}"#,
             );
-            insta::assert_snapshot!(String::from_utf8(msg.serialize().unwrap()).unwrap());
+            insta::assert_snapshot!(String::from_utf8(serde_json::to_vec(&msg).unwrap()).unwrap());
         }
 
         #[test]

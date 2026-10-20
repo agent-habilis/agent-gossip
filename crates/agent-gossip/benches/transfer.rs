@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agent_gossip::api::{CreateConfig, JoinConfig, MeshSession};
-use agent_gossip::{JoinTarget, MeshName, Message, MessageBody};
+use agent_gossip::{JoinTarget, MeshName, MessageBody};
+use habilis_network::protocol::message::Authored;
 use tokio::sync::broadcast::{self, error::RecvError};
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
@@ -105,7 +106,7 @@ struct DeliveryTally {
 /// channel closes), tallying delivered count/bytes and any broadcast lag
 /// through `tally`. Body of the receiver's spawned task.
 async fn receive_chunks(
-    mut rx: broadcast::Receiver<Message>,
+    mut rx: broadcast::Receiver<Authored>,
     chunk_count: u32,
     tally: DeliveryTally,
 ) {

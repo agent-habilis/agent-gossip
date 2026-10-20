@@ -35,6 +35,7 @@ use agent_gossip::{
     Channel, Lane, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
     PresenceSubtype, TaskId, TaskState,
 };
+use habilis_network::protocol::message::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
@@ -913,6 +914,7 @@ impl InProcNode {
             .await
             .expect("in-process broadcast failed")
             .id
+            .clone()
     }
 
     /// Send a msg to one peer; returns the new message id.
@@ -921,6 +923,7 @@ impl InProcNode {
             .await
             .expect("in-process msg failed")
             .id
+            .clone()
     }
 
     /// [`Self::msg`] without the panic — a msg is sealed to the recipient, so
@@ -930,7 +933,7 @@ impl InProcNode {
     /// # Errors
     /// Propagates the send failure (loop stopped, or the recipient's seal key
     /// is not known yet).
-    pub async fn try_msg(&self, to: &str, text: &str) -> anyhow::Result<Message> {
+    pub async fn try_msg(&self, to: &str, text: &str) -> anyhow::Result<Authored> {
         self.session
             .msg(
                 Nickname::new(to).expect("valid test nickname"),
@@ -1225,7 +1228,7 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
     /// so a test can read the minted ticket reference.
-    pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
+    pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Authored {
         self.session
             .task_artifact(TaskArtifactParams {
                 task_id: task_id.clone(),
@@ -1240,7 +1243,7 @@ impl InProcNode {
 
     /// Captured worker-pushed task frames (status/artifact; includes self
     /// echoes — filter on `is_self`/author as needed).
-    pub fn tasks(&mut self) -> Vec<(&Message, bool)> {
+    pub fn tasks(&mut self) -> Vec<(&Authored, bool)> {
         self.pump();
         self.drained
             .iter()
@@ -1357,7 +1360,7 @@ impl InProcNode {
 
     /// Inbound `msg`-kind messages captured so far (includes self
     /// echoes — filter on `is_self` if needed).
-    pub fn messages(&mut self) -> Vec<&Message> {
+    pub fn messages(&mut self) -> Vec<&Authored> {
         self.pump();
         self.drained
             .iter()
@@ -1371,7 +1374,7 @@ impl InProcNode {
     /// `msg` events from *other* peers only (drops our own echoes).
     /// The subprocess [`Node`] parsed only peer lines, so ports that
     /// counted "deliveries" use this.
-    pub fn inbound(&mut self) -> Vec<&Message> {
+    pub fn inbound(&mut self) -> Vec<&Authored> {
         self.pump();
         self.drained
             .iter()

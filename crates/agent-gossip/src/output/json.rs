@@ -9,7 +9,8 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use habilis_network::protocol::{Message, MessageKind, Nickname, PresenceSubtype, UnixSecs};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
@@ -215,14 +216,14 @@ struct StateLine<'a> {
     is_self: bool,
 }
 
-fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
+fn message_header<'a>(msg: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
     MessageHeader {
         event: "message",
         id: msg.id.as_str(),
         ty,
         gossip: msg.mesh.as_str(),
         author: msg.author.as_str(),
-        pubkey: msg.author_key().map(|key| key.to_string()),
+        pubkey: Some(msg.key().to_string()),
         ts: msg.timestamp.as_secs(),
     }
 }
@@ -383,7 +384,7 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Serializes the struct directly because the documented wire format
 /// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
-pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
+pub(super) fn format_presence_json(msg: &Authored, subtype: PresenceSubtype) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
@@ -404,7 +405,7 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
 /// consumer tells a private line from a public one: `type` (`"broadcast"` vs
 /// `"msg"`) and `to` (`null` vs the addressee, which also turns on the `→` in
 /// `display`).
-pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
+pub(super) fn format_msg_json(msg: &Authored, is_self: bool) -> String {
     let to = match &msg.kind {
         MessageKind::App { tag, to, .. } if tag.as_str() == crate::a2a::wire::MSG => to.as_ref(),
         MessageKind::App { tag, .. } if tag.as_str() == crate::a2a::wire::BROADCAST => None,
@@ -446,7 +447,7 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
     )
 }
 
-pub(super) fn print_message_json(msg: &Message, is_self: bool) {
+pub(super) fn print_message_json(msg: &Authored, is_self: bool) {
     emit(&format_msg_json(msg, is_self));
 }
 
@@ -454,7 +455,7 @@ pub(super) fn print_message_json(msg: &Message, is_self: bool) {
 /// its JSON line. A beat renders as a `task_progress` event; every other leg
 /// as a `task` event carrying the native A2A `kind` + `state`, the text
 /// projection as `body`, and the whole A2A payload.
-pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
+pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
     let to = match &msg.kind {
         MessageKind::App { tag, to, .. }
             if matches!(
@@ -518,7 +519,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             id: msg.id.as_str(),
             gossip: msg.mesh.as_str(),
             author: msg.author.as_str(),
-            pubkey: msg.author_key().map(|key| key.to_string()),
+            pubkey: Some(msg.key().to_string()),
             ts: msg.timestamp.as_secs(),
             to: to.as_str(),
             task_id,
@@ -584,7 +585,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     )
 }
 
-pub(super) fn print_task_json(msg: &Message, is_self: bool) {
+pub(super) fn print_task_json(msg: &Authored, is_self: bool) {
     emit(&format_task_json(msg, is_self));
 }
 
@@ -679,7 +680,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
     channel: habilis_network::protocol::Channel,
-    event: &Message,
+    event: &Authored,
     document: &serde_json::Value,
     is_self: bool,
 ) -> String {
@@ -695,7 +696,7 @@ pub(super) fn format_state_json(
             ty: channel.label(),
             gossip: event.mesh.as_str(),
             author: event.author.as_str(),
-            pubkey: event.author_key().map(|key| key.to_string()),
+            pubkey: Some(event.key().to_string()),
             ts: event.timestamp.as_secs(),
             merge: merge.unwrap_or(serde_json::Value::Null),
             // The meta document is every peer's agent card, ~4k tokens with

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use habilis_network::protocol::{DedupKey, Message, Nickname, ShardGroup};
+use habilis_network::protocol::{DedupKey, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -176,7 +176,7 @@ pub(crate) struct A2aApp {
 
 /// Own frames that enter the message log once `sent` resolves to true.
 pub(crate) struct UnsentLeg {
-    pub(crate) frames: Vec<Message>,
+    pub(crate) frames: Vec<habilis_network::protocol::message::Verified>,
     /// A big shard group's wire frames, for the `shard/repair` cache.
     pub(crate) cache: Option<(ShardGroup, Vec<bytes::Bytes>)>,
     pub(crate) sent: tokio::sync::oneshot::Receiver<bool>,
@@ -184,7 +184,7 @@ pub(crate) struct UnsentLeg {
 
 /// An own task leg to ingest into the task record once the peer got it.
 pub(crate) struct DeliveredLeg {
-    pub(crate) echo: Message,
+    pub(crate) echo: habilis_network::protocol::message::Authored,
     pub(crate) task_id: TaskId,
 }
 
@@ -740,7 +740,9 @@ mod tests {
             MessageBody::from(body),
         );
         DeliveredLeg {
-            echo,
+            echo: echo
+                .sign(&habilis_network::protocol::Identity::generate())
+                .authored(),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         }
     }

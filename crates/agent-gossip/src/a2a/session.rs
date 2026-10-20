@@ -1,6 +1,7 @@
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::{Message, MessageBody, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
@@ -13,13 +14,13 @@ pub(crate) enum SessionRequest {
     /// Broadcast a mesh chat message; echoes back the canonical [`Message`].
     Broadcast {
         body: MessageBody,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     /// Send a chat message to one peer; echoes back the canonical [`Message`].
     Msg {
         to: Nickname,
         body: MessageBody,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     Poll {
         after: Option<u64>,
@@ -34,7 +35,7 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving
     /// (`a2a artifact`).
@@ -42,7 +43,7 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         text: String,
         file: Option<crate::a2a::send::FileRef>,
-        resp: oneshot::Sender<Result<Message>>,
+        resp: oneshot::Sender<Result<Authored>>,
     },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).
     Peers {

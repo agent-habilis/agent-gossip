@@ -441,7 +441,7 @@ impl CraftedMsg {
     /// Sign with `key`, binding the current fields. Call last — unless the
     /// test intends to tamper afterward.
     pub fn sign(mut self, key: &TestKey) -> Self {
-        self.msg = self.msg.signed(&key.0);
+        self.msg = self.msg.sign(&key.0).into_message();
         self
     }
 
@@ -491,6 +491,13 @@ impl CraftedMsg {
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
     #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
-        self.msg.serialize().expect("crafted message serializes")
+        // A crafted frame is the unchecked wire form an adversary sends: its signature may be stale.
+        let key = self.msg.signer.as_ref().map_or_else(
+            || habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+            habilis_network::protocol::Signer::key,
+        );
+        habilis_network::protocol::message::Verified::fixture_unchecked(self.msg.clone(), key)
+            .serialize()
+            .expect("crafted message serializes")
     }
 }

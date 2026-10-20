@@ -833,7 +833,7 @@ async fn broadcast_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(state.identity());
+    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).sign(state.identity());
     let Ok(bytes) = msg.serialize() else {
         return false;
     };
@@ -1611,7 +1611,11 @@ mod tests {
             },
         );
         let line = crate::output::event_json(&crate::output::OutputEvent::Task {
-            msg: Box::new(plaintext),
+            msg: Box::new(
+                plaintext
+                    .sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
             is_self: true,
         })
         .expect("a task event renders a JSON line");
