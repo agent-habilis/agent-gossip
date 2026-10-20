@@ -3,7 +3,7 @@ use habilis_network::protocol::MeshId;
 use habilis_network::protocol::Message as Frame;
 use habilis_network::protocol::MessageBody;
 
-use super::extensions::{META_BELL, META_LAST_POLL, META_WAITING};
+use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
@@ -389,6 +389,32 @@ pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
     reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
 }
 
+/// The metadata of a status leg: its order value, and the `mesh:waiting` reason
+/// when it has one. The counterpart of [`status_order`] and [`status_waiting`].
+#[must_use]
+pub fn status_metadata(waiting: Option<&str>, order_ms: u64) -> serde_json::Value {
+    let mut meta = serde_json::json!({ META_ORDER_MS: order_ms });
+    if let Some(reason) = waiting {
+        meta[META_WAITING] = reason.into();
+    }
+    meta
+}
+
+/// The order value a status leg carries, when the peer sends one.
+#[must_use]
+pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
+}
+
+/// The worker's clock now, in milliseconds: the order value of a status leg.
+#[must_use]
+pub fn leg_order_ms() -> u64 {
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
+}
+
 /// The reason a worker gives for waiting on its own user (`mesh:waiting`), when
 /// the status leg carries one. Peer-controlled text that `GetTask` echoes, so it
 /// gets the same control-character strip and length cap as [`task_label`].
@@ -510,7 +536,8 @@ mod tests {
 
     use super::{
         Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
-        msg_payload, payload_body, status_update, status_waiting, waiting_metadata,
+        msg_payload, payload_body, status_metadata, status_order, status_update, status_waiting,
+        waiting_metadata,
     };
 
     fn mesh() -> MeshId {
@@ -632,5 +659,31 @@ mod tests {
             Some("asks its user")
         );
         assert_eq!(status_waiting(&update(waiting_metadata(None))), None);
+    }
+
+    /// A status leg carries its order value next to the reason, and the reader
+    /// still finds the reason. A leg from a peer without the order value reads
+    /// as none.
+    #[test]
+    fn a_status_leg_carries_its_order_value_and_its_reason() {
+        let task_id = crate::a2a::TaskId::random();
+        let update = |metadata| {
+            status_update(
+                &mesh(),
+                StatusUpdateParams {
+                    task_id: &task_id,
+                    state: crate::a2a::TaskState::Working,
+                    note: None,
+                    metadata: Some(metadata),
+                },
+            )
+        };
+        let leg = update(status_metadata(Some("asks its user"), 7));
+        assert_eq!(status_order(&leg), Some(7));
+        assert_eq!(status_waiting(&leg).as_deref(), Some("asks its user"));
+        assert_eq!(
+            status_order(&update(waiting_metadata(Some("asks its user")).unwrap())),
+            None
+        );
     }
 }

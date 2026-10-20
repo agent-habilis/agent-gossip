@@ -922,7 +922,10 @@ pub(crate) async fn broadcast_task_status(
             task_id,
             state: task_state,
             note,
-            metadata: crate::a2a::gossip::waiting_metadata(waiting),
+            metadata: Some(crate::a2a::gossip::status_metadata(
+                waiting,
+                crate::a2a::gossip::leg_order_ms(),
+            )),
         },
     );
     let plain = crate::a2a::gossip::payload_body(&update)?;

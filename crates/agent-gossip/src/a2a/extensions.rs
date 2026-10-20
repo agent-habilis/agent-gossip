@@ -20,3 +20,7 @@ pub(super) const META_LAST_POLL: &str = "mesh:last_poll";
 /// Why a working task waits on its worker's own user. Rides a `working`
 /// status; the next status leg clears it.
 pub(super) const META_WAITING: &str = "mesh:waiting";
+/// When the worker sent a status leg, in milliseconds on its clock. Tells two
+/// legs of one wire second apart. Absent on a leg from a peer that does not
+/// send it, which then orders by the second alone.
+pub(super) const META_ORDER_MS: &str = "mesh:order_ms";

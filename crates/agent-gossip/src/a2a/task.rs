@@ -104,6 +104,9 @@ pub(crate) struct TaskRecord {
     /// steps back drops newer waiting updates until it passes this time again,
     /// the same exposure as `is_stale`, accepted.
     pub waiting_at: Option<UnixSecs>,
+    /// Order value of the status leg that last set or cleared `waiting`, when
+    /// its peer sent one. Set together with `waiting_at`.
+    pub waiting_order: Option<u64>,
     /// When this node last told its agent that the worker's reader is silent,
     /// so one task raises one event per interval.
     pub last_stall_event: Option<Instant>,
@@ -248,6 +251,7 @@ pub(crate) fn ingest(
         return None;
     };
     let mut waiting = None;
+    let mut order = None;
     let mut reader = None;
     let (kind, fraction) = match tag.as_str() {
         wire::STATUS => {
@@ -261,6 +265,7 @@ pub(crate) fn ingest(
                 if payload.status.state == TaskState::Working {
                     waiting = gossip::status_waiting(&payload);
                 }
+                order = gossip::status_order(&payload);
                 (LegKind::Status(payload.status.state), None)
             }
         }
@@ -284,7 +289,7 @@ pub(crate) fn ingest(
     );
     // Every status leg restates whether the worker waits, so a plain one clears
     // it. Anti-entropy replays old legs, so two checks gate the waiting update
-    // only: the worker's clock drops a leg older than the last answer, and
+    // only: `is_newer_than_waiting` drops a leg older than the last answer, and
     // `surfaced_legs` drops a leg already shown, which covers a replay in the
     // same second as the answer. `apply` above still runs for every leg and
     // `advance` is idempotent. A finished task waits for nothing.
@@ -293,11 +298,12 @@ pub(crate) fn ingest(
     {
         if rec.state.is_terminal() {
             rec.waiting = None;
-        } else if rec.waiting_at.is_none_or(|at| frame.timestamp >= at)
+        } else if is_newer_than_waiting(rec, frame.timestamp, order)
             && !rec.surfaced_legs.contains(&frame.id)
         {
             rec.waiting = waiting;
             rec.waiting_at = Some(frame.timestamp);
+            rec.waiting_order = order;
             // Remembered here, not only by `note_surfaced`: a replay in the
             // same second as this leg must not pass the clock check again.
             rec.surfaced_legs.insert(frame.id.clone());
@@ -305,6 +311,16 @@ pub(crate) fn ingest(
     }
     // Only a beat from the other party says anything about its reader.
     reader.filter(|_| !mine)
+}
+
+/// Whether a status leg is not older than the one that last set `waiting`. When
+/// both legs carry an order value it decides, so two legs of one second stay in
+/// the order they were sent. Otherwise the wire second decides, as before.
+fn is_newer_than_waiting(rec: &TaskRecord, at: UnixSecs, order: Option<u64>) -> bool {
+    match (order, rec.waiting_order) {
+        (Some(order), Some(last)) => order >= last,
+        _ => rec.waiting_at.is_none_or(|last| at >= last),
+    }
 }
 
 /// A beat older than one idle timeout proves nothing about the peer now. The
@@ -466,6 +482,7 @@ pub(crate) fn adopt_initiator(
                 last_fraction: None,
                 waiting: None,
                 waiting_at: None,
+                waiting_order: None,
                 last_stall_event: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -542,6 +559,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_fraction: None,
                 waiting: None,
                 waiting_at: None,
+                waiting_order: None,
                 last_stall_event: None,
                 ball: TaskRole::Receiver,
             });
@@ -1393,6 +1411,62 @@ mod tests {
             tasks[&tid()].waiting,
             None,
             "the replayed --waiting leg must not set the reason again"
+        );
+    }
+
+    /// A working status leg for `tid()` at wire time `at`, with the worker's
+    /// order value and a waiting reason when one is given.
+    fn ordered_leg(
+        reason: Option<&str>,
+        at: UnixSecs,
+        order_ms: u64,
+    ) -> habilis_network::protocol::Message {
+        let mut metadata = serde_json::json!({ "mesh:order_ms": order_ms });
+        if let Some(reason) = reason {
+            metadata["mesh:waiting"] = reason.into();
+        }
+        let mut frame = status_frame(TaskState::Working, Some(metadata));
+        frame.timestamp = at;
+        frame
+    }
+
+    /// Two legs of one second: the clear is sent after the waiting leg, but
+    /// arrives first. The order value keeps the older waiting leg from
+    /// restoring its reason.
+    #[test]
+    fn a_waiting_leg_sent_before_a_same_second_clear_does_not_restore_it() {
+        let at = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        let waiting = ordered_leg(Some("asks its user"), at, 1_000);
+        let clear = ordered_leg(None, at, 2_000);
+
+        ingest_inbound(&mut tasks, &clear);
+        ingest_inbound(&mut tasks, &waiting);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the older waiting leg must not restore its reason after the clear"
+        );
+    }
+
+    /// A leg without an order value, from a peer that does not send one, is
+    /// ordered by its wire second, as before.
+    #[test]
+    fn a_leg_without_an_order_value_is_ordered_by_its_second() {
+        let at = UnixSecs::now();
+        let mut tasks = working_task_we_opened(Instant::now());
+        ingest_inbound(&mut tasks, &ordered_leg(None, at, 2_000));
+
+        ingest_inbound(
+            &mut tasks,
+            &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
+        );
+        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+        ingest_inbound(&mut tasks, &waiting_leg(None, at));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks its user"),
+            "an older second must not clear the reason"
         );
     }
 
