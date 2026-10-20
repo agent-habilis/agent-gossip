@@ -1826,25 +1826,13 @@ pub(crate) struct SessionRequestParams<'a> {
     pub(crate) app: &'a mut A2aApp,
 }
 
-/// Raw injection (adversarial only): parse the bytes, keep the signer as parsed, serialize
-/// through the engine, and broadcast. Each step that fails is an error for the caller.
+/// Raw injection (adversarial only): the bytes go on the wire exactly as given. Nothing parses
+/// them and nothing re-signs them, so the receiver's own checks decide what happens to them. A
+/// failure to broadcast is the caller's error.
 #[cfg(feature = "adversarial")]
-async fn inject_raw_frame(bytes: &[u8], sender: &MeshSender) -> anyhow::Result<()> {
-    use anyhow::Context;
-    let message = Message::parse(bytes).context("injected bytes do not parse as a message")?;
-    let verified = if message.signer.is_some() {
-        Verified::fixture_with_signature(message)
-    } else {
-        Verified::fixture_unchecked(
-            message,
-            habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
-        )
-    };
-    let frame = verified
-        .serialize()
-        .context("injected frame does not serialize")?;
+async fn inject_raw_frame(bytes: bytes::Bytes, sender: &MeshSender) -> anyhow::Result<()> {
     sender
-        .broadcast(frame)
+        .broadcast(WireFrame::fixture_raw(bytes))
         .await
         .map_err(|err| anyhow::anyhow!("injected frame did not broadcast: {err}"))
 }
@@ -2049,7 +2037,7 @@ pub(crate) async fn handle_session_request(
             // happens to a frame whose signature does not match. Only the engine can make a WireFrame,
             // so the parsed frame goes back through the fixture that keeps its signer. A failure
             // here is the caller's error, never a silent drop.
-            let outcome = inject_raw_frame(&bytes, sender).await;
+            let outcome = inject_raw_frame(bytes, sender).await;
             let _ = resp.send(outcome);
             false
         }
