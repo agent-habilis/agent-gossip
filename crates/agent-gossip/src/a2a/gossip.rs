@@ -409,6 +409,27 @@ pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
 /// The worker's clock now, in milliseconds: the order value of a status leg.
 #[must_use]
 pub fn leg_order_ms() -> u64 {
+    next_order_ms(wall_clock_ms(), &LAST_ORDER_MS)
+}
+
+/// The last order value this process handed out. The wall clock can step back,
+/// so the next value is kept above it; a restart resets it, and the clock then
+/// carries the order on.
+static LAST_ORDER_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The order value for a leg sent at `now_ms`: the clock, unless that is not
+/// above the last value handed out, then one more than the last.
+fn next_order_ms(now_ms: u64, last: &std::sync::atomic::AtomicU64) -> u64 {
+    use std::sync::atomic::Ordering::Relaxed;
+    let previous = last
+        .fetch_update(Relaxed, Relaxed, |last| {
+            Some(now_ms.max(last.saturating_add(1)))
+        })
+        .unwrap_or_default();
+    now_ms.max(previous.saturating_add(1))
+}
+
+fn wall_clock_ms() -> u64 {
     let since_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -536,8 +557,8 @@ mod tests {
 
     use super::{
         Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
-        msg_payload, payload_body, status_metadata, status_order, status_update, status_waiting,
-        waiting_metadata,
+        msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
+        status_waiting, waiting_metadata,
     };
 
     fn mesh() -> MeshId {
@@ -684,6 +705,19 @@ mod tests {
         assert_eq!(
             status_order(&update(waiting_metadata(Some("asks its user")).unwrap())),
             None
+        );
+    }
+
+    /// The wall clock can step back, so two legs of one worker must still get
+    /// rising order values: the later leg keeps the higher one.
+    #[test]
+    fn a_clock_step_back_keeps_the_order_value_rising() {
+        let last = std::sync::atomic::AtomicU64::new(0);
+        let first = next_order_ms(2_000, &last);
+        let stepped_back = next_order_ms(1_500, &last);
+        assert!(
+            stepped_back > first,
+            "a clock step back must not lower the order value: {stepped_back} <= {first}"
         );
     }
 }
