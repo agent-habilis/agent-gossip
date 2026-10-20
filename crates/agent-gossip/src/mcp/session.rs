@@ -324,6 +324,52 @@ mod tests {
         })
     }
 
+    /// Fetch alice's cursor-less batches until bob's join presence and his Meta state
+    /// change have both been fetched, and return the seq the explicit replay starts
+    /// from. Returns only once both are consumed, so the implicit cursor is past
+    /// everything bob wrote on join.
+    async fn first_fetch_past_bob_join(alice: &Session) -> u64 {
+        let deadline = tokio::time::Instant::now() + DELIVER;
+        let mut replay_from = None;
+        let mut saw_meta = false;
+        while tokio::time::Instant::now() < deadline {
+            let events = alice
+                .fetch_messages(None, false)
+                .await
+                .expect("first fetch")
+                .events;
+            // The seq strictly before bob's join (0 if it's the first event) —
+            // replaying from here re-includes the join and everything after.
+            if replay_from.is_none() {
+                replay_from = events
+                    .iter()
+                    .position(|item| is_bob_join(&item.event))
+                    .map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq));
+            }
+            saw_meta |= events.iter().any(|item| is_bob_meta_change(&item.event));
+            if replay_from.is_some() && saw_meta {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        let replay_from = replay_from.expect("first fetch should see bob's join presence");
+        assert!(saw_meta, "first fetch should see bob's meta state change");
+        replay_from
+    }
+
+    /// Bob's own Meta state change, the presence document he writes on join. It is
+    /// the event that can land after his join presence, so the cursor test waits
+    /// for it before it asserts that the delta is empty.
+    fn is_bob_meta_change(event: &crate::output::OutputEvent) -> bool {
+        use crate::output::OutputEvent;
+        matches!(
+            event,
+            OutputEvent::StateChanged { channel, event, .. }
+                if *channel == habilis_network::protocol::Channel::Meta
+                    && event.author.as_str() == "bob-cursor"
+        )
+    }
+
     /// Generous in-process delivery budget. Every mesh wait below is adaptive —
     /// it breaks the instant the condition holds — so a healthy run returns in
     /// milliseconds and only a genuinely stalled link pays this ceiling. Set
@@ -572,20 +618,12 @@ mod tests {
         // everything currently buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
-        let deadline = tokio::time::Instant::now() + DELIVER;
-        let replay_from = poll_until(deadline, Duration::from_millis(150), || async {
-            let events = alice
-                .fetch_messages(None, false)
-                .await
-                .expect("first fetch")
-                .events;
-            let bob_join_idx = events.iter().position(|item| is_bob_join(&item.event));
-            // The seq strictly before bob's join (0 if it's the first event) —
-            // replaying from here re-includes the join and everything after.
-            bob_join_idx.map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
-        })
-        .await
-        .expect("first fetch should see bob's join presence");
+        // The wait ends only once bob's join presence AND his Meta state change
+        // have both been fetched, so the cursor is past everything bob wrote on
+        // join before the empty-delta assertion runs. Waiting for the join alone
+        // races the Meta change: it can arrive in a later batch and show up in the
+        // "empty" delta.
+        let replay_from = first_fetch_past_bob_join(&alice).await;
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
