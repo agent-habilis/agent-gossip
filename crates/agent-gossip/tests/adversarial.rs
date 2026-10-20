@@ -974,8 +974,10 @@ async fn wait_doc(
     }
 }
 
+/// Defense in depth: dropped by the receiver gate (isolated by `unsigned_message_is_dropped`) and by
+/// the doc layer's actor == signer check; this test asserts the outcome, not which layer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsigned_state_merge_is_dropped() {
+async fn unsigned_state_merge_is_never_folded() {
     let (victim, attacker) = meshed_pair("state-unsigned").await;
     // A well-formed state merge, but UNSIGNED — must be dropped before it can
     // touch the state log (same authenticity gate as chat).

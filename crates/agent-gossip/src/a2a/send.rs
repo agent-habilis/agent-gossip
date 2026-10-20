@@ -2033,10 +2033,7 @@ pub(crate) async fn handle_session_request(
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
         SessionRequest::InjectRaw { bytes, resp } => {
-            // The bytes reach the wire as they are: the receiver's own verification decides what
-            // happens to a frame whose signature does not match. Only the engine can make a WireFrame,
-            // so the parsed frame goes back through the fixture that keeps its signer. A failure
-            // here is the caller's error, never a silent drop.
+            // The bytes go on the wire as given; see `inject_raw_frame`.
             let outcome = inject_raw_frame(bytes, sender).await;
             let _ = resp.send(outcome);
             false
