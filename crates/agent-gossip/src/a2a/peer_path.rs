@@ -3,6 +3,7 @@ use std::time::Duration;
 use habilis_network::embed::EventLoopState;
 use habilis_network::iroh::endpoint::TransportAddrUsage;
 use habilis_network::iroh::{Endpoint, TransportAddr};
+use habilis_network::net::{GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID};
 use habilis_network::ops::MeshSender;
 use habilis_network::protocol::{MeshId, Nickname};
 use tokio::sync::oneshot;
@@ -12,12 +13,6 @@ use crate::a2a::app::{A2aApp, A2aResponder};
 use crate::a2a::gossip_rpc::READER_GET;
 use crate::a2a::send::{BroadcastA2aCallParams, broadcast_a2a_call};
 use crate::a2a::tuning::POLL_WAITERS_CAP;
-
-// Copied from `habilis-network-iroh-transport-util/src/lib.rs`, which
-// habilis-network does not re-export.
-const WEBRTC_TRANSPORT_ID: u64 = 0x5752_5443;
-const MULTIHOP_TRANSPORT_ID: u64 = 0x6d68;
-const GOSSIP_TRANSPORT_ID: u64 = 0x6773;
 
 const KIND_ORDER: [&str; 6] = ["ip", "webrtc", "multihop", "gossip", "custom", "relay"];
 
@@ -214,7 +209,10 @@ mod tests {
 
     use habilis_network::iroh::{RelayUrl, TransportAddr};
 
-    use super::{path_label, reader_from_reply};
+    use super::{
+        GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID, path_label,
+        reader_from_reply,
+    };
 
     fn ip() -> TransportAddr {
         TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], 4433)))
@@ -236,16 +234,19 @@ mod tests {
     fn labels_each_kind_of_active_address() {
         assert_eq!(path_label(&[ip()]), "ip");
         assert_eq!(path_label(&[relay()]), "relay");
-        assert_eq!(path_label(&[custom(0x5752_5443)]), "webrtc");
-        assert_eq!(path_label(&[custom(0x6d68)]), "multihop");
-        assert_eq!(path_label(&[custom(0x6773)]), "gossip");
+        assert_eq!(path_label(&[custom(WEBRTC_TRANSPORT_ID)]), "webrtc");
+        assert_eq!(path_label(&[custom(MULTIHOP_TRANSPORT_ID)]), "multihop");
+        assert_eq!(path_label(&[custom(GOSSIP_TRANSPORT_ID)]), "gossip");
         assert_eq!(path_label(&[custom(7)]), "custom");
     }
 
     #[test]
     fn joins_several_kinds_in_a_fixed_order_without_repeats() {
         assert_eq!(path_label(&[relay(), ip(), ip()]), "ip+relay");
-        assert_eq!(path_label(&[relay(), custom(0x5752_5443)]), "webrtc+relay");
+        assert_eq!(
+            path_label(&[relay(), custom(WEBRTC_TRANSPORT_ID)]),
+            "webrtc+relay"
+        );
     }
 
     #[test]
