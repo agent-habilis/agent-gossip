@@ -572,9 +572,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
             note,
             waiting,
         } => {
-            if waiting.is_some() && state != crate::a2a::TaskState::Working {
-                anyhow::bail!("--waiting requires --state working");
-            }
+            crate::a2a::send::WorkerLeg::parse(state, waiting.as_deref())
+                .map_err(|_| anyhow::anyhow!("--waiting requires --state working"))?;
             let cmd = IpcCommand::A2aStatus {
                 mesh,
                 task_id,

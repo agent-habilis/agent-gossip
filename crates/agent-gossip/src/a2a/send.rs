@@ -759,7 +759,7 @@ pub(crate) async fn emit_task_status(
         waiting,
         app,
     } = params;
-    check_waiting(task_state, waiting)?;
+    let leg = WorkerLeg::parse(task_state, waiting)?;
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
@@ -769,9 +769,8 @@ pub(crate) async fn emit_task_status(
             author,
             peer: &peer,
             task_id,
-            task_state,
+            leg,
             note,
-            waiting,
             app,
         },
         state,
@@ -782,15 +781,41 @@ pub(crate) async fn emit_task_status(
     .map(|(_id, msg, pending)| (msg, pending))
 }
 
-/// A waiting reason rides a `working` status only: on any other state it would
-/// leave the reason on a task that is not working. The CLI and MCP check this
-/// too; the check here covers a library caller.
-fn check_waiting(task_state: crate::a2a::TaskState, waiting: Option<&str>) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        waiting.is_none() || task_state == crate::a2a::TaskState::Working,
-        "waiting requires state working"
-    );
-    Ok(())
+/// A worker's status leg, parsed once from its state and waiting reason. The
+/// reason rides a `working` leg only, so no other state can hold one.
+#[derive(Clone, Copy)]
+pub(crate) enum WorkerLeg<'a> {
+    Working { waiting: Option<&'a str> },
+    Other(crate::a2a::TaskState),
+}
+
+impl<'a> WorkerLeg<'a> {
+    /// # Errors
+    /// `waiting requires state working` if a reason comes with another state.
+    pub(crate) fn parse(
+        state: crate::a2a::TaskState,
+        waiting: Option<&'a str>,
+    ) -> anyhow::Result<Self> {
+        match (state == crate::a2a::TaskState::Working, waiting) {
+            (true, waiting) => Ok(Self::Working { waiting }),
+            (false, None) => Ok(Self::Other(state)),
+            (false, Some(_)) => anyhow::bail!("waiting requires state working"),
+        }
+    }
+
+    fn state(self) -> crate::a2a::TaskState {
+        match self {
+            Self::Working { .. } => crate::a2a::TaskState::Working,
+            Self::Other(state) => state,
+        }
+    }
+
+    fn waiting(self) -> Option<&'a str> {
+        match self {
+            Self::Working { waiting } => waiting,
+            Self::Other(_) => None,
+        }
+    }
 }
 
 /// A worker-emitted artifact leg's identity, task, result text/file, and the
@@ -887,11 +912,8 @@ pub(crate) struct BroadcastTaskStatusParams<'a> {
     pub(crate) author: &'a Nickname,
     pub(crate) peer: &'a Nickname,
     pub(crate) task_id: &'a crate::a2a::TaskId,
-    pub(crate) task_state: crate::a2a::TaskState,
+    pub(crate) leg: WorkerLeg<'a>,
     pub(crate) note: Option<&'a str>,
-    /// Why a `working` task waits on the worker's own user; rides the leg as
-    /// `mesh:waiting`.
-    pub(crate) waiting: Option<&'a str>,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -946,17 +968,16 @@ pub(crate) async fn broadcast_task_status(
         author,
         peer,
         task_id,
-        task_state,
+        leg,
         note,
-        waiting,
         app,
     } = params;
     let update = worker_status_leg(StatusLegParams {
         mesh,
         task_id,
-        state: task_state,
+        state: leg.state(),
         note,
-        waiting,
+        waiting: leg.waiting(),
     });
     let plain = crate::a2a::gossip::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
@@ -2384,15 +2405,15 @@ mod sharded_leg_tests {
 
 #[cfg(test)]
 mod waiting_tests {
-    use super::check_waiting;
+    use super::WorkerLeg;
     use crate::a2a::TaskState;
 
     /// The shared sender refuses a reason on any state but `working`, so a
     /// library caller cannot leave `mesh:waiting` on an `input-required` task.
     #[test]
     fn a_waiting_reason_needs_the_working_state() {
-        assert!(check_waiting(TaskState::Working, Some("asks its user")).is_ok());
-        assert!(check_waiting(TaskState::InputRequired, None).is_ok());
+        assert!(WorkerLeg::parse(TaskState::Working, Some("asks its user")).is_ok());
+        assert!(WorkerLeg::parse(TaskState::InputRequired, None).is_ok());
         for state in [
             TaskState::InputRequired,
             TaskState::Completed,
@@ -2400,8 +2421,9 @@ mod waiting_tests {
             TaskState::Canceled,
             TaskState::Rejected,
         ] {
-            let error = check_waiting(state, Some("asks its user"))
-                .expect_err("a reason with a non-working state must be refused");
+            let error = WorkerLeg::parse(state, Some("asks its user"))
+                .err()
+                .expect("a reason with a non-working state must be refused");
             assert_eq!(error.to_string(), "waiting requires state working");
         }
     }
