@@ -2409,10 +2409,11 @@ mod waiting_tests {
 
 #[cfg(test)]
 mod status_leg_tests {
+    use habilis_network::protocol::MeshId;
+
     use super::{StatusLegParams, worker_status_leg};
     use crate::a2a::TaskState;
     use crate::a2a::gossip::{status_order, status_waiting};
-    use habilis_network::protocol::MeshId;
 
     /// The worker's status leg carries the order value next to the waiting
     /// reason. Without the order value the initiator cannot tell two legs of one
