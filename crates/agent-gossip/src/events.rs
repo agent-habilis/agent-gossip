@@ -1,5 +1,6 @@
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, Message, MessageId, Nickname};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageId, Nickname};
 
 use crate::a2a::{TaskId, TaskState};
 
@@ -14,11 +15,11 @@ pub enum OutputEvent {
         a2a_port: Option<u16>,
     },
     Message {
-        msg: Box<Message>,
+        msg: Box<Authored>,
         is_self: bool,
     },
     Presence {
-        msg: Box<Message>,
+        msg: Box<Authored>,
     },
     PeerTimeout {
         nickname: Nickname,
@@ -46,7 +47,7 @@ pub enum OutputEvent {
         known: usize,
     },
     Task {
-        msg: Box<Message>,
+        msg: Box<Authored>,
         is_self: bool,
     },
     TaskMessage {
@@ -69,6 +70,14 @@ pub enum OutputEvent {
         task_id: TaskId,
         reason: TaskGoneReason,
     },
+    /// The worker's agent has not polled for `check_secs` and holds no bell.
+    /// States the fact only; the task is not canceled.
+    TaskStalled {
+        task_id: TaskId,
+        peer: Nickname,
+        last_poll_secs_ago: u64,
+        check_secs: u64,
+    },
     Receipt {
         from: Nickname,
         ref_id: String,
@@ -77,7 +86,7 @@ pub enum OutputEvent {
     },
     StateChanged {
         channel: habilis_network::protocol::Channel,
-        event: Box<Message>,
+        event: Box<Authored>,
         document: serde_json::Value,
         is_self: bool,
     },

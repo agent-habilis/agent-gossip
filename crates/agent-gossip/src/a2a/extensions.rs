@@ -12,3 +12,15 @@ pub const META_REASON: &str = "mesh:reason";
 /// The initiator's one-line name for a task, so both parties label it
 /// identically. Absent on a brief from a peer that does not set it.
 pub const META_LABEL: &str = "mesh:label";
+/// A worker beat's answer to "is my agent reading": whether a bell is armed.
+/// Absent on a beat from a peer that does not send it.
+pub(super) const META_BELL: &str = "mesh:bell";
+/// Seconds since the worker agent last polled. Sent with [`META_BELL`].
+pub(super) const META_LAST_POLL: &str = "mesh:last_poll";
+/// Why a working task waits on its worker's own user. Rides a `working`
+/// status; the next status leg clears it.
+pub(super) const META_WAITING: &str = "mesh:waiting";
+/// When the worker sent a status leg, in milliseconds on its clock. Tells two
+/// legs of one wire second apart. Absent on a leg from a peer that does not
+/// send it, which then orders by the second alone.
+pub(super) const META_ORDER_MS: &str = "mesh:order_ms";

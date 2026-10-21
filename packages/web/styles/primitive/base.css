@@ -28,6 +28,10 @@ html {
   caret-color: var(--foreground-color);
 }
 
+/* WebKit turns an opaque selection colour translucent (blendWithWhite), which on
+   a dark page dims it to grey. A colour that already has alpha is left alone. */
+::selection { background: color-mix(in srgb, var(--foreground-color) 99%, transparent); color: var(--background-color); }
+
 body {
   padding: var(--pageMargin);
   padding-bottom: calc(var(--pageMargin) + var(--lineHeight));

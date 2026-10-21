@@ -68,7 +68,8 @@ the recipient daemon got it. Before your daemon joins the gossip, it queues a
 send and echoes it at once.
 
 `peers` rows can carry `"reader":{"bell":true,"last_poll_secs_ago":30}`. When
-`bell` is false, or `last_poll_secs_ago` is large, no agent reads that peer.
+`bell` is false and `last_poll_secs_ago` is large or null, no agent reads that
+peer.
 The key is absent for your own row, for a peer that runs an older version, and
 for a peer that did not answer in time. `last_poll_secs_ago` is null before the
 first poll of that peer.
@@ -97,8 +98,8 @@ Do not answer ping messages. The daemon handles ping/pong and emits
 
 Task events are interactions, not chat lines (`is_visible` is false on them).
 
-A task event that reports state — `task_timeout`, `task_progress`, a
-status-update, a terminal state — for a `task_id` you are not tracking
+A task event that reports state — `task_timeout`, `task_progress`,
+`task_stalled`, a status-update, a terminal state — for a `task_id` you are not tracking
 **live** (no *open* todo for it; a task you already closed as dropped counts
 as untracked even when its id was minted this invocation) is **stale**:
 leftover from an earlier session or an already-dropped task. Consume it
@@ -145,6 +146,10 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 | `input-required`, kind `artifact-update` | leave it in progress; the result is in, awaiting your approval | `result` |
 | `input-required`, kind `status-update` | leave it in progress; surface the worker's question | `question` |
 | you asked a question (worker) | parked on the initiator | `asked` |
+| you wait for your own user (worker) | still in progress, parked on your user | `waiting-user` |
+| status-update with a `waiting` key (initiator) | leave it in progress; the worker waits for its own user | `waiting-user` |
+| a `working` status-update without the `waiting` key, while the badge is `waiting-user` (initiator) | leave it in progress; the wait is over | back to `working` |
+| `task_stalled` (initiator) | leave it in progress; the worker may be stuck | `stalled` |
 | you sent the artifact (worker) | parked on the initiator | `sent` |
 | kind `message`, on a task you are working | the initiator's answer or approval — act on it | back to `working` |
 | `completed`, after approval | close it | `done` |
@@ -168,8 +173,22 @@ approval — show it and approve or ask for changes. `status-update` is the work
 **asking you a question** — answer it. Both are answered the same way, with a
 follow-up that carries `--task-id` (see the initiator flow below).
 
-`task_progress` is a **liveness** beat, not progress: it carries no done/total
-and no percentage. It says the worker is still alive on the task, nothing more.
+`task_progress` is a **liveness** beat. It carries `done` and `total` only when
+the worker reports a percentage. It says the daemon of the worker is up, and
+it does not say that the agent is working.
+
+`task_stalled` is the one task event with `is_visible` true. The daemon of the
+initiator emits it when the worker beat shows that the agent of the worker has
+no armed bell and has not polled for 30 minutes or more, and the worker did not
+send `--waiting`. It states a fact, and it cancels nothing. The `display` line
+reads:
+
+```text
+💬️ task stalled · `<peer>` has not polled for <n> min
+```
+
+Print it verbatim, set the badge `stalled`, and follow the initiator flow
+below.
 
 Whether a todo tool exists is a fact about the **session**, not the harness: the
 same machine can hand you one session with the tool and the next without it, and
@@ -228,6 +247,10 @@ into the `subject` (and `activeForm`) on every transition:
 | `input-required`, kind `status-update` | badge `question`, keep `in_progress` |
 | `input-required`, kind `artifact-update` | badge `result`, keep `in_progress` |
 | you asked / you sent the artifact (worker) | badge `asked` / `sent`, keep `in_progress` |
+| you wait for your own user (worker) | badge `waiting-user`, keep `in_progress` |
+| status-update with a `waiting` key (initiator) | badge `waiting-user`, keep `in_progress` |
+| a `working` status-update without the `waiting` key, while the badge is `waiting-user` (initiator) | badge `working`, keep `in_progress` |
+| `task_stalled` (initiator) | badge `stalled`, keep `in_progress` |
 | the initiator's answer or approval arrives | badge back to `working`, keep `in_progress` |
 | `completed`, after approval | badge `done`, `status` `completed` |
 | `failed`, `task_timeout` | badge `dropped`, reason into `description`, `status` `completed` |
@@ -272,6 +295,18 @@ Worker flow:
    Then do the work. Do not re-emit `working` to keep the task alive: both
    daemons beat every live task for as long as they run, so a long build, a
    question to your user, or a long review cannot time the task out.
+
+   Before you ask your own user a question, tell the initiator that you wait
+   for the user. Give the reason in `--waiting`. This is only valid with
+   `--state working`:
+   ```bash
+   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --waiting "$REASON"
+   ```
+   Move the badge to `waiting-user`. The daemon of the initiator does not flag
+   a task with this key as stalled. Any other status leg clears the key. When
+   your user answers, send a plain `--state working` and move the badge back
+   to `working`. A worker with no armed bell, such as a Codex worker, must do
+   this in every wait of 30 minutes or more.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
    agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
@@ -363,3 +398,15 @@ Initiator flow:
    ```
    `TASK_STATE_SUBMITTED` on a task dispatched minutes ago is a stalled
    pickup, not a slow worker.
+6. On `task_stalled`, print its `display` line and set the badge `stalled`.
+   The event proves only that the agent of the worker has no armed bell and
+   has not polled for the time that it names. A worker with no bell can match
+   this rule in a long build, so the worker can still be alive. The daemon
+   cancels nothing and sends the event once for each interval. Probe the task
+   with `GetTask`. If `mesh:waiting` is in its metadata, the worker waits for
+   its own user, and you only wait. Otherwise send one follow-up with
+   `--task-id` that asks for a status. If a second `task_stalled` arrives for
+   the same task, put the choice to the user per the **Decisions** section:
+   wait, ask the worker again, or reassign the task. Send `CancelTask` only
+   when the user picks reassign. The next leg from the worker moves the badge
+   back to `working`.

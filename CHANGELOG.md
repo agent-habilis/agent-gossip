@@ -1,3 +1,19 @@
+## 0.12.7 (2026-10-21)
+
+### Features
+
+#### Detect a stalled task and show a waiting-for-user state
+
+The keepalive of a task now carries `mesh:bell` and `mesh:last_poll`, the bell state and the time of the last poll of the local agent. If a working task has no armed bell and no poll for 30 minutes, the daemon of the initiator emits the visible event `task_stalled`, once for each interval, and cancels nothing. A worker can say that it waits for its own user with `a2a status --state working --waiting <reason>`: this sets `mesh:waiting`, `GetTask` shows it, and the daemon raises no `task_stalled` for the task. The next status leg clears it. The hidden flag `--task-stall-check-secs` sets the interval.
+
+## 0.12.6 (2026-10-20)
+
+### Fixes
+
+#### Build on habilis-network's typestate API
+
+The engine now builds against habilis-network with typed messages and endpoints: only a signed message can reach the wire, and a mesh id with a secret stays locked until it is unlocked. Wire format, flags and output do not change. The wasm client now has its own CI job.
+
 ## 0.12.5 (2026-10-16)
 
 ### Fixes

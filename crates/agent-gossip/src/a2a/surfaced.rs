@@ -338,6 +338,7 @@ fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
         | OutputEvent::Error { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. } => None,
     }
@@ -490,7 +491,12 @@ impl SurfacedState {
             now,
             responder,
         } = params;
-        if !long {
+        // Only a cursor-less long poll is the bell. An explicit `after` is an
+        // MCP read, even when it parks. The legacy CLI `poll --after N --long`
+        // also passes here; that is harmless, because every CLI `--long` poll
+        // holds the bell lock, so the bell is already armed and the task is
+        // not stalled.
+        if !long || after.is_some() {
             self.last_foreground_poll = Some(now);
         }
         let (batch, baseline) = match after {
@@ -627,7 +633,11 @@ mod tests {
     fn meta_changed() -> OutputEvent {
         OutputEvent::StateChanged {
             channel: Channel::Meta,
-            event: Box::new(Message::fixture(MessageKind::Meta, "{}")),
+            event: Box::new(
+                Message::fixture(MessageKind::Meta, "{}")
+                    .sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
             document: serde_json::json!({}),
             is_self: true,
         }
@@ -640,12 +650,25 @@ mod tests {
             Some(nick("initiator")),
         );
         OutputEvent::Task {
-            msg: Box::new(msg),
+            msg: Box::new(
+                msg.sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
             is_self: true,
         }
     }
 
-    fn directed_frame(tag: &str, author: &str, to: &str) -> Message {
+    fn directed_frame(
+        tag: &str,
+        author: &str,
+        to: &str,
+    ) -> habilis_network::protocol::message::Authored {
+        directed_frame_raw(tag, author, to)
+            .sign(&habilis_network::protocol::Identity::generate())
+            .authored()
+    }
+
+    fn directed_frame_raw(tag: &str, author: &str, to: &str) -> Message {
         Message::new_app(
             &MeshId::from("test"),
             &nick(author),
@@ -973,6 +996,28 @@ mod tests {
         assert_eq!(
             surfaced.last_poll_secs_ago(start + Duration::from_secs(42)),
             Some(42)
+        );
+    }
+
+    /// An MCP reader sends an explicit `after` on every fetch, long or not. Its
+    /// parked fetch is a read, not the discarded CLI bell, so it counts as a
+    /// reader and keeps a task from reading as stalled.
+    #[tokio::test]
+    async fn explicit_after_long_fetch_counts_as_a_reader() {
+        let mut surfaced = SurfacedState::new();
+        let start = TokioInstant::now();
+
+        let (mcp_tx, _mcp_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: Some(0),
+            long: true,
+            now: start,
+            responder: PollResponder::Json(mcp_tx),
+        });
+        assert_eq!(
+            surfaced.last_poll_secs_ago(start),
+            Some(0),
+            "a parked MCP fetch with an explicit after is a foreground read"
         );
     }
 

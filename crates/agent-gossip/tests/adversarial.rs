@@ -58,8 +58,13 @@ fn surfaced(victim: &mut InProcNode, body: &str) -> bool {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unsigned_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("unsigned").await;
-    // No `.sign(..)` → empty signature. The victim must reject it.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned").bytes();
+    // No `.sign(..)`: the frame carries no key and no signature on the wire. The victim must
+    // reject it.
+    // `wrap_a2a` makes the body a valid chat payload, so the only thing that can drop it is the
+    // signature gate. Without it the app layer drops the frame and the test proves nothing.
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
+        .wrap_a2a()
+        .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed message from the same sender, sent *after* the
     // injection. When it arrives, the unsigned one (sent first) had its turn.
@@ -81,7 +86,9 @@ async fn tampered_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("tampered").await;
     let key = adversarial::new_key();
     // Sign "honest", then mutate the body → signature no longer matches.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "honest")
+    // The same shape as the control below: a nickname the victim surfaces, a2a-wrapped.
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
+        .wrap_a2a()
         .sign(&key)
         .tamper_body("tampered-after-sign")
         .bytes();
@@ -94,6 +101,46 @@ async fn tampered_message_is_dropped() {
     assert!(
         !surfaced(&mut victim, "tampered-after-sign") && !surfaced(&mut victim, "honest"),
         "a tampered message must be dropped (signature mismatch)"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// Bytes that do not parse go on the wire as they are, and the receiver drops them. The receiver
+/// must come through the frame unharmed: the barrier sent after it still surfaces, once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unparseable_frame_is_dropped_and_the_receiver_survives() {
+    let (mut victim, attacker) = meshed_pair("unparseable").await;
+    let garbage = b"\x00\xffnot a message frame".to_vec();
+    attacker.session.inject_raw(garbage).await.expect("inject");
+    attacker.broadcast("barrier-unparseable").await;
+    assert!(
+        victim.wait_body("barrier-unparseable", T).await,
+        "barrier lost after an unparseable frame"
+    );
+    assert_eq!(
+        victim.count_body("barrier-unparseable"),
+        1,
+        "the barrier surfaces once, and the unparseable frame adds nothing"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// The control for `tampered_message_is_dropped`: the same signed frame, without the mutation, is
+/// surfaced. The drop above is therefore the signature check, not a frame lost in transit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
+    let (mut victim, attacker) = meshed_pair("tamper-control").await;
+    let key = adversarial::new_key();
+    let honest = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
+        .wrap_a2a()
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(honest).await.expect("inject");
+    assert!(
+        victim.wait_body("honest", T).await,
+        "a correctly signed frame must surface: the control of the tamper test"
     );
     victim.leave().await;
     attacker.leave().await;
@@ -927,8 +974,10 @@ async fn wait_doc(
     }
 }
 
+/// Defense in depth: dropped by the receiver gate (isolated by `unsigned_message_is_dropped`) and by
+/// the doc layer's actor == signer check; this test asserts the outcome, not which layer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsigned_state_merge_is_dropped() {
+async fn unsigned_state_merge_is_never_folded() {
     let (victim, attacker) = meshed_pair("state-unsigned").await;
     // A well-formed state merge, but UNSIGNED — must be dropped before it can
     // touch the state log (same authenticity gate as chat).

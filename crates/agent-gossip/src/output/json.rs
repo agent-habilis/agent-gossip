@@ -9,10 +9,12 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use habilis_network::protocol::{Message, MessageKind, Nickname, PresenceSubtype, UnixSecs};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
+use crate::a2a::TaskId;
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
@@ -61,6 +63,14 @@ pub(super) enum SimpleEvent<'a> {
     TaskTimeout {
         task_id: &'a str,
         reason: TaskGoneReason,
+    },
+    TaskStalled {
+        task_id: &'a str,
+        peer: &'a str,
+        last_poll_secs_ago: u64,
+        check_secs: u64,
+        /// Pre-formatted line (see [`task_stalled_event`]).
+        display: String,
     },
     Receipt {
         from: &'a str,
@@ -162,6 +172,10 @@ struct TaskLine<'a> {
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<&'a str>,
+    /// Why the worker waits on its own user, from the leg's `mesh:waiting`.
+    /// Absent on every other leg, so the leg that clears it carries no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -215,14 +229,14 @@ struct StateLine<'a> {
     is_self: bool,
 }
 
-fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
+fn message_header<'a>(msg: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
     MessageHeader {
         event: "message",
         id: msg.id.as_str(),
         ty,
         gossip: msg.mesh.as_str(),
         author: msg.author.as_str(),
-        pubkey: msg.author_key().map(|key| key.to_string()),
+        pubkey: Some(msg.key().to_string()),
         ts: msg.timestamp.as_secs(),
     }
 }
@@ -298,6 +312,26 @@ pub(super) fn peer_timeout_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
+/// The `task_stalled` event. Its `display` states the silence as a fact: a
+/// worker with no bell can poll rarely while it works.
+pub(super) fn task_stalled_event<'a>(
+    task_id: &'a TaskId,
+    peer: &'a Nickname,
+    last_poll_secs_ago: u64,
+    check_secs: u64,
+) -> SimpleEvent<'a> {
+    SimpleEvent::TaskStalled {
+        task_id: task_id.as_str(),
+        peer: peer.as_str(),
+        last_poll_secs_ago,
+        check_secs,
+        display: format!(
+            "{DISPLAY_GLYPH} task stalled · `<{peer}>` has not polled for {} min",
+            last_poll_secs_ago / 60
+        ),
+    }
+}
+
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
@@ -346,7 +380,8 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         OutputEvent::Message { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
-        | OutputEvent::PeerReturn { .. } => true,
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::TaskStalled { .. } => true,
         OutputEvent::Presence { msg } => matches!(
             &msg.kind,
             MessageKind::Presence {
@@ -383,7 +418,7 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Serializes the struct directly because the documented wire format
 /// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
-pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
+pub(super) fn format_presence_json(msg: &Authored, subtype: PresenceSubtype) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
@@ -404,7 +439,7 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
 /// consumer tells a private line from a public one: `type` (`"broadcast"` vs
 /// `"msg"`) and `to` (`null` vs the addressee, which also turns on the `→` in
 /// `display`).
-pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
+pub(super) fn format_msg_json(msg: &Authored, is_self: bool) -> String {
     let to = match &msg.kind {
         MessageKind::App { tag, to, .. } if tag.as_str() == crate::a2a::wire::MSG => to.as_ref(),
         MessageKind::App { tag, .. } if tag.as_str() == crate::a2a::wire::BROADCAST => None,
@@ -446,7 +481,7 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
     )
 }
 
-pub(super) fn print_message_json(msg: &Message, is_self: bool) {
+pub(super) fn print_message_json(msg: &Authored, is_self: bool) {
     emit(&format_msg_json(msg, is_self));
 }
 
@@ -454,7 +489,7 @@ pub(super) fn print_message_json(msg: &Message, is_self: bool) {
 /// its JSON line. A beat renders as a `task_progress` event; every other leg
 /// as a `task` event carrying the native A2A `kind` + `state`, the text
 /// projection as `body`, and the whole A2A payload.
-pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
+pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
     let to = match &msg.kind {
         MessageKind::App { tag, to, .. }
             if matches!(
@@ -518,7 +553,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             id: msg.id.as_str(),
             gossip: msg.mesh.as_str(),
             author: msg.author.as_str(),
-            pubkey: msg.author_key().map(|key| key.to_string()),
+            pubkey: Some(msg.key().to_string()),
             ts: msg.timestamp.as_secs(),
             to: to.as_str(),
             task_id,
@@ -527,6 +562,11 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
+            // Only a `working` leg carries the reason, as in the record.
+            waiting: crate::a2a::gossip::status_payload(msg)
+                .ok()
+                .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
+                .and_then(|payload| crate::a2a::gossip::status_waiting(&payload)),
             display: task_display(TaskDisplayParams {
                 author: msg.author.as_str(),
                 to: to.as_str(),
@@ -568,6 +608,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             kind: "message",
             state: leg.state.map(crate::a2a::TaskState::as_str),
             label: leg.label,
+            waiting: None,
             display: task_display(TaskDisplayParams {
                 author: leg.author,
                 to: leg.peer,
@@ -584,7 +625,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     )
 }
 
-pub(super) fn print_task_json(msg: &Message, is_self: bool) {
+pub(super) fn print_task_json(msg: &Authored, is_self: bool) {
     emit(&format_task_json(msg, is_self));
 }
 
@@ -679,7 +720,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
     channel: habilis_network::protocol::Channel,
-    event: &Message,
+    event: &Authored,
     document: &serde_json::Value,
     is_self: bool,
 ) -> String {
@@ -695,7 +736,7 @@ pub(super) fn format_state_json(
             ty: channel.label(),
             gossip: event.mesh.as_str(),
             author: event.author.as_str(),
-            pubkey: event.author_key().map(|key| key.to_string()),
+            pubkey: Some(event.key().to_string()),
             ts: event.timestamp.as_secs(),
             merge: merge.unwrap_or(serde_json::Value::Null),
             // The meta document is every peer's agent card, ~4k tokens with
@@ -734,6 +775,10 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// wire format the `/mesh` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per OutputEvent variant; splitting the match would scatter the single event-to-JSON table"
+)]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {
         OutputEvent::Ready {
@@ -785,6 +830,17 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 reason: *reason,
             })
         }
+        OutputEvent::TaskStalled {
+            task_id,
+            peer,
+            last_poll_secs_ago,
+            check_secs,
+        } => serde_json::to_string(&task_stalled_event(
+            task_id,
+            peer,
+            *last_poll_secs_ago,
+            *check_secs,
+        )),
         OutputEvent::Receipt {
             from,
             ref_id,

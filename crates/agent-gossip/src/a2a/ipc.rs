@@ -4,8 +4,9 @@ use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
 use habilis_network::ops::{StateMergeParams, broadcast_state_merge, start_ping_round};
 use habilis_network::protocol::MeshName;
-use habilis_network::protocol::{MeshId, MessageBody, Nickname};
-use habilis_network::runtime::ipc::{Addressed, json_ack, json_error, json_ok_msg};
+use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
+use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -67,6 +68,8 @@ pub(crate) enum IpcCommand {
         state: TaskState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<String>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
     /// An optional `file` is offloaded over the blob channel and referenced as a
@@ -232,7 +235,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                    let _ = resp_tx.send(json_ok_record(&msg_id, &msg));
                     true
                 }
                 Err(error) => {
@@ -258,7 +261,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg_id, msg, pending)) => {
-                    let ok = json_ok_msg(&msg_id, &msg);
+                    let ok = json_ok_record(&msg_id, &msg);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -312,6 +315,7 @@ pub(crate) async fn handle_ipc_command(
             task_id,
             state: task_state,
             note,
+            waiting,
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
             match emit_task_status(
@@ -321,6 +325,7 @@ pub(crate) async fn handle_ipc_command(
                     task_id: &task_id,
                     task_state,
                     note: note.as_deref(),
+                    waiting: waiting.as_deref(),
                     app,
                 },
                 state,
@@ -330,7 +335,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg, pending)) => {
-                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    let ok = json_ok_record(&msg.id.clone(), &msg);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -375,7 +380,7 @@ pub(crate) async fn handle_ipc_command(
             .await
             {
                 Ok((msg, pending)) => {
-                    let ok = json_ok_msg(&msg.id.clone(), &msg);
+                    let ok = json_ok_record(&msg.id.clone(), &msg);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -613,6 +618,65 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
     format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
 }
 
+/// The record of a message as the IPC and MCP surfaces report it: the wire form, with the
+/// author's key and no signature, because an `Authored` view carries no signature. A body that
+/// was sealed on the wire is reported plaintext here, as the operator sees it.
+pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
+    let mut record = serde_json::Map::new();
+    record.insert("v".into(), message.version.clone().into());
+    record.insert(
+        "id".into(),
+        serde_json::to_value(&message.id).expect("an id serializes"),
+    );
+    if let serde_json::Value::Object(kind) =
+        serde_json::to_value(&message.kind).expect("a kind serializes")
+    {
+        record.extend(kind);
+    }
+    record.insert(
+        "mesh".into(),
+        serde_json::to_value(&message.mesh).expect("a mesh id serializes"),
+    );
+    record.insert(
+        "author".into(),
+        serde_json::to_value(&message.author).expect("a nickname serializes"),
+    );
+    record.insert("ts".into(), message.timestamp.as_secs().into());
+    record.insert(
+        "body".into(),
+        serde_json::to_value(&message.body).expect("a body serializes"),
+    );
+    record.insert("pubkey".into(), message.key().to_string().into());
+    if let Some(seq) = message.seq {
+        record.insert("seq".into(), seq.into());
+    }
+    if let Some(prev) = &message.prev {
+        record.insert(
+            "prev".into(),
+            serde_json::to_value(prev).expect("a hash serializes"),
+        );
+    }
+    if !message.parents.is_empty() {
+        record.insert(
+            "parents".into(),
+            serde_json::to_value(&message.parents).expect("hashes serialize"),
+        );
+    }
+    if let Some(shard) = &message.shard {
+        record.insert(
+            "shard".into(),
+            serde_json::to_value(shard).expect("a shard serializes"),
+        );
+    }
+    record.insert("ext".into(), message.ext.clone());
+    serde_json::Value::Object(record)
+}
+
+/// The `msg` IPC answer: the id and the record of the message just sent.
+fn json_ok_record(id: &MessageId, msg: &Authored) -> String {
+    serde_json::json!({"ok": true, "id": id, "message": message_record(msg)}).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use habilis_network::runtime::ipc::Addressed;
@@ -750,15 +814,22 @@ mod tests {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
+            waiting: Some("asks its user".to_string()),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"a2a_status\""));
         assert!(json.contains("\"state\":\"working\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::A2aStatus { state, note, .. } => {
+            IpcCommand::A2aStatus {
+                state,
+                note,
+                waiting,
+                ..
+            } => {
                 assert_eq!(state, TaskState::Working);
                 assert_eq!(note.as_deref(), Some("on it"));
+                assert_eq!(waiting.as_deref(), Some("asks its user"));
             }
             IpcCommand::Broadcast { .. }
             | IpcCommand::Msg { .. }
@@ -775,6 +846,25 @@ mod tests {
             | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected A2aStatus"),
         }
+    }
+
+    /// An older CLI sends no `waiting`; the daemon must still accept the line.
+    #[test]
+    fn ipc_command_a2a_status_without_waiting_still_parses() {
+        let cmd = IpcCommand::A2aStatus {
+            mesh: MeshId::from("test"),
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            state: TaskState::Working,
+            note: None,
+            waiting: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(!json.contains("waiting"), "the key must be absent: {json}");
+        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            parsed,
+            IpcCommand::A2aStatus { waiting: None, .. }
+        ));
     }
 
     #[test]
@@ -872,7 +962,7 @@ mod tests {
                 )
                 .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
-                let parsed = habilis_network::protocol::Message::parse(&bytes).unwrap();
+                let parsed = habilis_network::protocol::Message::parse(bytes.as_bytes()).unwrap();
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.mesh, &mesh);

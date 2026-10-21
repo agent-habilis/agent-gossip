@@ -245,6 +245,10 @@ pub(crate) enum A2aAction {
         /// completion summary, a failure reason).
         #[arg(long = "text", alias = "note")]
         note: Option<String>,
+        /// Mark the task as waiting on your own user, with the reason. Only
+        /// valid with `--state working`; the next status clears it.
+        #[arg(long)]
+        waiting: Option<String>,
     },
 
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
@@ -297,12 +301,25 @@ pub(crate) enum A2aAction {
     },
 }
 
-/// Parse an A2A task state from its friendly (kebab-case) name — the agent
-/// surface, not the A2A wire's `ProtoJSON` `TASK_STATE_*`.
+/// Parse the A2A task state a worker can send, from its friendly (kebab-case)
+/// name — the agent surface, not the A2A wire's `ProtoJSON` `TASK_STATE_*`.
 fn parse_state(raw: &str) -> Result<crate::a2a::TaskState, String> {
-    crate::a2a::TaskState::from_friendly(raw).ok_or_else(|| {
-        format!("invalid task state '{raw}' (working|input-required|completed|failed|canceled)")
-    })
+    use crate::a2a::TaskState;
+
+    TaskState::from_friendly(raw)
+        .filter(|state| {
+            matches!(
+                state,
+                TaskState::Working
+                    | TaskState::InputRequired
+                    | TaskState::Completed
+                    | TaskState::Failed
+                    | TaskState::Canceled
+            )
+        })
+        .ok_or_else(|| {
+            format!("invalid task state '{raw}' (working|input-required|completed|failed|canceled)")
+        })
 }
 
 #[cfg(test)]

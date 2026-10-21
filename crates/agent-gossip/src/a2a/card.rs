@@ -427,7 +427,7 @@ mod tests {
             sealed,
             Channel::Meta,
         )
-        .signed(&Identity::generate());
+        .sign(&Identity::generate());
         Ok(frame.wire_len())
     }
 

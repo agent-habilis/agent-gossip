@@ -3,6 +3,7 @@ use habilis_network::protocol::MeshId;
 use habilis_network::protocol::Message as Frame;
 use habilis_network::protocol::MessageBody;
 
+use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
@@ -243,6 +244,28 @@ pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// Whether the local agent of a worker is reading: the answer a beat carries so
+/// the initiator can tell a wedged agent from a live daemon without asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReaderBeat {
+    pub bell: bool,
+    pub last_poll_secs: u64,
+}
+
+/// As [`beat_metadata`], plus the worker's [`ReaderBeat`] when it has polled.
+#[must_use]
+pub fn beat_metadata_with_reader(
+    fraction: Option<(u64, u64)>,
+    reader: Option<ReaderBeat>,
+) -> serde_json::Value {
+    let mut meta = beat_metadata(fraction);
+    if let (Some(reader), Some(map)) = (reader, meta.as_object_mut()) {
+        map.insert(META_BELL.to_string(), reader.bell.into());
+        map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
+    }
+    meta
+}
+
 /// Compose a task artifact update (the worker's result): one artifact whose
 /// parts carry the result text.
 #[must_use]
@@ -320,6 +343,17 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
         .unwrap_or(false)
 }
 
+/// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
+/// beat from an old peer, or from a worker that never polled, reads as unknown.
+#[must_use]
+pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
+    let meta = update.metadata.as_ref()?;
+    Some(ReaderBeat {
+        bell: meta.get(META_BELL)?.as_bool()?,
+        last_poll_secs: meta.get(META_LAST_POLL)?.as_u64()?,
+    })
+}
+
 /// The `done/total` fraction a beat carries, if any.
 #[must_use]
 pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
@@ -339,6 +373,78 @@ pub fn task_label(message: &Message) -> Option<String> {
         .metadata
         .as_ref()?
         .get(META_LABEL)?
+        .as_str()?
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(super::tuning::TASK_LABEL_MAX_CHARS)
+        .collect::<String>();
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The `mesh:waiting` metadata of a `working` status leg, when a reason is
+/// given. The counterpart of [`status_waiting`].
+#[must_use]
+pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
+    reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
+}
+
+/// The metadata of a status leg: its order value, and the `mesh:waiting` reason
+/// when it has one. The counterpart of [`status_order`] and [`status_waiting`].
+#[must_use]
+pub fn status_metadata(waiting: Option<&str>, order_ms: u64) -> serde_json::Value {
+    let mut meta = serde_json::json!({ META_ORDER_MS: order_ms });
+    if let Some(reason) = waiting {
+        meta[META_WAITING] = reason.into();
+    }
+    meta
+}
+
+/// The order value a status leg carries, when the peer sends one.
+#[must_use]
+pub fn status_order(update: &TaskStatusUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_ORDER_MS)?.as_u64()
+}
+
+/// The worker's clock now, in milliseconds: the order value of a status leg.
+#[must_use]
+pub fn leg_order_ms() -> u64 {
+    next_order_ms(wall_clock_ms(), &LAST_ORDER_MS)
+}
+
+/// The last order value this process handed out. The wall clock can step back,
+/// so the next value is kept above it; a restart resets it, and the clock then
+/// carries the order on.
+static LAST_ORDER_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The order value for a leg sent at `now_ms`: the clock, unless that is not
+/// above the last value handed out, then one more than the last.
+fn next_order_ms(now_ms: u64, last: &std::sync::atomic::AtomicU64) -> u64 {
+    use std::sync::atomic::Ordering::Relaxed;
+    let previous = last
+        .fetch_update(Relaxed, Relaxed, |last| {
+            Some(now_ms.max(last.saturating_add(1)))
+        })
+        .unwrap_or_default();
+    now_ms.max(previous.saturating_add(1))
+}
+
+fn wall_clock_ms() -> u64 {
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The reason a worker gives for waiting on its own user (`mesh:waiting`), when
+/// the status leg carries one. Peer-controlled text that `GetTask` echoes, so it
+/// gets the same control-character strip and length cap as [`task_label`].
+#[must_use]
+pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
+    let raw = update
+        .metadata
+        .as_ref()?
+        .get(META_WAITING)?
         .as_str()?
         .chars()
         .filter(|ch| !ch.is_control())
@@ -450,8 +556,9 @@ mod tests {
     use habilis_network::protocol::MessageKind;
 
     use super::{
-        Frame, broadcast_payload, compose_broadcast, compose_msg, display_text, msg_payload,
-        payload_body,
+        Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
+        msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
+        status_waiting, waiting_metadata,
     };
 
     fn mesh() -> MeshId {
@@ -550,5 +657,67 @@ mod tests {
             "plain text",
         );
         assert!(broadcast_payload(&frame).is_err());
+    }
+
+    /// The producer (`waiting_metadata`, used by `a2a status --waiting`) and the
+    /// reader (`status_waiting`) agree, and a leg without a reason carries none.
+    #[test]
+    fn waiting_reason_round_trips_through_a_status_update() {
+        let task_id = crate::a2a::TaskId::random();
+        let update = |metadata| {
+            status_update(
+                &mesh(),
+                StatusUpdateParams {
+                    task_id: &task_id,
+                    state: crate::a2a::TaskState::Working,
+                    note: None,
+                    metadata,
+                },
+            )
+        };
+        assert_eq!(
+            status_waiting(&update(waiting_metadata(Some("asks its user")))).as_deref(),
+            Some("asks its user")
+        );
+        assert_eq!(status_waiting(&update(waiting_metadata(None))), None);
+    }
+
+    /// A status leg carries its order value next to the reason, and the reader
+    /// still finds the reason. A leg from a peer without the order value reads
+    /// as none.
+    #[test]
+    fn a_status_leg_carries_its_order_value_and_its_reason() {
+        let task_id = crate::a2a::TaskId::random();
+        let update = |metadata| {
+            status_update(
+                &mesh(),
+                StatusUpdateParams {
+                    task_id: &task_id,
+                    state: crate::a2a::TaskState::Working,
+                    note: None,
+                    metadata: Some(metadata),
+                },
+            )
+        };
+        let leg = update(status_metadata(Some("asks its user"), 7));
+        assert_eq!(status_order(&leg), Some(7));
+        assert_eq!(status_waiting(&leg).as_deref(), Some("asks its user"));
+        assert_eq!(
+            status_order(&update(waiting_metadata(Some("asks its user")).unwrap())),
+            None
+        );
+    }
+
+    /// The wall clock can step back, so two legs of one worker must still get
+    /// rising order values: the later leg keeps the higher one.
+    #[test]
+    fn a_clock_step_back_keeps_the_order_value_rising() {
+        let last = std::sync::atomic::AtomicU64::new(0);
+        let first = next_order_ms(2_000, &last);
+        let stepped_back = next_order_ms(1_500, &last);
+        assert!(
+            stepped_back > first,
+            "a clock step back must not lower the order value: {stepped_back} <= {first}"
+        );
     }
 }

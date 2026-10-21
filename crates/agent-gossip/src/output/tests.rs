@@ -2,6 +2,7 @@
 //! snapshots + proptests). The wire serializers under test live in
 //! [`super::json`].
 
+use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::json::{SimpleEvent, format_msg_json, format_presence_json};
@@ -22,7 +23,15 @@ fn sid() -> habilis_network::protocol::MeshId {
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
-fn chat_frame(author: &str, text: &str) -> Message {
+fn view(message: Message) -> Authored {
+    habilis_network::protocol::message::Verified::fixture_unchecked(
+        message,
+        habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+    )
+    .authored()
+}
+
+fn chat_frame_raw(author: &str, text: &str) -> Message {
     let payload = crate::a2a::gossip::compose_broadcast(&sid(), text);
     let frame_id = habilis_network::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
@@ -38,6 +47,10 @@ fn chat_frame(author: &str, text: &str) -> Message {
         },
     )
     .with_id(frame_id)
+}
+
+fn chat_frame(author: &str, text: &str) -> Authored {
+    view(chat_frame_raw(author, text))
 }
 
 #[test]
@@ -59,8 +72,8 @@ fn json_message_has_all_fields() {
     assert_eq!(parsed["message"]["messageId"], parsed["id"]);
     assert_eq!(parsed["message"]["role"], "ROLE_USER");
     assert_eq!(parsed["message"]["parts"][0]["text"], "hello");
-    // Unsigned (test fixture): the pubkey field is omitted.
-    assert!(parsed.get("pubkey").is_none());
+    // An author view always has a key: the fixture's zero key here, never an omitted field.
+    assert_eq!(parsed["pubkey"], "0".repeat(64));
 }
 
 #[test]
@@ -68,14 +81,12 @@ fn json_signed_message_exposes_full_pubkey() {
     // A real (signed) message carries the author's full Ed25519 public key
     // (hex) in the JSON event — the identity behind the display nickname.
     let identity = habilis_network::protocol::Identity::generate();
-    let msg = chat_frame("alice", "hi").signed(&identity);
+    let msg = chat_frame_raw("alice", "hi").sign(&identity).authored();
     let parsed = parse(&format_msg_json(&msg, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
     assert_eq!(
         pubkey,
-        msg.author_key()
-            .expect("signed message has a key")
-            .to_string(),
+        msg.key().to_string(),
         "event pubkey must be the message's key"
     );
     assert_eq!(pubkey.len(), 64, "full 32-byte key as hex");
@@ -152,7 +163,7 @@ fn json_body_escapes_backslashes() {
 
 #[test]
 fn json_presence_joined() {
-    let msg = Message::new_joined(&sid(), &nick("alice"));
+    let msg = view(Message::new_joined(&sid(), &nick("alice")));
     let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "presence");
@@ -164,7 +175,7 @@ fn json_presence_joined() {
 
 #[test]
 fn json_presence_left() {
-    let msg = Message::new_left(&sid(), &nick("bob"));
+    let msg = view(Message::new_left(&sid(), &nick("bob")));
     let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Left));
     assert_eq!(parsed["subtype"], "left");
     assert_eq!(parsed["author"], "bob");
@@ -182,7 +193,7 @@ struct StatusFrameArgs<'a> {
 }
 
 /// A task **status** frame carrying `state` (with optional beat metadata).
-fn status_frame(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Message {
+fn status_frame_raw(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Message {
     let StatusFrameArgs {
         task_id,
         state,
@@ -202,6 +213,10 @@ fn status_frame(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Message {
     let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
     let kind = MessageKind::app_to(crate::a2a::wire::STATUS, nick(to), None);
     Message::new_frame(&sid(), &nick(author), kind, body)
+}
+
+fn status_frame(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Authored {
+    view(status_frame_raw(author, to, args))
 }
 
 #[test]
@@ -268,6 +283,60 @@ fn task_self_echo_flag() {
 }
 
 #[test]
+fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
+    use super::OutputEvent;
+    let line = |metadata| {
+        let msg = status_frame(
+            "calm-otter",
+            "drift-oak",
+            StatusFrameArgs {
+                task_id: "550e8400-e29b-41d4-a716-446655440000",
+                state: crate::a2a::TaskState::Working,
+                note: None,
+                metadata,
+            },
+        );
+        let json = super::json::event_json(&OutputEvent::Task {
+            msg: Box::new(msg),
+            is_self: false,
+        })
+        .expect("task event produces a JSON line");
+        parse(&json)
+    };
+    let waiting = line(crate::a2a::gossip::waiting_metadata(Some("asks its user")));
+    assert_eq!(waiting["event"], "task");
+    assert_eq!(waiting["waiting"], "asks its user");
+    let plain = line(None);
+    assert!(plain.get("waiting").is_none(), "got: {plain}");
+}
+
+/// The record keeps the reason from a `working` leg only, so the event key
+/// follows: a peer that sends `input-required` with `mesh:waiting` must not
+/// make the initiator badge a task that is not working.
+#[test]
+fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
+    use super::OutputEvent;
+    let msg = status_frame(
+        "calm-otter",
+        "drift-oak",
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::InputRequired,
+            note: None,
+            metadata: crate::a2a::gossip::waiting_metadata(Some("asks its user")),
+        },
+    );
+    let json = super::json::event_json(&OutputEvent::Task {
+        msg: Box::new(msg),
+        is_self: false,
+    })
+    .expect("task event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["state"], "input-required");
+    assert!(parsed.get("waiting").is_none(), "got: {parsed}");
+}
+
+#[test]
 fn task_progress_event_json_shape() {
     use super::OutputEvent;
     let msg = status_frame(
@@ -326,6 +395,32 @@ fn task_peer_left_event_json_shape() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "task_timeout");
     assert_eq!(parsed["reason"], "peer-left");
+}
+
+#[test]
+fn task_stalled_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskStalled {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        peer: habilis_network::protocol::Nickname::from("calm-otter"),
+        last_poll_secs_ago: 2_400,
+        check_secs: 1_800,
+    };
+    let json = super::json::event_json(&event).expect("task_stalled event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_stalled");
+    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["peer"], "calm-otter");
+    assert_eq!(parsed["last_poll_secs_ago"], 2_400);
+    assert_eq!(parsed["check_secs"], 1_800);
+    assert_eq!(
+        parsed["display"],
+        "💬️ task stalled · `<calm-otter>` has not polled for 40 min"
+    );
+    assert!(super::json::is_visible(&event), "the user must see it");
+    assert!(crate::a2a::node::wakes(&event), "it must ring the bell");
+    assert!(crate::a2a::node::is_pollable(&event), "poll must serve it");
 }
 
 // ── peer_timeout / peer_return shape ───────────────────────
@@ -394,11 +489,11 @@ fn json_output_is_single_line() {
     let msgs: Vec<String> = vec![
         format_msg_json(&chat_frame("alice", "hello world"), false),
         format_presence_json(
-            &Message::new_joined(&sid(), &nick("charlie")),
+            &view(Message::new_joined(&sid(), &nick("charlie"))),
             PresenceSubtype::Joined,
         ),
         format_presence_json(
-            &Message::new_left(&sid(), &nick("dave")),
+            &view(Message::new_left(&sid(), &nick("dave"))),
             PresenceSubtype::Left,
         ),
     ];
@@ -409,14 +504,19 @@ fn json_output_is_single_line() {
 }
 
 mod snapshots {
+    use habilis_network::protocol::message::Authored;
     use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
-    use super::{format_msg_json, format_presence_json};
+    use super::{format_msg_json, format_presence_json, view};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
     /// timestamps from the fixture.
-    fn snap_frame(kind: MessageKind, body: &str) -> Message {
+    fn snap_frame_raw(kind: MessageKind, body: &str) -> Message {
         Message::fixture(kind, body)
+    }
+
+    fn snap_frame(kind: MessageKind, body: &str) -> Authored {
+        view(snap_frame_raw(kind, body))
     }
 
     const SNAP_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
@@ -495,7 +595,7 @@ mod snapshots {
     /// A deterministic chat frame for snapshots: the payload's random
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
-    fn snap_chat_frame(text: &str) -> Message {
+    fn snap_chat_frame_raw(text: &str) -> Message {
         let mut payload = crate::a2a::gossip::compose_broadcast(
             &habilis_network::protocol::MeshId::from("test"),
             text,
@@ -508,8 +608,12 @@ mod snapshots {
         )
     }
 
+    fn snap_chat_frame(text: &str) -> Authored {
+        view(snap_chat_frame_raw(text))
+    }
+
     /// The directed twin of [`snap_chat_frame`].
-    fn snap_msg_frame(text: &str) -> Message {
+    fn snap_msg_frame_raw(text: &str) -> Message {
         let mut payload =
             crate::a2a::gossip::compose_msg(&habilis_network::protocol::MeshId::from("test"), text);
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
@@ -522,6 +626,10 @@ mod snapshots {
             ),
             body.as_str(),
         )
+    }
+
+    fn snap_msg_frame(text: &str) -> Authored {
+        view(snap_msg_frame_raw(text))
     }
 
     #[test]
@@ -541,23 +649,23 @@ mod snapshots {
 
     #[test]
     fn snap_presence_joined() {
-        let msg = Message::fixture(
+        let msg = view(Message::fixture(
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined,
             },
             "",
-        );
+        ));
         insta::assert_snapshot!(format_presence_json(&msg, PresenceSubtype::Joined));
     }
 
     #[test]
     fn snap_presence_left() {
-        let msg = Message::fixture(
+        let msg = view(Message::fixture(
             MessageKind::Presence {
                 subtype: PresenceSubtype::Left,
             },
             "",
-        );
+        ));
         insta::assert_snapshot!(format_presence_json(&msg, PresenceSubtype::Left));
     }
 
@@ -568,7 +676,7 @@ mod snapshots {
         let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
         super::super::json::format_state_json(
             habilis_network::protocol::Channel::State,
-            &Message::fixture(MessageKind::State, &body),
+            &view(Message::fixture(MessageKind::State, &body)),
             document,
             is_self,
         )
@@ -607,10 +715,10 @@ mod snapshots {
     #[test]
     fn a_meta_event_carries_no_document() {
         let merge = serde_json::json!({"peers": {"aa": {"status": "busy"}}});
-        let msg = Message::fixture(
+        let msg = view(Message::fixture(
             MessageKind::State,
             &format!(r#"{{"k":"merge","merge":{merge}}}"#),
-        );
+        ));
         let document = four_card_meta_document();
         let line = super::super::json::format_state_json(
             habilis_network::protocol::Channel::Meta,
@@ -631,10 +739,10 @@ mod snapshots {
     #[test]
     fn a_state_event_keeps_its_document() {
         let merge = serde_json::json!({"turn": "b"});
-        let msg = Message::fixture(
+        let msg = view(Message::fixture(
             MessageKind::State,
             &format!(r#"{{"k":"merge","merge":{merge}}}"#),
-        );
+        ));
         let document = serde_json::json!({"turn": "b"});
         let line = super::super::json::format_state_json(
             habilis_network::protocol::Channel::State,
@@ -689,6 +797,7 @@ mod prop {
         strategy::Strategy,
     };
 
+    use super::view;
     use super::{PresenceSubtype, format_msg_json, format_presence_json, sid};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
@@ -724,9 +833,9 @@ mod prop {
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
             let test_nick = habilis_network::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
-                (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
+                (view(Message::new_joined(&sid(), &test_nick)), PresenceSubtype::Joined)
             } else {
-                (Message::new_left(&sid(), &test_nick), PresenceSubtype::Left)
+                (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
             };
             let json = format_presence_json(&msg, subtype);
             let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

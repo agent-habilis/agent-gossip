@@ -175,6 +175,7 @@ mod tests {
             habilis_network::protocol::MeshName::new("t").unwrap(),
             habilis_network::protocol::MeshConfig::loopback(),
         )
+        .expect("a mesh without a secret")
         .to_string();
         assert!(A2aTicket::decode(&mesh).is_err());
     }

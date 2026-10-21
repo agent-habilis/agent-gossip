@@ -664,13 +664,13 @@ fn create_mesh_relay_transport_is_in_the_id() {
     ))
     .expect("create with relay should succeed");
 
-    let decoded: habilis_network::protocol::Mesh = relayed["gossip"]
+    let decoded: habilis_network::protocol::LockedMesh = relayed["gossip"]
         .as_str()
         .unwrap()
         .parse()
         .expect("valid mesh id");
     assert!(
-        decoded.config.transport.relay_transport,
+        decoded.config().transport.relay_transport,
         "the decoded id must carry the relay-transport bit"
     );
     assert_ne!(
@@ -685,7 +685,7 @@ fn created_mesh(
     client: &mut McpClient,
     request_id: u64,
     args: serde_json::Value,
-) -> habilis_network::protocol::Mesh {
+) -> habilis_network::protocol::LockedMesh {
     let created = tool_result_json(&client.tool_call(request_id, "create_gossip", args))
         .expect("create_gossip should succeed");
     let mesh = created["gossip"]
@@ -716,10 +716,10 @@ fn create_mesh_default_transport_is_udp_webrtc_gossip() {
         serde_json::json!({ "name": "defaulttransport" }),
     );
     assert_eq!(
-        mesh.config.lookups,
+        mesh.config().lookups,
         habilis_network::protocol::LookupOpts::loopback()
     );
-    assert_eq!(mesh.config.transport, app_policy(false));
+    assert_eq!(mesh.config().transport, app_policy(false));
 }
 
 #[test]
@@ -730,7 +730,7 @@ fn create_mesh_relay_lookup_adds_relay_transport() {
         160,
         serde_json::json!({ "name": "relaylookup", "lookup": ["relay"] }),
     );
-    assert_eq!(mesh.config.transport, app_policy(true));
+    assert_eq!(mesh.config().transport, app_policy(true));
 }
 
 #[test]
@@ -745,7 +745,7 @@ fn create_mesh_explicit_transport_list_is_literal() {
             "transport": ["udp", "webrtc", "gossip"],
         }),
     );
-    assert_eq!(mesh.config.transport, app_policy(false));
+    assert_eq!(mesh.config().transport, app_policy(false));
 }
 
 #[test]
@@ -756,8 +756,8 @@ fn create_mesh_transport_multihop_turns_multihop_on() {
         180,
         serde_json::json!({ "name": "multihoptransport", "transport": ["udp", "webrtc", "multihop"] }),
     );
-    assert!(mesh.config.transport.multihop);
-    assert!(!mesh.config.transport.gossip);
+    assert!(mesh.config().transport.multihop);
+    assert!(!mesh.config().transport.gossip);
 }
 
 #[test]

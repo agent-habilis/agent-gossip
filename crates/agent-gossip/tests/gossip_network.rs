@@ -2675,10 +2675,7 @@ async fn same_nickname_peers_communicate() {
         .into_iter()
         .find(|msg| chat_text(msg) == "from-alpha")
         .expect("alpha's message is present");
-    assert!(
-        from_alpha.author_key().is_some(),
-        "a surfaced message carries the author's key"
-    );
+    let _: habilis_network::protocol::AuthorKey = from_alpha.key();
 
     alpha.leave().await;
     beta.leave().await;

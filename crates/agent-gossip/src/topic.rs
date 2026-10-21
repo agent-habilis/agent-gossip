@@ -71,9 +71,9 @@ mod tests {
     #[test]
     fn topic_mesh_is_public_with_udp_webrtc_gossip_and_relay_but_no_multihop() {
         let mesh = derive_topic_mesh("x").expect("a non-empty string derives");
-        assert_eq!(mesh.config.lookups, LookupOpts::public_preset());
+        assert_eq!(mesh.config().lookups, LookupOpts::public_preset());
         assert_eq!(
-            mesh.config.transport,
+            mesh.config().transport,
             TransportPolicy {
                 udp: true,
                 webrtc: true,

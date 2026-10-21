@@ -441,7 +441,7 @@ impl CraftedMsg {
     /// Sign with `key`, binding the current fields. Call last — unless the
     /// test intends to tamper afterward.
     pub fn sign(mut self, key: &TestKey) -> Self {
-        self.msg = self.msg.signed(&key.0);
+        self.msg = self.msg.sign(&key.0).into_message();
         self
     }
 
@@ -491,6 +491,31 @@ impl CraftedMsg {
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
     #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
-        self.msg.serialize().expect("crafted message serializes")
+        use habilis_network::protocol::message::Verified;
+        // A signed frame keeps its signature as built, or as stale after a tamper: the fixture keeps
+        // the signer, and the engine's own serializer writes the bytes.
+        if self.msg.signer.is_some() {
+            let frame = Verified::fixture_with_signature(self.msg.clone());
+            return frame
+                .serialize()
+                .expect("crafted message serializes")
+                .as_bytes()
+                .to_vec();
+        }
+        // An unsigned frame carries no key and no signature on the wire. The engine has no public
+        // unsigned encoding, so the serialized frame has its two key fields removed here.
+        let zero_key = habilis_network::protocol::AuthorKey::from_bytes([0; 32]);
+        let frame = Verified::fixture_unchecked(self.msg.clone(), zero_key);
+        let mut wire: serde_json::Value = serde_json::from_slice(
+            frame
+                .serialize()
+                .expect("crafted message serializes")
+                .as_bytes(),
+        )
+        .expect("a serialized frame is JSON");
+        let object = wire.as_object_mut().expect("a wire frame is a JSON object");
+        object.remove("pubkey");
+        object.remove("sig");
+        serde_json::to_vec(&wire).expect("an unsigned frame serializes")
     }
 }

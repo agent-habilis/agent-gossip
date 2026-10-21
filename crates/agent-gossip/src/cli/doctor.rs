@@ -4,7 +4,7 @@ use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use habilis_network::net::{self, NetworkCapability};
 use habilis_network::protocol::MeshId;
-use habilis_network::protocol::{Mesh, RelayChoice};
+use habilis_network::protocol::{LockedMesh, Mesh, RelayChoice};
 use habilis_network::runtime::ipc;
 use serde::Serialize;
 
@@ -358,7 +358,7 @@ struct InfoResponse {
 // ---- Mode 2: per-mesh connection analysis ---------------------------------
 
 async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
-    let mesh = match mesh_id.as_str().parse::<Mesh>() {
+    let mesh = match mesh_id.as_str().parse::<LockedMesh>() {
         Ok(mesh) => mesh,
         Err(error) => {
             let section = Section {
@@ -381,15 +381,19 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
     // mesh derive from a secret the bare hash withholds (the stretched key /
     // the invite root), which doctor doesn't hold — probing those derivations
     // would analyze a mesh that doesn't exist (and panic in `effective_seed`).
-    if !no_probe && !mesh.requires_password() && !mesh.requires_invite() {
-        sections.push(live_reachability_section(&mesh).await);
+    if !no_probe
+        && !mesh.requires_password()
+        && !mesh.requires_invite()
+        && let Ok(unlocked) = mesh.clone().unlock(None)
+    {
+        sections.push(live_reachability_section(&unlocked).await);
     }
     Report::new("gossip", sections)
 }
 
-fn mesh_identity_section(mesh: &Mesh) -> Section {
+fn mesh_identity_section(mesh: &LockedMesh) -> Section {
     let mut checks = vec![
-        Check::new("name", Verdict::Ok, format!("#{}", mesh.name.as_str())),
+        Check::new("name", Verdict::Ok, format!("#{}", mesh.name().as_str())),
         Check::new("network", Verdict::Ok, mesh.network_label()),
     ];
     if mesh.requires_password() {
@@ -405,8 +409,8 @@ fn mesh_identity_section(mesh: &Mesh) -> Section {
     }
 }
 
-fn declared_methods_section(mesh: &Mesh) -> Section {
-    let lookups = mesh.lookups();
+fn declared_methods_section(mesh: &LockedMesh) -> Section {
+    let lookups = &mesh.config().lookups;
     let mut checks = Vec::new();
 
     match &lookups.relay_lookup {
@@ -468,6 +472,9 @@ fn declared_methods_section(mesh: &Mesh) -> Section {
             ));
         } else {
             let ports = mesh
+                .clone()
+                .unlock(None)
+                .expect("an open mesh unlocks without a password")
                 .rendezvous_ports()
                 .iter()
                 .map(ToString::to_string)
@@ -600,7 +607,7 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::{Mesh, MeshConfig, MeshName, Seed};
+    use habilis_network::protocol::{LockedMesh, Mesh, MeshConfig, MeshName, Seed};
 
     use super::declared_methods_section;
 
@@ -613,9 +620,14 @@ mod tests {
             Seed::from_bytes([1u8; 32]),
             MeshName::new("t").unwrap(),
             MeshConfig::loopback(),
-        );
+        )
+        .expect("a mesh without a secret");
         mesh.set_invite();
-        let section = declared_methods_section(&mesh);
+        let locked: LockedMesh = mesh
+            .to_string()
+            .parse()
+            .expect("the id of an invite-only mesh parses");
+        let section = declared_methods_section(&locked);
         let ports = section
             .checks
             .iter()

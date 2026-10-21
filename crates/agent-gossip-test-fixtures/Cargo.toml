@@ -26,6 +26,7 @@ workspace = true
 # because the back-edge is a dev-dependency, and this is the standard shape of
 # a fixtures crate.
 agent-gossip = { path = "../agent-gossip" }
+habilis-network.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
