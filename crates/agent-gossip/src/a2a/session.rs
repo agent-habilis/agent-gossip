@@ -35,6 +35,7 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
+        waiting: Option<String>,
         resp: oneshot::Sender<Result<Authored>>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving

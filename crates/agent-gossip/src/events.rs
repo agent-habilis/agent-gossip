@@ -70,6 +70,14 @@ pub enum OutputEvent {
         task_id: TaskId,
         reason: TaskGoneReason,
     },
+    /// The worker's agent has not polled for `check_secs` and holds no bell.
+    /// States the fact only; the task is not canceled.
+    TaskStalled {
+        task_id: TaskId,
+        peer: Nickname,
+        last_poll_secs_ago: u64,
+        check_secs: u64,
+    },
     Receipt {
         from: Nickname,
         ref_id: String,

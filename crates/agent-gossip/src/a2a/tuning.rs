@@ -23,6 +23,12 @@ pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 /// enough that tasks forgotten after a `/clear` free the per-peer quota.
 pub(crate) const TASK_SKILL_SILENCE_MAX_SECS: u64 = 24 * 60 * 60;
 
+/// How long a worker's agent may go without a foreground poll, with no bell
+/// armed, before the initiator's daemon tells its agent (seconds). One value
+/// for every task: a long build with no bell trips it too, so the event states
+/// the fact and cancels nothing.
+pub(crate) const TASK_STALL_CHECK_SECS: u64 = 30 * 60;
+
 /// How long `a2a call` waits for a directed peer response (seconds), and the
 /// `--timeout-secs` default.
 ///
@@ -121,6 +127,7 @@ pub(crate) struct Tuning {
     pub(crate) task_timeout_secs: u64,
     pub(crate) task_keepalive_secs: u64,
     pub(crate) task_skill_silence_max_secs: u64,
+    pub(crate) task_stall_check_secs: u64,
     pub(crate) longpoll_max_ms: u64,
 }
 
@@ -129,6 +136,7 @@ impl Tuning {
         task_timeout_secs: TASK_TIMEOUT_SECS,
         task_keepalive_secs: TASK_KEEPALIVE_SECS,
         task_skill_silence_max_secs: TASK_SKILL_SILENCE_MAX_SECS,
+        task_stall_check_secs: TASK_STALL_CHECK_SECS,
         longpoll_max_ms: LONGPOLL_MAX_MS,
     };
 }
@@ -155,6 +163,10 @@ pub(crate) fn task_keepalive_secs() -> u64 {
 
 pub(crate) fn task_skill_silence_max_secs() -> u64 {
     current().task_skill_silence_max_secs
+}
+
+pub(crate) fn task_stall_check_secs() -> u64 {
+    current().task_stall_check_secs
 }
 
 pub(crate) fn longpoll_max_ms() -> u64 {

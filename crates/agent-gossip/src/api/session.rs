@@ -12,9 +12,8 @@ use super::advertise::Advertiser;
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
 use super::inproc::InProcessSession;
-use super::params::{A2aCallParams, TaskArtifactParams};
+use super::params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
 use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
-use crate::a2a::TaskId;
 use crate::output::OutputEvent;
 use crate::output::PingPeer;
 
@@ -289,13 +288,8 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_status(
-        &self,
-        task_id: TaskId,
-        state: crate::a2a::TaskState,
-        note: Option<String>,
-    ) -> anyhow::Result<Authored> {
-        self.core.task_status(task_id, state, note).await
+    pub async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Authored> {
+        self.core.task_status(status).await
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.

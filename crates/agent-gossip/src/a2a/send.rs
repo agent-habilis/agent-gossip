@@ -722,6 +722,9 @@ pub(crate) struct TaskStatusParams<'a> {
     pub(crate) task_id: &'a crate::a2a::TaskId,
     pub(crate) task_state: crate::a2a::TaskState,
     pub(crate) note: Option<&'a str>,
+    /// Why a `working` task waits on the worker's own user; rides the leg as
+    /// `mesh:waiting`.
+    pub(crate) waiting: Option<&'a str>,
     pub(crate) app: &'a mut A2aApp,
 }
 
@@ -738,6 +741,7 @@ pub(crate) struct TaskStatusParams<'a> {
 /// swallow the transition.
 ///
 /// # Errors
+/// `waiting requires state working` if a reason comes with another state;
 /// `unknown task` if we hold no record for `task_id`; otherwise a
 /// serialize/broadcast failure.
 pub(crate) async fn emit_task_status(
@@ -752,8 +756,10 @@ pub(crate) async fn emit_task_status(
         task_id,
         task_state,
         note,
+        waiting,
         app,
     } = params;
+    let leg = WorkerLeg::parse(task_state, waiting)?;
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
@@ -763,7 +769,7 @@ pub(crate) async fn emit_task_status(
             author,
             peer: &peer,
             task_id,
-            task_state,
+            leg,
             note,
             app,
         },
@@ -773,6 +779,42 @@ pub(crate) async fn emit_task_status(
     )
     .await
     .map(|(_id, msg, pending)| (msg, pending))
+}
+
+/// A worker's status leg, parsed once from its state and waiting reason. The
+/// reason rides a `working` leg only, so no other state can hold one. Only
+/// [`WorkerLeg::parse`] builds a `WorkerLeg`, so the rule has one place.
+#[derive(Clone, Copy)]
+pub(crate) enum WorkerLeg<'a> {
+    Working { waiting: Option<&'a str> },
+    Other(crate::a2a::TaskState),
+}
+
+impl<'a> WorkerLeg<'a> {
+    pub(crate) fn parse(
+        state: crate::a2a::TaskState,
+        waiting: Option<&'a str>,
+    ) -> anyhow::Result<Self> {
+        match (state == crate::a2a::TaskState::Working, waiting) {
+            (true, waiting) => Ok(Self::Working { waiting }),
+            (false, None) => Ok(Self::Other(state)),
+            (false, Some(_)) => anyhow::bail!("waiting requires state working"),
+        }
+    }
+
+    fn state(self) -> crate::a2a::TaskState {
+        match self {
+            Self::Working { .. } => crate::a2a::TaskState::Working,
+            Self::Other(state) => state,
+        }
+    }
+
+    fn waiting(self) -> Option<&'a str> {
+        match self {
+            Self::Working { waiting } => waiting,
+            Self::Other(_) => None,
+        }
+    }
 }
 
 /// A worker-emitted artifact leg's identity, task, result text/file, and the
@@ -869,9 +911,44 @@ pub(crate) struct BroadcastTaskStatusParams<'a> {
     pub(crate) author: &'a Nickname,
     pub(crate) peer: &'a Nickname,
     pub(crate) task_id: &'a crate::a2a::TaskId,
-    pub(crate) task_state: crate::a2a::TaskState,
+    pub(crate) leg: WorkerLeg<'a>,
     pub(crate) note: Option<&'a str>,
     pub(crate) app: &'a mut A2aApp,
+}
+
+/// The status leg a worker emits: its state and note, the order value that
+/// tells it apart from the other legs of its second, and the waiting reason.
+fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
+    let StatusLegParams {
+        mesh,
+        task_id,
+        state,
+        note,
+        waiting,
+    } = leg;
+    crate::a2a::gossip::status_update(
+        mesh,
+        crate::a2a::gossip::StatusUpdateParams {
+            task_id,
+            state,
+            note,
+            metadata: Some(crate::a2a::gossip::status_metadata(
+                waiting,
+                crate::a2a::gossip::leg_order_ms(),
+            )),
+        },
+    )
+}
+
+/// The fields of one worker status leg, grouped so [`worker_status_leg`] stays
+/// within the argument budget.
+#[derive(Clone, Copy)]
+struct StatusLegParams<'a> {
+    mesh: &'a MeshId,
+    task_id: &'a crate::a2a::TaskId,
+    state: crate::a2a::TaskState,
+    note: Option<&'a str>,
+    waiting: Option<&'a str>,
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
@@ -890,19 +967,17 @@ pub(crate) async fn broadcast_task_status(
         author,
         peer,
         task_id,
-        task_state,
+        leg,
         note,
         app,
     } = params;
-    let update = crate::a2a::gossip::status_update(
+    let update = worker_status_leg(StatusLegParams {
         mesh,
-        crate::a2a::gossip::StatusUpdateParams {
-            task_id,
-            state: task_state,
-            note,
-            metadata: None,
-        },
-    );
+        task_id,
+        state: leg.state(),
+        note,
+        waiting: leg.waiting(),
+    });
     let plain = crate::a2a::gossip::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
@@ -1915,6 +1990,7 @@ pub(crate) async fn handle_session_request(
             task_id,
             state: task_state,
             note,
+            waiting,
             resp,
         } => {
             let outcome = emit_task_status(
@@ -1924,6 +2000,7 @@ pub(crate) async fn handle_session_request(
                     task_id: &task_id,
                     task_state,
                     note: note.as_deref(),
+                    waiting: waiting.as_deref(),
                     app,
                 },
                 state,
@@ -2322,5 +2399,58 @@ mod sharded_leg_tests {
             .map(|leg| leg.frames.len())
             .sum();
         assert_eq!(logged, 2);
+    }
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::WorkerLeg;
+    use crate::a2a::TaskState;
+
+    /// The shared sender refuses a reason on any state but `working`, so a
+    /// library caller cannot leave `mesh:waiting` on an `input-required` task.
+    #[test]
+    fn a_waiting_reason_needs_the_working_state() {
+        assert!(WorkerLeg::parse(TaskState::Working, Some("asks its user")).is_ok());
+        assert!(WorkerLeg::parse(TaskState::InputRequired, None).is_ok());
+        for state in [
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+            TaskState::Canceled,
+            TaskState::Rejected,
+        ] {
+            let error = WorkerLeg::parse(state, Some("asks its user"))
+                .err()
+                .expect("a reason with a non-working state must be refused");
+            assert_eq!(error.to_string(), "waiting requires state working");
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_leg_tests {
+    use habilis_network::protocol::MeshId;
+
+    use super::{StatusLegParams, worker_status_leg};
+    use crate::a2a::TaskState;
+    use crate::a2a::gossip::{status_order, status_waiting};
+
+    /// The worker's status leg carries the order value next to the waiting
+    /// reason. Without the order value the initiator cannot tell two legs of one
+    /// second apart.
+    #[test]
+    fn a_worker_status_leg_carries_its_order_value_and_reason() {
+        let mesh = MeshId::from("test");
+        let task_id = crate::a2a::TaskId::random();
+        let leg = worker_status_leg(StatusLegParams {
+            mesh: &mesh,
+            task_id: &task_id,
+            state: TaskState::Working,
+            note: None,
+            waiting: Some("asks its user"),
+        });
+        assert!(status_order(&leg).is_some(), "the leg has no mesh:order_ms");
+        assert_eq!(status_waiting(&leg).as_deref(), Some("asks its user"));
     }
 }

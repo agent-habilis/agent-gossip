@@ -11,10 +11,9 @@ use habilis_network::protocol::MeshName;
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
 
-use crate::a2a::TaskId;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
-    TaskArtifactParams, TopicConfig,
+    TaskArtifactParams, TaskStatusParams, TopicConfig,
 };
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
@@ -110,11 +109,9 @@ impl Session {
     /// Fails if the event loop has stopped.
     pub(super) async fn task_status(
         &self,
-        task_id: TaskId,
-        state: crate::a2a::TaskState,
-        note: Option<String>,
+        status: TaskStatusParams,
     ) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.task_status(task_id, state, note).await?;
+        let msg = self.inner.task_status(status).await?;
         Ok((msg.id.clone(), msg))
     }
 
@@ -249,11 +246,11 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::JoinTarget;
-    use habilis_network::protocol::Message;
+    use habilis_network::protocol::{Channel, JoinTarget, Message};
     use habilis_network::protocol::{MessageKind, PresenceSubtype};
     use serde_json::json;
 
@@ -296,6 +293,7 @@ mod tests {
             | OutputEvent::StateChanged { .. }
             | OutputEvent::TaskMessage { .. }
             | OutputEvent::TaskTimeout { .. }
+            | OutputEvent::TaskStalled { .. }
             | OutputEvent::Receipt { .. } => None,
         }
     }
@@ -310,6 +308,63 @@ mod tests {
         )
     }
 
+    /// One cursor-less fetch of the baseline wait: remember the seq before
+    /// bob-cursor's join and whether his card merge has been seen. `Some` once
+    /// both have, across all the fetches so far.
+    async fn baseline_step(
+        alice: &Session,
+        replay_from: &Cell<Option<u64>>,
+        saw_card: &Cell<bool>,
+        meta_doc: &RefCell<serde_json::Value>,
+    ) -> Option<()> {
+        let events = alice
+            .fetch_messages(None, false)
+            .await
+            .expect("first fetch")
+            .events;
+        if replay_from.get().is_none() {
+            replay_from.set(seq_before_bob_join(&events));
+        }
+        for (author, document) in events.iter().filter_map(|item| meta_change(&item.event)) {
+            let before = meta_doc.replace(document.clone());
+            saw_card.set(saw_card.get() || is_bob_card_merge(author, &before, document));
+        }
+        (replay_from.get().is_some() && saw_card.get()).then_some(())
+    }
+
+    /// The seq strictly before bob-cursor's join in `events` (0 if the join is
+    /// the first event) — replaying from here re-includes the join and
+    /// everything after.
+    fn seq_before_bob_join(events: &[crate::a2a::surfaced::SurfacedEvent]) -> Option<u64> {
+        let join_idx = events.iter().position(|item| is_bob_join(&item.event))?;
+        Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
+    }
+
+    /// The author and the document after a meta change, if `event` is one.
+    fn meta_change(event: &crate::output::OutputEvent) -> Option<(&str, &serde_json::Value)> {
+        let crate::output::OutputEvent::StateChanged {
+            channel: Channel::Meta,
+            event: change,
+            document,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        Some((change.author.as_str(), document))
+    }
+
+    /// Whether a meta change by `author`, taking the document from `before` to
+    /// `after`, is the merge of bob-cursor's card.
+    fn is_bob_card_merge(
+        author: &str,
+        before: &serde_json::Value,
+        after: &serde_json::Value,
+    ) -> bool {
+        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
+        author == "bob-cursor" && !card(before) && card(after)
+    }
+
     /// Whether `event` is bob-cursor's join presence — the marker
     /// `implicit_cursor_returns_delta_on_subsequent_fetches` waits on to know
     /// its cursor baseline includes the join.
@@ -322,52 +377,6 @@ mod tests {
                 }
             ) && msg.author.as_str() == "bob-cursor"
         })
-    }
-
-    /// Fetch alice's cursor-less batches until bob's join presence and his Meta state
-    /// change have both been fetched, and return the seq the explicit replay starts
-    /// from. Returns only once both are consumed, so the implicit cursor is past
-    /// everything bob wrote on join.
-    async fn first_fetch_past_bob_join(alice: &Session) -> u64 {
-        let deadline = tokio::time::Instant::now() + DELIVER;
-        let mut replay_from = None;
-        let mut saw_meta = false;
-        while tokio::time::Instant::now() < deadline {
-            let events = alice
-                .fetch_messages(None, false)
-                .await
-                .expect("first fetch")
-                .events;
-            // The seq strictly before bob's join (0 if it's the first event) —
-            // replaying from here re-includes the join and everything after.
-            if replay_from.is_none() {
-                replay_from = events
-                    .iter()
-                    .position(|item| is_bob_join(&item.event))
-                    .map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq));
-            }
-            saw_meta |= events.iter().any(|item| is_bob_meta_change(&item.event));
-            if replay_from.is_some() && saw_meta {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(150)).await;
-        }
-        let replay_from = replay_from.expect("first fetch should see bob's join presence");
-        assert!(saw_meta, "first fetch should see bob's meta state change");
-        replay_from
-    }
-
-    /// Bob's own Meta state change, the presence document he writes on join. It is
-    /// the event that can land after his join presence, so the cursor test waits
-    /// for it before it asserts that the delta is empty.
-    fn is_bob_meta_change(event: &crate::output::OutputEvent) -> bool {
-        use crate::output::OutputEvent;
-        matches!(
-            event,
-            OutputEvent::StateChanged { channel, event, .. }
-                if *channel == habilis_network::protocol::Channel::Meta
-                    && event.author.as_str() == "bob-cursor"
-        )
     }
 
     /// Generous in-process delivery budget. Every mesh wait below is adaptive —
@@ -626,6 +635,28 @@ mod tests {
         alice.leave().await;
     }
 
+    #[test]
+    fn bob_card_merge_is_the_absent_to_present_transition() {
+        // A failed card publish writes `card_error` under bob-cursor's own entry.
+        // It has his author but no card, so it must not count as the card merge.
+        let empty = json!({ "peers": {} });
+        let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
+        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+
+        assert!(
+            !is_bob_card_merge("bob-cursor", &empty, &card_error),
+            "a card_error merge by bob-cursor is not his card merge"
+        );
+        assert!(
+            is_bob_card_merge("bob-cursor", &empty, &card),
+            "the merge that adds bob-cursor's card is the card merge"
+        );
+        assert!(
+            !is_bob_card_merge("bob-cursor", &card, &card),
+            "a later meta change with the card already present is not the card merge"
+        );
+    }
+
     #[tokio::test]
     async fn implicit_cursor_returns_delta_on_subsequent_fetches() {
         // First `fetch_messages(None)` sees full history. Subsequent
@@ -640,17 +671,25 @@ mod tests {
             .await
             .expect("join");
 
-        // Drive alice's first cursor-less fetch until bob's join presence lands.
-        // That first non-empty fetch advances the implicit cursor past
-        // everything currently buffered — which is exactly what we test next.
+        // Drive alice's first cursor-less fetches until bob's join presence AND
+        // the merge of bob's card into the meta document have both landed. They
+        // are two events that gossip delivers independently, so the second can
+        // arrive after the first fetch that saw the join; stopping at the join
+        // alone left that meta event to show up as a false delta below.
+        // The fetches advance the implicit cursor past everything currently
+        // buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
-        // The wait ends only once bob's join presence AND his Meta state change
-        // have both been fetched, so the cursor is past everything bob wrote on
-        // join before the empty-delta assertion runs. Waiting for the join alone
-        // races the Meta change: it can arrive in a later batch and show up in the
-        // "empty" delta.
-        let replay_from = first_fetch_past_bob_join(&alice).await;
+        let replay_from = Cell::new(None);
+        let saw_card = Cell::new(false);
+        let meta_doc = RefCell::new(serde_json::Value::Null);
+        let deadline = tokio::time::Instant::now() + DELIVER;
+        poll_until(deadline, Duration::from_millis(150), || {
+            baseline_step(&alice, &replay_from, &saw_card, &meta_doc)
+        })
+        .await
+        .expect("first fetches should see bob's join presence and his card merge");
+        let replay_from = replay_from.get().expect("set with the join");
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.

@@ -237,8 +237,7 @@ fn poll_len(mesh: &str, nickname: &str) -> usize {
     events.len()
 }
 
-/// An agent that waits through MCP or the in-process api parks a long fetch
-/// and holds no OS lock. It reads that peer all the same, so `bell` is true.
+/// An in-process agent that parks a long fetch with no cursor holds no OS lock. It reads that peer all the same, so `bell` is true.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_parked_in_process_fetch_counts_as_a_bell() {
     let bob = common::InProcNode::create("rl-mcp").await;

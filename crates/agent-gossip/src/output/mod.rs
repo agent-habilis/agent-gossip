@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 pub(crate) use self::json::is_visible;
 use self::json::{
     SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
-    ping_report_display, print_message_json,
+    ping_report_display, print_message_json, task_stalled_event,
 };
 pub use self::json::{event_json, surfaced_event_json};
 use crate::a2a::TaskId;
@@ -370,6 +370,31 @@ impl Output {
                         reason,
                     },
                     false,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// A worker's agent has not polled for `check_secs` with no bell armed. JSON
+    /// mode emits a visible `task_stalled` event; nothing is canceled.
+    pub(crate) fn task_stalled(&self, notice: &crate::a2a::task::StallNotice) {
+        self.dispatch(
+            || OutputEvent::TaskStalled {
+                task_id: notice.task_id.clone(),
+                peer: notice.peer.clone(),
+                last_poll_secs_ago: notice.last_poll_secs,
+                check_secs: notice.check_secs,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &task_stalled_event(
+                        &notice.task_id,
+                        &notice.peer,
+                        notice.last_poll_secs,
+                        notice.check_secs,
+                    ),
+                    true,
                 ),
                 OutputMode::Silent => {}
             },

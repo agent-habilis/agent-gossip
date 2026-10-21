@@ -14,6 +14,7 @@ use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
+use crate::a2a::TaskId;
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
@@ -62,6 +63,14 @@ pub(super) enum SimpleEvent<'a> {
     TaskTimeout {
         task_id: &'a str,
         reason: TaskGoneReason,
+    },
+    TaskStalled {
+        task_id: &'a str,
+        peer: &'a str,
+        last_poll_secs_ago: u64,
+        check_secs: u64,
+        /// Pre-formatted line (see [`task_stalled_event`]).
+        display: String,
     },
     Receipt {
         from: &'a str,
@@ -163,6 +172,10 @@ struct TaskLine<'a> {
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<&'a str>,
+    /// Why the worker waits on its own user, from the leg's `mesh:waiting`.
+    /// Absent on every other leg, so the leg that clears it carries no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
@@ -299,6 +312,26 @@ pub(super) fn peer_timeout_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
+/// The `task_stalled` event. Its `display` states the silence as a fact: a
+/// worker with no bell can poll rarely while it works.
+pub(super) fn task_stalled_event<'a>(
+    task_id: &'a TaskId,
+    peer: &'a Nickname,
+    last_poll_secs_ago: u64,
+    check_secs: u64,
+) -> SimpleEvent<'a> {
+    SimpleEvent::TaskStalled {
+        task_id: task_id.as_str(),
+        peer: peer.as_str(),
+        last_poll_secs_ago,
+        check_secs,
+        display: format!(
+            "{DISPLAY_GLYPH} task stalled · `<{peer}>` has not polled for {} min",
+            last_poll_secs_ago / 60
+        ),
+    }
+}
+
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
@@ -347,7 +380,8 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         OutputEvent::Message { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
-        | OutputEvent::PeerReturn { .. } => true,
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::TaskStalled { .. } => true,
         OutputEvent::Presence { msg } => matches!(
             &msg.kind,
             MessageKind::Presence {
@@ -528,6 +562,11 @@ pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
+            // Only a `working` leg carries the reason, as in the record.
+            waiting: crate::a2a::gossip::status_payload(msg)
+                .ok()
+                .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
+                .and_then(|payload| crate::a2a::gossip::status_waiting(&payload)),
             display: task_display(TaskDisplayParams {
                 author: msg.author.as_str(),
                 to: to.as_str(),
@@ -569,6 +608,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             kind: "message",
             state: leg.state.map(crate::a2a::TaskState::as_str),
             label: leg.label,
+            waiting: None,
             display: task_display(TaskDisplayParams {
                 author: leg.author,
                 to: leg.peer,
@@ -735,6 +775,10 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// wire format the `/mesh` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per OutputEvent variant; splitting the match would scatter the single event-to-JSON table"
+)]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {
         OutputEvent::Ready {
@@ -786,6 +830,17 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 reason: *reason,
             })
         }
+        OutputEvent::TaskStalled {
+            task_id,
+            peer,
+            last_poll_secs_ago,
+            check_secs,
+        } => serde_json::to_string(&task_stalled_event(
+            task_id,
+            peer,
+            *last_poll_secs_ago,
+            *check_secs,
+        )),
         OutputEvent::Receipt {
             from,
             ref_id,

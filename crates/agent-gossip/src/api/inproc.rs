@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, oneshot};
 use super::advertise::Advertiser;
 use super::config::{CreateConfig, JoinConfig, TopicConfig};
 use super::error::{CreateError, JoinError};
-use super::params::A2aCallParams;
+use super::params::{A2aCallParams, TaskStatusParams};
 use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::a2a::session::SessionRequest;
@@ -179,16 +179,18 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn task_status(
-        &self,
-        task_id: TaskId,
-        state: crate::a2a::TaskState,
-        note: Option<String>,
-    ) -> anyhow::Result<Authored> {
+    pub(crate) async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Authored> {
+        let TaskStatusParams {
+            task_id,
+            state,
+            note,
+            waiting,
+        } = status;
         self.call(|resp| SessionRequest::TaskStatus {
             task_id,
             state,
             note,
+            waiting,
             resp,
         })
         .await?
