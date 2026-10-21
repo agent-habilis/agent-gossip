@@ -51,6 +51,20 @@ impl TaskRole {
     }
 }
 
+/// When the status leg that set or cleared `waiting` was sent: its wire second,
+/// and its order value when its peer sent one.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WaitingMark {
+    at: UnixSecs,
+    order: Option<u64>,
+}
+
+impl WaitingMark {
+    fn new(at: UnixSecs, order: Option<u64>) -> Self {
+        Self { at, order }
+    }
+}
+
 /// One in-flight task this node is a party to.
 #[derive(Debug)]
 pub(crate) struct TaskRecord {
@@ -99,14 +113,11 @@ pub(crate) struct TaskRecord {
     /// Why the worker waits on its own user, from the `mesh:waiting` key of its
     /// last status leg. Any other status leg clears it.
     pub waiting: Option<String>,
-    /// Wire time of the status leg that last set or cleared `waiting`. A leg
-    /// older than this is a replay and changes nothing. A worker clock that
-    /// steps back drops newer waiting updates until it passes this time again,
-    /// the same exposure as `is_stale`, accepted.
-    pub waiting_at: Option<UnixSecs>,
-    /// Order value of the status leg that last set or cleared `waiting`, when
-    /// its peer sent one. Set together with `waiting_at`.
-    pub waiting_order: Option<u64>,
+    /// The status leg that last set or cleared `waiting`. A leg older than this
+    /// is a replay and changes nothing. A worker clock that steps back drops
+    /// newer waiting updates until it passes this time again, the same exposure
+    /// as `is_stale`, accepted.
+    pub waiting_mark: Option<WaitingMark>,
     /// When this node last told its agent that the worker's reader is silent,
     /// so one task raises one event per interval.
     pub last_stall_event: Option<Instant>,
@@ -302,8 +313,7 @@ pub(crate) fn ingest(
             && !rec.surfaced_legs.contains(&frame.id)
         {
             rec.waiting = waiting;
-            rec.waiting_at = Some(frame.timestamp);
-            rec.waiting_order = order;
+            rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
             // Remembered here, not only by `note_surfaced`: a replay in the
             // same second as this leg must not pass the clock check again.
             rec.surfaced_legs.insert(frame.id.clone());
@@ -317,10 +327,11 @@ pub(crate) fn ingest(
 /// both legs carry an order value it decides, so two legs of one second stay in
 /// the order they were sent. Otherwise the wire second decides, as before.
 fn is_newer_than_waiting(rec: &TaskRecord, at: UnixSecs, order: Option<u64>) -> bool {
-    match (order, rec.waiting_order) {
-        (Some(order), Some(last)) => order >= last,
-        _ => rec.waiting_at.is_none_or(|last| at >= last),
-    }
+    rec.waiting_mark
+        .is_none_or(|mark| match (order, mark.order) {
+            (Some(order), Some(last)) => order >= last,
+            _ => at >= mark.at,
+        })
 }
 
 /// A beat older than one idle timeout proves nothing about the peer now. The
@@ -481,8 +492,7 @@ pub(crate) fn adopt_initiator(
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 waiting: None,
-                waiting_at: None,
-                waiting_order: None,
+                waiting_mark: None,
                 last_stall_event: None,
                 // Whoever owes the next move: the worker on a live task, us if
                 // it parked for our input.
@@ -558,8 +568,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 waiting: None,
-                waiting_at: None,
-                waiting_order: None,
+                waiting_mark: None,
                 last_stall_event: None,
                 ball: TaskRole::Receiver,
             });
