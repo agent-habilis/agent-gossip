@@ -782,7 +782,8 @@ pub(crate) async fn emit_task_status(
 }
 
 /// A worker's status leg, parsed once from its state and waiting reason. The
-/// reason rides a `working` leg only, so no other state can hold one.
+/// reason rides a `working` leg only, so no other state can hold one. Only
+/// [`WorkerLeg::parse`] builds a `WorkerLeg`, so the rule has one place.
 #[derive(Clone, Copy)]
 pub(crate) enum WorkerLeg<'a> {
     Working { waiting: Option<&'a str> },
@@ -790,8 +791,6 @@ pub(crate) enum WorkerLeg<'a> {
 }
 
 impl<'a> WorkerLeg<'a> {
-    /// # Errors
-    /// `waiting requires state working` if a reason comes with another state.
     pub(crate) fn parse(
         state: crate::a2a::TaskState,
         waiting: Option<&'a str>,

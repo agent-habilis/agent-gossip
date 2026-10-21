@@ -780,12 +780,8 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
         let state = parse_task_state(&args.state)?;
-        if args.waiting.is_some() && state != crate::a2a::TaskState::Working {
-            return Err(McpError::invalid_params(
-                "waiting requires state \"working\"",
-                None,
-            ));
-        }
+        crate::a2a::send::WorkerLeg::parse(state, args.waiting.as_deref())
+            .map_err(|_| McpError::invalid_params("waiting requires state \"working\"", None))?;
         match session
             .task_status(TaskStatusParams {
                 task_id,
