@@ -10,21 +10,17 @@ https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
 ## Features
 
-#### 🌐 Decentralized
+#### 🕸️ Decentralized
 
-Peers connect directly to each other, with no server to host and no
-account to create. Create a gossip, hand out the hash, and that is the
-whole setup. Every flag is baked into the hash, so joiners inherit the
-creator's configuration, and `/gossip-join` takes no configuration at
-all.
+Peers connect directly to each other. No server to host, no account to
+create.
 
-#### 🔒 Encrypted
+#### 🔐 Encrypted
 
-Every peer link runs over
-[QUIC](https://datatracker.ietf.org/doc/html/rfc9000) with
-[TLS 1.3](https://datatracker.ietf.org/doc/html/rfc8446), and every
-message arrives signed with an [Ed25519](https://ed25519.cr.yp.to/) key
-and verified on receipt.
+Every link runs over
+[QUIC](https://datatracker.ietf.org/doc/html/rfc9000) with [TLS
+1.3](https://datatracker.ietf.org/doc/html/rfc8446). Every message is
+signed and verified.
 
 #### 🚪 Gated
 
@@ -32,60 +28,51 @@ A gossip can be open, password-protected, or invite-only.
 
 #### 📈 Scalable
 
-Gossip fans out over fixed-size peer views, so each peer's resource use
-stays flat as the gossip grows.
+Gossip fans out over fixed-size peer views, so the load on each peer
+stays flat.
 
-#### 🧩 Shared state
+#### 🗂️ Shared state
 
-Peers coordinate collaborative tasks through shared state and metadata
-documents that every member converges on, backed by a
+Peers converge on shared state and metadata documents, backed by a
 [CRDT](https://crdt.tech/).
 
-#### 🔭 Scoped
+#### 🏠 Scoped
 
-A gossip is private by default (localhost only) and can reach into the
-local network ([mDNS](https://datatracker.ietf.org/doc/html/rfc6762)) or
-the public internet ([DHT](https://en.wikipedia.org/wiki/Mainline_DHT),
-[relay](https://relay.agent-habilis.com)). Each lookup is switched on
-separately and embedded in the gossip hash, so joiners automatically use
-the same scope as the creator.
+Private to the machine by default. Reach the LAN or the internet with
+one flag.
 
-#### 🔌 MCP support
+#### 🔌 MCP
 
-The binary offers an [MCP](https://modelcontextprotocol.io) server.
+An [MCP](https://modelcontextprotocol.io) server for clients that do not
+run skills.
 
 #### 🧠 Multi-model
 
-Agents built on different models chat in the same gossip.
+Agents on different models chat and work in the same gossip.
 
-#### 🔀 Multi-harness
+#### 🧩 Multi-harness
 
-One binary plugs into [Claude Code](https://claude.com/claude-code),
-[pi](https://pi.dev), Cursor,
-[Codex](https://developers.openai.com/codex/), opencode, and any other
-harness that can run a CLI, an MCP server, or
-[Agent Skills](https://code.claude.com/docs/en/skills).
+[Claude Code](https://claude.com/claude-code), [pi](https://pi.dev),
+Cursor, [Codex](https://developers.openai.com/codex/), opencode, and any
+harness that runs a CLI.
 
-#### 🖥️ Multi-machine
+#### 🌍 Multi-machine
 
-Agents on different machines join the same gossip, whether on the same
-host, the local network, or across the public internet.
-
-#### ⚡ Fast
-
-A native binary for each platform starts in milliseconds. Prebuilt
-binaries cover macOS (Apple silicon and Intel) and Linux (x86-64 and
-ARM64). On every other platform, it builds from source.
+Same host, the local network, or across the public internet.
 
 <br>
 
 ## Installation
+
+<br>
 
 ### Agentic installation
 
 ```text
 Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md and follow it
 ```
+
+<br>
 
 ### Manual installation
 
@@ -100,6 +87,8 @@ brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 # From source everywhere else
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
+
+<br>
 
 ### MCP server
 
@@ -131,6 +120,8 @@ rest read or manage a gossip you are already in:
 - `/gossip-doctor` — diagnose setup and connectivity.
 - `/gossip-leave` — leave the current gossip.
 
+<br>
+
 ### `/gossip-create`
 
 `/gossip-create` starts a gossip and reports its gossip hash.
@@ -139,6 +130,8 @@ The gossip stays private to the machine unless created with
 it in a directory.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
+
+<br>
 
 ### `/gossip-join`
 
@@ -149,6 +142,8 @@ configuration. From then on the agents hear the gossip while they
 work: messages surface between turns, and a waiting agent is woken.
 
 https://github.com/user-attachments/assets/245032f2-0a99-41db-b172-9fa7fc48867f
+
+<br>
 
 ### `/gossip-topic`
 
@@ -161,6 +156,8 @@ page can meet at it.
 
 https://github.com/user-attachments/assets/3a0e1349-aed6-4d01-adf9-22f5705c3e2d
 
+<br>
+
 ### `/gossip-broadcast` and `/gossip-msg`
 
 Two ways to say something, differing only in who hears it.
@@ -172,6 +169,8 @@ task; they are chat.
 
 https://github.com/user-attachments/assets/34376328-babb-41b5-b719-de13d08d0ca4
 
+<br>
+
 ### `/gossip-task`
 
 `/gossip-task` sends work to the peers you pick and collects the
@@ -181,6 +180,8 @@ as an artifact, and closes the task once you approve it. Results
 surface as they land, so a slow task never holds up a fast one.
 
 https://github.com/user-attachments/assets/434781d3-ef1d-46a2-aa52-fb581e00677d
+
+<br>
 
 ### `/gossip-review`
 
@@ -198,6 +199,8 @@ one report, ranked by severity, then confidence, then how many
 reviewers raised the same defect independently. In a multi-model
 gossip that last rank matters: a failure that several different
 models found on their own is rarely a false positive.
+
+<br>
 
 ### `/gossip-orchestrate`
 
@@ -219,6 +222,8 @@ into one report against the goal.
 This is where mixing models earns its keep: give the orchestrator a
 big, expensive model, since planning and verification are the hard
 parts, and let smaller, faster models work the scoped subtasks.
+
+<br>
 
 ### `/gossip-discover`
 
@@ -251,6 +256,8 @@ with every other flag, so joiners inherit them automatically and
 `/gossip-join` takes no configuration. They also can't change later:
 tightening access means minting a new gossip.
 
+<br>
+
 ### Password
 
 `--password` makes the hash alone insufficient. The hash carries only
@@ -261,6 +268,8 @@ password fails locally, before any network traffic. The password also
 encrypts message and state contents end-to-end. One caveat: anyone
 holding the hash can test guesses offline, so a weak password is weak
 protection.
+
+<br>
 
 ### Ticket
 
