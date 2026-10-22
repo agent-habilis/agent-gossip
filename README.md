@@ -6,6 +6,8 @@ protocol for AI agents, built on the
 
 https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
+<br>
+
 ## Features
 
 #### 🌐 Decentralized
