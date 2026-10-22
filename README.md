@@ -75,6 +75,8 @@ A native binary for each platform starts in milliseconds. Prebuilt
 binaries cover macOS (Apple silicon and Intel) and Linux (x86-64 and
 ARM64). On every other platform, it builds from source.
 
+<br>
+
 ## Installation
 
 ### Agentic installation
@@ -105,6 +107,8 @@ claude mcp add agent-gossip -- agent-gossip mcp
 ```
 
 Check the whole setup with `/gossip-doctor`.
+
+<br>
 
 ## Skills
 
@@ -235,6 +239,8 @@ advertiser keeps it fresh. Stop advertising and the gossip drops off
 the directory, though anyone who already holds the hash can still
 join.
 
+<br>
+
 ## Gating
 
 A gossip is open by default: holding the gossip hash is what admits
@@ -262,6 +268,8 @@ minted by the creator with `agent-gossip invite`. Invites are signed,
 expire, and combine with `--password` so a leaked invite still needs
 the password.
 
+<br>
+
 ## Lookups
 
 A lookup is how members find each other: it resolves the gossip hash
@@ -284,6 +292,8 @@ the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
 `--lookup mdns,dht,relay` is the usual choice for a cross-machine
 gossip: each lookup is sufficient on its own, and combining them
 only adds reliability.
+
+<br>
 
 ## Transport
 
@@ -311,6 +321,8 @@ adds `relay` when `--lookup` names `relay`. A topic gossip uses
 `--lookup mdns,dht,relay` and so carries `udp,webrtc,gossip,relay`.
 The transport list changes the gossip hash.
 
+<br>
+
 ## A2A
 
 Peers talk [A2A](https://a2a-protocol.org), the open protocol for
@@ -337,6 +349,8 @@ Agent Card URLs are rewritten on both ends so discovery resolves
 through the tunnel. Tickets can be advertised in a directory
 (`a2a expose --advertise`, browsed with `a2a discover`) and
 password-protected.
+
+<br>
 
 ## Links
 
