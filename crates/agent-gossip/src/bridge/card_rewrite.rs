@@ -344,7 +344,7 @@ fn rewrite_url(url: &str, local_base: &str) -> Option<String> {
         .or_else(|| url.strip_prefix("https://"))?;
     let rest_start = after_scheme
         .find(['/', '?', '#'])
-        .map_or(after_scheme.len(), |index| index);
+        .unwrap_or(after_scheme.len());
     let rest = &after_scheme[rest_start..];
     Some(format!("{local_base}{rest}"))
 }
