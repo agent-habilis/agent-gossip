@@ -1643,14 +1643,17 @@ impl Node {
     /// `create` CLI args (e.g. `["--lookup", "mdns,dht,relay"]`).
     pub fn create_args(name: &str, extra: &[&str], flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("create");
-        let file = File::create(&log).unwrap();
+        let file = File::create(&log).expect("create the daemon log file");
         let mut args = vec!["create", "--name", name];
         args.extend_from_slice(extra);
         let mut cmd = test_cmd();
         cmd.args(&args);
         apply_flags(&mut cmd, flags);
         let child = cmd
-            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .stdout(Stdio::from(
+                file.try_clone()
+                    .expect("clone the daemon log file handle for stdout"),
+            ))
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn create");
@@ -1694,13 +1697,16 @@ impl Node {
     /// `join` CLI args (e.g. `["--password=pw"]`).
     pub fn join_args(mesh: &str, nickname: &str, extra: &[&str], flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(nickname);
-        let file = File::create(&log).unwrap();
+        let file = File::create(&log).expect("create the daemon log file");
         let mut cmd = test_cmd();
         cmd.args(["join", mesh, "--nickname", nickname]);
         cmd.args(extra);
         apply_flags(&mut cmd, flags);
         let child = cmd
-            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .stdout(Stdio::from(
+                file.try_clone()
+                    .expect("clone the daemon log file handle for stdout"),
+            ))
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn join");
