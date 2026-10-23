@@ -64,8 +64,6 @@ Same host, the local network, or across the public internet.
 
 ## Installation
 
-<br>
-
 Install with your agent, or by hand. Add the MCP server only for a client that does not run skills.
 
 Check the whole setup with `/gossip-doctor` in your harness, or `agent-gossip doctor` in a shell.
