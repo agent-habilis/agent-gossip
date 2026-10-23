@@ -340,8 +340,8 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   groups: std, then external crates (`habilis_network` and the workspace crates
   included), then `self`/`super`/`crate`. Write a child-module import as
   `self::child::…` so that it sorts into the last group. `cargo task fmt` runs
-  nightly rustfmt (pinned in `crates/tasks/src/fmt.rs`) for the
-  `group_imports` option in `rustfmt.toml`, and `cargo task ci` and the CI fmt
+  rustfmt from the nightly toolchain in `rust-toolchain.toml`, which the
+  `group_imports` option in `rustfmt.toml` needs. `cargo task ci` and the CI fmt
   job fail on drift. rustfmt does not move a `use` that comes after a `mod`.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
