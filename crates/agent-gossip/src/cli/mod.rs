@@ -5,12 +5,12 @@
 //! parsed args and the daemon / IPC / api layers it drives.
 
 use anyhow::Result;
-use habilis_network::protocol::JoinTarget;
-use habilis_network::protocol::{LockedMesh, MeshConfig, MeshName};
-use habilis_network::protocol::{MeshId, MessageId, Nickname};
-use habilis_network::runtime::run as run_event_loop;
-use habilis_network::runtime::{CreateParams, JoinParams, Resolved};
-use habilis_network::runtime::{SetupKind, SetupParams, setup_mesh};
+use habilis_network::protocol::{
+    JoinTarget, LockedMesh, MeshConfig, MeshId, MeshName, MessageId, Nickname,
+};
+use habilis_network::runtime::{
+    CreateParams, JoinParams, Resolved, SetupKind, SetupParams, run as run_event_loop, setup_mesh,
+};
 use serde::Deserialize;
 
 pub(crate) use self::args::Cli;

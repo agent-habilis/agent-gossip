@@ -7,13 +7,11 @@ use std::time::Instant;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::{Delivered, MeshSender, PendingSend};
-use habilis_network::protocol::Identity;
-use habilis_network::protocol::message::WireFrame;
-use habilis_network::protocol::message::{Authored, Verified};
+use habilis_network::protocol::message::{Authored, Verified, WireFrame};
 use habilis_network::protocol::reassembly::synthesize_from;
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, Channel, ContentHash, CorrId, MeshId, Message, MessageBody, MessageId,
-    MessageKind, Nickname, Shard, ShardGroup,
+    AppFrameParams, AppTag, Channel, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
+    MessageId, MessageKind, Nickname, Shard, ShardGroup,
 };
 use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,

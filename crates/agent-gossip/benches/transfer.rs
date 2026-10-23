@@ -28,7 +28,8 @@ use std::time::{Duration, Instant};
 use agent_gossip::api::{CreateConfig, JoinConfig, MeshSession};
 use agent_gossip::{JoinTarget, MeshName, MessageBody};
 use habilis_network::protocol::message::Authored;
-use tokio::sync::broadcast::{self, error::RecvError};
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{self};
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
 /// source for the format width and the receiver's parse.

@@ -3,8 +3,7 @@ use std::time::Duration;
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use habilis_network::net::{self, NetworkCapability};
-use habilis_network::protocol::MeshId;
-use habilis_network::protocol::{LockedMesh, Mesh, RelayChoice};
+use habilis_network::protocol::{LockedMesh, Mesh, MeshId, RelayChoice};
 use habilis_network::runtime::ipc;
 use serde::Serialize;
 

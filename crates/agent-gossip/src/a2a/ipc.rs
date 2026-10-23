@@ -4,9 +4,8 @@ use std::time::Duration;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
 use habilis_network::ops::{StateMergeParams, broadcast_state_merge, start_ping_round};
-use habilis_network::protocol::MeshName;
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -921,7 +920,8 @@ mod tests {
 
     mod prop {
         use proptest::collection::vec as arb_vec;
-        use proptest::{prop_assert, prop_assert_eq, proptest, strategy::Strategy};
+        use proptest::strategy::Strategy;
+        use proptest::{prop_assert, prop_assert_eq, proptest};
 
         use super::{MeshId, MessageBody, Nickname};
 

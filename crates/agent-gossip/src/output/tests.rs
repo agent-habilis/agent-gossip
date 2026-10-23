@@ -792,13 +792,12 @@ mod snapshots {
 
 mod prop {
     use habilis_network::protocol::Message;
-    use proptest::{
-        collection::vec as arb_vec, prelude::any, prop_assert, prop_assert_eq, proptest,
-        strategy::Strategy,
-    };
+    use proptest::collection::vec as arb_vec;
+    use proptest::prelude::any;
+    use proptest::strategy::Strategy;
+    use proptest::{prop_assert, prop_assert_eq, proptest};
 
-    use super::view;
-    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid};
+    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, view};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())

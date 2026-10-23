@@ -1,6 +1,4 @@
-use habilis_network::protocol::JoinTarget;
-use habilis_network::protocol::Nickname;
-use habilis_network::protocol::{LookupSet, MeshName, TransportPolicy};
+use habilis_network::protocol::{JoinTarget, LookupSet, MeshName, Nickname, TransportPolicy};
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
 use crate::policy::app_policy;

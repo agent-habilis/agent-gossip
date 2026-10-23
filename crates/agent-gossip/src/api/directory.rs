@@ -2,13 +2,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use habilis_network::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
-use habilis_network::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
-use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
-use habilis_network::protocol::{MeshId, Nickname};
+use habilis_network::protocol::{
+    DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
+};
 use habilis_network::runtime::CoHostPolicy;
 use habilis_network::runtime::tuning::directory_expiry;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use super::MeshSession;

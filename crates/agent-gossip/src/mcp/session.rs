@@ -7,9 +7,8 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::MeshName;
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
@@ -258,8 +257,7 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::{Channel, JoinTarget, Message};
-    use habilis_network::protocol::{MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{Channel, JoinTarget, Message, MessageKind, PresenceSubtype};
     use serde_json::json;
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};

@@ -1,10 +1,8 @@
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{Mesh, MeshName};
-use habilis_network::protocol::{MeshId, MessageBody, Nickname};
+use habilis_network::protocol::{Mesh, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
-use habilis_network::runtime::{CoHostPolicy, EventLoopConfig};
-use habilis_network::runtime::{SetupKind, SetupParams, setup_mesh};
+use habilis_network::runtime::{CoHostPolicy, EventLoopConfig, SetupKind, SetupParams, setup_mesh};
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
@@ -14,8 +12,7 @@ use super::error::{CreateError, JoinError};
 use super::inproc::InProcessSession;
 use super::params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
 use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
-use crate::output::OutputEvent;
-use crate::output::PingPeer;
+use crate::output::{OutputEvent, PingPeer};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event

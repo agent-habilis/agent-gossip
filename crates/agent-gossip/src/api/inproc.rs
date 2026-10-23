@@ -1,7 +1,6 @@
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::MeshName;
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{MeshId, MessageBody, Nickname};
+use habilis_network::protocol::{MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::{EventLoopConfig, Node};
 use tokio::sync::{broadcast, oneshot};
 

@@ -1,8 +1,7 @@
 //! `join` command args: attach to an existing gossip by id/domain/repo.
 
 use clap::Parser;
-use habilis_network::protocol::Nickname;
-use habilis_network::protocol::{JoinTarget, JoinTargetError};
+use habilis_network::protocol::{JoinTarget, JoinTargetError, Nickname};
 
 use super::shared::SharedServerOpts;
 use crate::cli::password::PasswordFlag;

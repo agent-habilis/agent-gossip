@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 
-use habilis_network::embed::EventLoopState;
-use habilis_network::embed::HandlerCtx;
-use habilis_network::embed::{AppClass, InboundApp, NodeApp};
-use habilis_network::embed::{IpcRequest, NodeDriver};
+use habilis_network::embed::{
+    AppClass, EventLoopState, HandlerCtx, InboundApp, IpcRequest, NodeApp, NodeDriver,
+};
 use habilis_network::net::add_peer_addr;
-use habilis_network::protocol::MessageBody;
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{AppTag, Channel, DedupKey, Message, MessageKind, Nickname};
+use habilis_network::protocol::{
+    AppTag, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
+};
 use habilis_network::runtime::state_file::StateFile;
 use tokio::time::Instant as TokioInstant;
 

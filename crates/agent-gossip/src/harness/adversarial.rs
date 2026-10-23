@@ -11,12 +11,10 @@
     reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
 )]
 
-use habilis_network::protocol::PresenceSubtype;
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname,
+    AppFrameParams, AppTag, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
+    MessageKind, Nickname, PresenceSubtype, UnixSecs, encode_pubkey,
 };
-use habilis_network::protocol::{ContentHash, Message, UnixSecs};
-use habilis_network::protocol::{Identity, encode_pubkey};
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
 pub use habilis_network::util::consts::{

@@ -1,7 +1,5 @@
 use anyhow::{Context, Result, bail};
-use habilis_network::protocol::MeshId;
-use habilis_network::protocol::Message as Frame;
-use habilis_network::protocol::MessageBody;
+use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
 use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::{
@@ -551,9 +549,7 @@ pub(crate) fn test_status_frame(
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::MeshId;
-    use habilis_network::protocol::MessageId;
-    use habilis_network::protocol::MessageKind;
+    use habilis_network::protocol::{MeshId, MessageId, MessageKind};
 
     use super::{
         Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,

@@ -48,17 +48,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use habilis_network::embed::RosterEntry;
-use habilis_network::protocol::JoinTarget;
-use habilis_network::protocol::RelayLadder;
-use habilis_network::protocol::{LookupSet, MeshId, MeshName, MessageBody, MessageId, Nickname};
-use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
-use rmcp::{
-    ServerHandler, ServiceExt,
-    handler::server::wrapper::Parameters,
-    model::{CallToolResult, Content, ErrorData as McpError, ServerCapabilities, ServerInfo},
-    schemars, tool, tool_handler, tool_router,
-    transport::stdio,
+use habilis_network::protocol::{
+    JoinTarget, LookupSet, MeshId, MeshName, MessageBody, MessageId, Nickname, RelayLadder,
 };
+use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, Content, ErrorData as McpError, ServerCapabilities, ServerInfo};
+use rmcp::transport::stdio;
+use rmcp::{ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 

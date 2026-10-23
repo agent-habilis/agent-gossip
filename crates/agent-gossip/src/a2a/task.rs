@@ -17,11 +17,11 @@
 //! record is frozen. Local triggers (the timeout) *broadcast* a terminal
 //! `canceled` status so the other side converges.
 
-use std::collections::{HashMap, VecDeque, hash_map::Entry};
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use habilis_network::embed::EventLoopState;
-use habilis_network::embed::HandlerCtx;
+use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 

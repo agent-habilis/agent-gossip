@@ -1,6 +1,7 @@
 use habilis_network::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
-use habilis_network::runtime::{CreateParams, EventLoopConfig, JoinParams, Resolved};
-use habilis_network::runtime::{SetupParams, setup_mesh};
+use habilis_network::runtime::{
+    CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, setup_mesh,
+};
 
 use super::advertise::{Advertiser, spawn_advertiser};
 use super::config::{CreateConfig, JoinConfig, TopicConfig};

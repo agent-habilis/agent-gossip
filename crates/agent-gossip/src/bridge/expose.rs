@@ -11,8 +11,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use habilis_network::iroh::Endpoint;
 use habilis_network::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use habilis_network::net::build_endpoint;
-use habilis_network::protocol::{DirectorySelection, LookupOpts, LookupSet, validate_advertise};
-use habilis_network::protocol::{Password, TicketAuth, TicketSecret, ct_eq};
+use habilis_network::protocol::{
+    DirectorySelection, LookupOpts, LookupSet, Password, TicketAuth, TicketSecret, ct_eq,
+    validate_advertise,
+};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 

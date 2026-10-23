@@ -15,8 +15,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use habilis_network::ops::directory::directory_mesh;
-use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
-use habilis_network::protocol::{MeshId, MessageBody, Nickname};
+use habilis_network::protocol::{LookupOpts, LookupSet, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::CoHostPolicy;
 use habilis_network::runtime::tuning::{
     advertise_interval, directory_expiry, directory_private_for_test,

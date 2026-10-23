@@ -1,6 +1,5 @@
-use habilis_network::protocol::MeshName;
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{MeshId, MessageKind, Nickname};
+use habilis_network::protocol::{MeshId, MeshName, MessageKind, Nickname};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 pub(crate) use self::json::is_visible;

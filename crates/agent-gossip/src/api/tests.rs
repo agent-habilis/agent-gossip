@@ -4,8 +4,9 @@
 use std::time::Duration;
 
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{Mesh, MeshConfig, MeshName, TransportPolicy};
-use habilis_network::protocol::{MessageBody, Nickname};
+use habilis_network::protocol::{
+    Mesh, MeshConfig, MeshName, MessageBody, Nickname, TransportPolicy,
+};
 use habilis_network::runtime::CoHostPolicy;
 use tokio::sync::broadcast;
 

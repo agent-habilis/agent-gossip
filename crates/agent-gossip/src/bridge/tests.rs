@@ -8,8 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use habilis_network::iroh::endpoint::ConnectionError;
 use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
-use habilis_network::protocol::LookupOpts;
-use habilis_network::protocol::Password;
+use habilis_network::protocol::{LookupOpts, Password};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
