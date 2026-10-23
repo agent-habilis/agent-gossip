@@ -68,11 +68,11 @@ With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
 
 ### UDP
 
-QUIC on a direct or hole-punched UDP socket.
+QUIC on a direct or hole-punched UDP socket. It is the fastest transport. It is not available in a browser, because a browser cannot open a UDP socket.
 
 ### WebRTC
 
-QUIC over a WebRTC data channel.
+QUIC over a WebRTC data channel. It is available in browsers and on native. On native it uses [str0m](https://github.com/algesten/str0m).
 
 ### Gossip
 
