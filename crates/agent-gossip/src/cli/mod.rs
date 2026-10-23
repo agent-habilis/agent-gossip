@@ -176,12 +176,12 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(detached_stdio(&std::io::stdout()))
         .stderr(detached_stdio(&std::io::stderr()));
-    // SAFETY: `setsid` is async-signal-safe and touches no memory of this
-    // process, so it is sound between fork and exec.
     #[expect(
         unsafe_code,
         reason = "setsid has no safe std wrapper; process_group(0) is not enough because Claude Code also walks processes by session id"
     )]
+    // SAFETY: `setsid` is async-signal-safe and touches no memory of this
+    // process, so it is sound between fork and exec.
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(&mut child, || {
             if libc::setsid() == -1 {
