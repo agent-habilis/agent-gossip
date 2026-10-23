@@ -18,16 +18,29 @@ the machine. `--advertise` is the exception: a directory listing needs a lookup
 that reaches other machines, so it takes all three.
 
 `--lookup` takes a comma-separated list of lookups. An unknown value is an
-error.
+error. Each lookup is sufficient on its own. Combining them only adds
+reliability. Use `--lookup mdns,dht,relay` unless you must restrict reach.
 
-| Lookup | Reach | Mechanism |
-|---|---|---|
-| `mdns` | Same LAN only | [mDNS](https://datatracker.ietf.org/doc/html/rfc6762) multicast on the local network. |
-| `dht` | Public internet | The [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT). Nothing to host. |
-| `relay` | Public internet | Rendezvous through a [relay](https://relay.agent-habilis.com). Uses the default relay set, or the ladder you give with `--relay-url`. |
+<Callout type="info">
+  `discover`, `a2a expose` and `a2a discover` take the same `--lookup` and
+  `--relay-url` flags, with one difference: there, no `--lookup` means all
+  three lookups, not loopback-only.
+</Callout>
 
-Each lookup is sufficient on its own. Combining them only adds reliability.
-Use `--lookup mdns,dht,relay` unless you must restrict reach.
+### mDNS
+
+Reach is the same LAN only. Members find each other with
+[mDNS](https://datatracker.ietf.org/doc/html/rfc6762) multicast on the local network.
+
+### DHT
+
+Reach is the public internet. Members find each other on the
+[mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT). Nothing to host.
+
+### Relay
+
+Reach is the public internet. Members rendezvous through a
+[relay](https://relay.agent-habilis.com). The relay uses the default relay set, or the ladder you give with `--relay-url`.
 
 `--relay-url` takes an ordered, comma-separated relay ladder. The beacon homes
 on the first reachable rung. It requires `relay` in `--lookup`.
@@ -37,12 +50,6 @@ agent-gossip create --name ops --lookup mdns,dht,relay \
     --relay-url https://a.example,https://b.example
 ```
 
-<Callout type="info">
-  `discover`, `a2a expose` and `a2a discover` take the same `--lookup` and
-  `--relay-url` flags, with one difference: there, no `--lookup` means all
-  three lookups, not loopback-only.
-</Callout>
-
 ## Transport
 
 A lookup finds peers. The transport policy is a separate choice: it says what
@@ -50,24 +57,37 @@ can carry the payload after peers find each other. `--transport` is also set at
 `create` and carried in the identifier.
 
 `--transport` takes a comma-separated list. A list names exactly what the
-gossip carries, and it changes the identifier.
-
-| Transport | Payload path |
-|---|---|
-| `udp` | QUIC on a direct or hole-punched UDP socket. |
-| `webrtc` | QUIC over a WebRTC data channel. |
-| `gossip` | A peer with no direct path is reached in the frames of the gossip itself. Needs `udp` or `webrtc` in the list. |
-| `multihop` | A peer with no direct path is reached through other members. Needs `udp` or `webrtc` in the list. Off by default. |
-| `relay` | Payload falls back to the relay when a direct path fails. Requires `relay` in `--lookup`. |
-
-A list must name `udp` or `webrtc`. A list without `udp` needs `relay` in
-`--lookup`, because the relay is the only path for the WebRTC offers. Without
-`relay` in the list, the relay serves lookup only, so a pair that cannot connect
-directly stays unlinked.
+gossip carries, and it changes the identifier. A list must name `udp` or
+`webrtc`. A list without `udp` needs `relay` in `--lookup`, because the relay is
+the only path for the WebRTC offers. Without `relay` in the list, the relay
+serves lookup only, so a pair that cannot connect directly stays unlinked.
 
 With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
 `relay` when `--lookup` names `relay`. A topic gossip uses
 `--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
+
+### UDP
+
+QUIC on a direct or hole-punched UDP socket.
+
+### WebRTC
+
+QUIC over a WebRTC data channel.
+
+### Gossip
+
+A peer with no direct path is reached in the frames of the gossip itself.
+Needs `udp` or `webrtc` in the list.
+
+### Multihop
+
+A peer with no direct path is reached through other members. Needs `udp` or
+`webrtc` in the list. Off by default.
+
+### Relay fallback
+
+Payload falls back to the relay when a direct path fails. Requires `relay` in
+`--lookup`.
 
 ## Gating
 

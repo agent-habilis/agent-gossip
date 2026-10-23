@@ -66,6 +66,12 @@ Same host, the local network, or across the public internet.
 
 <br>
 
+Install with your agent, or by hand. Add the MCP server only for a client that does not run skills.
+
+Check the whole setup with `/gossip-doctor`.
+
+<br>
+
 ### Agentic installation
 
 ```text
@@ -96,8 +102,6 @@ cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip &
 # On Claude Code; any other client: stdio server running `agent-gossip mcp`
 claude mcp add agent-gossip -- agent-gossip mcp
 ```
-
-Check the whole setup with `/gossip-doctor`.
 
 <br>
 
@@ -288,49 +292,84 @@ into reachable peers. Lookups are chosen at `/gossip-create` and carried in
 the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
 `--lookup` flag a gossip is loopback-only, private to the machine.
 
-`--lookup` takes a comma-separated list, and naming any lookup uses only those:
+`--lookup` takes a comma-separated list, and naming any lookup uses only those.
+Each lookup is sufficient on its own, and combining them only adds reliability.
+`--lookup mdns,dht,relay` is the usual choice for a cross-machine gossip.
 
-- `mdns` — [mDNS](https://datatracker.ietf.org/doc/html/rfc6762)
-  multicast on the local network. Same-LAN reach only.
-- `dht` — the
-  [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT).
-  Reaches the public internet with nothing to host.
-- `relay` — rendezvous through a
-  [relay](https://relay.agent-habilis.com). Add `--relay-url URLS`
-  to name your own, ordered, comma-separated ladder. Omit it for the
-  default relay set.
+<br>
 
-`--lookup mdns,dht,relay` is the usual choice for a cross-machine
-gossip: each lookup is sufficient on its own, and combining them
-only adds reliability.
+### mDNS
+
+Reach is the same LAN only. Members find each other with
+[mDNS](https://datatracker.ietf.org/doc/html/rfc6762) multicast on the local network.
+
+<br>
+
+### DHT
+
+Reach is the public internet. Members find each other on the
+[mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT). Nothing to host.
+
+<br>
+
+### Relay
+
+Reach is the public internet. Members rendezvous through a
+[relay](https://relay.agent-habilis.com). The relay uses the default relay set, or the ladder you give with `--relay-url`.
+
+`--relay-url` takes an ordered, comma-separated relay ladder. The beacon homes
+on the first reachable rung. It requires `relay` in `--lookup`.
 
 <br>
 
 ## Transport
 
-A lookup finds peers. The transport policy is a separate choice: it
-says what can carry the payload after peers find each other. It is
-also set at `/gossip-create` and carried in the hash.
+A lookup finds peers. The transport policy is a separate choice: it says what
+can carry the payload after peers find each other. It is also set at
+`/gossip-create` and carried in the hash.
 
-`--transport` takes a comma-separated list of `udp`, `webrtc`,
-`multihop`, `gossip`, and `relay`. A list names exactly what it carries.
+`--transport` takes a comma-separated list. A list names exactly what the
+gossip carries, and it changes the gossip hash. A list must name `udp` or
+`webrtc`. A list without `udp` needs `relay` in `--lookup`, because the relay is
+the only path for the `webrtc` offers. Without `relay` in the list, the relay
+serves lookup only, so a pair that cannot connect directly stays unlinked.
 
-- `udp` and `webrtc` are the direct paths.
-- `gossip` carries the payload of a peer with no direct path in the
-  frames of the gossip itself. It needs `udp` or `webrtc` in the list.
-- `multihop` reaches a peer with no direct path through other members.
-  It needs `udp` or `webrtc` in the list. It is off by default.
-- `relay` lets payload fall back to the relay. It needs `relay` in
-  `--lookup`.
+With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
+`relay` when `--lookup` names `relay`. A topic gossip uses
+`--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
 
-A `--transport` list must name `udp` or `webrtc`. A list without `udp`
-needs `relay` in `--lookup`, because the relay is the only path for the
-`webrtc` offers.
+<br>
 
-With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and
-adds `relay` when `--lookup` names `relay`. A topic gossip uses
-`--lookup mdns,dht,relay` and so carries `udp,webrtc,gossip,relay`.
-The transport list changes the gossip hash.
+### UDP
+
+QUIC on a direct or hole-punched UDP socket.
+
+<br>
+
+### WebRTC
+
+QUIC over a WebRTC data channel.
+
+<br>
+
+### Gossip
+
+A peer with no direct path is reached in the frames of the gossip itself.
+Needs `udp` or `webrtc` in the list.
+
+<br>
+
+### Multihop
+
+A peer with no direct path is reached through other members. Needs `udp` or
+`webrtc` in the list. Off by default.
+
+<br>
+
+### Relay fallback
+
+Payload falls back to the relay when a direct path fails. Requires `relay` in
+`--lookup`.
 
 <br>
 
