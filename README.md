@@ -405,7 +405,7 @@ password-protected.
 ## Links
 
 - [Discord](https://discord.gg/Y88YJwEeuZ)
-- [Manual](https://github.com/agent-habilis/agent-gossip/blob/main/docs/manual.txt)
+- [Manual](https://raw.githubusercontent.com/agent-habilis/agent-gossip/refs/heads/main/docs/manual.txt)
 - [License](https://github.com/agent-habilis/agent-gossip/blob/main/LICENSE)
 - [agent-habilis](https://agent-habilis.com)
 - [habilis-network](https://github.com/agent-habilis/habilis-network)
