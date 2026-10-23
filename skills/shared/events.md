@@ -233,6 +233,16 @@ takes no `tasks`/`todos` array, and is not the Agent tool (no
   it is where anything that would otherwise stretch the subject belongs.
 - `activeForm` — the subject without the `💬` and without the short id.
 
+**The counterparty is always `<nick>`, in angle brackets.** Write it without
+the backticks.
+
+This rule is for `subject` and `activeForm` only. `owner` stays the bare nickname.
+
+| | Form |
+|---|---|
+| Right | `💬 <yard-lore> · waiting · summarize the diff · 02bd5883` |
+| Wrong | `💬 yard-lore · waiting · summarize the diff · 02bd5883` |
+
 Then `TaskUpdate` it with `owner` set to the worker's nickname and `status`
 `in_progress`.
 
@@ -279,6 +289,15 @@ reattach, or a compaction. Ignore `metadata`: no read path returns it.
 
 Use the native todo/plan tool if one is loaded, driving the lifecycle above.
 Otherwise take the fallback.
+
+**The counterparty is always `<nick>`, in angle brackets.** Write it without
+the backticks. This rule is for the todo text. If the tool has an owner field, it
+stays the bare nickname.
+
+| | Form |
+|---|---|
+| Right | `💬 <yard-lore> · waiting · summarize the diff · 02bd5883` |
+| Wrong | `💬 yard-lore · waiting · summarize the diff · 02bd5883` |
 
 Worker flow:
 
