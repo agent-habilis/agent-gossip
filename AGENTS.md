@@ -377,6 +377,18 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
   `wait_for_ready` returns).
 
+## Rust style
+
+This repository follows the Google Rust Style Guide: https://google.github.io/styleguide/rustguide.html
+
+This file wins over the guide. If the two conflict, follow this file.
+
+`clippy.toml` and `rustfmt.toml` already enforce these rules:
+
+- No wildcard imports, including `use super::*` in test modules.
+- Imports in three groups: std, then external crates, then `self`/`super`/`crate`.
+- No single-character identifiers, except the names in `allowed-idents-below-min-chars`.
+
 ## Agent Restrictions
 
 - **NEVER** run `git commit` unless the user explicitly asks for it in the
