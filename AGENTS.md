@@ -341,8 +341,9 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   included), then `self`/`super`/`crate`. Write a child-module import as
   `self::child::…` so that it sorts into the last group. `cargo task fmt` runs
   rustfmt from the nightly toolchain in `rust-toolchain.toml`, which the
-  `group_imports` option in `rustfmt.toml` needs. `cargo task ci` and the CI fmt
-  job fail on drift. rustfmt does not move a `use` that comes after a `mod`.
+  `group_imports` and `imports_granularity` options in `rustfmt.toml` need.
+  `cargo task ci` and the CI fmt job fail on drift. rustfmt does not move a
+  `use` that comes after a `mod`.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
 - Use the typestate pattern only when one function or one builder drives a
@@ -388,6 +389,10 @@ This file wins over the guide. If the two conflict, follow this file.
 - No wildcard imports, including `use super::*` in test modules.
 - Imports in three groups: std, then external crates, then `self`/`super`/`crate`.
 - No single-character identifiers, except the names in `allowed-idents-below-min-chars`.
+- `unwrap_used` is on. `allow-unwrap-in-tests = true` in `clippy.toml` allows it in tests. Use `.expect("reason")` in production code and in test helpers.
+- `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
+- `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
+- `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
 
 ## Agent Restrictions
 
