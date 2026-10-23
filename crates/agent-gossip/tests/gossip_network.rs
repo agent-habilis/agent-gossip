@@ -1372,7 +1372,8 @@ fn test_cli_a2a_call_requires_a_peer() {
 /// past its newest seq — so a long-poll after it sees only new events.
 fn poll_cursor(mesh: &str, nickname: &str) -> Option<String> {
     let baseline = cli_poll(mesh, nickname, None);
-    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
+    let baseline: Vec<serde_json::Value> =
+        serde_json::from_str(&baseline).expect("the binary prints valid JSON for this command");
     baseline
         .iter()
         .filter_map(|event| event["seq"].as_u64())
@@ -2964,10 +2965,13 @@ fn test_flap_storm_all_rosters_recover() {
 )]
 fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, String, String) {
     let log = tmp_log(&format!("leave-{name}"));
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test temp dir is writable");
     let mut child = common::test_cmd()
         .args(["create", "--name", name])
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stdout(Stdio::from(
+            file.try_clone()
+                .expect("the log file handle can be cloned for stdout"),
+        ))
         .stderr(Stdio::from(file))
         .spawn()
         .expect("failed to spawn create");
@@ -3254,7 +3258,8 @@ fn spawn_decoy(name: &str) -> (std::process::Child, String, String, String, Path
         );
         std::thread::sleep(POLL);
     }
-    let (mesh, nickname) = ready_identity(&log).unwrap();
+    let (mesh, nickname) =
+        ready_identity(&log).expect("the daemon wrote its ready line before this read");
     (decoy, decoy_pid, mesh, nickname, log)
 }
 
@@ -3264,7 +3269,8 @@ fn session_report(session_pid: &str) -> serde_json::Value {
         .output()
         .expect("failed to run agent-gossip session");
     assert!(out.status.success(), "session failed: {out:?}");
-    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+        .expect("the session command prints JSON on success")
 }
 
 /// Session scope end to end: a daemon spawned under a decoy "agent" shell is
@@ -3372,9 +3378,15 @@ fn bell_check_block_reason(session_pid: &str) -> Option<String> {
     // A shell `bell-check && echo armed` must not lie; the Stop hook's
     // `|| true` still hands Claude Code the JSON.
     assert_eq!(out.status.code(), Some(3), "a block exits 3: {out:?}");
-    let decision: serde_json::Value = serde_json::from_str(stdout).unwrap();
+    let decision: serde_json::Value =
+        serde_json::from_str(stdout).expect("bell-check prints JSON when it blocks");
     assert_eq!(decision["decision"], "block");
-    Some(decision["reason"].as_str().unwrap().to_owned())
+    Some(
+        decision["reason"]
+            .as_str()
+            .expect("a block decision carries a reason string")
+            .to_owned(),
+    )
 }
 
 fn wait_for_bell(session_pid: &str, armed: bool) {
@@ -3510,7 +3522,7 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
             .expect("failed to spawn the owner"),
     );
     let sessions_dir = common::runtime_base().join("sessions");
-    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::create_dir_all(&sessions_dir).expect("the test temp dir is writable");
     let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
     let stderr_file = tmp_log(&format!("{name}-stderr"));
 
@@ -3522,11 +3534,13 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
         .arg(&state_file)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(File::create(&stderr_file).unwrap())
+        .stderr(File::create(&stderr_file).expect("the test temp dir is writable"))
         .spawn()
         .expect("failed to spawn the launcher");
     let launcher_pid = launcher.id();
-    let status = launcher.wait().unwrap();
+    let status = launcher
+        .wait()
+        .expect("the launcher child can be waited on");
     let launch_time = started.elapsed();
     let launcher_stderr = fs::read_to_string(&stderr_file).unwrap_or_default();
     assert!(

@@ -49,11 +49,14 @@ fn spawn_create(name: &str) -> (Daemon, String, String) {
 /// [`spawn_create`] with extra `create` flags, for the hidden tuning knobs.
 fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
     let log = tmp_log(&format!("lossless-{name}"));
-    let file = fs::File::create(&log).unwrap();
+    let file = fs::File::create(&log).expect("the test temp dir is writable");
     let child = test_cmd()
         .args(["create", "--name", name])
         .args(flags)
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stdout(Stdio::from(
+            file.try_clone()
+                .expect("the log file handle can be cloned for stdout"),
+        ))
         .stderr(Stdio::from(file))
         .spawn()
         .expect("spawn create");

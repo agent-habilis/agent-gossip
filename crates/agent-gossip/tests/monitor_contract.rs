@@ -72,11 +72,14 @@ impl JsonNode {
     /// timings).
     fn create_with_flags(flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("json-create");
-        let file = fs::File::create(&log).unwrap();
+        let file = fs::File::create(&log).expect("the test temp dir is writable");
         let child = common::test_cmd()
             .args(["create", "--name", "jtest"])
             .args(common::flag_args(flags))
-            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .stdout(Stdio::from(
+                file.try_clone()
+                    .expect("the log file handle can be cloned for stdout"),
+            ))
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn create");
@@ -118,11 +121,14 @@ impl JsonNode {
     /// spawned daemon as `(flag, value)` pairs.
     fn join_with_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(&format!("json-{nickname}"));
-        let file = fs::File::create(&log).unwrap();
+        let file = fs::File::create(&log).expect("the test temp dir is writable");
         let child = common::test_cmd()
             .args(["join", mesh, "--nickname", nickname])
             .args(common::flag_args(flags))
-            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .stdout(Stdio::from(
+                file.try_clone()
+                    .expect("the log file handle can be cloned for stdout"),
+            ))
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn join");
