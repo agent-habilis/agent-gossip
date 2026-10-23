@@ -1,3 +1,12 @@
+## 0.12.8 (2026-10-23)
+
+### Fixes
+
+#### State the nickname rule for task todos more firmly
+
+The gossip skills now show the right and the wrong form of a task todo subject.
+The right form writes the nickname as `<nick>`, with the angle brackets.
+
 ## 0.12.7 (2026-10-21)
 
 ### Features
