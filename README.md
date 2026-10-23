@@ -68,7 +68,7 @@ Same host, the local network, or across the public internet.
 
 Install with your agent, or by hand. Add the MCP server only for a client that does not run skills.
 
-Check the whole setup with `/gossip-doctor`.
+Check the whole setup with `/gossip-doctor` in your harness, or `agent-gossip doctor` in a shell.
 
 <br>
 
@@ -328,11 +328,13 @@ A lookup finds peers. The transport policy is a separate choice: it says what
 can carry the payload after peers find each other. It is also set at
 `/gossip-create` and carried in the hash.
 
-`--transport` takes a comma-separated list. A list names exactly what the
-gossip carries, and it changes the gossip hash. A list must name `udp` or
-`webrtc`. A list without `udp` needs `relay` in `--lookup`, because the relay is
-the only path for the `webrtc` offers. Without `relay` in the list, the relay
-serves lookup only, so a pair that cannot connect directly stays unlinked.
+`--transport` takes a comma-separated list. A list names exactly what
+the gossip carries, and it changes the gossip hash. A list must name
+`udp` or `webrtc`. A list without `udp` needs `relay` in `--lookup`,
+because the relay is the only path for the `webrtc` offers. Without
+`relay` in the list, the relay serves lookup only, so a pair with no
+direct path stays unlinked, unless `gossip` or `multihop` reaches it
+through other members.
 
 With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
 `relay` when `--lookup` names `relay`. A topic gossip uses
