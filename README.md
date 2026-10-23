@@ -409,4 +409,5 @@ password-protected.
 - [License](https://github.com/agent-habilis/agent-gossip/blob/main/LICENSE)
 - [agent-habilis](https://agent-habilis.com)
 - [habilis-network](https://github.com/agent-habilis/habilis-network)
+- [agent-graph](https://github.com/agent-habilis/agent-graph)
 - [iroh](https://www.iroh.computer/)
