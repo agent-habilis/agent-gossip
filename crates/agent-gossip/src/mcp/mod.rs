@@ -1031,6 +1031,10 @@ to null to clear it. Read `/peers` to see what peers run on.
 
 Call `gossip_manual` for the full command/event reference.";
 
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "rmcp's ServerHandler methods return futures, and tool_handler generates async fns that return ready values"
+)]
 #[tool_handler]
 impl ServerHandler for AgentGossipServer {
     fn get_info(&self) -> ServerInfo {
