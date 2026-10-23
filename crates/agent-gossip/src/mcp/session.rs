@@ -230,12 +230,20 @@ impl Session {
     /// to the cursor-less CLI `poll` alone.
     fn effective_after(&self, explicit: Option<u64>) -> Option<u64> {
         explicit
-            .or_else(|| *self.last_delivered_seq.lock().unwrap())
+            .or_else(|| {
+                *self.last_delivered_seq.lock().expect(
+                    "the cursor lock is never held across a panic, so it cannot be poisoned",
+                )
+            })
             .or(Some(0))
     }
 
     fn advance_cursor_to(&self, seq: u64) {
-        *self.last_delivered_seq.lock().unwrap() = Some(seq);
+        *self
+            .last_delivered_seq
+            .lock()
+            .expect("the cursor lock is never held across a panic, so it cannot be poisoned") =
+            Some(seq);
     }
 
     /// Clean shutdown — delegates to the core's `leave`.
