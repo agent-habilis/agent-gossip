@@ -35,7 +35,7 @@ mod token {
     use super::{BenchConfig, Bencher, MAX_NAME, MeshName, SHORT_NAME, api, black_box};
 
     fn bench_encode(bencher: Bencher<'_, '_>, raw: &str) {
-        let name = MeshName::new(raw).unwrap();
+        let name = MeshName::new(raw).expect("the bench names are fixed and valid mesh names");
         let config = BenchConfig::public();
         bencher.bench(|| api::mesh_token(black_box(&name), black_box(&config)));
     }
@@ -52,7 +52,7 @@ mod token {
 
     #[divan::bench]
     fn decode(bencher: Bencher<'_, '_>) {
-        let name = MeshName::new(MAX_NAME).unwrap();
+        let name = MeshName::new(MAX_NAME).expect("the bench names are fixed and valid mesh names");
         let token = api::mesh_token(&name, &BenchConfig::public());
         bencher.bench(|| api::mesh_decode(black_box(&token)));
     }
@@ -76,7 +76,7 @@ mod parsing {
     // A valid token to exercise the accept path of `MeshId::new`.
     fn valid_token() -> String {
         api::mesh_token(
-            &MeshName::new("bench").unwrap(),
+            &MeshName::new("bench").expect("the bench names are fixed and valid mesh names"),
             &super::BenchConfig::loopback(),
         )
     }
