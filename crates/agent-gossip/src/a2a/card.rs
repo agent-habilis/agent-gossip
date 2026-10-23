@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
 use habilis_network::protocol::{AuthorKey, Nickname};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
@@ -273,7 +275,7 @@ pub(crate) fn card_error_merge(nickname: &Nickname, error: Option<&str>) -> serd
 #[must_use]
 pub(crate) fn absent_peers<'doc>(
     document: &'doc serde_json::Value,
-    live: &std::collections::HashSet<&str>,
+    live: &HashSet<&str>,
     self_nick: &Nickname,
 ) -> Vec<&'doc str> {
     document
@@ -300,6 +302,8 @@ pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use habilis_network::protocol::{AuthorKey, Nickname};
 
     use super::{own_card, publish_merges};
@@ -377,7 +381,7 @@ mod tests {
             }
         });
         let self_nick = Nickname::from("print-onyx");
-        let live = std::collections::HashSet::from(["calm-otter"]);
+        let live = HashSet::from(["calm-otter"]);
 
         let absent = super::absent_peers(&document, &live, &self_nick);
 
@@ -393,14 +397,14 @@ mod tests {
     #[test]
     fn absent_peers_never_includes_our_own_entry() {
         let document = serde_json::json!({ "peers": { "print-onyx": { "status": "idle" } } });
-        let live = std::collections::HashSet::new();
+        let live = HashSet::new();
         assert!(super::absent_peers(&document, &live, &Nickname::from("print-onyx")).is_empty());
     }
 
     /// A document with no `/peers` map at all (a fresh mesh) is not an error.
     #[test]
     fn absent_peers_tolerates_a_document_without_peers() {
-        let live = std::collections::HashSet::new();
+        let live = HashSet::new();
         assert!(
             super::absent_peers(&serde_json::json!({}), &live, &Nickname::from("print-onyx"))
                 .is_empty()

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
@@ -606,7 +607,7 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
     // Active members only. The roster snapshot chains the *quiet* peers onto
     // the live ones, and a peer that died ungracefully lands exactly there —
     // counting it as live is what made this report empty in the first place.
-    let live: std::collections::HashSet<&str> = snapshot
+    let live: HashSet<&str> = snapshot
         .peers
         .iter()
         .filter(|entry| !entry.quiet)

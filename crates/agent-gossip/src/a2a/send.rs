@@ -2,6 +2,7 @@
 //! the IPC `Msg` command and the typed in-process `SessionRequest` both funnel
 //! through it so they cannot drift.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
@@ -1265,7 +1266,7 @@ pub(crate) struct CallFile<'a> {
 /// timed-out call that it replaces.
 fn call_blob_group(
     task_id: Option<crate::a2a::TaskId>,
-    tasks: &std::collections::HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
+    tasks: &HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
 ) -> (crate::a2a::TaskId, bool) {
     match task_id {
         Some(task_id) if tasks.contains_key(&task_id) => (task_id, false),

@@ -42,6 +42,7 @@
 //! create / leave / join cycles are supported. See `session.rs`
 //! for the per-mesh abstraction.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -923,7 +924,7 @@ impl AgentGossipServer {
         // Same rule as the CLI's `meta get`, from the same function, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
         let roster = session.peers().await.map_err(to_mcp_error)?;
-        let live: std::collections::HashSet<&str> = roster
+        let live: HashSet<&str> = roster
             .peers
             .iter()
             .filter(|entry| !entry.quiet)

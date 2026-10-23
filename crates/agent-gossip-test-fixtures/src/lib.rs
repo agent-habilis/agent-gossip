@@ -19,6 +19,7 @@
 //! exempt from the lint by construction, so the suppression is gone — while the
 //! crate's own private helpers stay `dead_code`-checked.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -1761,7 +1762,7 @@ impl Node {
             .iter()
             .filter(|msg| msg.author == author && msg.body.starts_with(prefix))
             .map(|msg| msg.body.clone())
-            .collect::<std::collections::HashSet<_>>()
+            .collect::<HashSet<_>>()
             .len()
     }
 

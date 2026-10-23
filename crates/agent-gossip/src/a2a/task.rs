@@ -17,7 +17,7 @@
 //! record is frozen. Local triggers (the timeout) *broadcast* a terminal
 //! `canceled` status so the other side converges.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, hash_map::Entry};
 use std::time::{Duration, Instant};
 
 use habilis_network::embed::EventLoopState;
@@ -476,7 +476,7 @@ pub(crate) fn adopt_initiator(
         now,
     } = params;
     match tasks.entry(task_id.clone()) {
-        std::collections::hash_map::Entry::Vacant(slot) => {
+        Entry::Vacant(slot) => {
             // First adoption (task creation): open the initiator-side record at
             // the server-minted state.
             slot.insert(TaskRecord {
@@ -503,7 +503,7 @@ pub(crate) fn adopt_initiator(
                 },
             });
         }
-        std::collections::hash_map::Entry::Occupied(mut slot) => {
+        Entry::Occupied(mut slot) => {
             // Already tracking. The worker-pushed status/artifact stream is the
             // authoritative source of *live* transitions, so a late or reordered
             // RPC snapshot (e.g. a `GetTask` reply that raced the artifact push)

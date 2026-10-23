@@ -7,6 +7,7 @@
 //! Crypto-heavy deps are optimized even in dev builds (see the
 //! `[profile.dev.package]` overrides in `Cargo.toml`), so debug `cargo test`
 //! runs at near-release connect speeds.
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -571,7 +572,7 @@ async fn test_concurrent_asks() {
     let mut creator = InProcNode::create("netconc").await;
     let joiner = InProcNode::join(&creator.mesh, "joiner-concurrent").await;
 
-    let mut ids = std::collections::HashSet::new();
+    let mut ids = HashSet::new();
     for index in 0..ASK_COUNT {
         let id = joiner
             .broadcast(&format!("concurrent message {index}"))
