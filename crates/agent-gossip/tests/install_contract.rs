@@ -187,6 +187,8 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
 
     let plug = common::test_cmd()
         .env("HOME", &home)
+        // Windows reads the home from USERPROFILE first.
+        .env("USERPROFILE", &home)
         .arg("plug")
         .output()
         .expect("failed to run `agent-gossip plug`");
@@ -244,6 +246,8 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
     // Step 4: the doc tells the agent to read this and expect `up to date`.
     let doctor = common::test_cmd()
         .env("HOME", &home)
+        // Windows reads the home from USERPROFILE first.
+        .env("USERPROFILE", &home)
         .args(["doctor", "--no-probe", "--output", "json"])
         .output()
         .expect("failed to run `agent-gossip doctor`");
@@ -277,6 +281,8 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
 
     let unplug = common::test_cmd()
         .env("HOME", &home)
+        // Windows reads the home from USERPROFILE first.
+        .env("USERPROFILE", &home)
         .arg("unplug")
         .output()
         .expect("failed to run `agent-gossip unplug`");

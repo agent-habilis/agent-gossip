@@ -723,6 +723,7 @@ mod tests {
         assert!(body("gossip-status").contains("| host | cwd |"));
     }
 
+    #[cfg(unix)]
     fn ready_gate_merge(skill: &str) -> &'static str {
         let is_merge =
             |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");

@@ -124,6 +124,7 @@ fn directory_advertise_then_discover() {
 /// own loop has to break on SIGTERM too — otherwise `kill` hangs it.
 /// Regression for that hang.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn discover_stops_on_sigterm() {
     // Advertiser so the discoverer fully comes up (and thus has the api
     // session — and its SIGTERM handler — running) before we signal it.

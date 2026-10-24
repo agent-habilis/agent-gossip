@@ -248,6 +248,7 @@ fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
 /// exits 0 with the truthful empty batch — no error to surface, no stop-order
 /// dependency between the daemon task and the bell task.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn bell_exits_cleanly_when_the_daemon_leaves() {
     use std::io::Read as _;
 

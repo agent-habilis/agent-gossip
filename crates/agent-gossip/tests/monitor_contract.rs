@@ -391,6 +391,7 @@ async fn test_self_echo_suppression() {
 /// Peer departure: when joiner-A is killed via SIGINT, creator receives a
 /// presence `left` event with the correct JSON shape.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_peer_departure_event() {
     // Disruption/recovery test — serialize against the other heavy departure
     // tests so concurrent SIGINTs don't starve each other's heal cycles (the
@@ -535,6 +536,7 @@ async fn test_message_event_has_all_required_fields() {
 /// When the creator leaves, remaining peers should stay alive and be able
 /// to pass messages.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_creator_departure_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
@@ -621,6 +623,7 @@ fn test_creator_hard_kill_peers_survive() {
 /// With 4 peers, all joiners survive after creator departs and can
 /// continue exchanging messages.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_creator_departure_four_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
