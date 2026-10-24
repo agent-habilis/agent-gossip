@@ -176,6 +176,14 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(detached_stdio(&std::io::stdout()))
         .stderr(detached_stdio(&std::io::stderr()));
+    spawn_detached(&mut child)
+        .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
+    std::process::exit(0)
+}
+
+/// Start `child` in its own session.
+#[cfg(unix)]
+fn spawn_detached(child: &mut std::process::Command) -> std::io::Result<()> {
     // SAFETY: `setsid` is async-signal-safe and touches no memory of this
     // process, so it is sound between fork and exec.
     #[expect(
@@ -183,17 +191,59 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
         reason = "setsid has no safe std wrapper; process_group(0) is not enough because Claude Code also walks processes by session id"
     )]
     unsafe {
-        std::os::unix::process::CommandExt::pre_exec(&mut child, || {
+        std::os::unix::process::CommandExt::pre_exec(child, || {
             if libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
         });
     }
-    child
-        .spawn()
-        .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
-    std::process::exit(0)
+    child.spawn().map(drop)
+}
+
+/// Start `child` with no console, in its own process group, and outside the
+/// job of the launcher, so that closing the console or the job of the agent
+/// does not end the daemon.
+///
+/// `CREATE_NO_WINDOW` is not set: Windows ignores it with `DETACHED_PROCESS`.
+/// A process with no console that starts a console program gives it a new,
+/// visible console, so a child of the daemon needs `CREATE_NO_WINDOW`. The
+/// daemon starts no child today.
+///
+/// A job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` refuses
+/// `CREATE_BREAKAWAY_FROM_JOB` with `ERROR_ACCESS_DENIED`. The launcher then
+/// starts the daemon once more inside the job, and says so: the daemon ends
+/// when the job ends.
+///
+/// std passes every inheritable handle of the launcher to the child, not only
+/// the three it names. The stdin of the launcher, like a captured stream in
+/// [`detached_stdio`], is made non-inheritable here, so the daemon holds no end
+/// of a pipe of the caller. The launcher exits right after the spawn.
+#[cfg(windows)]
+fn spawn_detached(child: &mut std::process::Command) -> std::io::Result<()> {
+    use std::os::windows::io::AsHandle as _;
+    use std::os::windows::process::CommandExt as _;
+
+    use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+    };
+
+    keep_from_child(std::io::stdin().as_handle());
+    let detached = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    child.creation_flags(detached | CREATE_BREAKAWAY_FROM_JOB);
+    match child.spawn() {
+        Ok(_) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed()) => {
+            child.creation_flags(detached);
+            child.spawn()?;
+            crate::status::warn(
+                "the daemon could not leave the job of its parent, so it ends when the job ends",
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The detached daemon's copy of one of the launcher's output streams. A pipe or
@@ -202,6 +252,7 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
 /// end would block the caller for its whole life and fill the pipe with message
 /// bodies. A file, `/dev/null` or a tty is inherited, so the skill's `.stderr`
 /// file still gets startup errors.
+#[cfg(unix)]
 fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
     use std::os::unix::fs::FileTypeExt as _;
     let captured = stream
@@ -215,6 +266,56 @@ fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
         std::process::Stdio::null()
     } else {
         std::process::Stdio::inherit()
+    }
+}
+
+/// The detached daemon's copy of one of the launcher's output streams, on
+/// Windows. Only a file on disk is inherited, so the skill's `.stderr` file
+/// still gets startup errors. A pipe is how a caller captures output, as on
+/// Unix. A console handle means nothing to a process with no console. Each
+/// of them, and a handle whose type cannot be read, gives null, and the
+/// handle is kept from the daemon ([`keep_from_child`]).
+#[cfg(windows)]
+fn detached_stdio(stream: &impl std::os::windows::io::AsHandle) -> std::process::Stdio {
+    use std::os::windows::io::AsRawHandle as _;
+
+    use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_DISK, GetFileType};
+
+    let handle = stream.as_handle();
+    // SAFETY: `GetFileType` only reads the type of a handle that `handle`
+    // borrows, so the handle stays open for the call.
+    #[expect(
+        unsafe_code,
+        reason = "GetFileType has no safe std wrapper, and std::fs::File::metadata does not tell a pipe from a console"
+    )]
+    let kind = unsafe { GetFileType(handle.as_raw_handle()) };
+    if kind == FILE_TYPE_DISK {
+        std::process::Stdio::inherit()
+    } else {
+        keep_from_child(handle);
+        std::process::Stdio::null()
+    }
+}
+
+/// Clear the inherit flag of a handle of the launcher. std starts a child with
+/// `bInheritHandles`, so an inheritable handle of the launcher reaches the
+/// daemon even when the daemon gets null in its place, and a pipe of the caller
+/// would then never reach its end. A null or invalid handle makes the call
+/// fail, and the failure is ignored: there is then nothing to inherit.
+#[cfg(windows)]
+fn keep_from_child(handle: std::os::windows::io::BorrowedHandle<'_>) {
+    use std::os::windows::io::AsRawHandle as _;
+
+    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+
+    // SAFETY: `SetHandleInformation` only changes the inherit flag of a handle
+    // that `handle` borrows, so the handle stays open for the call.
+    #[expect(
+        unsafe_code,
+        reason = "std has no safe way to stop a handle from being inherited"
+    )]
+    unsafe {
+        SetHandleInformation(handle.as_raw_handle(), HANDLE_FLAG_INHERIT, 0);
     }
 }
 
