@@ -1,3 +1,9 @@
+## 0.12.9 (2026-10-24)
+
+### Fixes
+
+- A peer that left no longer comes back as a ghost, the peer count drops, and a replayed event is served once
+
 ## 0.12.8 (2026-10-23)
 
 ### Fixes
