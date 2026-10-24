@@ -55,11 +55,25 @@ pub fn error(msg: &str) {
 /// A path for display: `$HOME` collapsed to `~`, else the full path.
 #[must_use]
 pub fn home_path(path: &Path) -> String {
-    if let Some(home) = std::env::var_os("HOME")
+    #[cfg(unix)]
+    let home = std::env::var_os("HOME");
+    #[cfg(windows)]
+    let home = windows_home();
+    if let Some(home) = home
         && !home.is_empty()
         && let Ok(rest) = path.strip_prefix(PathBuf::from(home))
     {
         return format!("~/{}", rest.display());
     }
     path.display().to_string()
+}
+
+/// The home of the user on Windows: `USERPROFILE`, which Windows sets and the
+/// agents read, and else `HOME`. Git for Windows sets `HOME` to the same
+/// folder; an MSYS2 or Cygwin `HOME` is another folder, which no agent reads.
+#[cfg(windows)]
+pub(crate) fn windows_home() -> Option<std::ffi::OsString> {
+    std::env::var_os("USERPROFILE")
+        .filter(|home| !home.is_empty())
+        .or_else(|| std::env::var_os("HOME").filter(|home| !home.is_empty()))
 }

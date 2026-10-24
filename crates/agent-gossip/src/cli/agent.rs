@@ -217,8 +217,20 @@ fn dir_in_sync(dir: &Dir<'_>, dest: &Path) -> bool {
 ///
 /// # Errors
 /// `$HOME` is unset.
+#[cfg(unix)]
 pub(crate) fn home_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("`$HOME` is not set")?;
+    Ok(PathBuf::from(home))
+}
+
+/// The home of the user on Windows: `USERPROFILE`, which the agents read, and
+/// else `HOME`.
+///
+/// # Errors
+/// Neither is set.
+#[cfg(windows)]
+pub(crate) fn home_dir() -> Result<PathBuf> {
+    let home = crate::status::windows_home().context("neither `USERPROFILE` nor `HOME` is set")?;
     Ok(PathBuf::from(home))
 }
 
