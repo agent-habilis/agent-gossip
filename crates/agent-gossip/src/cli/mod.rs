@@ -28,6 +28,8 @@ use crate::topic::resolve_topic;
 mod a2a_discover;
 pub(crate) mod agent;
 pub(crate) mod args;
+#[cfg(windows)]
+mod auto;
 pub(crate) mod bell;
 mod discover;
 mod doctor;
@@ -170,12 +172,34 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
     }
     habilis_network::runtime::validate_owner_pid(owner)?;
     let mut child = std::process::Command::new(std::env::current_exe()?);
+    // On Windows `auto` was resolved from this launcher's parents, which the
+    // daemon does not share, so the daemon gets the resolved values.
+    #[cfg(unix)]
+    child.args(std::env::args_os().skip(1));
+    #[cfg(windows)]
+    child.args(auto::concrete_args(
+        std::env::args_os().skip(1),
+        owner,
+        shared.state_file.as_deref(),
+    ));
     child
-        .args(std::env::args_os().skip(1))
         .arg("--detached-child")
         .stdin(std::process::Stdio::null())
-        .stdout(detached_stdio(&std::io::stdout()))
-        .stderr(detached_stdio(&std::io::stderr()));
+        .stdout(detached_stdio(&std::io::stdout()));
+    #[cfg(unix)]
+    child.stderr(detached_stdio(&std::io::stderr()));
+    #[cfg(windows)]
+    match shared.stderr_file.as_deref() {
+        Some(path) => {
+            // The launcher's own stderr can be a pipe of the caller, and the
+            // daemon gets the file instead, so it must not inherit the pipe.
+            keep_from_child(std::os::windows::io::AsHandle::as_handle(&std::io::stderr()));
+            child.stderr(session_stderr(path)?);
+        }
+        None => {
+            child.stderr(detached_stdio(&std::io::stderr()));
+        }
+    }
     spawn_detached(&mut child)
         .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
     std::process::exit(0)
@@ -317,6 +341,26 @@ fn keep_from_child(handle: std::os::windows::io::BorrowedHandle<'_>) {
     unsafe {
         SetHandleInformation(handle.as_raw_handle(), HANDLE_FLAG_INHERIT, 0);
     }
+}
+
+/// The `.stderr` file of a session on Windows, for the detached daemon. An older
+/// file moves to `<file>.prev` first, so a relaunch keeps the errors of the
+/// last daemon; if that move fails, the launch stops and the old file stays.
+/// The folder of the file is made private before the file is created.
+#[cfg(windows)]
+fn session_stderr(path: &std::path::Path) -> Result<std::fs::File> {
+    let base = crate::runtime_base();
+    habilis_network::util::ensure_parent_private(Some(&base), path)
+        .map_err(|error| anyhow::anyhow!("prepare {}: {error}", path.display()))?;
+    let mut prev = path.as_os_str().to_owned();
+    prev.push(".prev");
+    match std::fs::rename(path, &prev) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => anyhow::bail!("move {} to .prev: {error}", path.display()),
+    }
+    std::fs::File::create(path)
+        .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))
 }
 
 /// Build the output sink, set up the mesh, and run the event loop. The
@@ -1125,7 +1169,22 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         timeout_secs,
         legacy_output: _,
     } = opts;
+    #[cfg(unix)]
     let ready = wait_for_ready(&state_file, timeout_secs).await?;
+    // On Windows the skill cannot build the path of the `.stderr` file, so a
+    // failed `ready` prints it: the errors of a launch that did not serve.
+    #[cfg(windows)]
+    let ready = match wait_for_ready(&state_file, timeout_secs).await {
+        Ok(ready) => ready,
+        Err(error) => {
+            let stderr =
+                std::fs::read_to_string(auto::stderr_beside(&state_file)).unwrap_or_default();
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
+            return Err(error);
+        }
+    };
     print_ready_identity(&ready);
     Ok(())
 }

@@ -26,6 +26,7 @@ pub(crate) struct PollOpts {
     /// then poll as the identity it carries. Lets a poll be armed before the
     /// daemon has minted its identity.
     #[arg(long, value_name = "PATH", conflicts_with_all = ["gossip", "nickname"])]
+    #[cfg_attr(windows, arg(value_parser = crate::cli::auto::state_file))]
     pub state_file: Option<std::path::PathBuf>,
 
     /// Debug/recovery read: only return events surfaced after this sequence

@@ -15,6 +15,7 @@ pub(crate) struct ReadyOpts {
     /// `create`/`join`. `ready` blocks until that file reports the daemon
     /// is serving, then exits 0 (non-zero on timeout).
     #[arg(long)]
+    #[cfg_attr(windows, arg(value_parser = crate::cli::auto::state_file))]
     pub state_file: std::path::PathBuf,
 
     /// Max seconds to wait for the daemon to start serving before giving up.
