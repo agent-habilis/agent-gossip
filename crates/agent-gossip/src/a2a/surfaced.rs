@@ -295,10 +295,10 @@ pub(crate) struct SurfacedState {
     receipted: BTreeSet<u64>,
     /// When a foreground poll last ran.
     last_foreground_poll: Option<TokioInstant>,
-    /// The frames already in the ring, by the engine's dedup key (author key and id), so a copy
-    /// that reaches the tap again is not a second event. The engine drops a copy it still holds;
-    /// this holds the line when it does not, and keeps a replay from ringing the bell. Sized to the
-    /// ring: a frame older than the ring is gone from the agent's view either way.
+    /// The frames served, by the engine's dedup key (author key and id), so a copy that reaches
+    /// the tap again is not a second event. The engine drops a copy it still holds; this holds the
+    /// line when it does not, and keeps a replay from ringing the bell. Sized past the ring, see
+    /// [`SERVED_FRAMES_CAP`](crate::a2a::tuning::SERVED_FRAMES_CAP).
     served_frames: BoundedFifoSet<DedupKey>,
 }
 
@@ -381,7 +381,7 @@ impl SurfacedState {
             last_served: 0,
             receipted: BTreeSet::new(),
             last_foreground_poll: None,
-            served_frames: BoundedFifoSet::new(crate::a2a::tuning::SURFACED_EVENTS_CAP),
+            served_frames: BoundedFifoSet::new(crate::a2a::tuning::SERVED_FRAMES_CAP),
         }
     }
 
