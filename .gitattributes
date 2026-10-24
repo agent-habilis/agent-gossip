@@ -1,0 +1,4 @@
+# LF in every checkout, Windows included. The binary embeds the skills and
+# the tests read docs at build time, and both parse LF; a CRLF checkout of
+# core.autocrlf=true breaks them. Git finds the binary files itself.
+* text=auto eol=lf
