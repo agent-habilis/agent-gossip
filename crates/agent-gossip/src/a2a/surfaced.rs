@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
-use habilis_network::protocol::{MessageKind, Nickname};
+use habilis_network::protocol::{DedupKey, MessageKind, Nickname};
+use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::wire;
@@ -294,6 +295,34 @@ pub(crate) struct SurfacedState {
     receipted: BTreeSet<u64>,
     /// When a foreground poll last ran.
     last_foreground_poll: Option<TokioInstant>,
+    /// The frames served, by the engine's dedup key (author key and id), so a copy that reaches
+    /// the tap again is not a second event. The engine drops a copy it still holds; this holds the
+    /// line when it does not, and keeps a replay from ringing the bell. Sized past the ring, see
+    /// [`SERVED_FRAMES_CAP`](crate::a2a::tuning::SERVED_FRAMES_CAP).
+    served_frames: BoundedFifoSet<DedupKey>,
+}
+
+/// The frame an event carries, when it carries one. Transient events (a timeout, a return, a
+/// report) have no frame and are never a copy of anything.
+fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
+    match event {
+        OutputEvent::Message { msg, .. }
+        | OutputEvent::Presence { msg }
+        | OutputEvent::Task { msg, .. } => Some(msg.dedup_key()),
+        OutputEvent::TaskMessage { .. }
+        | OutputEvent::Ready { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::Receipt { .. }
+        | OutputEvent::StateChanged { .. } => None,
+    }
 }
 
 /// The author and frame id a `read` receipt goes back to.
@@ -352,11 +381,17 @@ impl SurfacedState {
             last_served: 0,
             receipted: BTreeSet::new(),
             last_foreground_poll: None,
+            served_frames: BoundedFifoSet::new(crate::a2a::tuning::SERVED_FRAMES_CAP),
         }
     }
 
     /// Record a surfaced event in the ring (the `Output` tap drain).
     pub(crate) fn push(&mut self, event: OutputEvent) {
+        if let Some(key) = frame_key(&event)
+            && !self.served_frames.insert(key)
+        {
+            return;
+        }
         self.surfaced_events.push(event);
     }
 
@@ -1291,5 +1326,33 @@ mod tests {
         surfaced.expire_poll_waiters(now + cap + Duration::from_millis(1));
         assert_eq!(rx.await.expect("expired"), "[]", "cap elapsed → empty");
         assert!(surfaced.poll_waiters.is_empty());
+    }
+    fn joined_event(name: &str) -> OutputEvent {
+        OutputEvent::Presence {
+            msg: Box::new(
+                Message::new_joined(&MeshId::from("test"), &nick(name))
+                    .sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
+        }
+    }
+
+    /// A frame served once is served once: a copy that reaches the ring again, by whatever road,
+    /// is not a new event. Keyed on the author key and the id, as the engine's dedup is.
+    #[test]
+    fn the_same_frame_is_served_once() {
+        let mut state = SurfacedState::new();
+        let event = joined_event("swift-cedar");
+        let OutputEvent::Presence { msg } = &event else {
+            unreachable!()
+        };
+        let copy = OutputEvent::Presence { msg: msg.clone() };
+        state.push(event);
+        state.push(copy);
+        assert_eq!(
+            state.poll_since(None).events.len(),
+            1,
+            "a copy of a served frame was served again"
+        );
     }
 }
