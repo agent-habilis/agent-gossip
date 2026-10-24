@@ -98,13 +98,15 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 mimalloc = { version = "0.1", default-features = false }
 
-# The process flags and the handle type that start the detached daemon on
-# Windows (`cli::spawn_detached`, `cli::detached_stdio`). Already transitive in
+# The process flags, the handle type and the stderr handle that start the
+# daemon on Windows (`cli::spawn_detached`, `cli::detached_stdio`,
+# `cli::redirect_stderr`). Already transitive in
 # the lockfile at 0.61, as in the engine, so it adds no crate to the graph.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",
+  "Win32_System_Console",
   "Win32_System_Threading",
 ] }
 

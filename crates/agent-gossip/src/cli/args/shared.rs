@@ -54,11 +54,11 @@ pub(crate) struct SharedServerOpts {
     #[cfg_attr(windows, arg(value_parser = crate::cli::auto::pid))]
     pub owner_pid: Option<u32>,
 
-    /// Windows only: the file that the detached daemon writes its stderr to,
-    /// or `auto` for `<runtime-base>/sessions/<agent>.stderr`. The launcher
-    /// moves an older file to `.stderr.prev` first. Needs `--owner-pid`.
+    /// Windows only: the file that the daemon writes its stderr to, or `auto`
+    /// for `<runtime-base>/sessions/<agent>.stderr`. An older file moves to
+    /// `.stderr.prev` first. On Unix the shell redirects stderr instead.
     #[cfg(windows)]
-    #[arg(long, value_name = "PATH", requires = "owner_pid", value_parser = crate::cli::auto::stderr_file)]
+    #[arg(long, value_name = "PATH", value_parser = crate::cli::auto::stderr_file)]
     pub stderr_file: Option<std::path::PathBuf>,
 
     /// Internal marker: this process is the detached child that

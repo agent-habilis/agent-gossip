@@ -91,15 +91,21 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
         Commands::Create { opts } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&opts.shared)?;
             install_tuning(&opts.shared.tuning);
             Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&opts.shared)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             install_tuning(&opts.shared.tuning);
             Box::pin(join(opts.gossip, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&opts.shared)?;
             install_tuning(&opts.shared.tuning);
             Box::pin(topic(opts)).await
         }
@@ -189,16 +195,12 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
     #[cfg(unix)]
     child.stderr(detached_stdio(&std::io::stderr()));
     #[cfg(windows)]
-    match shared.stderr_file.as_deref() {
-        Some(path) => {
-            // The launcher's own stderr can be a pipe of the caller, and the
-            // daemon gets the file instead, so it must not inherit the pipe.
-            keep_from_child(std::os::windows::io::AsHandle::as_handle(&std::io::stderr()));
-            child.stderr(session_stderr(path)?);
-        }
-        None => {
-            child.stderr(detached_stdio(&std::io::stderr()));
-        }
+    if shared.stderr_file.is_some() {
+        // `stderr_to_session_file` already made the session file the
+        // launcher's stderr, so the daemon inherits it.
+        child.stderr(std::process::Stdio::inherit());
+    } else {
+        child.stderr(detached_stdio(&std::io::stderr()));
     }
     spawn_detached(&mut child)
         .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
@@ -343,7 +345,20 @@ fn keep_from_child(handle: std::os::windows::io::BorrowedHandle<'_>) {
     }
 }
 
-/// The `.stderr` file of a session on Windows, for the detached daemon. An older
+/// With `--stderr-file` on Windows, make the session file the stderr of this
+/// process before anything else runs, as the `2>` of the shell does on Unix:
+/// an error found while the mesh and the password are resolved lands there,
+/// and an old file is never shown as the reason. A detached daemon inherits
+/// it from its launcher, which leaves the flag out of the daemon's arguments.
+#[cfg(windows)]
+fn stderr_to_session_file(shared: &SharedServerOpts) -> Result<()> {
+    match shared.stderr_file.as_deref() {
+        Some(path) => redirect_stderr(session_stderr(path)?),
+        None => Ok(()),
+    }
+}
+
+/// The `.stderr` file of a session on Windows. An older
 /// file moves to `<file>.prev` first, so a relaunch keeps the errors of the
 /// last daemon; if that move fails, the launch stops and the old file stays.
 /// The folder of the file is made private before the file is created.
@@ -361,6 +376,31 @@ fn session_stderr(path: &std::path::Path) -> Result<std::fs::File> {
     }
     std::fs::File::create(path)
         .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))
+}
+
+/// Make `file` the stderr of this process, for the rest of its life. std reads
+/// the handle of stderr from the process on each write, so `eprintln!` and the
+/// log sink follow it.
+#[cfg(windows)]
+fn redirect_stderr(file: std::fs::File) -> Result<()> {
+    use std::os::windows::io::IntoRawHandle as _;
+
+    use windows_sys::Win32::System::Console::{STD_ERROR_HANDLE, SetStdHandle};
+
+    // The stderr until now can be a pipe of the caller. A child of this
+    // process, the detached daemon, must not inherit it.
+    keep_from_child(std::os::windows::io::AsHandle::as_handle(&std::io::stderr()));
+    let handle = file.into_raw_handle();
+    // SAFETY: `handle` is an open file handle that this process now owns and
+    // never closes, so it stays valid as the stderr of the process.
+    #[expect(unsafe_code, reason = "SetStdHandle has no safe std wrapper")]
+    let set = unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) };
+    anyhow::ensure!(
+        set != 0,
+        "redirect stderr: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(())
 }
 
 /// Build the output sink, set up the mesh, and run the event loop. The

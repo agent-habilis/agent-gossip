@@ -103,7 +103,14 @@ fn render_skills(src: &Path, dest: &Path) {
         .collect();
     skills.sort();
 
-    let mut loader = |path: &Path| std::fs::read_to_string(path).map_err(|error| error.to_string());
+    // A build for Windows reads `<dir>/windows/<file>` in place of an included
+    // `<dir>/<file>` when it exists: the shell cannot name the agent process
+    // there, so those parts use `auto`. Includes inside it still resolve from
+    // `<dir>`. Every other target reads the sources as they are.
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
+    let mut loader = |path: &Path| {
+        std::fs::read_to_string(source_for(path, windows)).map_err(|error| error.to_string())
+    };
     for skill_dir in skills {
         let skill = skill_dir
             .file_name()
@@ -118,6 +125,18 @@ fn render_skills(src: &Path, dest: &Path) {
         std::fs::write(out.join("SKILL.md"), rendered)
             .unwrap_or_else(|error| panic!("write {}/SKILL.md: {error}", out.display()));
     }
+}
+
+/// The file a build reads for `path`: its `windows/` variant on Windows, when
+/// there is one, and else `path`.
+fn source_for(path: &Path, windows: bool) -> PathBuf {
+    if windows && let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+        let variant = dir.join("windows").join(name);
+        if variant.is_file() {
+            return variant;
+        }
+    }
+    path.to_path_buf()
 }
 
 /// Hash the generated tree and publish it as `AGENT_GOSSIP_EMBED_FINGERPRINT`.

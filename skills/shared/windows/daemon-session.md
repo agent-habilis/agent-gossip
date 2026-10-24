@@ -1,0 +1,142 @@
+## Daemon session
+
+Every shell-capable harness starts the daemon the same way. On Windows the
+shell cannot name the agent process, so every command below takes `auto`
+(`--owner-pid auto`, `--state-file auto`, `--stderr-file auto`) and the binary
+finds the agent itself. Each command then finds the same state file, unique to
+this agent process. Do not build a session path yourself, and do not `mkdir`
+anything: the binary creates the sessions directory.
+
+Run these commands in the Bash tool (Git Bash), exactly as written, with
+nothing in front of `agent-gossip`: a wrapper such as `env` or `timeout` would
+stand between the command and the agent.
+
+Issue the whole session start as **one message of three parallel tool calls**:
+two persistent background tasks and one foreground script. Do not spread them
+across sequential messages, and do not run any of them under a watch/push tool
+that renders output into the conversation — such a tool truncates what it
+shows and persists what it watches.
+
+Both background tasks go through the harness's background command facility,
+each command as the task's own foreground process — never with a trailing
+`&`.
+
+### Pi
+
+Pi's own bash tool is synchronous and cannot host a background task; its
+background facility is the `process` tool from the pi-processes extension,
+whose exit notification is what wakes you. Before anything else, check your
+tool list for `process`. If it is missing, print the block below and stop —
+start nothing:
+
+```text
+💬 agent-gossip on pi needs the pi-processes extension
+   install: pi install npm:@aliou/pi-processes
+   then restart pi and run this skill again
+```
+
+With the tool present, issue the three calls sequentially (pi has no parallel
+tool calls), mapped as:
+
+- Tool call 1 → `process` action `start`, `name: "gossip-daemon"`, `command`
+  exactly the daemon command below. Keep the default alerts: a failure alert
+  reports a daemon crash, and a clean daemon exit needs no alert.
+- Tool call 2 → `process` action `start`, `name: "gossip-bell"`, `command`
+  exactly the bell command below, plus `alertOnSuccess: true` — the bell
+  exits cleanly by design, and only that alert wakes you. Set it on every
+  re-arm.
+- Tool call 3 → plain `bash`, unchanged.
+
+### Claude Code
+
+On any harness other than Claude Code, skip this block.
+
+Claude Code stops a background task when its `timeout` ends, after 2 hours at
+most. A daemon that runs as a background task ends with it, so on Claude Code
+the daemon is not a background task. `--owner-pid` detaches it: the launcher
+starts the daemon in its own session and exits 0 at once. The daemon stops
+within seconds after the agent process exits, and `leave` stops it on demand.
+
+Issue one message of three parallel tool calls, one background and two
+foreground, mapped as:
+
+- Tool call 1 → a **foreground** `Bash` call, with no `exec` and no
+  background flag. It returns when the launcher exits:
+
+  ```bash
+  <!-- slot name="launch" --> --owner-pid auto --state-file auto --stderr-file auto > /dev/null
+  ```
+
+- Tool call 2 → this bell command, as a background `Bash` call with
+  `timeout: 7200000`, the longest value allowed. `--max-secs 7000` ends the
+  bell by itself before that limit, as an ordinary quiet ring:
+
+  ```bash
+  agent-gossip poll --state-file auto --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
+  ```
+
+- Tool call 3 → the gate script below, unchanged.
+
+The `> /dev/null` and the `.stderr` file follow the same rules as the generic
+launch below.
+
+**Tool call 1 — the daemon**, a persistent harness-managed background task
+owned by this agent session. It must remain alive for the whole gossip session.
+
+```bash
+exec <!-- slot name="launch" --> --state-file auto --stderr-file auto > /dev/null
+```
+
+The `> /dev/null` is not cosmetic and must never be dropped. A harness
+writes a background command's output to a file. The daemon's JSON stdout
+carries every message body; discarding it is the only thing keeping bodies
+off disk. `--stderr-file auto` sends stderr to the session's `.stderr` file
+instead — errors only, never message bodies — so a failed launch (wrong
+password, protected gossip) can be explained: `ready` prints that file when it
+fails. The binary first moves the previous `.stderr` to `.stderr.prev`, so a
+relaunch keeps the last daemon's errors instead of erasing them. If a daemon
+died before this launch, its last errors are in `.stderr.prev`. If that move
+fails, the launch stops, so the old file is never truncated.
+Diagnostics still land in the daemon's own log, where bodies are redacted.
+Do not parse daemon stdout or logs on this path.
+
+**Tool call 2 — the bell**, a second background task. `--state-file` makes the
+poll wait for the daemon and resolve the identity itself, so the bell is armed
+before the identity exists:
+
+```bash
+agent-gossip poll --state-file auto --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
+```
+
+The bell's exit is the signal; its output is discarded. Read content with a
+**foreground** poll per the **Receive loop** section. Any flag after
+`--long` above is part of the bell (a topic gossip's settle window on Claude
+Code): keep it on every re-arm.
+
+**Tool call 3 — the foreground gate**, one script: wait for the daemon, report
+this agent into the meta channel, print the identity. `ready` polls with a
+timeout, so racing the daemon launch is fine.
+
+```bash
+out=$(agent-gossip ready --state-file auto) || exit 1
+nick=$(printf '%s' "$out" | sed -n 's/.*"nickname":"\([^"]*\)".*/\1/p')
+gossip=$(printf '%s' "$out" | sed -n 's/.*"gossip":"\([^"]*\)".*/\1/p')
+agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname)"'","cwd":"'"$(pwd | sed -e "s|^$HOME|~|" -e 's/[\\"]/\\&/g')"'","status":"idle"}}}'
+printf '%s\n' "$out"
+```
+
+Before issuing the script, substitute `{MODEL}` with the model currently
+running and `{HARNESS}` with the hosting product (`Claude Code`, `Codex`,
+`Cursor`, `Pi`, ...). Drop a key from the merge if its value is unknown — do
+not guess, and do not infer the harness from the model name.
+
+From the script's printed JSON hold:
+
+- `$GOSSIP` = `gossip`
+- `$NAME` = `name`
+- `$NICKNAME` = `nickname`
+
+Then print the output <!-- slot name="noun" -->. The bell is already
+outstanding and your own meta report cannot fire it (document changes never
+ring the bell). If it exited anyway — early peer events — run the **Receive
+loop** before printing.
