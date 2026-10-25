@@ -569,20 +569,22 @@ fn cli_task_create_attempt(mesh: &str, nickname: &str, to: &str, text: &str) -> 
 /// (parsed from the JSON-RPC response the call prints on stdout). Panics on
 /// failure.
 ///
-/// Waits for `to`'s card first: a directed call is rejected until the seal key
-/// replicates, so issuing one the moment the mesh links is a race. See
-/// [`await_peer_card_cli`].
+/// Waits for the cards both ways first: a directed call is rejected until the
+/// seal key replicates, so issuing one the moment the mesh links is a race. The
+/// worker seals its reply to the caller, so a worker without the caller's card
+/// drops the reply. See [`await_peer_card_cli`].
 ///
 /// Then **re-issues while the peer never answers**, on the same reasoning as
 /// [`InProcNode::a2a_call_retrying`] — the card arriving does not mean the
 /// overlay holds a live link, and a directed request sent into that gap is
 /// dropped for good rather than healed, leaving the sender to block until the
-/// heal tick re-bridges the pair. Waiting on the card guards one race; this
+/// heal tick re-bridges the pair. Waiting on the cards guards one race; this
 /// guards the other. Only the transport timeout is retried: a real answer,
 /// including a semantic error like `unknown peer`, means the round trip
 /// completed and is handed to the assertion below untouched.
 pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
     await_peer_card_cli(mesh, nickname, to);
+    await_peer_card_cli(mesh, to, nickname);
     let deadline = Instant::now() + MSG_TIMEOUT;
     let out = loop {
         let attempt = cli_task_create_attempt(mesh, nickname, to, text);
