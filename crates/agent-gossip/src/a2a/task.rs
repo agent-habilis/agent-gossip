@@ -996,6 +996,13 @@ mod tests {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
     }
 
+    /// A clock a day ahead of now. With Rust 1.95 on Windows an `Instant`
+    /// cannot go back past the boot, and a CI runner may have been up for
+    /// minutes, so every test that steps back from its `now` starts here.
+    fn a_day_ahead() -> Instant {
+        Instant::now() + Duration::from_hours(25)
+    }
+
     /// Every live task is beaten once quiet past the cadence — on either side,
     /// whoever holds the ball, however long the skill has been silent. Pre-fix
     /// only the ball-owner beat, and only within 120 s of its skill's last leg,
@@ -1003,7 +1010,7 @@ mod tests {
     #[test]
     fn keepalive_covers_every_live_task_past_the_cadence() {
         let cadence = Duration::from_secs(30);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let quiet = now.checked_sub(2 * cadence).unwrap();
 
         // I initiated it and the worker holds the ball.
@@ -1040,7 +1047,7 @@ mod tests {
     #[test]
     fn a_peer_beat_does_not_suppress_our_beat() {
         let cadence = Duration::from_secs(30);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let mut tasks = HashMap::new();
         apply(
             &mut tasks,
@@ -1058,7 +1065,7 @@ mod tests {
     #[test]
     fn a_forgotten_task_stops_beating_after_the_silence_cap() {
         let cadence = Duration::from_secs(30);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let day_ago = now.checked_sub(Duration::from_hours(25)).unwrap();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), day_ago);
@@ -1075,7 +1082,7 @@ mod tests {
     #[test]
     fn a_peer_that_never_beat_is_not_reaped_for_silence() {
         let timeout = Duration::from_mins(2);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let accepted = now.checked_sub(timeout * 2).unwrap();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), accepted);
@@ -1093,7 +1100,7 @@ mod tests {
     #[test]
     fn a_peer_that_never_beat_is_reaped_after_the_silence_cap() {
         let timeout = Duration::from_mins(2);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let day_ago = now.checked_sub(Duration::from_hours(25)).unwrap();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
@@ -1646,7 +1653,7 @@ mod tests {
     #[test]
     fn a_leg_on_a_reaped_task_is_a_replay() {
         let timeout = Duration::from_mins(2);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         let rec = tasks.get_mut(&tid()).unwrap();
@@ -1675,7 +1682,7 @@ mod tests {
         use crate::a2a::rpc::A2aOp;
 
         let timeout = Duration::from_mins(2);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let mut app = A2aApp::new();
         apply(&mut app.tasks, &leg(LegKind::Offer, true), now);
         let rec = app.tasks.get_mut(&tid()).unwrap();
@@ -1924,7 +1931,7 @@ mod tests {
     #[test]
     fn a_task_cancelled_by_the_sweep_is_not_reaped_in_the_same_pass() {
         let timeout = Duration::from_mins(2);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
         // A peer that beats, idle well past the debounce.
@@ -1961,7 +1968,7 @@ mod tests {
     #[test]
     fn own_beats_do_not_hold_off_the_reaper() {
         let timeout = Duration::from_mins(2);
-        let now = Instant::now();
+        let now = a_day_ahead();
         let long_ago = now.checked_sub(timeout * 2).expect("test clock");
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), long_ago);
@@ -2232,7 +2239,7 @@ mod tests {
 
         let mesh = MeshId::from("test");
         let task_id = tid();
-        let now = Instant::now();
+        let now = a_day_ahead();
 
         // The worker's own status leg, as the plaintext twin (`sealed: false`)
         // or as the wire frame the addressee alone can read (`sealed: true`).
