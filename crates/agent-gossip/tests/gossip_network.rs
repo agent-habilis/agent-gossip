@@ -3152,6 +3152,24 @@ fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     assert_eq!(report["left"][0]["confirmed"], true, "report: {report}");
 
+    // On Windows `peers` finds the daemon by its marker, and the daemon removes
+    // the marker before it broadcasts `left`, so `peers` fails there even while
+    // the daemon runs and the probe below proves nothing. The process is the
+    // probe on Windows: `leave` waits for it to exit before it confirms.
+    #[cfg(windows)]
+    {
+        let exited = child.try_wait().expect("failed to query the daemon");
+        if exited.is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_file(&log);
+        }
+        assert!(
+            exited.is_some(),
+            "leave reported confirmed while the daemon was still running"
+        );
+    }
+
     // The daemon's own socket is the black-box probe: `peers` reaches it from
     // the nickname alone — no state file involved — so it answers for exactly
     // as long as the daemon is up.
