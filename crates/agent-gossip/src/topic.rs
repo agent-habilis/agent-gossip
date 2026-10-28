@@ -62,14 +62,19 @@ mod tests {
         let mesh = super::derive_topic_mesh("standup").unwrap();
         assert_eq!(
             mesh.to_string(),
-            "L4rA2igekqYAiecUqXZpt3yPPEPPUwDF6UuaVXxT4QdHbsiKQHCcvAJbq37HwwmKbD"
+            "L4rA2igekqYAiecUqXZpt3yPPEPPUwDF6UuaVXxT4QdHbsiKQHCcvAJbq37HwwmKbD",
+            "the topic id derivation matches the released value"
         );
     }
 
     #[test]
     fn topic_mesh_is_public_with_udp_webrtc_gossip_and_relay_but_no_multihop() {
         let mesh = super::derive_topic_mesh("x").expect("a non-empty string derives");
-        assert_eq!(mesh.config().lookups, LookupOpts::public_preset());
+        assert_eq!(
+            mesh.config().lookups,
+            LookupOpts::public_preset(),
+            "a topic mesh uses the public lookups"
+        );
         assert_eq!(
             mesh.config().transport,
             TransportPolicy {
@@ -78,7 +83,8 @@ mod tests {
                 multihop: false,
                 gossip: true,
                 relay_transport: true,
-            }
+            },
+            "a topic mesh is udp, webrtc and gossip with relay, not multihop"
         );
     }
 }

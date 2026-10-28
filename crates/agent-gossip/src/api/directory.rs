@@ -277,7 +277,8 @@ mod lookup_tests {
     fn directory_ids_survive_the_lookup_api_change() {
         assert_eq!(
             directory_topic(true, LookupSet::default()),
-            "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)"
+            "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)",
+            "the directory topic id is stable across the lookup API"
         );
         assert_eq!(
             directory_topic(
@@ -287,11 +288,13 @@ mod lookup_tests {
                     ..LookupSet::default()
                 }
             ),
-            "TopicId(aaef8fe2a5ca5560cdecc153d4ee18d446e6448d831e97e1639e1ef8b6b42eaa)"
+            "TopicId(aaef8fe2a5ca5560cdecc153d4ee18d446e6448d831e97e1639e1ef8b6b42eaa)",
+            "the directory topic id is stable across the lookup API"
         );
         assert_eq!(
             directory_topic(false, LookupSet::default()),
-            "TopicId(14a8001b57bb1cbcc7b94f936c71cb94c2ab39a8c9b0423dbad0da809f93db8f)"
+            "TopicId(14a8001b57bb1cbcc7b94f936c71cb94c2ab39a8c9b0423dbad0da809f93db8f)",
+            "the directory topic id is stable across the lookup API"
         );
     }
 }
