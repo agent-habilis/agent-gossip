@@ -46,6 +46,10 @@ pub(crate) fn own_card(
         required: None,
         params: None,
     };
+    let modes: Vec<String> = ["text/plain", "application/json", "application/octet-stream"]
+        .into_iter()
+        .map(String::from)
+        .collect();
     AgentCard {
         name: nickname.as_str().to_string(),
         description: format!(
@@ -91,16 +95,8 @@ pub(crate) fn own_card(
                 },
             ],
         },
-        default_input_modes: vec![
-            "text/plain".to_string(),
-            "application/json".to_string(),
-            "application/octet-stream".to_string(),
-        ],
-        default_output_modes: vec![
-            "text/plain".to_string(),
-            "application/json".to_string(),
-            "application/octet-stream".to_string(),
-        ],
+        default_input_modes: modes.clone(),
+        default_output_modes: modes,
         skills: vec![
             AgentSkill {
                 id: "chat".to_string(),
@@ -278,15 +274,13 @@ pub(crate) fn absent_peers<'doc>(
     live: &HashSet<&str>,
     self_nick: &Nickname,
 ) -> Vec<&'doc str> {
-    document
-        .get("peers")
-        .and_then(serde_json::Value::as_object)
+    let peers: Option<&serde_json::Map<String, serde_json::Value>> =
+        document.get("peers").and_then(serde_json::Value::as_object);
+    peers
         .map(|peers| {
-            peers
-                .keys()
-                .map(String::as_str)
-                .filter(|nick| *nick != self_nick.as_str() && !live.contains(nick))
-                .collect()
+            let self_name: &str = self_nick.as_str();
+            let is_absent = |nick: &&str| *nick != self_name && !live.contains(nick);
+            peers.keys().map(String::as_str).filter(is_absent).collect()
         })
         .unwrap_or_default()
 }
