@@ -18,7 +18,7 @@ abbrev_name|crates/agent-gossip/src/a2a/receipt.rs|9|open: An identifier is not 
 abbrev_name|crates/agent-gossip/src/a2a/rpc.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/send.rs|119|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/session.rs|14|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/surfaced.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/surfaced.rs|12|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/task.rs|14|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/api/advertise.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/api/inproc.rs|35|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
@@ -232,7 +232,7 @@ long_chain|crates/agent-gossip/src/output/output.rs|2|open: A statement with a c
 long_chain|crates/agent-gossip/tests/a2a_contract.rs|4|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/adversarial.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/directory.rs|6|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/agent-gossip/tests/gossip_network.rs|37|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/gossip_network.rs|39|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/install_contract.rs|5|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/lossless_receive.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/man_contract.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
