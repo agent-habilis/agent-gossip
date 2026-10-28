@@ -45,8 +45,8 @@ pub(crate) fn expand_at(
             line: number,
             reason,
         };
-        let interior: &str = trimmed
-            .strip_prefix("<!--")
+        let after_open = trimmed.strip_prefix("<!--");
+        let interior: &str = after_open
             .and_then(|rest| rest.strip_suffix("-->"))
             .ok_or_else(|| malformed("unterminated include comment".to_owned()))?;
         if interior.contains("-->") {
@@ -61,10 +61,10 @@ pub(crate) fn expand_at(
             .position(|(key, _)| key == "path")
             .ok_or_else(|| malformed("include requires path=\"...\"".to_owned()))?;
         let (_, target) = pairs.remove(target_position);
-        let child_args: Vec<(&str, &str)> = pairs
+        let borrowed_pairs = pairs
             .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str()))
-            .collect();
+            .map(|(key, value)| (key.as_str(), value.as_str()));
+        let child_args: Vec<(&str, &str)> = borrowed_pairs.collect();
         let expanded = expand_at(&base.join(target), &child_args, loader, stack)?;
         let sentinel = format!("\u{0}INC{}\u{0}", expansions.len());
         text.push_str(&sentinel);
