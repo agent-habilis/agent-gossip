@@ -130,7 +130,6 @@ pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public func
 pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|open: A public function returns an iterator, not a Vec
 pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|open: A public function returns an iterator, not a Vec
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskState is Copy, so a by-value as_str is the clippy-accepted form for a Copy type; kept as a counted row
-turbofish_collect_parse|crates/agent-gossip-test-fixtures/src/node.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/broadcast_params.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/node.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/reader_asks.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)

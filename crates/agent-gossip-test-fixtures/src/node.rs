@@ -161,12 +161,13 @@ impl Node {
     /// `prefix` — the convergence metric for the anti-entropy gap-recovery
     /// tests (each sends `prefix-{i}` and waits for the full distinct set).
     pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
-        self.messages()
+        let distinct: HashSet<String> = self
+            .messages()
             .iter()
             .filter(|message| message.author == author && message.body.starts_with(prefix))
             .map(|message| message.body.clone())
-            .collect::<HashSet<_>>()
-            .len()
+            .collect();
+        distinct.len()
     }
 
     /// Send SIGINT to the child process (triggers the ctrl-c handler).
