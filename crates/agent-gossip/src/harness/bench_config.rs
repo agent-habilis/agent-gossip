@@ -74,7 +74,7 @@ pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
 }
 
 pub fn mesh_decode(token: &str) {
-    let _ = token.parse::<Mesh>();
+    let _: Result<Mesh, _> = token.parse();
 }
 
 /// Encode then decode the config region — exercises the lookup-flags +

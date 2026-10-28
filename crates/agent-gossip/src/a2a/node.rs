@@ -351,7 +351,8 @@ impl A2aApp {
     async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         let failure = publish_own_card(state, context).await.err().map(|error| {
             // The reason is read by peers: one line, and no more than a line holds.
-            error.to_string().chars().take(200).collect::<String>()
+            let reason: String = error.to_string().chars().take(200).collect();
+            reason
         });
         if failure.is_some() {
             self.card_retry_wait = (self.card_retry_wait.max(1) * 2).min(CARD_RETRY_MAX_TICKS);
