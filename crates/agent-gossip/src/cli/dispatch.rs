@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::a2a::a2a;
-use super::args::{Cli, Commands};
+use super::args::{self, Cli, Commands};
 use super::create::create;
 use super::install_tuning::install_tuning;
 use super::invite::invite;
@@ -48,8 +48,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Join { options } => {
             reject_id_encoded_flag("--name", options.name.is_some())?;
             install_tuning(&options.shared.tuning);
+            let env_room = std::env::var(args::DEFAULT_ROOM_ENV).ok();
+            let target = args::resolve_target(
+                options.gossip.and_then(args::GossipArg::into_target),
+                env_room.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
             Box::pin(join(
-                options.gossip,
+                target,
                 options.nickname,
                 options.password,
                 options.shared,

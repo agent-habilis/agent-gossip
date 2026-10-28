@@ -47,6 +47,31 @@ fn man_prints_manual_to_stdout() {
     }
 }
 
+fn carries_banned_word(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("square")
+        || lower.contains("participant")
+        || lower
+            .split(|ch: char| !ch.is_ascii_alphabetic())
+            .any(|word| word == "room" || word == "rooms")
+}
+
+#[test]
+fn a_stray_room_word_still_counts_as_banned() {
+    assert!(
+        carries_banned_word("join the room now"),
+        "the word room, as a verb phrase, is banned"
+    );
+    assert!(
+        carries_banned_word("Rooms are gone"),
+        "a capitalized plural is banned too"
+    );
+    assert!(
+        !carries_banned_word("keep the headroom"),
+        "headroom only contains the word, so it is allowed"
+    );
+}
+
 /// The manual is the one place the old vocabulary can rot back in unnoticed:
 /// it is 1600 lines of prose with no compiler behind it, and it was already
 /// ~250 uses of "square" out of step with the code before the rename. The
@@ -74,15 +99,10 @@ fn manual_carries_no_pre_rename_vocabulary() {
         "`agent-gossip man` produced no output"
     );
 
-    let carries_banned_word = |line: &str| {
-        let lower = line.to_lowercase();
-        lower.contains("square")
-            || lower.contains("participant")
-            || lower
-                .split(|ch: char| !ch.is_ascii_alphabetic())
-                .any(|word| word == "room" || word == "rooms")
-    };
-    let offenders: Vec<_> = stdout
+    // The env var name is an identifier the manual must quote, and its `ROOM`
+    // segment would otherwise read as the retired word.
+    let prose = stdout.replace("AGENT_GOSSIP_DEFAULT_ROOM", "");
+    let offenders: Vec<_> = prose
         .lines()
         .enumerate()
         .filter(|(_, line)| carries_banned_word(line))
