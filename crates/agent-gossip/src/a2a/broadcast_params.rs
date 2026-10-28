@@ -2253,8 +2253,8 @@ mod echo_when_sent_tests {
     use tokio::sync::oneshot;
 
     use super::{EchoAs, PendingSend, echo_when_sent};
-    use crate::events::OutputEvent;
     use crate::output::capture_events;
+    use crate::output_event::OutputEvent;
 
     fn echo() -> habilis_network::protocol::message::Authored {
         echo_raw()

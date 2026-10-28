@@ -1,11 +1,11 @@
 //! Output-module tests: the JSON wire format (shape assertions + insta
 //! snapshots + proptests). The wire serializers under test live in
-//! [`super::json`].
+//! [`super::simple_event`].
 
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
-use super::json::{SimpleEvent, format_msg_json, format_presence_json};
+use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -97,7 +97,7 @@ fn json_signed_message_exposes_full_pubkey() {
 fn ready_event_drift_is_present_only_when_stale() {
     use super::OutputEvent;
     let make = |drift: Option<&str>| {
-        super::json::event_json(&OutputEvent::Ready {
+        super::simple_event::event_json(&OutputEvent::Ready {
             mesh: sid(),
             name: habilis_network::protocol::MeshName::new("team").unwrap(),
             nickname: nick("alice"),
@@ -124,7 +124,7 @@ fn ready_event_drift_is_present_only_when_stale() {
 fn fork_event_json_shape() {
     use super::OutputEvent;
     let pubkey = "deadbeef".repeat(8); // 64 hex
-    let json = super::json::event_json(&OutputEvent::Fork {
+    let json = super::simple_event::event_json(&OutputEvent::Fork {
         nickname: nick("alice"),
         pubkey: pubkey.clone(),
         seq: 7,
@@ -235,7 +235,7 @@ fn task_event_json_shape() {
     );
     // Routed through `event_json` so the captured-event form is
     // byte-identical to the stdout `--output json` line.
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::simple_event::event_json(&OutputEvent::Task {
         msg: Box::new(msg),
         is_self: false,
     })
@@ -271,7 +271,7 @@ fn task_self_echo_flag() {
             metadata: None,
         },
     );
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::simple_event::event_json(&OutputEvent::Task {
         msg: Box::new(msg),
         is_self: true,
     })
@@ -297,7 +297,7 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
                 metadata,
             },
         );
-        let json = super::json::event_json(&OutputEvent::Task {
+        let json = super::simple_event::event_json(&OutputEvent::Task {
             msg: Box::new(msg),
             is_self: false,
         })
@@ -329,7 +329,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             metadata: crate::a2a::status_update_params::waiting_metadata(Some("asks its user")),
         },
     );
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::simple_event::event_json(&OutputEvent::Task {
         msg: Box::new(msg),
         is_self: false,
     })
@@ -354,7 +354,7 @@ fn task_progress_event_json_shape() {
             )))),
         },
     );
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::simple_event::event_json(&OutputEvent::Task {
         msg: Box::new(msg),
         is_self: false,
     })
@@ -377,7 +377,7 @@ fn task_progress_event_json_shape() {
 fn task_timeout_event_json_shape() {
     use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
-    let json = super::json::event_json(&OutputEvent::TaskTimeout {
+    let json = super::simple_event::event_json(&OutputEvent::TaskTimeout {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         reason: TaskGoneReason::Timeout,
     })
@@ -392,7 +392,7 @@ fn task_timeout_event_json_shape() {
 fn task_peer_left_event_json_shape() {
     use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
-    let json = super::json::event_json(&OutputEvent::TaskTimeout {
+    let json = super::simple_event::event_json(&OutputEvent::TaskTimeout {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         reason: TaskGoneReason::PeerLeft,
     })
@@ -412,7 +412,8 @@ fn task_stalled_event_json_shape() {
         last_poll_secs_ago: 2_400,
         check_secs: 1_800,
     };
-    let json = super::json::event_json(&event).expect("task_stalled event produces a JSON line");
+    let json =
+        super::simple_event::event_json(&event).expect("task_stalled event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "task_stalled");
     assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
@@ -423,7 +424,10 @@ fn task_stalled_event_json_shape() {
         parsed["display"],
         "💬️ task stalled · `<calm-otter>` has not polled for 40 min"
     );
-    assert!(super::json::is_visible(&event), "the user must see it");
+    assert!(
+        super::simple_event::is_visible(&event),
+        "the user must see it"
+    );
     assert!(crate::a2a::node::wakes(&event), "it must ring the bell");
     assert!(crate::a2a::node::is_pollable(&event), "poll must serve it");
 }
@@ -556,7 +560,7 @@ mod snapshots {
             ),
             body.as_str(),
         );
-        super::super::json::format_task_json(&frame, false)
+        super::super::simple_event::format_task_json(&frame, false)
     }
 
     #[test]
@@ -598,7 +602,7 @@ mod snapshots {
             ),
             body.as_str(),
         );
-        insta::assert_snapshot!(super::super::json::format_task_json(&frame, false));
+        insta::assert_snapshot!(super::super::simple_event::format_task_json(&frame, false));
     }
 
     /// A deterministic chat frame for snapshots: the payload's random
@@ -687,7 +691,7 @@ mod snapshots {
     /// newly-derived `document` + `display` + `self`. Field order is wire-pinned.
     fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
         let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
-        super::super::json::format_state_json(
+        super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
             &view(Message::fixture(MessageKind::State, &body)),
             document,
@@ -733,7 +737,7 @@ mod snapshots {
             &format!(r#"{{"k":"merge","merge":{merge}}}"#),
         ));
         let document = four_card_meta_document();
-        let line = super::super::json::format_state_json(
+        let line = super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::Meta,
             &msg,
             &document,
@@ -757,7 +761,7 @@ mod snapshots {
             &format!(r#"{{"k":"merge","merge":{merge}}}"#),
         ));
         let document = serde_json::json!({"turn": "b"});
-        let line = super::super::json::format_state_json(
+        let line = super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
             &msg,
             &document,

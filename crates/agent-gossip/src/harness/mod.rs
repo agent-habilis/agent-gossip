@@ -5,11 +5,11 @@
 
 #[cfg(feature = "bench")]
 #[doc(hidden)]
-pub mod bench;
+pub mod bench_config;
 
 #[cfg(feature = "adversarial")]
 #[doc(hidden)]
-pub mod adversarial;
+pub mod test_key;
 
 #[cfg(feature = "adversarial")]
 #[doc(hidden)]

@@ -1,8 +1,3 @@
 
 crates/agent-gossip/src/cli/a2a_discover.rs|1|rename pending: public type(s) DiscoverParams
 crates/agent-gossip/src/cli/ready.rs|1|rename pending: public type(s) ReadyStateFile
-crates/agent-gossip/src/events.rs|1|rename pending: public type(s) OutputEvent, PingPeer, TaskGoneReason
-crates/agent-gossip/src/harness/adversarial.rs|1|rename pending: public type(s) TestKey, StatusFrameParams, SealedTaskStatusParams, SealedMsgParams, CraftedMsg
-crates/agent-gossip/src/harness/bench.rs|1|rename pending: public type(s) BenchConfig, BenchMessage
-crates/agent-gossip/src/output/json.rs|1|rename pending: public type(s) SimpleEvent
-crates/tasks/src/idle_cpu.rs|1|rename pending: public type(s) Plan

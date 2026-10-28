@@ -9,11 +9,11 @@ mod ci;
 mod clean;
 mod coverage;
 mod fmt;
-mod idle_cpu;
 mod install;
 mod lint;
 mod logs;
 mod man;
+mod plan;
 mod proptest;
 mod release;
 mod run;
@@ -178,9 +178,9 @@ fn main() -> ExitCode {
             nodes,
             variants,
             binaries,
-        } => idle_cpu::run(
+        } => plan::run(
             &sh,
-            idle_cpu::Plan {
+            plan::Plan {
                 settle,
                 window,
                 nodes,

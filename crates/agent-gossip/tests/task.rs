@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use agent_gossip::events::{OutputEvent, TaskGoneReason};
+use agent_gossip::output_event::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, three_peers};

@@ -58,7 +58,8 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
         .tasks()
         .into_iter()
         .find(|(msg, _)| {
-            agent_gossip::a2a::gossip::frame_task_state(msg) == Some(TaskState::InputRequired)
+            agent_gossip::a2a::status_update_params::frame_task_state(msg)
+                == Some(TaskState::InputRequired)
         })
         .expect("initiator surfaced the artifact");
     let payload: serde_json::Value =

@@ -1,4 +1,4 @@
-use agent_gossip::events::OutputEvent;
+use agent_gossip::output_event::OutputEvent;
 use agent_gossip::{MAX_MESSAGE_SIZE, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};

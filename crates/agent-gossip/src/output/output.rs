@@ -4,9 +4,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::{
     OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent, StateChangedParams,
-    TaskGoneReason, TaskId, TaskMessageLeg, emit, emit_json, format_presence_json, json,
+    TaskGoneReason, TaskId, TaskMessageLeg, emit, emit_json, format_presence_json,
     peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
-    task_stalled_event,
+    simple_event, task_stalled_event,
 };
 
 /// Per-event-loop output destination. Replaces the former
@@ -231,7 +231,7 @@ impl Output {
                 is_self,
             },
             |mode| match mode {
-                OutputMode::Json => json::print_task_json(msg, is_self),
+                OutputMode::Json => simple_event::print_task_json(msg, is_self),
                 OutputMode::Silent => {}
             },
         );
@@ -271,18 +271,20 @@ impl Output {
                 is_self,
             },
             |mode| match mode {
-                OutputMode::Json => emit(&json::format_task_message_json(&TaskMessageLeg {
-                    id: &id,
-                    mesh: &mesh,
-                    author: &author,
-                    peer: &peer,
-                    task_id: &task_id,
-                    state,
-                    text: &text,
-                    label: label.as_deref(),
-                    message: message.as_deref(),
-                    is_self,
-                })),
+                OutputMode::Json => {
+                    emit(&simple_event::format_task_message_json(&TaskMessageLeg {
+                        id: &id,
+                        mesh: &mesh,
+                        author: &author,
+                        peer: &peer,
+                        task_id: &task_id,
+                        state,
+                        text: &text,
+                        label: label.as_deref(),
+                        message: message.as_deref(),
+                        is_self,
+                    }));
+                }
                 OutputMode::Silent => {}
             },
         );
@@ -361,7 +363,9 @@ impl Output {
             Output::Stream { mode, tap, .. } => {
                 match mode {
                     OutputMode::Json => {
-                        emit(&json::format_state_json(channel, event, document, is_self));
+                        emit(&simple_event::format_state_json(
+                            channel, event, document, is_self,
+                        ));
                     }
                     OutputMode::Silent => {}
                 }

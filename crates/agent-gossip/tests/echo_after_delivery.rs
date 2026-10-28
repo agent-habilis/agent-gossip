@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use agent_gossip::events::OutputEvent;
+use agent_gossip::output_event::OutputEvent;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, Node};
 
@@ -15,7 +15,7 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
         matches!(
             event,
             OutputEvent::Message { msg, is_self: true }
-                if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(text)
+                if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(text)
         )
     })
 }

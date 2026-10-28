@@ -1,7 +1,7 @@
 use tokio::sync::mpsc;
 
 use super::Output;
-use crate::events::OutputEvent;
+use crate::output_event::OutputEvent;
 
 /// A capturing sink paired with the receiver that drains it — the stream behind
 /// [`MeshSession::events`](crate::api::MeshSession::events). Named apart from

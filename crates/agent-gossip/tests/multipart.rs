@@ -217,7 +217,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     let matching = alice
         .tasks()
         .iter()
-        .filter(|(message, _)| agent_gossip::a2a::gossip::task_text(message) == big)
+        .filter(|(message, _)| agent_gossip::a2a::status_update_params::task_text(message) == big)
         .count();
     assert_eq!(
         matching, 1,

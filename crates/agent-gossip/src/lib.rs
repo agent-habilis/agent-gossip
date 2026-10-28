@@ -48,11 +48,11 @@ pub use habilis_network::util::mesh_prefix;
 
 pub use self::a2a::surfaced_event::SurfacedEvent;
 pub use self::a2a::{TaskId, TaskState};
+pub use self::output::{event_json, surfaced_event_json};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting
 // them keeps the roster readable without widening the surface.
-pub use self::events::{OutputEvent, PingPeer, TaskGoneReason};
-pub use self::output::{event_json, surfaced_event_json};
+pub use self::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 
 // Application-layer modules. The engine modules (protocol, gossip, daemon,
 // …) live in the `habilis-network` crate; this crate re-exports the
@@ -62,9 +62,9 @@ pub use self::output::{event_json, surfaced_event_json};
 pub mod a2a;
 pub(crate) mod bridge;
 pub(crate) mod cli;
-pub mod events;
 pub(crate) mod mcp;
 pub(crate) mod output;
+pub mod output_event;
 pub(crate) mod policy;
 pub(crate) mod topic;
 
