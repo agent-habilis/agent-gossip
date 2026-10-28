@@ -212,10 +212,10 @@ pub(crate) fn parts_text(parts: &[Part]) -> String {
 /// [`status_update`] composes alongside the frame's mesh, grouped so the
 /// call stays within the argument budget.
 #[derive(Debug)]
-pub struct StatusUpdateParams<'a> {
-    pub task_id: &'a TaskId,
+pub struct StatusUpdateParams<'caller> {
+    pub task_id: &'caller TaskId,
     pub state: TaskState,
-    pub note: Option<&'a str>,
+    pub note: Option<&'caller str>,
     pub metadata: Option<serde_json::Value>,
 }
 

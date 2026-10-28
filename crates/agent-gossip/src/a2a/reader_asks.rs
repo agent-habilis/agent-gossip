@@ -105,10 +105,10 @@ pub(crate) struct ReaderAsks {
 }
 
 /// The values `ask_readers` needs beyond its `state` and `app` handles.
-pub(crate) struct ReaderAskParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) sender: &'a MeshSender,
+pub(crate) struct ReaderAskParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) sender: &'caller MeshSender,
 }
 
 /// Send `mesh/reader.get` to each live peer that has a known endpoint.

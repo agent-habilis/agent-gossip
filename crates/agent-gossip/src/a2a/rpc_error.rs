@@ -246,13 +246,13 @@ pub(crate) fn get_task(app: &A2aApp, task_id: &TaskId, mesh: &MeshId) -> Result<
 /// One JSON-RPC op's identity (mesh/author/pubkey/local port) plus the app
 /// state it's resolved against — grouped so `handle_op` stays within the
 /// argument budget alongside its state/sender/output handles.
-pub(crate) struct HandleOpParams<'a> {
+pub(crate) struct HandleOpParams<'caller> {
     pub(crate) op: A2aOp,
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
     pub(crate) our_pubkey: AuthorKey,
     pub(crate) a2a_port: u16,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Execute one op against the live loop state — the JSON-RPC binding's
@@ -383,11 +383,11 @@ pub(crate) async fn handle_op(
 /// The addressee (must be `None`), payload, and identity of one
 /// `message/send` RPC op — grouped so `send_message` stays within the
 /// argument budget alongside its state/sender/output handles.
-struct SendMessageParams<'a> {
+struct SendMessageParams<'caller> {
     to: Option<Nickname>,
     message: super::Message,
-    mesh: &'a MeshId,
-    author: &'a Nickname,
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
 }
 
 /// A **broadcast** `message/send` (no addressee): re-author the wire payload

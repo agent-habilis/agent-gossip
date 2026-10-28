@@ -46,21 +46,21 @@ pub fn pubkey_hex(key: &TestKey) -> String {
 /// The value cluster for [`CraftedMsg::status_frame`]: the author/target
 /// nicknames plus the frame-vs-payload task-id pair under test.
 #[derive(Clone, Copy, Debug)]
-pub struct StatusFrameParams<'a> {
-    pub author: &'a str,
-    pub to: &'a str,
-    pub frame_task_id: &'a str,
-    pub payload_task_id: &'a str,
+pub struct StatusFrameParams<'caller> {
+    pub author: &'caller str,
+    pub to: &'caller str,
+    pub frame_task_id: &'caller str,
+    pub payload_task_id: &'caller str,
 }
 
 /// The value cluster for [`CraftedMsg::sealed_task_status`]: a *well-formed*
 /// status leg for an existing task, from an author who is not that task's
 /// counterparty.
 #[derive(Clone, Copy, Debug)]
-pub struct SealedTaskStatusParams<'a> {
-    pub author: &'a str,
-    pub to: &'a str,
-    pub task_id: &'a str,
+pub struct SealedTaskStatusParams<'caller> {
+    pub author: &'caller str,
+    pub to: &'caller str,
+    pub task_id: &'caller str,
     pub state: crate::a2a::TaskState,
     /// Marks the leg as a liveness beat rather than a transition.
     pub beat: bool,
@@ -71,10 +71,10 @@ pub struct SealedTaskStatusParams<'a> {
 
 /// The value cluster for [`CraftedMsg::sealed_msg`].
 #[derive(Clone, Copy, Debug)]
-pub struct SealedMsgParams<'a> {
-    pub author: &'a str,
-    pub to: &'a str,
-    pub text: &'a str,
+pub struct SealedMsgParams<'caller> {
+    pub author: &'caller str,
+    pub to: &'caller str,
+    pub text: &'caller str,
     pub seal_key: PublicKey,
 }
 

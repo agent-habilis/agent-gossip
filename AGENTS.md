@@ -401,7 +401,6 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined P1: there are 108 turbofish sites and many inferred types; the compiler and review catch the unclear inference, so the code keeps the inference where it reads well.
 - Declined P4: the `.into()` and `.parse()` calls take their target from the surrounding signature or field, so an explicit type would repeat it at each call site.
 - Declined P5: a complex iterator chain is typed by its binding or its `collect` target, and the compiler checks that type, so no extra annotation is added.
-- Declined N3: lifetimes such as `'a` on a struct with one borrowed field are clear, and renaming the about 260 uses in tests and fixtures touches over 30 sites.
 - Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
 - Declined O9: a rough grep finds about 28 leaf files whose name does not match their primary item; renaming them touches their imports, so the names stay.

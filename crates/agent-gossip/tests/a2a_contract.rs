@@ -60,12 +60,12 @@ fn post(port: u16, path: &str, token: &str, body: &Value) -> (u16, Value) {
 /// One JSON-RPC call's identity + payload — grouped so the [`rpc`] test helper
 /// stays within the argument budget.
 #[derive(Clone, Copy)]
-struct RpcCall<'a> {
+struct RpcCall<'caller> {
     port: u16,
-    path: &'a str,
-    token: &'a str,
-    method: &'a str,
-    params: &'a Value,
+    path: &'caller str,
+    token: &'caller str,
+    method: &'caller str,
+    params: &'caller Value,
 }
 
 /// A JSON-RPC call that must succeed; returns `result`.

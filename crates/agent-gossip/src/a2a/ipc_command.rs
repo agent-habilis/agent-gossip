@@ -173,14 +173,14 @@ impl Addressed for IpcCommand {
 /// One IPC command plus the daemon's own identity (mesh/name/author) and app
 /// state it's served against — grouped so `handle_ipc_command` stays within
 /// the argument budget alongside its state/sender/output handles.
-pub(crate) struct IpcDispatchParams<'a> {
+pub(crate) struct IpcDispatchParams<'caller> {
     pub(crate) command: IpcCommand,
     pub(crate) resp_tx: oneshot::Sender<String>,
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) name: &'a MeshName,
-    pub(crate) author: &'a Nickname,
-    pub(crate) endpoint: &'a Endpoint,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) name: &'caller MeshName,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) endpoint: &'caller Endpoint,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Returns `true` if the handler broadcast anything, so the caller

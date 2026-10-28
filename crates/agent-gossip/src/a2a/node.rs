@@ -714,9 +714,9 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
 /// The value cluster [`handle_task_leg`] needs beyond its `app`/`ctx` handles
 /// — the input of [`route_content`]'s task-leg arm.
 #[derive(Clone, Copy)]
-struct TaskLegParams<'a> {
-    message: &'a Authored,
-    to: &'a Nickname,
+struct TaskLegParams<'caller> {
+    message: &'caller Authored,
+    to: &'caller Nickname,
     surfaceable: bool,
 }
 
@@ -855,11 +855,11 @@ fn handle_broadcast(out: &output::Output, message: &Authored, surfaceable: bool)
 
 /// The value cluster [`handle_msg`] needs beyond its `out` sink handle.
 #[derive(Clone, Copy)]
-struct MsgParams<'a> {
-    message: &'a Authored,
-    to: &'a Nickname,
+struct MsgParams<'caller> {
+    message: &'caller Authored,
+    to: &'caller Nickname,
     surfaceable: bool,
-    self_author: &'a Nickname,
+    self_author: &'caller Nickname,
 }
 
 /// A msg: printed and logged **only by its addressee** (`to == self_author`).
@@ -899,11 +899,11 @@ fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
 
 /// The value cluster [`handle_task`] needs beyond its `out` sink handle.
 #[derive(Clone, Copy)]
-struct TaskDisplayParams<'a> {
-    message: &'a Authored,
-    to: &'a Nickname,
+struct TaskDisplayParams<'caller> {
+    message: &'caller Authored,
+    to: &'caller Nickname,
     surfaceable: bool,
-    self_author: &'a Nickname,
+    self_author: &'caller Nickname,
 }
 
 /// A task leg: surfaced + logged only by the addressee (`to == self_author`)
@@ -989,9 +989,9 @@ async fn handle_a2a_rpc(
 /// One inbound `a2a_req` frame's request body plus the correlation id its
 /// `a2a_resp` must echo back — grouped so [`handle_a2a_req`] stays within the
 /// argument budget alongside its `state`/`app`/`ctx` handles.
-struct A2aReqParams<'a> {
-    message: &'a Authored,
-    corr: &'a habilis_network::protocol::CorrId,
+struct A2aReqParams<'caller> {
+    message: &'caller Authored,
+    corr: &'caller habilis_network::protocol::CorrId,
 }
 
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
@@ -1103,10 +1103,10 @@ async fn handle_a2a_req(
 
 /// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
 /// handles.
-struct ShardRepairParams<'a> {
-    group: &'a habilis_network::protocol::ShardGroup,
-    missing: &'a [u32],
-    requester: &'a Nickname,
+struct ShardRepairParams<'caller> {
+    group: &'caller habilis_network::protocol::ShardGroup,
+    missing: &'caller [u32],
+    requester: &'caller Nickname,
 }
 
 /// Serve a `shard/repair` ask: re-deliver the named cached frames of one of our

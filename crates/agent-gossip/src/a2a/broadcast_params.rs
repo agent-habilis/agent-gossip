@@ -130,9 +130,9 @@ struct ChainStamp {
 /// The identity + payload of one outbound chat frame — the fields `build_msg`
 /// shares with [`synthesize_logical_msg`], grouped so the chain-stamp/shard/
 /// signer args stay their own params.
-struct ChatFrameParams<'a> {
-    mesh: &'a MeshId,
-    author: &'a Nickname,
+struct ChatFrameParams<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
     body: MessageBody,
     id: Option<MessageId>,
 }
@@ -237,8 +237,8 @@ fn answer_when_sent(
 /// One outbound wire frame plus its echo flag — the part
 /// [`send_msg_part`] commits/delivers, grouped so the state/sender/out handles
 /// stay their own leading params.
-struct OutboundPart<'a> {
-    message: &'a Verified,
+struct OutboundPart<'source> {
+    message: &'source Verified,
     bytes: WireFrame,
     echo: bool,
 }
@@ -281,9 +281,9 @@ async fn send_msg_part(
 /// The identity + text of one outbound chat broadcast — grouped so
 /// `send_broadcast` stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct BroadcastParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
+pub(crate) struct BroadcastParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
     pub(crate) text: MessageBody,
 }
 
@@ -517,13 +517,13 @@ pub(crate) async fn send_broadcast(
 /// and cap-tracking flag, plus the in-flight task registry it's ingested
 /// into — grouped so `broadcast_directed_frame` stays within the argument budget
 /// alongside its state/sender/out handles.
-struct DirectedFrameParams<'a> {
-    mesh: &'a MeshId,
-    author: &'a Nickname,
+struct DirectedFrameParams<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
     /// `None` for a leg that belongs to no task — a msg. Its
     /// presence is also what decides whether the coarse task machine is
     /// advanced for our own leg.
-    task_id: Option<&'a crate::a2a::TaskId>,
+    task_id: Option<&'caller crate::a2a::TaskId>,
     kind: MessageKind,
     payload_body: MessageBody,
     echo_body: MessageBody,
@@ -534,7 +534,7 @@ struct DirectedFrameParams<'a> {
     /// equal its frame id, so a msg must carry the A2A id on the frame. Task
     /// legs pin nothing — their payloads carry the task id instead.
     id: Option<MessageId>,
-    app: &'a mut A2aApp,
+    app: &'caller mut A2aApp,
 }
 
 /// How a directed leg's self-echo renders. A task leg drives the task widget
@@ -717,16 +717,16 @@ fn print_echo(out: &output::Output, echo: &Authored, echo_as: EchoAs) {
 /// registry it's resolved (and later ingested) against — grouped so
 /// `emit_task_status` stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct TaskStatusParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) task_id: &'a crate::a2a::TaskId,
+pub(crate) struct TaskStatusParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) task_id: &'caller crate::a2a::TaskId,
     pub(crate) task_state: crate::a2a::TaskState,
-    pub(crate) note: Option<&'a str>,
+    pub(crate) note: Option<&'caller str>,
     /// Why a `working` task waits on the worker's own user; rides the leg as
     /// `mesh:waiting`.
-    pub(crate) waiting: Option<&'a str>,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) waiting: Option<&'caller str>,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the other
@@ -786,8 +786,8 @@ pub(crate) async fn emit_task_status(
 /// reason rides a `working` leg only, so no other state can hold one. Only
 /// [`WorkerLeg::parse`] builds a `WorkerLeg`, so the rule has one place.
 #[derive(Clone, Copy)]
-pub(crate) enum WorkerLeg<'a> {
-    Working { waiting: Option<&'a str> },
+pub(crate) enum WorkerLeg<'source> {
+    Working { waiting: Option<&'source str> },
     Other(crate::a2a::TaskState),
 }
 
@@ -822,13 +822,13 @@ impl<'a> WorkerLeg<'a> {
 /// task registry it's resolved (and later ingested) against — grouped so
 /// `emit_task_artifact` stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct TaskArtifactEmitParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) task_id: &'a crate::a2a::TaskId,
-    pub(crate) text: &'a str,
+pub(crate) struct TaskArtifactEmitParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) task_id: &'caller crate::a2a::TaskId,
+    pub(crate) text: &'caller str,
     pub(crate) file: Option<FileRef>,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Worker-emit a `TaskArtifactUpdate` (the result) for a task we're serving.
@@ -907,14 +907,14 @@ pub(crate) fn seal_directed(
 /// the task registry the frame is ingested into — grouped so
 /// `broadcast_task_status` stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct BroadcastTaskStatusParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) peer: &'a Nickname,
-    pub(crate) task_id: &'a crate::a2a::TaskId,
-    pub(crate) leg: WorkerLeg<'a>,
-    pub(crate) note: Option<&'a str>,
-    pub(crate) app: &'a mut A2aApp,
+pub(crate) struct BroadcastTaskStatusParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) peer: &'caller Nickname,
+    pub(crate) task_id: &'caller crate::a2a::TaskId,
+    pub(crate) leg: WorkerLeg<'caller>,
+    pub(crate) note: Option<&'caller str>,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// The status leg a worker emits: its state and note, the order value that
@@ -944,12 +944,12 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
 /// The fields of one worker status leg, grouped so [`worker_status_leg`] stays
 /// within the argument budget.
 #[derive(Clone, Copy)]
-struct StatusLegParams<'a> {
-    mesh: &'a MeshId,
-    task_id: &'a crate::a2a::TaskId,
+struct StatusLegParams<'caller> {
+    mesh: &'caller MeshId,
+    task_id: &'caller crate::a2a::TaskId,
     state: crate::a2a::TaskState,
-    note: Option<&'a str>,
-    waiting: Option<&'a str>,
+    note: Option<&'caller str>,
+    waiting: Option<&'caller str>,
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
@@ -1009,12 +1009,12 @@ pub(crate) async fn broadcast_task_status(
 /// The identity, addressee and text of one outbound msg — grouped
 /// so [`send_msg`] stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct MsgParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) peer: &'a Nickname,
+pub(crate) struct MsgParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) peer: &'caller Nickname,
     pub(crate) text: MessageBody,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Send one msg: a chat line addressed to a single peer. The
@@ -1095,14 +1095,14 @@ pub(crate) async fn send_msg(
 /// text/file, and the task registry the frame is ingested into — grouped so
 /// `broadcast_task_artifact` stays within the argument budget alongside its
 /// state/sender/out handles.
-pub(crate) struct BroadcastTaskArtifactParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) peer: &'a Nickname,
-    pub(crate) task_id: &'a crate::a2a::TaskId,
-    pub(crate) text: &'a str,
+pub(crate) struct BroadcastTaskArtifactParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) peer: &'caller Nickname,
+    pub(crate) task_id: &'caller crate::a2a::TaskId,
+    pub(crate) text: &'caller str,
     pub(crate) file: Option<FileRef>,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
@@ -1168,11 +1168,11 @@ pub(crate) async fn broadcast_task_artifact(
 /// The identity + task-target of a `--file`-bearing leg — grouped so
 /// `build_offload_parts` stays within the argument budget alongside its
 /// state/app handles.
-struct OffloadTextParams<'a> {
-    mesh: &'a MeshId,
-    author: &'a Nickname,
-    task_id: &'a crate::a2a::TaskId,
-    text: &'a str,
+struct OffloadTextParams<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    task_id: &'caller crate::a2a::TaskId,
+    text: &'caller str,
     file: Option<FileRef>,
 }
 
@@ -1252,9 +1252,9 @@ async fn build_offload_parts(
 
 /// Who attaches which file to an `a2a call` — grouped so [`attach_call_file`]
 /// stays within the argument budget alongside its state/app handles.
-pub(crate) struct CallFile<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
+pub(crate) struct CallFile<'source> {
+    pub(crate) mesh: &'source MeshId,
+    pub(crate) author: &'source Nickname,
     pub(crate) file: FileRef,
 }
 
@@ -1334,12 +1334,12 @@ pub(crate) async fn attach_call_file(
 /// One outbound directed leg's wire frame/bytes plus its echo twin and
 /// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
 /// so the state/sender/out handles stay their own leading params.
-struct DirectedLegPart<'a> {
-    app: &'a mut A2aApp,
+struct DirectedLegPart<'source> {
+    app: &'source mut A2aApp,
     echo_as: EchoAs,
-    message: &'a Verified,
+    message: &'source Verified,
     bytes: WireFrame,
-    echo: Option<&'a Authored>,
+    echo: Option<&'source Authored>,
     content: bool,
 }
 
@@ -1533,9 +1533,9 @@ pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Message, task_id: &crat
 }
 
 /// One own task leg: its plaintext twin and its task. A chat msg has no task and no record.
-struct OwnLeg<'a> {
+struct OwnLeg<'source> {
     echo: Authored,
-    task_id: Option<&'a crate::a2a::TaskId>,
+    task_id: Option<&'source crate::a2a::TaskId>,
 }
 
 /// Queue an own task leg for the task record, behind the legs sent before it. The record takes a
@@ -1639,11 +1639,11 @@ pub(crate) async fn send_shard_repair_requests(
 /// timeout, and the transport-specific responder it answers through —
 /// grouped so `broadcast_a2a_call` stays within the argument budget alongside
 /// its state/app/sender handles.
-pub(crate) struct BroadcastA2aCallParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
+pub(crate) struct BroadcastA2aCallParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
     pub(crate) peer: Nickname,
-    pub(crate) method: &'a str,
+    pub(crate) method: &'caller str,
     pub(crate) params: serde_json::Value,
     pub(crate) timeout: std::time::Duration,
     pub(crate) responder: crate::a2a::a2a_app::A2aResponder,
@@ -1782,9 +1782,9 @@ pub(crate) async fn broadcast_a2a_call(
 
 /// A directed RPC frame's identity, kind, and body — the fields
 /// `send_directed_rpc` needs beyond its state/sender handles.
-pub(crate) struct DirectedRpcParams<'a> {
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
+pub(crate) struct DirectedRpcParams<'caller> {
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
     pub(crate) kind: MessageKind,
     pub(crate) body: MessageBody,
 }
@@ -1892,11 +1892,11 @@ async fn session_ping(
 /// One typed in-process request plus the identity + app state it's served
 /// against — grouped so `handle_session_request` stays within the argument
 /// budget alongside its state/sender/output handles.
-pub(crate) struct SessionRequestParams<'a> {
+pub(crate) struct SessionRequestParams<'caller> {
     pub(crate) request: SessionRequest,
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-    pub(crate) app: &'a mut A2aApp,
+    pub(crate) mesh: &'caller MeshId,
+    pub(crate) author: &'caller Nickname,
+    pub(crate) app: &'caller mut A2aApp,
 }
 
 /// Raw injection (adversarial only): the bytes go on the wire exactly as given. Nothing parses

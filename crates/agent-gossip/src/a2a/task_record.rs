@@ -207,10 +207,10 @@ pub(crate) enum LegKind {
 }
 
 /// The fields of an applied leg the state machine needs.
-pub(crate) struct LegInfo<'a> {
-    pub task_id: &'a TaskId,
+pub(crate) struct LegInfo<'source> {
+    pub task_id: &'source TaskId,
     /// The other party (inbound: the author; outbound: the `to`).
-    pub peer: &'a Nickname,
+    pub peer: &'source Nickname,
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
@@ -220,9 +220,9 @@ pub(crate) struct LegInfo<'a> {
 
 /// The value cluster [`ingest`] needs beyond its `tasks` registry handle.
 #[derive(Clone, Copy)]
-pub(crate) struct IngestLegParams<'a> {
-    pub(crate) frame: &'a Message,
-    pub(crate) task_id: &'a TaskId,
+pub(crate) struct IngestLegParams<'caller> {
+    pub(crate) frame: &'caller Message,
+    pub(crate) task_id: &'caller TaskId,
     pub(crate) mine: bool,
     pub(crate) now: Instant,
 }
@@ -455,9 +455,9 @@ pub(crate) fn admit_new_task(tasks: &HashMap<TaskId, TaskRecord>, peer: &Nicknam
 /// The value cluster [`adopt_initiator`] needs beyond its `tasks` registry
 /// handle.
 #[derive(Clone, Copy)]
-pub(crate) struct AdoptInitiatorParams<'a> {
-    pub(crate) task_id: &'a TaskId,
-    pub(crate) peer: &'a Nickname,
+pub(crate) struct AdoptInitiatorParams<'caller> {
+    pub(crate) task_id: &'caller TaskId,
+    pub(crate) peer: &'caller Nickname,
     pub(crate) task_state: TaskState,
     pub(crate) now: Instant,
 }
@@ -930,12 +930,12 @@ pub(crate) async fn tick_task_keepalive(
 
 /// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
 /// handles.
-struct BroadcastStatusParams<'a> {
-    peer: &'a Nickname,
+struct BroadcastStatusParams<'caller> {
+    peer: &'caller Nickname,
     /// The task id rides inside the status payload body (8.0); the envelope no
     /// longer carries it, so this is unused here beyond documenting the leg.
-    task_id: &'a TaskId,
-    update: &'a super::TaskStatusUpdate,
+    task_id: &'caller TaskId,
+    update: &'caller super::TaskStatusUpdate,
 }
 
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the

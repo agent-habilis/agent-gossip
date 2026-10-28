@@ -23,64 +23,64 @@ const DISPLAY_GLYPH: &str = "💬\u{FE0F}";
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
-pub(super) enum SimpleEvent<'a> {
+pub(super) enum SimpleEvent<'source> {
     Ready {
-        version: &'a str,
-        gossip: &'a str,
-        name: &'a str,
-        nickname: &'a str,
+        version: &'source str,
+        gossip: &'source str,
+        name: &'source str,
+        nickname: &'source str,
         /// Skill-drift warning for a stale install; omitted from the wire when
         /// the install is current, so the common case stays unchanged.
         #[serde(skip_serializing_if = "Option::is_none")]
-        drift: Option<&'a str>,
+        drift: Option<&'source str>,
         /// The bound `--a2a-serve` port; omitted when the binding is off.
         #[serde(skip_serializing_if = "Option::is_none")]
         a2a_port: Option<u16>,
     },
     MsgPosted {
-        id: &'a str,
+        id: &'source str,
     },
     PeerTimeout {
-        nickname: &'a str,
+        nickname: &'source str,
         last_seen_secs_ago: u64,
         /// Pre-formatted, markdown-safe line the `/mesh` skill echoes
         /// verbatim. See [`peer_timeout_display`].
         display: String,
     },
     PeerReturn {
-        nickname: &'a str,
+        nickname: &'source str,
         /// Pre-formatted, markdown-safe line (see [`peer_return_display`]).
         display: String,
     },
     Fork {
-        nickname: &'a str,
-        pubkey: &'a str,
+        nickname: &'source str,
+        pubkey: &'source str,
         seq: u64,
     },
     TaskTimeout {
-        task_id: &'a str,
+        task_id: &'source str,
         reason: TaskGoneReason,
     },
     TaskStalled {
-        task_id: &'a str,
-        peer: &'a str,
+        task_id: &'source str,
+        peer: &'source str,
         last_poll_secs_ago: u64,
         check_secs: u64,
         /// Pre-formatted line (see [`task_stalled_event`]).
         display: String,
     },
     Receipt {
-        from: &'a str,
+        from: &'source str,
         #[serde(rename = "ref")]
-        ref_id: &'a str,
-        state: &'a str,
+        ref_id: &'source str,
+        state: &'source str,
         ts: u64,
     },
     Info {
-        message: &'a str,
+        message: &'source str,
     },
     Error {
-        message: &'a str,
+        message: &'source str,
     },
     PingReport {
         peers: Vec<PingPeer>,
@@ -94,13 +94,13 @@ pub(super) enum SimpleEvent<'a> {
 /// Common prefix for every `{"event":"message",...}` line. Field
 /// order is part of the wire format (see AGENTS.md).
 #[derive(Serialize)]
-struct MessageHeader<'a> {
+struct MessageHeader<'source> {
     pub event: &'static str,
-    pub id: &'a str,
+    pub id: &'source str,
     #[serde(rename = "type")]
     pub ty: &'static str,
-    pub gossip: &'a str,
-    pub author: &'a str,
+    pub gossip: &'source str,
+    pub author: &'source str,
     /// Author's full Ed25519 public key (hex) — the cryptographic identity
     /// behind the display `author`. `Some` on every signed (real) message;
     /// `None` (omitted) only for unsigned test fixtures. Agents should key
@@ -111,13 +111,13 @@ struct MessageHeader<'a> {
 }
 
 #[derive(Serialize)]
-struct MsgLine<'a> {
+struct MsgLine<'source> {
     #[serde(flatten)]
-    pub header: MessageHeader<'a>,
+    pub header: MessageHeader<'source>,
     /// The plain-text projection of the A2A payload (text parts joined) —
     /// the convenience field agents read without unpacking `message`.
     pub body: String,
-    pub to: Option<&'a str>,
+    pub to: Option<&'source str>,
     /// The embedded A2A `Message` object the frame carried — the full
     /// payload (parts, contextId, extensions, metadata) for A2A-aware
     /// consumers. `None` only for an unparseable payload, which the receive
@@ -134,9 +134,9 @@ struct MsgLine<'a> {
 }
 
 #[derive(Serialize)]
-struct PresenceLine<'a> {
+struct PresenceLine<'source> {
     #[serde(flatten)]
-    pub header: MessageHeader<'a>,
+    pub header: MessageHeader<'source>,
     pub subtype: PresenceSubtype,
     /// Pre-formatted, markdown-safe line (see [`presence_display`]).
     pub display: String,
@@ -149,15 +149,15 @@ struct PresenceLine<'a> {
 /// A2A state; `payload` is the construct whole for A2A-aware consumers, except
 /// that a `message` leg drops the text parts `body` already holds.
 #[derive(Serialize)]
-struct TaskLine<'a> {
+struct TaskLine<'source> {
     pub event: &'static str,
-    pub id: &'a str,
-    pub gossip: &'a str,
-    pub author: &'a str,
+    pub id: &'source str,
+    pub gossip: &'source str,
+    pub author: &'source str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pubkey: Option<String>,
     pub ts: i64,
-    pub to: &'a str,
+    pub to: &'source str,
     pub task_id: String,
     pub kind: &'static str,
     /// The friendly kebab state (`working`/`input-required`/…) — our agent API,
@@ -168,7 +168,7 @@ struct TaskLine<'a> {
     /// `mesh:label` metadata so both parties label it the same way. Rides the
     /// opening brief only, and is absent from a peer that does not set it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<&'a str>,
+    pub label: Option<&'source str>,
     /// Why the worker waits on its own user, from the leg's `mesh:waiting`.
     /// Absent on every other leg, so the leg that clears it carries no key.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,13 +186,13 @@ struct TaskLine<'a> {
 /// ball-owner's keepalive/percent heartbeat. `done`/`total` are `None` when
 /// the beat reports indeterminate progress (no fraction in its metadata).
 #[derive(Serialize)]
-struct TaskProgressLine<'a> {
+struct TaskProgressLine<'source> {
     pub event: &'static str,
-    pub id: &'a str,
-    pub gossip: &'a str,
-    pub author: &'a str,
+    pub id: &'source str,
+    pub gossip: &'source str,
+    pub author: &'source str,
     pub ts: i64,
-    pub to: &'a str,
+    pub to: &'source str,
     pub task_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub done: Option<u64>,
@@ -208,19 +208,19 @@ struct TaskProgressLine<'a> {
 /// merge delta and, on the `state` channel, the freshly-derived document; field
 /// order is part of the wire format.
 #[derive(Serialize)]
-struct StateLine<'a> {
+struct StateLine<'source> {
     event: &'static str,
-    id: &'a str,
+    id: &'source str,
     #[serde(rename = "type")]
     ty: &'static str,
-    gossip: &'a str,
-    author: &'a str,
+    gossip: &'source str,
+    author: &'source str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pubkey: Option<String>,
     ts: i64,
     merge: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
-    document: Option<&'a serde_json::Value>,
+    document: Option<&'source serde_json::Value>,
     display: String,
     #[serde(rename = "self")]
     is_self: bool,
@@ -259,12 +259,12 @@ fn msg_display(author: &str, body: &str, to: Option<&str>) -> String {
 /// The value cluster for [`task_display`]: the author/target nicks, the
 /// native A2A `kind`/`state`, and the text body.
 #[derive(Clone, Copy)]
-struct TaskDisplayParams<'a> {
-    author: &'a str,
-    to: &'a str,
-    kind: &'a str,
+struct TaskDisplayParams<'caller> {
+    author: &'caller str,
+    to: &'caller str,
+    kind: &'caller str,
     state: Option<crate::a2a::TaskState>,
-    body: &'a str,
+    body: &'caller str,
 }
 
 /// `display` line for a `task` event:

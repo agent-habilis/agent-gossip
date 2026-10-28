@@ -129,9 +129,9 @@ pub(crate) struct Plan {
 /// Where one daemon belongs: which binary, which scratch root, and its
 /// (variant, index) address within the run.
 #[derive(Clone, Copy, Debug)]
-struct Site<'a> {
-    binary: &'a Path,
-    base: &'a Path,
+struct Site<'source> {
+    binary: &'source Path,
+    base: &'source Path,
     variant: usize,
     index: usize,
 }

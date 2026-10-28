@@ -5,15 +5,15 @@ use super::a2a_call_sugar::A2aCallSugar;
 
 /// An `a2a call` request typed by method, so a task method cannot exist
 /// without its task id.
-pub(super) enum A2aCallRequest<'a> {
+pub(super) enum A2aCallRequest<'caller> {
     SendMessage {
-        mesh: &'a MeshId,
-        task_id: Option<&'a crate::a2a::TaskId>,
-        text: &'a str,
-        label: Option<&'a str>,
+        mesh: &'caller MeshId,
+        task_id: Option<&'caller crate::a2a::TaskId>,
+        text: &'caller str,
+        label: Option<&'caller str>,
     },
     TaskById {
-        task_id: &'a crate::a2a::TaskId,
+        task_id: &'caller crate::a2a::TaskId,
     },
     /// A method the CLI has no sugar for; `--params` is its only input.
     Unsugared,

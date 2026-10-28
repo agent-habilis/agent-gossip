@@ -1,10 +1,10 @@
 /// Who is following up, into which task, on whom — grouped so
 /// [`cli_task_followup`] stays inside the argument budget.
 #[derive(Debug)]
-pub struct FollowupParams<'a> {
-    pub mesh: &'a str,
-    pub nickname: &'a str,
-    pub to: &'a str,
-    pub task_id: &'a str,
-    pub text: &'a str,
+pub struct FollowupParams<'caller> {
+    pub mesh: &'caller str,
+    pub nickname: &'caller str,
+    pub to: &'caller str,
+    pub task_id: &'caller str,
+    pub text: &'caller str,
 }

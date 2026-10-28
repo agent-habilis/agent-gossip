@@ -31,8 +31,8 @@ pub(crate) struct ChatMessage {
 /// Borrowed for serialization, so a roster poll allocates no `serde_json::Map`
 /// per peer.
 #[derive(Serialize)]
-struct Peer<'a> {
-    nickname: &'a str,
+struct Peer<'source> {
+    nickname: &'source str,
 }
 
 #[derive(Debug, Default)]
@@ -141,19 +141,19 @@ impl Inbox {
 /// is built around a pre-minted id rather than through `ops::send_app` (which
 /// mints its id internally, leaving nothing to reference).
 #[derive(Serialize)]
-struct A2aMessage<'a> {
+struct A2aMessage<'source> {
     #[serde(rename = "messageId")]
-    message_id: &'a str,
-    role: &'a str,
-    parts: Vec<A2aPart<'a>>,
+    message_id: &'source str,
+    role: &'source str,
+    parts: Vec<A2aPart<'source>>,
     #[serde(rename = "contextId")]
-    context_id: &'a str,
-    extensions: Vec<&'a str>,
+    context_id: &'source str,
+    extensions: Vec<&'source str>,
 }
 
 #[derive(Serialize)]
-struct A2aPart<'a> {
-    text: &'a str,
+struct A2aPart<'source> {
+    text: &'source str,
 }
 
 pub(crate) struct GossipDriver {

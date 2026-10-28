@@ -186,10 +186,10 @@ fn json_presence_left() {
 
 /// The value cluster for the `status_frame` test helper: the crafted
 /// frame's task id (with optional beat metadata).
-struct StatusFrameArgs<'a> {
-    task_id: &'a str,
+struct StatusFrameArgs<'caller> {
+    task_id: &'caller str,
     state: crate::a2a::TaskState,
-    note: Option<&'a str>,
+    note: Option<&'caller str>,
     metadata: Option<serde_json::Value>,
 }
 

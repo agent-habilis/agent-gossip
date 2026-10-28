@@ -33,8 +33,8 @@ const BAD_SECRET: u32 = 1;
 /// The a2a bridge's target + lookup/advertise/output configuration — grouped
 /// (matching the api's `*Config` structs) since `expose` is a single
 /// CLI operation with no environment handles to keep separate.
-pub(crate) struct ExposeParams<'a> {
-    pub(crate) to: &'a str,
+pub(crate) struct ExposeParams<'caller> {
+    pub(crate) to: &'caller str,
     pub(crate) flags: LookupSet,
     pub(crate) advertise: DirectorySelection,
     pub(crate) loopback: bool,
