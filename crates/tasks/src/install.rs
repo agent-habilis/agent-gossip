@@ -29,13 +29,13 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // self-identified as an old commit (`765793f`), and the mismatch was only
     // caught in a failing field test. Best-effort — a probe hiccup must not
     // fail an install that succeeded.
-    let installed: std::path::PathBuf = std::env::var_os("CARGO_HOME")
+    let cargo_home: Option<std::path::PathBuf> = std::env::var_os("CARGO_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::home_dir().map(|user_home| user_home.join(".cargo")))
-        .map_or_else(
-            || "agent-gossip".into(),
-            |cargo| cargo.join("bin/agent-gossip"),
-        );
+        .or_else(|| std::env::home_dir().map(|user_home| user_home.join(".cargo")));
+    let installed: std::path::PathBuf = cargo_home.map_or_else(
+        || "agent-gossip".into(),
+        |cargo| cargo.join("bin/agent-gossip"),
+    );
     let version = cmd!(sh, "{installed} --version")
         .quiet()
         .read()
