@@ -1,4 +1,5 @@
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Msg {
     pub author: String,
     pub body: String,

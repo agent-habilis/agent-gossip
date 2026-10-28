@@ -417,12 +417,12 @@ async fn status_task_id_mismatch_is_dropped() {
     let victim_nick = victim.nickname.clone();
     let evil = CraftedMsg::status_frame(
         attacker.session.mesh_id(),
-        test_key::StatusFrameParams {
-            author: "ghost",
-            to: &victim_nick,
-            frame_task_id: "550e8400-e29b-41d4-a716-446655440000", // frame correlation
-            payload_task_id: "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
-        },
+        test_key::StatusFrameParams::new(
+            "ghost",
+            &victim_nick,
+            "550e8400-e29b-41d4-a716-446655440000", // frame correlation
+            "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
+        ),
     )
     .sign(&key)
     .bytes();
@@ -651,14 +651,13 @@ async fn a_bystanders_task_status_is_dropped() {
     let key = test_key::new_key();
     let evil = CraftedMsg::sealed_task_status(
         attacker.session.mesh_id(),
-        test_key::SealedTaskStatusParams {
-            author: "wire-thistle",
-            to: &initiator.nickname,
-            task_id: &task_id,
-            state: TaskState::Completed,
-            beat: false,
+        test_key::SealedTaskStatusParams::new(
+            "wire-thistle",
+            &initiator.nickname,
+            &task_id,
             seal_key,
-        },
+        )
+        .with_state(TaskState::Completed),
     )
     .sign(&key)
     .bytes();
@@ -710,12 +709,12 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
 
     let old = CraftedMsg::sealed_msg(
         attacker.session.mesh_id(),
-        test_key::SealedMsgParams {
-            author: &attacker.nickname,
-            to: &victim.nickname,
-            text: "from before the join",
+        test_key::SealedMsgParams::new(
+            &attacker.nickname,
+            &victim.nickname,
+            "from before the join",
             seal_key,
-        },
+        ),
     )
     .timestamp(habilis_network::protocol::UnixSecs::from_secs(
         1_000_000_000,
@@ -780,12 +779,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
         .expect("the sender's seal key is published in the meta doc");
     let forged = CraftedMsg::sealed_receipt(
         attacker.session.mesh_id(),
-        test_key::SealedMsgParams {
-            author: &attacker.nickname,
-            to: &sender.nickname,
-            text: id.as_str(),
-            seal_key,
-        },
+        test_key::SealedMsgParams::new(&attacker.nickname, &sender.nickname, id.as_str(), seal_key),
     )
     .sign(&test_key::new_key())
     .bytes();

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// a `--a2a-serve` daemon additionally declares its localhost JSON-RPC one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct AgentInterface {
     pub url: String,
     pub protocol_binding: String,

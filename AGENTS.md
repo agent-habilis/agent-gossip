@@ -394,7 +394,6 @@ This file wins over the guide. If the two conflict, follow this file.
 - `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
-- Declined U26: this is an application crate (S4), so its public structs with public fields do not use `#[non_exhaustive]`; callers build them directly and fix them in the same change.
 - Declined D1: AGENTS drops derivable doc comments, so a public item gets a doc comment only when it states a why that the signature cannot.
 - Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
 - Declined P5: a complex iterator chain is typed by its binding or its `collect` target, and the compiler checks that type, so no extra annotation is added.

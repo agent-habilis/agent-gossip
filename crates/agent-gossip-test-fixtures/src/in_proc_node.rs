@@ -399,13 +399,14 @@ impl InProcNode {
         method: &str,
         params: serde_json::Value,
     ) -> serde_json::Value {
+        let call = A2aCallParams::new(
+            Nickname::new(target).expect("valid target"),
+            method.to_owned(),
+            params,
+            MSG_TIMEOUT,
+        );
         self.session
-            .a2a_call(A2aCallParams {
-                peer: Nickname::new(target).expect("valid target"),
-                method: method.to_owned(),
-                params,
-                timeout: MSG_TIMEOUT,
-            })
+            .a2a_call(call)
             .await
             .expect("a2a_call transport")
     }
@@ -444,14 +445,11 @@ impl InProcNode {
         let peer = Nickname::new(target).expect("valid target");
         let deadline = Instant::now() + MSG_TIMEOUT;
         loop {
+            let call =
+                A2aCallParams::new(peer.clone(), method.to_owned(), params.clone(), RPC_ATTEMPT);
             let response: serde_json::Value = self
                 .session
-                .a2a_call(A2aCallParams {
-                    peer: peer.clone(),
-                    method: method.to_owned(),
-                    params: params.clone(),
-                    timeout: RPC_ATTEMPT,
-                })
+                .a2a_call(call)
                 .await
                 .expect("a2a_call transport");
             if !is_rpc_timeout(&response) || Instant::now() >= deadline {
@@ -462,26 +460,22 @@ impl InProcNode {
 
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
     pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
+        let status = match note {
+            Some(text) => TaskStatusParams::new(task_id.clone(), state).with_note(text.to_owned()),
+            None => TaskStatusParams::new(task_id.clone(), state),
+        };
         self.session
-            .task_status(TaskStatusParams {
-                task_id: task_id.clone(),
-                state,
-                note: note.map(str::to_owned),
-                waiting: None,
-            })
+            .task_status(status)
             .await
             .expect("in-process task_status failed");
     }
 
     /// Worker-emit a `working` status that says the worker waits on its user.
     pub async fn task_waiting(&self, task_id: &TaskId, reason: &str) {
+        let status = TaskStatusParams::new(task_id.clone(), TaskState::Working)
+            .with_waiting(reason.to_owned());
         self.session
-            .task_status(TaskStatusParams {
-                task_id: task_id.clone(),
-                state: TaskState::Working,
-                note: None,
-                waiting: Some(reason.to_owned()),
-            })
+            .task_status(status)
             .await
             .expect("in-process task_waiting failed");
     }
@@ -489,13 +483,7 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
     pub async fn task_artifact(&self, task_id: &TaskId, text: &str) {
         self.session
-            .task_artifact(TaskArtifactParams {
-                task_id: task_id.clone(),
-                text: text.to_owned(),
-                file: None,
-                file_name: None,
-                file_mime: None,
-            })
+            .task_artifact(TaskArtifactParams::new(task_id.clone(), text.to_owned()))
             .await
             .expect("in-process task_artifact failed");
     }
@@ -504,14 +492,10 @@ impl InProcNode {
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
     /// so a test can read the minted ticket reference.
     pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Authored {
+        let artifact =
+            TaskArtifactParams::new(task_id.clone(), String::new()).with_file(path.to_path_buf());
         self.session
-            .task_artifact(TaskArtifactParams {
-                task_id: task_id.clone(),
-                text: String::new(),
-                file: Some(path.to_path_buf()),
-                file_name: None,
-                file_mime: None,
-            })
+            .task_artifact(artifact)
             .await
             .expect("in-process task_artifact_file failed")
     }

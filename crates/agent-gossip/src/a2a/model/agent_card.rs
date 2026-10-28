@@ -4,6 +4,7 @@ use super::{AgentCapabilities, AgentInterface, AgentSkill};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct AgentCard {
     pub name: String,
     pub description: String,

@@ -141,6 +141,8 @@ excessive_nesting = "warn"
 clone_on_ref_ptr = "warn"
 # Google Rust Style Guide, U23: a public enum is non_exhaustive, so a new variant is not a breaking change.
 exhaustive_enums = "warn"
+# Google Rust Style Guide, U26: a public struct with public fields is non_exhaustive, so a new field is not a breaking change.
+exhaustive_structs = "warn"
 redundant_clone = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error

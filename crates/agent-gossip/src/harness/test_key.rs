@@ -46,6 +46,7 @@ pub fn pubkey_hex(key: &TestKey) -> String {
 /// The value cluster for [`CraftedMsg::status_frame`]: the author/target
 /// nicknames plus the frame-vs-payload task-id pair under test.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StatusFrameParams<'caller> {
     pub author: &'caller str,
     pub to: &'caller str,
@@ -57,6 +58,7 @@ pub struct StatusFrameParams<'caller> {
 /// status leg for an existing task, from an author who is not that task's
 /// counterparty.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SealedTaskStatusParams<'caller> {
     pub author: &'caller str,
     pub to: &'caller str,
@@ -71,11 +73,72 @@ pub struct SealedTaskStatusParams<'caller> {
 
 /// The value cluster for [`CraftedMsg::sealed_msg`].
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SealedMsgParams<'caller> {
     pub author: &'caller str,
     pub to: &'caller str,
     pub text: &'caller str,
     pub seal_key: PublicKey,
+}
+
+impl<'caller> StatusFrameParams<'caller> {
+    #[must_use]
+    pub fn new(
+        author: &'caller str,
+        to: &'caller str,
+        frame_task_id: &'caller str,
+        payload_task_id: &'caller str,
+    ) -> Self {
+        Self {
+            author,
+            to,
+            frame_task_id,
+            payload_task_id,
+        }
+    }
+}
+
+impl<'caller> SealedTaskStatusParams<'caller> {
+    /// A `working` transition, not a beat.
+    #[must_use]
+    pub fn new(
+        author: &'caller str,
+        to: &'caller str,
+        task_id: &'caller str,
+        seal_key: PublicKey,
+    ) -> Self {
+        Self {
+            author,
+            to,
+            task_id,
+            state: crate::a2a::TaskState::Working,
+            beat: false,
+            seal_key,
+        }
+    }
+
+    #[must_use]
+    pub fn with_state(mut self, state: crate::a2a::TaskState) -> Self {
+        self.state = state;
+        self
+    }
+}
+
+impl<'caller> SealedMsgParams<'caller> {
+    #[must_use]
+    pub fn new(
+        author: &'caller str,
+        to: &'caller str,
+        text: &'caller str,
+        seal_key: PublicKey,
+    ) -> Self {
+        Self {
+            author,
+            to,
+            text,
+            seal_key,
+        }
+    }
 }
 
 /// The addressee's public X25519 mesh-seal key, read out of a meta document

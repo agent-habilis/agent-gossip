@@ -4,6 +4,7 @@ use super::{Artifact, Message, TaskId, TaskStatus};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Task {
     pub id: TaskId,
     pub context_id: String,

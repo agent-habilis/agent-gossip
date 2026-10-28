@@ -1260,13 +1260,10 @@ async fn test_completed_task_is_never_reaped() {
 
     // The initiator approves *into the task* — the `--task-id` is what makes this
     // a follow-up rather than a brand-new task.
-    let approved = common::cli_task_followup(&common::FollowupParams {
-        mesh: &mesh,
-        nickname: &creator.nickname,
-        to: "tk-done",
-        task_id: &tid,
-        text: "approved, thank you",
-    });
+    let approved = common::cli_task_followup(
+        &common::FollowupParams::new(&mesh, &creator.nickname, "tk-done", &tid)
+            .with_text("approved, thank you"),
+    );
     assert_eq!(
         approved["result"]["task"]["id"], tid,
         "a --task-id follow-up must land on the same task, not open a new one: {approved}"
@@ -1547,13 +1544,10 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     assert!(saw_offer >= 1, "worker never surfaced the task message");
     common::cli_task_status(&mesh, worker_nick, &tid, "working");
     common::cli_task_artifact(&mesh, worker_nick, &tid, "three");
-    common::cli_task_followup(&common::FollowupParams {
-        mesh: &mesh,
-        nickname: &creator.nickname,
-        to: worker_nick,
-        task_id: &tid,
-        text: "approved",
-    });
+    common::cli_task_followup(
+        &common::FollowupParams::new(&mesh, &creator.nickname, worker_nick, &tid)
+            .with_text("approved"),
+    );
     common::cli_task_status(&mesh, worker_nick, &tid, "completed");
     let saw_completed: usize = wait_until(
         || {

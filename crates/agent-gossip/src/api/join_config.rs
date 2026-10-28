@@ -5,6 +5,7 @@ use crate::policy;
 
 /// How to join a mesh.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct JoinConfig {
     /// What to join: a mesh id, classified into a [`JoinTarget`] at the
     /// boundary (parse a string with [`str::parse`]). The name, lookups and
@@ -41,6 +42,7 @@ impl JoinConfig {
 /// string, so it is the only input — anyone passing the same string converges
 /// on the same mesh.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TopicConfig {
     /// The shared string. Hashed into the mesh seed after trimming
     /// surrounding whitespace (never case-folded).
@@ -68,6 +70,7 @@ impl TopicConfig {
 /// stays hidden behind [`RelayLadder`](crate::RelayLadder) inside the
 /// lookups, so the surface is iroh-free.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CreateConfig {
     /// The mesh name (validated): 1..=32 UTF-8 characters (any
     /// script/emoji), excluding control characters, whitespace, and any

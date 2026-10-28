@@ -4,6 +4,7 @@ use super::{MessageId, Part, Role, TaskId};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Message {
     pub message_id: MessageId,
     pub role: Role,

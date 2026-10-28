@@ -17,6 +17,7 @@ use super::directory_error::DirectoryError;
 /// One live directory entry handed to embedders — the public, iroh-free
 /// projection of a `habilis_network::ops::directory::Listing`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MeshListing {
     /// The advertised mesh's id — pass to [`MeshSession::join`] to join.
     pub mesh: MeshId,

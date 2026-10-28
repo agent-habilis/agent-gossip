@@ -209,6 +209,7 @@ pub(crate) fn parts_text(parts: &[Part]) -> String {
 /// [`status_update`] composes alongside the frame's mesh, grouped so the
 /// call stays within the argument budget.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct StatusUpdateParams<'caller> {
     pub task_id: &'caller TaskId,
     pub state: TaskState,
@@ -262,6 +263,7 @@ pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
 /// Whether the local agent of a worker is reading: the answer a beat carries so
 /// the initiator can tell a wedged agent from a live daemon without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ReaderBeat {
     pub bell: bool,
     pub last_poll_secs: u64,

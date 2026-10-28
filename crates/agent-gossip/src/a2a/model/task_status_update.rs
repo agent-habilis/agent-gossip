@@ -4,6 +4,7 @@ use super::{TaskId, TaskStatus};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct TaskStatusUpdate {
     pub task_id: TaskId,
     pub context_id: String,

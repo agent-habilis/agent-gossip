@@ -12,6 +12,7 @@ use crate::output::OutputEvent;
 /// is the `poll` / `fetch` cursor value; `event` renders to the live-stream
 /// JSON line via [`crate::output::surfaced_event_json`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SurfacedEvent {
     pub seq: u64,
     pub event: OutputEvent,

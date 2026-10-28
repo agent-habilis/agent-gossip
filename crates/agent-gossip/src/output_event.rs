@@ -92,6 +92,7 @@ pub enum OutputEvent {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct PingPeer {
     pub nickname: Nickname,
     pub rtt_ms: u64,

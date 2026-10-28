@@ -4,6 +4,7 @@ use super::Part;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Artifact {
     pub artifact_id: String,
     pub parts: Vec<Part>,
