@@ -267,7 +267,7 @@ mod tests {
                 .get_dir(skill)
                 .unwrap_or_else(|| panic!("{skill} is embedded"));
             let files: Vec<_> = dir.files().collect();
-            let file_paths: Vec<&std::path::Path> = files.iter().map(|file| file.path()).collect();
+            let file_paths: Vec<&Path> = files.iter().map(|file| file.path()).collect();
             assert_eq!(
                 files.len(),
                 1,
@@ -292,7 +292,7 @@ mod tests {
         // renderer didn't emit. This catches the other direction — a build.rs
         // prefix filter wide enough to sweep in a dir nobody owns, which plug
         // would then install and never clean up.
-        let dir_paths: Vec<&std::path::Path> = SKILLS.dirs().map(Dir::path).collect();
+        let dir_paths: Vec<&Path> = SKILLS.dirs().map(Dir::path).collect();
         assert_eq!(
             SKILLS.dirs().count(),
             OWNED_SKILL_DIRS.len(),
