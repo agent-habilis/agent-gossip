@@ -229,7 +229,11 @@ async fn test_two_node_message_delivery() {
     );
     let received = joiner.inbound();
     assert_eq!(received.len(), 1, "expected exactly 1 delivery");
-    assert_eq!(chat_text(received[0]), "hello from the network");
+    assert_eq!(
+        chat_text(received[0]),
+        "hello from the network",
+        "the joiner receives the one message"
+    );
 }
 
 /// A passworded mesh: the right password joins and messages flow; a wrong
@@ -267,7 +271,11 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "passworded joiner never received the creator's message"
     );
-    assert_eq!(chat_text(joiner.inbound()[0]), "hello behind the password");
+    assert_eq!(
+        chat_text(joiner.inbound()[0]),
+        "hello behind the password",
+        "the password joiner receives the message"
+    );
 }
 
 /// The subprocess wire contract for `--password`: `create --password=pw`
@@ -344,7 +352,11 @@ async fn test_state_log_propagates_to_a_peer() {
         "joiner never converged to the creator's state log"
     );
     // The author holds its own events too (gossip never echoes to self).
-    assert_eq!(creator.state_get().await, want);
+    assert_eq!(
+        creator.state_get().await,
+        want,
+        "the creator holds its own state"
+    );
 }
 
 /// Durable state log, anti-entropy backfill: a peer that joins **after** the
@@ -405,7 +417,11 @@ async fn test_three_node_full_delivery() {
         "expected both beta and gamma to receive the broadcast"
     );
     for message in beta.inbound().into_iter().chain(gamma.inbound()) {
-        assert_eq!(chat_text(message), "broadcast to all three nodes");
+        assert_eq!(
+            chat_text(message),
+            "broadcast to all three nodes",
+            "every peer receives the broadcast"
+        );
     }
 }
 
@@ -453,7 +469,10 @@ fn test_stdout_format_parseable() {
         .chain(joiner.messages())
         .collect();
     for message in &msgs {
-        assert_eq!(message.body, "format check message");
+        assert_eq!(
+            message.body, "format check message",
+            "the message body is the format check text"
+        );
     }
 }
 
@@ -528,7 +547,7 @@ fn test_utf8_body_round_trip() {
         .chain(joiner.messages())
         .collect();
     for message in &msgs {
-        assert_eq!(message.body, body);
+        assert_eq!(message.body, body, "the message body is kept as sent");
     }
 }
 
@@ -885,13 +904,20 @@ fn test_ready_gate_succeeds_when_serving() {
     let parsed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
     assert_eq!(parsed["ready"], true, "gate returned but ready is not true");
-    assert_eq!(parsed["name"], "ready-test");
+    assert_eq!(
+        parsed["name"], "ready-test",
+        "the ready output names the ready test"
+    );
     assert!(
         parsed["gossip"]
             .as_str()
-            .is_some_and(|mesh| agent_gossip::MeshId::new(mesh).is_ok())
+            .is_some_and(|mesh| agent_gossip::MeshId::new(mesh).is_ok()),
+        "the gate reports ready"
     );
-    assert!(parsed["nickname"].as_str().is_some());
+    assert!(
+        parsed["nickname"].as_str().is_some(),
+        "the ready output carries a nickname"
+    );
 
     let _ = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -978,7 +1004,10 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
     // The first daemon still owns the file and is unharmed.
     let parsed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
-    assert_eq!(parsed["name"], "collide-first");
+    assert_eq!(
+        parsed["name"], "collide-first",
+        "the collision keeps the first name"
+    );
 
     let _ = Command::new("kill")
         .args(["-TERM", &first.id().to_string()])
@@ -1126,9 +1155,12 @@ fn test_ready_gate_emits_identity_json_on_success() {
     );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
-    assert_eq!(parsed["gossip"], "deadbeef");
-    assert_eq!(parsed["name"], "cool-team");
-    assert_eq!(parsed["nickname"], "calm-otter");
+    assert_eq!(parsed["gossip"], "deadbeef", "ready prints the gossip id");
+    assert_eq!(parsed["name"], "cool-team", "ready prints the name");
+    assert_eq!(
+        parsed["nickname"], "calm-otter",
+        "ready prints the nickname"
+    );
     let _ = fs::remove_file(&state_file);
 }
 
@@ -1183,9 +1215,18 @@ fn test_poll_returns_messages() {
         first["seq"].is_u64(),
         "poll record must carry a seq: {first}"
     );
-    assert_eq!(first["event"], "message");
-    assert_eq!(first["type"], "broadcast");
-    assert_eq!(first["display"], "💬️ `<joiner-poll>`: hello from poll test");
+    assert_eq!(
+        first["event"], "message",
+        "the first poll event is a message"
+    );
+    assert_eq!(
+        first["type"], "broadcast",
+        "the first poll event is a broadcast"
+    );
+    assert_eq!(
+        first["display"], "💬️ `<joiner-poll>`: hello from poll test",
+        "the poll display names the joiner"
+    );
     assert_eq!(first["self"], true, "joiner authored it → self:true");
 
     // Poll with `--after <seq>` of the first message → excludes it, keeps the
@@ -1247,24 +1288,29 @@ fn test_cli_broadcast_and_msg_wire_contract() {
     // Broadcast: `type` says everyone, `to` is null, no arrow.
     let bob_events = events(&bob.nickname);
     let broadcast = find(&bob_events, "to-everyone").expect("bob received the broadcast");
-    assert_eq!(broadcast["type"], "broadcast");
-    assert!(broadcast["to"].is_null());
+    assert_eq!(broadcast["type"], "broadcast", "bob receives a broadcast");
+    assert!(broadcast["to"].is_null(), "the broadcast has no recipient");
     assert_eq!(
         broadcast["display"],
-        format!("💬️ `<{}>`: to-everyone", creator.nickname)
+        format!("💬️ `<{}>`: to-everyone", creator.nickname),
+        "the broadcast display is the expected line"
     );
 
     // Msg: `type` says one peer, `to` names them, and the arrow marks it.
     let message = find(&bob_events, "to-bob-only").expect("bob received the msg");
-    assert_eq!(message["type"], "msg");
-    assert_eq!(message["to"], bob.nickname);
-    assert_eq!(message["is_visible"], true);
+    assert_eq!(message["type"], "msg", "bob receives a direct message");
+    assert_eq!(
+        message["to"], bob.nickname,
+        "the direct message is addressed to bob"
+    );
+    assert_eq!(message["is_visible"], true, "the direct message is visible");
     assert_eq!(
         message["display"],
         format!(
             "💬️ `<{}>` → `<{}>`: to-bob-only",
             creator.nickname, bob.nickname
-        )
+        ),
+        "the direct message display is the expected line"
     );
 
     // Carol got the broadcast and not the msg — over real sockets, real
@@ -3037,7 +3083,11 @@ fn state_file_carries_daemon_pid() {
     let state_file = default_state_file(&mesh, &nickname);
     let parsed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
-    assert_eq!(parsed["pid"], child.id());
+    assert_eq!(
+        parsed["pid"],
+        child.id(),
+        "the state file records the daemon pid"
+    );
 
     let _ = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -3065,8 +3115,12 @@ fn leave_explicit_target_stops_only_that_mesh() {
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     let left = report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
-    assert_eq!(left[0]["gossip"], victim_mesh.as_str());
-    assert_eq!(left[0]["confirmed"], true);
+    assert_eq!(
+        left[0]["gossip"],
+        victim_mesh.as_str(),
+        "the leave report names the victim gossip"
+    );
+    assert_eq!(left[0]["confirmed"], true, "the victim is confirmed left");
     assert!(
         !default_state_file(&victim_mesh, &victim_nick).exists(),
         "victim state file survived leave"
@@ -3121,7 +3175,11 @@ fn ready_carries_the_stale_skill_warning() {
         .expect("failed to run agent-gossip plug");
     assert!(plugged.status.success(), "plug failed: {plugged:?}");
     let clean = ready(&home);
-    assert_eq!(clean["nickname"], nickname.as_str());
+    assert_eq!(
+        clean["nickname"],
+        nickname.as_str(),
+        "the clean report names the nickname"
+    );
     assert!(
         clean["drift"].is_null(),
         "a matching install must not warn: {clean}"
@@ -3227,7 +3285,11 @@ fn leave_report_carries_the_full_topic_string() {
     let state: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(default_state_file(&mesh, &nickname)).unwrap())
             .unwrap();
-    assert_eq!(state["topic"], topic.as_str());
+    assert_eq!(
+        state["topic"],
+        topic.as_str(),
+        "the state file records the topic"
+    );
 
     let out: std::process::Output = common::test_cmd()
         .args(["leave", &mesh])
@@ -3238,8 +3300,15 @@ fn leave_report_carries_the_full_topic_string() {
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     let left = report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the topic daemon: {report}");
-    assert_eq!(left[0]["topic"], topic.as_str());
-    assert_eq!(left[0]["confirmed"], true);
+    assert_eq!(
+        left[0]["topic"],
+        topic.as_str(),
+        "the leave report names the topic"
+    );
+    assert_eq!(
+        left[0]["confirmed"], true,
+        "the topic gossip is confirmed left"
+    );
 
     let _ = child.wait();
     let _ = fs::remove_file(&log);
@@ -3304,8 +3373,16 @@ fn leave_session_scope_via_decoy_parent() {
     let report = session_report(&decoy_pid);
     let sessions = report["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
-    assert_eq!(sessions[0]["gossip"], mesh.as_str());
-    assert_eq!(sessions[0]["nickname"], nickname.as_str());
+    assert_eq!(
+        sessions[0]["gossip"],
+        mesh.as_str(),
+        "the session report names the gossip"
+    );
+    assert_eq!(
+        sessions[0]["nickname"],
+        nickname.as_str(),
+        "the session report names the nickname"
+    );
     assert!(
         default_state_file(&mesh, &nickname).exists(),
         "session (read-only) stopped the daemon"
@@ -3320,9 +3397,16 @@ fn leave_session_scope_via_decoy_parent() {
         serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
     let left = leave_report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
-    assert_eq!(left[0]["gossip"], mesh.as_str());
-    assert_eq!(left[0]["confirmed"], true);
-    assert!(!default_state_file(&mesh, &nickname).exists());
+    assert_eq!(
+        left[0]["gossip"],
+        mesh.as_str(),
+        "the leave report names the gossip"
+    );
+    assert_eq!(left[0]["confirmed"], true, "the gossip is confirmed left");
+    assert!(
+        !default_state_file(&mesh, &nickname).exists(),
+        "the default state file is removed"
+    );
 
     let _ = decoy.wait();
     let _ = fs::remove_file(&log);
@@ -3344,8 +3428,12 @@ fn leave_nothing_owned_is_a_clean_noop() {
     assert!(out.status.success(), "leave should exit 0 on a no-op");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    assert_eq!(report["ok"], true);
-    assert_eq!(report["left"].as_array().unwrap().len(), 0);
+    assert_eq!(report["ok"], true, "the no-op leave reports ok");
+    assert_eq!(
+        report["left"].as_array().unwrap().len(),
+        0,
+        "a no-op leave leaves nothing"
+    );
 
     let _ = idle.kill();
     let _ = idle.wait();
@@ -3396,7 +3484,10 @@ fn bell_check_block_reason(session_pid: &str) -> Option<String> {
     assert_eq!(out.status.code(), Some(3), "a block exits 3: {out:?}");
     let decision: serde_json::Value =
         serde_json::from_str(stdout).expect("bell-check prints JSON when it blocks");
-    assert_eq!(decision["decision"], "block");
+    assert_eq!(
+        decision["decision"], "block",
+        "the bell check blocks the stop"
+    );
     Some(
         decision["reason"]
             .as_str()
@@ -3424,7 +3515,11 @@ fn bell_check_and_session_track_the_bell_lock() {
     let _serial = serial_guard();
     let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
 
-    assert_eq!(session_report(&decoy_pid)["sessions"][0]["bell"], false);
+    assert_eq!(
+        session_report(&decoy_pid)["sessions"][0]["bell"],
+        false,
+        "the decoy session is not bell-armed"
+    );
     let reason = bell_check_block_reason(&decoy_pid).expect("no bell blocks the turn");
     assert!(
         reason.contains("gossip bell not armed") && reason.contains(nickname.as_str()),
