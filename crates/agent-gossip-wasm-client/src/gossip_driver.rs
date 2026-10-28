@@ -235,7 +235,7 @@ impl NodeDriver for GossipDriver {
         &mut self,
         req: Self::Session,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let Request::Broadcast(text) = req;
 
@@ -245,7 +245,7 @@ impl NodeDriver for GossipDriver {
             // Chat is role user; the receiver rejects an agent role outright.
             role: "ROLE_USER",
             parts: vec![A2aPart { text: &text }],
-            context_id: ctx.mesh.as_str(),
+            context_id: context.mesh.as_str(),
             extensions: vec![wire::EXT_MESH_BROADCAST],
         };
         let Ok(json) = serde_json::to_string(&payload) else {
@@ -256,8 +256,8 @@ impl NodeDriver for GossipDriver {
         };
 
         let frame = Message::new_app(
-            ctx.mesh,
-            ctx.author,
+            context.mesh,
+            context.author,
             AppFrameParams {
                 tag: AppTag::from(wire::BROADCAST),
                 to: None,
@@ -266,12 +266,12 @@ impl NodeDriver for GossipDriver {
             },
         )
         .with_id(id)
-        .sign(ctx.identity);
+        .sign(context.identity);
 
         let Ok(bytes) = frame.serialize() else {
             return false;
         };
-        match deliver(&frame, bytes, state, ctx.sender).await {
+        match deliver(&frame, bytes, state, context.sender).await {
             Ok(Delivered::Done) => {}
             Ok(Delivered::Pending(pending)) => {
                 // A dial is awaited off the event loop. The frame is echoed now; a dial that

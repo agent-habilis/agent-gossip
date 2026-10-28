@@ -26,11 +26,11 @@ pub(crate) struct Receipt {
 /// receipt, so a failure only costs the sender a proof.
 pub(crate) async fn send_receipt(
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     to: &Nickname,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
-    let outcome = send_sealed(state, ctx, to, receipt).await;
+    let outcome = send_sealed(state, context, to, receipt).await;
     if let Err(error) = &outcome {
         tracing::debug!(target: "agent_gossip::a2a", %error, "receipt not sent");
     }
@@ -43,15 +43,15 @@ pub(crate) async fn send_receipt(
 pub(crate) async fn send_read_receipts(
     app: &mut crate::a2a::a2a_app::A2aApp,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     after: Option<u64>,
 ) {
-    for (to, ref_id) in app.surfaced.read_targets(after, ctx.author) {
+    for (to, ref_id) in app.surfaced.read_targets(after, context.author) {
         let receipt = Receipt {
             ref_id,
             state: ReceiptState::Read,
         };
-        let _ = send_receipt(state, ctx, &to, &receipt).await;
+        let _ = send_receipt(state, context, &to, &receipt).await;
     }
 }
 
@@ -59,7 +59,7 @@ pub(crate) async fn send_read_receipts(
 /// who got or read which frame.
 async fn send_sealed(
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     to: &Nickname,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
@@ -72,13 +72,13 @@ async fn send_sealed(
     };
     send_directed_rpc(
         DirectedRpcParams {
-            mesh: ctx.mesh,
-            author: ctx.author,
+            mesh: context.mesh,
+            author: context.author,
             kind,
             body,
         },
         state,
-        ctx.sender,
+        context.sender,
     )
     .await
 }

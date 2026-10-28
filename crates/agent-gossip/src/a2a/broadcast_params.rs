@@ -1883,9 +1883,9 @@ pub(crate) async fn send_directed_rpc(
 async fn session_ping(
     response: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) -> bool {
-    habilis_network::ops::start_ping_round(state, ctx, Some(response)).await;
+    habilis_network::ops::start_ping_round(state, context, Some(response)).await;
     true
 }
 
@@ -1922,10 +1922,10 @@ async fn inject_raw_frame(bytes: bytes::Bytes, sender: &MeshSender) -> anyhow::R
 pub(crate) async fn handle_session_request(
     params: SessionRequestParams<'_>,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
-    let sender = ctx.sender;
+    let sender = context.sender;
     let SessionRequestParams {
         req,
         mesh,
@@ -1980,7 +1980,7 @@ pub(crate) async fn handle_session_request(
             // buffered, else (with `long`) park a typed waiter the loop
             // fulfills/expires. A parked waiter broadcasts nothing → `false`.
             if !long {
-                crate::a2a::receipt::send_read_receipts(app, state, ctx, after).await;
+                crate::a2a::receipt::send_read_receipts(app, state, context, after).await;
             }
             app.surfaced
                 .poll_or_register(crate::a2a::surfaced_event::PollOrRegisterParams {
@@ -2085,7 +2085,7 @@ pub(crate) async fn handle_session_request(
             let _ = response.send(state.doc(Channel::Meta).to_json());
             false
         }
-        SessionRequest::Ping { response } => session_ping(response, state, ctx).await,
+        SessionRequest::Ping { response } => session_ping(response, state, context).await,
         SessionRequest::A2aCall {
             peer,
             method,

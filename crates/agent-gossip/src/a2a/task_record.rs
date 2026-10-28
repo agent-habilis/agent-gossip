@@ -717,7 +717,7 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
 pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     out: &output::Output,
 ) {
     let now = Instant::now();
@@ -741,7 +741,7 @@ pub(crate) async fn tick_task_sweep(
         );
     for (task_id, peer, reason) in cancels {
         let update = status_update_params::status_update(
-            ctx.mesh,
+            context.mesh,
             status_update_params::StatusUpdateParams {
                 task_id,
                 state: TaskState::Canceled,
@@ -751,7 +751,7 @@ pub(crate) async fn tick_task_sweep(
         );
         broadcast_status(
             state,
-            ctx,
+            context,
             BroadcastStatusParams {
                 peer,
                 task_id,
@@ -872,14 +872,14 @@ pub(crate) fn fail_tasks_for_departed_peer(
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) {
     /// `(task_id, peer, state, last_fraction)` for one keepalive-due task.
     type KeepaliveDue = (TaskId, Nickname, TaskState, Option<(u64, u64)>);
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
-    let (bell, last_poll) = super::node::reader_liveness(app, ctx);
+    let (bell, last_poll) = super::node::reader_liveness(app, context);
     let reader = last_poll.map(|last_poll_secs| ReaderBeat {
         bell,
         last_poll_secs,
@@ -900,7 +900,7 @@ pub(crate) async fn tick_task_keepalive(
 
     for (task_id, peer, task_state, fraction) in due {
         let update = status_update_params::status_update(
-            ctx.mesh,
+            context.mesh,
             status_update_params::StatusUpdateParams {
                 task_id: &task_id,
                 state: task_state,
@@ -912,7 +912,7 @@ pub(crate) async fn tick_task_keepalive(
         );
         let sent = broadcast_status(
             state,
-            ctx,
+            context,
             BroadcastStatusParams {
                 peer: &peer,
                 task_id: &task_id,
@@ -946,7 +946,7 @@ struct BroadcastStatusParams<'a> {
 /// later. A send that starts and then fails costs one cadence.
 async fn broadcast_status(
     state: &EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     params: BroadcastStatusParams<'_>,
 ) -> bool {
     let BroadcastStatusParams {
@@ -969,7 +969,8 @@ async fn broadcast_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    let message = Message::new_frame(ctx.mesh, ctx.author, kind, body).sign(state.identity());
+    let message =
+        Message::new_frame(context.mesh, context.author, kind, body).sign(state.identity());
     let Ok(bytes) = message.serialize() else {
         return false;
     };
@@ -981,7 +982,7 @@ async fn broadcast_status(
     // background because this runs from `on_tick`, inline on the event loop:
     // a cold `deliver` dials there and stops the whole node for the dial and
     // path-select budgets, once per due task.
-    habilis_network::ops::deliver_in_background(&message, bytes, state, ctx.sender).await
+    habilis_network::ops::deliver_in_background(&message, bytes, state, context.sender).await
 }
 
 #[cfg(test)]

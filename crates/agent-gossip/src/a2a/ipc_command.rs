@@ -193,10 +193,10 @@ pub(crate) struct IpcDispatchParams<'a> {
 pub(crate) async fn handle_ipc_command(
     params: IpcDispatchParams<'_>,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
-    let sender = ctx.sender;
+    let sender = context.sender;
     let IpcDispatchParams {
         cmd,
         resp_tx,
@@ -289,7 +289,7 @@ pub(crate) async fn handle_ipc_command(
             // on the next surfaced event or expires at the park cap. A parked
             // waiter broadcasts nothing → `false`.
             if !long {
-                send_read_receipts(app, state, ctx, after).await;
+                send_read_receipts(app, state, context, after).await;
             }
             app.surfaced.poll_or_register(PollOrRegisterParams {
                 after,
@@ -305,7 +305,7 @@ pub(crate) async fn handle_ipc_command(
             // second. Pongs are collected by the gossip receive path; the
             // round's deadline drives the `ping_report` emission. CLI/IPC
             // consumes that event, not a channel, so there is no responder.
-            start_ping_round(state, ctx, None).await;
+            start_ping_round(state, context, None).await;
             tracing::debug!("IPC ping command received; round armed");
             let _ = resp_tx.send(json_ack());
             true

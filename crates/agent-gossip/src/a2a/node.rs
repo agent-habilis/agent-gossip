@@ -32,7 +32,7 @@ impl NodeApp for A2aApp {
         &mut self,
         frame: InboundApp<'_>,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let InboundApp {
             message,
@@ -43,10 +43,10 @@ impl NodeApp for A2aApp {
         // handler, which decides loggability.
         let tag = message.kind.app_tag().map(AppTag::as_str);
         if tag == Some(wire::REQ) || tag == Some(wire::RESP) {
-            handle_a2a_rpc(message, state, self, ctx).await;
+            handle_a2a_rpc(message, state, self, context).await;
             return false;
         }
-        let routed = route_content(message, surfaceable, self, ctx);
+        let routed = route_content(message, surfaceable, self, context);
         if routed.fresh_for_us {
             let receipt = Receipt {
                 ref_id: message.id.as_str().to_owned(),
@@ -54,7 +54,7 @@ impl NodeApp for A2aApp {
             };
             // Best effort: `send_receipt` logs its own failure, and a lost
             // receipt only leaves the sender without a delivery proof.
-            let _ = send_receipt(state, ctx, &message.author, &receipt).await;
+            let _ = send_receipt(state, context, &message.author, &receipt).await;
         }
         routed.loggable
     }
@@ -63,17 +63,17 @@ impl NodeApp for A2aApp {
         &mut self,
         author: &Nickname,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) {
-        adopt_meta_endpoint(author, state, ctx);
+        adopt_meta_endpoint(author, state, context);
     }
 
-    async fn on_meshed(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    async fn on_meshed(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Re-publish our card now that we're meshed: the home relay is homed by
         // this point, so the card's endpoint hint gets a real dial path (the
         // startup publish may have had none). A no-op if the address is
         // unchanged.
-        self.sync_own_card(state, ctx).await;
+        self.sync_own_card(state, context).await;
     }
 
     async fn on_peer_left(
@@ -110,11 +110,11 @@ impl NodeDriver for A2aApp {
         }
     }
 
-    async fn on_startup(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        self.sync_own_card(state, ctx).await;
+    async fn on_startup(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+        self.sync_own_card(state, context).await;
     }
 
-    async fn on_tick(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    async fn on_tick(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
@@ -123,26 +123,29 @@ impl NodeDriver for A2aApp {
         // no peer can send to us without it.
         if self.card_error.is_some() {
             if self.card_retry_in == 0 {
-                self.sync_own_card(state, ctx).await;
+                self.sync_own_card(state, context).await;
             } else {
                 self.card_retry_in -= 1;
             }
         }
-        crate::a2a::task_record::tick_task_sweep(state, self, ctx, &out).await;
-        crate::a2a::task_record::tick_task_keepalive(state, self, ctx).await;
+        crate::a2a::task_record::tick_task_sweep(state, self, context, &out).await;
+        crate::a2a::task_record::tick_task_keepalive(state, self, context).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
         // to re-send the missing shards from their sender-side cache.
         crate::a2a::broadcast_params::send_shard_repair_requests(
-            ctx.mesh, ctx.author, state, ctx.sender,
+            context.mesh,
+            context.author,
+            state,
+            context.sender,
         )
         .await;
     }
 
-    async fn on_shutdown(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    async fn on_shutdown(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Retract our meta entry first so the merge frame is queued ahead of
         // `Left` and rides the same propagation window the engine sleeps after
         // this hook.
-        retract_own_meta_entry(state, ctx).await;
+        retract_own_meta_entry(state, context).await;
         // Empty out any parked A2A-call waiters so a held call returns a
         // clean timeout, then close the blob-serving endpoint (dropping its
         // store removes the `<nick>.blobs/` spool).
@@ -184,18 +187,18 @@ impl NodeDriver for A2aApp {
         &mut self,
         req: SessionRequest,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
         crate::a2a::broadcast_params::handle_session_request(
             crate::a2a::broadcast_params::SessionRequestParams {
                 req,
-                mesh: ctx.mesh,
-                author: ctx.author,
+                mesh: context.mesh,
+                author: context.author,
                 app: self,
             },
             state,
-            ctx,
+            context,
             &out,
         )
         .await
@@ -205,7 +208,7 @@ impl NodeDriver for A2aApp {
         &mut self,
         req: A2aRequest,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) {
         let A2aRequest { op, response } = req;
         // A directed `message/send` (task creation) needs the synchronous gossip
@@ -219,8 +222,8 @@ impl NodeDriver for A2aApp {
         {
             crate::a2a::broadcast_params::broadcast_a2a_call(
                 crate::a2a::broadcast_params::BroadcastA2aCallParams {
-                    mesh: ctx.mesh,
-                    author: ctx.author,
+                    mesh: context.mesh,
+                    author: context.author,
                     peer,
                     method: "SendMessage",
                     params: serde_json::json!({ "message": message }),
@@ -230,7 +233,7 @@ impl NodeDriver for A2aApp {
                 },
                 state,
                 self,
-                ctx.sender,
+                context.sender,
             )
             .await;
             return;
@@ -240,14 +243,14 @@ impl NodeDriver for A2aApp {
         let outcome = crate::a2a::rpc_error::handle_op(
             crate::a2a::rpc_error::HandleOpParams {
                 op,
-                mesh: ctx.mesh,
-                author: ctx.author,
-                our_pubkey: ctx.our_pubkey,
+                mesh: context.mesh,
+                author: context.author,
+                our_pubkey: context.our_pubkey,
                 a2a_port: port,
                 app: self,
             },
             state,
-            ctx.sender,
+            context.sender,
             &out,
         )
         .await;
@@ -258,21 +261,21 @@ impl NodeDriver for A2aApp {
         &mut self,
         req: IpcRequest<'_, IpcCommand>,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
         crate::a2a::ipc_command::handle_ipc_command(
             crate::a2a::ipc_command::IpcDispatchParams {
                 cmd: req.cmd,
                 resp_tx: req.resp,
-                mesh: ctx.mesh,
+                mesh: context.mesh,
                 name: req.name,
-                author: ctx.author,
-                endpoint: ctx.endpoint,
+                author: context.author,
+                endpoint: context.endpoint,
                 app: self,
             },
             state,
-            ctx,
+            context,
             &out,
         )
         .await
@@ -290,35 +293,38 @@ impl NodeDriver for A2aApp {
 ///
 /// # Errors
 /// The card does not fit the frames, or a merge was refused.
-async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> anyhow::Result<()> {
+async fn publish_own_card(
+    state: &mut EventLoopState,
+    context: &HandlerCtx<'_>,
+) -> anyhow::Result<()> {
     let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-    let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
+    let card = crate::a2a::card::own_card(context.author, context.our_pubkey, &seal_b58);
     // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
     // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
     // Re-publishing with an unchanged address is a no-op (an automerge change
     // with no ops), so this is safe to call repeatedly.
     let mut card = serde_json::to_value(&card)?;
-    card["endpoint"] = crate::a2a::card::endpoint_hint(ctx.endpoint);
+    card["endpoint"] = crate::a2a::card::endpoint_hint(context.endpoint);
     // The cut follows the size of the frame that the gossip really sends: the merge becomes an
     // automerge change, and a passworded gossip seals it. The same steps as the merge path.
     let merges = {
         let doc = state.doc(Channel::Meta);
         let identity = state.identity().clone();
         let actor_seed = *identity.public().as_bytes();
-        crate::a2a::card::publish_merges(ctx.author, &card, |merge| {
+        crate::a2a::card::publish_merges(context.author, &card, |merge| {
             let Some(change) = doc.build_change(merge, &actor_seed)? else {
                 return Ok(0);
             };
             let (wire, _plain) = doc.compose_wire_body(&change, None)?;
             Ok(
-                Message::new_channel_event(ctx.mesh, ctx.author, wire, Channel::Meta)
+                Message::new_channel_event(context.mesh, context.author, wire, Channel::Meta)
                     .sign(&identity)
                     .wire_len(),
             )
         })?
     };
     for merge in merges {
-        merge_own_meta_entry(state, ctx, merge, false).await?;
+        merge_own_meta_entry(state, context, merge, false).await?;
     }
     Ok(())
 }
@@ -331,18 +337,18 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> a
 /// never burned) overwrites it and eventually leaves cleanly. A foreign
 /// non-card write racing the delete can survive the merge (add wins), but
 /// peers only ever write their own subtree.
-async fn retract_own_meta_entry(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-    let merge = crate::a2a::card::retract_merge(ctx.author);
+async fn retract_own_meta_entry(state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+    let merge = crate::a2a::card::retract_merge(context.author);
     // Best effort at leave: the failure is logged by the merge.
-    let _ = merge_own_meta_entry(state, ctx, merge, true).await;
+    let _ = merge_own_meta_entry(state, context, merge, true).await;
 }
 
 impl A2aApp {
     /// Publish our card, and keep `card_error` and its `/peers/<nick>/card_error` mirror in step
     /// with the outcome. A failure is retried on the ticks that the backoff allows (see
     /// `on_tick`).
-    async fn sync_own_card(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        let failure = publish_own_card(state, ctx).await.err().map(|error| {
+    async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+        let failure = publish_own_card(state, context).await.err().map(|error| {
             // The reason is read by peers: one line, and no more than a line holds.
             error.to_string().chars().take(200).collect::<String>()
         });
@@ -354,8 +360,8 @@ impl A2aApp {
             self.card_retry_in = 0;
         }
         if failure != self.card_error {
-            let merge = crate::a2a::card::card_error_merge(ctx.author, failure.as_deref());
-            let _ = merge_own_meta_entry(state, ctx, merge, false).await;
+            let merge = crate::a2a::card::card_error_merge(context.author, failure.as_deref());
+            let _ = merge_own_meta_entry(state, context, merge, false).await;
             self.card_error = failure;
         }
     }
@@ -378,18 +384,18 @@ impl A2aApp {
 /// The merge was refused, for example because its frame is over the size limit.
 async fn merge_own_meta_entry(
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     merge: serde_json::Value,
     farewell: bool,
 ) -> anyhow::Result<()> {
     match habilis_network::ops::broadcast_state_merge(
         state,
         habilis_network::ops::StateMergeParams {
-            mesh: ctx.mesh,
-            author: ctx.author,
+            mesh: context.mesh,
+            author: context.author,
             merge,
-            sender: ctx.sender,
-            sink: ctx.sink,
+            sender: context.sender,
+            sink: context.sink,
             channel: Channel::Meta,
             // Daemon plumbing: the agent didn't write this, so don't surface it
             // as a "you changed shared state" event (nor race a fetch long-poll).
@@ -435,10 +441,10 @@ fn is_empty_working_repeat(
 
 /// Whether the local agent is reading: `(bell armed, seconds since its last
 /// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
-pub(crate) fn reader_liveness(app: &A2aApp, ctx: &HandlerCtx<'_>) -> (bool, Option<u64>) {
+pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, Option<u64>) {
     // A CLI bell holds the OS lock. A parked cursor-less long fetch in process
     // is a bell too. An MCP fetch always passes a cursor, so it is a read only.
-    let bell = crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
+    let bell = crate::cli::bell::is_armed(context.mesh.as_ref(), context.author.as_str())
         || app.surfaced.has_parked_bell();
     (
         bell,
@@ -592,7 +598,7 @@ fn route_content(
     message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) -> Routed {
     match &message.kind {
         // Each chat tag is pinned to its addressing here as well as in
@@ -607,8 +613,9 @@ fn route_content(
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::MSG => {
-            let fresh_for_us =
-                surfaceable && to == ctx.author && !is_replayed_chat(&app.surfaced_chat, message);
+            let fresh_for_us = surfaceable
+                && to == context.author
+                && !is_replayed_chat(&app.surfaced_chat, message);
             let loggable = surface_chat(message, surfaceable, app, |out, surface| {
                 handle_msg(
                     out,
@@ -616,7 +623,7 @@ fn route_content(
                         message,
                         to,
                         surfaceable: surface,
-                        self_author: ctx.author,
+                        self_author: context.author,
                     },
                 )
             });
@@ -635,7 +642,7 @@ fn route_content(
                     surfaceable,
                 },
                 app,
-                ctx,
+                context,
             );
             Routed {
                 loggable: leg.loggable,
@@ -645,7 +652,7 @@ fn route_content(
         MessageKind::App {
             tag, to: Some(to), ..
         } if tag.as_str() == wire::RECEIPT => {
-            if to == ctx.author {
+            if to == context.author {
                 surface_receipt(message, app);
             }
             Routed::default()
@@ -716,7 +723,7 @@ struct TaskLegParams<'a> {
 /// Process an inbound task leg (a task-related `a2a_status` or `a2a_artifact`)
 /// for its addressee: advance the coarse state machine (addressee only — a
 /// third-party relay tracks nothing), then surface it via the lifecycle layer.
-fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_>) -> Routed {
+fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCtx<'_>) -> Routed {
     let TaskLegParams {
         message,
         to,
@@ -726,7 +733,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
     let mut replay = false;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
-    if to == ctx.author
+    if to == context.author
         && let Some(task_id) = crate::a2a::status_update_params::frame_task_id(message)
     {
         // …and being the addressee is not enough: the leg must come from the
@@ -786,13 +793,13 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             message,
             to,
             surfaceable: surface,
-            self_author: ctx.author,
+            self_author: context.author,
         },
     );
     // A beat is liveness plumbing and never logged, so it earns no receipt.
     Routed {
         loggable,
-        fresh_for_us: surfaceable && to == ctx.author && loggable && !replay,
+        fresh_for_us: surfaceable && to == context.author && loggable && !replay,
     }
 }
 
@@ -932,14 +939,14 @@ async fn handle_a2a_rpc(
     message: &Authored,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) {
     let (tag, corr) = match &message.kind {
         MessageKind::App {
             tag,
             to: Some(to),
             corr: Some(corr),
-        } if to == ctx.author => (tag.as_str(), corr),
+        } if to == context.author => (tag.as_str(), corr),
         MessageKind::App { .. }
         | MessageKind::Presence { .. }
         | MessageKind::PeerInfo
@@ -966,7 +973,7 @@ async fn handle_a2a_rpc(
             },
             state,
             app,
-            ctx,
+            context,
         )
         .await;
     } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.author) {
@@ -994,7 +1001,7 @@ async fn handle_a2a_req(
     req: A2aReqParams<'_>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) {
     use crate::a2a::served::Served;
     let A2aReqParams { message, corr } = req;
@@ -1010,22 +1017,22 @@ async fn handle_a2a_req(
                         crate::a2a::rpc_error::handle_op(
                             crate::a2a::rpc_error::HandleOpParams {
                                 op,
-                                mesh: ctx.mesh,
-                                author: ctx.author,
-                                our_pubkey: ctx.our_pubkey,
+                                mesh: context.mesh,
+                                author: context.author,
+                                our_pubkey: context.our_pubkey,
                                 // No local HTTP port on the gossip path; only card
                                 // ops read it, and those aren't in the safe set here.
                                 a2a_port: 0,
                                 app,
                             },
                             state,
-                            ctx.sender,
+                            context.sender,
                             &out,
                         )
                         .await
                     }
                     Served::Ingest(payload) => {
-                        ingest_remote_message(&payload, &requester, app, ctx)
+                        ingest_remote_message(&payload, &requester, app, context)
                     }
                     Served::ShardRepair { group, missing } => {
                         resend_cached_shards(
@@ -1035,12 +1042,12 @@ async fn handle_a2a_req(
                                 requester: &requester,
                             },
                             state,
-                            ctx,
+                            context,
                         )
                         .await
                     }
                     Served::ReaderGet => {
-                        let (bell, last_poll_secs_ago) = reader_liveness(app, ctx);
+                        let (bell, last_poll_secs_ago) = reader_liveness(app, context);
                         Ok(serde_json::json!({
                             "bell": bell,
                             "last_poll_secs_ago": last_poll_secs_ago,
@@ -1080,13 +1087,13 @@ async fn handle_a2a_req(
     // splitting a large sealed response into shard frames.
     if let Err(error) = crate::a2a::broadcast_params::send_directed_rpc(
         crate::a2a::broadcast_params::DirectedRpcParams {
-            mesh: ctx.mesh,
-            author: ctx.author,
+            mesh: context.mesh,
+            author: context.author,
             kind,
             body,
         },
         state,
-        ctx.sender,
+        context.sender,
     )
     .await
     {
@@ -1109,7 +1116,7 @@ struct ShardRepairParams<'a> {
 async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) -> Result<serde_json::Value, crate::a2a::rpc_error::RpcError> {
     let ShardRepairParams {
         group,
@@ -1133,7 +1140,8 @@ async fn resend_cached_shards(
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
         // not start is asked for again on the requester's next tick.
-        if habilis_network::ops::deliver_in_background(&message, bytes, state, ctx.sender).await {
+        if habilis_network::ops::deliver_in_background(&message, bytes, state, context.sender).await
+        {
             resent += 1;
         }
     }
@@ -1182,7 +1190,7 @@ fn ingest_remote_message(
     payload: &crate::a2a::Message,
     requester: &Nickname,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) -> Result<serde_json::Value, crate::a2a::rpc_error::RpcError> {
     use crate::a2a::task_record::{LegInfo, LegKind};
     let now = Instant::now();
@@ -1233,9 +1241,9 @@ fn ingest_remote_message(
     let label = crate::a2a::status_update_params::task_label(payload);
     app.output.task_message(&output::TaskMessageLeg {
         id: payload.message_id.as_str(),
-        mesh: ctx.mesh.as_str(),
+        mesh: context.mesh.as_str(),
         author: requester.as_str(),
-        peer: ctx.author.as_str(),
+        peer: context.author.as_str(),
         task_id: task_id.as_str(),
         state: rec_state,
         text: &text,
@@ -1247,7 +1255,7 @@ fn ingest_remote_message(
     // yields `{"task": <Task>}`.
     app.tasks
         .get(&task_id)
-        .map(|rec| serde_json::json!({ "task": crate::a2a::rpc_error::task_object(&task_id, rec, ctx.mesh) }))
+        .map(|rec| serde_json::json!({ "task": crate::a2a::rpc_error::task_object(&task_id, rec, context.mesh) }))
         .ok_or_else(|| crate::a2a::rpc_error::RpcError::internal("task record missing after ingest"))
 }
 
@@ -1258,13 +1266,13 @@ fn ingest_remote_message(
 /// from the synced meta doc even before its gossiped `PeerInfo` arrives. Both
 /// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
 /// does **not** graft a gossip link — mesh formation stays `PeerInfo`'s job.
-fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
     let doc = state.doc(Channel::Meta).to_json();
     let Some((peer_id, peer_addr)) = crate::a2a::card::peer_endpoint(&doc, author) else {
         return;
     };
     // Never bind our own endpoint or the rendezvous pseudo-node.
-    if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
+    if peer_id == context.endpoint.id() || peer_id == context.rendezvous_id {
         return;
     }
     state.note_peer_endpoint(author.clone(), peer_addr.clone());
