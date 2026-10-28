@@ -6,7 +6,7 @@ use habilis_network::protocol::{
 use habilis_network::runtime::{CreateParams, JoinParams, Node};
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
-use crate::driver::{GossipDriver, Inbox, Request};
+use crate::gossip_driver::{GossipDriver, Inbox, Request};
 use crate::err::err;
 use crate::parse_nickname::parse_nickname;
 use crate::parse_path_mode::parse_path_mode;

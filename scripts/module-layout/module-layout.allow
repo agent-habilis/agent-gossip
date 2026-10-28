@@ -1,5 +1,4 @@
 
-crates/agent-gossip-wasm-client/src/driver.rs|1|rename pending: public type(s) Request, ChatMessage, Inbox, GossipDriver
 crates/agent-gossip/src/a2a/app.rs|1|rename pending: public type(s) SurfacedIo, Startup, A2aApp, UnsentLeg, DeliveredLeg, A2aResponder, A2aWaiter
 crates/agent-gossip/src/a2a/gossip.rs|1|rename pending: public type(s) StatusUpdateParams, ReaderBeat
 crates/agent-gossip/src/a2a/gossip_rpc.rs|1|rename pending: public type(s) Served

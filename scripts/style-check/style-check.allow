@@ -4,7 +4,7 @@ abbrev_name|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|49|open: An id
 abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-test-fixtures/src/node.rs|20|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-test-fixtures/src/test_cmd.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip-wasm-client/src/driver.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip-wasm-client/src/gossip_driver.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-wasm-client/src/gossip_peer.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/card.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/gossip_rpc.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
@@ -169,7 +169,7 @@ generic_name|crates/agent-gossip/src/a2a/model/uuid_id.rs|1|open: A generic para
 generic_name|crates/agent-gossip/src/bridge/connect.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
 generic_name|crates/agent-gossip/src/cli/send.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
 lifetime|crates/agent-gossip-test-fixtures/src/followup_params.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
-lifetime|crates/agent-gossip-wasm-client/src/driver.rs|3|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip-wasm-client/src/gossip_driver.rs|3|open: Name a type lifetime for what it borrows ('frame, not 'a)
 lifetime|crates/agent-gossip/src/a2a/gossip.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
 lifetime|crates/agent-gossip/src/a2a/ipc.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
 lifetime|crates/agent-gossip/src/a2a/node.rs|5|open: Name a type lifetime for what it borrows ('frame, not 'a)
@@ -193,7 +193,7 @@ long_chain|crates/agent-gossip-test-fixtures/src/cli_task_create_attempt.rs|1|op
 long_chain|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/node.rs|4|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/park_bell.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/agent-gossip-wasm-client/src/driver.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip-wasm-client/src/gossip_driver.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/benches/transfer.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/build.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/a2a/app.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
@@ -262,7 +262,7 @@ pub_vec_return|crates/agent-gossip/src/harness/adversarial.rs|1|open: A public f
 pub_vec_return|crates/agent-gossip/src/harness/bench.rs|1|open: A public function returns an iterator, not a Vec
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: A public as_ or to_ method takes a reference, and an into_ method takes self
 turbofish_collect_parse|crates/agent-gossip-test-fixtures/src/node.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
-turbofish_collect_parse|crates/agent-gossip-wasm-client/src/driver.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip-wasm-client/src/gossip_driver.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip-wasm-client/src/gossip_peer.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip-wasm-client/src/parse_nickname.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/gossip.rs|3|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)

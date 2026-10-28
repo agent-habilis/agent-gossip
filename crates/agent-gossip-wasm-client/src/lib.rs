@@ -14,7 +14,7 @@
 pub use self::gossip_peer::GossipPeer;
 pub use self::start::start;
 
-mod driver;
+mod gossip_driver;
 mod err;
 mod gossip_peer;
 mod max_direct_peers;

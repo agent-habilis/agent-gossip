@@ -6,7 +6,7 @@ use habilis_network::net::TransportOpts;
 use habilis_network::runtime::{Node, Resolved, SetupParams, setup_mesh};
 use wasm_bindgen::JsValue;
 
-use crate::driver::{GossipDriver, Inbox};
+use crate::gossip_driver::{GossipDriver, Inbox};
 use crate::err::err;
 use crate::gossip_peer::GossipPeer;
 use crate::max_direct_peers::MAX_DIRECT_PEERS;
