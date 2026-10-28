@@ -211,68 +211,95 @@ mod tests {
         let caller = Nickname::from("alice");
         let mut st = state();
         seed_task(&mut st, TASK_A, "alice");
-        assert!(matches!(
-            classify("ListTasks", &json!({}), &caller, &st),
-            Served::Op(_)
-        ));
-        assert!(matches!(
-            classify("GetTask", &json!({"id": TASK_A}), &caller, &st),
-            Served::Op(_)
-        ));
-        assert!(matches!(
-            classify("mesh/state.get", &json!({}), &caller, &st),
-            Served::Op(_)
-        ));
+        assert!(
+            matches!(
+                classify("ListTasks", &json!({}), &caller, &st),
+                Served::Op(_)
+            ),
+            "a list request is served as an operation"
+        );
+        assert!(
+            matches!(
+                classify("GetTask", &json!({"id": TASK_A}), &caller, &st),
+                Served::Op(_)
+            ),
+            "a get request is served as an operation"
+        );
+        assert!(
+            matches!(
+                classify("mesh/state.get", &json!({}), &caller, &st),
+                Served::Op(_)
+            ),
+            "a state read is served as an operation"
+        );
         // Streaming ops are served: SubscribeToTask returns a snapshot op,
         // SendStreamingMessage ingests like a create.
-        assert!(matches!(
-            classify("SubscribeToTask", &json!({"id": TASK_A}), &caller, &st),
-            Served::Op(_)
-        ));
-        assert!(matches!(
-            classify(
-                "SendStreamingMessage",
-                &json!({"message": {
-                    "messageId": "550e8400-e29b-41d4-a716-446655440000",
-                    "role": "ROLE_USER",
-                    "parts": [{"text": "stream it"}],
-                }}),
-                &caller,
-                &st
+        assert!(
+            matches!(
+                classify("SubscribeToTask", &json!({"id": TASK_A}), &caller, &st),
+                Served::Op(_)
             ),
-            Served::Ingest(_)
-        ));
+            "a subscribe request is served as an operation"
+        );
+        assert!(
+            matches!(
+                classify(
+                    "SendStreamingMessage",
+                    &json!({"message": {
+                        "messageId": "550e8400-e29b-41d4-a716-446655440000",
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "stream it"}],
+                    }}),
+                    &caller,
+                    &st
+                ),
+                Served::Ingest(_)
+            ),
+            "a streaming send is ingested"
+        );
     }
 
     #[test]
     fn a_reader_ask_is_served_to_any_member_and_has_no_op() {
         let st = state();
         for caller in ["alice", "bob"] {
-            assert!(matches!(
-                classify("mesh/reader.get", &json!({}), &Nickname::from(caller), &st),
-                Served::ReaderGet
-            ));
+            assert!(
+                matches!(
+                    classify("mesh/reader.get", &json!({}), &Nickname::from(caller), &st),
+                    Served::ReaderGet
+                ),
+                "a reader ask is served to every member"
+            );
         }
         // Not an `A2aOp`, so the localhost HTTP binding cannot reach it.
-        assert!(crate::a2a::rpc_error::parse_op("mesh/reader.get", &json!({}), None).is_err());
+        assert!(
+            crate::a2a::rpc_error::parse_op("mesh/reader.get", &json!({}), None).is_err(),
+            "a reader ask is not an a2a op"
+        );
     }
 
     #[test]
     fn merges_and_broadcast_send_are_rejected() {
         let caller = Nickname::from("alice");
         let st = state();
-        assert!(is_reject(&classify(
-            "mesh/state.merge",
-            &json!({"merge": {"x": 1}}),
-            &caller,
-            &st
-        )));
-        assert!(is_reject(&classify(
-            "mesh/meta.merge",
-            &json!({"merge": {"x": 1}}),
-            &caller,
-            &st
-        )));
+        assert!(
+            is_reject(&classify(
+                "mesh/state.merge",
+                &json!({"merge": {"x": 1}}),
+                &caller,
+                &st
+            )),
+            "a request from a non-member is rejected"
+        );
+        assert!(
+            is_reject(&classify(
+                "mesh/meta.merge",
+                &json!({"merge": {"x": 1}}),
+                &caller,
+                &st
+            )),
+            "a request for another caller's task is rejected"
+        );
         // A broadcast message/send (declares the mesh-broadcast extension) is
         // refused — the peer must not re-author it under its own identity.
         let broadcast = json!({"message": {
@@ -281,12 +308,10 @@ mod tests {
             "parts": [{"text": "hi"}],
             "extensions": [super::super::EXT_MESH_BROADCAST],
         }});
-        assert!(is_reject(&classify(
-            "SendMessage",
-            &broadcast,
-            &caller,
-            &st
-        )));
+        assert!(
+            is_reject(&classify("SendMessage", &broadcast, &caller, &st)),
+            "an unknown method is rejected"
+        );
     }
 
     #[test]
@@ -298,10 +323,13 @@ mod tests {
             "role": "ROLE_USER",
             "parts": [{"text": "review src/net"}],
         }});
-        assert!(matches!(
-            classify("SendMessage", &directed, &caller, &st),
-            Served::Ingest(_)
-        ));
+        assert!(
+            matches!(
+                classify("SendMessage", &directed, &caller, &st),
+                Served::Ingest(_)
+            ),
+            "a malformed task id is rejected"
+        );
     }
 
     /// A read is only served to the task's own peer. Pre-fix `GetTask` and
@@ -346,7 +374,11 @@ mod tests {
                     panic!("expected a rejection")
                 }
             };
-        assert_eq!(reject(TASK_B), reject(TASK_A));
+        assert_eq!(
+            reject(TASK_B),
+            reject(TASK_A),
+            "rejects for different tasks differ"
+        );
     }
 
     /// `ListTasks` over gossip is scoped to the caller's own tasks. Pre-fix it
@@ -375,7 +407,7 @@ mod tests {
         else {
             panic!("expected ListTasks");
         };
-        assert_eq!(locally, None);
+        assert_eq!(locally, None, "a locally held task is not reported");
     }
 
     #[test]
@@ -383,51 +415,61 @@ mod tests {
         let caller = Nickname::from("alice");
         let st = state();
         // No such task → rejected (not a party).
-        assert!(is_reject(&classify(
-            "CancelTask",
-            &json!({"id": "550e8400-e29b-41d4-a716-446655440000"}),
-            &caller,
-            &st
-        )));
+        assert!(
+            is_reject(&classify(
+                "CancelTask",
+                &json!({"id": "550e8400-e29b-41d4-a716-446655440000"}),
+                &caller,
+                &st
+            )),
+            "a request without a caller is rejected"
+        );
     }
 
     #[test]
     fn shard_repair_is_classified_and_validated() {
         let caller = Nickname::from("alice");
         let st = state();
-        assert!(matches!(
-            classify(
+        assert!(
+            matches!(
+                classify(
+                    "shard/repair",
+                    &json!({"group": "550e8400-e29b-41d4-a716-446655440000", "missing": [0, 3, 7]}),
+                    &caller,
+                    &st
+                ),
+                Served::ShardRepair { missing, .. } if missing == vec![0, 3, 7]
+            ),
+            "an unauthorized state merge is refused"
+        );
+        // A non-uuid group or an empty missing list is malformed.
+        assert!(
+            is_reject(&classify(
                 "shard/repair",
-                &json!({"group": "550e8400-e29b-41d4-a716-446655440000", "missing": [0, 3, 7]}),
+                &json!({"group": "nope", "missing": [0]}),
                 &caller,
                 &st
-            ),
-            Served::ShardRepair { missing, .. } if missing == vec![0, 3, 7]
-        ));
-        // A non-uuid group or an empty missing list is malformed.
-        assert!(is_reject(&classify(
-            "shard/repair",
-            &json!({"group": "nope", "missing": [0]}),
-            &caller,
-            &st
-        )));
-        assert!(is_reject(&classify(
-            "shard/repair",
-            &json!({"group": "550e8400-e29b-41d4-a716-446655440000", "missing": []}),
-            &caller,
-            &st
-        )));
+            )),
+            "a meta merge from a peer is rejected"
+        );
+        assert!(
+            is_reject(&classify(
+                "shard/repair",
+                &json!({"group": "550e8400-e29b-41d4-a716-446655440000", "missing": []}),
+                &caller,
+                &st
+            )),
+            "a foreign task is rejected"
+        );
     }
 
     #[test]
     fn unknown_method_is_rejected() {
         let caller = Nickname::from("alice");
         let st = state();
-        assert!(is_reject(&classify(
-            "message/stream",
-            &json!({}),
-            &caller,
-            &st
-        )));
+        assert!(
+            is_reject(&classify("message/stream", &json!({}), &caller, &st)),
+            "a mesh control request is rejected"
+        );
     }
 }
