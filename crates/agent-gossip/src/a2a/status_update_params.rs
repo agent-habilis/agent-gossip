@@ -370,12 +370,11 @@ pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate, FramePayloa
 /// rather than a state transition? Wire-static: the `mesh:beat` marker.
 #[must_use]
 pub fn is_beat(update: &TaskStatusUpdate) -> bool {
-    update
+    let beat = update
         .metadata
         .as_ref()
-        .and_then(|meta| meta.get(META_BEAT))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
+        .and_then(|meta| meta.get(META_BEAT));
+    beat.and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
 /// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
@@ -404,15 +403,9 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
 /// (a `\n` would forge a second row) are stripped and the length capped.
 #[must_use]
 pub fn task_label(message: &Message) -> Option<String> {
-    let raw: String = message
-        .metadata
-        .as_ref()?
-        .get(META_LABEL)?
-        .as_str()?
-        .chars()
-        .filter(|ch| !ch.is_control())
-        .take(super::tuning::TASK_LABEL_MAX_CHARS)
-        .collect();
+    let label: &str = message.metadata.as_ref()?.get(META_LABEL)?.as_str()?;
+    let visible = label.chars().filter(|ch| !ch.is_control());
+    let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
@@ -476,15 +469,9 @@ fn wall_clock_ms() -> u64 {
 /// gets the same control-character strip and length cap as [`task_label`].
 #[must_use]
 pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
-    let raw: String = update
-        .metadata
-        .as_ref()?
-        .get(META_WAITING)?
-        .as_str()?
-        .chars()
-        .filter(|ch| !ch.is_control())
-        .take(super::tuning::TASK_LABEL_MAX_CHARS)
-        .collect();
+    let waiting: &str = update.metadata.as_ref()?.get(META_WAITING)?.as_str()?;
+    let visible = waiting.chars().filter(|ch| !ch.is_control());
+    let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
@@ -498,11 +485,12 @@ pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
 pub fn frame_task_id(frame: &Frame) -> Option<TaskId> {
     // `task_id` is no longer an envelope field (8.0); it rides inside the body it
     // was always duplicated into, so we read it from there.
+    let body: &str = frame.body.as_str();
     match frame.kind.app_tag()?.as_str() {
-        wire::STATUS => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
+        wire::STATUS => serde_json::from_str::<TaskStatusUpdate>(body)
             .ok()
             .map(|payload| payload.task_id),
-        wire::ARTIFACT => serde_json::from_str::<TaskArtifactUpdate>(frame.body.as_str())
+        wire::ARTIFACT => serde_json::from_str::<TaskArtifactUpdate>(body)
             .ok()
             .map(|payload| payload.task_id),
         _ => None,
@@ -539,19 +527,24 @@ pub fn frame_task_state(frame: &Frame) -> Option<TaskState> {
 /// or an artifact's parts.
 #[must_use]
 pub fn task_text(frame: &Frame) -> String {
+    let body: &str = frame.body.as_str();
     match frame
         .kind
         .app_tag()
         .map(habilis_network::protocol::AppTag::as_str)
     {
-        Some(wire::STATUS) => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
-            .ok()
-            .and_then(|payload| payload.status.message.map(|message| display_text(&message)))
-            .unwrap_or_default(),
-        Some(wire::ARTIFACT) => serde_json::from_str::<TaskArtifactUpdate>(frame.body.as_str())
-            .ok()
-            .map(|payload| parts_text(&payload.artifact.parts))
-            .unwrap_or_default(),
+        Some(wire::STATUS) => {
+            let payload: Option<TaskStatusUpdate> = serde_json::from_str(body).ok();
+            payload
+                .and_then(|payload| payload.status.message.map(|message| display_text(&message)))
+                .unwrap_or_default()
+        }
+        Some(wire::ARTIFACT) => {
+            let payload: Option<TaskArtifactUpdate> = serde_json::from_str(body).ok();
+            payload
+                .map(|payload| parts_text(&payload.artifact.parts))
+                .unwrap_or_default()
+        }
         _ => String::new(),
     }
 }
