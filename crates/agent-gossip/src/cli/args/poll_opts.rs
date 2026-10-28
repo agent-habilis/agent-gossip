@@ -98,7 +98,11 @@ mod tests {
             "5",
         ])
         .expect_err("--settle-secs without --long must be rejected");
-        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--settle-secs without --long fails with a missing argument"
+        );
         let cli = parse(&[
             "agent-gossip",
             "poll",
@@ -114,7 +118,11 @@ mod tests {
         let Commands::Poll { options } = cli.command else {
             panic!("expected Poll command");
         };
-        assert_eq!(options.settle_secs, Some(5));
+        assert_eq!(
+            options.settle_secs,
+            Some(5),
+            "--settle-secs with --long is kept"
+        );
     }
 
     #[test]
@@ -122,13 +130,21 @@ mod tests {
         let base = ["agent-gossip", "poll", "--gossip", "g", "--nickname", "n"];
         let err = parse(&[&base[..], &["--max-secs", "7000"]].concat())
             .expect_err("--max-secs without --long must be rejected");
-        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--max-secs without --long fails with a missing argument"
+        );
         let cli = parse(&[&base[..], &["--long", "--max-secs", "7000"]].concat())
             .expect("--max-secs with --long parses");
         let Commands::Poll { options } = cli.command else {
             panic!("expected Poll command");
         };
-        assert_eq!(options.max_secs, Some(7000));
+        assert_eq!(
+            options.max_secs,
+            Some(7000),
+            "--max-secs with --long is kept"
+        );
     }
 
     #[test]
@@ -145,9 +161,18 @@ mod tests {
         let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
-        assert!(options.gossip.is_some());
-        assert!(options.nickname.is_some());
-        assert!(options.state_file.is_none());
+        assert!(
+            options.gossip.is_some(),
+            "--gossip and --nickname parse as a session identity"
+        );
+        assert!(
+            options.nickname.is_some(),
+            "the session form carries a nickname"
+        );
+        assert!(
+            options.state_file.is_none(),
+            "the session form has no state file"
+        );
     }
 
     #[test]
@@ -163,10 +188,16 @@ mod tests {
         let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
-        assert!(options.gossip.is_none());
-        assert!(options.nickname.is_none());
-        assert!(options.state_file.is_some());
-        assert!(options.long);
+        assert!(
+            options.gossip.is_none(),
+            "--state-file alone leaves the gossip unset"
+        );
+        assert!(
+            options.nickname.is_none(),
+            "--state-file alone leaves the nickname unset"
+        );
+        assert!(options.state_file.is_some(), "--state-file is kept");
+        assert!(options.long, "--long is parsed");
     }
 
     #[test]
@@ -180,7 +211,8 @@ mod tests {
                 "--gossip",
                 "abc",
             ])
-            .is_err()
+            .is_err(),
+            "--state-file conflicts with --gossip"
         );
         assert!(
             parse(&[
@@ -191,7 +223,8 @@ mod tests {
                 "--nickname",
                 "calm-fox",
             ])
-            .is_err()
+            .is_err(),
+            "--state-file conflicts with --nickname"
         );
     }
 
@@ -213,21 +246,34 @@ mod tests {
         let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
-        assert_eq!(options.after, Some(41));
+        assert_eq!(options.after, Some(41), "the hidden --after flag is kept");
     }
 
     #[test]
     fn identity_is_required_without_state_file() {
-        assert!(parse(&["agent-gossip", "poll"]).is_err());
-        assert!(parse(&["agent-gossip", "poll", "--gossip", "abc"]).is_err());
-        assert!(parse(&["agent-gossip", "poll", "--nickname", "calm-fox"]).is_err());
+        assert!(
+            parse(&["agent-gossip", "poll"]).is_err(),
+            "poll without an identity is rejected"
+        );
+        assert!(
+            parse(&["agent-gossip", "poll", "--gossip", "abc"]).is_err(),
+            "poll with only a gossip is rejected"
+        );
+        assert!(
+            parse(&["agent-gossip", "poll", "--nickname", "calm-fox"]).is_err(),
+            "poll with only a nickname is rejected"
+        );
     }
 
     #[test]
     fn gossip_without_nickname_is_rejected() {
         let err = parse(&["agent-gossip", "poll", "--gossip", "abc"])
             .expect_err("--gossip alone must be rejected");
-        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--gossip alone fails with a missing argument"
+        );
     }
 
     #[test]
@@ -243,6 +289,10 @@ mod tests {
             "calm-fox",
         ])
         .expect_err("--state-file together with --gossip must be rejected");
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "--state-file conflicts with --gossip"
+        );
     }
 }
