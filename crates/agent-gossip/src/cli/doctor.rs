@@ -216,12 +216,12 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
     let local = if capability.local_addrs.is_empty() {
         capability.node_id.clone()
     } else {
-        let addrs = capability
+        let addrs: Vec<String> = capability
             .local_addrs
             .iter()
             .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect();
+        let addrs = addrs.join(", ");
         format!("{} ({addrs})", capability.node_id)
     };
     checks.push(Check::new("local endpoint", Verdict::Ok, &local));
@@ -418,11 +418,11 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
             checks.push(Check::new("relay", Verdict::Ok, "disabled"));
         }
         RelayChoice::Pinned => {
-            let rungs = net::relay_ladder(&lookups.relay_lookup)
+            let rungs: Vec<String> = net::relay_ladder(&lookups.relay_lookup)
                 .iter()
                 .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+                .collect();
+            let rungs = rungs.join(", ");
             checks.push(Check::new(
                 "relay",
                 Verdict::Ok,
@@ -430,11 +430,8 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
             ));
         }
         RelayChoice::Custom(ladder) => {
-            let rungs = ladder
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let rungs: Vec<String> = ladder.iter().map(ToString::to_string).collect();
+            let rungs = rungs.join(", ");
             checks.push(Check::new(
                 "relay",
                 Verdict::Ok,
@@ -471,15 +468,15 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
                 "password-derived — need --password to compute",
             ));
         } else {
-            let ports = mesh
+            let ports: Vec<String> = mesh
                 .clone()
                 .unlock(None)
                 .expect("an open mesh unlocks without a password")
                 .rendezvous_ports()
                 .iter()
                 .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+                .collect();
+            let ports = ports.join(", ");
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
