@@ -3,10 +3,15 @@
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct FollowupParams<'caller> {
+    /// The mesh id.
     pub mesh: &'caller str,
+    /// The nickname of the daemon that sends the follow-up.
     pub nickname: &'caller str,
+    /// The nickname of the peer that receives it.
     pub to: &'caller str,
+    /// The task the follow-up joins.
     pub task_id: &'caller str,
+    /// The body of the follow-up.
     pub text: &'caller str,
 }
 
@@ -28,6 +33,7 @@ impl<'caller> FollowupParams<'caller> {
         }
     }
 
+    /// Set the body of the follow-up; the constructor leaves it empty.
     #[must_use]
     pub fn with_text(mut self, text: &'caller str) -> Self {
         self.text = text;

@@ -9,10 +9,12 @@ use crate::{
     test_cmd, tmp_log,
 };
 
+/// One `agent-gossip` daemon as a child process, with its output captured in a log file.
 #[derive(Debug)]
 pub struct Node {
     pub(crate) child: Child,
     pub(crate) log: PathBuf,
+    /// The nickname the daemon runs under.
     pub nickname: String,
 }
 
@@ -114,6 +116,7 @@ impl Node {
         }
     }
 
+    /// The whole log so far; empty when the file is missing or unreadable.
     pub fn log_contents(&self) -> String {
         fs::read_to_string(&self.log).unwrap_or_default()
     }
@@ -145,6 +148,7 @@ impl Node {
         false
     }
 
+    /// Every chat message in the log, in arrival order.
     pub fn messages(&self) -> Vec<Msg> {
         parse_messages(&self.log_contents())
     }
