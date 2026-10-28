@@ -300,16 +300,17 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
+    let left_json: Vec<serde_json::Value> = outcomes
+        .iter()
+        .map(|(target, _, gone)| {
+            let mut obj = target_json(target);
+            obj["confirmed"] = (*gone).into();
+            obj
+        })
+        .collect();
     let report = serde_json::json!({
         "ok": true,
-        "left": outcomes
-            .iter()
-            .map(|(target, _, gone)| {
-                let mut obj = target_json(target);
-                obj["confirmed"] = (*gone).into();
-                obj
-            })
-            .collect::<Vec<_>>(),
+        "left": left_json,
         "other_sessions": other_sessions,
         "cleaned": cleaned,
     });
