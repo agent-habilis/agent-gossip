@@ -447,7 +447,7 @@ mod tests {
             |target| target.pid != 2,
             |_, nickname| nickname == "armed",
         );
-        assert_eq!(missing, ["deaf"]);
+        assert_eq!(missing, ["deaf"], "only the deaf session is missing a bell");
     }
 
     /// The scenario that reissued pids create, and the reason `leave` cannot
@@ -474,7 +474,10 @@ mod tests {
             "a live daemon on another gossip must not stand in for this one"
         );
         // The daemon that does answer for its own gossip is confirmed.
-        assert!(confirm_owner(&owners, &target("bbbb", "three-four", 10)));
+        assert!(
+            confirm_owner(&owners, &target("bbbb", "three-four", 10)),
+            "a session owned by the caller is confirmed"
+        );
         // Right gossip, but the pid moved on: also not ours to signal.
         assert!(
             !confirm_owner(&owners, &target("bbbb", "three-four", 11)),
@@ -482,7 +485,10 @@ mod tests {
         );
         // A nickname that disagrees rules it out even with mesh and pid equal,
         // which is what separates two daemons sharing one state-file path.
-        assert!(!confirm_owner(&owners, &target("bbbb", "someone-else", 10)));
+        assert!(
+            !confirm_owner(&owners, &target("bbbb", "someone-else", 10)),
+            "a session of another owner is not confirmed"
+        );
     }
 
     #[test]
@@ -504,9 +510,9 @@ mod tests {
             target("bbbb", "three-four", 20),
         ];
         let (owned, other_sessions) = split_owned(live, |target| target.pid == 10);
-        assert_eq!(owned.len(), 1);
-        assert_eq!(owned[0].pid, 10);
-        assert_eq!(other_sessions, 1);
+        assert_eq!(owned.len(), 1, "one live target is owned by this session");
+        assert_eq!(owned[0].pid, 10, "the owned target is the one with pid 10");
+        assert_eq!(other_sessions, 1, "the other session is counted separately");
     }
 
     #[test]
@@ -516,11 +522,14 @@ mod tests {
             target("zzzzyyyyxxxxwwww2222", "three-four", 20),
         ];
         let full = select_explicit(live.clone(), "aaaabbbbccccdddd1111", None);
-        assert_eq!(full.len(), 1);
-        assert_eq!(full[0].pid, 10);
+        assert_eq!(full.len(), 1, "the full nickname selects one target");
+        assert_eq!(full[0].pid, 10, "the full selection is the pid 10 target");
         let prefix = select_explicit(live, "aaaabbbbccccddd", None);
-        assert_eq!(prefix.len(), 1);
-        assert_eq!(prefix[0].pid, 10);
+        assert_eq!(prefix.len(), 1, "a nickname prefix selects one target");
+        assert_eq!(
+            prefix[0].pid, 10,
+            "the prefix selection is the pid 10 target"
+        );
     }
 
     #[test]
@@ -530,13 +539,16 @@ mod tests {
             target("aaaa", "three-four", 20),
         ];
         let matched = select_explicit(live, "aaaa", Some("three-four"));
-        assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].pid, 20);
+        assert_eq!(matched.len(), 1, "a nickname matches its own target");
+        assert_eq!(matched[0].pid, 20, "the matched target is pid 20");
     }
 
     #[test]
     fn select_explicit_no_match_is_empty() {
         let live = vec![target("aaaa", "one-two", 10)];
-        assert!(select_explicit(live, "none", None).is_empty());
+        assert!(
+            select_explicit(live, "none", None).is_empty(),
+            "an unknown mesh selects nothing"
+        );
     }
 }
