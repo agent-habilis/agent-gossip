@@ -11,6 +11,10 @@ use serde::Serialize;
 /// names. Rebuilt into a single message rather than an `anyhow` context layer:
 /// context prepends, which would invert the fact-then-remedy order the operator
 /// reads (and that `--output json`'s stderr contract pins).
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every other cause keeps its own text"
+)]
 pub(crate) async fn send<Payload>(command: &Payload, nickname: &Nickname) -> Result<String>
 where
     Payload: Serialize + Addressed,
@@ -22,10 +26,6 @@ where
                 "{no_daemon} Start one with `agent-gossip create` or \
                  `agent-gossip join {{hash}} --nickname {nickname}`."
             ),
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             other => anyhow::Error::from(other),
         })
 }

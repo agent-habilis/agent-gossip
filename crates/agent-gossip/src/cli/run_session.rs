@@ -44,13 +44,12 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     }
     // The advertiser reaches the directory over this mesh's own lookups
     // (only `create` advertises, so only `Create` carries them).
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only `Create` advertises"
+    )]
     let directory_lookups = match &kind {
         SetupKind::Create { config, .. } => Some(config.lookups.clone()),
-        SetupKind::Join { .. } | SetupKind::Topic { .. } => None,
-        #[expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-        )]
         _ => None,
     };
     let out = Output::new(OutputMode::Json, shared.filter_self);

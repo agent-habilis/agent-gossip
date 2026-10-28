@@ -207,16 +207,16 @@ impl Output {
     /// branch on `event`. When `filter_self` is enabled, self-authored legs are
     /// suppressed.
     pub(crate) fn print_task(&self, message: &Authored, is_self: bool) {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every other frame is not a task frame"
+        )]
         // Only worker-pushed status/artifact frames surface as a `task` event.
         match &message.kind {
             MessageKind::App { tag, to, .. } => match (tag.as_str(), to) {
                 (wire::STATUS | wire::ARTIFACT, Some(_)) => {}
                 _ => return,
             },
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every other variant takes this arm"
-            )]
             _ => return,
         }
         if is_self && self.filters_self() {

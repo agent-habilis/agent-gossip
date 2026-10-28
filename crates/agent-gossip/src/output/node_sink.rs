@@ -55,10 +55,6 @@ impl habilis_network::embed::NodeSink for Output {
                 document: &document,
                 is_self,
             }),
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             _ => {}
         }
     }

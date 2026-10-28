@@ -562,10 +562,6 @@ enum EchoAs {
 /// # Errors
 /// Propagates a [`Message::serialize`] failure, a gossip broadcast error, and
 /// a full unmeshed pending-outbound buffer.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one straight-line sign/echo/deliver pipeline shared by the single and the sharded directed leg; splitting it would scatter a single sequential path across helpers"
-)]
 async fn broadcast_directed_frame(
     frame: DirectedFrameParams<'_>,
     state: &mut EventLoopState,
@@ -634,13 +630,14 @@ async fn broadcast_directed_frame(
     let group =
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
     let max_parts = MAX_SHARD_TOTAL;
+    let probe_shard = Shard::new(group.clone(), max_parts - 1, max_parts);
     let probe: Verified = Message::new_frame(
         mesh,
         author,
         kind.clone(),
         MessageBody::try_new(String::new()).expect("empty body is valid"),
     )
-    .with_shard(Some(Shard::new(group.clone(), max_parts - 1, max_parts)))
+    .with_shard(Some(probe_shard))
     .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
@@ -1382,10 +1379,6 @@ async fn send_directed_leg(
                 };
                 Ok(pending.into_iter().next())
             }
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             _ => Err(anyhow::anyhow!("unsupported delivery outcome")),
         };
     } else if state.pending_outbound_mut().push((message.clone(), bytes)) {
@@ -1836,17 +1829,14 @@ pub(crate) async fn send_directed_rpc(
     }
     let group = ShardGroup::from_uuid_str(crate::a2a::A2aRpcId::random().as_str())
         .expect("a freshly minted uuid is a valid shard group");
+    let probe_shard = Shard::new(group.clone(), MAX_SHARD_TOTAL - 1, MAX_SHARD_TOTAL);
     let probe: Verified = Message::new_frame(
         mesh,
         author,
         kind.clone(),
         MessageBody::try_new(String::new()).expect("empty body is valid"),
     )
-    .with_shard(Some(Shard::new(
-        group.clone(),
-        MAX_SHARD_TOTAL - 1,
-        MAX_SHARD_TOTAL,
-    )))
+    .with_shard(Some(probe_shard))
     .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
@@ -1862,12 +1852,13 @@ pub(crate) async fn send_directed_rpc(
     for (index, chunk) in chunks.iter().enumerate() {
         let chunk_body =
             MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
+        let shard = Shard::new(
+            group.clone(),
+            u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
+            total,
+        );
         let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
-            .with_shard(Some(Shard::new(
-                group.clone(),
-                u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
-                total,
-            )))
+            .with_shard(Some(shard))
             .sign(&signer);
         logging::log_out(&message);
         let bytes = message.serialize()?;

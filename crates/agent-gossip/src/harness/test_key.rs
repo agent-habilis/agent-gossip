@@ -572,6 +572,10 @@ impl CraftedMsg {
     /// # Panics
     ///
     /// Panics unless the message is a broadcast chat message.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only a broadcast chat message or a presence beat flips"
+    )]
     pub fn flip_chat_kind(mut self) -> Self {
         self.message.kind = match self.message.kind.clone() {
             MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => {
@@ -584,10 +588,6 @@ impl CraftedMsg {
                 to: None,
                 corr: None,
             },
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             _ => panic!("flip_chat_kind takes a broadcast chat message"),
         };
         self

@@ -572,10 +572,11 @@ fn classify(message: &Authored) -> AppClass {
         tag,
         Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
     );
-    AppClass::NONE
+    let content = AppClass::NONE
         .with_if(AppClass::LOGGABLE, loggable)
         .with_if(AppClass::BEAT, beat)
-        .with_if(AppClass::VALID, valid)
+        .with_if(AppClass::VALID, valid);
+    content
         .with_if(AppClass::CHAINED, chained)
         .with_if(AppClass::SEALED, sealed)
 }
@@ -586,6 +587,10 @@ fn classify(message: &Authored) -> AppClass {
 /// task leg that reached us for the first time, inside our join horizon: the
 /// only frames that earn a delivery receipt. A frame from before the horizon is
 /// never surfaced, so a receipt for it would claim a delivery nobody sees.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every frame that no arm above names is a no-op"
+)]
 fn route_content(
     message: &Authored,
     surfaceable: bool,
@@ -649,21 +654,6 @@ fn route_content(
             }
             Routed::default()
         }
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => Routed::default(),
-        #[expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-        )]
         _ => Routed::default(),
     }
 }
@@ -933,27 +923,16 @@ async fn handle_a2a_rpc(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; a frame that is not a directed, correlated request or response is not ours"
+    )]
     let (tag, corr) = match &message.kind {
         MessageKind::App {
             tag,
             to: Some(to),
             corr: Some(corr),
         } if to == context.author => (tag.as_str(), corr),
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::StateDigest
-        | MessageKind::Meta
-        | MessageKind::MetaDigest
-        | MessageKind::LinkState => return,
-        #[expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-        )]
         _ => return,
     };
     // The engine keeps `corr` generic (a length-bounded string); the a2a layer

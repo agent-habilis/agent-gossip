@@ -1,11 +1,10 @@
 abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: module msg holds the type Msg (file named after the type, O9); renaming it would move the public Msg
-abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|11|open: external: ChainStamp.prev and Shard.idx are habilis-network field names
+abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|5|open: external: ChainStamp.prev is a habilis-network field name
 abbrev_name|crates/agent-gossip/src/a2a/card.rs|1|open: external: the addr() method is a habilis-network API name
 abbrev_name|crates/agent-gossip/src/a2a/ipc_command.rs|3|open: external: Authored.prev is a habilis-network field name
-abbrev_name|crates/agent-gossip/src/a2a/node.rs|2|open: external: IpcRequest.cmd and IpcRequest.resp are habilis-network field names
 abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|1|open: external: the addr() method is a habilis-network API name
 abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|1|open: external: the addr() method is a habilis-network API name
-abbrev_name|crates/agent-gossip/src/harness/test_key.rs|3|open: external: ChainStamp.prev and Shard.idx are habilis-network field names
+abbrev_name|crates/agent-gossip/src/harness/test_key.rs|2|open: external: ChainStamp.prev is a habilis-network field name
 abbrev_name|crates/agent-gossip/src/output/node_sink.rs|2|open: external: NodeEvent::Presence.msg is a habilis-network field name
 abbrev_name|crates/tasks/src/bench.rs|4|open: external: the cmd! macro is xshell's name
 abbrev_name|crates/tasks/src/build.rs|6|open: external: the cmd! macro is xshell's name

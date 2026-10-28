@@ -435,10 +435,6 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
                 &format!("custom ladder: {rungs}"),
             ));
         }
-        #[expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-        )]
         _ => {}
     }
 

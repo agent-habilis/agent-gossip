@@ -151,10 +151,6 @@ impl Directory {
                                     Some(ListingChange::Updated(id)) => dir
                                         .get(&id)
                                         .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
-                                    #[expect(
-                                        clippy::wildcard_enum_match_arm,
-                                        reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-                                    )]
                                     _ => None,
                                 }
                             };
@@ -169,9 +165,9 @@ impl Directory {
                     },
                     _ = expiry.tick() => {
                         let now = Instant::now();
-                        let lost = {
+                        let lost: Vec<_> = {
                             let mut dir = collector.lock().expect("directory mutex not poisoned");
-                            dir.expire(ttl, now).collect::<Vec<_>>()
+                            dir.expire(ttl, now).collect()
                         };
                         for id in lost {
                             let _ = events_tx.send(DirectoryEvent::Lost(id));

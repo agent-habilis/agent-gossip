@@ -16,6 +16,10 @@ use crate::cli::password_flag::PasswordFlag;
 /// hint is meant to be copy-pasted, so the string is single-quoted with embedded
 /// `'` escaped POSIX-style — unquoted, whitespace would split into extra args
 /// and metacharacters could expand.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only `Unrecognized` needs its own text"
+)]
 fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
     JoinTarget::from_str(input).map_err(|error| match &error {
         JoinTargetError::Unrecognized(token) => {
@@ -25,10 +29,6 @@ fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
                  use `agent-gossip topic {quoted}`."
             )
         }
-        #[expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only `Unrecognized` needs its own text"
-        )]
         _ => error.to_string(),
     })
 }

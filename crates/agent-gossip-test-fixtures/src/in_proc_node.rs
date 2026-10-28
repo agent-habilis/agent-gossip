@@ -249,10 +249,6 @@ impl InProcNode {
         match channel {
             Channel::State => self.state_merge(merge).await,
             Channel::Meta => self.meta_merge(merge).await,
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             _ => panic!("the fixture has no twin for this channel"),
         }
     }
@@ -262,10 +258,6 @@ impl InProcNode {
         match channel {
             Channel::State => self.state_get().await,
             Channel::Meta => self.meta_get().await,
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             _ => panic!("the fixture has no twin for this channel"),
         }
     }

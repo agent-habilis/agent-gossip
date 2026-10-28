@@ -29,10 +29,6 @@ pub(super) async fn join(
                     .then_some("gossip")
             }
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
-            #[expect(
-                clippy::wildcard_enum_match_arm,
-                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
-            )]
             _ => None,
         };
         if let Some(what) = requires {
