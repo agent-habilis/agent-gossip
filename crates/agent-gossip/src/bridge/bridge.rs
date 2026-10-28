@@ -144,8 +144,8 @@ pub(super) async fn forward_one(bridge: &Bridge, tcp: TcpStream) -> Result<()> {
             return Ok(());
         }
     };
-    let conn = bridge.shared.get().await?;
-    let (mut send, recv) = conn.open_bi().await?;
+    let connection = bridge.shared.get().await?;
+    let (mut send, recv) = connection.open_bi().await?;
     send.write_all(bridge.auth.token.as_bytes())
         .await
         .context("sending the auth token failed")?;
@@ -241,7 +241,7 @@ where
 pub(super) struct SharedConnection {
     endpoint: Endpoint,
     addr: EndpointAddr,
-    conn: Arc<Mutex<Option<Connection>>>,
+    connection: Arc<Mutex<Option<Connection>>>,
 }
 
 impl SharedConnection {
@@ -249,7 +249,7 @@ impl SharedConnection {
         Self {
             endpoint,
             addr,
-            conn: Arc::new(Mutex::new(None)),
+            connection: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -257,16 +257,16 @@ impl SharedConnection {
     /// The dial retries until [`DISCOVERY_DEADLINE`] so an exposer whose address
     /// is still propagating is waited for, not failed on.
     pub(super) async fn get(&self) -> Result<Connection> {
-        let mut guard = self.conn.lock().await;
-        if let Some(conn) = guard.as_ref()
-            && conn.close_reason().is_none()
+        let mut guard = self.connection.lock().await;
+        if let Some(connection) = guard.as_ref()
+            && connection.close_reason().is_none()
         {
-            return Ok(conn.clone());
+            return Ok(connection.clone());
         }
         let started = Instant::now();
-        let conn = loop {
+        let connection = loop {
             match self.endpoint.connect(self.addr.clone(), A2A_ALPN).await {
-                Ok(conn) => break conn,
+                Ok(connection) => break connection,
                 Err(error) if started.elapsed() < DISCOVERY_DEADLINE => {
                     tracing::debug!(%error, "a2a dial retrying while the address propagates");
                     tokio::time::sleep(RETRY_DELAY).await;
@@ -274,7 +274,7 @@ impl SharedConnection {
                 Err(error) => bail!("connecting to the a2a exposer failed: {error}"),
             }
         };
-        *guard = Some(conn.clone());
-        Ok(conn)
+        *guard = Some(connection.clone());
+        Ok(connection)
     }
 }

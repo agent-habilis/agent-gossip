@@ -250,16 +250,16 @@ async fn raw_secret_is_rejected_on_a_passworded_bridge() {
 
     // Impostor: present the raw ticket secret (what a directory ad leaks)
     // instead of the password-stretched token.
-    let conn = consumer_endpoint
+    let connection = consumer_endpoint
         .connect(ticket.addr.clone(), A2A_ALPN)
         .await
         .expect("dial");
-    let (mut send, mut recv) = conn.open_bi().await.expect("open stream");
+    let (mut send, mut recv) = connection.open_bi().await.expect("open stream");
     send.write_all(ticket.secret.as_bytes())
         .await
         .expect("write token");
     let _ = recv.read_to_end(64).await;
-    let closed = conn.close_reason();
+    let closed = connection.close_reason();
     assert!(
         matches!(
             closed,

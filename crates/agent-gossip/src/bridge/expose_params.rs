@@ -141,27 +141,27 @@ pub(super) async fn serve_connection(
     auth: TicketAuth,
     paired: &AtomicBool,
 ) -> Result<()> {
-    let conn = incoming.await?;
+    let connection = incoming.await?;
     if paired.swap(true, Ordering::SeqCst) {
-        conn.close(BRIDGE_BUSY.into(), b"bridge busy: already paired");
+        connection.close(BRIDGE_BUSY.into(), b"bridge busy: already paired");
         tracing::info!("refused a second consumer — the 1:1 bridge is already paired");
         return Ok(());
     }
-    let result = serve_streams(&conn, origin, &auth).await;
+    let result = serve_streams(&connection, origin, &auth).await;
     paired.store(false, Ordering::SeqCst);
     result
 }
 
 /// Serve each bi-stream of the paired connection as an independent HTTP flow.
 /// Ends when the peer closes the connection (or a bad token closes it).
-async fn serve_streams(conn: &Connection, origin: &str, auth: &TicketAuth) -> Result<()> {
-    while let Ok((send, recv)) = conn.accept_bi().await {
-        let conn = conn.clone();
+async fn serve_streams(connection: &Connection, origin: &str, auth: &TicketAuth) -> Result<()> {
+    while let Ok((send, recv)) = connection.accept_bi().await {
+        let connection = connection.clone();
         let auth = auth.clone();
         let origin = origin.to_owned();
         tokio::spawn(async move {
             if let Err(error) =
-                serve_stream(&conn, BiStreamHalves { send, recv }, &auth, &origin).await
+                serve_stream(&connection, BiStreamHalves { send, recv }, &auth, &origin).await
             {
                 tracing::debug!(%error, "a2a bridge stream ended");
             }
@@ -180,7 +180,7 @@ struct BiStreamHalves {
 /// Authenticate one bi-stream by its 32-byte token header, dial the origin, and
 /// raw-proxy. A bad token closes the whole connection (the bearer is poisoned).
 async fn serve_stream(
-    conn: &Connection,
+    connection: &Connection,
     streams: BiStreamHalves,
     auth: &TicketAuth,
     origin: &str,
@@ -196,7 +196,7 @@ async fn serve_stream(
         } else {
             BAD_SECRET
         };
-        conn.close(code.into(), b"bad token");
+        connection.close(code.into(), b"bad token");
         return Ok(());
     }
     let tcp = TcpStream::connect(origin)
