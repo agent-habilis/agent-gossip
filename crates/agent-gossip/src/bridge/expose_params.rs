@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use habilis_network::iroh::Endpoint;
 use habilis_network::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
-use habilis_network::net::build_endpoint;
+use habilis_network::net;
 use habilis_network::protocol::{
     DirectorySelection, LookupOpts, LookupSet, Password, TicketAuth, TicketSecret, ct_eq,
     validate_advertise,
@@ -109,12 +109,12 @@ pub(super) async fn bind(
     // `TransportHandles::default()` — IP and relay only. This is the A2A
     // binding's own endpoint, separate from the mesh's; the mesh's custom
     // transports belong to that one.
-    let endpoint = build_endpoint(
+    let endpoint = net::build_endpoint(
         &lookups,
         None,
         None,
         vec![A2A_ALPN.to_vec()],
-        habilis_network::net::TransportHandles::default(),
+        net::TransportHandles::default(),
     )
     .await?;
     if !lookups.is_loopback() {
@@ -254,12 +254,11 @@ fn parse_origin(to: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_origin;
 
     #[test]
     fn parses_a_plain_http_origin() {
         assert_eq!(
-            parse_origin("http://127.0.0.1:9999").unwrap(),
+            super::parse_origin("http://127.0.0.1:9999").unwrap(),
             "127.0.0.1:9999"
         );
     }
@@ -267,7 +266,7 @@ mod tests {
     #[test]
     fn drops_the_path_from_the_origin() {
         assert_eq!(
-            parse_origin("http://127.0.0.1:9999/a2a/v1").unwrap(),
+            super::parse_origin("http://127.0.0.1:9999/a2a/v1").unwrap(),
             "127.0.0.1:9999"
         );
     }
@@ -275,14 +274,14 @@ mod tests {
     #[test]
     fn defaults_the_port_when_omitted() {
         assert_eq!(
-            parse_origin("http://example.test").unwrap(),
+            super::parse_origin("http://example.test").unwrap(),
             "example.test:80"
         );
     }
 
     #[test]
     fn rejects_https_with_a_clear_message() {
-        let error = parse_origin("https://127.0.0.1:9999")
+        let error = super::parse_origin("https://127.0.0.1:9999")
             .unwrap_err()
             .to_string();
         assert!(
@@ -293,7 +292,7 @@ mod tests {
 
     #[test]
     fn rejects_a_non_http_scheme() {
-        assert!(parse_origin("127.0.0.1:9999").is_err());
-        assert!(parse_origin("tcp://127.0.0.1:9999").is_err());
+        assert!(super::parse_origin("127.0.0.1:9999").is_err());
+        assert!(super::parse_origin("tcp://127.0.0.1:9999").is_err());
     }
 }

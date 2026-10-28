@@ -608,8 +608,6 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 mod tests {
     use habilis_network::protocol::{LockedMesh, Mesh, MeshConfig, MeshName, Seed};
 
-    use super::declared_methods_section;
-
     #[test]
     fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {
         // Regression: an invite-only mesh withholds its derivation secret from
@@ -626,7 +624,7 @@ mod tests {
             .to_string()
             .parse()
             .expect("the id of an invite-only mesh parses");
-        let section = declared_methods_section(&locked);
+        let section = super::declared_methods_section(&locked);
         let ports = section
             .checks
             .iter()

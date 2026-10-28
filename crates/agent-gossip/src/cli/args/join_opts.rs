@@ -61,12 +61,11 @@ pub(crate) struct JoinOpts {
 mod tests {
     use clap::Parser;
 
-    use super::parse_join_target;
     use crate::cli::args::Cli;
 
     #[test]
     fn a_non_token_string_points_at_topic() {
-        let error = parse_join_target("github.com/alice/proj").unwrap_err();
+        let error = super::parse_join_target("github.com/alice/proj").unwrap_err();
         assert!(
             error.contains("agent-gossip topic 'github.com/alice/proj'"),
             "got: {error}"
@@ -75,12 +74,12 @@ mod tests {
 
     #[test]
     fn the_topic_hint_is_shell_safe() {
-        let whitespace = parse_join_target("my secret gossip").unwrap_err();
+        let whitespace = super::parse_join_target("my secret gossip").unwrap_err();
         assert!(
             whitespace.contains("agent-gossip topic 'my secret gossip'"),
             "got: {whitespace}"
         );
-        let quote = parse_join_target("it's here").unwrap_err();
+        let quote = super::parse_join_target("it's here").unwrap_err();
         assert!(
             quote.contains(r"agent-gossip topic 'it'\''s here'"),
             "got: {quote}"

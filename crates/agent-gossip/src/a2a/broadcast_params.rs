@@ -8,10 +8,9 @@ use std::time::Instant;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::{Delivered, MeshSender, PendingSend};
 use habilis_network::protocol::message::{Authored, Verified, WireFrame};
-use habilis_network::protocol::reassembly::synthesize_from;
 use habilis_network::protocol::{
     AppFrameParams, AppTag, Channel, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
-    MessageId, MessageKind, Nickname, Shard, ShardGroup,
+    MessageId, MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
 use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
@@ -508,7 +507,7 @@ pub(crate) async fn send_broadcast(
         state.shard_cache_mut().insert(group.clone(), cache_frames);
     }
     let header = header.expect("a split body has a first shard");
-    let logical = synthesize_from(&header, body, &group);
+    let logical = reassembly::synthesize_from(&header, body, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
 }
@@ -695,8 +694,8 @@ async fn broadcast_directed_frame(
         frames.push(message);
     }
     let cache = (!cache_frames.is_empty()).then(|| (group.clone(), cache_frames));
-    let logical = synthesize_from(&frames[0], payload_body, &group);
-    let echo = synthesize_from(&frames[0], echo_body, &group);
+    let logical = reassembly::synthesize_from(&frames[0], payload_body, &group);
+    let echo = reassembly::synthesize_from(&frames[0], echo_body, &group);
     let pending = queue_sharded_leg(app, frames, cache, shard_pending);
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
@@ -2194,7 +2193,6 @@ mod call_blob_group_tests {
 
     use habilis_network::protocol::Nickname;
 
-    use super::call_blob_group;
     use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
     use crate::a2a::{TaskId, TaskState};
 
@@ -2206,7 +2204,7 @@ mod call_blob_group_tests {
         let tasks = HashMap::new();
         let unknown = TaskId::random();
 
-        let (group_id, fresh_group) = call_blob_group(Some(unknown.clone()), &tasks);
+        let (group_id, fresh_group) = super::call_blob_group(Some(unknown.clone()), &tasks);
 
         assert_ne!(
             group_id, unknown,
@@ -2231,7 +2229,7 @@ mod call_blob_group_tests {
             },
         );
 
-        let (task_id, fresh_group) = call_blob_group(Some(known.clone()), &tasks);
+        let (task_id, fresh_group) = super::call_blob_group(Some(known.clone()), &tasks);
 
         assert_eq!(task_id, known);
         assert!(!fresh_group, "the task sweep reaps the blob");
@@ -2245,15 +2243,15 @@ mod call_blob_group_tests {
         let tasks = HashMap::new();
         let unknown = TaskId::random();
 
-        let (first, _) = call_blob_group(Some(unknown.clone()), &tasks);
-        let (retry, _) = call_blob_group(Some(unknown), &tasks);
+        let (first, _) = super::call_blob_group(Some(unknown.clone()), &tasks);
+        let (retry, _) = super::call_blob_group(Some(unknown), &tasks);
 
         assert_ne!(first, retry);
     }
 
     #[test]
     fn a_first_call_owns_a_fresh_group() {
-        let (_, fresh_group) = call_blob_group(None, &HashMap::new());
+        let (_, fresh_group) = super::call_blob_group(None, &HashMap::new());
 
         assert!(fresh_group);
     }
@@ -2265,7 +2263,7 @@ mod echo_when_sent_tests {
     use tokio::sync::oneshot;
 
     use super::{EchoAs, PendingSend, echo_when_sent};
-    use crate::output::capture_events;
+    use crate::output;
     use crate::output_event::OutputEvent;
 
     fn echo() -> habilis_network::protocol::message::Authored {
@@ -2291,7 +2289,7 @@ mod echo_when_sent_tests {
 
     #[tokio::test]
     async fn a_delivered_send_prints_the_echo() {
-        let (out, mut events) = capture_events();
+        let (out, mut events) = output::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
@@ -2309,7 +2307,7 @@ mod echo_when_sent_tests {
 
     #[tokio::test]
     async fn a_failed_send_prints_no_echo_and_passes_the_error_on() {
-        let (out, mut events) = capture_events();
+        let (out, mut events) = output::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);

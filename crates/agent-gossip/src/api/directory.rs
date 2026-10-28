@@ -1,12 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use habilis_network::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
+use habilis_network::ops::directory::{self, Listing, ListingChange, Listings};
 use habilis_network::protocol::{
     DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
 };
-use habilis_network::runtime::CoHostPolicy;
-use habilis_network::runtime::tuning::directory_expiry;
+use habilis_network::runtime::{CoHostPolicy, tuning};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
@@ -114,11 +113,8 @@ impl Directory {
         // Directories are inherently networked, so resolve as all-on:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
-        let resolved = resolve_lookups_or_public(
-            !habilis_network::runtime::tuning::directory_private_for_test(),
-            lookups,
-        );
-        let mesh = directory_mesh(&directory_name, resolved);
+        let resolved = resolve_lookups_or_public(!tuning::directory_private_for_test(), lookups);
+        let mesh = directory::directory_mesh(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
         // rendezvous (it only dials an advertiser's beacon).
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never)
@@ -130,7 +126,7 @@ impl Directory {
 
         let collector = listings.clone();
         let task = tokio::spawn(async move {
-            let ttl = directory_expiry();
+            let ttl = tuning::directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
             loop {
@@ -260,16 +256,15 @@ pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> Loo
 
 #[cfg(test)]
 mod lookup_tests {
-    use habilis_network::ops::directory::directory_mesh;
+    use habilis_network::ops::directory;
     use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
-
-    use super::resolve_lookups_or_public;
 
     fn directory_topic(public: bool, lookups: LookupSet) -> String {
         let name = MeshName::new(DEFAULT_DIRECTORY).unwrap();
         format!(
             "{:?}",
-            directory_mesh(&name, resolve_lookups_or_public(public, lookups)).topic_id()
+            directory::directory_mesh(&name, super::resolve_lookups_or_public(public, lookups))
+                .topic_id()
         )
     }
 
