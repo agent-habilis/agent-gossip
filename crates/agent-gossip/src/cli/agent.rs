@@ -521,10 +521,9 @@ mod tests {
                     1,
                     "{path}: exactly one launch carries --owner-pid \"$PPID\": {long_running:?}"
                 );
-                long_running
-                    .iter()
-                    .filter(|line| is_daemon_launch(line))
-                    .for_each(|line| assert_launch_shape(&path, line));
+                for line in long_running.iter().filter(|line| is_daemon_launch(line)) {
+                    assert_launch_shape(&path, line);
+                }
                 assert!(
                     long_running.iter().any(|line| is_bell(line)),
                     "{path}: expected a poll bell, found {long_running:?}"
