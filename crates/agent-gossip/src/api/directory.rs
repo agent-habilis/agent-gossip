@@ -102,9 +102,9 @@ impl Directory {
     /// # Panics
     /// Panics only if the internal collector mutex is poisoned by a
     /// panic in the background task — not reachable in normal use.
-    pub async fn open(name: Option<impl Into<String>>, lookups: LookupSet) -> anyhow::Result<Self> {
+    pub async fn open(name: Option<&str>, lookups: LookupSet) -> anyhow::Result<Self> {
         let directory_name = match name {
-            Some(value) => MeshName::new(value.into())
+            Some(value) => MeshName::new(value.to_owned())
                 .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
             None => {
                 MeshName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid mesh name")

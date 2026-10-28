@@ -120,7 +120,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
             let message: super::Message = match serde_json::from_value(params["message"].clone()) {
                 Ok(message) => message,
                 Err(error) => {
-                    return Served::Reject(RpcError::invalid_params(format!(
+                    return Served::Reject(RpcError::invalid_params(&format!(
                         "params.message is not an A2A Message: {error}"
                     )));
                 }

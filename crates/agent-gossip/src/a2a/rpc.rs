@@ -20,10 +20,10 @@ pub(crate) struct RpcError {
 }
 
 impl RpcError {
-    pub(crate) fn invalid_params(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid_params(message: &str) -> Self {
         RpcError {
             code: -32602,
-            message: message.into(),
+            message: message.to_owned(),
         }
     }
 
@@ -37,10 +37,10 @@ impl RpcError {
         }
     }
 
-    pub(crate) fn internal(message: impl Into<String>) -> Self {
+    pub(crate) fn internal(message: &str) -> Self {
         RpcError {
             code: -32603,
-            message: message.into(),
+            message: message.to_owned(),
         }
     }
 
@@ -126,7 +126,7 @@ pub(crate) fn parse_op(
         "SendMessage" | "SendStreamingMessage" => {
             let message: super::Message = serde_json::from_value(params["message"].clone())
                 .map_err(|error| {
-                    RpcError::invalid_params(format!(
+                    RpcError::invalid_params(&format!(
                         "params.message is not an A2A Message: {error}"
                     ))
                 })?;
@@ -306,7 +306,7 @@ pub(crate) async fn handle_op(
                 output,
             )
             .await
-            .map_err(|error| RpcError::internal(error.to_string()))?;
+            .map_err(|error| RpcError::internal(&error.to_string()))?;
             // The task is canceled in our record whether or not the peer is
             // reached; awaiting the dial here would stop the event loop.
             log_pending(pending);
@@ -330,7 +330,7 @@ pub(crate) async fn handle_op(
                 },
             )
             .await
-            .map_err(|error| RpcError::internal(error.to_string()))?;
+            .map_err(|error| RpcError::internal(&error.to_string()))?;
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
@@ -344,7 +344,7 @@ pub(crate) async fn handle_op(
                 tenant: None,
                 protocol_version: super::PROTOCOL_VERSION.to_string(),
             });
-            serde_json::to_value(&card).map_err(|error| RpcError::internal(error.to_string()))
+            serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
             let doc = state.doc(Channel::Meta).to_json();
@@ -413,7 +413,7 @@ async fn send_message(
     }
     let text = super::gossip::display_text(&message);
     let body = MessageBody::new(text)
-        .map_err(|error| RpcError::invalid_params(format!("message text: {error}")))?;
+        .map_err(|error| RpcError::invalid_params(&format!("message text: {error}")))?;
     let (_id, frame) = send_broadcast(
         BroadcastParams {
             mesh,
@@ -425,11 +425,11 @@ async fn send_message(
         output,
     )
     .await
-    .map_err(|error| RpcError::internal(error.to_string()))?;
+    .map_err(|error| RpcError::internal(&error.to_string()))?;
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof; a broadcast
     // has no task, so echo the daemon-authored Message as `{"message": …}`.
     let echo: super::Message = serde_json::from_str(frame.body.as_str())
-        .map_err(|error| RpcError::internal(error.to_string()))?;
+        .map_err(|error| RpcError::internal(&error.to_string()))?;
     serde_json::to_value(super::SendMessageResponse::Message(echo))
-        .map_err(|error| RpcError::internal(error.to_string()))
+        .map_err(|error| RpcError::internal(&error.to_string()))
 }

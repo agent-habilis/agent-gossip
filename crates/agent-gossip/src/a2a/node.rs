@@ -1038,7 +1038,7 @@ async fn handle_a2a_req(
                 Served::Reject(error) => Err(error),
             }
         }
-        Err(error) => Err(crate::a2a::rpc::RpcError::invalid_params(format!(
+        Err(error) => Err(crate::a2a::rpc::RpcError::invalid_params(&format!(
             "malformed JSON-RPC request: {error}"
         ))),
     };

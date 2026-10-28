@@ -7,6 +7,7 @@
 //! rendering.
 
 use anyhow::Result;
+use habilis_network::protocol::MeshName;
 
 use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};
@@ -20,7 +21,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // match the lookups the advertiser used — an mDNS-only advertiser is
     // found only by an mDNS-only `discover`.
     let mut discoverer = Directory::open(
-        opts.directory.map(|name| name.as_str().to_owned()),
+        opts.directory.as_ref().map(MeshName::as_str),
         opts.lookups.to_set()?,
     )
     .await?;

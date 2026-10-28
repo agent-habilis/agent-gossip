@@ -113,9 +113,9 @@ pub struct Part {
 impl Part {
     /// A plain text part.
     #[must_use]
-    pub fn text(text: impl Into<String>) -> Self {
+    pub fn text(text: &str) -> Self {
         Part {
-            text: Some(text.into()),
+            text: Some(text.to_owned()),
             ..Part::default()
         }
     }
@@ -200,7 +200,7 @@ impl Message {
     /// A minimal message with a fresh id and one text part; callers stamp
     /// `context_id` / `task_id` / `extensions` as the operation requires.
     #[must_use]
-    pub fn text(role: Role, text: impl Into<String>) -> Self {
+    pub fn text(role: Role, text: &str) -> Self {
         Message {
             message_id: MessageId::random(),
             role,

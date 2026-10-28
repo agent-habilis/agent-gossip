@@ -593,7 +593,7 @@ impl AgentGossipServer {
         const GRACE: Duration = Duration::from_millis(1500);
         const MAX: Duration = Duration::from_secs(8);
 
-        let mut directory = Directory::open(args.directory, LookupSet::default())
+        let mut directory = Directory::open(args.directory.as_deref(), LookupSet::default())
             .await
             .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         let mut events = directory

@@ -46,17 +46,17 @@ struct Check {
 }
 
 impl Check {
-    fn new(name: impl Into<String>, verdict: Verdict, detail: impl Into<String>) -> Self {
+    fn new(name: &str, verdict: Verdict, detail: &str) -> Self {
         Self {
-            name: name.into(),
+            name: name.to_owned(),
             verdict,
-            detail: Some(detail.into()),
+            detail: Some(detail.to_owned()),
         }
     }
 
-    fn bare(name: impl Into<String>, verdict: Verdict) -> Self {
+    fn bare(name: &str, verdict: Verdict) -> Self {
         Self {
-            name: name.into(),
+            name: name.to_owned(),
             verdict,
             detail: None,
         }
@@ -140,17 +140,17 @@ fn environment_section() -> Section {
         Check::new(
             "platform",
             Verdict::Ok,
-            format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+            &format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
         ),
         Check::new(
             "log dir",
             Verdict::Ok,
-            output::home_path(&habilis_network::util::logs::log_dir()),
+            &output::home_path(&habilis_network::util::logs::log_dir()),
         ),
         Check::new(
             "runtime dir",
             Verdict::Ok,
-            output::home_path(&crate::runtime_base()),
+            &output::home_path(&crate::runtime_base()),
         ),
     ];
     Section {
@@ -176,10 +176,10 @@ fn integrations_section() -> Section {
                 } else {
                     base
                 };
-                Check::new(agent.label(), verdict, detail)
+                Check::new(agent.label(), verdict, &detail)
             })
             .collect(),
-        Err(error) => vec![Check::new("home", Verdict::Fail, error.to_string())],
+        Err(error) => vec![Check::new("home", Verdict::Fail, &error.to_string())],
     };
     Section {
         title: "Integrations".to_owned(),
@@ -199,7 +199,7 @@ async fn network_section(no_probe: bool) -> Section {
             Err(error) => vec![Check::new(
                 "local endpoint",
                 Verdict::Fail,
-                format!("failed to bind: {error}"),
+                &format!("failed to bind: {error}"),
             )],
         }
     };
@@ -223,7 +223,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
             .join(", ");
         format!("{} ({addrs})", capability.node_id)
     };
-    checks.push(Check::new("local endpoint", Verdict::Ok, local));
+    checks.push(Check::new("local endpoint", Verdict::Ok, &local));
 
     if !capability.report_obtained {
         checks.push(Check::new(
@@ -244,7 +244,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
     checks.push(Check::new(
         "UDP",
         udp_verdict,
-        format!("IPv4 {}, IPv6 {}", yes_no(udp_v4), yes_no(udp_v6)),
+        &format!("IPv4 {}, IPv6 {}", yes_no(udp_v4), yes_no(udp_v6)),
     ));
 
     let (nat_verdict, nat_detail) = match capability.mapping_varies_by_dest {
@@ -274,7 +274,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
             if let Some(addr) = v6 {
                 parts.push(addr.clone());
             }
-            checks.push(Check::new("public address", Verdict::Ok, parts.join(", ")));
+            checks.push(Check::new("public address", Verdict::Ok, &parts.join(", ")));
         }
     }
 
@@ -284,7 +284,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
                 Some(latency) => format!("{relay} ({latency}ms)"),
                 None => relay.clone(),
             };
-            checks.push(Check::new("relay", Verdict::Ok, detail));
+            checks.push(Check::new("relay", Verdict::Ok, &detail));
         }
         None => checks.push(Check::new("relay", Verdict::Warn, "no relay reachable")),
     }
@@ -327,7 +327,7 @@ async fn active_meshes_section() -> Section {
             info.peer_count,
             plural(info.peer_count, "member", "members"),
         );
-        checks.push(Check::new(format!("#{}", info.name), Verdict::Ok, detail));
+        checks.push(Check::new(&format!("#{}", info.name), Verdict::Ok, &detail));
     }
     if checks.is_empty() {
         checks.push(Check::bare(
@@ -365,7 +365,7 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
                 checks: vec![Check::new(
                     "decode",
                     Verdict::Fail,
-                    format!("could not decode gossip id: {error}"),
+                    &format!("could not decode gossip id: {error}"),
                 )],
             };
             return Report::new("gossip", vec![section]);
@@ -392,7 +392,7 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
 
 fn mesh_identity_section(mesh: &LockedMesh) -> Section {
     let mut checks = vec![
-        Check::new("name", Verdict::Ok, format!("#{}", mesh.name().as_str())),
+        Check::new("name", Verdict::Ok, &format!("#{}", mesh.name().as_str())),
         Check::new("network", Verdict::Ok, mesh.network_label()),
     ];
     if mesh.requires_password() {
@@ -425,7 +425,7 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
             checks.push(Check::new(
                 "relay",
                 Verdict::Ok,
-                format!("pinned ladder: {rungs}"),
+                &format!("pinned ladder: {rungs}"),
             ));
         }
         RelayChoice::Custom(ladder) => {
@@ -437,7 +437,7 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
             checks.push(Check::new(
                 "relay",
                 Verdict::Ok,
-                format!("custom ladder: {rungs}"),
+                &format!("custom ladder: {rungs}"),
             ));
         }
     }
@@ -482,7 +482,7 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
-                format!("127.0.0.1 ladder: {ports}"),
+                &format!("127.0.0.1 ladder: {ports}"),
             ));
         }
     }
@@ -513,7 +513,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
             checks.push(Check::new(
                 "relay rung",
                 verdict,
-                format!("{rung} {}", if reachable { "online" } else { "offline" }),
+                &format!("{rung} {}", if reachable { "online" } else { "offline" }),
             ));
         }
     }
@@ -541,7 +541,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
                     Some(url) => format!("reachable — {} path (relay {url})", path.label()),
                     None => format!("reachable — {} path", path.label()),
                 };
-                checks.push(Check::new("rendezvous", Verdict::Ok, detail));
+                checks.push(Check::new("rendezvous", Verdict::Ok, &detail));
             } else {
                 checks.push(Check::new(
                     "rendezvous",
@@ -555,7 +555,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
             checks.push(Check::new(
                 "endpoint",
                 Verdict::Fail,
-                format!("failed to bind: {error}"),
+                &format!("failed to bind: {error}"),
             ));
         }
     }
