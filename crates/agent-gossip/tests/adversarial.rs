@@ -485,7 +485,7 @@ async fn broadcast_shaped_msg_is_dropped() {
     // `a2a_msg` with no addressee: a msg on the broadcast plane. This is the
     // leak direction — it would hand every peer a line meant for one.
     let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
-        .as_msg()
+        .into_msg()
         .wrap_msg()
         .address_to(None)
         .sign(&key)
@@ -514,7 +514,7 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
     // payload; retagging afterwards leaves the extension in place.
     let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
         .wrap_a2a()
-        .as_msg()
+        .into_msg()
         .address_to(Some(victim.nickname.as_str()))
         .sign(&key)
         .bytes();
@@ -538,7 +538,7 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
     // the shape a multihop relay legitimately carries. It must forward it
     // without ever surfacing it.
     let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
-        .as_msg()
+        .into_msg()
         .wrap_msg()
         .address_to(Some("someone-else"))
         .sign(&key)
@@ -580,7 +580,7 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
         &victim_nick,
         "evil-msg-as-victim",
     )
-    .as_msg()
+    .into_msg()
     .wrap_msg()
     .address_to(Some("someone-else"))
     .sign(&key)

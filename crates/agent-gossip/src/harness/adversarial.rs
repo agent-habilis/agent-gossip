@@ -145,9 +145,9 @@ impl CraftedMsg {
     /// Retag this chat frame as a `a2a_msg` (chat addressed to one peer),
     /// keeping the body. Pair with [`address_to`](CraftedMsg::address_to) to
     /// build either a well-formed msg or the broadcast-shaped forgery.
-    pub fn as_msg(mut self) -> Self {
+    pub fn into_msg(mut self) -> Self {
         let MessageKind::App { to, corr, .. } = self.msg.kind.clone() else {
-            panic!("as_msg takes an app frame");
+            panic!("into_msg takes an app frame");
         };
         self.msg.kind = MessageKind::App {
             tag: AppTag::from(wire::MSG),
