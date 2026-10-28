@@ -6,8 +6,8 @@ use agent_gossip::api::{
     TaskStatusParams,
 };
 use agent_gossip::{
-    Channel, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
-    TaskId, TaskState,
+    Channel, JoinTarget, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
+    PresenceSubtype, TaskId, TaskState,
 };
 use habilis_network::protocol::message::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -92,7 +92,7 @@ impl InProcNode {
     /// Join `mesh` under an explicit active-view cap.
     pub async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
         init_test_tracing();
-        let target = mesh.parse().expect("valid test join target");
+        let target: JoinTarget = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
         config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         config.max_peers = max_peers;
@@ -119,7 +119,7 @@ impl InProcNode {
     /// Join `mesh` (a mesh id) with an explicit nickname.
     pub async fn join(mesh: &str, nickname: &str) -> Self {
         init_test_tracing();
-        let target = mesh.parse().expect("valid test join target");
+        let target: JoinTarget = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
         config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
         Self::with_session(
@@ -149,7 +149,7 @@ impl InProcNode {
         nickname: &str,
         password: &str,
     ) -> Result<Self, agent_gossip::api::JoinError> {
-        let target = mesh.parse().expect("valid test join target");
+        let target: JoinTarget = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
         config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
         config.password = Some(password.to_owned());

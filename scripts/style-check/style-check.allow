@@ -33,7 +33,6 @@ assert_no_message|crates/agent-gossip/tests/gossip_network.rs|39|open: An assert
 assert_no_message|crates/agent-gossip/tests/mcp_stdio.rs|28|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/monitor_contract.rs|86|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/slot-template/src/tests.rs|24|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-bool_param_comment|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public function with a bool parameter writes its purpose in a comment above the parameter, so a call site says what true means
 fn_import|crates/agent-gossip/src/api/tests.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 long_chain|crates/agent-gossip-test-fixtures/src/cli_task_create_attempt.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
@@ -101,7 +100,4 @@ pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|An owned list of pi
 pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|A public function that builds a byte buffer returns a Vec (I7)
 pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|A public function that builds a byte buffer returns a Vec (I7)
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskState is Copy, so a by-value as_str is the clippy-accepted form for a Copy type; kept as a counted row
-untyped_generic_let|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|3|open: A let that takes its type from parse, into or try_into names the type (P4)
-untyped_generic_let|crates/agent-gossip/tests/adversarial.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)
-untyped_generic_let|crates/agent-gossip/tests/gossip_network.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)
 untyped_long_chain_let|crates/tasks/src/main.rs|1|The branches return anyhow::Result from cargo-zigbuild, and the tasks crate has no anyhow dependency (P5)

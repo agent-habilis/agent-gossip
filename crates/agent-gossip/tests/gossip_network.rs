@@ -247,7 +247,7 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
     assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
 
     // No password: a crisp requirement error, not a silent empty mesh.
-    let target = creator.mesh.parse().expect("join target");
+    let target: agent_gossip::JoinTarget = creator.mesh.parse().expect("join target");
     let missing = agent_gossip::api::MeshSession::join(agent_gossip::api::JoinConfig::new(target))
         .await
         .expect_err("a missing password must be rejected");

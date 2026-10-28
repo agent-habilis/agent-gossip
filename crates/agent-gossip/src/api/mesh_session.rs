@@ -275,6 +275,7 @@ impl MeshSession {
     pub async fn fetch(
         &self,
         after: Option<u64>,
+        // true long-polls up to the server cap when the buffer is empty; false reads at once.
         long: bool,
     ) -> Result<crate::a2a::surfaced_event::PollBatch, SessionError> {
         self.core.fetch(after, long).await

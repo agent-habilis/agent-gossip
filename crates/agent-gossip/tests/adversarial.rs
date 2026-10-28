@@ -21,7 +21,7 @@
 use std::time::{Duration, Instant};
 
 use agent_gossip::OutputEvent;
-use agent_gossip::a2a::TaskState;
+use agent_gossip::a2a::{TaskId, TaskState};
 use agent_gossip::harness::test_key::{self, CraftedMsg};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
@@ -634,7 +634,7 @@ async fn a_bystanders_task_status_is_dropped() {
         worker.wait_task_message(T).await,
         "worker never received the brief"
     );
-    let tid = task_id.parse().expect("task id parses");
+    let tid: TaskId = task_id.parse().expect("task id parses");
     worker.task_status(&tid, TaskState::Working, None).await;
     assert!(
         initiator.wait_task_state(TaskState::Working, T).await,
