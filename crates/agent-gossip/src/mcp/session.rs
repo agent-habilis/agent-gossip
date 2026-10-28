@@ -18,7 +18,7 @@ use crate::api::{
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
 /// Dropping it winds the loop down via the core's own `Drop`.
-pub(super) struct Session {
+pub(crate) struct Session {
     inner: InProcessSession,
     /// Implicit `after` seq cursor for [`Session::fetch_messages`].
     last_delivered_seq: Mutex<Option<u64>>,
