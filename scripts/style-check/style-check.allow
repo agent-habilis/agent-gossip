@@ -9,7 +9,7 @@ abbrev_name|crates/agent-gossip/src/a2a/node.rs|12|open: An identifier is not a 
 abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/served.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/a2a_ticket.rs|7|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/bridge/bridge.rs|30|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/bridge/bridge.rs|19|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|12|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/tests.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/doctor.rs|10|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on

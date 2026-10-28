@@ -789,10 +789,10 @@ mod tests {
 
     #[test]
     fn first_poll_returns_all_no_eviction() {
-        let mut buf = SurfacedEvents::new(10);
-        buf.push(peer_return("a"));
-        buf.push(peer_return("b"));
-        let (events, missed_before) = buf.since(None);
+        let mut buffer = SurfacedEvents::new(10);
+        buffer.push(peer_return("a"));
+        buffer.push(peer_return("b"));
+        let (events, missed_before) = buffer.since(None);
         assert_eq!(events.len(), 2);
         assert!(missed_before.is_none());
         assert_eq!(events[0].seq, 1);
@@ -801,11 +801,11 @@ mod tests {
 
     #[test]
     fn cursor_returns_only_newer() {
-        let mut buf = SurfacedEvents::new(10);
-        let s1 = buf.push(peer_return("a"));
-        buf.push(peer_return("b"));
-        buf.push(peer_return("c"));
-        let (events, missed_before) = buf.since(Some(s1));
+        let mut buffer = SurfacedEvents::new(10);
+        let s1 = buffer.push(peer_return("a"));
+        buffer.push(peer_return("b"));
+        buffer.push(peer_return("c"));
+        let (events, missed_before) = buffer.since(Some(s1));
         assert!(missed_before.is_none());
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq, 2);
@@ -814,12 +814,12 @@ mod tests {
 
     #[test]
     fn cursor_zero_returns_all_without_eviction() {
-        let mut buf = SurfacedEvents::new(2);
+        let mut buffer = SurfacedEvents::new(2);
         // Overflow so the front seq is > 1, proving seq 0 is never "evicted".
         for name in ["a", "b", "c", "d"] {
-            buf.push(peer_return(name));
+            buffer.push(peer_return(name));
         }
-        let (events, missed_before) = buf.since(Some(0));
+        let (events, missed_before) = buffer.since(Some(0));
         assert!(
             missed_before.is_none(),
             "the 0 cursor is the before-anything baseline"
@@ -829,10 +829,10 @@ mod tests {
 
     #[test]
     fn cursor_at_newest_returns_empty() {
-        let mut buf = SurfacedEvents::new(10);
-        buf.push(peer_return("a"));
-        let s2 = buf.push(peer_return("b"));
-        let (events, missed_before) = buf.since(Some(s2));
+        let mut buffer = SurfacedEvents::new(10);
+        buffer.push(peer_return("a"));
+        let s2 = buffer.push(peer_return("b"));
+        let (events, missed_before) = buffer.since(Some(s2));
         assert!(events.is_empty());
         assert!(missed_before.is_none());
     }
@@ -841,11 +841,11 @@ mod tests {
     fn cursor_at_evicted_seq_is_not_a_gap() {
         // Evicting the event *at* the cursor loses nothing: the caller already
         // consumed it, and the next expected seq is still present.
-        let mut buf = SurfacedEvents::new(2);
-        let consumed = buf.push(peer_return("a")); // seq 1, evicted next
-        buf.push(peer_return("b")); // seq 2
-        buf.push(peer_return("c")); // seq 3 → evicts seq 1; ring {2,3}
-        let (events, missed_before) = buf.since(Some(consumed));
+        let mut buffer = SurfacedEvents::new(2);
+        let consumed = buffer.push(peer_return("a")); // seq 1, evicted next
+        buffer.push(peer_return("b")); // seq 2
+        buffer.push(peer_return("c")); // seq 3 → evicts seq 1; ring {2,3}
+        let (events, missed_before) = buffer.since(Some(consumed));
         assert!(
             missed_before.is_none(),
             "cursor at the evicted seq still has seq 2 next — no gap"
@@ -856,13 +856,13 @@ mod tests {
     #[test]
     fn evicted_cursor_flags_gap() {
         // A real gap: the cursor's next-expected seq was evicted unseen.
-        let mut buf = SurfacedEvents::new(2);
-        let stale = buf.push(peer_return("a")); // seq 1 (the cursor)
-        buf.push(peer_return("b")); // seq 2 → evicted unseen
-        buf.push(peer_return("c")); // seq 3
-        buf.push(peer_return("d")); // seq 4 → evicts seq 2; ring {3,4}
-        assert_eq!(buf.count(), 2);
-        let (events, missed_before) = buf.since(Some(stale));
+        let mut buffer = SurfacedEvents::new(2);
+        let stale = buffer.push(peer_return("a")); // seq 1 (the cursor)
+        buffer.push(peer_return("b")); // seq 2 → evicted unseen
+        buffer.push(peer_return("c")); // seq 3
+        buffer.push(peer_return("d")); // seq 4 → evicts seq 2; ring {3,4}
+        assert_eq!(buffer.count(), 2);
+        let (events, missed_before) = buffer.since(Some(stale));
         assert_eq!(
             missed_before,
             Some(3),
@@ -915,14 +915,14 @@ mod tests {
 
     #[test]
     fn latest_seq_starts_at_zero_climbs_and_survives_eviction() {
-        let mut buf = SurfacedEvents::new(2);
-        assert_eq!(buf.latest_seq(), 0, "fresh ring has no surfaced events");
-        buf.push(peer_return("a"));
-        assert_eq!(buf.latest_seq(), 1);
-        buf.push(peer_return("b"));
-        buf.push(peer_return("c")); // evicts seq 1; ring {2,3}
+        let mut buffer = SurfacedEvents::new(2);
+        assert_eq!(buffer.latest_seq(), 0, "fresh ring has no surfaced events");
+        buffer.push(peer_return("a"));
+        assert_eq!(buffer.latest_seq(), 1);
+        buffer.push(peer_return("b"));
+        buffer.push(peer_return("c")); // evicts seq 1; ring {2,3}
         assert_eq!(
-            buf.latest_seq(),
+            buffer.latest_seq(),
             3,
             "latest_seq tracks the newest assigned seq, not the retained front"
         );
@@ -930,12 +930,12 @@ mod tests {
 
     #[test]
     fn oldest_drop_keeps_recent_window() {
-        let mut buf = SurfacedEvents::new(3);
+        let mut buffer = SurfacedEvents::new(3);
         for name in ["a", "b", "c", "d", "e"] {
-            buf.push(peer_return(name));
+            buffer.push(peer_return(name));
         }
-        assert_eq!(buf.count(), 3);
-        let (events, _) = buf.since(None);
+        assert_eq!(buffer.count(), 3);
+        let (events, _) = buffer.since(None);
         let seqs: Vec<u64> = events.iter().map(|item| item.seq).collect();
         assert_eq!(seqs, vec![3, 4, 5], "kept the three newest by seq");
     }
@@ -1266,12 +1266,12 @@ mod tests {
     /// Meta/state pushes bump `latest_seq` but never `latest_waking_seq`.
     #[test]
     fn waking_seq_ignores_document_echoes() {
-        let mut buf = SurfacedEvents::new(10);
-        buf.push(meta_changed());
-        assert_eq!(buf.latest_seq(), 1);
-        assert_eq!(buf.latest_waking_seq(), 0);
-        buf.push(peer_return("a"));
-        assert_eq!(buf.latest_waking_seq(), 2);
+        let mut buffer = SurfacedEvents::new(10);
+        buffer.push(meta_changed());
+        assert_eq!(buffer.latest_seq(), 1);
+        assert_eq!(buffer.latest_waking_seq(), 0);
+        buffer.push(peer_return("a"));
+        assert_eq!(buffer.latest_waking_seq(), 2);
     }
 
     #[tokio::test]

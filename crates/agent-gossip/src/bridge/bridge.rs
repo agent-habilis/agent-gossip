@@ -161,30 +161,30 @@ pub(super) async fn forward_one(bridge: &Bridge, tcp: TcpStream) -> Result<()> {
 async fn screen_opening_request(tcp: &mut TcpStream, gate: &LocalGate) -> Result<Vec<u8>, Refusal> {
     use tokio::io::AsyncReadExt as _;
 
-    let mut buf = Vec::with_capacity(2048);
+    let mut buffer = Vec::with_capacity(2048);
     let mut chunk = [0u8; 2048];
     let end = loop {
-        if let Some(at) = find_head_end(&buf) {
+        if let Some(at) = find_head_end(&buffer) {
             break at;
         }
-        if buf.len() > MAX_HEAD_BYTES {
+        if buffer.len() > MAX_HEAD_BYTES {
             return Err(Refusal("request head too large"));
         }
         match tcp.read(&mut chunk).await {
             Ok(0) | Err(_) => return Err(Refusal("malformed request")),
-            Ok(read) => buf.extend_from_slice(&chunk[..read]),
+            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
         }
     };
-    let head =
-        std::str::from_utf8(&buf[..end]).map_err(|_| Refusal("request head is not valid utf-8"))?;
+    let head = std::str::from_utf8(&buffer[..end])
+        .map_err(|_| Refusal("request head is not valid utf-8"))?;
     let mut out = gate.screen(head)?.into_bytes();
-    out.extend_from_slice(&buf[end + 4..]);
+    out.extend_from_slice(&buffer[end + 4..]);
     Ok(out)
 }
 
 /// Index of the blank line that ends the head (the offset of its `\r\n\r\n`).
-fn find_head_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|window| window == b"\r\n\r\n")
+fn find_head_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 /// Splice the local client and the QUIC bi-stream: the client's request is
@@ -215,13 +215,13 @@ where
     W: AsyncWriteExt + Unpin,
 {
     let mut rewriter = CardRewriter::new(local_base.to_owned());
-    let mut buf = vec![0u8; 16 * 1024];
+    let mut buffer = vec![0u8; 16 * 1024];
     loop {
-        match quic_recv.read(&mut buf).await {
+        match quic_recv.read(&mut buffer).await {
             // `Ok(None)` is a clean end of stream; a read error ends it too.
             Ok(None) | Err(_) => break,
             Ok(Some(read)) => {
-                let out = rewriter.feed(&buf[..read]);
+                let out = rewriter.feed(&buffer[..read]);
                 if !out.is_empty() && client_write.write_all(&out).await.is_err() {
                     return;
                 }
