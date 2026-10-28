@@ -27,6 +27,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+pub use agent_gossip::PresenceSubtype;
 use agent_gossip::api::{
     A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams, TaskStatusParams,
 };
@@ -36,7 +37,7 @@ use agent_gossip::api::{
 pub use agent_gossip::runtime_base;
 use agent_gossip::{
     Channel, Lane, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
-    PresenceSubtype, TaskId, TaskState,
+    TaskId, TaskState,
 };
 use habilis_network::protocol::message::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -1452,15 +1453,9 @@ impl InProcNode {
             .count()
     }
 
-    /// Number of surfaced presence events of the given kind
-    /// (`joined` when `joined` is true, else `left`).
-    pub fn presence_count(&mut self, joined: bool) -> usize {
+    /// Number of surfaced presence events of the given kind.
+    pub fn presence_count(&mut self, want: PresenceSubtype) -> usize {
         self.pump();
-        let want = if joined {
-            PresenceSubtype::Joined
-        } else {
-            PresenceSubtype::Left
-        };
         self.drained
             .iter()
             .filter(|event| match event {
@@ -1473,12 +1468,12 @@ impl InProcNode {
     }
 
     /// Wait until a `joined`/`left` presence for `nick` is surfaced.
-    pub async fn wait_presence(&mut self, nick: &str, joined: bool, timeout: Duration) -> bool {
-        let want = if joined {
-            PresenceSubtype::Joined
-        } else {
-            PresenceSubtype::Left
-        };
+    pub async fn wait_presence(
+        &mut self,
+        nick: &str,
+        want: PresenceSubtype,
+        timeout: Duration,
+    ) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| match event {
                 OutputEvent::Presence { msg } => {
@@ -1495,15 +1490,10 @@ impl InProcNode {
     /// (any author) have been surfaced.
     pub async fn wait_presence_count(
         &mut self,
-        joined: bool,
+        want: PresenceSubtype,
         min_count: usize,
         timeout: Duration,
     ) -> bool {
-        let want = if joined {
-            PresenceSubtype::Joined
-        } else {
-            PresenceSubtype::Left
-        };
         self.wait_for(timeout, |events| {
             events
                 .iter()

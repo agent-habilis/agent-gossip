@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use agent_gossip::OutputEvent;
 use agent_gossip_test_fixtures as common;
-use common::InProcNode;
+use common::{InProcNode, PresenceSubtype};
 
 /// How long the steady-state test holds the mesh quiet before asserting
 /// nothing spurious happened. Long enough to outlive a fresh-mesh
@@ -43,15 +43,21 @@ async fn mesh_stays_meshed_no_spurious_flaps() {
 
     // Each node converges on the full roster.
     assert!(
-        creator.wait_presence_count(true, 2, ROSTER_TIMEOUT).await,
+        creator
+            .wait_presence_count(PresenceSubtype::Joined, 2, ROSTER_TIMEOUT)
+            .await,
         "creator never surfaced both joiners"
     );
     assert!(
-        joiner_a.wait_presence_count(true, 2, ROSTER_TIMEOUT).await,
+        joiner_a
+            .wait_presence_count(PresenceSubtype::Joined, 2, ROSTER_TIMEOUT)
+            .await,
         "joiner a never saw both other peers"
     );
     assert!(
-        joiner_b.wait_presence_count(true, 2, ROSTER_TIMEOUT).await,
+        joiner_b
+            .wait_presence_count(PresenceSubtype::Joined, 2, ROSTER_TIMEOUT)
+            .await,
         "joiner b never saw both other peers"
     );
 
@@ -68,7 +74,7 @@ async fn mesh_stays_meshed_no_spurious_flaps() {
             .iter()
             .filter(|event| matches!(event, OutputEvent::PeerTimeout { .. }))
             .count();
-        let lefts = node.presence_count(false);
+        let lefts = node.presence_count(PresenceSubtype::Left);
         assert_eq!(
             timeouts, 0,
             "{label} surfaced a spurious peer_timeout during the quiet hold (all peers were alive)"
@@ -112,7 +118,9 @@ async fn concurrent_joins_all_mesh_and_receive() {
     let mut joiners = [n1, n2, n3, n4, n5];
 
     assert!(
-        creator.wait_presence_count(true, 5, ROSTER_TIMEOUT).await,
+        creator
+            .wait_presence_count(PresenceSubtype::Joined, 5, ROSTER_TIMEOUT)
+            .await,
         "creator did not surface all 5 concurrent joiners as `joined`"
     );
 
@@ -145,7 +153,8 @@ async fn fanout_complete_from_each_origin() {
         ("fo-j3", &mut j3),
     ] {
         assert!(
-            node.wait_presence_count(true, 3, ROSTER_TIMEOUT).await,
+            node.wait_presence_count(PresenceSubtype::Joined, 3, ROSTER_TIMEOUT)
+                .await,
             "{label} did not see all 3 other peers as `joined`"
         );
     }
@@ -189,7 +198,8 @@ async fn roster_converges_to_4() {
         ("ro-j3", &mut j3),
     ] {
         assert!(
-            node.wait_presence_count(true, 3, ROSTER_TIMEOUT).await,
+            node.wait_presence_count(PresenceSubtype::Joined, 3, ROSTER_TIMEOUT)
+                .await,
             "{label} did not converge to 3 peer `joined` presences within {ROSTER_TIMEOUT:?}"
         );
     }
@@ -216,7 +226,7 @@ async fn above_old_cap_mesh_stays_full_mesh() {
     // All 8 nodes converge on the full roster (7 peers each).
     assert!(
         creator
-            .wait_presence_count(true, JOINERS, ROSTER_TIMEOUT)
+            .wait_presence_count(PresenceSubtype::Joined, JOINERS, ROSTER_TIMEOUT)
             .await,
         "creator never surfaced all {JOINERS} joiners"
     );
@@ -224,7 +234,7 @@ async fn above_old_cap_mesh_stays_full_mesh() {
         let nick = joiner.nickname.clone();
         assert!(
             joiner
-                .wait_presence_count(true, JOINERS, ROSTER_TIMEOUT)
+                .wait_presence_count(PresenceSubtype::Joined, JOINERS, ROSTER_TIMEOUT)
                 .await,
             "{nick} never saw all {JOINERS} peers"
         );
@@ -246,7 +256,7 @@ async fn above_old_cap_mesh_stays_full_mesh() {
             "{nick} surfaced a spurious peer_timeout — the >5-node mesh is churning (active-view raise regressed?)"
         );
         assert_eq!(
-            joiner.presence_count(false),
+            joiner.presence_count(PresenceSubtype::Left),
             0,
             "{nick} surfaced a spurious presence:left during the quiet hold"
         );

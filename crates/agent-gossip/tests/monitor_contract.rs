@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, serial_guard, socket_path,
-    tmp_log, wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, PresenceSubtype, RECOVERY_TIMEOUT,
+    serial_guard, socket_path, tmp_log, wait_until,
 };
 
 /// Parse a JSON stdout line as a `ready` event, returning its
@@ -287,7 +287,9 @@ async fn test_peer_discovery_three_peers() {
     let (mut creator, _joiner_a, _joiner_b) = common::three_peers("disco").await;
 
     assert!(
-        creator.wait_presence_count(true, 2, MSG_TIMEOUT).await,
+        creator
+            .wait_presence_count(PresenceSubtype::Joined, 2, MSG_TIMEOUT)
+            .await,
         "expected >=2 joined presence events"
     );
 }
@@ -440,7 +442,7 @@ async fn test_presence_joined_event_shape() {
 
     assert!(
         creator
-            .wait_presence("mon-joined-shape", true, MSG_TIMEOUT)
+            .wait_presence("mon-joined-shape", PresenceSubtype::Joined, MSG_TIMEOUT)
             .await,
         "creator did not receive joined presence from mon-joined-shape"
     );

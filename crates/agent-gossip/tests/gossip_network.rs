@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin, chat_text,
-    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, PresenceSubtype, RECOVERY_TIMEOUT,
+    bin, chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
     cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
     wait_until,
 };
@@ -559,7 +559,7 @@ async fn test_presence_block_delivery() {
     // creator must surface it.
     assert!(
         creator
-            .wait_presence("joiner-presence", true, MSG_TIMEOUT)
+            .wait_presence("joiner-presence", PresenceSubtype::Joined, MSG_TIMEOUT)
             .await,
         "creator never surfaced the joiner's 'joined' presence"
     );
@@ -659,7 +659,7 @@ async fn test_graceful_shutdown_handler_fires() {
     // Let the mesh form so the `Left` broadcast has a live link.
     assert!(
         creator
-            .wait_presence("joiner-shutdown", true, MSG_TIMEOUT)
+            .wait_presence("joiner-shutdown", PresenceSubtype::Joined, MSG_TIMEOUT)
             .await,
         "joiner never surfaced as joined before leaving"
     );
@@ -669,7 +669,7 @@ async fn test_graceful_shutdown_handler_fires() {
 
     assert!(
         creator
-            .wait_presence("joiner-shutdown", false, MSG_TIMEOUT)
+            .wait_presence("joiner-shutdown", PresenceSubtype::Left, MSG_TIMEOUT)
             .await,
         "creator never received the joiner's 'left' presence"
     );
@@ -689,49 +689,61 @@ async fn test_interleaved_join_leave_order() {
 
     let alpha = InProcNode::join(&observer.mesh, "alpha-order").await;
     assert!(
-        observer.wait_presence_count(true, 1, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Joined, 1, MSG_TIMEOUT)
+            .await,
         "alpha joined not received"
     );
 
     let beta = InProcNode::join(&observer.mesh, "beta-order").await;
     assert!(
-        observer.wait_presence_count(true, 2, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Joined, 2, MSG_TIMEOUT)
+            .await,
         "beta joined not received"
     );
 
     alpha.leave().await;
     assert!(
-        observer.wait_presence_count(false, 1, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Left, 1, MSG_TIMEOUT)
+            .await,
         "alpha left not received"
     );
 
     let gamma = InProcNode::join(&observer.mesh, "gamma-order").await;
     assert!(
-        observer.wait_presence_count(true, 3, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Joined, 3, MSG_TIMEOUT)
+            .await,
         "gamma joined not received"
     );
 
     beta.leave().await;
     assert!(
-        observer.wait_presence_count(false, 2, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Left, 2, MSG_TIMEOUT)
+            .await,
         "beta left not received"
     );
 
     gamma.leave().await;
     assert!(
-        observer.wait_presence_count(false, 3, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Left, 3, MSG_TIMEOUT)
+            .await,
         "gamma left not received"
     );
 
     assert!(
-        observer.presence_count(true) >= 3,
+        observer.presence_count(PresenceSubtype::Joined) >= 3,
         "expected >=3 joined, got {}",
-        observer.presence_count(true)
+        observer.presence_count(PresenceSubtype::Joined)
     );
     assert!(
-        observer.presence_count(false) >= 3,
+        observer.presence_count(PresenceSubtype::Left) >= 3,
         "expected >=3 left, got {}",
-        observer.presence_count(false)
+        observer.presence_count(PresenceSubtype::Left)
     );
 }
 
