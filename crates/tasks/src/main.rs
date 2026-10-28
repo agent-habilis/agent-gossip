@@ -1,3 +1,5 @@
+//! Dev tasks for the workspace, run as `cargo task`.
+
 use std::process::ExitCode;
 
 use cargo_zigbuild::macos::install_name_tool;
