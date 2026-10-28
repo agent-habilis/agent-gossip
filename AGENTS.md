@@ -393,6 +393,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
+- Accepted exception to C1: the test fixture's `SERIAL_GATE` recovers from a poisoned mutex, because it guards `()` and one panicking test must not stop the serial suite.
 
 ## Agent Restrictions
 
