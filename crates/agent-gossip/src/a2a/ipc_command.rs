@@ -16,9 +16,8 @@ use crate::a2a::broadcast_params::{
     emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
-use crate::a2a::receipt::send_read_receipts;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
-use crate::a2a::{TaskId, TaskState};
+use crate::a2a::{TaskId, TaskState, receipt};
 use crate::output;
 
 /// Command sent from CLI to the running server over IPC. App-side because its
@@ -289,7 +288,7 @@ pub(crate) async fn handle_ipc_command(
             // on the next surfaced event or expires at the park cap. A parked
             // waiter broadcasts nothing → `false`.
             if !long {
-                send_read_receipts(app, state, context, after).await;
+                receipt::send_read_receipts(app, state, context, after).await;
             }
             app.surfaced.poll_or_register(PollOrRegisterParams {
                 after,

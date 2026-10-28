@@ -25,9 +25,8 @@ use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
 };
-use crate::cli::args::lookup::lookups_or_public;
-use crate::cli::args::resolved;
-use crate::topic::derive_topic_mesh;
+use crate::cli::args::{lookup, resolved};
+use crate::topic;
 
 #[derive(Clone)]
 pub(crate) struct AgentGossipServer {
@@ -71,7 +70,7 @@ impl AgentGossipServer {
                     })?,
             )
         };
-        let lookups = lookups_or_public(&args.lookup, args.advertise);
+        let lookups = lookup::lookups_or_public(&args.lookup, args.advertise);
         let resolved = resolved::resolve(&lookups, relay_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI
@@ -158,7 +157,7 @@ impl AgentGossipServer {
         &self,
         Parameters(args): Parameters<TopicMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let derived = derive_topic_mesh(&args.string)
+        let derived = topic::derive_topic_mesh(&args.string)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {

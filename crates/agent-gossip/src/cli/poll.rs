@@ -2,7 +2,7 @@ use anyhow::Result;
 use habilis_network::protocol::{MeshId, Nickname};
 
 use super::args::{PollIdentity, PollOpts};
-use super::ready_state_file::wait_for_ready;
+use super::ready_state_file;
 use crate::a2a::ipc_command::IpcCommand;
 
 /// Query the running daemon's live peer roster. Always emits the
@@ -23,9 +23,11 @@ pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
     // before the daemon has minted its identity.
     let (mesh, nickname) = match identity {
         PollIdentity::StateFile(path) => {
-            let ready =
-                wait_for_ready(&path, habilis_network::runtime::tuning::READY_MAX.as_secs())
-                    .await?;
+            let ready = ready_state_file::wait_for_ready(
+                &path,
+                habilis_network::runtime::tuning::READY_MAX.as_secs(),
+            )
+            .await?;
             let carried = ready.identity();
             let missing = |field: &'static str| {
                 anyhow::anyhow!("state file {} carries no {field}", path.display())

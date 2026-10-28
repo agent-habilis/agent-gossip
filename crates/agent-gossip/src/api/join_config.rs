@@ -1,7 +1,7 @@
 use habilis_network::protocol::{JoinTarget, LookupSet, MeshName, Nickname, TransportPolicy};
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
-use crate::policy::app_policy;
+use crate::policy;
 
 /// How to join a mesh.
 #[derive(Debug, Clone)]
@@ -109,7 +109,7 @@ impl CreateConfig {
             name,
             nickname: None,
             lookups: LookupSet::default(),
-            transport: app_policy(false),
+            transport: policy::app_policy(false),
             advertise: false,
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,

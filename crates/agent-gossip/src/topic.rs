@@ -5,7 +5,7 @@ use habilis_network::protocol::{
 use habilis_network::runtime::{Resolved, SetupKind, derive_topic_mesh_config};
 use habilis_network::util::tuning::topic_mdns_only_for_test;
 
-use crate::policy::app_transport_policy;
+use crate::policy;
 
 // Both lanes take the app transport policy, never the engine default (which
 // has multihop on). The policy is baked into the topic id, so peers on another
@@ -29,7 +29,7 @@ pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
     derive_topic_mesh_config(
         string,
         MeshConfig {
-            transport: app_transport_policy(&lookups),
+            transport: policy::app_transport_policy(&lookups),
             lookups: resolve_lookups(lookups),
             password: None,
             issuer_pubkey: None,

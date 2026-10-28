@@ -4,7 +4,7 @@ use habilis_network::protocol::{
 
 use super::lookup::{Lookup, lookup_set};
 use super::transport::{Transport, transport_policy};
-use crate::policy::app_transport_policy;
+use crate::policy;
 
 pub(crate) struct Resolved {
     pub set: LookupSet,
@@ -35,7 +35,7 @@ pub(crate) fn resolve(
     let set = lookup_set(lookups, relay_url)?;
     let resolved = resolve_lookups(set.clone());
     let transport = if transports.is_empty() {
-        app_transport_policy(&set)
+        policy::app_transport_policy(&set)
     } else {
         transport_policy(transports)?
     };

@@ -7,7 +7,7 @@ use super::advertiser::{Advertiser, spawn_advertiser};
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use crate::output::Output;
-use crate::topic::resolve_topic;
+use crate::topic;
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
@@ -132,7 +132,8 @@ pub(super) async fn topic_setup(
     config: TopicConfig,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
-    let resolved = resolve_topic(config.string, config.nickname).map_err(JoinError::Resolve)?;
+    let resolved =
+        topic::resolve_topic(config.string, config.nickname).map_err(JoinError::Resolve)?;
     resolved_setup(resolved, config.max_peers, output).await
 }
 

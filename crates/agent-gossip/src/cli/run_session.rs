@@ -6,7 +6,7 @@ use habilis_network::runtime::{
 use super::args::SharedServerOpts;
 use super::detach_if_owned::detach_if_owned;
 use super::drift_warning::drift_warning;
-use crate::api::spawn_advertiser;
+use crate::api;
 use crate::output::{Output, OutputMode};
 
 /// Build the output sink, set up the mesh, and run the event loop. The
@@ -107,7 +107,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         .zip(directory_lookups)
         .zip(live_count)
         .map(|((directory, lookups), counter)| {
-            spawn_advertiser(&config, counter, directory, lookups)
+            api::spawn_advertiser(&config, counter, directory, lookups)
         });
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).

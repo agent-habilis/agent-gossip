@@ -10,7 +10,7 @@ use super::meta::meta;
 use super::peers::peers;
 use super::ping::ping;
 use super::poll::poll;
-use super::ready_state_file::ready;
+use super::ready_state_file;
 use super::reject_id_encoded_flag::reject_id_encoded_flag;
 use super::state::state;
 use super::topic::topic;
@@ -78,7 +78,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::State { options } => state(options).await,
         Commands::Meta { options } => meta(options).await,
         Commands::Topology { options } => topology_cmd(options).await,
-        Commands::Ready { options } => ready(options).await,
+        Commands::Ready { options } => ready_state_file::ready(options).await,
         Commands::Discover { options } => {
             install_tuning(&options.tuning);
             Box::pin(super::discover::discover(options)).await

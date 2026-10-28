@@ -1,8 +1,7 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread::sleep;
 use std::time::Duration;
+use std::{fs, thread};
 
 use xshell::{Shell, cmd};
 
@@ -190,7 +189,7 @@ pub(crate) fn run(sh: &Shell, plan: Plan, variants: &[String], binaries: &[Strin
     let mut running = spawn_meshes(&binary, &base, &variants, nodes)?;
 
     println!("settling {settle}s");
-    sleep(Duration::from_secs(settle));
+    thread::sleep(Duration::from_secs(settle));
     check_alive(&variants, &mut running, "settle")?;
     // Sampled in one `ps` for every pid at once: a fork per node would stagger
     // the nodes' windows by the fork cost, which is exactly the kind of
@@ -206,7 +205,7 @@ pub(crate) fn run(sh: &Shell, plan: Plan, variants: &[String], binaries: &[Strin
     let mut monitor = ambient_monitor(&ambient_log);
 
     println!("measuring {window}s");
-    sleep(Duration::from_secs(window));
+    thread::sleep(Duration::from_secs(window));
     if let Some(monitor) = monitor.as_mut() {
         let _ = monitor.kill();
         let _ = monitor.wait();
