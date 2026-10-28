@@ -6,8 +6,8 @@ use habilis_network::protocol::{
 use habilis_network::runtime::{CreateParams, JoinParams, Node};
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
-use crate::gossip_driver::{GossipDriver, Inbox, Request};
 use crate::err::err;
+use crate::gossip_driver::{GossipDriver, Inbox, Request};
 use crate::parse_nickname::parse_nickname;
 use crate::parse_path_mode::parse_path_mode;
 use crate::spawn_peer::spawn_peer;
@@ -38,27 +38,22 @@ impl GossipPeer {
     ) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
         let transports = parse_path_mode(path_mode.as_deref())?;
-        let resolved = CreateParams {
-            name: MeshName::random(),
-            nickname: parse_nickname(nickname)?,
-            // The relay ladder is the load-bearing leg: it is the only one a tab
-            // has, and the rendezvous homes on it.
-            config: MeshConfig {
-                lookups: LookupOpts::public_preset(),
-                password: None,
-                issuer_pubkey: None,
-                transport: TransportPolicy {
-                    udp: true,
-                    webrtc: true,
-                    multihop: false,
-                    gossip: true,
-                    relay_transport: true,
-                },
-            },
-            advertise: DirectorySelection::Unset,
-            password: None,
-            invite_only: false,
-        }
+        // The relay ladder is the load-bearing leg: it is the only one a tab
+        // has, and the rendezvous homes on it.
+        let config = MeshConfig::new(
+            LookupOpts::public_preset(),
+            None,
+            None,
+            TransportPolicy::default()
+                .with_multihop(false)
+                .with_relay_transport(true),
+        );
+        let resolved = CreateParams::new(
+            MeshName::random(),
+            parse_nickname(nickname)?,
+            config,
+            DirectorySelection::Unset,
+        )
         .resolve()
         .map_err(|error| err("resolve create params", &error))?;
         spawn_peer(resolved, transports).await
@@ -79,13 +74,9 @@ impl GossipPeer {
             .trim()
             .parse()
             .map_err(|error| err("parse gossip id", &error))?;
-        let resolved = JoinParams {
-            target,
-            nickname: parse_nickname(nickname)?,
-            password: None,
-        }
-        .resolve()
-        .map_err(|error| err("resolve join params", &error))?;
+        let resolved = JoinParams::new(target, parse_nickname(nickname)?, None)
+            .resolve()
+            .map_err(|error| err("resolve join params", &error))?;
         spawn_peer(resolved, transports).await
     }
 

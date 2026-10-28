@@ -171,19 +171,15 @@ impl NodeApp for GossipDriver {
     fn classify(&self, message: &habilis_network::protocol::message::Authored) -> AppClass {
         let tag = message.kind.app_tag().map(AppTag::as_str);
         let is_broadcast = tag == Some(wire::BROADCAST);
-        AppClass {
-            loggable: is_broadcast,
-            beat: false,
-            // Anything outside the taxonomy this client speaks is dropped whole
-            // rather than surfaced: a signed frame with an arbitrary tag must
-            // not reach the page.
-            valid: is_broadcast || tag.is_none(),
-            // Only broadcast chat carries seq/parents and joins the DAG.
-            chained: is_broadcast,
-            // Broadcast chat is public by definition. Directed tags are sealed,
-            // and this client does not send them yet — see `Request`.
-            sealed: false,
-        }
+        // Anything outside the taxonomy this client speaks is dropped whole
+        // rather than surfaced: a signed frame with an arbitrary tag must
+        // not reach the page. Only broadcast chat carries seq/parents and joins
+        // the DAG. Broadcast chat is public by definition: directed tags are
+        // sealed, and this client does not send them yet — see `Request`.
+        AppClass::NONE
+            .with_if(AppClass::LOGGABLE, is_broadcast)
+            .with_if(AppClass::VALID, is_broadcast || tag.is_none())
+            .with_if(AppClass::CHAINED, is_broadcast)
     }
 
     async fn on_app_frame(
@@ -251,19 +247,17 @@ impl NodeDriver for GossipDriver {
         let Ok(json) = serde_json::to_string(&payload) else {
             return false;
         };
-        let Ok(body) = MessageBody::new(json) else {
+        let Ok(body) = MessageBody::try_new(json) else {
+            return false;
+        };
+        let Ok(tag) = AppTag::try_new(wire::BROADCAST) else {
             return false;
         };
 
         let frame = Message::new_app(
             context.mesh,
             context.author,
-            AppFrameParams {
-                tag: AppTag::from(wire::BROADCAST),
-                to: None,
-                corr: None,
-                body,
-            },
+            AppFrameParams::new(tag, None, None, body),
         )
         .with_id(id)
         .sign(context.identity);
@@ -272,7 +266,6 @@ impl NodeDriver for GossipDriver {
             return false;
         };
         match deliver(&frame, bytes, state, context.sender).await {
-            Ok(Delivered::Done) => {}
             Ok(Delivered::Pending(pending)) => {
                 // A dial is awaited off the event loop. The frame is echoed now; a dial that
                 // fails is told to the inbox when it fails.
@@ -291,6 +284,8 @@ impl NodeDriver for GossipDriver {
                     }
                 });
             }
+            // `Done`: sent, or handed to a warm connection, so nothing is left to wait for.
+            Ok(_) => {}
             Err(error) => {
                 self.inbox.push(
                     "system".to_owned(),
