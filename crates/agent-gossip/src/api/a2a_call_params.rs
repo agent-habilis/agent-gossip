@@ -58,6 +58,7 @@ pub struct TaskStatusParams {
 }
 
 impl A2aCallParams {
+    /// A call to `peer` for `method`, with the reply deadline `timeout`.
     #[must_use]
     pub fn new(
         peer: Nickname,
@@ -107,6 +108,7 @@ impl TaskStatusParams {
         }
     }
 
+    /// Put `note` on the status message.
     #[must_use]
     pub fn with_note(mut self, note: String) -> Self {
         self.note = Some(note);

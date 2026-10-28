@@ -1,3 +1,5 @@
+//! Integration tests for the waiting flag of a task.
+
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};

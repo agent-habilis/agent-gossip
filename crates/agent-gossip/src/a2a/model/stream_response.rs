@@ -8,8 +8,12 @@ use super::{Message, Task, TaskArtifactUpdate, TaskStatusUpdate};
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum StreamResponse {
+    /// A full snapshot of the task.
     Task(Task),
+    /// A message on the task.
     Message(Message),
+    /// A change of task status.
     StatusUpdate(TaskStatusUpdate),
+    /// A new or changed artifact.
     ArtifactUpdate(TaskArtifactUpdate),
 }

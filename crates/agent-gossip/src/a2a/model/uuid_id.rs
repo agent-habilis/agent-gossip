@@ -6,9 +6,11 @@ use uuid::Uuid;
 
 /// The kind of a UUID-string id: names the error text a crafted id gets.
 pub trait IdKind {
+    /// The text of the error that a non-UUID value gets at parse.
     const ERROR: &'static str;
 }
 
+/// Marks a [`MessageId`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageIdKind {}
 
@@ -16,6 +18,7 @@ impl IdKind for MessageIdKind {
     const ERROR: &'static str = "invalid a2a message id";
 }
 
+/// Marks a [`TaskId`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskIdKind {}
 
@@ -23,6 +26,7 @@ impl IdKind for TaskIdKind {
     const ERROR: &'static str = "invalid a2a task id";
 }
 
+/// Marks an [`A2aRpcId`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum A2aRpcIdKind {}
 
@@ -37,8 +41,11 @@ impl IdKind for A2aRpcIdKind {
 #[serde(transparent)]
 pub struct UuidId<Kind: IdKind>(String, #[serde(skip)] PhantomData<Kind>);
 
+/// The id the sender mints for one message.
 pub type MessageId = UuidId<MessageIdKind>;
+/// The id the server mints for one task.
 pub type TaskId = UuidId<TaskIdKind>;
+/// The correlation id of one gossip RPC call.
 pub type A2aRpcId = UuidId<A2aRpcIdKind>;
 
 impl<'de, Kind: IdKind> Deserialize<'de> for UuidId<Kind> {

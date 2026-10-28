@@ -8,18 +8,25 @@ use serde::{Deserialize, Deserializer, Serialize};
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct Part {
+    /// Text content. Exactly one of `text`, `raw`, `url`, `data` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Base64-encoded bytes of a file. Exactly one of `text`, `raw`, `url`, `data` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// Where to fetch a file. Exactly one of `text`, `raw`, `url`, `data` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Structured JSON content. Exactly one of `text`, `raw`, `url`, `data` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    /// Name of the file that `raw` or `url` carries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
+    /// MIME type of the content; wire name `mediaType`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_type: Option<String>,
+    /// Free-form JSON that rides along with the part.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }

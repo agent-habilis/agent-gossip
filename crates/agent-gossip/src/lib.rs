@@ -59,16 +59,19 @@ pub use self::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 // curated public protocol surface from there above. `a2a` is public on
 // purpose — it is the agent-communication data model both bindings (gossip,
 // local JSON-RPC) share, and embedders speak it directly.
+/// The A2A data model and the gossip binding that carries it.
 pub mod a2a;
 pub(crate) mod bridge;
 pub(crate) mod cli;
 pub(crate) mod mcp;
 pub(crate) mod output;
+/// The typed events a daemon writes to its `--output json` stream.
 pub mod output_event;
 pub(crate) mod policy;
 pub(crate) mod topic;
 
 pub mod api;
+/// Roster and health values that `status` and `doctor` report.
 pub mod status;
 
 // Not public API. Feature-gated, doc-hidden shims that expose the engine's

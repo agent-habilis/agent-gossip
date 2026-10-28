@@ -8,6 +8,8 @@ use super::{Message, Task};
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum SendMessageResponse {
+    /// The send created a task; the JSON key is `task`.
     Task(Task),
+    /// The send got a direct reply and made no task; the JSON key is `message`.
     Message(Message),
 }

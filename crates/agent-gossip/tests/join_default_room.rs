@@ -1,3 +1,5 @@
+//! Integration tests for the join target that `AGENT_GOSSIP_DEFAULT_ROOM` supplies.
+
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Output, Stdio};
 use std::sync::mpsc;

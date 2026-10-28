@@ -15,7 +15,9 @@ use crate::output::OutputEvent;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SurfacedEvent {
+    /// Strictly increasing per daemon, starting at 1; 0 means "before anything".
     pub seq: u64,
+    /// The event as it was surfaced.
     pub event: OutputEvent,
 }
 

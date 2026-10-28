@@ -28,6 +28,7 @@ pub(crate) mod receipt;
 pub(crate) mod rpc_error;
 pub(crate) mod served;
 pub(crate) mod session_request;
+/// The parameters of a task status update.
 pub mod status_update_params;
 pub use self::frame_payload_error::FramePayloadError;
 pub(crate) mod surfaced_event;

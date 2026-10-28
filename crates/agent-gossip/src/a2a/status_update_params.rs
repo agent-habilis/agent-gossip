@@ -213,9 +213,13 @@ pub(crate) fn parts_text(parts: &[Part]) -> String {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct StatusUpdateParams<'caller> {
+    /// The task that moves.
     pub task_id: &'caller TaskId,
+    /// The state the task enters; a terminal state closes the stream.
     pub state: TaskState,
+    /// Becomes `status.message` as an agent-role message. `None` sends no message.
     pub note: Option<&'caller str>,
+    /// Opaque `metadata` on the update, for example from [`beat_metadata`].
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -267,7 +271,9 @@ pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ReaderBeat {
+    /// `true` when the agent armed a long poll, so a new message wakes it.
     pub bell: bool,
+    /// Seconds since the agent last polled.
     pub last_poll_secs: u64,
 }
 

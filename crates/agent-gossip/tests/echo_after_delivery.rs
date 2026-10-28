@@ -1,3 +1,5 @@
+//! Integration tests that a self echo appears only after a delivery.
+
 use std::time::Duration;
 
 use agent_gossip::a2a::status_update_params;

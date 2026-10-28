@@ -1,3 +1,5 @@
+//! Integration tests for delivery and read receipts.
+
 use agent_gossip::output_event::OutputEvent;
 use agent_gossip::{MAX_MESSAGE_SIZE, TaskState};
 use agent_gossip_test_fixtures as common;

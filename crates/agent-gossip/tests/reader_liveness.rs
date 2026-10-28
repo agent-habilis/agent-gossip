@@ -1,3 +1,5 @@
+//! Integration tests for read receipts and the reader bell of a peer.
+
 use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;

@@ -1,3 +1,5 @@
+//! Integration tests for the CLI-side argument checks of `a2a status`.
+
 use agent_gossip_test_fixtures as common;
 use common::test_cmd;
 

@@ -11,7 +11,9 @@ pub enum FramePayloadError {
     Shape(&'static str),
     /// A JSON payload failed to parse or serialize.
     Invalid {
+        /// Names the payload that failed, such as the task or the status update.
         what: &'static str,
+        /// The serde error behind the failure.
         source: serde_json::Error,
     },
     /// The message body was rejected by the engine.
