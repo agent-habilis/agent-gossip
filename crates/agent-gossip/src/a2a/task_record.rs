@@ -1018,7 +1018,11 @@ mod tests {
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), quiet);
         let rec = tasks.get_mut(&tid()).unwrap();
-        assert_eq!(rec.ball, TaskRole::Receiver);
+        assert_eq!(
+            rec.ball,
+            TaskRole::Receiver,
+            "the ball passes to the receiver"
+        );
         assert!(
             rec.should_keepalive(now, cadence),
             "the side without the ball beats too"
@@ -1034,12 +1038,18 @@ mod tests {
 
         // Within the cadence ⇒ not due yet.
         rec.last_sent = now;
-        assert!(!rec.should_keepalive(now, cadence));
+        assert!(
+            !rec.should_keepalive(now, cadence),
+            "a finished task is not kept alive"
+        );
 
         // A terminal task is never beaten.
         rec.last_sent = quiet;
         rec.state = TaskState::Canceled;
-        assert!(!rec.should_keepalive(now, cadence));
+        assert!(
+            !rec.should_keepalive(now, cadence),
+            "a stalled task is not kept alive"
+        );
     }
 
     /// The peer's beat must not stand in for ours. The cadence once read the
@@ -1056,7 +1066,10 @@ mod tests {
             now.checked_sub(2 * cadence).unwrap(),
         );
         apply(&mut tasks, &leg(LegKind::Beat, false), now);
-        assert!(tasks[&tid()].should_keepalive(now, cadence));
+        assert!(
+            tasks[&tid()].should_keepalive(now, cadence),
+            "a working task is kept alive at the cadence"
+        );
     }
 
     /// A task no agent has touched for the silence cap stops being beaten, so
@@ -1073,7 +1086,10 @@ mod tests {
         // Only the daemons have spoken since: the peer's beat, and ours.
         apply(&mut tasks, &leg(LegKind::Beat, false), now);
         tasks.get_mut(&tid()).unwrap().last_sent = day_ago;
-        assert!(!tasks[&tid()].should_keepalive(now, cadence));
+        assert!(
+            !tasks[&tid()].should_keepalive(now, cadence),
+            "a quiet task past the cadence is not kept alive"
+        );
     }
 
     /// A 0.8/0.9 peer beats only while it owes the next move, so its silence
@@ -1107,7 +1123,7 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
 
         let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
-        assert_eq!(expired.len(), 1);
+        assert_eq!(expired.len(), 1, "the one expired task is reported");
     }
 
     /// A beat is only evidence while it is fresh. The engine dedups by a
@@ -1154,7 +1170,11 @@ mod tests {
                 now: later,
             },
         );
-        assert_eq!(tasks[&tid()].last_peer_activity, peer_clock);
+        assert_eq!(
+            tasks[&tid()].last_peer_activity,
+            peer_clock,
+            "the last peer activity is the peer clock"
+        );
     }
 
     fn closed() -> super::ClosedTasks {
@@ -1207,7 +1227,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Working), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task is working after the leg"
+        );
         tasks
     }
 
@@ -1255,12 +1279,10 @@ mod tests {
     fn a_silent_reader_on_a_working_task_we_opened_is_stalled() {
         let now = Instant::now();
         let tasks = working_task_we_opened(now);
-        assert!(super::stalled(
-            silent_reader(),
-            &tasks[&tid()],
-            STALL_CHECK,
-            now
-        ));
+        assert!(
+            super::stalled(silent_reader(), &tasks[&tid()], STALL_CHECK, now),
+            "the reader is stalled"
+        );
     }
 
     /// Anything that shows the worker agent reading, or that the beat cannot
@@ -1322,12 +1344,20 @@ mod tests {
                 peer: Nickname::from("calm-otter"),
                 last_poll_secs: STALL_CHECK.as_secs(),
                 check_secs: STALL_CHECK.as_secs(),
-            })
+            }),
+            "the first stall notice names the stalled task"
         );
         let soon = now + Duration::from_secs(30);
-        assert_eq!(notice_for(&mut tasks, &beat, soon), None);
+        assert_eq!(
+            notice_for(&mut tasks, &beat, soon),
+            None,
+            "no stall notice before the stall window"
+        );
         let later = now + STALL_CHECK;
-        assert!(notice_for(&mut tasks, &beat, later).is_some());
+        assert!(
+            notice_for(&mut tasks, &beat, later).is_some(),
+            "a stall notice comes once the window has passed"
+        );
     }
 
     /// A beat from an old peer carries no reader keys, so it is never flagged.
@@ -1336,7 +1366,11 @@ mod tests {
         let now = Instant::now();
         let mut tasks = working_task_we_opened(now);
         let beat = beat_from_worker(None);
-        assert_eq!(notice_for(&mut tasks, &beat, now), None);
+        assert_eq!(
+            notice_for(&mut tasks, &beat, now),
+            None,
+            "no stall notice while the peer beats"
+        );
     }
 
     /// A working status leg for `tid()` at wire time `at`, with a waiting reason
@@ -1385,7 +1419,11 @@ mod tests {
 
         deliver(&mut tasks, &waiting);
         deliver(&mut tasks, &clear_same_second);
-        assert_eq!(tasks[&tid()].waiting, None);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "no waiting question before the leg"
+        );
         ingest_inbound(&mut tasks, &waiting);
         assert_eq!(
             tasks[&tid()].waiting,
@@ -1402,7 +1440,11 @@ mod tests {
         );
 
         deliver(&mut tasks, &waiting_again);
-        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks again"));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks again"),
+            "the waiting question is the newest one"
+        );
         ingest_inbound(&mut tasks, &clear);
         assert_eq!(
             tasks[&tid()].waiting.as_deref(),
@@ -1460,9 +1502,17 @@ mod tests {
         let clear = waiting_leg(None, at);
 
         ingest_inbound(&mut tasks, &waiting);
-        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks its user"),
+            "the waiting question is the one asked"
+        );
         ingest_inbound(&mut tasks, &clear);
-        assert_eq!(tasks[&tid()].waiting, None);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the clear leg removes the waiting question"
+        );
 
         ingest_inbound(&mut tasks, &waiting);
         assert_eq!(
@@ -1519,7 +1569,11 @@ mod tests {
             &mut tasks,
             &waiting_leg(Some("asks its user"), at + Duration::from_secs(1)),
         );
-        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks its user"),
+            "the waiting question is the one asked"
+        );
         ingest_inbound(&mut tasks, &waiting_leg(None, at));
         assert_eq!(
             tasks[&tid()].waiting.as_deref(),
@@ -1538,7 +1592,11 @@ mod tests {
             &mut tasks,
             &ordered_leg(Some("asks its user"), at + Duration::from_secs(1), 1_000),
         );
-        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks its user"),
+            "the waiting question is kept after an out of order leg"
+        );
 
         ingest_inbound(&mut tasks, &ordered_leg(None, at, 2_000));
         assert_eq!(
@@ -1569,7 +1627,11 @@ mod tests {
             &mut tasks,
             &ordered_leg(None, at + Duration::from_secs(2), 6_000),
         );
-        assert_eq!(tasks[&tid()].waiting, None);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the waiting question is cleared"
+        );
     }
 
     /// The contract: only a `working` leg carries the reason. A leg for any
@@ -1582,7 +1644,11 @@ mod tests {
         let mut leg = status_frame(TaskState::InputRequired, metadata());
         leg.timestamp = first;
         ingest_inbound(&mut tasks, &leg);
-        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the task waits for input"
+        );
         assert_eq!(
             tasks[&tid()].waiting,
             None,
@@ -1595,10 +1661,18 @@ mod tests {
     fn a_late_waiting_leg_on_a_finished_task_sets_nothing() {
         let mut tasks = working_task_we_opened(Instant::now());
         ingest_inbound(&mut tasks, &status_frame(TaskState::Completed, None));
-        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "a leg after the terminal state is ignored"
+        );
 
         ingest_inbound(&mut tasks, &waiting_leg(Some("too late"), UnixSecs::now()));
-        assert_eq!(tasks[&tid()].waiting, None);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the waiting question is cleared after completion"
+        );
     }
 
     /// A beat older than one idle timeout proves nothing about the worker now: a
@@ -1609,7 +1683,11 @@ mod tests {
         let mut tasks = working_task_we_opened(now);
         let mut beat = beat_from_worker(Some(silent_reader()));
         beat.timestamp = UnixSecs::now() - Duration::from_secs(super::task_timeout_secs() + 1);
-        assert_eq!(notice_for(&mut tasks, &beat, now), None);
+        assert_eq!(
+            notice_for(&mut tasks, &beat, now),
+            None,
+            "no stall notice for a finished task"
+        );
     }
 
     /// A working leg with `mesh:waiting` records the reason, and the next
@@ -1632,10 +1710,18 @@ mod tests {
 
         let waiting = serde_json::json!({ extensions::META_WAITING: "asks its user" });
         ingest_leg(&mut tasks, status_frame(TaskState::Working, Some(waiting)));
-        assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
+        assert_eq!(
+            tasks[&tid()].waiting.as_deref(),
+            Some("asks its user"),
+            "the waiting question is the one asked"
+        );
 
         ingest_leg(&mut tasks, status_frame(TaskState::Working, None));
-        assert_eq!(tasks[&tid()].waiting, None);
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "the waiting question is cleared"
+        );
     }
 
     /// A leg on a task that already closed is a replay: anti-entropy served an
@@ -1648,7 +1734,10 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         tasks.get_mut(&tid()).unwrap().state = TaskState::Completed;
         let late = status_leg(false);
-        assert!(super::is_replay(&tasks, &closed(), &tid(), &late.id));
+        assert!(
+            super::is_replay(&tasks, &closed(), &tid(), &late.id),
+            "a late leg is a replay"
+        );
     }
 
     /// The record goes 2 min after close, and the replays in the field came
@@ -1665,10 +1754,13 @@ mod tests {
 
         let mut reaped_ids = closed();
         let (_, reaped) = super::sweep_registry(&mut tasks, &mut reaped_ids, now, timeout);
-        assert_eq!(reaped, vec![tid()]);
-        assert!(tasks.is_empty());
+        assert_eq!(reaped, vec![tid()], "the reaped task list holds the task");
+        assert!(tasks.is_empty(), "the registry is empty after the reap");
         let late = status_leg(false);
-        assert!(super::is_replay(&tasks, &reaped_ids, &tid(), &late.id));
+        assert!(
+            super::is_replay(&tasks, &reaped_ids, &tid(), &late.id),
+            "a late leg for a reaped task is a replay"
+        );
     }
 
     /// After the sweep reaps a finished task, its own peer can still read it
@@ -1692,7 +1784,7 @@ mod tests {
         rec.state = TaskState::Completed;
         rec.last_activity = now.checked_sub(timeout * 2).unwrap();
         super::sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
-        assert!(app.tasks.is_empty());
+        assert!(app.tasks.is_empty(), "the app has no tasks after the reap");
 
         let params = json!({"id": tid().as_str()});
         assert!(
@@ -1711,9 +1803,19 @@ mod tests {
         );
 
         let task = rpc_error::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
-        assert_eq!(task["id"], tid().as_str());
-        assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED");
-        assert_eq!(task["metadata"]["mesh:peer"], "calm-otter");
+        assert_eq!(
+            task["id"],
+            tid().as_str(),
+            "the task id is the requested id"
+        );
+        assert_eq!(
+            task["status"]["state"], "TASK_STATE_COMPLETED",
+            "the task state is completed"
+        );
+        assert_eq!(
+            task["metadata"]["mesh:peer"], "calm-otter",
+            "the task keeps the peer metadata"
+        );
     }
 
     /// The closed set stays bounded: past `cap`, the oldest task is forgotten.
@@ -1734,9 +1836,18 @@ mod tests {
                 },
             );
         }
-        assert!(closed.get(&ids[0]).is_none());
-        assert!(closed.get(&ids[1]).is_some());
-        assert!(closed.get(&ids[2]).is_some());
+        assert!(
+            closed.get(&ids[0]).is_none(),
+            "the oldest closed task is evicted"
+        );
+        assert!(
+            closed.get(&ids[1]).is_some(),
+            "the second closed task is kept"
+        );
+        assert!(
+            closed.get(&ids[2]).is_some(),
+            "the newest closed task is kept"
+        );
     }
 
     #[test]
@@ -1746,7 +1857,10 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         let working = status_leg(false);
         super::note_surfaced(&mut tasks, &tid(), &working);
-        assert!(super::is_replay(&tasks, &closed(), &tid(), &working.id));
+        assert!(
+            super::is_replay(&tasks, &closed(), &tid(), &working.id),
+            "a leg for a closed task is a replay"
+        );
     }
 
     /// A peer beats every 30 s with a fresh id. Recorded, the beats would push
@@ -1762,7 +1876,10 @@ mod tests {
         for _ in 0..100 {
             super::note_surfaced(&mut tasks, &tid(), &status_leg(true));
         }
-        assert!(super::is_replay(&tasks, &closed(), &tid(), &real.id));
+        assert!(
+            super::is_replay(&tasks, &closed(), &tid(), &real.id),
+            "a leg the task already saw is a replay"
+        );
     }
 
     /// Pin: a new leg on a live task surfaces, and so does a leg for a task we
@@ -1774,9 +1891,15 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         super::note_surfaced(&mut tasks, &tid(), &status_leg(false));
         let fresh = status_leg(false);
-        assert!(!super::is_replay(&tasks, &closed(), &tid(), &fresh.id));
+        assert!(
+            !super::is_replay(&tasks, &closed(), &tid(), &fresh.id),
+            "a fresh leg is not a replay"
+        );
         let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
-        assert!(!super::is_replay(&tasks, &closed(), &unknown, &fresh.id));
+        assert!(
+            !super::is_replay(&tasks, &closed(), &unknown, &fresh.id),
+            "a leg for an unknown task is not a replay"
+        );
     }
 
     fn leg(kind: LegKind, mine: bool) -> LegInfo<'static> {
@@ -1819,7 +1942,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Working), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task is working before the peer clock check"
+        );
         let peer_clock = tasks[&tid()].last_peer_activity;
 
         apply(
@@ -1850,7 +1977,10 @@ mod tests {
             TaskState::Working,
             "a non-party cannot park the task in review"
         );
-        assert!(!tasks[&tid()].review);
+        assert!(
+            !tasks[&tid()].review,
+            "the review flag is clear before the review"
+        );
 
         let later = now.checked_add(Duration::from_mins(30)).unwrap();
         apply(&mut tasks, &from_outsider(LegKind::Beat), later);
@@ -1862,14 +1992,22 @@ mod tests {
 
         // The real counterparty still drives it.
         apply(&mut tasks, &leg(LegKind::Artifact, false), now);
-        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
-        assert!(tasks[&tid()].review);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the task waits for review"
+        );
+        assert!(tasks[&tid()].review, "the review flag is set");
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Completed), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "the approval completes the task"
+        );
     }
 
     /// The registry a remote peer can mint into is bounded, per peer first.
@@ -1908,7 +2046,11 @@ mod tests {
             minted.push(open(&flooder, index));
         }
 
-        assert_eq!(admit_new_task(&tasks, &flooder), Admission::PeerAtCap);
+        assert_eq!(
+            admit_new_task(&tasks, &flooder),
+            Admission::PeerAtCap,
+            "the flooder is refused at the peer cap"
+        );
         assert_eq!(
             admit_new_task(&tasks, &honest),
             Admission::Ok,
@@ -1919,7 +2061,11 @@ mod tests {
         // orchestrator running many short tasks with one worker is not a
         // flooder, and must not be treated as one.
         tasks.get_mut(&minted[0]).unwrap().state = TaskState::Completed;
-        assert_eq!(admit_new_task(&tasks, &flooder), Admission::Ok);
+        assert_eq!(
+            admit_new_task(&tasks, &flooder),
+            Admission::Ok,
+            "a new task is admitted under the cap"
+        );
     }
 
     /// A task the sweep cancels survives that same sweep.
@@ -1960,7 +2106,7 @@ mod tests {
             still_live.is_empty(),
             "a terminal record is not re-cancelled"
         );
-        assert_eq!(now_reaped, vec![tid()]);
+        assert_eq!(now_reaped, vec![tid()], "the reaped id is the stale task");
         assert!(tasks.is_empty(), "and the registry stays bounded");
     }
 
@@ -2048,7 +2194,7 @@ mod tests {
 
         // The real worker's snapshot is still adopted.
         adopt(&mut tasks, "calm-otter", TaskState::Failed, later);
-        assert_eq!(tasks[&tid()].state, TaskState::Failed);
+        assert_eq!(tasks[&tid()].state, TaskState::Failed, "the task is failed");
     }
 
     /// A second `Offer` on a live task id from a different peer must not
@@ -2150,7 +2296,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Working), true),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task keeps working after the echoed artifact"
+        );
 
         // The worker's own echoed artifact leg: directed, body is a sealed
         // ciphertext stand-in that does not parse as a `TaskArtifactUpdate`.
@@ -2184,7 +2334,7 @@ mod tests {
             TaskState::InputRequired,
             "the worker's own artifact echo must park the task for review"
         );
-        assert!(tasks[&tid()].review);
+        assert!(tasks[&tid()].review, "the task is parked for review");
 
         // ①: the app surfaces the *plaintext* logical frame it built (the same
         // `task_id`, unsealed), so rendering that self-echo as JSON must not
@@ -2213,8 +2363,12 @@ mod tests {
         })
         .expect("a task event renders a JSON line");
         let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
-        assert_eq!(parsed["task_id"], task_id.as_str());
-        assert_eq!(parsed["self"], true);
+        assert_eq!(
+            parsed["task_id"],
+            task_id.as_str(),
+            "the frame names the task"
+        );
+        assert_eq!(parsed["self"], true, "the frame is marked self");
     }
 
     /// The **ingest contract** for a worker's own status leg: a sealed body is a
@@ -2288,7 +2442,11 @@ mod tests {
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
         ingest_own(&mut tasks, &status_frame(TaskState::Working, false));
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task keeps working after the unreadable frame"
+        );
 
         // The wire frame is unreadable to its own sender: ingesting *that* is
         // the bug, and it must stay a no-op rather than silently half-advance.
@@ -2301,8 +2459,15 @@ mod tests {
 
         // The plaintext twin closes the worker's own record.
         ingest_own(&mut tasks, &status_frame(TaskState::Completed, false));
-        assert_eq!(tasks[&tid()].state, TaskState::Completed);
-        assert!(tasks[&tid()].state.is_terminal());
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "the task is completed"
+        );
+        assert!(
+            tasks[&tid()].state.is_terminal(),
+            "the completed task is terminal"
+        );
 
         // And so the idle sweep passes it over, however long it sits there.
         // This is `tick_task_sweep`'s expiry predicate, verbatim.
@@ -2328,17 +2493,29 @@ mod tests {
 
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         let rec = &tasks[&tid()];
-        assert_eq!(rec.role, TaskRole::Initiator);
-        assert_eq!(rec.state, TaskState::Submitted);
-        assert_eq!(rec.ball, TaskRole::Receiver);
+        assert_eq!(rec.role, TaskRole::Initiator, "the initiator role is set");
+        assert_eq!(rec.state, TaskState::Submitted, "the new task is submitted");
+        assert_eq!(
+            rec.ball,
+            TaskRole::Receiver,
+            "the ball is with the receiver"
+        );
 
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Working), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
-        assert_eq!(tasks[&tid()].ball, TaskRole::Receiver);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task is working"
+        );
+        assert_eq!(
+            tasks[&tid()].ball,
+            TaskRole::Receiver,
+            "the ball is with the receiver"
+        );
 
         // Worker asks a question → input-required, ball flips to me.
         apply(
@@ -2346,25 +2523,57 @@ mod tests {
             &leg(LegKind::Status(TaskState::InputRequired), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
-        assert_eq!(tasks[&tid()].ball, TaskRole::Initiator);
-        assert!(!tasks[&tid()].review);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the task waits for input"
+        );
+        assert_eq!(
+            tasks[&tid()].ball,
+            TaskRole::Initiator,
+            "the ball is with the initiator"
+        );
+        assert!(!tasks[&tid()].review, "the review flag is clear");
 
         // My answer resumes the work and hands the ball back.
         apply(&mut tasks, &leg(LegKind::Text, true), now);
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
-        assert_eq!(tasks[&tid()].ball, TaskRole::Receiver);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task resumes working"
+        );
+        assert_eq!(
+            tasks[&tid()].ball,
+            TaskRole::Receiver,
+            "the ball is with the receiver"
+        );
 
         // The result parks the task for my review.
         apply(&mut tasks, &leg(LegKind::Artifact, false), now);
-        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
-        assert!(tasks[&tid()].review);
-        assert_eq!(tasks[&tid()].ball, TaskRole::Initiator);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the task waits for input"
+        );
+        assert!(tasks[&tid()].review, "the review flag is set");
+        assert_eq!(
+            tasks[&tid()].ball,
+            TaskRole::Initiator,
+            "the ball is with the initiator"
+        );
 
         // My approval message resumes the worker...
         apply(&mut tasks, &leg(LegKind::Text, true), now);
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
-        assert_eq!(tasks[&tid()].ball, TaskRole::Receiver);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task resumes working"
+        );
+        assert_eq!(
+            tasks[&tid()].ball,
+            TaskRole::Receiver,
+            "the ball is with the receiver"
+        );
 
         // ...and the *worker* authors the terminal `completed` (native A2A).
         apply(
@@ -2372,7 +2581,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Completed), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "the task is completed"
+        );
     }
 
     /// A worker cannot close a task it never started.
@@ -2391,7 +2604,11 @@ mod tests {
         let mut tasks = HashMap::new();
         let now = Instant::now();
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
-        assert_eq!(tasks[&tid()].state, TaskState::Submitted);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Submitted,
+            "the task is submitted"
+        );
 
         apply(
             &mut tasks,
@@ -2415,7 +2632,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Completed), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "the task is completed"
+        );
 
         // Declining an offer outright is a different leg, and still lands.
         let mut declined = HashMap::new();
@@ -2425,7 +2646,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Failed), false),
             now,
         );
-        assert_eq!(declined[&tid()].state, TaskState::Failed);
+        assert_eq!(
+            declined[&tid()].state,
+            TaskState::Failed,
+            "the declined task failed"
+        );
     }
 
     /// A terminal task is frozen: a later leg never mutates it.
@@ -2439,14 +2664,22 @@ mod tests {
             &leg(LegKind::Status(TaskState::Rejected), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Rejected);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Rejected,
+            "the task is rejected"
+        );
         // A stray confirm after decline must not resurrect it.
         apply(
             &mut tasks,
             &leg(LegKind::Status(TaskState::Completed), true),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Rejected);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Rejected,
+            "the task stays rejected"
+        );
     }
 
     /// A non-offer leg for an unknown task id is dropped (no record created).
@@ -2454,7 +2687,7 @@ mod tests {
     fn unknown_task_non_offer_is_ignored() {
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Text, false), Instant::now());
-        assert!(tasks.is_empty());
+        assert!(tasks.is_empty(), "the registry is empty");
     }
 
     /// Out-of-order legs (a confirm before any review park) are ignored.
@@ -2469,7 +2702,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Completed), true),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Submitted);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Submitted,
+            "the task is submitted"
+        );
     }
 
     /// Direction guards (native A2A — the worker drives its own task):
@@ -2487,7 +2724,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Working), true),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Submitted);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Submitted,
+            "the task is submitted"
+        );
         // Worker accepts, returns a result → review park.
         apply(
             &mut tasks,
@@ -2512,7 +2753,11 @@ mod tests {
             &leg(LegKind::Status(TaskState::Completed), false),
             now,
         );
-        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "the task is completed"
+        );
     }
 
     /// A revision loop: artifact → review park → the initiator's `change`
@@ -2528,12 +2773,20 @@ mod tests {
             now,
         );
         apply(&mut tasks, &leg(LegKind::Artifact, false), now);
-        assert!(tasks[&tid()].review);
+        assert!(tasks[&tid()].review, "the review flag is set");
         apply(&mut tasks, &leg(LegKind::Text, true), now); // change verdict
-        assert_eq!(tasks[&tid()].state, TaskState::Working);
-        assert!(!tasks[&tid()].review);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the task is working after the verdict change"
+        );
+        assert!(!tasks[&tid()].review, "the review flag is clear");
         apply(&mut tasks, &leg(LegKind::Artifact, false), now);
-        assert_eq!(tasks[&tid()].state, TaskState::InputRequired);
-        assert!(tasks[&tid()].review);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the task waits for input"
+        );
+        assert!(tasks[&tid()].review, "the review flag is set");
     }
 }
