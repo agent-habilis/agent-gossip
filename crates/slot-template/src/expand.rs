@@ -16,7 +16,7 @@ use crate::expand_at::expand_at;
 pub fn expand(
     path: &Path,
     args: &[(&str, &str)],
-    loader: &mut dyn FnMut(&Path) -> Result<String, String>,
+    loader: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<String, Error> {
     expand_at(path, args, loader, &mut Vec::new())
 }

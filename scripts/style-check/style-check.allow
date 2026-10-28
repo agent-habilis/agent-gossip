@@ -139,7 +139,6 @@ crate_example|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: Every library
 crate_example|crates/agent-gossip-wasm-client/src/lib.rs|1|open: Every library crate shows how it works: a doc example (a fenced code block in a /// or //! comment) somewhere in its source
 crate_example|crates/slot-template/src/lib.rs|1|open: Every library crate shows how it works: a doc example (a fenced code block in a /// or //! comment) somewhere in its source
 doc_basics|crates/agent-gossip/src/a2a/model/part.rs|1|open: A doc comment does not explain Rust: no `this is a function`, no `a struct that`, no `returns a Result` (D6)
-dyn_param|crates/slot-template/src/expand.rs|1|open: A library fn takes a generic (T: Trait or impl Trait), not a dyn Trait parameter
 fn_import|crates/agent-gossip/src/a2a/ipc.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/a2a/send.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/api/config.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
