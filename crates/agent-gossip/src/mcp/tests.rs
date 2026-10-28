@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use super::{AgentGossipServer, MCP_INSTRUCTIONS};
 
 fn declared_tools() -> BTreeSet<String> {
-    AgentGossipServer::tool_router()
-        .list_all()
+    let tools = AgentGossipServer::tool_router().list_all();
+    tools
         .into_iter()
         .map(|tool| tool.name.to_string())
         .collect()

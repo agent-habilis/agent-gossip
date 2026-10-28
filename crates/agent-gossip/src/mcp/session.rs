@@ -753,9 +753,8 @@ mod tests {
                 .await
                 .expect("delta fetch 2")
                 .events;
-            events
-                .iter()
-                .filter_map(|item| as_message(&item.event))
+            let mut messages = events.iter().filter_map(|item| as_message(&item.event));
+            messages
                 .any(|message| chat_text(message).as_deref() == Some("hi via cursor"))
                 .then_some(())
         })

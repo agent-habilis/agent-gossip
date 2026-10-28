@@ -417,10 +417,8 @@ impl AgentGossipServer {
         let task_id = parse_task_id(&args.task_id)?;
         let file = args.file.map(std::path::PathBuf::from);
         let file_name: Option<String> = args.file_name.or_else(|| {
-            file.as_ref()
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
+            let path_name = file.as_ref().and_then(|path| path.file_name());
+            path_name.and_then(|name| name.to_str()).map(str::to_owned)
         });
         match session
             .task_artifact(TaskArtifactParams {
@@ -532,12 +530,8 @@ impl AgentGossipServer {
         // Same rule as the CLI's `meta get`, from the same function, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
         let roster = session.peers().await.map_err(to_mcp_error)?;
-        let live: HashSet<&str> = roster
-            .peers
-            .iter()
-            .filter(|entry| !entry.quiet)
-            .map(|entry| entry.nickname.as_str())
-            .collect();
+        let active = roster.peers.iter().filter(|entry| !entry.quiet);
+        let live: HashSet<&str> = active.map(|entry| entry.nickname.as_str()).collect();
         let absent = card::absent_peers(&document, &live, session.nickname());
         ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
