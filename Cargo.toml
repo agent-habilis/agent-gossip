@@ -136,6 +136,10 @@ shadow_unrelated = "warn"
 semicolon_inside_block = "warn"
 allow_attributes_without_reason = "warn"
 excessive_nesting = "warn"
+# Google Rust Style Guide, B3: a clone is a copy that is needed, and `Arc::clone(&x)` shows that it
+# only bumps a count.
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error
 # instead of silently lingering.

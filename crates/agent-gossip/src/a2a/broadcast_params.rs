@@ -3,6 +3,7 @@
 //! through it so they cannot drift.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
@@ -326,7 +327,7 @@ pub(crate) async fn send_broadcast(
             text.as_str().len()
         ));
     }
-    let signer = state.identity().clone();
+    let signer = Arc::clone(state.identity());
     let payload = crate::a2a::status_update_params::compose_broadcast(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
@@ -580,7 +581,7 @@ async fn broadcast_directed_frame(
         id: pinned_id,
         app,
     } = frame;
-    let signer = state.identity().clone();
+    let signer = Arc::clone(state.identity());
     // Fast path: the whole leg in one frame. The id is pinned before signing —
     // the signature covers it.
     let mut single = Message::new_frame(mesh, author, kind.clone(), payload_body.clone());
@@ -1811,7 +1812,7 @@ pub(crate) async fn send_directed_rpc(
         kind,
         body,
     } = params;
-    let signer = state.identity().clone();
+    let signer = Arc::clone(state.identity());
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).sign(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         habilis_network::util::logging::log_out(&single);

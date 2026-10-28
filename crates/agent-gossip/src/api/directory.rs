@@ -124,7 +124,7 @@ impl Directory {
         let listings = Arc::new(Mutex::new(Listings::new()));
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-        let collector = listings.clone();
+        let collector = Arc::clone(&listings);
         let task = tokio::spawn(async move {
             let ttl = tuning::directory_expiry();
             let mut expiry = tokio::time::interval(ttl);

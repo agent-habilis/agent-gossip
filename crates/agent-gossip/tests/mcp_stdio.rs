@@ -240,7 +240,7 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     tool_result_json(&joiner.tool_call(
         base_id + 1,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh.clone() }),
+        serde_json::json!({ "gossip": mesh }),
     ))
     .expect("join_gossip must succeed");
 
@@ -319,12 +319,9 @@ fn join_mesh_requires_the_password() {
     let mesh = created["gossip"].as_str().expect("mesh id").to_string();
 
     let mut joiner = McpClient::spawn();
-    let missing = tool_error(&joiner.tool_call(
-        7001,
-        "join_gossip",
-        serde_json::json!({ "gossip": mesh.clone() }),
-    ))
-    .expect("join without password must error");
+    let missing =
+        tool_error(&joiner.tool_call(7001, "join_gossip", serde_json::json!({ "gossip": mesh })))
+            .expect("join without password must error");
     assert!(
         missing.contains("password-protected"),
         "error must name the requirement: {missing}"
@@ -333,7 +330,7 @@ fn join_mesh_requires_the_password() {
     let wrong = tool_error(&joiner.tool_call(
         7002,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh.clone(), "password": "hunter3" }),
+        serde_json::json!({ "gossip": mesh, "password": "hunter3" }),
     ))
     .expect("join with a wrong password must error");
     assert!(
@@ -502,7 +499,7 @@ fn join_mesh_idempotent_for_same_mesh() {
     let rejoin = client.tool_call(
         31,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh.clone(), "nickname": nickname.clone() }),
+        serde_json::json!({ "gossip": mesh, "nickname": nickname }),
     );
     let rejoin_json = tool_result_json(&rejoin).unwrap_or_else(|| {
         panic!("idempotent join_gossip should succeed, but got error response: {rejoin}")

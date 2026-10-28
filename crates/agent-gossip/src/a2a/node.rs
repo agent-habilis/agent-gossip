@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use habilis_network::embed::{
@@ -309,7 +310,7 @@ async fn publish_own_card(
     // automerge change, and a passworded gossip seals it. The same steps as the merge path.
     let merges = {
         let doc = state.doc(Channel::Meta);
-        let identity = state.identity().clone();
+        let identity = Arc::clone(state.identity());
         let actor_seed = *identity.public().as_bytes();
         crate::a2a::card::publish_merges(context.author, &card, |merge| {
             let Some(change) = doc.build_change(merge, &actor_seed)? else {
