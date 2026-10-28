@@ -1,4 +1,4 @@
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 
 use crate::{BELL_GRACE, assert_bell_parked, test_cmd};
 
@@ -13,12 +13,12 @@ use crate::{BELL_GRACE, assert_bell_parked, test_cmd};
 /// waking event past `last_served`, which only a foreground poll advances, so
 /// an undrained backlog (a join, a presence line) rings the bell at once.
 pub fn park_bell(mesh: &str, nickname: &str) -> Child {
-    let mut bell: Child = test_cmd()
+    let mut command: Command = test_cmd();
+    command
         .args(["poll", "--gossip", mesh, "--nickname", nickname, "--long"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("bell spawns");
+        .stderr(Stdio::null());
+    let mut bell: Child = command.spawn().expect("bell spawns");
     std::thread::sleep(BELL_GRACE);
     assert_bell_parked(&mut bell, "bell must park on a drained daemon");
     bell
