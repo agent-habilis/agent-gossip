@@ -254,28 +254,33 @@ fn parse_origin(to: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    const HTTP: &str = "http://";
+    const TCP: &str = "tcp://";
 
     #[test]
     fn parses_a_plain_http_origin() {
         assert_eq!(
-            super::parse_origin("http://127.0.0.1:9999").unwrap(),
-            "127.0.0.1:9999"
+            super::parse_origin(&format!("{HTTP}127.0.0.1:9999")).unwrap(),
+            "127.0.0.1:9999",
+            "a plain http origin keeps its host and port"
         );
     }
 
     #[test]
     fn drops_the_path_from_the_origin() {
         assert_eq!(
-            super::parse_origin("http://127.0.0.1:9999/a2a/v1").unwrap(),
-            "127.0.0.1:9999"
+            super::parse_origin(&format!("{HTTP}127.0.0.1:9999/a2a/v1")).unwrap(),
+            "127.0.0.1:9999",
+            "the origin drops the path"
         );
     }
 
     #[test]
     fn defaults_the_port_when_omitted() {
         assert_eq!(
-            super::parse_origin("http://example.test").unwrap(),
-            "example.test:80"
+            super::parse_origin(&format!("{HTTP}example.test")).unwrap(),
+            "example.test:80",
+            "an omitted port defaults to 80"
         );
     }
 
@@ -292,7 +297,13 @@ mod tests {
 
     #[test]
     fn rejects_a_non_http_scheme() {
-        assert!(super::parse_origin("127.0.0.1:9999").is_err());
-        assert!(super::parse_origin("tcp://127.0.0.1:9999").is_err());
+        assert!(
+            super::parse_origin("127.0.0.1:9999").is_err(),
+            "an origin without a scheme is rejected"
+        );
+        assert!(
+            super::parse_origin(&format!("{TCP}127.0.0.1:9999")).is_err(),
+            "a tcp origin is rejected"
+        );
     }
 }

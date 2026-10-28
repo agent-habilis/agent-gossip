@@ -36,7 +36,6 @@ assert_no_message|crates/agent-gossip/src/a2a/status_update_params.rs|16|open: A
 assert_no_message|crates/agent-gossip/src/a2a/surfaced_event.rs|40|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/a2a/task_record.rs|87|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/a2a_ticket.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/bridge/expose_params.rs|5|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/local_gate.rs|12|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/ticket_directory.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/agent.rs|22|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
@@ -121,14 +120,12 @@ pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public func
 pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|open: A public function returns an iterator, not a Vec
 pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|open: A public function returns an iterator, not a Vec
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskState is Copy, so a by-value as_str is the clippy-accepted form for a Copy type; kept as a counted row
-turbofish_collect_parse|crates/agent-gossip/src/a2a/node.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/status_update_params.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/surfaced_event.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/bridge/local_gate.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/cli/agent.rs|2|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/cli/doctor.rs|4|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/cli/session.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
-turbofish_collect_parse|crates/agent-gossip/src/harness/bench_config.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/mcp/tests.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/tests/gossip_network.rs|3|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/tasks/src/plan.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
