@@ -3,8 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// A2A v1.0 `Part`: a proto `oneof content` — exactly one of `text` / `raw`
 /// (base64 bytes) / `url` / `data` — plus the `filename` / `mediaType` /
 /// `metadata` siblings. `ProtoJSON` puts the set oneof member at top level (no
-/// `kind` discriminator), so this is a struct with a validating deserialize
-/// that enforces exactly-one-of at parse.
+/// `kind` discriminator), so the deserialize step enforces exactly-one-of at parse.
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Part {

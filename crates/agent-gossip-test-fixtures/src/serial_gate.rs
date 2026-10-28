@@ -9,4 +9,4 @@
 /// serializes within a binary, not across them. (The async in-process
 /// adversarial suite does **not** use this — a multi-thread runtime keeps it
 /// responsive; a cross-runtime async mutex starved it instead.)
-pub(crate) static SERIAL_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static SERIAL_GATE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());

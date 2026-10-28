@@ -77,7 +77,6 @@ assert_no_message|crates/agent-gossip/tests/topic_policy.rs|1|open: An assert na
 assert_no_message|crates/agent-gossip/tests/topic_split.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/slot-template/src/tests.rs|24|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 bool_param_comment|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public function with a bool parameter writes its purpose in a comment above the parameter, so a call site says what true means
-doc_basics|crates/agent-gossip/src/a2a/model/part.rs|1|open: A doc comment does not explain Rust: no `this is a function`, no `a struct that`, no `returns a Result` (D6)
 fn_import|crates/agent-gossip/src/a2a/broadcast_params.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/a2a/ipc_command.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/api/directory.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
@@ -179,8 +178,6 @@ long_chain|crates/tasks/src/build.rs|1|open: A statement with a chain of five or
 long_chain|crates/tasks/src/install.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/plan.rs|11|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/util/ensure_installed.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-poison|crates/agent-gossip-test-fixtures/src/serial_guard.rs|1|open: Never reach inside a poisoned mutex
-pub_const_fn|crates/agent-gossip/src/version.rs|1|open: Mark a public fn const only if it will stay const (a const context, a newtype accessor, or a trivial accessor)
 pub_vec_param|crates/agent-gossip/src/a2a/status_update_params.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
 pub_vec_param|crates/agent-gossip/src/harness/session.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
 pub_vec_param|crates/agent-gossip/src/harness/test_key.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
@@ -191,7 +188,7 @@ pub_vec_return|crates/agent-gossip/src/api/directory.rs|1|open: A public functio
 pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public function returns an iterator, not a Vec
 pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|open: A public function returns an iterator, not a Vec
 pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|open: A public function returns an iterator, not a Vec
-self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: A public as_ or to_ method takes a reference, and an into_ method takes self
+self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskState is Copy, so a by-value as_str is the clippy-accepted form for a Copy type; kept as a counted row
 turbofish_collect_parse|crates/agent-gossip-test-fixtures/src/node.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip-wasm-client/src/gossip_driver.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip-wasm-client/src/gossip_peer.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)

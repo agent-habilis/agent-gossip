@@ -111,6 +111,7 @@ dependencies = [
  "agent-gossip",
  "anyhow",
  "habilis-network",
+ "parking_lot",
  "serde_json",
  "tokio",
  "tracing-subscriber",

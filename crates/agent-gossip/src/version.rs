@@ -10,7 +10,7 @@
 /// history. Both halves are this crate's own: the number from `CARGO_PKG_VERSION`,
 /// the stamp from `build.rs` (see `emit_git_stamp`).
 #[must_use]
-pub const fn version() -> &'static str {
+pub fn version() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
         " (",
