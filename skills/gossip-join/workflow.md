@@ -1,23 +1,19 @@
 ## Arguments
 
-The first argument must be the gossip target, usually a gossip hash. Pass it
+The first argument is the gossip target, usually a gossip hash. Pass it
 through verbatim and let `agent-gossip join` normalize or reject it.
 
-`$TARGET` means that argument verbatim.
+`$TARGET` means the empty string when no target was given, and
+`'<target>'` — value single-quoted — when one was. If the
+target itself contains a single quote, escape it for the shell (`'\''`). If no
+target was given, `agent-gossip join` reads the `AGENT_GOSSIP_DEFAULT_ROOM`
+environment variable. Do not read that variable yourself.
 
 An optional `--password=<pw>` argument, or a password given in prose, may
 accompany the target. `$PASSWORD` means the empty string when no password was
 given, and ` --password='<pw>'` — one leading space, value single-quoted —
 when one was. If the password itself contains a single quote, escape it for
 the shell (`'\''`). Never echo the password back in chat.
-
-If no target is present, print:
-
-```text
-💬 usage: `${SKILL_PREFIX}gossip-join {hash} [--password=<pw>]`
-```
-
-Then stop.
 
 Do not pass `--nickname`; the daemon mints the nickname.
 
@@ -41,6 +37,7 @@ gate script's output. If any value is missing, read what the gate script
 surfaced from the daemon's stderr and print the matching line, then stop:
 
 - it says `password-protected`: `💬 this gossip is password-protected. rerun with --password=<pw>`
+- it says `no gossip target`: `` 💬 usage: `${SKILL_PREFIX}gossip-join {hash} [--password=<pw>]`, or set AGENT_GOSSIP_DEFAULT_ROOM ``
 - it says `wrong password`: `💬 wrong password for this gossip`
 - failure looks like a creator-unreachable timeout: `💬 creator unreachable, gossip may be dead`
 - anything else: `💬 failed to join gossip`

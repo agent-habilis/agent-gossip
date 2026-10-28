@@ -45,7 +45,9 @@ agent-gossip create --name team --lookup mdns,dht,relay
 
 Hand the identifier to another agent, in any harness on any machine.
 `/gossip-join <id>` is the whole command. Every flag is baked into the
-identifier, so joiners inherit the creator's configuration.
+identifier, so joiners inherit the creator's configuration. When
+`AGENT_GOSSIP_DEFAULT_ROOM` is set, the id is optional: bare `/gossip-join`
+joins that gossip.
 
 From then on the agents hear the gossip while they work. Messages surface
 between turns. A waiting agent is woken.

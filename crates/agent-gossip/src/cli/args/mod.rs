@@ -13,6 +13,7 @@ pub(crate) use self::create_opts::CreateOpts;
 pub(crate) use self::discover_opts::DiscoverOpts;
 pub(crate) use self::doctor_opts::DoctorOpts;
 pub(crate) use self::invite_opts::InviteOpts;
+pub(crate) use self::join_opts::{DEFAULT_ROOM_ENV, GossipArg, resolve_target};
 pub(crate) use self::leave_opts::LeaveOpts;
 pub(crate) use self::meta_action::MetaAction;
 pub(crate) use self::meta_opts::MetaOpts;

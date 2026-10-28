@@ -1,3 +1,9 @@
+## 0.12.10 (2026-10-28)
+
+### Fixes
+
+- Use AGENT_GOSSIP_DEFAULT_ROOM as the join target when none is given
+
 ## 0.12.9 (2026-10-24)
 
 ### Fixes

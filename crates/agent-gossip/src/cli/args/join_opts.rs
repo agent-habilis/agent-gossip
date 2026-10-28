@@ -29,12 +29,54 @@ fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
     })
 }
 
+/// The positional target as typed. An empty argument names no target, so it
+/// parses to `None` and the environment default applies.
+#[derive(Clone, Debug)]
+pub(crate) struct GossipArg(Option<JoinTarget>);
+
+impl GossipArg {
+    pub(crate) fn into_target(self) -> Option<JoinTarget> {
+        self.0
+    }
+}
+
+impl FromStr for GossipArg {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, String> {
+        if input.is_empty() {
+            return Ok(Self(None));
+        }
+        parse_join_target(input).map(|target| Self(Some(target)))
+    }
+}
+
+pub(crate) const DEFAULT_ROOM_ENV: &str = "AGENT_GOSSIP_DEFAULT_ROOM";
+
+/// The argument wins; the environment value fills in only when the argument is
+/// absent. An empty environment value counts as unset.
+pub(crate) fn resolve_target(
+    arg: Option<JoinTarget>,
+    env_value: Option<&str>,
+) -> Result<JoinTarget, String> {
+    if let Some(target) = arg {
+        return Ok(target);
+    }
+    match env_value.filter(|value| !value.is_empty()) {
+        Some(value) => parse_join_target(value),
+        None => Err(format!(
+            "no gossip target. Pass a hash, or set {DEFAULT_ROOM_ENV}."
+        )),
+    }
+}
+
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
-    /// Gossip identifier. Validated at parse (clap `FromStr`). For a
-    /// public gossip derived from a shared string, use `agent-gossip topic <string>`.
-    #[arg(value_parser = parse_join_target)]
-    pub gossip: JoinTarget,
+    /// Gossip identifier; optional. When omitted or empty, the
+    /// `AGENT_GOSSIP_DEFAULT_ROOM` environment variable fills it in. Validated at
+    /// parse (clap `FromStr`). For a public gossip derived from a shared string,
+    /// use `agent-gossip topic <string>`.
+    pub gossip: Option<GossipArg>,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
@@ -61,13 +103,89 @@ pub(crate) struct JoinOpts {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
+    use habilis_network::protocol::{JoinTarget, MeshId};
 
-    use crate::cli::args::Cli;
+    use super::{DEFAULT_ROOM_ENV, GossipArg, parse_join_target, resolve_target};
+    use crate::cli::args::{Cli, Commands};
+
+    fn hash(seed: &str) -> String {
+        MeshId::from(seed).to_string()
+    }
+
+    fn parsed_target(args: &[&str]) -> Option<JoinTarget> {
+        let Commands::Join { options } = Cli::try_parse_from(args).unwrap().command else {
+            panic!("not a join command");
+        };
+        options.gossip.and_then(GossipArg::into_target)
+    }
+
+    #[test]
+    fn join_without_a_target_parses() {
+        assert!(
+            parsed_target(&["agent-gossip", "join"]).is_none(),
+            "join with no target names none"
+        );
+    }
+
+    #[test]
+    fn join_with_an_empty_target_parses_as_no_target() {
+        assert!(
+            parsed_target(&["agent-gossip", "join", ""]).is_none(),
+            "an empty target names none"
+        );
+    }
+
+    #[test]
+    fn join_help_names_the_default_room_variable() {
+        let help = Cli::command()
+            .find_subcommand_mut("join")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(help.contains(DEFAULT_ROOM_ENV), "got: {help}");
+    }
+
+    #[test]
+    fn the_argument_wins_over_the_environment() {
+        let arg = parse_join_target(&hash("arg")).unwrap();
+        let resolved = resolve_target(Some(arg), Some(&hash("env"))).unwrap();
+        assert!(
+            matches!(resolved, JoinTarget::Mesh(id) if id.to_string() == hash("arg")),
+            "the argument target must win over the environment"
+        );
+    }
+
+    #[test]
+    fn the_environment_fills_in_a_missing_argument() {
+        let resolved = resolve_target(None, Some(&hash("env"))).unwrap();
+        assert!(
+            matches!(resolved, JoinTarget::Mesh(id) if id.to_string() == hash("env")),
+            "the environment target must fill in the missing argument"
+        );
+    }
+
+    #[test]
+    fn a_missing_argument_and_environment_names_the_variable() {
+        let error = resolve_target(None, None).unwrap_err();
+        assert!(error.contains("AGENT_GOSSIP_DEFAULT_ROOM"), "got: {error}");
+    }
+
+    #[test]
+    fn an_empty_environment_counts_as_unset() {
+        let error = resolve_target(None, Some("")).unwrap_err();
+        assert!(error.contains("AGENT_GOSSIP_DEFAULT_ROOM"), "got: {error}");
+    }
+
+    #[test]
+    fn a_bad_environment_value_gets_the_join_error() {
+        let error = resolve_target(None, Some("github.com/alice/proj")).unwrap_err();
+        assert!(error.contains("agent-gossip topic"), "got: {error}");
+    }
 
     #[test]
     fn a_non_token_string_points_at_topic() {
-        let error = super::parse_join_target("github.com/alice/proj").unwrap_err();
+        let error = parse_join_target("github.com/alice/proj").unwrap_err();
         assert!(
             error.contains("agent-gossip topic 'github.com/alice/proj'"),
             "got: {error}"
@@ -76,12 +194,12 @@ mod tests {
 
     #[test]
     fn the_topic_hint_is_shell_safe() {
-        let whitespace = super::parse_join_target("my secret gossip").unwrap_err();
+        let whitespace = parse_join_target("my secret gossip").unwrap_err();
         assert!(
             whitespace.contains("agent-gossip topic 'my secret gossip'"),
             "got: {whitespace}"
         );
-        let quote = super::parse_join_target("it's here").unwrap_err();
+        let quote = parse_join_target("it's here").unwrap_err();
         assert!(
             quote.contains(r"agent-gossip topic 'it'\''s here'"),
             "got: {quote}"
@@ -90,7 +208,7 @@ mod tests {
 
     #[test]
     fn mistyped_gossip_hash_fails_during_cli_parsing() {
-        let mut mistyped = habilis_network::protocol::MeshId::from("join-cli-test").to_string();
+        let mut mistyped = MeshId::from("join-cli-test").to_string();
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
 
