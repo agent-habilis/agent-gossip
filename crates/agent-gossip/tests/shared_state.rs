@@ -423,9 +423,8 @@ async fn foreign_card_forgery_is_rejected() {
         .await,
         "alice never saw bob's genuine card"
     );
-    let genuine_url: String = alice
-        .meta_get()
-        .await
+    let alice_meta = alice.meta_get().await;
+    let genuine_url: String = alice_meta
         .pointer(&identity_ptr)
         .and_then(Value::as_str)
         .expect("bob's genuine gossip-interface url")
@@ -489,16 +488,17 @@ async fn agent_cards_publish_to_meta_on_join() {
     let has_card = |doc: &Value, nick: &str| {
         let card = doc.pointer(&format!("/peers/{nick}/card"));
         card.is_some_and(|card| {
+            let has_extensions = card["capabilities"]["extensions"]
+                .as_array()
+                .is_some_and(|exts| !exts.is_empty());
+            // v1.0: the protocol version + the Ed25519 identity ride the
+            // gossip `AgentInterface` (the bare `<pubkey>`).
+            let interface = &card["supportedInterfaces"][0];
+            let has_identity = interface["protocolVersion"].is_string()
+                && interface["url"].as_str().is_some_and(|key| key.len() == 64);
             card["name"] == *nick
-                && card["capabilities"]["extensions"]
-                    .as_array()
-                    .is_some_and(|exts| !exts.is_empty())
-                // v1.0: the protocol version + the Ed25519 identity ride the
-                // gossip `AgentInterface` (the bare `<pubkey>`).
-                && card["supportedInterfaces"][0]["protocolVersion"].is_string()
-                && card["supportedInterfaces"][0]["url"]
-                    .as_str()
-                    .is_some_and(|key| key.len() == 64)
+                && has_extensions
+                && has_identity
                 // The stable dial hint (EndpointId + home relay) rides inside the
                 // card, so a synced peer can dial without a gossiped PeerInfo.
                 && card["endpoint"]["id"].is_string()
