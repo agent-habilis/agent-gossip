@@ -699,14 +699,18 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.mesh_id().expect("Msg is mesh-addressed").as_str(),
-            expected.as_str()
+            expected.as_str(),
+            "a mesh-addressed message keeps its mesh"
         );
     }
 
     #[test]
     fn ipc_command_info_round_trip() {
         let json = serde_json::to_string(&IpcCommand::Info).unwrap();
-        assert_eq!(json, r#"{"command":"info"}"#);
+        assert_eq!(
+            json, r#"{"command":"info"}"#,
+            "a bare info command serializes its tag"
+        );
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert!(parsed.mesh_id().is_none(), "Info carries no mesh");
     }
@@ -724,8 +728,12 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::StateMerge { mesh, merge } => {
-                assert_eq!(mesh, expected);
-                assert_eq!(merge, serde_json::json!({"turn": "b"}));
+                assert_eq!(mesh, expected, "the state merge keeps the mesh");
+                assert_eq!(
+                    merge,
+                    serde_json::json!({"turn": "b"}),
+                    "the state merge keeps the patch"
+                );
             }
             IpcCommand::Broadcast { .. }
             | IpcCommand::Msg { .. }
@@ -758,7 +766,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::Poll { after, long, .. } => {
-                assert_eq!(after, Some(42));
+                assert_eq!(after, Some(42), "the after cursor is kept");
                 assert!(!long, "absent long deserializes to false");
             }
             IpcCommand::Broadcast { .. }
@@ -785,10 +793,13 @@ mod tests {
             mesh: expected.clone(),
         };
         let json = serde_json::to_string(&command).unwrap();
-        assert!(json.contains("\"command\":\"ping\""));
+        assert!(
+            json.contains("\"command\":\"ping\""),
+            "a ping serializes its tag"
+        );
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Ping { mesh } => assert_eq!(mesh, expected),
+            IpcCommand::Ping { mesh } => assert_eq!(mesh, expected, "the ping keeps the mesh"),
             IpcCommand::Broadcast { .. }
             | IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
@@ -816,8 +827,14 @@ mod tests {
             waiting: Some("asks its user".to_string()),
         };
         let json = serde_json::to_string(&command).unwrap();
-        assert!(json.contains("\"command\":\"a2a_status\""));
-        assert!(json.contains("\"state\":\"working\""));
+        assert!(
+            json.contains("\"command\":\"a2a_status\""),
+            "an a2a status serializes its tag"
+        );
+        assert!(
+            json.contains("\"state\":\"working\""),
+            "the a2a status carries its state"
+        );
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::A2aStatus {
@@ -826,9 +843,17 @@ mod tests {
                 waiting,
                 ..
             } => {
-                assert_eq!(state, TaskState::Working);
-                assert_eq!(note.as_deref(), Some("on it"));
-                assert_eq!(waiting.as_deref(), Some("asks its user"));
+                assert_eq!(
+                    state,
+                    TaskState::Working,
+                    "the status keeps the working state"
+                );
+                assert_eq!(note.as_deref(), Some("on it"), "the status keeps its note");
+                assert_eq!(
+                    waiting.as_deref(),
+                    Some("asks its user"),
+                    "the status keeps its waiting reason"
+                );
             }
             IpcCommand::Broadcast { .. }
             | IpcCommand::Msg { .. }
@@ -860,10 +885,10 @@ mod tests {
         let json = serde_json::to_string(&command).unwrap();
         assert!(!json.contains("waiting"), "the key must be absent: {json}");
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
-        assert!(matches!(
-            parsed,
-            IpcCommand::A2aStatus { waiting: None, .. }
-        ));
+        assert!(
+            matches!(parsed, IpcCommand::A2aStatus { waiting: None, .. }),
+            "a status with a waiting reason matches the status arm"
+        );
     }
 
     #[test]
@@ -873,10 +898,15 @@ mod tests {
             mesh: expected.clone(),
         };
         let json = serde_json::to_string(&command).unwrap();
-        assert!(json.contains("\"command\":\"peers\""));
+        assert!(
+            json.contains("\"command\":\"peers\""),
+            "a peers command serializes its tag"
+        );
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Peers { mesh } => assert_eq!(mesh, expected),
+            IpcCommand::Peers { mesh } => {
+                assert_eq!(mesh, expected, "the peers command keeps the mesh");
+            }
             IpcCommand::Broadcast { .. }
             | IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
@@ -902,8 +932,14 @@ mod tests {
             long: false,
         };
         let json = serde_json::to_string(&command).unwrap();
-        assert!(!json.contains("after"));
-        assert!(!json.contains("long"));
+        assert!(
+            !json.contains("after"),
+            "an absent after cursor is not serialized"
+        );
+        assert!(
+            !json.contains("long"),
+            "an absent long flag is not serialized"
+        );
     }
 
     #[test]
