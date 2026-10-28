@@ -333,10 +333,10 @@ mod tests {
             "--method",
             "SendMessage",
         ]);
-        let Commands::A2a { opts } = cli.command else {
+        let Commands::A2a { options } = cli.command else {
             panic!("expected the a2a command");
         };
-        let A2aAction::Call { timeout_secs, .. } = opts.action else {
+        let A2aAction::Call { timeout_secs, .. } = options.action else {
             panic!("expected the call action");
         };
         assert_eq!(

@@ -7,18 +7,18 @@ use crate::a2a::ipc_command::IpcCommand;
 
 /// Query the running daemon's live peer roster. Always emits the
 /// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
-pub(super) async fn poll(mut opts: PollOpts) -> Result<()> {
+pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
     // First, so `--max-secs` counts from the process start like the harness
     // clock does, readiness wait included.
     let poll_started = tokio::time::Instant::now();
-    let identity = opts.identity()?;
+    let identity = options.identity()?;
     let PollOpts {
         after,
         long,
         settle_secs,
         max_secs,
         ..
-    } = opts;
+    } = options;
     // The state-file form waits for readiness first so a poll can be armed
     // before the daemon has minted its identity.
     let (mesh, nickname) = match identity {

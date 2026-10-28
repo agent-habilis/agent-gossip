@@ -90,12 +90,12 @@ pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
 /// This tolerates a half-written or old-schema file the daemon is about to
 /// atomically overwrite, and the freshness check rejects a `ready: true`
 /// left behind by a prior daemon that was killed with SIGKILL.
-pub(super) async fn ready(opts: ReadyOpts) -> Result<()> {
+pub(super) async fn ready(options: ReadyOpts) -> Result<()> {
     let ReadyOpts {
         state_file,
         timeout_secs,
         legacy_output: _,
-    } = opts;
+    } = options;
     let ready = wait_for_ready(&state_file, timeout_secs).await?;
     print_ready_identity(&ready);
     Ok(())

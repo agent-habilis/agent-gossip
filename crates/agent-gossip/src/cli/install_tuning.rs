@@ -3,7 +3,7 @@
 /// `habilis_network::util::tuning`, the task/long-poll knobs in
 /// `a2a::tuning`. Kept together here so a new flag cannot reach one and miss
 /// the other.
-pub(super) fn install_tuning(opts: &super::args::tuning_opts::TuningOpts) {
-    habilis_network::runtime::tuning::init(opts.tuning());
-    crate::a2a::tuning::init(opts.a2a_tuning());
+pub(super) fn install_tuning(options: &super::args::tuning_opts::TuningOpts) {
+    habilis_network::runtime::tuning::init(options.tuning());
+    crate::a2a::tuning::init(options.a2a_tuning());
 }

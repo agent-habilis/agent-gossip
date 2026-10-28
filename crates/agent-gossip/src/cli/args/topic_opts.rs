@@ -41,7 +41,7 @@ mod tests {
 
     fn topic_opts(args: &[&str]) -> super::TopicOpts {
         match Cli::parse_from(args).command {
-            Commands::Topic { opts } => opts,
+            Commands::Topic { options } => options,
             Commands::Create { .. }
             | Commands::Join { .. }
             | Commands::Poll { .. }
@@ -67,10 +67,11 @@ mod tests {
 
     #[test]
     fn topic_parses_string_and_nickname() {
-        let opts = topic_opts(&["agent-gossip", "topic", "agent-habilis", "--nickname", "me"]);
-        assert_eq!(opts.string, "agent-habilis");
+        let options = topic_opts(&["agent-gossip", "topic", "agent-habilis", "--nickname", "me"]);
+        assert_eq!(options.string, "agent-habilis");
         assert_eq!(
-            opts.nickname
+            options
+                .nickname
                 .as_ref()
                 .map(habilis_network::protocol::Nickname::as_str),
             Some("me")
@@ -79,15 +80,15 @@ mod tests {
 
     #[test]
     fn topic_accepts_leading_hyphen_string() {
-        let opts = topic_opts(&["agent-gossip", "topic", "-release-2026"]);
-        assert_eq!(opts.string, "-release-2026");
+        let options = topic_opts(&["agent-gossip", "topic", "-release-2026"]);
+        assert_eq!(options.string, "-release-2026");
     }
 
     // A caller can build `topic <flags> -- <string>` so a string that
     // collides with a known flag still lands in the positional.
     #[test]
     fn topic_accepts_string_after_end_of_flags() {
-        let opts = topic_opts(&[
+        let options = topic_opts(&[
             "agent-gossip",
             "topic",
             "--nickname",
@@ -95,7 +96,7 @@ mod tests {
             "--",
             "--nickname",
         ]);
-        assert_eq!(opts.string, "--nickname");
+        assert_eq!(options.string, "--nickname");
     }
 
     #[test]

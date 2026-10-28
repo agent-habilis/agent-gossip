@@ -51,7 +51,7 @@ mod tests {
 
     fn discover_opts(args: &[&str]) -> super::DiscoverOpts {
         match Cli::parse_from(args).command {
-            Commands::Discover { opts } => opts,
+            Commands::Discover { options } => options,
             Commands::Create { .. }
             | Commands::Join { .. }
             | Commands::Topic { .. }

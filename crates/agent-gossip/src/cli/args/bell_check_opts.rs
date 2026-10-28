@@ -23,16 +23,16 @@ mod tests {
     #[test]
     fn bell_check_parses_session_pid() {
         let cli = Cli::parse_from(["agent-gossip", "bell-check", "--session-pid", "42"]);
-        let Commands::BellCheck { opts } = cli.command else {
+        let Commands::BellCheck { options } = cli.command else {
             panic!("expected BellCheck command");
         };
         assert_eq!(
-            opts.session_pid,
+            options.session_pid,
             Some(42),
             "--session-pid 42 must parse to 42"
         );
         assert_eq!(
-            opts.grace_ms,
+            options.grace_ms,
             crate::a2a::tuning::BELL_CHECK_GRACE_MS,
             "the grace period defaults to the shared tuning constant"
         );

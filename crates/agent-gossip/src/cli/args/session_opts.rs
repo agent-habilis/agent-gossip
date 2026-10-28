@@ -24,11 +24,11 @@ mod tests {
     #[test]
     fn session_defaults() {
         let cli = Cli::parse_from(["agent-gossip", "session"]);
-        let Commands::Session { opts } = cli.command else {
+        let Commands::Session { options } = cli.command else {
             panic!("expected Session command");
         };
         assert!(
-            opts.session_pid.is_none(),
+            options.session_pid.is_none(),
             "without --session-pid the option stays unset"
         );
     }
@@ -36,11 +36,11 @@ mod tests {
     #[test]
     fn session_accepts_pid() {
         let cli = Cli::parse_from(["agent-gossip", "session", "--session-pid", "42"]);
-        let Commands::Session { opts } = cli.command else {
+        let Commands::Session { options } = cli.command else {
             panic!("expected Session command");
         };
         assert_eq!(
-            opts.session_pid,
+            options.session_pid,
             Some(42),
             "--session-pid 42 must parse to 42"
         );

@@ -111,10 +111,10 @@ mod tests {
             "5",
         ])
         .expect("--settle-secs with --long parses");
-        let Commands::Poll { opts } = cli.command else {
+        let Commands::Poll { options } = cli.command else {
             panic!("expected Poll command");
         };
-        assert_eq!(opts.settle_secs, Some(5));
+        assert_eq!(options.settle_secs, Some(5));
     }
 
     #[test]
@@ -125,10 +125,10 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
         let cli = parse(&[&base[..], &["--long", "--max-secs", "7000"]].concat())
             .expect("--max-secs with --long parses");
-        let Commands::Poll { opts } = cli.command else {
+        let Commands::Poll { options } = cli.command else {
             panic!("expected Poll command");
         };
-        assert_eq!(opts.max_secs, Some(7000));
+        assert_eq!(options.max_secs, Some(7000));
     }
 
     #[test]
@@ -142,12 +142,12 @@ mod tests {
             "calm-fox",
         ])
         .expect("gossip+nickname form must parse");
-        let Commands::Poll { opts } = cli.command else {
+        let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
-        assert!(opts.gossip.is_some());
-        assert!(opts.nickname.is_some());
-        assert!(opts.state_file.is_none());
+        assert!(options.gossip.is_some());
+        assert!(options.nickname.is_some());
+        assert!(options.state_file.is_none());
     }
 
     #[test]
@@ -160,13 +160,13 @@ mod tests {
             "--long",
         ])
         .expect("state-file form must parse");
-        let Commands::Poll { opts } = cli.command else {
+        let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
-        assert!(opts.gossip.is_none());
-        assert!(opts.nickname.is_none());
-        assert!(opts.state_file.is_some());
-        assert!(opts.long);
+        assert!(options.gossip.is_none());
+        assert!(options.nickname.is_none());
+        assert!(options.state_file.is_some());
+        assert!(options.long);
     }
 
     #[test]
@@ -210,10 +210,10 @@ mod tests {
             "41",
         ])
         .expect("hidden flag parses");
-        let Commands::Poll { opts } = cli.command else {
+        let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
-        assert_eq!(opts.after, Some(41));
+        assert_eq!(options.after, Some(41));
     }
 
     #[test]

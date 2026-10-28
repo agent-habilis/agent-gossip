@@ -40,19 +40,19 @@ mod tests {
     #[test]
     fn leave_defaults() {
         let cli = Cli::parse_from(["agent-gossip", "leave"]);
-        let Commands::Leave { opts } = cli.command else {
+        let Commands::Leave { options } = cli.command else {
             panic!("expected Leave command");
         };
-        assert!(opts.gossip.is_none());
-        assert!(opts.nickname.is_none());
-        assert!(opts.session_pid.is_none());
+        assert!(options.gossip.is_none());
+        assert!(options.nickname.is_none());
+        assert!(options.session_pid.is_none());
         // A signalled daemon takes up to NODE_LEAVE to close its
         // rendezvous and drop its state file; confirming sooner reports a
         // live daemon as gone, and a relaunch then races it.
         assert!(
-            opts.confirm_timeout_secs > habilis_network::util::tuning::NODE_LEAVE.as_secs(),
+            options.confirm_timeout_secs > habilis_network::util::tuning::NODE_LEAVE.as_secs(),
             "leave gives up before the daemon's own leave budget: {}",
-            opts.confirm_timeout_secs
+            options.confirm_timeout_secs
         );
     }
 
@@ -66,11 +66,11 @@ mod tests {
             "--nickname",
             "my-nick",
         ]);
-        let Commands::Leave { opts } = cli.command else {
+        let Commands::Leave { options } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.gossip.unwrap(), expected);
-        assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
+        assert_eq!(options.gossip.unwrap(), expected);
+        assert_eq!(options.nickname.unwrap().as_str(), "my-nick");
     }
 
     #[test]

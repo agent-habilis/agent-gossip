@@ -16,13 +16,13 @@ use crate::api::{Directory, DirectoryEvent};
 /// Browse a directory, streaming `gossip_found`/`gossip_lost` JSON lines until
 /// interrupted (SIGINT or SIGTERM) or, with `--window-secs`, until the window
 /// closes.
-pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
+pub(super) async fn discover(options: DiscoverOpts) -> Result<()> {
     // Reach the directory over the chosen lookups (default all-on). Must
     // match the lookups the advertiser used — an mDNS-only advertiser is
     // found only by an mDNS-only `discover`.
     let mut discoverer = Directory::open(
-        opts.directory.as_ref().map(MeshName::as_str),
-        opts.lookups.to_set()?,
+        options.directory.as_ref().map(MeshName::as_str),
+        options.lookups.to_set()?,
     )
     .await?;
     // Route the directory session's logs to its per-member file (same as
@@ -37,7 +37,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // Pinned once: recreating the sleep inside `select!` would restart the
     // window on every event.
     let window = async {
-        match opts.window_secs {
+        match options.window_secs {
             Some(secs) => tokio::time::sleep(std::time::Duration::from_secs(secs)).await,
             None => std::future::pending().await,
         }

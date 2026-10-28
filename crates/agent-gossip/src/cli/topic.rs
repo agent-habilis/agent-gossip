@@ -7,7 +7,7 @@ use crate::topic::resolve_topic;
 /// Join a public mesh derived deterministically from a shared string. The
 /// seed, name, and (always-public) config are all derived from the string, so
 /// the same string joins the same topic on any machine — no id to share.
-pub(super) async fn topic(opts: TopicOpts) -> Result<()> {
-    let resolved = resolve_topic(opts.string, opts.nickname)?;
-    Box::pin(run_session(resolved, opts.shared)).await
+pub(super) async fn topic(options: TopicOpts) -> Result<()> {
+    let resolved = resolve_topic(options.string, options.nickname)?;
+    Box::pin(run_session(resolved, options.shared)).await
 }

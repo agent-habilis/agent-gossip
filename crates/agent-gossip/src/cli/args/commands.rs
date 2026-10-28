@@ -23,19 +23,19 @@ pub(crate) enum Commands {
     /// Create and join a new gossip
     Create {
         #[command(flatten)]
-        opts: CreateOpts,
+        options: CreateOpts,
     },
 
     /// Join an existing gossip
     Join {
         #[command(flatten)]
-        opts: JoinOpts,
+        options: JoinOpts,
     },
 
     /// Join a public gossip derived from a shared string
     Topic {
         #[command(flatten)]
-        opts: TopicOpts,
+        options: TopicOpts,
     },
 
     /// Leave a gossip: stop this session's local daemon.
@@ -50,7 +50,7 @@ pub(crate) enum Commands {
     /// (SIGKILL, power loss) are cleaned up along the way.
     Leave {
         #[command(flatten)]
-        opts: LeaveOpts,
+        options: LeaveOpts,
     },
 
     /// Report the gossip this session is joined to.
@@ -62,7 +62,7 @@ pub(crate) enum Commands {
     /// gossip id and nickname of a session it is still joined to.
     Session {
         #[command(flatten)]
-        opts: SessionOpts,
+        options: SessionOpts,
     },
 
     /// Exit 3 when a gossip session of the calling agent has no bell armed.
@@ -71,19 +71,19 @@ pub(crate) enum Commands {
     #[command(hide = true)]
     BellCheck {
         #[command(flatten)]
-        opts: BellCheckOpts,
+        options: BellCheckOpts,
     },
 
     /// Check for new messages in a gossip
     Poll {
         #[command(flatten)]
-        opts: PollOpts,
+        options: PollOpts,
     },
 
     /// Ping all peers and have the daemon measure RTT.
     Ping {
         #[command(flatten)]
-        opts: PingOpts,
+        options: PingOpts,
     },
 
     /// Browse gossips advertising themselves in a directory.
@@ -93,7 +93,7 @@ pub(crate) enum Commands {
     /// `join` yourself. Does not auto-join.
     Discover {
         #[command(flatten)]
-        opts: DiscoverOpts,
+        options: DiscoverOpts,
     },
 
     /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the gossip.
@@ -105,7 +105,7 @@ pub(crate) enum Commands {
     /// through the bridge. Strictly 1:1 — one consumer per exposer at a time.
     A2a {
         #[command(flatten)]
-        opts: A2aOpts,
+        options: A2aOpts,
     },
 
     /// List the live peer roster of a gossip.
@@ -116,7 +116,7 @@ pub(crate) enum Commands {
     /// and `peer_count`.
     Peers {
         #[command(flatten)]
-        opts: PeersOpts,
+        options: PeersOpts,
     },
 
     /// Mint a ticket to an invite-only gossip
@@ -128,7 +128,7 @@ pub(crate) enum Commands {
     /// invite inherits the gossip's password, so a scraped invite still needs it.
     Invite {
         #[command(flatten)]
-        opts: InviteOpts,
+        options: InviteOpts,
     },
 
     /// Read or change the gossip's shared state.
@@ -139,7 +139,7 @@ pub(crate) enum Commands {
     /// change via the `state` event on the daemon's `--output json` stream.
     State {
         #[command(flatten)]
-        opts: StateOpts,
+        options: StateOpts,
     },
 
     /// Read or change the gossip's meta state.
@@ -150,7 +150,7 @@ pub(crate) enum Commands {
     /// current document. The two channels are fully independent.
     Meta {
         #[command(flatten)]
-        opts: MetaOpts,
+        options: MetaOpts,
     },
 
     /// Print the multihop routing topology from a running daemon's point of view.
@@ -159,7 +159,7 @@ pub(crate) enum Commands {
     /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`).
     Topology {
         #[command(flatten)]
-        opts: TopologyOpts,
+        options: TopologyOpts,
     },
 
     /// Wait until a gossip daemon is serving, then exit.
@@ -173,7 +173,7 @@ pub(crate) enum Commands {
     /// doubles as the identity read.
     Ready {
         #[command(flatten)]
-        opts: ReadyOpts,
+        options: ReadyOpts,
     },
 
     /// Run as a Model Context Protocol server over stdio.
@@ -250,6 +250,6 @@ pub(crate) enum Commands {
     /// the machine form.
     Doctor {
         #[command(flatten)]
-        opts: DoctorOpts,
+        options: DoctorOpts,
     },
 }

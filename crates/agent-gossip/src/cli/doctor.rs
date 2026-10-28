@@ -105,13 +105,13 @@ impl Report {
     }
 }
 
-pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
-    let report = match opts.gossip {
-        Some(mesh) => mesh_report(&mesh, opts.no_probe).await,
-        None => machine_report(opts.no_probe).await,
+pub(super) async fn run(options: DoctorOpts) -> Result<()> {
+    let report = match options.gossip {
+        Some(mesh) => mesh_report(&mesh, options.no_probe).await,
+        None => machine_report(options.no_probe).await,
     };
 
-    match opts.output {
+    match options.output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Human => render_human(&report),
     }

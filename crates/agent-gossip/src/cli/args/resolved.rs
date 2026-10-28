@@ -106,10 +106,10 @@ mod tests {
         let mut command_line = vec!["agent-gossip", "create"];
         command_line.extend_from_slice(flags);
         let cli = Cli::try_parse_from(command_line).expect("the flags parse");
-        let Commands::Create { opts } = cli.command else {
+        let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };
-        resolve(&opts.lookups.lookup, None, &opts.transport)
+        resolve(&options.lookups.lookup, None, &options.transport)
     }
 
     #[test]
@@ -135,11 +135,11 @@ mod tests {
     fn create_advertise_without_lookup_is_public_with_relay_transport() {
         let cli = Cli::try_parse_from(["agent-gossip", "create", "--advertise"])
             .expect("a bare --advertise parses");
-        let Commands::Create { opts } = cli.command else {
+        let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };
-        let lookups = lookups_or_public(&opts.lookups.lookup, opts.advertise.is_some());
-        let resolved = resolve(&lookups, None, &opts.transport).expect("advertise resolves");
+        let lookups = lookups_or_public(&options.lookups.lookup, options.advertise.is_some());
+        let resolved = resolve(&lookups, None, &options.transport).expect("advertise resolves");
         assert_eq!(resolved.lookups, LookupOpts::public_preset());
         assert_eq!(resolved.transport, policy(false, true));
     }

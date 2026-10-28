@@ -35,12 +35,12 @@ mod tests {
     #[test]
     fn doctor_defaults_to_machine_health_human() {
         let cli = Cli::parse_from(["agent-gossip", "doctor"]);
-        let Commands::Doctor { opts } = cli.command else {
+        let Commands::Doctor { options } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.gossip.is_none());
-        assert!(!opts.no_probe);
-        assert_eq!(opts.output, OutputFormat::Human);
+        assert!(options.gossip.is_none());
+        assert!(!options.no_probe);
+        assert_eq!(options.output, OutputFormat::Human);
     }
 
     #[test]
@@ -54,11 +54,11 @@ mod tests {
             "--output",
             "json",
         ]);
-        let Commands::Doctor { opts } = cli.command else {
+        let Commands::Doctor { options } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.gossip.is_some());
-        assert!(opts.no_probe);
-        assert_eq!(opts.output, OutputFormat::Json);
+        assert!(options.gossip.is_some());
+        assert!(options.no_probe);
+        assert_eq!(options.output, OutputFormat::Json);
     }
 }

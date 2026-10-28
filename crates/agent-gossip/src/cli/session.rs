@@ -225,14 +225,14 @@ pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
     Some(format!("{who} on gossip {mesh}"))
 }
 
-pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
+pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     let LeaveOpts {
         gossip: mesh,
         nickname,
         session_pid,
         confirm_timeout_secs,
         legacy_output: _,
-    } = opts;
+    } = options;
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
         (
@@ -321,11 +321,11 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     clippy::unused_async,
     reason = "keeps the dispatch arm uniform with every other subcommand"
 )]
-pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
+pub(crate) async fn session(options: SessionOpts) -> Result<()> {
     let SessionOpts {
         session_pid,
         legacy_output: _,
-    } = opts;
+    } = options;
     let Discovery { live, cleaned } = discover();
     let (owned, other_sessions) = owned_sessions(live, session_pid);
 
@@ -387,11 +387,11 @@ fn is_ready(target: &Target) -> bool {
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
 /// turn, and Claude Code still reads the JSON.
-pub(crate) fn bell_check(opts: &BellCheckOpts) -> bool {
+pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
-    } = opts;
+    } = options;
     let (owned, _) = owned_sessions(discover().live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.

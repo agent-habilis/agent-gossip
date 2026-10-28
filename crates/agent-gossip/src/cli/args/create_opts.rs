@@ -99,10 +99,10 @@ mod tests {
             "my-nick",
         ]);
         match cli.command {
-            Commands::Create { opts } => {
-                assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
+            Commands::Create { options } => {
+                assert_eq!(options.name.as_ref().map(MeshName::as_str), Some("team"));
                 assert_eq!(
-                    opts.nickname.as_ref().map(Nickname::as_str),
+                    options.nickname.as_ref().map(Nickname::as_str),
                     Some("my-nick")
                 );
             }
@@ -135,9 +135,9 @@ mod tests {
     fn create_opts_without_nickname() {
         let cli = Cli::parse_from(["agent-gossip", "create", "--name", "team"]);
         match cli.command {
-            Commands::Create { opts } => {
-                assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
-                assert_eq!(opts.nickname, None);
+            Commands::Create { options } => {
+                assert_eq!(options.name.as_ref().map(MeshName::as_str), Some("team"));
+                assert_eq!(options.nickname, None);
             }
             Commands::Join { .. }
             | Commands::Topic { .. }
@@ -168,7 +168,7 @@ mod tests {
     fn create_opts_name_optional() {
         let cli = Cli::parse_from(["agent-gossip", "create"]);
         match cli.command {
-            Commands::Create { opts } => assert_eq!(opts.name, None),
+            Commands::Create { options } => assert_eq!(options.name, None),
             Commands::Join { .. }
             | Commands::Topic { .. }
             | Commands::Poll { .. }
@@ -219,7 +219,7 @@ mod tests {
     fn advertise_flag_absent_bare_and_valued() {
         fn advertise_of(args: &[&str]) -> DirectorySelection {
             match Cli::parse_from(args).command {
-                Commands::Create { opts } => opts.advertise_selection(),
+                Commands::Create { options } => options.advertise_selection(),
                 Commands::Join { .. }
                 | Commands::Topic { .. }
                 | Commands::Poll { .. }
@@ -276,7 +276,7 @@ mod tests {
     fn password_flag_absent_bare_and_valued() {
         fn password_of(args: &[&str]) -> Option<PasswordFlag> {
             match Cli::parse_from(args).command {
-                Commands::Create { opts } => opts.password,
+                Commands::Create { options } => options.password,
                 Commands::Join { .. }
                 | Commands::Topic { .. }
                 | Commands::Poll { .. }
@@ -333,13 +333,13 @@ mod tests {
             "custom-name",
         ]);
         match cli.command {
-            Commands::Create { opts } => {
-                assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
+            Commands::Create { options } => {
+                assert_eq!(options.name.as_ref().map(MeshName::as_str), Some("team"));
                 assert_eq!(
-                    opts.nickname.as_ref().map(Nickname::as_str),
+                    options.nickname.as_ref().map(Nickname::as_str),
                     Some("custom-name")
                 );
-                assert_eq!(opts.lookups.lookup.len(), 3);
+                assert_eq!(options.lookups.lookup.len(), 3);
             }
             Commands::Join { .. }
             | Commands::Topic { .. }

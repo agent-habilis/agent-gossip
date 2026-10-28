@@ -41,41 +41,47 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // boxed: each holds a full `EventLoopState`/session, so they sit right at
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
-        Commands::Create { opts } => {
-            install_tuning(&opts.shared.tuning);
-            Box::pin(create(opts)).await
+        Commands::Create { options } => {
+            install_tuning(&options.shared.tuning);
+            Box::pin(create(options)).await
         }
-        Commands::Join { opts } => {
-            reject_id_encoded_flag("--name", opts.name.is_some())?;
-            install_tuning(&opts.shared.tuning);
-            Box::pin(join(opts.gossip, opts.nickname, opts.password, opts.shared)).await
+        Commands::Join { options } => {
+            reject_id_encoded_flag("--name", options.name.is_some())?;
+            install_tuning(&options.shared.tuning);
+            Box::pin(join(
+                options.gossip,
+                options.nickname,
+                options.password,
+                options.shared,
+            ))
+            .await
         }
-        Commands::Topic { opts } => {
-            install_tuning(&opts.shared.tuning);
-            Box::pin(topic(opts)).await
+        Commands::Topic { options } => {
+            install_tuning(&options.shared.tuning);
+            Box::pin(topic(options)).await
         }
-        Commands::Leave { opts } => super::session::leave(opts).await,
-        Commands::Session { opts } => super::session::session(opts).await,
-        Commands::BellCheck { opts } => {
-            if super::session::bell_check(&opts) {
+        Commands::Leave { options } => super::session::leave(options).await,
+        Commands::Session { options } => super::session::session(options).await,
+        Commands::BellCheck { options } => {
+            if super::session::bell_check(&options) {
                 // 3, not 1 or 2: clap's usage error is 2, and 1 is any error.
                 std::io::Write::flush(&mut std::io::stdout())?;
                 std::process::exit(3);
             }
             Ok(())
         }
-        Commands::Poll { opts } => poll(opts).await,
-        Commands::Ping { opts } => ping(opts).await,
-        Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
-        Commands::Peers { opts } => peers(opts).await,
-        Commands::Invite { opts } => invite(opts).await,
-        Commands::State { opts } => state(opts).await,
-        Commands::Meta { opts } => meta(opts).await,
-        Commands::Topology { opts } => topology_cmd(opts).await,
-        Commands::Ready { opts } => ready(opts).await,
-        Commands::Discover { opts } => {
-            install_tuning(&opts.tuning);
-            Box::pin(super::discover::discover(opts)).await
+        Commands::Poll { options } => poll(options).await,
+        Commands::Ping { options } => ping(options).await,
+        Commands::A2a { options } => Box::pin(a2a(options.action)).await,
+        Commands::Peers { options } => peers(options).await,
+        Commands::Invite { options } => invite(options).await,
+        Commands::State { options } => state(options).await,
+        Commands::Meta { options } => meta(options).await,
+        Commands::Topology { options } => topology_cmd(options).await,
+        Commands::Ready { options } => ready(options).await,
+        Commands::Discover { options } => {
+            install_tuning(&options.tuning);
+            Box::pin(super::discover::discover(options)).await
         }
         Commands::Mcp {
             directory_private,
@@ -106,6 +112,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // self-contained, no repo checkout needed (like `Man`).
         Commands::Plug { agents, paths } => super::plug::plug(&agents, &paths),
         Commands::Unplug { agents, paths } => super::plug::unplug(&agents, &paths),
-        Commands::Doctor { opts } => super::doctor::run(opts).await,
+        Commands::Doctor { options } => super::doctor::run(options).await,
     }
 }

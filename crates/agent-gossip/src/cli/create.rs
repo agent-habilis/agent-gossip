@@ -6,17 +6,22 @@ use super::args::CreateOpts;
 use super::run_session::run_session;
 
 /// Create a new mesh, print its identifier, and start listening.
-pub(super) async fn create(opts: CreateOpts) -> Result<()> {
+pub(super) async fn create(options: CreateOpts) -> Result<()> {
     // Borrow-then-move: resolve the lookups and advertise selection (which
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
-    let advertise = opts.advertise_selection();
-    let password = super::password_flag::resolve_password(opts.password.clone())?;
+    let advertise = options.advertise_selection();
+    let password = super::password_flag::resolve_password(options.password.clone())?;
     // Naming no lookup is loopback and naming any restricts to it, except
     // that `--advertise` needs a lookup that reaches other machines.
-    let lookups =
-        super::args::lookup::lookups_or_public(&opts.lookups.lookup, opts.advertise.is_some());
-    let mesh_parts =
-        super::args::resolved::resolve(&lookups, opts.lookups.relay_url.clone(), &opts.transport)?;
+    let lookups = super::args::lookup::lookups_or_public(
+        &options.lookups.lookup,
+        options.advertise.is_some(),
+    );
+    let mesh_parts = super::args::resolved::resolve(
+        &lookups,
+        options.lookups.relay_url.clone(),
+        &options.transport,
+    )?;
     let config = MeshConfig {
         lookups: mesh_parts.lookups,
         // The verifier is baked in at setup: its salt is the seed, which is
@@ -32,16 +37,16 @@ pub(super) async fn create(opts: CreateOpts) -> Result<()> {
     // `resolve` validates `--advertise` against the config (never a silent
     // no-op) before any setup work.
     let resolved = CreateParams {
-        name: opts.name.unwrap_or_else(MeshName::random),
-        nickname: opts.nickname,
+        name: options.name.unwrap_or_else(MeshName::random),
+        nickname: options.nickname,
         config,
         advertise,
         password,
-        invite_only: opts.invite_only,
+        invite_only: options.invite_only,
     }
     .resolve()?;
     // Boxed: the session future carries the full `EventLoopConfig` and sits
     // just over clippy's `large_futures` budget (same reason the event loop
     // itself is boxed).
-    Box::pin(run_session(resolved, opts.shared)).await
+    Box::pin(run_session(resolved, options.shared)).await
 }
