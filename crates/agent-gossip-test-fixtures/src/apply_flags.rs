@@ -5,14 +5,14 @@ use std::process::Command;
 /// other pair becomes a CLI flag (empty value ⇒ bare flag, e.g.
 /// `("--directory-private", "")`). Use for the `Node` spawns that may carry a
 /// `RUST_LOG` debug filter.
-pub(crate) fn apply_flags(cmd: &mut Command, pairs: &[(&str, &str)]) {
+pub(crate) fn apply_flags(command: &mut Command, pairs: &[(&str, &str)]) {
     for (flag, value) in pairs {
         if *flag == "RUST_LOG" {
-            cmd.env("RUST_LOG", value);
+            command.env("RUST_LOG", value);
         } else {
-            cmd.arg(flag);
+            command.arg(flag);
             if !value.is_empty() {
-                cmd.arg(value);
+                command.arg(value);
             }
         }
     }

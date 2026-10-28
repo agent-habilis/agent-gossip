@@ -43,7 +43,7 @@ pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
     let mut bell_lock = None;
     let mut settle = settle_secs.map(std::time::Duration::from_secs);
     let max_duration = max_secs.map(std::time::Duration::from_secs);
-    let cmd = IpcCommand::Poll { mesh, after, long };
+    let command = IpcCommand::Poll { mesh, after, long };
 
     loop {
         // A duplicate bell takes the lock over once the first one exits, so
@@ -68,7 +68,7 @@ pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
             return Ok(());
         }
         let started = tokio::time::Instant::now();
-        let response = super::send::send(&cmd, &nickname).await?;
+        let response = super::send::send(&command, &nickname).await?;
         // An empty response is the daemon closing the connection without
         // writing (shutdown mid-park) — `round_trip` maps that EOF to `""`.
         // Surface it instead of printing a blank line / retrying forever.

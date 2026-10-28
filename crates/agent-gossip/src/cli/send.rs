@@ -10,11 +10,11 @@ use serde::Serialize;
 /// names. Rebuilt into a single message rather than an `anyhow` context layer:
 /// context prepends, which would invert the fact-then-remedy order the operator
 /// reads (and that `--output json`'s stderr contract pins).
-pub(crate) async fn send<C>(cmd: &C, nickname: &Nickname) -> Result<String>
+pub(crate) async fn send<C>(command: &C, nickname: &Nickname) -> Result<String>
 where
     C: Serialize + Addressed,
 {
-    habilis_network::runtime::ipc::send(&crate::runtime_base(), cmd, nickname)
+    habilis_network::runtime::ipc::send(&crate::runtime_base(), command, nickname)
         .await
         .map_err(|error| match error.downcast::<NoDaemon>() {
             Ok(no_daemon) => anyhow::anyhow!(

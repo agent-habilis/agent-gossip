@@ -124,7 +124,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             // resolve here, against the caller's.
             let file = file.map(std::path::absolute).transpose()?;
             let file_name = advertised_file_name(file.as_deref(), file_name);
-            let cmd = IpcCommand::A2aCall {
+            let command = IpcCommand::A2aCall {
                 mesh,
                 to,
                 method,
@@ -134,7 +134,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
                 file_name,
                 file_mime,
             };
-            let response = super::send::send(&cmd, &nickname).await?;
+            let response = super::send::send(&command, &nickname).await?;
             println!("{response}");
             let parsed: serde_json::Value = serde_json::from_str(&response)?;
             if !parsed["error"].is_null() {
@@ -152,14 +152,14 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
         } => {
             crate::a2a::broadcast_params::WorkerLeg::parse(state, waiting.as_deref())
                 .map_err(|_| anyhow::anyhow!("--waiting requires --state working"))?;
-            let cmd = IpcCommand::A2aStatus {
+            let command = IpcCommand::A2aStatus {
                 mesh,
                 task_id,
                 state,
                 note,
                 waiting,
             };
-            let response = super::send::send(&cmd, &nickname).await?;
+            let response = super::send::send(&command, &nickname).await?;
             let id = finish_send(&response, "task status")?;
             println!("{id}");
             Ok(())
@@ -178,7 +178,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             }
             let file = file.map(std::path::absolute).transpose()?;
             let file_name = advertised_file_name(file.as_deref(), file_name);
-            let cmd = IpcCommand::A2aArtifact {
+            let command = IpcCommand::A2aArtifact {
                 mesh,
                 task_id,
                 text: text.unwrap_or_default(),
@@ -186,7 +186,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
                 file_name,
                 file_mime,
             };
-            let response = super::send::send(&cmd, &nickname).await?;
+            let response = super::send::send(&command, &nickname).await?;
             let id = finish_send(&response, "task artifact")?;
             println!("{id}");
             Ok(())

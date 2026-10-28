@@ -43,10 +43,10 @@ impl Node {
         let file = File::create(&log).expect("create the daemon log file");
         let mut args = vec!["create", "--name", name];
         args.extend_from_slice(extra);
-        let mut cmd = test_cmd();
-        cmd.args(&args);
-        apply_flags(&mut cmd, flags);
-        let child = cmd
+        let mut command = test_cmd();
+        command.args(&args);
+        apply_flags(&mut command, flags);
+        let child = command
             .stdout(Stdio::from(
                 file.try_clone()
                     .expect("clone the daemon log file handle for stdout"),
@@ -95,11 +95,11 @@ impl Node {
     pub fn join_args(mesh: &str, nickname: &str, extra: &[&str], flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(nickname);
         let file = File::create(&log).expect("create the daemon log file");
-        let mut cmd = test_cmd();
-        cmd.args(["join", mesh, "--nickname", nickname]);
-        cmd.args(extra);
-        apply_flags(&mut cmd, flags);
-        let child = cmd
+        let mut command = test_cmd();
+        command.args(["join", mesh, "--nickname", nickname]);
+        command.args(extra);
+        apply_flags(&mut command, flags);
+        let child = command
             .stdout(Stdio::from(
                 file.try_clone()
                     .expect("clone the daemon log file handle for stdout"),

@@ -266,7 +266,7 @@ impl NodeDriver for A2aApp {
         let out = self.output.clone();
         crate::a2a::ipc_command::handle_ipc_command(
             crate::a2a::ipc_command::IpcDispatchParams {
-                cmd: req.cmd,
+                command: req.cmd,
                 resp_tx: req.resp,
                 mesh: context.mesh,
                 name: req.name,

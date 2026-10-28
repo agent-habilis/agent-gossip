@@ -7,10 +7,10 @@ use crate::a2a::ipc_command::IpcCommand;
 /// Print the multihop routing topology (assembled mesh graph) from the running
 /// daemon, as JSON.
 pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
-    let cmd = IpcCommand::Topology {
+    let command = IpcCommand::Topology {
         mesh: options.gossip,
     };
-    let response = super::send::send(&cmd, &options.nickname).await?;
+    let response = super::send::send(&command, &options.nickname).await?;
     println!("{response}");
     let parsed: MsgResponse = serde_json::from_str(&response)?;
     if !parsed.ok {

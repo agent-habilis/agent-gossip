@@ -7,7 +7,7 @@ use crate::a2a::ipc_command::IpcCommand;
 /// Read or change the mesh's `meta` channel via the running daemon — the
 /// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.
 pub(super) async fn meta(options: MetaOpts) -> Result<()> {
-    let (cmd, nickname) = match options.action {
+    let (command, nickname) = match options.action {
         MetaAction::Merge {
             gossip: mesh,
             nickname,
@@ -29,7 +29,7 @@ pub(super) async fn meta(options: MetaOpts) -> Result<()> {
             nickname,
         } => (IpcCommand::MetaGet { mesh }, nickname),
     };
-    let response = super::send::send(&cmd, &nickname).await?;
+    let response = super::send::send(&command, &nickname).await?;
     println!("{response}");
     let parsed: MsgResponse = serde_json::from_str(&response)?;
     if !parsed.ok {

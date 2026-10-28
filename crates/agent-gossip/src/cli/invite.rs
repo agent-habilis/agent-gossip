@@ -15,8 +15,8 @@ pub(super) async fn invite(options: InviteOpts) -> Result<()> {
         legacy_output: _,
     } = options;
     let ttl = parse_ttl(ttl.as_deref())?;
-    let cmd = IpcCommand::Invite { mesh, ttl };
-    let response = super::send::send(&cmd, &nickname).await?;
+    let command = IpcCommand::Invite { mesh, ttl };
+    let response = super::send::send(&command, &nickname).await?;
     println!("{response}");
     let parsed: serde_json::Value = serde_json::from_str(&response)?;
     if parsed.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {

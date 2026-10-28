@@ -6,7 +6,7 @@ use crate::{bin, test_log_dir};
 /// per-test temp dir. Use instead of `Command::new(bin())`. (`--log-dir`
 /// is a global flag, so it sits before the subcommand here.)
 pub fn test_cmd() -> Command {
-    let mut cmd = Command::new(bin());
-    cmd.arg("--log-dir").arg(test_log_dir());
-    cmd
+    let mut command = Command::new(bin());
+    command.arg("--log-dir").arg(test_log_dir());
+    command
 }

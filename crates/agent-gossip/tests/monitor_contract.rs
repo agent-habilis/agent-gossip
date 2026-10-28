@@ -1931,21 +1931,22 @@ fn scratch_file(tag: &str) -> (RemoveOnDrop, Vec<u8>) {
 
 /// `a2a call --method SendMessage` from `nickname` to `to`, plus `extra` args.
 fn cli_call(mesh: &str, nickname: &str, to: &str, extra: &[&std::ffi::OsStr]) -> Command {
-    let mut cmd = common::test_cmd();
-    cmd.args([
-        "a2a",
-        "call",
-        "--gossip",
-        mesh,
-        "--nickname",
-        nickname,
-        "--to",
-        to,
-        "--method",
-        "SendMessage",
-    ])
-    .args(extra);
-    cmd
+    let mut command = common::test_cmd();
+    command
+        .args([
+            "a2a",
+            "call",
+            "--gossip",
+            mesh,
+            "--nickname",
+            nickname,
+            "--to",
+            to,
+            "--method",
+            "SendMessage",
+        ])
+        .args(extra);
+    command
 }
 
 fn assert_success(out: &std::process::Output, what: &str) {

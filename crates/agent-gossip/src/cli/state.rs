@@ -7,7 +7,7 @@ use crate::a2a::ipc_command::IpcCommand;
 /// Read or change the mesh's shared state via the running daemon. Emits the
 /// raw IPC JSON response — `{ok,...}` for `merge`, `{ok,document}` for `get`.
 pub(super) async fn state(options: StateOpts) -> Result<()> {
-    let (cmd, nickname) = match options.action {
+    let (command, nickname) = match options.action {
         StateAction::Merge {
             gossip: mesh,
             nickname,
@@ -29,7 +29,7 @@ pub(super) async fn state(options: StateOpts) -> Result<()> {
             nickname,
         } => (IpcCommand::StateGet { mesh }, nickname),
     };
-    let response = super::send::send(&cmd, &nickname).await?;
+    let response = super::send::send(&command, &nickname).await?;
     println!("{response}");
     // A rejected merge must not exit 0: a shell-driven agent
     // reads the exit code to tell an applied change from a rejected one, and an

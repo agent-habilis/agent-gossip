@@ -175,7 +175,7 @@ impl Addressed for IpcCommand {
 /// state it's served against — grouped so `handle_ipc_command` stays within
 /// the argument budget alongside its state/sender/output handles.
 pub(crate) struct IpcDispatchParams<'a> {
-    pub(crate) cmd: IpcCommand,
+    pub(crate) command: IpcCommand,
     pub(crate) resp_tx: oneshot::Sender<String>,
     pub(crate) mesh: &'a MeshId,
     pub(crate) name: &'a MeshName,
@@ -198,7 +198,7 @@ pub(crate) async fn handle_ipc_command(
 ) -> bool {
     let sender = context.sender;
     let IpcDispatchParams {
-        cmd,
+        command,
         resp_tx,
         mesh,
         name,
@@ -213,13 +213,13 @@ pub(crate) async fn handle_ipc_command(
     // than binding it to `_` and trusting the path alone (a stale socket path or
     // a symlinked runtime dir would otherwise misroute a signed broadcast). The
     // `Info` probe carries no mesh and is addressed purely by socket path.
-    if let Some(cmd_mesh) = cmd.mesh_id()
+    if let Some(cmd_mesh) = command.mesh_id()
         && cmd_mesh != mesh
     {
         let _ = resp_tx.send(json_error("command gossip id does not match this daemon"));
         return false;
     }
-    match cmd {
+    match command {
         IpcCommand::Broadcast { mesh: _, body } => {
             tracing::debug!("IPC broadcast command received");
             match send_broadcast(
@@ -692,11 +692,11 @@ mod tests {
     #[test]
     fn ipc_command_msg_round_trip() {
         let expected = MeshId::from("test");
-        let cmd = IpcCommand::Broadcast {
+        let command = IpcCommand::Broadcast {
             mesh: expected.clone(),
             body: MessageBody::from("hello"),
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.mesh_id().expect("Msg is mesh-addressed").as_str(),
@@ -715,11 +715,11 @@ mod tests {
     #[test]
     fn ipc_command_state_merge_round_trip() {
         let expected = MeshId::from("test");
-        let cmd = IpcCommand::StateMerge {
+        let command = IpcCommand::StateMerge {
             mesh: expected.clone(),
             merge: serde_json::json!({"turn": "b"}),
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(json.contains(r#""command":"state_merge""#), "tag: {json}");
         assert!(json.contains(r#""merge""#), "{json}");
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
@@ -747,12 +747,12 @@ mod tests {
 
     #[test]
     fn ipc_command_poll_round_trip() {
-        let cmd = IpcCommand::Poll {
+        let command = IpcCommand::Poll {
             mesh: MeshId::from("test"),
             after: Some(42),
             long: false,
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         // `long: false` is skipped on the wire, keeping the format byte-stable
         // for callers that never long-poll.
         assert!(!json.contains("long"), "false long must not serialize");
@@ -782,10 +782,10 @@ mod tests {
     #[test]
     fn ipc_command_ping_round_trip() {
         let expected = MeshId::from("test");
-        let cmd = IpcCommand::Ping {
+        let command = IpcCommand::Ping {
             mesh: expected.clone(),
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(json.contains("\"command\":\"ping\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
@@ -809,14 +809,14 @@ mod tests {
 
     #[test]
     fn ipc_command_a2a_status_round_trip() {
-        let cmd = IpcCommand::A2aStatus {
+        let command = IpcCommand::A2aStatus {
             mesh: MeshId::from("test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
             waiting: Some("asks its user".to_string()),
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(json.contains("\"command\":\"a2a_status\""));
         assert!(json.contains("\"state\":\"working\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
@@ -851,14 +851,14 @@ mod tests {
     /// An older CLI sends no `waiting`; the daemon must still accept the line.
     #[test]
     fn ipc_command_a2a_status_without_waiting_still_parses() {
-        let cmd = IpcCommand::A2aStatus {
+        let command = IpcCommand::A2aStatus {
             mesh: MeshId::from("test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: None,
             waiting: None,
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(!json.contains("waiting"), "the key must be absent: {json}");
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert!(matches!(
@@ -870,10 +870,10 @@ mod tests {
     #[test]
     fn ipc_command_peers_round_trip() {
         let expected = MeshId::from("test");
-        let cmd = IpcCommand::Peers {
+        let command = IpcCommand::Peers {
             mesh: expected.clone(),
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(json.contains("\"command\":\"peers\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
@@ -897,24 +897,24 @@ mod tests {
 
     #[test]
     fn ipc_command_poll_no_after_skips_field() {
-        let cmd = IpcCommand::Poll {
+        let command = IpcCommand::Poll {
             mesh: MeshId::from("test"),
             after: None,
             long: false,
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(!json.contains("after"));
         assert!(!json.contains("long"));
     }
 
     #[test]
     fn ipc_command_poll_long_serializes_true() {
-        let cmd = IpcCommand::Poll {
+        let command = IpcCommand::Poll {
             mesh: MeshId::from("test"),
             after: None,
             long: true,
         };
-        let json = serde_json::to_string(&cmd).unwrap();
+        let json = serde_json::to_string(&command).unwrap();
         assert!(json.contains("\"long\":true"), "wire: {json}");
     }
 
