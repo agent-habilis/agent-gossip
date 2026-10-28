@@ -7,13 +7,11 @@ use std::os::fd::AsFd;
 /// file still gets startup errors.
 pub(super) fn detached_stdio(stream: &impl AsFd) -> std::process::Stdio {
     use std::os::unix::fs::FileTypeExt as _;
-    let captured: bool = stream
-        .as_fd()
-        .try_clone_to_owned()
-        .and_then(|fd| std::fs::File::from(fd).metadata())
-        .map_or(true, |meta| {
-            meta.file_type().is_fifo() || meta.file_type().is_socket()
-        });
+    let owned = stream.as_fd().try_clone_to_owned();
+    let metadata = owned.and_then(|fd| std::fs::File::from(fd).metadata());
+    let captured: bool = metadata.map_or(true, |meta| {
+        meta.file_type().is_fifo() || meta.file_type().is_socket()
+    });
     if captured {
         std::process::Stdio::null()
     } else {
