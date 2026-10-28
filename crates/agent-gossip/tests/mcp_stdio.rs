@@ -388,7 +388,8 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         });
         assert_eq!(
             parsed.get("jsonrpc").and_then(|value| value.as_str()),
-            Some("2.0")
+            Some("2.0"),
+            "line {i} is not a JSON-RPC 2.0 response"
         );
         responses += 1;
     }
@@ -478,8 +479,15 @@ fn create_mesh_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
     let first = client.tool_call(20, "create_gossip", serde_json::json!({ "name": "twice1" }));
     let first_json = tool_result_json(&first).expect("first create_gossip should succeed");
-    assert!(agent_gossip::MeshId::new(first_json["gossip"].as_str().unwrap()).is_ok());
-    assert_eq!(first_json["name"].as_str(), Some("twice1"));
+    assert!(
+        agent_gossip::MeshId::new(first_json["gossip"].as_str().unwrap()).is_ok(),
+        "create_gossip must return a valid mesh id, got {first_json}"
+    );
+    assert_eq!(
+        first_json["name"].as_str(),
+        Some("twice1"),
+        "create_gossip must echo the requested name"
+    );
 
     let second = client.tool_call(21, "create_gossip", serde_json::json!({ "name": "twice2" }));
     let err = tool_error(&second).expect("second create_gossip should error, but got success");
@@ -504,8 +512,16 @@ fn join_mesh_idempotent_for_same_mesh() {
     let rejoin_json = tool_result_json(&rejoin).unwrap_or_else(|| {
         panic!("idempotent join_gossip should succeed, but got error response: {rejoin}")
     });
-    assert_eq!(rejoin_json["gossip"].as_str(), Some(mesh.as_str()));
-    assert_eq!(rejoin_json["nickname"].as_str(), Some(nickname.as_str()));
+    assert_eq!(
+        rejoin_json["gossip"].as_str(),
+        Some(mesh.as_str()),
+        "idempotent join must return the same mesh id"
+    );
+    assert_eq!(
+        rejoin_json["nickname"].as_str(),
+        Some(nickname.as_str()),
+        "idempotent join must keep the original nickname"
+    );
 
     // Different nickname on the same mesh → error.
     let conflict = client.tool_call(
@@ -536,7 +552,10 @@ fn join_with_invalid_input_errors_gracefully() {
     // Prove the server is still alive: call a benign tool.
     let info = client.tool_call(41, "gossip_info", serde_json::json!({}));
     let err2 = tool_error(&info).expect("gossip_info with no session should error");
-    assert!(err2.contains("not in a gossip"));
+    assert!(
+        err2.contains("not in a gossip"),
+        "gossip_info without a session must say so, got: {err2}"
+    );
 }
 
 #[test]
@@ -545,7 +564,11 @@ fn leave_without_session_is_noop() {
     let response = client.tool_call(50, "leave_gossip", serde_json::json!({}));
     // Docs say: "no-op if not in one." Must succeed.
     let json = tool_result_json(&response).expect("leave with no session should succeed");
-    assert_eq!(json["ok"], serde_json::json!(true));
+    assert_eq!(
+        json["ok"],
+        serde_json::json!(true),
+        "leave without a session must report ok"
+    );
 }
 
 #[test]
@@ -583,7 +606,10 @@ fn send_broadcast_without_session_errors() {
         serde_json::json!({ "text": "orphan" }),
     );
     let err = tool_error(&response).expect("send_broadcast without session should error");
-    assert!(err.contains("not in a gossip"));
+    assert!(
+        err.contains("not in a gossip"),
+        "send_broadcast without a session must say so, got: {err}"
+    );
 }
 
 #[test]
@@ -715,9 +741,14 @@ fn create_mesh_default_transport_is_udp_webrtc_gossip() {
     );
     assert_eq!(
         mesh.config().lookups,
-        habilis_network::protocol::LookupOpts::loopback()
+        habilis_network::protocol::LookupOpts::loopback(),
+        "the default lookup must be loopback"
     );
-    assert_eq!(mesh.config().transport, app_policy(false));
+    assert_eq!(
+        mesh.config().transport,
+        app_policy(false),
+        "without relay lookup the transport must be the app policy"
+    );
 }
 
 #[test]
@@ -728,7 +759,11 @@ fn create_mesh_relay_lookup_adds_relay_transport() {
         160,
         serde_json::json!({ "name": "relaylookup", "lookup": ["relay"] }),
     );
-    assert_eq!(mesh.config().transport, app_policy(true));
+    assert_eq!(
+        mesh.config().transport,
+        app_policy(true),
+        "relay lookup must add the relay transport"
+    );
 }
 
 #[test]
@@ -743,7 +778,11 @@ fn create_mesh_explicit_transport_list_is_literal() {
             "transport": ["udp", "webrtc", "gossip"],
         }),
     );
-    assert_eq!(mesh.config().transport, app_policy(false));
+    assert_eq!(
+        mesh.config().transport,
+        app_policy(false),
+        "an explicit transport list must win over the relay lookup"
+    );
 }
 
 #[test]
@@ -754,8 +793,14 @@ fn create_mesh_transport_multihop_turns_multihop_on() {
         180,
         serde_json::json!({ "name": "multihoptransport", "transport": ["udp", "webrtc", "multihop"] }),
     );
-    assert!(mesh.config().transport.multihop);
-    assert!(!mesh.config().transport.gossip);
+    assert!(
+        mesh.config().transport.multihop,
+        "the multihop entry must turn multihop on"
+    );
+    assert!(
+        !mesh.config().transport.gossip,
+        "leaving gossip out of the list must turn gossip off"
+    );
 }
 
 #[test]
@@ -828,22 +873,37 @@ fn send_empty_body_works() {
     let sent = client.tool_call(101, "send_broadcast", serde_json::json!({ "text": "" }));
     let sent_json = tool_result_json(&sent).expect("empty-body send should succeed");
     let id = sent_json["id"].as_str().unwrap().to_string();
-    assert!(!id.is_empty());
+    assert!(!id.is_empty(), "send_broadcast must return a message id");
     // send_broadcast now returns the full echo inline — the agent
     // should never need a follow-up fetch for its own send.
     let echo = sent_json
         .get("message")
         .expect("send_broadcast must return an echo");
-    assert_eq!(echo["id"].as_str(), Some(id.as_str()));
+    assert_eq!(
+        echo["id"].as_str(),
+        Some(id.as_str()),
+        "the echo must carry the id of the sent message"
+    );
     // The frame body carries the serialized A2A payload; the sent text
     // (empty here) is its first text part, and the payload's messageId is
     // the frame id.
     let payload: serde_json::Value =
         serde_json::from_str(echo["body"].as_str().expect("frame body is a string"))
             .expect("frame body is a serialized a2a message");
-    assert_eq!(payload["parts"][0]["text"].as_str(), Some(""));
-    assert_eq!(payload["messageId"].as_str(), Some(id.as_str()));
-    assert!(echo["ts"].is_i64());
+    assert_eq!(
+        payload["parts"][0]["text"].as_str(),
+        Some(""),
+        "the empty text must be the first part of the payload"
+    );
+    assert_eq!(
+        payload["messageId"].as_str(),
+        Some(id.as_str()),
+        "the payload message id must equal the frame id"
+    );
+    assert!(
+        echo["ts"].is_i64(),
+        "the echo must carry an integer timestamp, got {echo}"
+    );
 
     // FROM_START dodges the implicit cursor to inspect the whole buffer.
     let fetched = tool_result_json(&client.tool_call(
@@ -886,7 +946,10 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
         serde_json::json!({ "after": FROM_START }),
     ))
     .expect("fetch from start");
-    assert!(from_start["messages"].is_array());
+    assert!(
+        from_start["messages"].is_array(),
+        "fetch from the start must return a messages array, got {from_start}"
+    );
 }
 
 #[test]
@@ -942,7 +1005,10 @@ fn send_broadcast_reaches_the_mesh() {
         serde_json::json!({ "text": "hello mesh" }),
     );
     let json = tool_result_json(&response).expect("broadcast send should succeed");
-    assert!(!json["id"].as_str().unwrap().is_empty());
+    assert!(
+        !json["id"].as_str().unwrap().is_empty(),
+        "send_broadcast must return a non-empty id, got {json}"
+    );
 }
 
 // ─── cursor pagination (#1) ──────────────────────────────────────
@@ -1130,9 +1196,18 @@ fn task_creation_surfaces_to_worker_via_fetch() {
         probe += 1;
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(task["kind"], "message");
-    assert_eq!(task["to"], creator_nick);
-    assert_eq!(task["body"], "## Task\nport it");
+    assert_eq!(
+        task["kind"], "message",
+        "the task event must be a plain message"
+    );
+    assert_eq!(
+        task["to"], creator_nick,
+        "the task must be addressed to the creator"
+    );
+    assert_eq!(
+        task["body"], "## Task\nport it",
+        "the task body must arrive unchanged"
+    );
 }
 
 /// A directed `message/send` (task creation) to a nickname that is not a
@@ -1191,7 +1266,10 @@ fn mesh_info_reports_peer_roster() {
         probe += 1;
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(info["peer_count"], 2);
+    assert_eq!(
+        info["peer_count"], 2,
+        "the converged roster must count both members"
+    );
     let peers = info["peers"].as_array().expect("peers array");
     assert!(
         peers
@@ -1200,9 +1278,18 @@ fn mesh_info_reports_peer_roster() {
         "creator roster should list the joiner: {peers:?}"
     );
     for entry in peers {
-        assert!(entry["nickname"].is_string());
-        assert!(entry.get("last_seen_secs_ago").is_some());
-        assert!(entry["quiet"].is_boolean());
+        assert!(
+            entry["nickname"].is_string(),
+            "every roster entry must have a nickname, got {entry}"
+        );
+        assert!(
+            entry.get("last_seen_secs_ago").is_some(),
+            "every roster entry must report when it was last seen, got {entry}"
+        );
+        assert!(
+            entry["quiet"].is_boolean(),
+            "every roster entry must carry a quiet flag, got {entry}"
+        );
         let reach = entry["reach"].as_str().expect("reach is a string");
         assert!(
             reach == "direct" || reach == "gossip",
