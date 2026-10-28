@@ -226,9 +226,9 @@ fn three_peers(suffix: &str) -> (JsonNode, JsonNode, JsonNode, String) {
     let joiner_a = JsonNode::join(&mesh, &format!("mon-{suffix}-a"));
     let joiner_b = JsonNode::join(&mesh, &format!("mon-{suffix}-b"));
 
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner_a.wait_ready(&mesh));
-    assert!(joiner_b.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner_a.wait_ready(&mesh), "the first joiner is ready");
+    assert!(joiner_b.wait_ready(&mesh), "the second joiner is ready");
 
     std::thread::sleep(Duration::from_secs(3));
 
@@ -248,8 +248,11 @@ async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
     let mesh = creator.mesh.clone();
     let nick = creator.nickname.clone();
-    assert!(agent_gossip::MeshId::new(&mesh).is_ok());
-    assert!(!nick.is_empty());
+    assert!(
+        agent_gossip::MeshId::new(&mesh).is_ok(),
+        "the mesh id is valid"
+    );
+    assert!(!nick.is_empty(), "the nickname is not empty");
 
     assert!(
         creator
@@ -267,16 +270,35 @@ async fn test_ready_event_shape() {
         .find(|value| value["event"] == "ready")
         .expect("no ready event found");
 
-    assert_eq!(ready["event"], "ready");
-    assert!(ready["gossip"].is_string());
-    assert!(ready["name"].is_string());
-    assert!(ready["nickname"].is_string());
-    assert_eq!(ready["gossip"].as_str().unwrap(), mesh);
-    assert_eq!(ready["name"].as_str().unwrap(), "readyshape");
-    assert_eq!(ready["nickname"].as_str().unwrap(), nick);
+    assert_eq!(ready["event"], "ready", "the ready event is named ready");
+    assert!(ready["gossip"].is_string(), "the gossip field is a string");
+    assert!(ready["name"].is_string(), "the name field is a string");
+    assert!(
+        ready["nickname"].is_string(),
+        "the nickname field is a string"
+    );
+    assert_eq!(
+        ready["gossip"].as_str().unwrap(),
+        mesh,
+        "the gossip field is the mesh"
+    );
+    assert_eq!(
+        ready["name"].as_str().unwrap(),
+        "readyshape",
+        "the name field is readyshape"
+    );
+    assert_eq!(
+        ready["nickname"].as_str().unwrap(),
+        nick,
+        "the nickname field is the nickname"
+    );
     // The build self-identifies: the ready event carries the exact version
     // string (crate version + git sha + dirty flag).
-    assert_eq!(ready["version"].as_str().unwrap(), agent_gossip::version());
+    assert_eq!(
+        ready["version"].as_str().unwrap(),
+        agent_gossip::version(),
+        "the version field is the build version"
+    );
 }
 
 /// Three peers: creator surfaces a membership `joined` presence for
@@ -318,12 +340,15 @@ async fn test_cross_peer_message_delivery() {
         .find(|value| value["body"] == "hello from A")
         .expect("no message with body 'hello from A' found");
 
-    assert_eq!(message["event"], "message");
-    assert_eq!(message["type"], "broadcast");
+    assert_eq!(message["event"], "message", "the event is message");
+    assert_eq!(message["type"], "broadcast", "the type is broadcast");
     assert!(message["id"].is_string(), "missing id field");
-    assert_eq!(message["author"], "mon-xpeer-a");
+    assert_eq!(
+        message["author"], "mon-xpeer-a",
+        "the author is mon-xpeer-a"
+    );
     assert!(message["ts"].is_number(), "ts should be a number");
-    assert_eq!(message["body"], "hello from A");
+    assert_eq!(message["body"], "hello from A", "the body is hello from A");
     assert!(message["to"].is_null(), "message should have to: null");
     assert_eq!(
         message["message"]["role"], "ROLE_USER",
@@ -350,8 +375,14 @@ async fn test_bidirectional_multi_peer() {
         .iter()
         .filter_map(|value| value["body"].as_str().map(str::to_owned))
         .collect();
-    assert!(bodies.iter().any(|body| body == "msg from A"));
-    assert!(bodies.iter().any(|body| body == "msg from B"));
+    assert!(
+        bodies.iter().any(|body| body == "msg from A"),
+        "the bodies hold msg from A"
+    );
+    assert!(
+        bodies.iter().any(|body| body == "msg from B"),
+        "the bodies hold msg from B"
+    );
 }
 
 /// Self-echo suppression: the sender does NOT see its own message in JSON output
@@ -378,7 +409,7 @@ async fn test_self_echo_suppression() {
         .iter()
         .find(|entry| entry["body"] == "echo test")
         .expect("creator did not receive message");
-    assert_eq!(message["self"], false);
+    assert_eq!(message["self"], false, "the message is not from self");
 
     let joiner_msgs = joiner.broadcast_events();
     assert!(
@@ -426,9 +457,9 @@ fn test_peer_departure_event() {
         .find(|value| value["subtype"] == "left")
         .expect("creator did not receive left event");
 
-    assert_eq!(left["event"], "message");
-    assert_eq!(left["type"], "presence");
-    assert_eq!(left["subtype"], "left");
+    assert_eq!(left["event"], "message", "the left event is message");
+    assert_eq!(left["type"], "presence", "the left type is presence");
+    assert_eq!(left["subtype"], "left", "the left subtype is left");
     assert!(left["author"].is_string(), "presence event missing author");
     assert!(left["ts"].is_number(), "presence event missing ts");
     assert!(left["id"].is_string(), "presence event missing id");
@@ -453,13 +484,28 @@ async fn test_presence_joined_event_shape() {
         .find(|value| value["subtype"] == "joined" && value["author"] == "mon-joined-shape")
         .expect("creator did not receive joined presence from mon-joined-shape");
 
-    assert_eq!(joined_event["event"], "message");
-    assert_eq!(joined_event["type"], "presence");
-    assert_eq!(joined_event["subtype"], "joined");
-    assert!(joined_event["author"].is_string());
-    assert!(joined_event["ts"].is_number());
-    assert!(joined_event["id"].is_string());
-    assert_eq!(joined_event["author"], "mon-joined-shape");
+    assert_eq!(
+        joined_event["event"], "message",
+        "the joined event is message"
+    );
+    assert_eq!(
+        joined_event["type"], "presence",
+        "the joined type is presence"
+    );
+    assert_eq!(
+        joined_event["subtype"], "joined",
+        "the joined subtype is joined"
+    );
+    assert!(
+        joined_event["author"].is_string(),
+        "the joined author is a string"
+    );
+    assert!(joined_event["ts"].is_number(), "the joined ts is a number");
+    assert!(joined_event["id"].is_string(), "the joined id is a string");
+    assert_eq!(
+        joined_event["author"], "mon-joined-shape",
+        "the joined author is mon-joined-shape"
+    );
 }
 
 /// Info events have the expected shape.
@@ -479,7 +525,7 @@ async fn test_info_event_shape() {
     );
 
     let info = &info_events[0];
-    assert_eq!(info["event"], "info");
+    assert_eq!(info["event"], "info", "the info event is info");
     assert!(
         info["message"].is_string(),
         "info event missing message field"
@@ -560,9 +606,9 @@ fn test_creator_departure_peers_survive() {
     let mut joiner_a = JsonNode::join(&mesh, "survive-alpha");
     let mut joiner_b = JsonNode::join(&mesh, "survive-beta");
 
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner_a.wait_ready(&mesh));
-    assert!(joiner_b.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner_a.wait_ready(&mesh), "the first joiner is ready");
+    assert!(joiner_b.wait_ready(&mesh), "the second joiner is ready");
 
     // Wait for gossip overlay to stabilise.
     let count = wait_until(
@@ -598,8 +644,11 @@ fn test_creator_departure_peers_survive() {
     );
 
     let message = &joiner_b.broadcast_events()[0];
-    assert_eq!(message["author"], "survive-alpha");
-    assert_eq!(message["body"], "still-here");
+    assert_eq!(
+        message["author"], "survive-alpha",
+        "the author is survive-alpha"
+    );
+    assert_eq!(message["body"], "still-here", "the body is still-here");
 }
 
 /// When the creator is hard-killed, joiners should stay alive.
@@ -608,8 +657,8 @@ fn test_creator_hard_kill_peers_survive() {
     let (mut creator, mesh) = JsonNode::create();
     let mut joiner_a = JsonNode::join(&mesh, "hk-alpha");
 
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner_a.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner_a.wait_ready(&mesh), "the first joiner is ready");
 
     let count = wait_until(
         || {
@@ -647,10 +696,10 @@ fn test_creator_departure_four_peers_survive() {
     let mut joiner_b = JsonNode::join(&mesh, "four-beta");
     let mut joiner_c = JsonNode::join(&mesh, "four-gamma");
 
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner_a.wait_ready(&mesh));
-    assert!(joiner_b.wait_ready(&mesh));
-    assert!(joiner_c.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner_a.wait_ready(&mesh), "the first joiner is ready");
+    assert!(joiner_b.wait_ready(&mesh), "the second joiner is ready");
+    assert!(joiner_c.wait_ready(&mesh), "the third joiner is ready");
 
     let count = wait_until(
         || {
@@ -793,7 +842,7 @@ fn test_hard_kill_triggers_peer_timeout() {
 
     // Spawn a joiner we can kill.
     let mut victim = JsonNode::join(&mesh, "victim-alpha");
-    assert!(victim.wait_ready(&mesh));
+    assert!(victim.wait_ready(&mesh), "the victim is ready");
 
     // Confirm survivor sees peer_count = 2 in state file.
     let count_deadline = Instant::now() + MSG_TIMEOUT;
@@ -1068,21 +1117,27 @@ async fn test_task_event_wire_contract() {
         std::thread::sleep(POLL);
     }
     let task = task.expect("the worker never surfaced a task event");
-    assert_eq!(task["event"], "task");
-    assert_eq!(task["kind"], "message");
-    assert_eq!(task["task_id"], task_id);
-    assert_eq!(task["to"], worker);
-    assert_eq!(task["author"], creator.nickname);
-    assert_eq!(task["body"], "## Task\nport it");
-    assert_eq!(task["self"], false);
-    assert!(task["id"].is_string());
-    assert!(task["ts"].is_number());
+    assert_eq!(task["event"], "task", "the task event is task");
+    assert_eq!(task["kind"], "message", "the kind is message");
+    assert_eq!(task["task_id"], task_id, "the task id is the task");
+    assert_eq!(task["to"], worker, "the to field is the worker");
+    assert_eq!(
+        task["author"], creator.nickname,
+        "the author is the creator"
+    );
+    assert_eq!(
+        task["body"], "## Task\nport it",
+        "the body is the task brief"
+    );
+    assert_eq!(task["self"], false, "the self field is false");
+    assert!(task["id"].is_string(), "the id field is a string");
+    assert!(task["ts"].is_number(), "the ts field is a number");
     assert!(
         task.get("phase").is_none(),
         "no phase field in the native model"
     );
     // A distinct top-level event — never the `message` family.
-    assert!(task.get("type").is_none());
+    assert!(task.get("type").is_none(), "the task has no type field");
 
     // The bystander relayed it but must never surface it.
     assert!(
@@ -1129,8 +1184,8 @@ async fn test_task_idle_timeout_after_owner_dies() {
     ];
     let (creator, mesh) = JsonNode::create_with_flags(timers);
     let mut joiner = JsonNode::join_with_flags(&mesh, "tk-bob", timers);
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner.wait_ready(&mesh), "the joiner is ready");
 
     // The creator must see the joiner before it can offer.
     let saw_join = wait_until(
@@ -1224,8 +1279,8 @@ async fn test_completed_task_is_never_reaped() {
     ];
     let (creator, mesh) = JsonNode::create_with_flags(timers);
     let worker = JsonNode::join_with_flags(&mesh, "tk-done", timers);
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
 
     let saw_join = wait_until(
         || {
@@ -1317,8 +1372,8 @@ async fn test_silent_tasks_survive_while_daemons_live() {
     let worker_nick = "tk-silent";
     let (creator, mesh) = JsonNode::create_with_flags(timers);
     let worker = JsonNode::join_with_flags(&mesh, worker_nick, timers);
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
 
     let saw_join = wait_until(
         || {
@@ -1421,8 +1476,8 @@ async fn test_a_repeated_working_does_not_reach_the_initiator() {
     let worker_nick = "tk-repeat";
     let (creator, mesh) = JsonNode::create_with_flags(&[]);
     let worker = JsonNode::join_with_flags(&mesh, worker_nick, &[]);
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
 
     let saw_join = wait_until(
         || {
@@ -1513,8 +1568,8 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     let (creator, mesh) = JsonNode::create_with_flags(fast_reap);
     let worker =
         JsonNode::join_with_flags(&mesh, worker_nick, &[("--task-keepalive-secs", "3600")]);
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
 
     let saw_join = wait_until(
         || {
@@ -1650,20 +1705,35 @@ async fn test_peers_roster_shape() {
         std::thread::sleep(POLL);
     }
 
-    assert_eq!(roster["ok"], true);
+    assert_eq!(roster["ok"], true, "the roster is ok");
     assert_eq!(roster["peer_count"], 3, "creator + 2 joiners");
     let peers = roster["peers"].as_array().expect("peers is an array");
     let nicks: Vec<&str> = peers
         .iter()
         .filter_map(|entry| entry["nickname"].as_str())
         .collect();
-    assert!(nicks.contains(&joiner_a.nickname.as_str()));
-    assert!(nicks.contains(&joiner_b.nickname.as_str()));
+    assert!(
+        nicks.contains(&joiner_a.nickname.as_str()),
+        "the roster lists the first joiner"
+    );
+    assert!(
+        nicks.contains(&joiner_b.nickname.as_str()),
+        "the roster lists the second joiner"
+    );
     // Each entry carries the documented fields, with a valid reach tag.
     for entry in peers {
-        assert!(entry["nickname"].is_string());
-        assert!(entry.get("last_seen_secs_ago").is_some());
-        assert!(entry["quiet"].is_boolean());
+        assert!(
+            entry["nickname"].is_string(),
+            "the entry nickname is a string"
+        );
+        assert!(
+            entry.get("last_seen_secs_ago").is_some(),
+            "the entry has last_seen_secs_ago"
+        );
+        assert!(
+            entry["quiet"].is_boolean(),
+            "the entry quiet flag is a boolean"
+        );
         let reach = entry["reach"].as_str().expect("reach is a string");
         assert!(
             reach == "direct" || reach == "gossip",
@@ -1714,8 +1784,8 @@ async fn test_peers_roster_shape() {
 async fn test_poll_record_matches_stream_line() {
     let (creator, mesh) = JsonNode::create();
     let joiner = JsonNode::join(&mesh, "parity-joiner");
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner.wait_ready(&mesh), "the joiner is ready");
     std::thread::sleep(Duration::from_secs(3));
 
     // Joiner sends; the creator surfaces it on its stream and can poll it.
@@ -1767,8 +1837,8 @@ async fn test_poll_record_matches_stream_line() {
 fn test_ping_report_is_pollable() {
     let (creator, mesh) = JsonNode::create_with_flags(&[("--ping-window-secs", "2")]);
     let joiner = JsonNode::join_with_flags(&mesh, "ping-pollee", &[]);
-    assert!(creator.wait_ready(&mesh));
-    assert!(joiner.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(joiner.wait_ready(&mesh), "the joiner is ready");
     std::thread::sleep(Duration::from_secs(3));
 
     // Creator arms a ping; the report lands ~2s later on its stream and ring.
@@ -1872,7 +1942,7 @@ fn channel_wire_contract(channel: Channel) {
     // (cards masked on meta, as above).
     let got = common::cli_channel_get(channel, &mesh, &joiner.nickname);
     let got: serde_json::Value = serde_json::from_str(&got).expect("get stdout is JSON");
-    assert_eq!(got["ok"], true);
+    assert_eq!(got["ok"], true, "the got call is ok");
     let mut got_doc = got["document"].clone();
     if let Some(map) = got_doc.as_object_mut() {
         map.remove("peers");
@@ -2001,8 +2071,8 @@ fn assert_fetches(url: &str, bytes: &[u8]) {
 async fn test_task_followup_carries_a_file() {
     let (creator, mesh) = JsonNode::create();
     let worker = JsonNode::join(&mesh, "tf-file");
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
 
     let tid = common::cli_task_create(&mesh, &creator.nickname, "tf-file", "take the node");
     let (sent, bytes) = scratch_file("followup.tar");
@@ -2048,8 +2118,8 @@ async fn test_task_followup_carries_a_file() {
 async fn test_task_first_call_carries_a_file() {
     let (creator, mesh) = JsonNode::create();
     let worker = JsonNode::join(&mesh, "tf-first");
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-first");
 
     let (sent, bytes) = scratch_file("first.tar");
@@ -2098,8 +2168,8 @@ async fn test_task_first_call_carries_a_file() {
 async fn test_call_file_path_is_relative_to_the_caller() {
     let (creator, mesh) = JsonNode::create();
     let worker = JsonNode::join(&mesh, "tf-rel");
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-rel");
 
     let (sent, bytes) = scratch_file("relative.tar");
@@ -2132,7 +2202,7 @@ async fn test_call_file_path_is_relative_to_the_caller() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_call_file_to_unknown_peer_spools_nothing() {
     let (creator, mesh) = JsonNode::create();
-    assert!(creator.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
 
     let (sent, _bytes) = scratch_file("nobody.tar");
     let out: std::process::Output = cli_call(
@@ -2167,8 +2237,8 @@ async fn test_call_file_to_unknown_peer_spools_nothing() {
 async fn test_call_file_errors_exit_non_zero() {
     let (creator, mesh) = JsonNode::create();
     let worker = JsonNode::join(&mesh, "tf-err");
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-err");
 
     let missing = std::env::temp_dir().join(format!(
@@ -2258,7 +2328,7 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
     let first = JsonNode::join_with_flags(&mesh, "tf-share-a", &fast_reap);
     let second = JsonNode::join_with_flags(&mesh, "tf-share-b", &fast_reap);
     for node in [&creator, &first, &second] {
-        assert!(node.wait_ready(&mesh));
+        assert!(node.wait_ready(&mesh), "the node is ready");
     }
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-share-a");
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-share-b");
@@ -2335,8 +2405,8 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
     ];
     let (creator, mesh) = JsonNode::create_with_flags(&fast_reap);
     let worker = JsonNode::join_with_flags(&mesh, "tf-late", &fast_reap);
-    assert!(creator.wait_ready(&mesh));
-    assert!(worker.wait_ready(&mesh));
+    assert!(creator.wait_ready(&mesh), "the creator is ready");
+    assert!(worker.wait_ready(&mesh), "the worker is ready");
     common::await_peer_card_cli(&mesh, &creator.nickname, "tf-late");
 
     let (sent, _bytes) = scratch_file("late.tar");
