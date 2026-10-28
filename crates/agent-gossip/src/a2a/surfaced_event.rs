@@ -751,11 +751,9 @@ mod tests {
         let jumped = state.read_targets(Some(1), &nick("me"));
         assert_eq!(jumped.len(), 1, "only the frame after the cursor is read");
         let skipped = state.read_targets(Some(0), &nick("me"));
+        let skipped_to: Vec<&str> = skipped.iter().map(|(to, _)| to.as_str()).collect();
         assert_eq!(
-            skipped
-                .iter()
-                .map(|(to, _)| to.as_str())
-                .collect::<Vec<_>>(),
+            skipped_to,
             vec!["alice"],
             "the frame the jump skipped is read now"
         );

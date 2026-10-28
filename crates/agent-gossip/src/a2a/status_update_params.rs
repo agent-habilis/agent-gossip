@@ -201,11 +201,8 @@ pub fn display_text(message: &Message) -> String {
 /// newline-joined. Shared by the message and artifact rendering paths.
 #[must_use]
 pub(crate) fn parts_text(parts: &[Part]) -> String {
-    parts
-        .iter()
-        .map(Part::display)
-        .collect::<Vec<_>>()
-        .join("\n")
+    let lines: Vec<_> = parts.iter().map(Part::display).collect();
+    lines.join("\n")
 }
 
 /// A task status update's task/state/note/metadata — the fields
