@@ -55,8 +55,8 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             lookups,
             legacy_output: _,
         } => {
-            Box::pin(super::a2a_discover::discover(
-                super::a2a_discover::DiscoverParams {
+            Box::pin(super::discover_params::discover(
+                super::discover_params::DiscoverParams {
                     directory,
                     lookups: lookups.to_set()?,
                 },

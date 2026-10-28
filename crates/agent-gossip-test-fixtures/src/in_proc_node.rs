@@ -313,7 +313,7 @@ impl InProcNode {
         // seal is one-shot, so wait for it first — otherwise, under the concurrent
         // suite's load, the request is silently dropped and the call hangs.
         self.await_peer_card(target).await;
-        let msg = agent_gossip::a2a::gossip::send_message_payload(
+        let msg = agent_gossip::a2a::status_update_params::send_message_payload(
             self.session.mesh_id(),
             None,
             text,
@@ -367,7 +367,7 @@ impl InProcNode {
         task_id: &TaskId,
         text: &str,
     ) -> serde_json::Value {
-        let msg = agent_gossip::a2a::gossip::send_message_payload(
+        let msg = agent_gossip::a2a::status_update_params::send_message_payload(
             self.session.mesh_id(),
             Some(task_id),
             text,
@@ -537,7 +537,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Task { msg, .. }
-                        if agent_gossip::a2a::gossip::frame_task_state(msg) == Some(state)
+                        if agent_gossip::a2a::status_update_params::frame_task_state(msg) == Some(state)
                 )
             })
         })
@@ -662,7 +662,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Message { msg, is_self: false }
-                        if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(body)
+                        if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(body)
                 )
             })
         })
@@ -691,7 +691,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Message { msg, is_self: false }
-                        if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(body)
+                        if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(body)
                 )
             })
             .count()

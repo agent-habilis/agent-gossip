@@ -42,7 +42,7 @@ abbrev_name|crates/agent-gossip/src/cli/meta.rs|6|open: An identifier is not a l
 abbrev_name|crates/agent-gossip/src/cli/peers.rs|5|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/ping.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/poll.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/cli/ready.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/ready_state_file.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/run_session.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/send.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/session.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
@@ -148,6 +148,7 @@ fn_import|crates/agent-gossip/src/bridge/expose_params.rs|1|open: Call a top-lev
 fn_import|crates/agent-gossip/src/bridge/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/cli/args/join_opts.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/cli/args/resolved.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/dispatch.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/cli/doctor.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/cli/poll.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/cli/run_session.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)

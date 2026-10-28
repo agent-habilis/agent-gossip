@@ -2,7 +2,7 @@ use anyhow::Result;
 use habilis_network::protocol::{MeshId, Nickname};
 
 use super::args::{PollIdentity, PollOpts};
-use super::ready::wait_for_ready;
+use super::ready_state_file::wait_for_ready;
 use crate::a2a::ipc_command::IpcCommand;
 
 /// Query the running daemon's live peer roster. Always emits the

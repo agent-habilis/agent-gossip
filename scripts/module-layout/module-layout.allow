@@ -1,3 +1,1 @@
 
-crates/agent-gossip/src/cli/a2a_discover.rs|1|rename pending: public type(s) DiscoverParams
-crates/agent-gossip/src/cli/ready.rs|1|rename pending: public type(s) ReadyStateFile

@@ -378,7 +378,7 @@ fn is_ready(target: &Target) -> bool {
         .ok()
         .flatten()
         .is_some_and(|snapshot| {
-            snapshot.ready && super::ready::ready_is_fresh(snapshot.last_updated)
+            snapshot.ready && super::ready_state_file::ready_is_fresh(snapshot.last_updated)
         })
 }
 

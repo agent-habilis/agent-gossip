@@ -5,10 +5,10 @@
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
-//! `bench` feature exposes `agent_gossip::harness::bench`, the in-crate
+//! `bench` feature exposes `agent_gossip::harness::bench_config`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_gossip::harness::bench::{self as api, BenchConfig, BenchMessage};
+use agent_gossip::harness::bench_config::{self as api, BenchConfig, BenchMessage};
 use agent_gossip::{MeshName, MessageBody, Nickname};
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};

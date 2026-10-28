@@ -1,5 +1,5 @@
 use super::drift_warning::drift_warning;
-use super::ready::ReadyStateFile;
+use super::ready_state_file::ReadyStateFile;
 
 /// Print the session identity as a JSON object for `agent-gossip ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)

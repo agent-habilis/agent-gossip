@@ -10,7 +10,7 @@ use super::meta::meta;
 use super::peers::peers;
 use super::ping::ping;
 use super::poll::poll;
-use super::ready::ready;
+use super::ready_state_file::ready;
 use super::reject_id_encoded_flag::reject_id_encoded_flag;
 use super::state::state;
 use super::topic::topic;
