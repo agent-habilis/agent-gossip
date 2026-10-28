@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
+use super::directory_error::DirectoryError;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
 
@@ -102,10 +103,10 @@ impl Directory {
     /// # Panics
     /// Panics only if the internal collector mutex is poisoned by a
     /// panic in the background task — not reachable in normal use.
-    pub async fn open(name: Option<&str>, lookups: LookupSet) -> anyhow::Result<Self> {
+    pub async fn open(name: Option<&str>, lookups: LookupSet) -> Result<Self, DirectoryError> {
         let directory_name = match name {
             Some(value) => MeshName::new(value.to_owned())
-                .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
+                .map_err(|error| DirectoryError::InvalidName(error.to_string()))?,
             None => {
                 MeshName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid mesh name")
             }
@@ -120,7 +121,9 @@ impl Directory {
         let mesh = directory_mesh(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
         // rendezvous (it only dials an advertiser's beacon).
-        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
+        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never)
+            .await
+            .map_err(DirectoryError::Join)?;
         let mut inbound = session.messages();
         let listings = Arc::new(Mutex::new(Listings::new()));
         let (events_tx, events_rx) = mpsc::unbounded_channel();
@@ -221,12 +224,12 @@ impl Directory {
     /// # Errors
     /// Propagates a clean-shutdown error from the underlying directory
     /// [`MeshSession::leave`] (event-loop task panic / loop error).
-    pub async fn close(mut self) -> anyhow::Result<()> {
+    pub async fn close(mut self) -> Result<(), DirectoryError> {
         if let Some(task) = self.task.take() {
             task.abort();
         }
         if let Some(session) = self.session.take() {
-            session.leave().await?;
+            session.leave().await.map_err(DirectoryError::Leave)?;
         }
         Ok(())
     }

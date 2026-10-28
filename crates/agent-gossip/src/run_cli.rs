@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::cli_error::CliError;
 
 use crate::cli;
 use crate::cli::Cli;
@@ -15,7 +15,7 @@ use crate::register_build_version::register_build_version;
 /// # Errors
 /// Propagates any error from the selected subcommand — mesh setup
 /// failure, join timeout, IPC errors, invalid mesh-mode flags, etc.
-pub async fn run_cli() -> Result<()> {
+pub async fn run_cli() -> Result<(), CliError> {
     register_build_version();
     // Parse through `cli_command()` (not `Cli::parse()`) so the `help`
     // subcommand blurb override in that builder applies at runtime too.
@@ -25,5 +25,7 @@ pub async fn run_cli() -> Result<()> {
     // Box the single large await so it lives on the heap, not this frame —
     // the same lever the event loop uses (see `daemon::event_loop`); the
     // setup → run future is near clippy's `large_futures` budget.
-    Box::pin(cli::dispatch(cli)).await
+    Box::pin(cli::dispatch(cli))
+        .await
+        .map_err(CliError::Command)
 }

@@ -50,5 +50,5 @@ async fn main() -> Result<()> {
         .init();
     let result = agent_gossip::run_cli().await;
     agent_gossip::flush_log_if_pending();
-    result
+    Ok(result?)
 }

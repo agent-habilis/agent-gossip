@@ -103,3 +103,5 @@ mod register_build_version;
 mod run_cli;
 mod runtime_base;
 mod version;
+mod cli_error;
+pub use self::cli_error::CliError;

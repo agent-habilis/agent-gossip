@@ -12,6 +12,7 @@ pub use self::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusPar
 pub(crate) use self::advertiser::{DIRECTORY_ADVERTISER_COHOST, spawn_advertiser};
 pub use self::create_error::{CreateError, JoinError};
 pub use self::directory::{Directory, DirectoryEvent, MeshListing};
+pub use self::directory_error::DirectoryError;
 pub(crate) use self::in_process_session::InProcessSession;
 pub use self::join_config::{CreateConfig, JoinConfig, TopicConfig};
 pub use self::mesh_session::MeshSession;
@@ -19,6 +20,7 @@ pub use self::session_error::SessionError;
 
 mod advertiser;
 mod directory;
+mod directory_error;
 mod join_config;
 pub(crate) use self::directory::resolve_lookups_or_public;
 mod a2a_call_params;
