@@ -20,10 +20,10 @@ const KIND_ORDER: [&str; 6] = ["ip", "webrtc", "multihop", "gossip", "custom", "
 // cannot say which is selected, so a pair with both a direct path and the
 // relay live reads `ip+relay` rather than a guess.
 pub(crate) fn path_label(active: &[TransportAddr]) -> String {
-    let kinds: Vec<&str> = KIND_ORDER
+    let matching = KIND_ORDER
         .into_iter()
-        .filter(|kind| active.iter().any(|address| kind_of(address) == Some(kind)))
-        .collect();
+        .filter(|kind| active.iter().any(|address| kind_of(address) == Some(kind)));
+    let kinds: Vec<&str> = matching.collect();
     if kinds.is_empty() {
         return "unknown".to_owned();
     }
@@ -125,12 +125,13 @@ pub(crate) async fn ask_readers(
         sender,
     } = params;
     let room = (POLL_WAITERS_CAP / 2).saturating_sub(app.a2a_waiters.len());
-    let askable: Vec<Nickname> = state
-        .roster_snapshot()
+    let snapshot = state.roster_snapshot();
+    let fresh = snapshot
         .peers
         .iter()
-        .filter(|entry| !entry.quiet && entry.nickname != *author)
-        .filter(|entry| state.peer_endpoint(&entry.nickname).is_some())
+        .filter(|entry| !entry.quiet && entry.nickname != *author);
+    let reachable = fresh.filter(|entry| state.peer_endpoint(&entry.nickname).is_some());
+    let askable: Vec<Nickname> = reachable
         .take(room)
         .map(|entry| entry.nickname.clone())
         .collect();
@@ -195,11 +196,10 @@ async fn active_path(endpoint: &Endpoint, peer: habilis_network::iroh::EndpointI
     let Some(info) = endpoint.remote_info(peer).await else {
         return "unknown".to_owned();
     };
-    let active: Vec<TransportAddr> = info
+    let addrs = info
         .addrs()
-        .filter(|address| matches!(address.usage(), TransportAddrUsage::Active))
-        .map(|address| address.addr().clone())
-        .collect();
+        .filter(|address| matches!(address.usage(), TransportAddrUsage::Active));
+    let active: Vec<TransportAddr> = addrs.map(|address| address.addr().clone()).collect();
     path_label(&active)
 }
 
