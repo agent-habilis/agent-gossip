@@ -142,7 +142,7 @@ impl InProcessSession {
     /// Fails if the event loop has stopped or dropped the response.
     pub(crate) async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Authored> {
         // Two Results: the outer `?` is the channel, the inner is the loop's answer.
-        self.call(|resp| SessionRequest::Broadcast { body, resp })
+        self.call(|response| SessionRequest::Broadcast { body, response })
             .await?
     }
 
@@ -157,7 +157,7 @@ impl InProcessSession {
         to: Nickname,
         body: MessageBody,
     ) -> anyhow::Result<Authored> {
-        self.call(|resp| SessionRequest::Msg { to, body, resp })
+        self.call(|response| SessionRequest::Msg { to, body, response })
             .await?
     }
 
@@ -173,8 +173,12 @@ impl InProcessSession {
         after: Option<u64>,
         long: bool,
     ) -> anyhow::Result<crate::a2a::surfaced_event::PollBatch> {
-        self.call(|resp| SessionRequest::Poll { after, long, resp })
-            .await
+        self.call(|response| SessionRequest::Poll {
+            after,
+            long,
+            response,
+        })
+        .await
     }
 
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving; returns the
@@ -189,12 +193,12 @@ impl InProcessSession {
             note,
             waiting,
         } = status;
-        self.call(|resp| SessionRequest::TaskStatus {
+        self.call(|response| SessionRequest::TaskStatus {
             task_id,
             state,
             note,
             waiting,
-            resp,
+            response,
         })
         .await?
     }
@@ -209,11 +213,11 @@ impl InProcessSession {
         text: String,
         file: Option<crate::a2a::broadcast_params::FileRef>,
     ) -> anyhow::Result<Authored> {
-        self.call(|resp| SessionRequest::TaskArtifact {
+        self.call(|response| SessionRequest::TaskArtifact {
             task_id,
             text,
             file,
-            resp,
+            response,
         })
         .await?
     }
@@ -231,12 +235,12 @@ impl InProcessSession {
             params,
             timeout,
         } = call;
-        self.call(|resp| SessionRequest::A2aCall {
+        self.call(|response| SessionRequest::A2aCall {
             peer,
             method,
             params,
             timeout,
-            resp,
+            response,
         })
         .await
     }
@@ -246,14 +250,17 @@ impl InProcessSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
     pub(crate) async fn peers(&self) -> anyhow::Result<RosterSnapshot> {
-        self.call(|resp| SessionRequest::Peers { resp }).await
+        self.call(|response| SessionRequest::Peers { response })
+            .await
     }
 
     /// Run an RTT round and return the per-peer round-trip rows. Blocks for
     /// the ping window (the round finalizes on its deadline), so a quiet mesh
     /// returns an empty list after that delay.
     pub(crate) async fn ping(&self) -> anyhow::Result<Vec<crate::output::PingPeer>> {
-        let rows = self.call(|resp| SessionRequest::Ping { resp }).await?;
+        let rows = self
+            .call(|response| SessionRequest::Ping { response })
+            .await?;
         // Map the engine's chat-agnostic RTT rows onto the app's public ping
         // datum — same fields, distinct layers.
         Ok(rows
@@ -265,24 +272,26 @@ impl InProcessSession {
     /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
     /// valid merge; `Err` is a transport/serialize failure only.
     pub(crate) async fn state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
-        self.call(|resp| SessionRequest::StateMerge { merge, resp })
+        self.call(|response| SessionRequest::StateMerge { merge, response })
             .await?
     }
 
     /// The current derived shared-state document (the merge fold).
     pub(crate) async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
-        self.call(|resp| SessionRequest::StateGet { resp }).await
+        self.call(|response| SessionRequest::StateGet { response })
+            .await
     }
 
     /// `meta`-channel counterpart of [`state_merge`](Self::state_merge).
     pub(crate) async fn meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
-        self.call(|resp| SessionRequest::MetaMerge { merge, resp })
+        self.call(|response| SessionRequest::MetaMerge { merge, response })
             .await?
     }
 
     /// `meta`-channel counterpart of [`state_get`](Self::state_get).
     pub(crate) async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
-        self.call(|resp| SessionRequest::MetaGet { resp }).await
+        self.call(|response| SessionRequest::MetaGet { response })
+            .await
     }
 
     /// Broadcast pre-built wire bytes verbatim (no signing/chain). Testkit
@@ -292,7 +301,7 @@ impl InProcessSession {
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
     pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> anyhow::Result<()> {
-        self.call(|resp| SessionRequest::InjectRaw { bytes, resp })
+        self.call(|response| SessionRequest::InjectRaw { bytes, response })
             .await?
     }
 
@@ -310,7 +319,7 @@ impl InProcessSession {
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]
     pub(crate) async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
-        self.call(|resp| SessionRequest::ReassemblyStats { resp })
+        self.call(|response| SessionRequest::ReassemblyStats { response })
             .await
     }
 

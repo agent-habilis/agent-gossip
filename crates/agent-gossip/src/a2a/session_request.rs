@@ -14,20 +14,20 @@ pub(crate) enum SessionRequest {
     /// Broadcast a mesh chat message; echoes back the canonical [`Message`].
     Broadcast {
         body: MessageBody,
-        resp: oneshot::Sender<Result<Authored>>,
+        response: oneshot::Sender<Result<Authored>>,
     },
     /// Send a chat message to one peer; echoes back the canonical [`Message`].
     Msg {
         to: Nickname,
         body: MessageBody,
-        resp: oneshot::Sender<Result<Authored>>,
+        response: oneshot::Sender<Result<Authored>>,
     },
     Poll {
         after: Option<u64>,
         /// Long-poll: park the read up to the server cap, returning early on
         /// the first new event. `false` is an immediate read.
         long: bool,
-        resp: oneshot::Sender<crate::a2a::surfaced_event::PollBatch>,
+        response: oneshot::Sender<crate::a2a::surfaced_event::PollBatch>,
     },
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving (`a2a status`):
     /// the daemon resolves the peer from the task record and pushes it.
@@ -36,7 +36,7 @@ pub(crate) enum SessionRequest {
         state: crate::a2a::TaskState,
         note: Option<String>,
         waiting: Option<String>,
-        resp: oneshot::Sender<Result<Authored>>,
+        response: oneshot::Sender<Result<Authored>>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving
     /// (`a2a artifact`).
@@ -44,37 +44,37 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         text: String,
         file: Option<crate::a2a::broadcast_params::FileRef>,
-        resp: oneshot::Sender<Result<Authored>>,
+        response: oneshot::Sender<Result<Authored>>,
     },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).
     Peers {
-        resp: oneshot::Sender<RosterSnapshot>,
+        response: oneshot::Sender<RosterSnapshot>,
     },
     /// Run an RTT round: broadcast a ping, collect pongs for the ping window,
     /// then deliver the per-peer RTT rows. The response arrives only when the
     /// round finalizes (after the window), not immediately.
     Ping {
-        resp: oneshot::Sender<Vec<(Nickname, u64)>>,
+        response: oneshot::Sender<Vec<(Nickname, u64)>>,
     },
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: compose the body,
     /// then sign + gossip. `Err` carries a transport/serialize failure only — a
     /// merge always applies.
     StateMerge {
         merge: serde_json::Value,
-        resp: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<Result<()>>,
     },
     /// Read the current derived shared-state document (the merge fold).
     StateGet {
-        resp: oneshot::Sender<serde_json::Value>,
+        response: oneshot::Sender<serde_json::Value>,
     },
     /// `meta`-channel counterpart of [`StateMerge`](SessionRequest::StateMerge).
     MetaMerge {
         merge: serde_json::Value,
-        resp: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<Result<()>>,
     },
     /// `meta`-channel counterpart of [`StateGet`](SessionRequest::StateGet).
     MetaGet {
-        resp: oneshot::Sender<serde_json::Value>,
+        response: oneshot::Sender<serde_json::Value>,
     },
     /// A **gossip A2A call**: send a directed A2A JSON-RPC request to `peer`
     /// (which serves the safe method set) and await its response. The reply
@@ -85,7 +85,7 @@ pub(crate) enum SessionRequest {
         method: String,
         params: serde_json::Value,
         timeout: std::time::Duration,
-        resp: oneshot::Sender<serde_json::Value>,
+        response: oneshot::Sender<serde_json::Value>,
     },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject
@@ -97,7 +97,7 @@ pub(crate) enum SessionRequest {
     InjectRaw {
         bytes: bytes::Bytes,
         /// Answers with an error when the bytes do not parse, do not serialize, or do not broadcast.
-        resp: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<Result<()>>,
     },
     /// Simulate the gossip event stream terminally ending (flips
     /// `gossip_open` off, exactly what the real `None` arm does — the
@@ -110,6 +110,6 @@ pub(crate) enum SessionRequest {
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]
     ReassemblyStats {
-        resp: oneshot::Sender<(usize, usize, usize)>,
+        response: oneshot::Sender<(usize, usize, usize)>,
     },
 }

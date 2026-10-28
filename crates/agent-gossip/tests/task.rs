@@ -21,8 +21,8 @@ const TASK_WAIT: Duration = MSG_TIMEOUT;
 
 /// Parse the `Task` id out of a `SendMessage` response (v1.0
 /// `SendMessageResponse` oneof: `{"result":{"task":<Task>}}`).
-fn task_id_of(resp: &serde_json::Value) -> TaskId {
-    resp["result"]["task"]["id"]
+fn task_id_of(response: &serde_json::Value) -> TaskId {
+    response["result"]["task"]["id"]
         .as_str()
         .expect("the worker returned a Task with an id")
         .parse()
@@ -39,14 +39,14 @@ async fn creation_mints_server_id_and_returns_submitted_task() {
     alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
-    let resp = alice.create_task("t-create-bob", "review src/net").await;
-    assert!(resp["result"]["task"].is_object(), "got: {resp}");
+    let response = alice.create_task("t-create-bob", "review src/net").await;
+    assert!(response["result"]["task"].is_object(), "got: {response}");
     assert_eq!(
-        resp["result"]["task"]["status"]["state"],
+        response["result"]["task"]["status"]["state"],
         "TASK_STATE_SUBMITTED"
     );
     // The id is server-minted — a fresh uuid, not derived from our message.
-    let task_id = task_id_of(&resp);
+    let task_id = task_id_of(&response);
     assert!(!task_id.as_str().is_empty());
 
     // The worker's skill sees the incoming brief as a `message`-kind task event.
@@ -114,8 +114,8 @@ async fn full_lifecycle_worker_completes_after_approval() {
     alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
-    let resp = alice.create_task("t-life-bob", "port the parser").await;
-    let task_id = task_id_of(&resp);
+    let response = alice.create_task("t-life-bob", "port the parser").await;
+    let task_id = task_id_of(&response);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
 
     // Worker accepts (working) → initiator sees it.
@@ -180,8 +180,8 @@ async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
     alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
-    let resp = alice.create_task("t-left-bob", "doomed work").await;
-    let task_id = task_id_of(&resp);
+    let response = alice.create_task("t-left-bob", "doomed work").await;
+    let task_id = task_id_of(&response);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
     bob.task_status(&task_id, TaskState::Working, Some("on it"))
         .await;
@@ -360,10 +360,10 @@ async fn not_surfaced_to_third_party() {
         "mesh formed"
     );
 
-    let resp = alice
+    let response = alice
         .create_task(bob.nickname.as_str(), "private work")
         .await;
-    let task_id = task_id_of(&resp);
+    let task_id = task_id_of(&response);
     bob.task_status(&task_id, TaskState::Working, None).await;
     assert!(
         bob.wait_task_message(TASK_WAIT).await,
@@ -408,14 +408,14 @@ async fn a_peer_cannot_open_tasks_past_its_quota() {
     let mut opened = 0;
     let mut refusal = None;
     for _ in 0..CEILING {
-        let resp = alice.create_task(bob.nickname.as_str(), "work").await;
-        if let Some(message) = resp["error"]["message"].as_str() {
+        let response = alice.create_task(bob.nickname.as_str(), "work").await;
+        if let Some(message) = response["error"]["message"].as_str() {
             refusal = Some(message.to_owned());
             break;
         }
         assert!(
-            resp["result"]["task"]["id"].is_string(),
-            "neither a task nor an error: {resp}"
+            response["result"]["task"]["id"].is_string(),
+            "neither a task nor an error: {response}"
         );
         opened += 1;
     }

@@ -102,7 +102,7 @@ pub(crate) enum A2aOp {
 /// One in-flight request from the HTTP task to the event loop.
 pub(crate) struct A2aRequest {
     pub op: A2aOp,
-    pub resp: oneshot::Sender<Result<Value, RpcError>>,
+    pub response: oneshot::Sender<Result<Value, RpcError>>,
 }
 
 /// Map a JSON-RPC `method` + `params` (+ the URL-derived target) to an op.

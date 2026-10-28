@@ -249,7 +249,10 @@ async fn execute(
     req_tx: &mpsc::Sender<A2aRequest>,
 ) -> Result<serde_json::Value, RpcError> {
     let (resp_tx, resp_rx) = oneshot::channel();
-    let request = A2aRequest { op, resp: resp_tx };
+    let request = A2aRequest {
+        op,
+        response: resp_tx,
+    };
     if req_tx.send(request).await.is_err() {
         return Err(RpcError {
             code: -32603,

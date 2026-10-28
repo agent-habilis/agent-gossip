@@ -218,17 +218,17 @@ fn log_unless_done(delivered: Delivered) {
 /// Answer a session request once its sends have an outcome. Returns whether a send started.
 fn answer_when_sent(
     outcome: anyhow::Result<(Authored, Vec<PendingSend>)>,
-    resp: tokio::sync::oneshot::Sender<anyhow::Result<Authored>>,
+    response: tokio::sync::oneshot::Sender<anyhow::Result<Authored>>,
 ) -> bool {
     match outcome {
         Ok((message, pending)) => {
             when_sent(pending, move |verdict| {
-                let _ = resp.send(verdict.map(|()| message));
+                let _ = response.send(verdict.map(|()| message));
             });
             true
         }
         Err(error) => {
-            let _ = resp.send(Err(error));
+            let _ = response.send(Err(error));
             false
         }
     }
@@ -1881,11 +1881,11 @@ pub(crate) async fn send_directed_rpc(
 /// `Ping` handler, which passes no responder and emits the `ping_report`
 /// event instead.
 async fn session_ping(
-    resp: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
+    response: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) -> bool {
-    habilis_network::ops::start_ping_round(state, ctx, Some(resp)).await;
+    habilis_network::ops::start_ping_round(state, ctx, Some(response)).await;
     true
 }
 
@@ -1935,7 +1935,7 @@ pub(crate) async fn handle_session_request(
     app.drain_delivered_legs();
     retain_sent_legs(app, state);
     match req {
-        SessionRequest::Broadcast { body, resp } => {
+        SessionRequest::Broadcast { body, response } => {
             let outcome = send_broadcast(
                 BroadcastParams {
                     mesh,
@@ -1949,10 +1949,10 @@ pub(crate) async fn handle_session_request(
             .await
             .map(|(_id, message)| message);
             let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
+            let _ = response.send(outcome);
             sent_ok
         }
-        SessionRequest::Msg { to, body, resp } => {
+        SessionRequest::Msg { to, body, response } => {
             let outcome = send_msg(
                 MsgParams {
                     mesh,
@@ -1968,10 +1968,14 @@ pub(crate) async fn handle_session_request(
             .await;
             answer_when_sent(
                 outcome.map(|(_id, message, pending)| (message, pending)),
-                resp,
+                response,
             )
         }
-        SessionRequest::Poll { after, long, resp } => {
+        SessionRequest::Poll {
+            after,
+            long,
+            response,
+        } => {
             // Same policy as the CLI/IPC `Poll` arm: respond now if events are
             // buffered, else (with `long`) park a typed waiter the loop
             // fulfills/expires. A parked waiter broadcasts nothing → `false`.
@@ -1983,7 +1987,7 @@ pub(crate) async fn handle_session_request(
                     after,
                     long,
                     now: tokio::time::Instant::now(),
-                    responder: crate::a2a::surfaced_event::PollResponder::Typed(resp),
+                    responder: crate::a2a::surfaced_event::PollResponder::Typed(response),
                 });
             false
         }
@@ -1992,7 +1996,7 @@ pub(crate) async fn handle_session_request(
             state: task_state,
             note,
             waiting,
-            resp,
+            response,
         } => {
             let outcome = emit_task_status(
                 TaskStatusParams {
@@ -2009,13 +2013,13 @@ pub(crate) async fn handle_session_request(
                 output,
             )
             .await;
-            answer_when_sent(outcome, resp)
+            answer_when_sent(outcome, response)
         }
         SessionRequest::TaskArtifact {
             task_id,
             text,
             file,
-            resp,
+            response,
         } => {
             let outcome = emit_task_artifact(
                 TaskArtifactEmitParams {
@@ -2031,13 +2035,13 @@ pub(crate) async fn handle_session_request(
                 output,
             )
             .await;
-            answer_when_sent(outcome, resp)
+            answer_when_sent(outcome, response)
         }
-        SessionRequest::Peers { resp } => {
-            let _ = resp.send(state.roster_snapshot());
+        SessionRequest::Peers { response } => {
+            let _ = response.send(state.roster_snapshot());
             false
         }
-        SessionRequest::StateMerge { merge, resp } => {
+        SessionRequest::StateMerge { merge, response } => {
             let outcome = habilis_network::ops::broadcast_state_merge(
                 state,
                 habilis_network::ops::StateMergeParams {
@@ -2052,14 +2056,14 @@ pub(crate) async fn handle_session_request(
             )
             .await;
             let sent = outcome.is_ok();
-            let _ = resp.send(outcome.map(|_| ()));
+            let _ = response.send(outcome.map(|_| ()));
             sent
         }
-        SessionRequest::StateGet { resp } => {
-            let _ = resp.send(state.doc(Channel::State).to_json());
+        SessionRequest::StateGet { response } => {
+            let _ = response.send(state.doc(Channel::State).to_json());
             false
         }
-        SessionRequest::MetaMerge { merge, resp } => {
+        SessionRequest::MetaMerge { merge, response } => {
             let outcome = habilis_network::ops::broadcast_state_merge(
                 state,
                 habilis_network::ops::StateMergeParams {
@@ -2074,20 +2078,20 @@ pub(crate) async fn handle_session_request(
             )
             .await;
             let sent = outcome.is_ok();
-            let _ = resp.send(outcome.map(|_| ()));
+            let _ = response.send(outcome.map(|_| ()));
             sent
         }
-        SessionRequest::MetaGet { resp } => {
-            let _ = resp.send(state.doc(Channel::Meta).to_json());
+        SessionRequest::MetaGet { response } => {
+            let _ = response.send(state.doc(Channel::Meta).to_json());
             false
         }
-        SessionRequest::Ping { resp } => session_ping(resp, state, ctx).await,
+        SessionRequest::Ping { response } => session_ping(response, state, ctx).await,
         SessionRequest::A2aCall {
             peer,
             method,
             params: rpc_params,
             timeout,
-            resp,
+            response,
         } => {
             broadcast_a2a_call(
                 BroadcastA2aCallParams {
@@ -2097,7 +2101,7 @@ pub(crate) async fn handle_session_request(
                     method: &method,
                     params: rpc_params,
                     timeout,
-                    responder: crate::a2a::a2a_app::A2aResponder::Typed(resp),
+                    responder: crate::a2a::a2a_app::A2aResponder::Typed(response),
                     file: None,
                 },
                 state,
@@ -2110,10 +2114,10 @@ pub(crate) async fn handle_session_request(
         // Raw injection (adversarial only): broadcast the bytes verbatim, no
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
-        SessionRequest::InjectRaw { bytes, resp } => {
+        SessionRequest::InjectRaw { bytes, response } => {
             // The bytes go on the wire as given; see `inject_raw_frame`.
             let outcome = inject_raw_frame(bytes, sender).await;
-            let _ = resp.send(outcome);
+            let _ = response.send(outcome);
             false
         }
         // Simulated stream end (adversarial only): indistinguishable from
@@ -2127,8 +2131,8 @@ pub(crate) async fn handle_session_request(
         // Reassembly accounting snapshot (adversarial only) for the
         // shard-budget tripwires.
         #[cfg(feature = "adversarial")]
-        SessionRequest::ReassemblyStats { resp } => {
-            let _ = resp.send(state.reassembly_mut().stats());
+        SessionRequest::ReassemblyStats { response } => {
+            let _ = response.send(state.reassembly_mut().stats());
             false
         }
     }

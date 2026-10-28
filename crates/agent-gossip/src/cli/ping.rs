@@ -14,8 +14,8 @@ pub(super) async fn ping(opts: PingOpts) -> Result<()> {
         legacy_output: _,
     } = opts;
     let cmd = IpcCommand::Ping { mesh };
-    let resp = super::send::send(&cmd, &nickname).await?;
-    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    let response = super::send::send(&cmd, &nickname).await?;
+    let parsed: MsgResponse = serde_json::from_str(&response)?;
     if !parsed.ok {
         anyhow::bail!(
             "{}",

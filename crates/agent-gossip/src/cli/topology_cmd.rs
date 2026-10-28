@@ -8,9 +8,9 @@ use crate::a2a::ipc_command::IpcCommand;
 /// daemon, as JSON.
 pub(super) async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
     let cmd = IpcCommand::Topology { mesh: opts.gossip };
-    let resp = super::send::send(&cmd, &opts.nickname).await?;
-    println!("{resp}");
-    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    let response = super::send::send(&cmd, &opts.nickname).await?;
+    println!("{response}");
+    let parsed: MsgResponse = serde_json::from_str(&response)?;
     if !parsed.ok {
         std::process::exit(1);
     }

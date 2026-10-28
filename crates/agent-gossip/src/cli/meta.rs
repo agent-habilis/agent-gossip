@@ -29,9 +29,9 @@ pub(super) async fn meta(opts: MetaOpts) -> Result<()> {
             nickname,
         } => (IpcCommand::MetaGet { mesh }, nickname),
     };
-    let resp = super::send::send(&cmd, &nickname).await?;
-    println!("{resp}");
-    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    let response = super::send::send(&cmd, &nickname).await?;
+    println!("{response}");
+    let parsed: MsgResponse = serde_json::from_str(&response)?;
     if !parsed.ok {
         std::process::exit(1);
     }

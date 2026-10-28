@@ -27,8 +27,8 @@ async fn get_task_shows_the_waiting_reason_until_the_next_status() {
     alice.broadcast("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
-    let resp = alice.create_task("t-wait-bob", "port the parser").await;
-    let task_id: TaskId = resp["result"]["task"]["id"]
+    let response = alice.create_task("t-wait-bob", "port the parser").await;
+    let task_id: TaskId = response["result"]["task"]["id"]
         .as_str()
         .expect("the worker returned a Task with an id")
         .parse()

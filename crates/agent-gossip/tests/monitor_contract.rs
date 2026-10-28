@@ -1841,9 +1841,9 @@ fn channel_wire_contract(channel: Channel) {
         "{label} merge should exit 0: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let resp: serde_json::Value =
+    let response: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("merge stdout is JSON");
-    assert_eq!(resp["ok"], true, "{label} merge should report ok:true");
+    assert_eq!(response["ok"], true, "{label} merge should report ok:true");
 
     // The joiner surfaces it on its stream as an `event:"<chan>"`
     // record carrying the merge document + the freshly-derived document.

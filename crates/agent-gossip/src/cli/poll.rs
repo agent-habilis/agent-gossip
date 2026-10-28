@@ -68,24 +68,24 @@ pub(super) async fn poll(mut opts: PollOpts) -> Result<()> {
             return Ok(());
         }
         let started = tokio::time::Instant::now();
-        let resp = super::send::send(&cmd, &nickname).await?;
+        let response = super::send::send(&cmd, &nickname).await?;
         // An empty response is the daemon closing the connection without
         // writing (shutdown mid-park) — `round_trip` maps that EOF to `""`.
         // Surface it instead of printing a blank line / retrying forever.
         anyhow::ensure!(
-            !resp.is_empty(),
+            !response.is_empty(),
             "gossip daemon closed the connection without a response (shutting down?)"
         );
         // Clean daemon shutdown: end the poll with the truthful empty batch
         // and exit 0 — re-issuing would hit a socket that is about to vanish.
         // The sentinel is a control response and never reaches stdout. A
         // daemon that dies WITHOUT sending it (crash, SIGKILL) still errors.
-        if resp == crate::a2a::surfaced_event::SHUTDOWN_SENTINEL {
+        if response == crate::a2a::surfaced_event::SHUTDOWN_SENTINEL {
             println!("[]");
             return Ok(());
         }
-        if !(long && resp == "[]") {
-            println!("{resp}");
+        if !(long && response == "[]") {
+            println!("{response}");
             return Ok(());
         }
         // Both empty paths render exactly `[]`; an error response is a JSON

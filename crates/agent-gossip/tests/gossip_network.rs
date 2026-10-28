@@ -1413,9 +1413,9 @@ fn test_ipc_poll_long_park_times_out_empty() {
     let cursor = after.map_or(String::new(), |seq| format!("\"after\":{seq},"));
     let line = format!("{{\"command\":\"poll\",\"mesh\":\"{mesh}\",{cursor}\"long\":true}}");
     let started = Instant::now();
-    let resp = ipc_raw(&mesh, &creator.nickname, &line);
+    let response = ipc_raw(&mesh, &creator.nickname, &line);
     let elapsed = started.elapsed();
-    assert_eq!(resp, "[]", "park elapsed quietly → empty array");
+    assert_eq!(response, "[]", "park elapsed quietly → empty array");
     assert!(
         elapsed >= Duration::from_millis(700),
         "should have parked ~1s, took {elapsed:?}"

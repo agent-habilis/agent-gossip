@@ -10,7 +10,7 @@ pub(super) async fn peers(opts: PeersOpts) -> Result<()> {
         legacy_output: _,
     } = opts;
     let cmd = IpcCommand::Peers { mesh };
-    let resp = super::send::send(&cmd, &nickname).await?;
-    println!("{resp}");
+    let response = super::send::send(&cmd, &nickname).await?;
+    println!("{response}");
     Ok(())
 }

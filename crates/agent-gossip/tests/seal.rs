@@ -24,10 +24,13 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
 
     // A delegates a task to B — a directed, sealed `message/send`.
-    let resp = alice
+    let response = alice
         .create_task("seal-bob", "the private brief for bob")
         .await;
-    assert!(resp["result"]["task"].is_object(), "task created: {resp}");
+    assert!(
+        response["result"]["task"].is_object(),
+        "task created: {response}"
+    );
 
     // B is the addressee: it decrypts the sealed brief and surfaces it.
     assert!(

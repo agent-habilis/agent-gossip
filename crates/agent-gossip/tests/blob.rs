@@ -29,8 +29,8 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
 
     // `create_task` waits for bob's card (the directed-seal key) before sending.
-    let resp = alice.create_task("t-blob-bob", "render the report").await;
-    let task_id = resp["result"]["task"]["id"]
+    let response = alice.create_task("t-blob-bob", "render the report").await;
+    let task_id = response["result"]["task"]["id"]
         .as_str()
         .expect("worker returned a Task id")
         .parse()

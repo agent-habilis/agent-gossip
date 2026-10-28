@@ -207,7 +207,7 @@ impl NodeDriver for A2aApp {
         state: &mut EventLoopState,
         ctx: &HandlerCtx<'_>,
     ) {
-        let A2aRequest { op, resp } = req;
+        let A2aRequest { op, response } = req;
         // A directed `message/send` (task creation) needs the synchronous gossip
         // request/response round-trip — the peer mints the task id and returns the
         // Task. Route it through the waiter so the HTTP handler's oneshot resolves
@@ -225,7 +225,7 @@ impl NodeDriver for A2aApp {
                     method: "SendMessage",
                     params: serde_json::json!({ "message": message }),
                     timeout: Duration::from_secs(crate::a2a::tuning::CALL_TIMEOUT_SECS),
-                    responder: A2aResponder::Rpc(resp),
+                    responder: A2aResponder::Rpc(response),
                     file: None,
                 },
                 state,
@@ -251,7 +251,7 @@ impl NodeDriver for A2aApp {
             &out,
         )
         .await;
-        let _ = resp.send(outcome);
+        let _ = response.send(outcome);
     }
 
     async fn handle_ipc(

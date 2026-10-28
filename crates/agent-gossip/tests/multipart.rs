@@ -105,7 +105,7 @@ async fn shard_repair_reserves_cached_big_group_frames() {
     // logical message id). Bob already holds them — dedup will drop the
     // re-delivery — but the serve side must find and re-send them.
     let alice_nick = alice.nickname.clone();
-    let resp = bob
+    let response = bob
         .a2a_call(
             &alice_nick,
             "shard/repair",
@@ -113,8 +113,8 @@ async fn shard_repair_reserves_cached_big_group_frames() {
         )
         .await;
     assert_eq!(
-        resp["result"]["resent"], 2,
-        "the author re-served the cached frames: {resp}"
+        response["result"]["resent"], 2,
+        "the author re-served the cached frames: {response}"
     );
 
     // An unknown group is a clean zero, not an error.
@@ -196,8 +196,8 @@ async fn multishard_task_artifact_reassembles_into_one() {
     );
 
     // Alice creates a task on bob (native SendMessage); bob mints the id.
-    let resp = alice.create_task("mp-ex-bob", "produce a big report").await;
-    let task_id: TaskId = resp["result"]["task"]["id"]
+    let response = alice.create_task("mp-ex-bob", "produce a big report").await;
+    let task_id: TaskId = response["result"]["task"]["id"]
         .as_str()
         .expect("the worker returned a Task id")
         .parse()
