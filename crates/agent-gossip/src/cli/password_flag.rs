@@ -69,7 +69,10 @@ mod tests {
 
     #[test]
     fn absent_flag_is_no_password() {
-        assert!(resolve_password(None).unwrap().is_none());
+        assert!(
+            resolve_password(None).unwrap().is_none(),
+            "no password flag resolves to no password"
+        );
     }
 
     #[test]
@@ -77,13 +80,23 @@ mod tests {
         let password = resolve_password(Some(PasswordFlag::Inline("hunter2".to_owned())))
             .unwrap()
             .unwrap();
-        assert_eq!(password.as_str(), "hunter2");
+        assert_eq!(
+            password.as_str(),
+            "hunter2",
+            "the inline password is kept as given"
+        );
     }
 
     #[test]
     fn empty_and_whitespace_values_are_rejected() {
-        assert!(resolve_password(Some(PasswordFlag::Inline(String::new()))).is_err());
-        assert!(resolve_password(Some(PasswordFlag::Inline("   ".to_owned()))).is_err());
+        assert!(
+            resolve_password(Some(PasswordFlag::Inline(String::new()))).is_err(),
+            "an empty inline password is rejected"
+        );
+        assert!(
+            resolve_password(Some(PasswordFlag::Inline("   ".to_owned()))).is_err(),
+            "a whitespace-only inline password is rejected"
+        );
     }
 
     #[test]

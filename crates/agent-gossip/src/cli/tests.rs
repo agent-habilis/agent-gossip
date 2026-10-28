@@ -40,7 +40,11 @@ fn a_task_method_with_a_task_id_sends_only_the_id() {
 fn a_task_method_without_a_task_id_is_an_error() {
     for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
         let error = params(method, None, None, None).unwrap_err().to_string();
-        assert_eq!(error, format!("--method {method} requires --task-id"));
+        assert_eq!(
+            error,
+            format!("--method {method} requires --task-id"),
+            "a method that needs a task id names the flag it needs"
+        );
     }
 }
 
@@ -48,14 +52,28 @@ fn a_task_method_without_a_task_id_is_an_error() {
 fn send_message_carries_text_task_id_and_label() {
     let sent = params("SendMessage", Some("hi"), Some(TASK), Some("name")).unwrap();
     let message = &sent["message"];
-    assert_eq!(message["parts"][0]["text"], "hi");
-    assert_eq!(message["taskId"], TASK);
-    assert_eq!(message["contextId"], MeshId::from(MESH).as_str());
-    assert_eq!(sent.as_object().unwrap().len(), 1);
+    assert_eq!(
+        message["parts"][0]["text"], "hi",
+        "the text becomes the message part"
+    );
+    assert_eq!(
+        message["taskId"], TASK,
+        "the task id is carried on the message"
+    );
+    assert_eq!(
+        message["contextId"],
+        MeshId::from(MESH).as_str(),
+        "the context id is the mesh id"
+    );
+    assert_eq!(
+        sent.as_object().unwrap().len(),
+        1,
+        "only the message is sent"
+    );
 }
 
 #[test]
 fn a_method_without_sugar_sends_an_empty_object() {
     let sent = params("ListTasks", Some("ignored"), Some(TASK), None).unwrap();
-    assert_eq!(sent, json!({}));
+    assert_eq!(sent, json!({}), "an empty request sends an empty object");
 }

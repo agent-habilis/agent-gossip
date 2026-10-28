@@ -256,8 +256,8 @@ fn parse_variants(specs: &[String]) -> Result<Vec<Variant>, Box<dyn std::error::
             let (head, args) = spec.split_once('=').unwrap_or((spec.as_str(), ""));
             let (label, nodes) = match head.split_once('@') {
                 Some((label, count)) => {
-                    let parsed = count
-                        .parse::<usize>()
+                    let parsed: usize = count
+                        .parse()
                         .map_err(|_| format!("variant {spec:?}: {count:?} is not a node count"))?;
                     (label, Some(parsed.max(1)))
                 }
@@ -762,7 +762,7 @@ fn parse_ps_time(field: &str) -> f64 {
         .trim()
         .rsplit(':')
         .zip([1.0, 60.0, 3600.0])
-        .map(|(part, scale)| part.parse::<f64>().unwrap_or(0.0) * scale)
+        .map(|(part, scale)| part.parse().unwrap_or(0.0) * scale)
         .sum()
 }
 
@@ -773,10 +773,12 @@ fn proc_stat_cpu(pid: u32) -> Option<Cpu> {
     // follows starts at field 3, putting utime at index 11 and stime at 12.
     let rest = text.rsplit_once(')')?.1;
     let fields: Vec<&str> = rest.split_whitespace().collect();
+    let user: f64 = fields.get(11)?.parse().ok()?;
+    let system: f64 = fields.get(12)?.parse().ok()?;
     let ticks = clock_ticks();
     Some(Cpu {
-        user: fields.get(11)?.parse::<f64>().ok()? / ticks,
-        system: fields.get(12)?.parse::<f64>().ok()? / ticks,
+        user: user / ticks,
+        system: system / ticks,
     })
 }
 

@@ -423,7 +423,10 @@ mod tests {
     #[test]
     fn rewrites_the_url_when_streamed_one_byte_at_a_time() {
         let out = run_bytewise(&card_response("http://origin.internal:9999/rpc"));
-        assert!(body_of(&out).contains("http://127.0.0.1:8080/rpc"));
+        assert!(
+            body_of(&out).contains("http://127.0.0.1:8080/rpc"),
+            "the rpc url is rewritten to the local base"
+        );
     }
 
     #[test]
@@ -448,7 +451,10 @@ mod tests {
         )
         .into_bytes();
         let out = run(&response);
-        assert!(body_of(&out).contains("http://127.0.0.1:8080/rpc"));
+        assert!(
+            body_of(&out).contains("http://127.0.0.1:8080/rpc"),
+            "the rpc url is rewritten to the local base"
+        );
     }
 
     #[test]
@@ -509,7 +515,11 @@ mod tests {
 
     #[test]
     fn rewrite_url_leaves_non_http_targets_alone() {
-        assert_eq!(rewrite_url("grpc://origin:9999", BASE), None);
+        assert_eq!(
+            rewrite_url("grpc://origin:9999", BASE),
+            None,
+            "a non-http origin is not rewritten"
+        );
         assert_eq!(
             rewrite_url("http://origin:9999", BASE).as_deref(),
             Some("http://127.0.0.1:8080")
