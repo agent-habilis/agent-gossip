@@ -1,29 +1,29 @@
-abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|11|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/card.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/ipc_command.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/node.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/harness/test_key.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/mcp/mcp_instructions.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/output/node_sink.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/bench.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/build.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/ci.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/clean.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/coverage.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/fmt.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/install.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/lint.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/plan.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/proptest.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/release.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/run.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/test.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/uninstall.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/util/ensure_installed.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/tasks/src/util/sweep_stale_artifacts.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: module msg holds the type Msg (file named after the type, O9); renaming it would move the public Msg
+abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|11|open: external: ChainStamp.prev and Shard.idx are habilis-network field names
+abbrev_name|crates/agent-gossip/src/a2a/card.rs|1|open: external: the addr() method is a habilis-network API name
+abbrev_name|crates/agent-gossip/src/a2a/ipc_command.rs|3|open: external: Authored.prev is a habilis-network field name
+abbrev_name|crates/agent-gossip/src/a2a/node.rs|2|open: external: IpcRequest.cmd and IpcRequest.resp are habilis-network field names
+abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|1|open: external: the addr() method is a habilis-network API name
+abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|1|open: external: the addr() method is a habilis-network API name
+abbrev_name|crates/agent-gossip/src/harness/test_key.rs|3|open: external: ChainStamp.prev and Shard.idx are habilis-network field names
+abbrev_name|crates/agent-gossip/src/mcp/mcp_instructions.rs|6|open: false positive: the words are prose inside a string literal with escaped quotes, which the gate does not blank
+abbrev_name|crates/agent-gossip/src/output/node_sink.rs|2|open: external: NodeEvent::Presence.msg is a habilis-network field name
+abbrev_name|crates/tasks/src/bench.rs|4|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/build.rs|6|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/ci.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/clean.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/coverage.rs|3|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/fmt.rs|3|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/install.rs|3|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/lint.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/plan.rs|6|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/proptest.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/release.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/run.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/test.rs|4|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/uninstall.rs|2|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/util/ensure_installed.rs|3|open: external: the cmd! macro is xshell's name
+abbrev_name|crates/tasks/src/util/sweep_stale_artifacts.rs|2|open: external: the cmd! macro is xshell's name
 anyhow_pub|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|2|open: A public signature returns a typed error, not anyhow
 anyhow_pub|crates/agent-gossip/src/a2a/status_update_params.rs|4|open: A public signature returns a typed error, not anyhow
 anyhow_pub|crates/agent-gossip/src/api/directory.rs|2|open: A public signature returns a typed error, not anyhow
