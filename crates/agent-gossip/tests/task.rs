@@ -42,12 +42,15 @@ async fn creation_mints_server_id_and_returns_submitted_task() {
     let response = alice.create_task("t-create-bob", "review src/net").await;
     assert!(response["result"]["task"].is_object(), "got: {response}");
     assert_eq!(
-        response["result"]["task"]["status"]["state"],
-        "TASK_STATE_SUBMITTED"
+        response["result"]["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
+        "a new task starts in the submitted state"
     );
     // The id is server-minted — a fresh uuid, not derived from our message.
     let task_id = task_id_of(&response);
-    assert!(!task_id.as_str().is_empty());
+    assert!(
+        !task_id.as_str().is_empty(),
+        "the server mints a non-empty task id"
+    );
 
     // The worker's skill sees the incoming brief as a `message`-kind task event.
     assert!(

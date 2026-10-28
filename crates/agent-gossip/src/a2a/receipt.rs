@@ -95,9 +95,14 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&receipt).unwrap(),
-            r#"{"ref":"abc","state":"delivered"}"#
+            r#"{"ref":"abc","state":"delivered"}"#,
+            "a delivered receipt serializes its ref and state"
         );
         let read: Receipt = serde_json::from_str(r#"{"ref":"abc","state":"read"}"#).unwrap();
-        assert_eq!(read.state, ReceiptState::Read);
+        assert_eq!(
+            read.state,
+            ReceiptState::Read,
+            "a read receipt parses to the read state"
+        );
     }
 }
