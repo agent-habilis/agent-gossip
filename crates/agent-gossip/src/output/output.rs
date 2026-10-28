@@ -249,43 +249,30 @@ impl Output {
         }
         let state = leg.state;
         let is_self = leg.is_self;
-        let (id, mesh, author, peer, task_id, text) = (
-            leg.id.to_owned(),
-            leg.mesh.to_owned(),
-            leg.author.to_owned(),
-            leg.peer.to_owned(),
-            leg.task_id.to_owned(),
-            leg.text.to_owned(),
-        );
+        let id = leg.id.to_owned();
+        let mesh = leg.mesh.to_owned();
+        let author = leg.author.to_owned();
+        let peer = leg.peer.to_owned();
+        let task_id = leg.task_id.to_owned();
+        let text = leg.text.to_owned();
         let label = leg.label.map(ToOwned::to_owned);
         let message = leg.message.cloned().map(Box::new);
         self.dispatch(
             || OutputEvent::TaskMessage {
-                id: id.clone(),
-                mesh: mesh.clone(),
-                author: author.clone(),
-                peer: peer.clone(),
-                task_id: task_id.clone(),
+                id,
+                mesh,
+                author,
+                peer,
+                task_id,
                 state,
-                text: text.clone(),
-                label: label.clone(),
-                message: message.clone(),
+                text,
+                label,
+                message,
                 is_self,
             },
             |mode| match mode {
                 OutputMode::Json => {
-                    emit(&simple_event::format_task_message_json(&TaskMessageLeg {
-                        id: &id,
-                        mesh: &mesh,
-                        author: &author,
-                        peer: &peer,
-                        task_id: &task_id,
-                        state,
-                        text: &text,
-                        label: label.as_deref(),
-                        message: message.as_deref(),
-                        is_self,
-                    }));
+                    emit(&simple_event::format_task_message_json(leg));
                 }
                 OutputMode::Silent => {}
             },
