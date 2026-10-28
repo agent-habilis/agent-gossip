@@ -398,16 +398,12 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined U26: this is an application crate (S4), so its public structs with public fields do not use `#[non_exhaustive]`; callers build them directly and fix them in the same change.
 - Declined D1: AGENTS drops derivable doc comments, so a public item gets a doc comment only when it states a why that the signature cannot.
 - Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
-- Declined P1: there are 108 turbofish sites and many inferred types; the compiler and review catch the unclear inference, so the code keeps the inference where it reads well.
-- Declined P4: the `.into()` and `.parse()` calls take their target from the surrounding signature or field, so an explicit type would repeat it at each call site.
 - Declined P5: a complex iterator chain is typed by its binding or its `collect` target, and the compiler checks that type, so no extra annotation is added.
 - Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
 - Declined B5: no clone is timed against a borrow, because the crate runs on the network path where the copy cost is small next to a send, so the choice is made per site on readability.
-- Declined I13 for private functions: a private function that takes a bool keeps it when its name says what true means, because an enum there adds a type for one call site.
 - Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.
 - Declined I6: the 34 functions that return `Vec` are application and test helpers, which I7 allows; an iterator would make most callers collect again.
-- Declined I9: the fixture helpers take `&[(&str, &str)]`, so array literals pass at the call site without `.iter()`; a slice is the simpler type when the helper only iterates.
 - Declined U20: the 4 `#[doc(hidden)]` items in `harness` and `lib.rs` exist for the test suite and the adversarial feature; no crate outside this repo calls them, so they stay public for the tests only.
 
 ## Agent Restrictions
