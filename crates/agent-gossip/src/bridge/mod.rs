@@ -1,6 +1,5 @@
 pub(crate) use self::a2a_alpn::A2A_ALPN;
 pub(crate) use self::a2a_ticket_label::A2A_TICKET_LABEL;
-pub(crate) use self::bridge::connect;
 pub(crate) use self::expose_params::{ExposeParams, expose};
 pub(crate) use self::secret_len::SECRET_LEN;
 pub(crate) use self::ticket_directory::{TicketDirectory, TicketDirectoryEvent};
@@ -14,7 +13,7 @@ mod announce;
     clippy::module_inception,
     reason = "the primary type Bridge is named after this directory, per O9"
 )]
-mod bridge;
+pub(crate) mod bridge;
 mod card_rewriter;
 mod expose_params;
 mod local_gate;

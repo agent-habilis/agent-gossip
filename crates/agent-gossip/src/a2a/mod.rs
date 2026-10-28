@@ -10,7 +10,7 @@ pub use self::model::{
 };
 // Compatibility facade: the HTTP tunnel is a bridge subsystem, not A2A core.
 pub(crate) use crate::bridge::{
-    ExposeParams, TicketDirectory, TicketDirectoryEvent, connect, expose, ticket_requires_password,
+    ExposeParams, TicketDirectory, TicketDirectoryEvent, expose, ticket_requires_password,
 };
 
 pub(crate) mod a2a_app;

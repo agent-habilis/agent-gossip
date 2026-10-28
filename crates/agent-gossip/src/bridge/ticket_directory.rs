@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use habilis_network::ops::directory::directory_mesh;
+use habilis_network::ops::directory;
 use habilis_network::protocol::{LookupOpts, LookupSet, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::CoHostPolicy;
 use habilis_network::runtime::tuning::{
@@ -180,7 +180,7 @@ pub(crate) fn spawn_ticket_advertiser(
     // every tick.
     let body = ad.to_body()?;
     Ok(tokio::spawn(async move {
-        let mesh = directory_mesh(&directory, lookups);
+        let mesh = directory::directory_mesh(&directory, lookups);
         let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
         {
             Ok(session) => session,
@@ -235,7 +235,7 @@ impl TicketDirectory {
     /// The directory session cannot be established.
     pub(crate) async fn open(name: MeshName, lookups: LookupSet) -> Result<Self> {
         let resolved = resolve_lookups_or_public(!directory_private_for_test(), lookups);
-        let mesh = directory_mesh(&name, resolved);
+        let mesh = directory::directory_mesh(&name, resolved);
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let listings = Arc::new(Mutex::new(TicketListings::new()));

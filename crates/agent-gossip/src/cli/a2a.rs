@@ -48,7 +48,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
                 }
                 other => super::password_flag::resolve_password(other)?,
             };
-            crate::a2a::connect(&ticket, port, password, allow_anonymous).await
+            crate::bridge::bridge::connect(&ticket, port, password, allow_anonymous).await
         }
         A2aAction::Discover {
             directory,
