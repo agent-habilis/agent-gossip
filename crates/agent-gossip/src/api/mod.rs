@@ -15,6 +15,7 @@ pub use self::directory::{Directory, DirectoryEvent, MeshListing};
 pub(crate) use self::in_process_session::InProcessSession;
 pub use self::join_config::{CreateConfig, JoinConfig, TopicConfig};
 pub use self::mesh_session::MeshSession;
+pub use self::session_error::SessionError;
 
 mod advertiser;
 mod directory;
@@ -24,6 +25,7 @@ mod a2a_call_params;
 mod create_error;
 mod in_process_session;
 mod mesh_session;
+mod session_error;
 mod spawn_env;
 
 // Last, so it does not trip `clippy::items_after_test_module`.

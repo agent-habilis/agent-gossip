@@ -8,6 +8,7 @@ use super::a2a_call_params::{A2aCallParams, TaskStatusParams};
 use super::advertiser::Advertiser;
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
+use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::a2a::session_request::SessionRequest;
@@ -54,6 +55,14 @@ impl InProcessSession {
         }
     }
 
+    /// As [`Self::call`], for a loop answer that is itself an `anyhow` result.
+    async fn call_loop<T>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<anyhow::Result<T>>) -> SessionRequest,
+    ) -> Result<T, SessionError> {
+        self.call(build).await?.map_err(SessionError::Loop)
+    }
+
     /// Push a request carrying a `oneshot` reply channel and await the answer.
     /// `build` receives the reply sender and returns the variant to send, so
     /// both failure legs — the loop stopped, the loop dropped the channel —
@@ -61,12 +70,13 @@ impl InProcessSession {
     async fn call<T>(
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> SessionRequest,
-    ) -> anyhow::Result<T> {
+    ) -> Result<T, SessionError> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.node.send(build(resp_tx)).await?;
-        resp_rx
+        self.node
+            .send(build(resp_tx))
             .await
-            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
+            .map_err(|_| SessionError::Stopped)?;
+        resp_rx.await.map_err(|_| SessionError::DroppedResponse)
     }
 
     /// Create a new mesh as a poll-only, silent core (the MCP server).
@@ -140,10 +150,10 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Authored> {
+    pub(crate) async fn broadcast(&self, body: MessageBody) -> Result<Authored, SessionError> {
         // Two Results: the outer `?` is the channel, the inner is the loop's answer.
-        self.call(|response| SessionRequest::Broadcast { body, response })
-            .await?
+        self.call_loop(|response| SessionRequest::Broadcast { body, response })
+            .await
     }
 
     /// Send a chat message to one peer; returns the canonical [`Message`] the
@@ -156,9 +166,9 @@ impl InProcessSession {
         &self,
         to: Nickname,
         body: MessageBody,
-    ) -> anyhow::Result<Authored> {
-        self.call(|response| SessionRequest::Msg { to, body, response })
-            .await?
+    ) -> Result<Authored, SessionError> {
+        self.call_loop(|response| SessionRequest::Msg { to, body, response })
+            .await
     }
 
     /// Poll the surfaced-event history after the `after` seq cursor
@@ -172,7 +182,7 @@ impl InProcessSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<crate::a2a::surfaced_event::PollBatch> {
+    ) -> Result<crate::a2a::surfaced_event::PollBatch, SessionError> {
         self.call(|response| SessionRequest::Poll {
             after,
             long,
@@ -186,21 +196,24 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Authored> {
+    pub(crate) async fn task_status(
+        &self,
+        status: TaskStatusParams,
+    ) -> Result<Authored, SessionError> {
         let TaskStatusParams {
             task_id,
             state,
             note,
             waiting,
         } = status;
-        self.call(|response| SessionRequest::TaskStatus {
+        self.call_loop(|response| SessionRequest::TaskStatus {
             task_id,
             state,
             note,
             waiting,
             response,
         })
-        .await?
+        .await
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
@@ -212,14 +225,14 @@ impl InProcessSession {
         task_id: TaskId,
         text: String,
         file: Option<crate::a2a::broadcast_params::FileRef>,
-    ) -> anyhow::Result<Authored> {
-        self.call(|response| SessionRequest::TaskArtifact {
+    ) -> Result<Authored, SessionError> {
+        self.call_loop(|response| SessionRequest::TaskArtifact {
             task_id,
             text,
             file,
             response,
         })
-        .await?
+        .await
     }
 
     /// Call a peer's A2A server over gossip (request/response) and return the
@@ -228,7 +241,10 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn a2a_call(&self, call: A2aCallParams) -> anyhow::Result<serde_json::Value> {
+    pub(crate) async fn a2a_call(
+        &self,
+        call: A2aCallParams,
+    ) -> Result<serde_json::Value, SessionError> {
         let A2aCallParams {
             peer,
             method,
@@ -249,7 +265,7 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn peers(&self) -> anyhow::Result<RosterSnapshot> {
+    pub(crate) async fn peers(&self) -> Result<RosterSnapshot, SessionError> {
         self.call(|response| SessionRequest::Peers { response })
             .await
     }
@@ -257,7 +273,7 @@ impl InProcessSession {
     /// Run an RTT round and return the per-peer round-trip rows. Blocks for
     /// the ping window (the round finalizes on its deadline), so a quiet mesh
     /// returns an empty list after that delay.
-    pub(crate) async fn ping(&self) -> anyhow::Result<Vec<crate::output::PingPeer>> {
+    pub(crate) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>, SessionError> {
         let rows = self
             .call(|response| SessionRequest::Ping { response })
             .await?;
@@ -271,25 +287,25 @@ impl InProcessSession {
 
     /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
     /// valid merge; `Err` is a transport/serialize failure only.
-    pub(crate) async fn state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
-        self.call(|response| SessionRequest::StateMerge { merge, response })
-            .await?
+    pub(crate) async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
+        self.call_loop(|response| SessionRequest::StateMerge { merge, response })
+            .await
     }
 
     /// The current derived shared-state document (the merge fold).
-    pub(crate) async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
+    pub(crate) async fn state_get(&self) -> Result<serde_json::Value, SessionError> {
         self.call(|response| SessionRequest::StateGet { response })
             .await
     }
 
     /// `meta`-channel counterpart of [`state_merge`](Self::state_merge).
-    pub(crate) async fn meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
-        self.call(|response| SessionRequest::MetaMerge { merge, response })
-            .await?
+    pub(crate) async fn meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
+        self.call_loop(|response| SessionRequest::MetaMerge { merge, response })
+            .await
     }
 
     /// `meta`-channel counterpart of [`state_get`](Self::state_get).
-    pub(crate) async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
+    pub(crate) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
         self.call(|response| SessionRequest::MetaGet { response })
             .await
     }
@@ -300,9 +316,9 @@ impl InProcessSession {
     /// # Errors
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
-    pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> anyhow::Result<()> {
-        self.call(|response| SessionRequest::InjectRaw { bytes, response })
-            .await?
+    pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> Result<(), SessionError> {
+        self.call_loop(|response| SessionRequest::InjectRaw { bytes, response })
+            .await
     }
 
     /// Simulate the gossip stream terminally ending. Adversarial-suite
@@ -311,14 +327,17 @@ impl InProcessSession {
     /// # Errors
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
-    pub(crate) async fn sever_gossip(&self) -> anyhow::Result<()> {
-        self.node.send(SessionRequest::SeverGossip).await
+    pub(crate) async fn sever_gossip(&self) -> Result<(), SessionError> {
+        self.node
+            .send(SessionRequest::SeverGossip)
+            .await
+            .map_err(|_| SessionError::Stopped)
     }
 
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]
-    pub(crate) async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+    pub(crate) async fn reassembly_stats(&self) -> Result<(usize, usize, usize), SessionError> {
         self.call(|response| SessionRequest::ReassemblyStats { response })
             .await
     }
@@ -328,13 +347,13 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Returns an error if the event-loop task panicked or returned an error.
-    pub(crate) async fn leave(self) -> anyhow::Result<()> {
+    pub(crate) async fn leave(self) -> Result<(), SessionError> {
         let Self {
             node, advertiser, ..
         } = self;
         // Stop advertising first — we're leaving, so the listing should age out
         // rather than keep being re-broadcast while the loop winds down.
         drop(advertiser);
-        node.leave().await
+        node.leave().await.map_err(SessionError::LeaveFailed)
     }
 }

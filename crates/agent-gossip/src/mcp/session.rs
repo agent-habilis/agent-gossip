@@ -12,7 +12,7 @@ use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickna
 
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
-    TaskArtifactParams, TaskStatusParams, TopicConfig,
+    SessionError, TaskArtifactParams, TaskStatusParams, TopicConfig,
 };
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
@@ -143,7 +143,10 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn a2a_call(&self, call: A2aCallParams) -> Result<serde_json::Value> {
+    pub(super) async fn a2a_call(
+        &self,
+        call: A2aCallParams,
+    ) -> Result<serde_json::Value, SessionError> {
         self.inner.a2a_call(call).await
     }
 
@@ -151,7 +154,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn peers(&self) -> Result<RosterSnapshot> {
+    pub(super) async fn peers(&self) -> Result<RosterSnapshot, SessionError> {
         self.inner.peers().await
     }
 
@@ -160,7 +163,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>> {
+    pub(super) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>, SessionError> {
         self.inner.ping().await
     }
 
@@ -169,7 +172,10 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn apply_state_merge(&self, merge: serde_json::Value) -> Result<()> {
+    pub(super) async fn apply_state_merge(
+        &self,
+        merge: serde_json::Value,
+    ) -> Result<(), SessionError> {
         self.inner.state_merge(merge).await
     }
 
@@ -177,7 +183,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn state_get(&self) -> Result<serde_json::Value> {
+    pub(super) async fn state_get(&self) -> Result<serde_json::Value, SessionError> {
         self.inner.state_get().await
     }
 
@@ -185,7 +191,10 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn apply_meta_merge(&self, merge: serde_json::Value) -> Result<()> {
+    pub(super) async fn apply_meta_merge(
+        &self,
+        merge: serde_json::Value,
+    ) -> Result<(), SessionError> {
         self.inner.meta_merge(merge).await
     }
 
@@ -193,7 +202,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn meta_get(&self) -> Result<serde_json::Value> {
+    pub(super) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
         self.inner.meta_get().await
     }
 

@@ -24,11 +24,8 @@ abbrev_name|crates/tasks/src/test.rs|4|open: external: the cmd! macro is xshell'
 abbrev_name|crates/tasks/src/uninstall.rs|2|open: external: the cmd! macro is xshell's name
 abbrev_name|crates/tasks/src/util/ensure_installed.rs|3|open: external: the cmd! macro is xshell's name
 abbrev_name|crates/tasks/src/util/sweep_stale_artifacts.rs|2|open: external: the cmd! macro is xshell's name
-anyhow_pub|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|2|open: A public signature returns a typed error, not anyhow
 anyhow_pub|crates/agent-gossip/src/a2a/status_update_params.rs|4|open: A public signature returns a typed error, not anyhow
 anyhow_pub|crates/agent-gossip/src/api/directory.rs|2|open: A public signature returns a typed error, not anyhow
-anyhow_pub|crates/agent-gossip/src/api/mesh_session.rs|13|open: A public signature returns a typed error, not anyhow
-anyhow_pub|crates/agent-gossip/src/harness/session.rs|3|open: A public signature returns a typed error, not anyhow
 anyhow_pub|crates/agent-gossip/src/run_cli.rs|1|open: A public signature returns a typed error, not anyhow
 assert_no_message|crates/agent-gossip/src/a2a/a2a_app.rs|37|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/a2a/broadcast_params.rs|17|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)

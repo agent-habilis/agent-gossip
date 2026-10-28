@@ -11,6 +11,7 @@ use super::advertiser::Advertiser;
 use super::create_error::{CreateError, JoinError};
 use super::in_process_session::InProcessSession;
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
+use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::output::{OutputEvent, PingPeer};
 
@@ -202,7 +203,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn broadcast(&self, body: MessageBody) -> anyhow::Result<Authored> {
+    pub async fn broadcast(&self, body: MessageBody) -> Result<Authored, SessionError> {
         self.core.broadcast(body).await
     }
 
@@ -213,7 +214,7 @@ impl MeshSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response, or if the
     /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
-    pub async fn message(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Authored> {
+    pub async fn message(&self, to: Nickname, body: MessageBody) -> Result<Authored, SessionError> {
         self.core.message(to, body).await
     }
 
@@ -223,7 +224,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped (a merge always applies).
-    pub async fn state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+    pub async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.core.state_merge(merge).await
     }
 
@@ -232,7 +233,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
+    pub async fn state_get(&self) -> Result<serde_json::Value, SessionError> {
         self.core.state_get().await
     }
 
@@ -241,7 +242,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// As [`state_merge`](Self::state_merge).
-    pub async fn meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+    pub async fn meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.core.meta_merge(merge).await
     }
 
@@ -249,7 +250,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
+    pub async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
         self.core.meta_get().await
     }
 
@@ -275,7 +276,7 @@ impl MeshSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<crate::a2a::surfaced_event::PollBatch> {
+    ) -> Result<crate::a2a::surfaced_event::PollBatch, SessionError> {
         self.core.fetch(after, long).await
     }
 
@@ -285,7 +286,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_status(&self, status: TaskStatusParams) -> anyhow::Result<Authored> {
+    pub async fn task_status(&self, status: TaskStatusParams) -> Result<Authored, SessionError> {
         self.core.task_status(status).await
     }
 
@@ -293,7 +294,10 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_artifact(&self, artifact: TaskArtifactParams) -> anyhow::Result<Authored> {
+    pub async fn task_artifact(
+        &self,
+        artifact: TaskArtifactParams,
+    ) -> Result<Authored, SessionError> {
         let TaskArtifactParams {
             task_id,
             text,
@@ -317,7 +321,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn a2a_call(&self, call: A2aCallParams) -> anyhow::Result<serde_json::Value> {
+    pub async fn a2a_call(&self, call: A2aCallParams) -> Result<serde_json::Value, SessionError> {
         self.core.a2a_call(call).await
     }
 
@@ -325,7 +329,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn peers(&self) -> anyhow::Result<RosterSnapshot> {
+    pub async fn peers(&self) -> Result<RosterSnapshot, SessionError> {
         self.core.peers().await
     }
 
@@ -335,7 +339,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn ping(&self) -> anyhow::Result<Vec<PingPeer>> {
+    pub async fn ping(&self) -> Result<Vec<PingPeer>, SessionError> {
         self.core.ping().await
     }
 
@@ -344,7 +348,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Returns an error if the event-loop task panicked or returned an error.
-    pub async fn leave(self) -> anyhow::Result<()> {
+    pub async fn leave(self) -> Result<(), SessionError> {
         self.core.leave().await
     }
 }

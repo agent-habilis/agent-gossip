@@ -2,7 +2,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use agent_gossip::api::{
-    A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams, TaskStatusParams,
+    A2aCallParams, CreateConfig, JoinConfig, MeshSession, SessionError, TaskArtifactParams,
+    TaskStatusParams,
 };
 use agent_gossip::{
     Channel, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
@@ -181,7 +182,7 @@ impl InProcNode {
     /// # Errors
     /// Propagates the send failure (loop stopped, or the recipient's seal key
     /// is not known yet).
-    pub async fn try_msg(&self, to: &str, text: &str) -> anyhow::Result<Authored> {
+    pub async fn try_msg(&self, to: &str, text: &str) -> Result<Authored, SessionError> {
         self.session
             .message(
                 Nickname::new(to).expect("valid test nickname"),
@@ -199,7 +200,7 @@ impl InProcNode {
     }
 
     /// Like [`Self::state_merge`] but returns the raw result.
-    async fn try_state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+    async fn try_state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.session.state_merge(merge).await
     }
 
@@ -221,7 +222,7 @@ impl InProcNode {
     }
 
     /// Like [`Self::meta_merge`] but returns the raw result.
-    pub async fn try_meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+    pub async fn try_meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.session.meta_merge(merge).await
     }
 
