@@ -112,12 +112,12 @@ impl TicketListings {
         }
 
         if self.entries.len() >= MAX_LISTINGS
-            && let Some(stalest) = self
+            && let Some((ticket, _)) = self
                 .entries
                 .iter()
                 .min_by_key(|(_, listing)| listing.last_seen)
-                .map(|(ticket, _)| ticket.clone())
         {
+            let stalest = ticket.clone();
             self.entries.remove(&stalest);
         }
         self.entries.insert(
@@ -253,13 +253,15 @@ impl TicketDirectory {
                             let now = Instant::now();
                             let event = {
                                 let mut dir = collector.lock().expect("ticket directory mutex");
-                                match dir.note(message.body.as_str(), now) {
-                                    Some(TicketChange::Found(ticket)) => dir
-                                        .get(&ticket)
-                                        .map(|listing| TicketDirectoryEvent::Found(listing.clone())),
-                                    Some(TicketChange::Updated(ticket)) => dir
-                                        .get(&ticket)
-                                        .map(|listing| TicketDirectoryEvent::Updated(listing.clone())),
+                                let change = dir.note(message.body.as_str(), now);
+                                let listing_of = |ticket: &str| dir.get(ticket).cloned();
+                                match change {
+                                    Some(TicketChange::Found(ticket)) => {
+                                        listing_of(&ticket).map(TicketDirectoryEvent::Found)
+                                    }
+                                    Some(TicketChange::Updated(ticket)) => {
+                                        listing_of(&ticket).map(TicketDirectoryEvent::Updated)
+                                    }
                                     None => None,
                                 }
                             };
