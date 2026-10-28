@@ -32,7 +32,6 @@ long_chain|crates/agent-gossip/src/cli/detached_stdio.rs|1|open: A statement wit
 long_chain|crates/agent-gossip/src/cli/doctor.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/cli/join.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/cli/session.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/agent-gossip/src/main.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/mcp/agent_gossip_server.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/mcp/mesh_ref.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/mcp/session.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
