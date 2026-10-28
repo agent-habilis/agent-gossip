@@ -34,10 +34,12 @@ impl McpClient {
     /// Spawn the MCP server without performing the handshake — for tests that
     /// assert on the `initialize` response itself.
     fn spawn_raw() -> Self {
-        let mut child: Child = test_cmd()
+        let mut command = test_cmd();
+        command
             .arg("mcp")
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::piped());
+        let mut child: Child = command
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn agent-gossip mcp");
@@ -54,11 +56,10 @@ impl McpClient {
     /// Spawn the MCP server with extra `mcp`-subcommand flags (e.g. the hidden
     /// `--directory-private` so the directory path runs on the loopback ladder).
     fn spawn_with_args(extra: &[&str]) -> Self {
-        let mut child: Child = test_cmd()
-            .arg("mcp")
-            .args(extra)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+        let mut command = test_cmd();
+        command.arg("mcp").args(extra);
+        command.stdin(Stdio::piped()).stdout(Stdio::piped());
+        let mut child: Child = command
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn agent-gossip mcp");
@@ -186,27 +187,28 @@ fn tool_result_text(response: &serde_json::Value) -> Option<String> {
 fn tool_error(response: &serde_json::Value) -> Option<String> {
     // Either a JSON-RPC error (invalid args / not in mesh) or
     // `isError: true` in the result content.
-    if let Some(message) = response
-        .get("error")
+    let error = response.get("error");
+    let error_message = error
         .and_then(|error_obj| error_obj.get("message"))
-        .and_then(|message| message.as_str())
-    {
+        .and_then(|message| message.as_str());
+    if let Some(message) = error_message {
         return Some(message.to_string());
     }
-    if response
+    let is_error = response
         .get("result")
         .and_then(|result| result.get("isError"))
         .and_then(serde_json::Value::as_bool)
-        == Some(true)
-    {
+        == Some(true);
+    if is_error {
+        let result = response.get("result");
+        let content = result
+            .and_then(|result| result.get("content"))
+            .and_then(|content| content.as_array());
+        let text = content
+            .and_then(|arr| arr.first())
+            .and_then(|content| content.get("text"));
         return Some(
-            response
-                .get("result")
-                .and_then(|result| result.get("content"))
-                .and_then(|content| content.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|content| content.get("text"))
-                .and_then(|text| text.as_str())
+            text.and_then(|text| text.as_str())
                 .unwrap_or("unknown tool error")
                 .to_string(),
         );
@@ -353,13 +355,12 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     // Separate test that captures all stdout bytes and asserts every
     // non-empty line is JSON-RPC 2.0. Guards against any future
     // println! leak (the bug that motivated OutputMode::Silent).
-    let mut child: Child = test_cmd()
+    let mut command = test_cmd();
+    command
         .arg("mcp")
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn");
+        .stdout(Stdio::piped());
+    let mut child: Child = command.stderr(Stdio::piped()).spawn().expect("spawn");
     let stdin = child.stdin.as_mut().unwrap();
     for line in [
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
@@ -1048,9 +1049,8 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
         serde_json::json!({ "after": before_seq }),
     ))
     .expect("explicit replay");
-    let bodies: Vec<&str> = replay["messages"]
-        .as_array()
-        .unwrap()
+    let replayed = replay["messages"].as_array().unwrap();
+    let bodies: Vec<&str> = replayed
         .iter()
         .filter_map(|event| event["body"].as_str())
         .collect();
@@ -1063,8 +1063,9 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     let cursor = replay["current_seq"]
         .as_u64()
         .expect("current_seq should be set when batch non-empty");
+    let all_events = replay["messages"].as_array().unwrap();
     assert_eq!(
-        replay["messages"].as_array().unwrap().last().unwrap()["seq"].as_u64(),
+        all_events.last().unwrap()["seq"].as_u64(),
         Some(cursor),
         "current_seq must match the last event's seq in the batch"
     );
@@ -1080,9 +1081,8 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
                 serde_json::json!({ "after": cursor }),
             ))
             .expect("delta fetch");
-            let surfaced_four: bool = second["messages"]
-                .as_array()
-                .unwrap()
+            let surfaced = second["messages"].as_array().unwrap();
+            let surfaced_four: bool = surfaced
                 .iter()
                 .any(|event| event["body"].as_str() == Some("four"));
             if surfaced_four {
@@ -1177,12 +1177,10 @@ fn task_creation_surfaces_to_worker_via_fetch() {
             serde_json::json!({ "after": FROM_START }),
         ))
         .expect("fetch_messages must succeed");
-        let found: Option<serde_json::Value> = fetched["messages"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            // Match on the id, not the first task: an attempt whose response
-            // was dropped still minted a task of its own on the worker.
+        let mut events = fetched["messages"].as_array().into_iter().flatten();
+        // Match on the id, not the first task: an attempt whose response
+        // was dropped still minted a task of its own on the worker.
+        let found: Option<serde_json::Value> = events
             .find(|event| event["event"] == "task" && event["task_id"] == task_id.as_str())
             .cloned();
         if let Some(found) = found {
@@ -1315,7 +1313,9 @@ const DIR_FLAGS: [(&str, &str); 4] = [
 fn discover_meshes_finds_an_advertised_mesh() {
     let adv_log = tmp_log("mcp-disc-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser: Child = test_cmd()
+    let stdout = Stdio::from(adv_file.try_clone().unwrap());
+    let mut command = test_cmd();
+    command
         .args([
             "create",
             "--advertise",
@@ -1325,8 +1325,9 @@ fn discover_meshes_finds_an_advertised_mesh() {
             "--nickname",
             "adv",
         ])
-        .args(flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
+        .args(flag_args(&DIR_FLAGS));
+    let mut advertiser: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(adv_file))
         .spawn()
         .expect("spawn advertiser");
@@ -1352,11 +1353,8 @@ fn discover_meshes_finds_an_advertised_mesh() {
             serde_json::json!({ "directory": "mcdir" }),
         );
         let json = tool_result_json(&response).expect("discover_gossips returns a result");
-        let hit: bool = json["gossips"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|listing| listing["name"].as_str() == Some("mcpdisc"));
+        let mut gossips = json["gossips"].as_array().into_iter().flatten();
+        let hit: bool = gossips.any(|listing| listing["name"].as_str() == Some("mcpdisc"));
         if hit {
             break true;
         }
@@ -1391,12 +1389,10 @@ fn ping_reports_rtt_to_a_peer() {
     let rtt = loop {
         let response = creator.tool_call(id, "ping", serde_json::json!({}));
         let json = tool_result_json(&response).expect("ping returns a result");
-        let hit: Option<u64> = json["peers"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|peer| peer["nickname"].as_str() == Some(joiner_nick.as_str()))
-            .and_then(|peer| peer["rtt_ms"].as_u64());
+        let mut peers = json["peers"].as_array().into_iter().flatten();
+        let joiner_entry =
+            peers.find(|peer| peer["nickname"].as_str() == Some(joiner_nick.as_str()));
+        let hit: Option<u64> = joiner_entry.and_then(|peer| peer["rtt_ms"].as_u64());
         if let Some(rtt) = hit {
             break Some(rtt);
         }
