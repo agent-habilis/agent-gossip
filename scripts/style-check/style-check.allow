@@ -64,7 +64,6 @@ bool_param_comment|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public 
 fn_import|crates/agent-gossip/src/api/tests.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/bridge/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/bridge/ticket_directory.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
-fn_import|crates/agent-gossip/src/output/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 long_chain|crates/agent-gossip-test-fixtures/src/cli_task_create_attempt.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/node.rs|4|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)

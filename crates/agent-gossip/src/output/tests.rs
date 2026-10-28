@@ -485,7 +485,7 @@ fn receipt_event_is_invisible_and_stamped_so() {
         state: "read".to_owned(),
         ts: 1,
     };
-    assert!(!crate::output::is_visible(&event));
+    assert!(!crate::output::simple_event::is_visible(&event));
     let line = crate::output::event_json(&event).unwrap();
     assert_eq!(parse(&line)["is_visible"], false);
     assert_eq!(parse(&line)["state"], "read");

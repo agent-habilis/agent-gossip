@@ -466,7 +466,7 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
     if is_self_task_echo(event) {
         return false;
     }
-    output::is_visible(event)
+    output::simple_event::is_visible(event)
         || matches!(
             event,
             OutputEvent::Task { .. }
