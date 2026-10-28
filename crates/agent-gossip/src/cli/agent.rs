@@ -152,7 +152,7 @@ impl Agent {
         owned_skill_dirs_under(&self.install_path(home))
     }
 
-    /// up to date / out of date / not set up / absent for this agent.
+    /// Up to date / out of date / not set up / absent for this agent.
     pub(crate) fn state(self, home: &Path) -> AgentState {
         if self.installed(home) {
             if self.in_sync(home) {

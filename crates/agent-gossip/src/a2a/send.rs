@@ -1653,7 +1653,7 @@ pub(crate) struct BroadcastA2aCallParams<'a> {
     pub(crate) file: Option<FileRef>,
 }
 
-/// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
+/// The waiter times out via the loop's a2a-deadline arm. Fails fast (through the
 /// responder) when `peer` isn't a current peer or the waiter registry
 /// is full — no silent park.
 pub(crate) async fn broadcast_a2a_call(
