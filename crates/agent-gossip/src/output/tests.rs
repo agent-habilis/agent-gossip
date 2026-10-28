@@ -60,22 +60,39 @@ fn json_message_has_all_fields() {
     let message = chat_frame("alice", "hello");
     let json = format_msg_json(&message, false);
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "message");
-    assert_eq!(parsed["type"], "broadcast");
-    assert_eq!(parsed["gossip"], sid().as_str());
-    assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["body"], "hello");
-    assert!(parsed["to"].is_null());
-    assert_eq!(parsed["self"], false);
-    assert!(parsed["id"].is_string());
-    assert!(parsed["ts"].is_number());
+    assert_eq!(parsed["event"], "message", "the event field is message");
+    assert_eq!(parsed["type"], "broadcast", "the type field is broadcast");
+    assert_eq!(
+        parsed["gossip"],
+        sid().as_str(),
+        "the gossip field is sid().as_str()"
+    );
+    assert_eq!(parsed["author"], "alice", "the author field is alice");
+    assert_eq!(parsed["body"], "hello", "the body field is hello");
+    assert!(parsed["to"].is_null(), "the to field is null");
+    assert_eq!(parsed["self"], false, "the self field is false");
+    assert!(parsed["id"].is_string(), "the id field is a string");
+    assert!(parsed["ts"].is_number(), "the ts field is a number");
     // The embedded A2A object rides along whole (v1.0 ProtoJSON: no inline
     // `kind`, `ROLE_USER`), its id the frame's id.
-    assert_eq!(parsed["message"]["messageId"], parsed["id"]);
-    assert_eq!(parsed["message"]["role"], "ROLE_USER");
-    assert_eq!(parsed["message"]["parts"][0]["text"], "hello");
+    assert_eq!(
+        parsed["message"]["messageId"], parsed["id"],
+        "the output matches the expected value"
+    );
+    assert_eq!(
+        parsed["message"]["role"], "ROLE_USER",
+        "the output matches the expected value"
+    );
+    assert_eq!(
+        parsed["message"]["parts"][0]["text"], "hello",
+        "the output matches the expected value"
+    );
     // An author view always has a key: the fixture's zero key here, never an omitted field.
-    assert_eq!(parsed["pubkey"], "0".repeat(64));
+    assert_eq!(
+        parsed["pubkey"],
+        "0".repeat(64),
+        "the pubkey field is 0.repeat(64)"
+    );
 }
 
 #[test]
@@ -110,14 +127,14 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // In sync: no `drift` key on the wire.
     let clean = parse(&make(None));
-    assert_eq!(clean["event"], "ready");
-    assert!(clean.get("drift").is_none());
+    assert_eq!(clean["event"], "ready", "the event field is ready");
+    assert!(clean.get("drift").is_none(), "the drift key is absent");
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some("💬️ run `agent-gossip plug` to update skills")));
     assert_eq!(
-        stale["drift"],
-        "💬️ run `agent-gossip plug` to update skills"
+        stale["drift"], "💬️ run `agent-gossip plug` to update skills",
+        "the output matches the expected value"
     );
 }
 
@@ -132,17 +149,17 @@ fn fork_event_json_shape() {
     })
     .expect("fork event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "fork");
-    assert_eq!(parsed["nickname"], "alice");
-    assert_eq!(parsed["pubkey"], pubkey);
-    assert_eq!(parsed["seq"], 7);
+    assert_eq!(parsed["event"], "fork", "the event field is fork");
+    assert_eq!(parsed["nickname"], "alice", "the nickname field is alice");
+    assert_eq!(parsed["pubkey"], pubkey, "the pubkey field is pubkey");
+    assert_eq!(parsed["seq"], 7, "the seq field is 7");
 }
 
 #[test]
 fn json_self_flag_true() {
     let message = chat_frame("alice", "hi");
     let parsed = parse(&format_msg_json(&message, true));
-    assert_eq!(parsed["self"], true);
+    assert_eq!(parsed["self"], true, "the self field is true");
 }
 
 #[test]
@@ -150,7 +167,10 @@ fn json_body_escapes_quotes() {
     let message = chat_frame("alice", r#"say "hello""#);
     let json = format_msg_json(&message, false);
     let parsed = parse(&json);
-    assert_eq!(parsed["body"], r#"say "hello""#);
+    assert_eq!(
+        parsed["body"], r#"say "hello""#,
+        "the body field is r#say hello#"
+    );
 }
 
 #[test]
@@ -158,7 +178,10 @@ fn json_body_escapes_backslashes() {
     let message = chat_frame("alice", r"path\to\file");
     let json = format_msg_json(&message, false);
     let parsed = parse(&json);
-    assert_eq!(parsed["body"], r"path\to\file");
+    assert_eq!(
+        parsed["body"], r"path\to\file",
+        "the body field is rpath\\to\\file"
+    );
 }
 
 // ── format_msg_json: presence type ─────────────────────────
@@ -167,20 +190,27 @@ fn json_body_escapes_backslashes() {
 fn json_presence_joined() {
     let message = view(Message::new_joined(&sid(), &nick("alice")));
     let parsed = parse(&format_presence_json(&message, PresenceSubtype::Joined));
-    assert_eq!(parsed["event"], "message");
-    assert_eq!(parsed["type"], "presence");
-    assert_eq!(parsed["subtype"], "joined");
-    assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["gossip"], sid().as_str());
-    assert_eq!(parsed["display"], "💬️ `<alice>` has joined");
+    assert_eq!(parsed["event"], "message", "the event field is message");
+    assert_eq!(parsed["type"], "presence", "the type field is presence");
+    assert_eq!(parsed["subtype"], "joined", "the subtype field is joined");
+    assert_eq!(parsed["author"], "alice", "the author field is alice");
+    assert_eq!(
+        parsed["gossip"],
+        sid().as_str(),
+        "the gossip field is sid().as_str()"
+    );
+    assert_eq!(
+        parsed["display"], "💬️ `<alice>` has joined",
+        "the display field is 💬️ `<alice>` has joined"
+    );
 }
 
 #[test]
 fn json_presence_left() {
     let message = view(Message::new_left(&sid(), &nick("bob")));
     let parsed = parse(&format_presence_json(&message, PresenceSubtype::Left));
-    assert_eq!(parsed["subtype"], "left");
-    assert_eq!(parsed["author"], "bob");
+    assert_eq!(parsed["subtype"], "left", "the subtype field is left");
+    assert_eq!(parsed["author"], "bob", "the author field is bob");
 }
 
 // ── task type ──────────────────────────────────────────────
@@ -242,21 +272,33 @@ fn task_event_json_shape() {
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "task");
-    assert_eq!(parsed["author"], "drift-oak");
-    assert_eq!(parsed["to"], "calm-otter");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
-    assert_eq!(parsed["kind"], "status-update");
-    assert_eq!(parsed["state"], "working");
-    assert_eq!(parsed["self"], false);
-    assert!(parsed["id"].is_string());
-    assert!(parsed["ts"].is_number());
+    assert_eq!(parsed["event"], "task", "the event field is task");
+    assert_eq!(
+        parsed["author"], "drift-oak",
+        "the author field is drift-oak"
+    );
+    assert_eq!(parsed["to"], "calm-otter", "the to field is calm-otter");
+    assert_eq!(
+        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert_eq!(
+        parsed["kind"], "status-update",
+        "the kind field is status-update"
+    );
+    assert_eq!(parsed["state"], "working", "the state field is working");
+    assert_eq!(parsed["self"], false, "the self field is false");
+    assert!(parsed["id"].is_string(), "the id field is a string");
+    assert!(parsed["ts"].is_number(), "the ts field is a number");
     // The A2A construct rides along whole for A2A-aware consumers (v1.0
     // ProtoJSON: no inline `kind`, `TASK_STATE_*`).
-    assert_eq!(parsed["payload"]["status"]["state"], "TASK_STATE_WORKING");
-    assert!(parsed.get("phase").is_none());
+    assert_eq!(
+        parsed["payload"]["status"]["state"], "TASK_STATE_WORKING",
+        "the output matches the expected value"
+    );
+    assert!(parsed.get("phase").is_none(), "the phase key is absent");
     // Distinct top-level event — never the `message` family, no `type` key.
-    assert!(parsed.get("type").is_none());
+    assert!(parsed.get("type").is_none(), "the type key is absent");
 }
 
 #[test]
@@ -278,10 +320,16 @@ fn task_self_echo_flag() {
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["self"], true);
-    assert_eq!(parsed["kind"], "status-update");
-    assert_eq!(parsed["state"], "completed");
-    assert_eq!(parsed["payload"]["status"]["state"], "TASK_STATE_COMPLETED");
+    assert_eq!(parsed["self"], true, "the self field is true");
+    assert_eq!(
+        parsed["kind"], "status-update",
+        "the kind field is status-update"
+    );
+    assert_eq!(parsed["state"], "completed", "the state field is completed");
+    assert_eq!(
+        parsed["payload"]["status"]["state"], "TASK_STATE_COMPLETED",
+        "the output matches the expected value"
+    );
 }
 
 #[test]
@@ -308,8 +356,11 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
     let waiting = line(status_update_params::waiting_metadata(Some(
         "asks its user",
     )));
-    assert_eq!(waiting["event"], "task");
-    assert_eq!(waiting["waiting"], "asks its user");
+    assert_eq!(waiting["event"], "task", "the event field is task");
+    assert_eq!(
+        waiting["waiting"], "asks its user",
+        "the waiting field is asks its user"
+    );
     let plain = line(None);
     assert!(plain.get("waiting").is_none(), "got: {plain}");
 }
@@ -336,7 +387,10 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["state"], "input-required");
+    assert_eq!(
+        parsed["state"], "input-required",
+        "the state field is input-required"
+    );
     assert!(parsed.get("waiting").is_none(), "got: {parsed}");
 }
 
@@ -361,14 +415,20 @@ fn task_progress_event_json_shape() {
     let parsed = parse(&json);
     // A beat renders as a distinct `task_progress` event with its
     // `done`/`total`, never as a content `task` event.
-    assert_eq!(parsed["event"], "task_progress");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
-    assert_eq!(parsed["done"], 35);
-    assert_eq!(parsed["total"], 100);
-    assert!(parsed.get("phase").is_none());
     assert_eq!(
-        parsed["display"],
-        "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100"
+        parsed["event"], "task_progress",
+        "the event field is task_progress"
+    );
+    assert_eq!(
+        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert_eq!(parsed["done"], 35, "the done field is 35");
+    assert_eq!(parsed["total"], 100, "the total field is 100");
+    assert!(parsed.get("phase").is_none(), "the phase key is absent");
+    assert_eq!(
+        parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100",
+        "the output matches the expected value"
     );
 }
 
@@ -382,9 +442,15 @@ fn task_timeout_event_json_shape() {
     })
     .expect("task_timeout event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "task_timeout");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
-    assert_eq!(parsed["reason"], "timeout");
+    assert_eq!(
+        parsed["event"], "task_timeout",
+        "the event field is task_timeout"
+    );
+    assert_eq!(
+        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert_eq!(parsed["reason"], "timeout", "the reason field is timeout");
 }
 
 #[test]
@@ -397,8 +463,14 @@ fn task_peer_left_event_json_shape() {
     })
     .expect("task_timeout event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "task_timeout");
-    assert_eq!(parsed["reason"], "peer-left");
+    assert_eq!(
+        parsed["event"], "task_timeout",
+        "the event field is task_timeout"
+    );
+    assert_eq!(
+        parsed["reason"], "peer-left",
+        "the reason field is peer-left"
+    );
 }
 
 #[test]
@@ -413,14 +485,23 @@ fn task_stalled_event_json_shape() {
     };
     let json = simple_event::event_json(&event).expect("task_stalled event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "task_stalled");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
-    assert_eq!(parsed["peer"], "calm-otter");
-    assert_eq!(parsed["last_poll_secs_ago"], 2_400);
-    assert_eq!(parsed["check_secs"], 1_800);
     assert_eq!(
-        parsed["display"],
-        "💬️ task stalled · `<calm-otter>` has not polled for 40 min"
+        parsed["event"], "task_stalled",
+        "the event field is task_stalled"
+    );
+    assert_eq!(
+        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
+        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert_eq!(parsed["peer"], "calm-otter", "the peer field is calm-otter");
+    assert_eq!(
+        parsed["last_poll_secs_ago"], 2_400,
+        "the last_poll_secs_ago field is 2_400"
+    );
+    assert_eq!(parsed["check_secs"], 1_800, "the check_secs field is 1_800");
+    assert_eq!(
+        parsed["display"], "💬️ task stalled · `<calm-otter>` has not polled for 40 min",
+        "the output matches the expected value"
     );
     assert!(simple_event::is_visible(&event), "the user must see it");
     assert!(node::wakes(&event), "it must ring the bell");
@@ -438,10 +519,22 @@ fn peer_timeout_json_shape() {
     })
     .unwrap();
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "peer_timeout");
-    assert_eq!(parsed["nickname"], "ball-blue");
-    assert_eq!(parsed["last_seen_secs_ago"], 94);
-    assert_eq!(parsed["display"], "💬️ `<ball-blue>` went quiet");
+    assert_eq!(
+        parsed["event"], "peer_timeout",
+        "the event field is peer_timeout"
+    );
+    assert_eq!(
+        parsed["nickname"], "ball-blue",
+        "the nickname field is ball-blue"
+    );
+    assert_eq!(
+        parsed["last_seen_secs_ago"], 94,
+        "the last_seen_secs_ago field is 94"
+    );
+    assert_eq!(
+        parsed["display"], "💬️ `<ball-blue>` went quiet",
+        "the display field is 💬️ `<ball-blue>` went quiet"
+    );
 }
 
 #[test]
@@ -452,9 +545,18 @@ fn peer_return_json_shape() {
     })
     .unwrap();
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "peer_return");
-    assert_eq!(parsed["nickname"], "ball-blue");
-    assert_eq!(parsed["display"], "💬️ `<ball-blue>` came back");
+    assert_eq!(
+        parsed["event"], "peer_return",
+        "the event field is peer_return"
+    );
+    assert_eq!(
+        parsed["nickname"], "ball-blue",
+        "the nickname field is ball-blue"
+    );
+    assert_eq!(
+        parsed["display"], "💬️ `<ball-blue>` came back",
+        "the display field is 💬️ `<ball-blue>` came back"
+    );
 }
 
 #[test]
@@ -468,7 +570,8 @@ fn receipt_json_shape() {
     .unwrap();
     assert_eq!(
         json,
-        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#
+        r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#,
+        "the output matches the expected value"
     );
 }
 
@@ -480,10 +583,17 @@ fn receipt_event_is_invisible_and_stamped_so() {
         state: "read".to_owned(),
         ts: 1,
     };
-    assert!(!simple_event::is_visible(&event));
+    assert!(
+        !simple_event::is_visible(&event),
+        "the event is not visible"
+    );
     let line = crate::output::event_json(&event).unwrap();
-    assert_eq!(parse(&line)["is_visible"], false);
-    assert_eq!(parse(&line)["state"], "read");
+    assert_eq!(
+        parse(&line)["is_visible"],
+        false,
+        "the event is hidden from the user"
+    );
+    assert_eq!(parse(&line)["state"], "read", "the receipt state is read");
 }
 
 // ── all outputs are valid single-line JSON ─────────────────────
@@ -503,7 +613,7 @@ fn json_output_is_single_line() {
     ];
     for json in msgs {
         assert!(!json.contains('\n'), "JSON should be single line: {json}");
-        assert!(parse(&json).is_object());
+        assert!(parse(&json).is_object(), "the line parses to a json object");
     }
 }
 
@@ -735,8 +845,11 @@ mod snapshots {
             parsed.get("document").is_none(),
             "meta event carries the document: {line}"
         );
-        assert_eq!(parsed["merge"], merge);
-        assert!(parsed["display"].as_str().unwrap().contains("/peers/aa"));
+        assert_eq!(parsed["merge"], merge, "the merge field is merge");
+        assert!(
+            parsed["display"].as_str().unwrap().contains("/peers/aa"),
+            "the display names the peer path"
+        );
     }
 
     /// Pin: a `state` event keeps its document; the MCP tools promise it.
@@ -755,7 +868,10 @@ mod snapshots {
             false,
         );
         let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(parsed["document"], document);
+        assert_eq!(
+            parsed["document"], document,
+            "the document field is document"
+        );
     }
 
     #[test]
