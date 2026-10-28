@@ -87,9 +87,8 @@ fn reload_table_covers_every_harness() {
 
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("doctor --output json emits JSON");
-    let integrations: &serde_json::Value = report["sections"]
-        .as_array()
-        .expect("report has sections")
+    let sections = report["sections"].as_array().expect("report has sections");
+    let integrations: &serde_json::Value = sections
         .iter()
         .find(|section| section["title"] == "Integrations")
         .expect("machine report has an Integrations section");
@@ -113,10 +112,8 @@ fn reload_table_covers_every_harness() {
         );
     }
 
-    let rows: usize = DOC
-        .lines()
-        .filter(|line| line.starts_with('|') && line.contains("/skills`"))
-        .count();
+    let is_harness_row = |line: &&str| line.starts_with('|') && line.contains("/skills`");
+    let rows: usize = DOC.lines().filter(is_harness_row).count();
     assert_eq!(
         rows,
         checks.len(),
@@ -215,12 +212,10 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
     }
 
     let skills = home.join(".claude/skills");
-    let installed: Vec<String> = std::fs::read_dir(&skills)
-        .expect("plug created the skills dir")
-        .map(|entry| entry.expect("readable dir entry").file_name())
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("gossip-"))
-        .collect();
+    let entries = std::fs::read_dir(&skills).expect("plug created the skills dir");
+    let file_names = entries.map(|entry| entry.expect("readable dir entry").file_name());
+    let names = file_names.map(|name| name.to_string_lossy().into_owned());
+    let installed: Vec<String> = names.filter(|name| name.starts_with("gossip-")).collect();
 
     // The doc names four skills and claims "twelve more"; that arithmetic is
     // only true while this count holds.
@@ -252,20 +247,19 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
         .expect("failed to run `agent-gossip doctor`");
     let report: serde_json::Value =
         serde_json::from_slice(&doctor.stdout).expect("doctor emits JSON");
-    let checks: &Vec<serde_json::Value> = report["sections"]
-        .as_array()
-        .expect("report has sections")
+    let sections = report["sections"].as_array().expect("report has sections");
+    let integrations_section = sections
         .iter()
-        .find(|section| section["title"] == "Integrations")
+        .find(|section| section["title"] == "Integrations");
+    let checks: &Vec<serde_json::Value> = integrations_section
         .and_then(|section| section["checks"].as_array())
         .expect("Integrations section");
     let state: Box<dyn Fn(&str) -> String + '_> = Box::new(|harness| -> String {
-        checks
-            .iter()
-            .find(|check| check["name"] == harness)
+        let row = checks.iter().find(|check| check["name"] == harness);
+        let detail = row
             .and_then(|check| check["detail"].as_str())
-            .unwrap_or_else(|| panic!("no {harness} row in the Integrations section"))
-            .to_owned()
+            .unwrap_or_else(|| panic!("no {harness} row in the Integrations section"));
+        detail.to_owned()
     });
     assert!(
         state("claude-code").starts_with("up to date"),
