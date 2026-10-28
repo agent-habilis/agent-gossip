@@ -271,7 +271,7 @@ impl NodeDriver for GossipDriver {
         let Ok(bytes) = frame.serialize() else {
             return false;
         };
-        match deliver(&frame, bytes.into(), state, ctx.sender).await {
+        match deliver(&frame, bytes, state, ctx.sender).await {
             Ok(Delivered::Done) => {}
             Ok(Delivered::Pending(pending)) => {
                 // A dial is awaited off the event loop. The frame is echoed now; a dial that
