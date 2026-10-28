@@ -1450,8 +1450,11 @@ mod classify_tests {
 
     #[test]
     fn a_receipt_is_pollable_but_never_wakes_the_bell() {
-        assert!(super::is_pollable(&receipt_event()));
-        assert!(!wakes(&receipt_event()));
+        assert!(
+            super::is_pollable(&receipt_event()),
+            "a receipt is not pollable"
+        );
+        assert!(!wakes(&receipt_event()), "a receipt does not wake the bell");
     }
 
     fn receipt_frame_raw(to: Option<Nickname>, body: &str) -> Message {
@@ -1475,7 +1478,10 @@ mod classify_tests {
     fn a_receipt_is_valid_only_when_directed_with_a_parseable_body() {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
         let directed = classify(&receipt_frame(Some(Nickname::from("peer")), body));
-        assert!(directed.valid && directed.sealed && !directed.loggable);
+        assert!(
+            directed.valid && directed.sealed && !directed.loggable,
+            "a directed chat is valid, sealed and not loggable"
+        );
         assert!(!classify(&receipt_frame(None, body)).valid, "broadcast");
         assert!(
             !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid,
@@ -1514,11 +1520,10 @@ mod classify_tests {
     #[test]
     fn only_an_empty_working_on_a_working_task_is_a_repeat() {
         let working = Some(TaskState::Working);
-        assert!(is_empty_working_repeat(
-            working,
-            None,
-            &working_with(None, None)
-        ));
+        assert!(
+            is_empty_working_repeat(working, None, &working_with(None, None)),
+            "a repeated working status is recognized"
+        );
         assert!(
             !is_empty_working_repeat(Some(TaskState::Submitted), None, &working_with(None, None)),
             "the accept surfaces"
@@ -1586,7 +1591,10 @@ mod classify_tests {
         let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
         surfaced.insert(chat.dedup_key());
-        assert!(is_replayed_chat(&surfaced, &chat));
+        assert!(
+            is_replayed_chat(&surfaced, &chat),
+            "a surfaced chat is recognized as replayed"
+        );
     }
 
     // The key is the engine's `(pubkey, id)`: another author reusing the id
@@ -1600,7 +1608,10 @@ mod classify_tests {
             .clone()
             .sign(&habilis_network::protocol::Identity::generate())
             .authored();
-        assert!(!is_replayed_chat(&surfaced, &forgery));
+        assert!(
+            !is_replayed_chat(&surfaced, &forgery),
+            "a forged chat is not a replay"
+        );
     }
 
     // `surface_chat` records a line only once it was really printed, and keeps
@@ -1612,25 +1623,46 @@ mod classify_tests {
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
 
         // A msg addressed to someone else: the handler declines, nothing recorded.
-        assert!(!surface_chat(&chat, true, &mut app, |_, _| false));
-        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+        assert!(
+            !surface_chat(&chat, true, &mut app, |_, _| false),
+            "a chat is not surfaced when the gate refuses it"
+        );
+        assert!(
+            !is_replayed_chat(&app.surfaced_chat, &chat),
+            "a refused chat is not recorded"
+        );
 
         // Before the join horizon: logged but not printed, nothing recorded.
-        assert!(surface_chat(&chat, false, &mut app, |_, _| true));
-        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+        assert!(
+            surface_chat(&chat, false, &mut app, |_, _| true),
+            "a fresh chat surfaces"
+        );
+        assert!(
+            !is_replayed_chat(&app.surfaced_chat, &chat),
+            "a surfaced chat is recorded"
+        );
 
         // Printed once, then recorded.
-        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
-            assert!(surface, "a new line surfaces");
-            true
-        }));
-        assert!(is_replayed_chat(&app.surfaced_chat, &chat));
+        assert!(
+            surface_chat(&chat, true, &mut app, |_, surface| {
+                assert!(surface, "a new line surfaces");
+                true
+            }),
+            "a chat surfaces once the callback accepts it"
+        );
+        assert!(
+            is_replayed_chat(&app.surfaced_chat, &chat),
+            "a surfaced chat is recorded as a replay"
+        );
 
         // The replay: kept off the surface, still logged.
-        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
-            assert!(!surface, "a replay does not surface");
-            true
-        }));
+        assert!(
+            surface_chat(&chat, true, &mut app, |_, surface| {
+                assert!(!surface, "a replay does not surface");
+                true
+            }),
+            "a chat is not surfaced twice"
+        );
     }
 
     // These assertions are deliberately worded "broadcast"/"directed" rather
@@ -1676,7 +1708,7 @@ mod classify_tests {
             &Nickname::from("author"),
             MessageBody::from("{}"),
         )));
-        assert!(!peer_info.loggable);
+        assert!(!peer_info.loggable, "a peer info is not loggable");
         let _ = MessageKind::PeerInfo;
     }
 
@@ -1733,7 +1765,10 @@ mod classify_tests {
             },
         )
         .with_id(id);
-        assert!(!classify(&view(frame)).valid);
+        assert!(
+            !classify(&view(frame)).valid,
+            "a frame that is not a valid view is classified invalid"
+        );
     }
 
     // No regression: legitimate addressing still classifies valid.
