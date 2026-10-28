@@ -77,15 +77,15 @@ fn json_message_has_all_fields() {
     // `kind`, `ROLE_USER`), its id the frame's id.
     assert_eq!(
         parsed["message"]["messageId"], parsed["id"],
-        "the output matches the expected value"
+        "the embedded A2A messageId is the frame id"
     );
     assert_eq!(
         parsed["message"]["role"], "ROLE_USER",
-        "the output matches the expected value"
+        "the embedded A2A role stays ROLE_USER on the wire"
     );
     assert_eq!(
         parsed["message"]["parts"][0]["text"], "hello",
-        "the output matches the expected value"
+        "the embedded message keeps its text part unchanged"
     );
     // An author view always has a key: the fixture's zero key here, never an omitted field.
     assert_eq!(
@@ -134,7 +134,7 @@ fn ready_event_drift_is_present_only_when_stale() {
     let stale = parse(&make(Some("💬️ run `agent-gossip plug` to update skills")));
     assert_eq!(
         stale["drift"], "💬️ run `agent-gossip plug` to update skills",
-        "the output matches the expected value"
+        "a stale-skill warning reaches the drift field verbatim"
     );
 }
 
@@ -294,7 +294,7 @@ fn task_event_json_shape() {
     // ProtoJSON: no inline `kind`, `TASK_STATE_*`).
     assert_eq!(
         parsed["payload"]["status"]["state"], "TASK_STATE_WORKING",
-        "the output matches the expected value"
+        "a working status keeps the v1.0 TASK_STATE_WORKING name"
     );
     assert!(parsed.get("phase").is_none(), "the phase key is absent");
     // Distinct top-level event — never the `message` family, no `type` key.
@@ -328,7 +328,7 @@ fn task_self_echo_flag() {
     assert_eq!(parsed["state"], "completed", "the state field is completed");
     assert_eq!(
         parsed["payload"]["status"]["state"], "TASK_STATE_COMPLETED",
-        "the output matches the expected value"
+        "a completed status keeps the v1.0 TASK_STATE_COMPLETED name"
     );
 }
 
@@ -428,7 +428,7 @@ fn task_progress_event_json_shape() {
     assert!(parsed.get("phase").is_none(), "the phase key is absent");
     assert_eq!(
         parsed["display"], "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100",
-        "the output matches the expected value"
+        "the progress line names both peers and the 35 of 100 fraction"
     );
 }
 
@@ -501,7 +501,7 @@ fn task_stalled_event_json_shape() {
     assert_eq!(parsed["check_secs"], 1_800, "the check_secs field is 1_800");
     assert_eq!(
         parsed["display"], "💬️ task stalled · `<calm-otter>` has not polled for 40 min",
-        "the output matches the expected value"
+        "the stalled line names the silent peer and its 40 minutes"
     );
     assert!(simple_event::is_visible(&event), "the user must see it");
     assert!(node::wakes(&event), "it must ring the bell");
@@ -571,7 +571,7 @@ fn receipt_json_shape() {
     assert_eq!(
         json,
         r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#,
-        "the output matches the expected value"
+        "a delivered receipt is written as this exact one-line JSON"
     );
 }
 
