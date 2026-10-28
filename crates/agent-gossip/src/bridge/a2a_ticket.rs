@@ -80,9 +80,9 @@ impl A2aTicket {
         );
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let password = flags & PASSWORD_BIT != 0;
-        let mut pos = SECRET_LEN + 1;
-        let lookups = LookupOpts::decode_from(payload, &mut pos)?;
-        let addr_json = payload.get(pos..).context("ticket missing address")?;
+        let mut position = SECRET_LEN + 1;
+        let lookups = LookupOpts::decode_from(payload, &mut position)?;
+        let addr_json = payload.get(position..).context("ticket missing address")?;
         let value: serde_json::Value =
             serde_json::from_slice(addr_json).context("invalid ticket address json")?;
         let (_id, address) = endpoint_addr_from_json(&value)?;

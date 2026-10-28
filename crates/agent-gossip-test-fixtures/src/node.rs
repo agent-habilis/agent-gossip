@@ -212,13 +212,15 @@ impl Node {
     // expects a frozen one (or the reverse), which fails much later with a
     // timing symptom. INT and KILL stay lenient: a test may signal a child
     // that has already exited.
-    fn signal(&self, sig: &str) {
+    fn signal(&self, signature: &str) {
         let pid = self.child.id();
-        let status = Command::new("kill").args([sig, &pid.to_string()]).status();
-        if matches!(sig, "-STOP" | "-CONT") {
+        let status = Command::new("kill")
+            .args([signature, &pid.to_string()])
+            .status();
+        if matches!(signature, "-STOP" | "-CONT") {
             assert!(
                 status.as_ref().is_ok_and(std::process::ExitStatus::success),
-                "kill {sig} {pid} failed: {status:?}"
+                "kill {signature} {pid} failed: {status:?}"
             );
         }
     }
