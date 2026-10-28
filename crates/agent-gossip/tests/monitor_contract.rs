@@ -10,6 +10,7 @@
 //! Uses `--output json` and 3 peers to test multi-peer dynamics.
 //!
 //! Run `cargo build --release` first for faster crypto (shorter connect times).
+use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -73,13 +74,16 @@ impl JsonNode {
     fn create_with_flags(flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("json-create");
         let file = fs::File::create(&log).expect("the test temp dir is writable");
-        let child: Child = common::test_cmd()
+        let stdout = Stdio::from(
+            file.try_clone()
+                .expect("the log file handle can be cloned for stdout"),
+        );
+        let mut command = common::test_cmd();
+        command
             .args(["create", "--name", "jtest"])
-            .args(common::flag_args(flags))
-            .stdout(Stdio::from(
-                file.try_clone()
-                    .expect("the log file handle can be cloned for stdout"),
-            ))
+            .args(common::flag_args(flags));
+        let child: Child = command
+            .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn create");
@@ -122,13 +126,16 @@ impl JsonNode {
     fn join_with_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(&format!("json-{nickname}"));
         let file = fs::File::create(&log).expect("the test temp dir is writable");
-        let child: Child = common::test_cmd()
+        let stdout = Stdio::from(
+            file.try_clone()
+                .expect("the log file handle can be cloned for stdout"),
+        );
+        let mut command = common::test_cmd();
+        command
             .args(["join", mesh, "--nickname", nickname])
-            .args(common::flag_args(flags))
-            .stdout(Stdio::from(
-                file.try_clone()
-                    .expect("the log file handle can be cloned for stdout"),
-            ))
+            .args(common::flag_args(flags));
+        let child: Child = command
+            .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn join");
@@ -334,9 +341,8 @@ async fn test_cross_peer_message_delivery() {
 
     let creator_msgs = creator.broadcast_events();
     let joiner_b_msgs = joiner_b.broadcast_events();
-    let message: &serde_json::Value = creator_msgs
-        .iter()
-        .chain(joiner_b_msgs.iter())
+    let mut all_msgs = creator_msgs.iter().chain(joiner_b_msgs.iter());
+    let message: &serde_json::Value = all_msgs
         .find(|value| value["body"] == "hello from A")
         .expect("no message with body 'hello from A' found");
 
@@ -370,11 +376,11 @@ async fn test_bidirectional_multi_peer() {
         "creator expected >=2 messages"
     );
 
-    let bodies: Vec<String> = creator
-        .broadcast_events()
+    let events = creator.broadcast_events();
+    let bodies_iter = events
         .iter()
-        .filter_map(|value| value["body"].as_str().map(str::to_owned))
-        .collect();
+        .filter_map(|value| value["body"].as_str().map(str::to_owned));
+    let bodies: Vec<String> = bodies_iter.collect();
     assert!(
         bodies.iter().any(|body| body == "msg from A"),
         "the bodies hold msg from A"
@@ -808,16 +814,14 @@ fn test_hard_kill_triggers_peer_timeout() {
     let state_file = tmp_log("state-survivor");
     let log = tmp_log("json-survivor");
     let file = fs::File::create(&log).unwrap();
-    let mut creator: Child = common::test_cmd()
-        .args([
-            "create",
-            "--name",
-            "hardkill",
-            "--state-file",
-            state_file.to_str().unwrap(),
-        ])
-        .args(["--alive-timeout-secs", "3", "--sweep-interval-secs", "1"])
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+    let state = state_file.to_str().unwrap();
+    let stdout = Stdio::from(file.try_clone().unwrap());
+    let mut command = common::test_cmd();
+    command
+        .args(["create", "--name", "hardkill", "--state-file", state])
+        .args(["--alive-timeout-secs", "3", "--sweep-interval-secs", "1"]);
+    let mut creator: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
         .expect("failed to spawn creator");
@@ -892,9 +896,8 @@ fn test_hard_kill_triggers_peer_timeout() {
         roster["peer_count"], 1,
         "peer_count must exclude the quiet peer: {roster}"
     );
-    let victim_entry: &serde_json::Value = roster["peers"]
-        .as_array()
-        .expect("peers is an array")
+    let peers = roster["peers"].as_array().expect("peers is an array");
+    let victim_entry: &serde_json::Value = peers
         .iter()
         .find(|entry| entry["nickname"] == victim.nickname)
         .unwrap_or_else(|| panic!("quiet peer dropped out of the roster array: {roster}"));
@@ -906,13 +909,13 @@ fn test_hard_kill_triggers_peer_timeout() {
 
     // Confirm the JSON stream emitted exactly one peer_timeout event.
     let content = fs::read_to_string(&log).unwrap_or_default();
-    let timeouts: Vec<&str> = content
+    let peer_timeouts = content
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|value| value["event"] == "peer_timeout")
-        .filter_map(|value| value["nickname"].as_str().map(ToString::to_string))
-        .map(|_| "ok")
-        .collect();
+        .filter(|value| value["event"] == "peer_timeout");
+    let nicks =
+        peer_timeouts.filter_map(|value| value["nickname"].as_str().map(ToString::to_string));
+    let timeouts: Vec<&str> = nicks.map(|_| "ok").collect();
     assert_eq!(
         timeouts.len(),
         1,
@@ -983,12 +986,16 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     let _ = cli_send(&mesh, &creator.nickname, "live-after");
     assert!(
         wait_until(
-            || late
-                .broadcast_events()
-                .iter()
-                .filter(|value| value["author"] == creator.nickname.as_str()
-                    && value["body"] == "live-after")
-                .count(),
+            || {
+                let events = late.broadcast_events();
+                events
+                    .iter()
+                    .filter(|value| {
+                        value["author"] == creator.nickname.as_str()
+                            && value["body"] == "live-after"
+                    })
+                    .count()
+            },
             1,
             MSG_TIMEOUT,
         ) >= 1,
@@ -1606,8 +1613,8 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     common::cli_task_status(&mesh, worker_nick, &tid, "completed");
     let saw_completed: usize = wait_until(
         || {
-            creator
-                .json_events()
+            let events = creator.json_events();
+            events
                 .iter()
                 .filter(|value| value["task_id"] == tid.as_str() && value["state"] == "completed")
                 .count()
@@ -1681,10 +1688,8 @@ async fn test_peers_roster_shape() {
     let (creator, joiner_a, joiner_b, mesh) = three_peers("peers");
 
     let reach_values: fn(&serde_json::Value) -> Vec<String> = |roster| {
-        roster["peers"]
-            .as_array()
-            .into_iter()
-            .flatten()
+        let peers = roster["peers"].as_array().into_iter().flatten();
+        peers
             .filter_map(|entry| entry["reach"].as_str().map(str::to_owned))
             .collect()
     };
@@ -1741,10 +1746,13 @@ async fn test_peers_roster_shape() {
         );
         assert!(entry["path"].is_string(), "path is a string: {entry}");
     }
-    assert!(
-        peers.iter().any(|entry| entry["path"]
+    let ip_path = |entry: &serde_json::Value| {
+        entry["path"]
             .as_str()
-            .is_some_and(|path| path.starts_with("ip"))),
+            .is_some_and(|path| path.starts_with("ip"))
+    };
+    assert!(
+        peers.iter().any(ip_path),
         "at least one peer should have an active ip path in a localhost mesh: {roster}"
     );
     assert!(
@@ -1986,7 +1994,7 @@ fn scratch_file(tag: &str) -> (RemoveOnDrop, Vec<u8>) {
 }
 
 /// `a2a call --method SendMessage` from `nickname` to `to`, plus `extra` args.
-fn cli_call(mesh: &str, nickname: &str, to: &str, extra: &[&std::ffi::OsStr]) -> Command {
+fn cli_call(mesh: &str, nickname: &str, to: &str, extra: &[&OsStr]) -> Command {
     let mut command = common::test_cmd();
     command
         .args([
@@ -2020,12 +2028,13 @@ fn await_file_message(worker: &JsonNode, task_id: &str) -> serde_json::Value {
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         let found: Option<serde_json::Value> = worker.json_events().into_iter().find(|value| {
+            let parts = value["payload"]["parts"].as_array();
+            let has_file =
+                parts.is_some_and(|parts| parts.iter().any(|part| part["url"].is_string()));
             value["event"] == "task"
                 && value["kind"] == "message"
                 && value["task_id"] == task_id
-                && value["payload"]["parts"]
-                    .as_array()
-                    .is_some_and(|parts| parts.iter().any(|part| part["url"].is_string()))
+                && has_file
         });
         if let Some(event) = found {
             return event;
@@ -2082,11 +2091,11 @@ async fn test_task_followup_carries_a_file() {
         &creator.nickname,
         "tf-file",
         &[
-            "--task-id".as_ref(),
+            OsStr::new("--task-id"),
             tid.as_ref(),
-            "--text".as_ref(),
-            "graph abc".as_ref(),
-            "--file".as_ref(),
+            OsStr::new("--text"),
+            OsStr::new("graph abc"),
+            OsStr::new("--file"),
             sent.0.as_os_str(),
         ],
     )
@@ -2128,12 +2137,12 @@ async fn test_task_first_call_carries_a_file() {
         &creator.nickname,
         "tf-first",
         &[
-            "--file".as_ref(),
+            OsStr::new("--file"),
             sent.0.as_os_str(),
-            "--file-name".as_ref(),
-            "graph.tar".as_ref(),
-            "--file-mime".as_ref(),
-            "application/x-tar".as_ref(),
+            OsStr::new("--file-name"),
+            OsStr::new("graph.tar"),
+            OsStr::new("--file-mime"),
+            OsStr::new("application/x-tar"),
         ],
     )
     .output()
@@ -2363,9 +2372,11 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
     decline(&mesh, "tf-share-a", &task_ids[0]);
 
     let first_reaped: Box<dyn Fn() -> bool + '_> = Box::new(|| {
-        common::trace_log(&mesh, &creator.nickname)
+        let trace = common::trace_log(&mesh, &creator.nickname);
+        let reaped_marker = task_ids[0].as_str();
+        trace
             .lines()
-            .any(|line| line.contains("task reaped") && line.contains(task_ids[0].as_str()))
+            .any(|line| line.contains("task reaped") && line.contains(reaped_marker))
     });
     let reap_deadline = Instant::now() + Duration::from_secs(15);
     while !first_reaped() {
@@ -2415,10 +2426,10 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
         &creator.nickname,
         "tf-late",
         &[
-            "--file".as_ref(),
+            OsStr::new("--file"),
             sent.0.as_os_str(),
-            "--timeout-secs".as_ref(),
-            "0".as_ref(),
+            OsStr::new("--timeout-secs"),
+            OsStr::new("0"),
         ],
     )
     .output()
@@ -2462,10 +2473,7 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
 
 /// The reach a roster gives the creator, or `None` when the roster does not list it.
 fn creator_reach(view: &serde_json::Value, creator_nickname: &str) -> Option<String> {
-    view["peers"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|entry| entry["nickname"].as_str() == Some(creator_nickname))
-        .and_then(|entry| entry["reach"].as_str().map(str::to_owned))
+    let mut peers = view["peers"].as_array().into_iter().flatten();
+    let creator_entry = peers.find(|entry| entry["nickname"].as_str() == Some(creator_nickname));
+    creator_entry.and_then(|entry| entry["reach"].as_str().map(str::to_owned))
 }

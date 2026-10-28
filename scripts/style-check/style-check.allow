@@ -31,7 +31,6 @@ long_chain|crates/agent-gossip/tests/install_contract.rs|5|open: A statement wit
 long_chain|crates/agent-gossip/tests/lossless_receive.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/man_contract.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/mcp_stdio.rs|12|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/agent-gossip/tests/monitor_contract.rs|17|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/reader_liveness.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/receipts.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/tests/shared_state.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
