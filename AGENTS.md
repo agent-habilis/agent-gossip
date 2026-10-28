@@ -403,6 +403,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
 - Declined O1: this is one application crate, and splitting it would touch every import and the shared test harness, which depends on it.
 - Declined O3: the APIs share one crate for trait-impl coherence and shared types, so no submodule split is planned.
+- Declined O9: a rough grep finds about 28 leaf files whose name does not match their primary item; renaming them touches their imports, so the names stay.
 
 ## Agent Restrictions
 
