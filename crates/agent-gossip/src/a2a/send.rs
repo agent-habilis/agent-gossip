@@ -259,10 +259,7 @@ async fn send_msg_part(
         // not `deliver_in_background`: the CLI needs the delivery verdict to
         // report an unreachable peer, and each IPC send is one-shot.
         log_unless_done(habilis_network::ops::deliver(msg, bytes, state, sender).await?);
-    } else if state
-        .pending_outbound_mut()
-        .push((msg.clone(), bytes.clone()))
-    {
+    } else if state.pending_outbound_mut().push((msg.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
         commit_outbound_part(state, msg, out, echo);
     } else {
@@ -1384,10 +1381,7 @@ async fn send_directed_leg(
                 Ok(pending.into_iter().next())
             }
         };
-    } else if state
-        .pending_outbound_mut()
-        .push((msg.clone(), bytes.clone()))
-    {
+    } else if state.pending_outbound_mut().push((msg.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
         retain_leg(state, msg, content);
         if let Some(echo) = echo {
