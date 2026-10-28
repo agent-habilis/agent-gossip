@@ -407,6 +407,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined O9: a rough grep finds about 28 leaf files whose name does not match their primary item; renaming them touches their imports, so the names stay.
 - Declined O10: a leaf module without one primary item keeps its name, because renaming it touches every import of it.
 - Declined O13: it depends on O11, which the owner decides. Core code in non-leaf modules stays until that decision.
+- Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.
 
 ## Agent Restrictions
 
