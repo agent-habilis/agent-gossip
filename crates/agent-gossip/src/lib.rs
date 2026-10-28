@@ -91,6 +91,7 @@ pub use self::version::version;
 
 mod app_log_pins;
 mod cli_command;
+mod cli_error;
 mod ensure_mesh_runtime_dir;
 mod ensure_runtime_base;
 mod flush_log_if_pending;
@@ -103,5 +104,4 @@ mod register_build_version;
 mod run_cli;
 mod runtime_base;
 mod version;
-mod cli_error;
 pub use self::cli_error::CliError;

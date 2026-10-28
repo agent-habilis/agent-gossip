@@ -1,8 +1,7 @@
-use crate::cli_error::CliError;
-
 use crate::cli;
 use crate::cli::Cli;
 use crate::cli_command::cli_command;
+use crate::cli_error::CliError;
 use crate::register_build_version::register_build_version;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
