@@ -142,8 +142,15 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     let (status, card) = get(port, "/.well-known/agent-card.json");
     assert_eq!(status, 200, "well-known card must not require auth");
     let card: Value = serde_json::from_str(&card).expect("card is JSON");
-    assert_eq!(card["name"].as_str(), Some(host.nickname.as_str()));
-    assert_eq!(card["capabilities"]["streaming"], true);
+    assert_eq!(
+        card["name"].as_str(),
+        Some(host.nickname.as_str()),
+        "the card names the host's nickname"
+    );
+    assert_eq!(
+        card["capabilities"]["streaming"], true,
+        "the card advertises streaming"
+    );
     // A2A v1.0: reachable endpoints live in `supportedInterfaces`, each with its
     // own `protocolVersion`. The served card carries the JSONRPC interface (the
     // bound port) alongside the always-present gossip one.
@@ -184,7 +191,10 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         }}),
     });
     // v1.0 SendMessageResponse oneof: a broadcast has no task, so `{"message":…}`.
-    assert_eq!(echo["message"]["parts"][0]["text"], "hello from a2a");
+    assert_eq!(
+        echo["message"]["parts"][0]["text"], "hello from a2a",
+        "the echoed text comes back in the reply"
+    );
     // Cross-binding: the plain gossip peer surfaces the text.
     let delivered = wait_until(
         || joiner.count_from(&host.nickname, "hello from a2a"),
@@ -246,7 +256,11 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         method: "GetTask",
         params: &serde_json::json!({ "id": task_id }),
     });
-    assert_eq!(fetched["id"].as_str(), Some(task_id.as_str()));
+    assert_eq!(
+        fetched["id"].as_str(),
+        Some(task_id.as_str()),
+        "the fetched task is the one that was created"
+    );
     let listed = rpc(RpcCall {
         port,
         path: "/mesh",
@@ -276,7 +290,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         method: "mesh/state.get",
         params: &serde_json::json!({}),
     });
-    assert_eq!(doc["turn"], "a2a");
+    assert_eq!(doc["turn"], "a2a", "the document keeps the a2a turn");
 
     // GetExtendedAgentCard (authenticated) returns the full v1.0 card.
     let extended = rpc(RpcCall {
@@ -290,20 +304,29 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         extended["supportedInterfaces"].is_array(),
         "extended card is a v1.0 AgentCard: {extended}"
     );
-    assert_eq!(extended["capabilities"]["extendedAgentCard"], true);
+    assert_eq!(
+        extended["capabilities"]["extendedAgentCard"], true,
+        "the extended card is advertised"
+    );
 
     // Push-notification config methods are intentionally unsupported: the
     // JSON-RPC method-not-found error, and `capabilities.pushNotifications`
     // is declared false on the card.
-    assert_eq!(card["capabilities"]["pushNotifications"], false);
+    assert_eq!(
+        card["capabilities"]["pushNotifications"], false,
+        "push notifications are not advertised"
+    );
     let (push_status, push_response) = post(
         port,
         "/mesh",
         &token,
         &serde_json::json!({ "jsonrpc": "2.0", "id": 9, "method": "CreateTaskPushNotificationConfig", "params": {} }),
     );
-    assert_eq!(push_status, 200);
-    assert_eq!(push_response["error"]["code"], -32601);
+    assert_eq!(push_status, 200, "the unsupported push request is answered");
+    assert_eq!(
+        push_response["error"]["code"], -32601,
+        "the push request fails with method not found"
+    );
 
     let _ = std::fs::remove_file(&state_file);
 }

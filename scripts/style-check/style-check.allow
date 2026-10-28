@@ -43,7 +43,6 @@ assert_no_message|crates/agent-gossip/src/cli/password_flag.rs|2|open: An assert
 assert_no_message|crates/agent-gossip/src/cli/session.rs|13|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/mcp/session.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/output/tests.rs|82|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/tests/a2a_contract.rs|9|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/gossip_network.rs|39|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/mcp_stdio.rs|28|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/monitor_contract.rs|86|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
