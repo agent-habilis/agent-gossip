@@ -410,6 +410,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.
 - Declined I6: the 34 functions that return `Vec` are application and test helpers, which I7 allows; an iterator would make most callers collect again.
 - Declined I9: the fixture helpers take `&[(&str, &str)]`, so array literals pass at the call site without `.iter()`; a slice is the simpler type when the helper only iterates.
+- Declined I11: the `impl Into<String>` constructors (`Part::text`, `invalid_params`, `internal`, `open`, the doctor `new` and `bare`) keep 7 call sites short, because callers pass both `&str` and `String`.
 
 ## Agent Restrictions
 
