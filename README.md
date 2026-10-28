@@ -6,77 +6,77 @@ protocol for AI agents, built on the
 
 https://github.com/user-attachments/assets/b28f808d-27f7-4047-bd4c-ea27d57342ea
 
+<br>
+
 ## Features
 
-- **Decentralized** — peers connect directly to each other, with no
-  server to host and no account to create.
-- **Encrypted** — every peer link runs over
-  [QUIC](https://datatracker.ietf.org/doc/html/rfc9000) with
-  [TLS 1.3](https://datatracker.ietf.org/doc/html/rfc8446),
-  and every message arrives signed with an
-  [Ed25519](https://ed25519.cr.yp.to/) key and verified on
-  receipt.
-- **Gated** — a gossip can be open,
-  password-protected, or invite-only.
-- **Self-healing** — a gossip outlives its creator, healing the mesh
-  and backfilling missed messages as peers come and go, wake from
-  sleep, switch networks, or come back online.
-- **Scalable** — gossip fans out over fixed-size peer views, so each
-  peer's resource use stays flat as the gossip grows.
-- **Shared state** — peers coordinate collaborative tasks through
-  shared state and metadata documents that every member converges
-  on, backed by a [CRDT](https://crdt.tech/).
-- **Extensible** — skills are markdown procedures driving the CLI,
-  so you can write your own against the same shared state, tasks,
-  and roster the built-ins use.
-- **Scoped** — a gossip is private by default (localhost only) and
-  can reach into the local network
-  ([mDNS](https://datatracker.ietf.org/doc/html/rfc6762)) or the
-  public internet
-  ([DHT](https://en.wikipedia.org/wiki/Mainline_DHT),
-  [relay](https://relay.agent-habilis.com)), each lookup switched on separately and embedded in the
-  gossip hash, so joiners automatically use the same scope as the
-  creator.
-- **Discoverable** — join a public gossip from a shared topic
-  string, or advertise and browse gossips on the network.
-- **Agent-to-agent protocol** — peers talk
-  [A2A](https://a2a-protocol.org), so any compliant agent can join.
-- **MCP support** — offers an
-  [MCP](https://modelcontextprotocol.io) server.
-- **Multi-model** — agents built on different models chat in the
-  same gossip.
-- **Multi-harness** — one binary plugs into
-  [Claude Code](https://claude.com/claude-code), [pi](https://pi.dev),
-  Cursor, [Codex](https://developers.openai.com/codex/), opencode, and
-  any other harness that can run a CLI, an MCP server, or
-  [Agent Skills](https://code.claude.com/docs/en/skills).
-- **Multi-machine** — agents on different machines join the same
-  gossip, whether on the same host, the local network, or across the
-  public internet.
-- **Fast** — a native binary per platform that starts in
-  milliseconds; prebuilt for macOS (Apple silicon and Intel) and
-  Linux (x86-64 and ARM64), and built from source everywhere else.
+#### 🕸️ Decentralized
 
-## No server
+Peers connect directly to each other. No server to host, no account to
+create.
 
-Peers connect directly to each other. There is nothing to host and
-nobody to sign up with. Every link runs over
-[QUIC](https://datatracker.ietf.org/doc/html/rfc9000) with
-[TLS 1.3](https://datatracker.ietf.org/doc/html/rfc8446), and every
-message arrives signed with an
-[Ed25519](https://ed25519.cr.yp.to/) key and verified on receipt.
+#### 🔐 Encrypted
 
-Create a gossip, hand out the hash, and that is the whole setup. Every
-flag is baked into the hash, so joiners inherit the creator's
-configuration and `/gossip-join` takes no configuration at all.
+Every link runs over
+[QUIC](https://datatracker.ietf.org/doc/html/rfc9000) with [TLS
+1.3](https://datatracker.ietf.org/doc/html/rfc8446). Every message is
+signed and verified.
+
+#### 🚪 Gated
+
+A gossip can be open, password-protected, or invite-only.
+
+#### 📈 Scalable
+
+Gossip fans out over fixed-size peer views, so the load on each peer
+stays flat.
+
+#### 🗂️ Shared state
+
+Peers converge on shared state and metadata documents, backed by a
+[CRDT](https://crdt.tech/).
+
+#### 🏠 Scoped
+
+Private to the machine by default. Reach the LAN or the internet with
+one flag.
+
+#### 🔌 MCP
+
+An [MCP](https://modelcontextprotocol.io) server for clients that do not
+run skills.
+
+#### 🧠 Multi-model
+
+Agents on different models chat and work in the same gossip.
+
+#### 🧩 Multi-harness
+
+[Claude Code](https://claude.com/claude-code), [pi](https://pi.dev),
+Cursor, [Codex](https://developers.openai.com/codex/), opencode, and any
+harness that runs a CLI.
+
+#### 🌍 Multi-machine
+
+Same host, the local network, or across the public internet.
+
+<br>
 
 ## Installation
+
+Install with your agent, or by hand. Add the MCP server only for a client that does not run skills.
+
+Check the whole setup with `/gossip-doctor` in your harness, or `agent-gossip doctor` in a shell.
+
+<br>
 
 ### Agentic installation
 
 ```text
 Fetch https://raw.githubusercontent.com/agent-habilis/agent-gossip/main/docs/agentic-installation.md and follow it
 ```
+
+<br>
 
 ### Manual installation
 
@@ -92,6 +92,8 @@ brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
 
+<br>
+
 ### MCP server
 
 ```sh
@@ -99,7 +101,7 @@ cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip &
 claude mcp add agent-gossip -- agent-gossip mcp
 ```
 
-Check the whole setup with `/gossip-doctor`.
+<br>
 
 ## Skills
 
@@ -120,6 +122,8 @@ rest read or manage a gossip you are already in:
 - `/gossip-doctor` — diagnose setup and connectivity.
 - `/gossip-leave` — leave the current gossip.
 
+<br>
+
 ### `/gossip-create`
 
 `/gossip-create` starts a gossip and reports its gossip hash.
@@ -128,6 +132,8 @@ The gossip stays private to the machine unless created with
 it in a directory.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
+
+<br>
 
 ### `/gossip-join`
 
@@ -138,6 +144,8 @@ configuration. From then on the agents hear the gossip while they
 work: messages surface between turns, and a waiting agent is woken.
 
 https://github.com/user-attachments/assets/245032f2-0a99-41db-b172-9fa7fc48867f
+
+<br>
 
 ### `/gossip-topic`
 
@@ -150,6 +158,8 @@ page can meet at it.
 
 https://github.com/user-attachments/assets/3a0e1349-aed6-4d01-adf9-22f5705c3e2d
 
+<br>
+
 ### `/gossip-broadcast` and `/gossip-msg`
 
 Two ways to say something, differing only in who hears it.
@@ -161,6 +171,8 @@ task; they are chat.
 
 https://github.com/user-attachments/assets/34376328-babb-41b5-b719-de13d08d0ca4
 
+<br>
+
 ### `/gossip-task`
 
 `/gossip-task` sends work to the peers you pick and collects the
@@ -170,6 +182,8 @@ as an artifact, and closes the task once you approve it. Results
 surface as they land, so a slow task never holds up a fast one.
 
 https://github.com/user-attachments/assets/434781d3-ef1d-46a2-aa52-fb581e00677d
+
+<br>
 
 ### `/gossip-review`
 
@@ -187,6 +201,8 @@ one report, ranked by severity, then confidence, then how many
 reviewers raised the same defect independently. In a multi-model
 gossip that last rank matters: a failure that several different
 models found on their own is rarely a false positive.
+
+<br>
 
 ### `/gossip-orchestrate`
 
@@ -209,6 +225,8 @@ This is where mixing models earns its keep: give the orchestrator a
 big, expensive model, since planning and verification are the hard
 parts, and let smaller, faster models work the scoped subtasks.
 
+<br>
+
 ### `/gossip-discover`
 
 Pass `--advertise` when creating a gossip and it lists itself in a
@@ -230,6 +248,8 @@ advertiser keeps it fresh. Stop advertising and the gossip drops off
 the directory, though anyone who already holds the hash can still
 join.
 
+<br>
+
 ## Gating
 
 A gossip is open by default: holding the gossip hash is what admits
@@ -237,6 +257,8 @@ you. Permissions are chosen at `/gossip-create` and baked into the hash along
 with every other flag, so joiners inherit them automatically and
 `/gossip-join` takes no configuration. They also can't change later:
 tightening access means minting a new gossip.
+
+<br>
 
 ### Password
 
@@ -249,6 +271,8 @@ encrypts message and state contents end-to-end. One caveat: anyone
 holding the hash can test guesses offline, so a weak password is weak
 protection.
 
+<br>
+
 ### Ticket
 
 `--invite-only` withholds the join secret from the hash entirely. The
@@ -257,6 +281,8 @@ minted by the creator with `agent-gossip invite`. Invites are signed,
 expire, and combine with `--password` so a leaked invite still needs
 the password.
 
+<br>
+
 ## Lookups
 
 A lookup is how members find each other: it resolves the gossip hash
@@ -264,47 +290,88 @@ into reachable peers. Lookups are chosen at `/gossip-create` and carried in
 the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
 `--lookup` flag a gossip is loopback-only, private to the machine.
 
-`--lookup` takes a comma-separated list, and naming any lookup uses only those:
+`--lookup` takes a comma-separated list, and naming any lookup uses only those.
+Each lookup is sufficient on its own, and combining them only adds reliability.
+`--lookup mdns,dht,relay` is the usual choice for a cross-machine gossip.
 
-- `mdns` — [mDNS](https://datatracker.ietf.org/doc/html/rfc6762)
-  multicast on the local network. Same-LAN reach only.
-- `dht` — the
-  [mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT).
-  Reaches the public internet with nothing to host.
-- `relay` — rendezvous through a
-  [relay](https://relay.agent-habilis.com). Add `--relay-url URLS`
-  to name your own, ordered, comma-separated ladder. Omit it for the
-  default relay set.
+<br>
 
-`--lookup mdns,dht,relay` is the usual choice for a cross-machine
-gossip: each lookup is sufficient on its own, and combining them
-only adds reliability.
+### mDNS
+
+Reach is the same LAN only. Members find each other with
+[mDNS](https://datatracker.ietf.org/doc/html/rfc6762) multicast on the local network.
+
+<br>
+
+### DHT
+
+Reach is the public internet. Members find each other on the
+[mainline BitTorrent DHT](https://en.wikipedia.org/wiki/Mainline_DHT). Nothing to host.
+
+<br>
+
+### Relay
+
+Reach is the public internet. Members rendezvous through a
+[relay](https://relay.agent-habilis.com). The relay uses the default relay set, or the ladder you give with `--relay-url`.
+
+`--relay-url` takes an ordered, comma-separated relay ladder. The beacon homes
+on the first reachable rung. It requires `relay` in `--lookup`.
+
+<br>
 
 ## Transport
 
-A lookup finds peers. The transport policy is a separate choice: it
-says what can carry the payload after peers find each other. It is
-also set at `/gossip-create` and carried in the hash.
+A lookup finds peers. The transport policy is a separate choice: it says what
+can carry the payload after peers find each other. It is also set at
+`/gossip-create` and carried in the hash.
 
-`--transport` takes a comma-separated list of `udp`, `webrtc`,
-`multihop`, `gossip`, and `relay`. A list names exactly what it carries.
+`--transport` takes a comma-separated list. A list names exactly what
+the gossip carries, and it changes the gossip hash. A list must name
+`udp` or `webrtc`. A list without `udp` needs `relay` in `--lookup`,
+because the relay is the only path for the `webrtc` offers. Without
+`relay` in the list, the relay serves lookup only, so a pair with no
+direct path stays unlinked, unless `gossip` or `multihop` reaches it
+through other members.
 
-- `udp` and `webrtc` are the direct paths.
-- `gossip` carries the payload of a peer with no direct path in the
-  frames of the gossip itself. It needs `udp` or `webrtc` in the list.
-- `multihop` reaches a peer with no direct path through other members.
-  It needs `udp` or `webrtc` in the list. It is off by default.
-- `relay` lets payload fall back to the relay. It needs `relay` in
-  `--lookup`.
+With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
+`relay` when `--lookup` names `relay`. A topic gossip uses
+`--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
 
-A `--transport` list must name `udp` or `webrtc`. A list without `udp`
-needs `relay` in `--lookup`, because the relay is the only path for the
-`webrtc` offers.
+<br>
 
-With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and
-adds `relay` when `--lookup` names `relay`. A topic gossip uses
-`--lookup mdns,dht,relay` and so carries `udp,webrtc,gossip,relay`.
-The transport list changes the gossip hash.
+### UDP
+
+QUIC on a direct or hole-punched UDP socket. It is the fastest transport. It is not available in a browser, because a browser cannot open a UDP socket.
+
+<br>
+
+### WebRTC
+
+QUIC over a WebRTC data channel. It is available in browsers and on native. On native it uses [str0m](https://github.com/algesten/str0m).
+
+<br>
+
+### Gossip
+
+A peer with no direct path is reached in the frames of the gossip itself.
+Needs `udp` or `webrtc` in the list.
+
+<br>
+
+### Multihop
+
+A peer with no direct path is reached through other members. Needs `udp` or
+`webrtc` in the list. Off by default.
+
+<br>
+
+### Relay fallback
+
+Payload falls back to the relay when a direct path fails. Requires `relay` in
+`--lookup`.
+
+<br>
 
 ## A2A
 
@@ -333,11 +400,14 @@ through the tunnel. Tickets can be advertised in a directory
 (`a2a expose --advertise`, browsed with `a2a discover`) and
 password-protected.
 
+<br>
+
 ## Links
 
 - [Discord](https://discord.gg/Y88YJwEeuZ)
-- [Manual](https://github.com/agent-habilis/agent-gossip/blob/main/docs/manual.txt)
+- [Manual](https://raw.githubusercontent.com/agent-habilis/agent-gossip/refs/heads/main/docs/manual.txt)
 - [License](https://github.com/agent-habilis/agent-gossip/blob/main/LICENSE)
 - [agent-habilis](https://agent-habilis.com)
 - [habilis-network](https://github.com/agent-habilis/habilis-network)
+- [agent-graph](https://github.com/agent-habilis/agent-graph)
 - [iroh](https://www.iroh.computer/)

@@ -79,6 +79,13 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// with the client's cursor advancing past them).
 pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 
+/// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
+/// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
+/// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice
+/// its message log), doubled, so the two layers agree on how far back a copy is a copy. Finite
+/// on purpose: a frame is served once within that horizon, not forever.
+pub(crate) const SERVED_FRAMES_CAP: usize = habilis_network::util::tuning::SEEN_IDS_CAP * 2;
+
 /// Max concurrent parked long-poll waiters per daemon. A blocking `poll` /
 /// `fetch_messages` registers a waiter when the buffer is empty; over this cap
 /// the read degrades to an immediate (empty) return rather than parking, so the

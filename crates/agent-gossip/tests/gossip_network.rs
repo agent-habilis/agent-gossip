@@ -3813,3 +3813,116 @@ fn owner_pid_launcher_reports_flag_errors() {
     }
     let _ = owner.0.kill();
 }
+
+/// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
+/// subtype, the author and the frame id.
+fn presence_lines(node: &Node) -> Vec<(String, String, String)> {
+    node.log_contents()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| event["type"] == "presence" || event["event"] == "presence")
+        .map(|event| {
+            let field = |name: &str| event[name].as_str().unwrap_or_default().to_owned();
+            (field("subtype"), field("author"), field("id"))
+        })
+        .collect()
+}
+
+/// Four peers leave at once. Each survivor sees one `left` per nick and no `joined` for that nick
+/// after it, serves no frame twice, and its roster shrinks to the survivors. A guard, not a
+/// reproduction: a room this small never forgets a frame, so the replay storm the engine fix
+/// closed cannot start here. It holds the line the fix drew.
+#[test]
+fn test_mass_leave_leaves_no_ghosts() {
+    let _serial = serial_guard();
+    let envs = [
+        ("--heal-interval-secs", "3"),
+        ("--antientropy-interval-secs", "2"),
+    ];
+    let (creator, mesh) = Node::create_args("itest", &[], &envs);
+    let survivor = Node::join_flags(&mesh, "ml-survivor", &envs);
+    let mut leavers: Vec<Node> = (0..4)
+        .map(|index| Node::join_flags(&mesh, &format!("ml-leaver-{index}"), &envs))
+        .collect();
+    assert!(
+        creator.wait_ready(&mesh)
+            && survivor.wait_ready(&mesh)
+            && leavers.iter().all(|leaver| leaver.wait_ready(&mesh)),
+        "nodes never ready"
+    );
+    let count = |node: &Node, subtype: &str| {
+        presence_lines(node)
+            .iter()
+            .filter(|(kind, _, _)| kind == subtype)
+            .count()
+    };
+    assert!(
+        wait_until(|| count(&creator, "joined"), 5, MSG_TIMEOUT) >= 5,
+        "the creator never saw every joiner"
+    );
+    assert!(
+        wait_until(|| count(&survivor, "joined"), 5, MSG_TIMEOUT) >= 5,
+        "the survivor never saw the room"
+    );
+
+    for leaver in &leavers {
+        leaver.sigint();
+    }
+    for leaver in &mut leavers {
+        leaver.wait_exit();
+    }
+    assert!(
+        wait_until(|| count(&creator, "left"), 4, MSG_TIMEOUT) >= 4,
+        "the creator missed a goodbye"
+    );
+    assert!(
+        wait_until(|| count(&survivor, "left"), 4, MSG_TIMEOUT) >= 4,
+        "the survivor missed a goodbye"
+    );
+    // Three anti-entropy rounds: time for a resend of a departed frame to land and be dropped.
+    std::thread::sleep(Duration::from_secs(3 * TEST_AE_SECS));
+
+    for observer in [&creator, &survivor] {
+        let lines = presence_lines(observer);
+        for index in 0..4 {
+            let nick = format!("ml-leaver-{index}");
+            let lefts = lines
+                .iter()
+                .filter(|(kind, author, _)| kind == "left" && *author == nick)
+                .count();
+            assert_eq!(
+                lefts, 1,
+                "{nick} left {lefts} times at {}",
+                observer.nickname
+            );
+            let last_left = lines
+                .iter()
+                .rposition(|(kind, author, _)| kind == "left" && *author == nick)
+                .expect("one left per leaver");
+            assert!(
+                !lines[last_left..]
+                    .iter()
+                    .any(|(kind, author, _)| kind == "joined" && *author == nick),
+                "{nick} came back as a ghost at {}",
+                observer.nickname
+            );
+        }
+        let total = lines.len();
+        let mut ids: Vec<&str> = lines.iter().map(|(_, _, id)| id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(
+            ids.len(),
+            total,
+            "a presence frame was served twice at {}",
+            observer.nickname
+        );
+        let roster: serde_json::Value =
+            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers json");
+        assert_eq!(
+            roster["peer_count"], 2,
+            "ghosts in the roster of {}: {roster}",
+            observer.nickname
+        );
+    }
+}

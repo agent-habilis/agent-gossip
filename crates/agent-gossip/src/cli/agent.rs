@@ -392,6 +392,64 @@ mod tests {
         }
     }
 
+    /// The skills that include the shared events partial, and so its Task
+    /// widget section. A skill that stops including it turns this red.
+    const TASK_WIDGET_SKILLS: [&str; 13] = [
+        "gossip-broadcast",
+        "gossip-create",
+        "gossip-join",
+        "gossip-meta",
+        "gossip-msg",
+        "gossip-orchestrate",
+        "gossip-ping",
+        "gossip-reattach",
+        "gossip-review",
+        "gossip-state",
+        "gossip-status",
+        "gossip-task",
+        "gossip-topic",
+    ];
+
+    /// A todo subject is the one place a model writes a counterparty by hand,
+    /// and a bare nickname there breaks the widget's match on the row. Every
+    /// skill that carries the Claude Code Task widget section states the rule
+    /// in both adapters, with the right and the wrong row.
+    #[test]
+    fn task_widget_skills_carry_the_counterparty_rule() {
+        const RULE: &str = "**The counterparty is always `<nick>`, in angle brackets.**";
+        const RIGHT_ROW: &str =
+            "| Right | `💬 <yard-lore> · waiting · summarize the diff · 02bd5883` |";
+        const WRONG_ROW: &str =
+            "| Wrong | `💬 yard-lore · waiting · summarize the diff · 02bd5883` |";
+        for skill in OWNED_SKILL_DIRS {
+            let body = rendered(skill);
+            let has_section = body.contains("#### Task widget — Claude Code");
+            assert_eq!(
+                has_section,
+                TASK_WIDGET_SKILLS.contains(skill),
+                "{skill}: Task widget section presence is wrong"
+            );
+            if !has_section {
+                continue;
+            }
+            assert_eq!(
+                body.matches(RULE).count(),
+                2,
+                "{skill}: the rule belongs once in each adapter"
+            );
+            assert_eq!(
+                body.matches(RIGHT_ROW).count(),
+                2,
+                "{skill}: the right row belongs once in each adapter"
+            );
+            assert_eq!(
+                body.matches(WRONG_ROW).count(),
+                2,
+                "{skill}: the wrong row belongs once in each adapter"
+            );
+        }
+    }
+
     /// Patterns the skills replaced and must not bring back: a shell `sleep`
     /// before the bell leaves no bell process for its length, so the Stop hook
     /// would refuse every topic turn; `pgrep` matching broke on quoting and on
