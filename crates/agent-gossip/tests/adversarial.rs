@@ -88,11 +88,10 @@ async fn tampered_message_is_dropped() {
     let key = test_key::new_key();
     // Sign "honest", then mutate the body → signature no longer matches.
     // The same shape as the control below: a nickname the victim surfaces, a2a-wrapped.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
+    let signed: CraftedMsg = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
         .wrap_a2a()
-        .sign(&key)
-        .tamper_body("tampered-after-sign")
-        .bytes();
+        .sign(&key);
+    let evil: Vec<u8> = signed.tamper_body("tampered-after-sign").bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-tampered").await;
     assert!(
@@ -389,8 +388,9 @@ async fn payload_frame_id_mismatch_is_dropped() {
     // Wrap a valid payload first, then re-id the FRAME — the payload's
     // messageId no longer names the frame, a mismatch only a crafted client
     // produces.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body")
-        .wrap_a2a()
+    let wrapped: CraftedMsg =
+        CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body").wrap_a2a();
+    let evil: Vec<u8> = wrapped
         .id("00000000-0000-0000-0000-00000000beef")
         .sign(&key)
         .bytes();
@@ -456,15 +456,16 @@ async fn directed_broadcast_is_dropped() {
     // `a2a_broadcast` addressed to the victim: a private line wearing the
     // gossip-wide tag. Were it surfaced, a peer could make a 1:1 remark look
     // like something the whole gossip had seen.
-    let evil: Vec<u8> = CraftedMsg::new(
+    let wrapped: CraftedMsg = CraftedMsg::new(
         attacker.session.mesh_id(),
         "ghost",
         "evil-directed-broadcast",
     )
-    .wrap_a2a()
-    .address_to(Some(victim.nickname.as_str()))
-    .sign(&key)
-    .bytes();
+    .wrap_a2a();
+    let evil: Vec<u8> = wrapped
+        .address_to(Some(victim.nickname.as_str()))
+        .sign(&key)
+        .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-dirbcast").await;
     assert!(
@@ -485,12 +486,11 @@ async fn broadcast_shaped_msg_is_dropped() {
     let key = test_key::new_key();
     // `a2a_msg` with no addressee: a msg on the broadcast plane. This is the
     // leak direction — it would hand every peer a line meant for one.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
-        .into_msg()
-        .wrap_msg()
-        .address_to(None)
-        .sign(&key)
-        .bytes();
+    let msg: CraftedMsg =
+        CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
+            .into_msg()
+            .wrap_msg();
+    let evil: Vec<u8> = msg.address_to(None).sign(&key).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-bcastmsg").await;
     assert!(
@@ -513,9 +513,10 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
     // A msg carrying a broadcast payload: correctly addressed, but its A2A
     // body declares `mesh-broadcast`. `wrap_a2a` composes the broadcast
     // payload; retagging afterwards leaves the extension in place.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
+    let retagged: CraftedMsg = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
         .wrap_a2a()
-        .into_msg()
+        .into_msg();
+    let evil: Vec<u8> = retagged
         .address_to(Some(victim.nickname.as_str()))
         .sign(&key)
         .bytes();
@@ -538,12 +539,11 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
     // A well-formed msg for someone else entirely, injected at the victim —
     // the shape a multihop relay legitimately carries. It must forward it
     // without ever surfacing it.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
-        .into_msg()
-        .wrap_msg()
-        .address_to(Some("someone-else"))
-        .sign(&key)
-        .bytes();
+    let msg: CraftedMsg =
+        CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
+            .into_msg()
+            .wrap_msg();
+    let evil: Vec<u8> = msg.address_to(Some("someone-else")).sign(&key).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgrelay").await;
     assert!(
@@ -576,16 +576,14 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
     let (mut victim, attacker) = meshed_pair("msgself").await;
     let key = test_key::new_key();
     let victim_nick = victim.nickname.clone();
-    let evil: Vec<u8> = CraftedMsg::new(
+    let msg: CraftedMsg = CraftedMsg::new(
         attacker.session.mesh_id(),
         &victim_nick,
         "evil-msg-as-victim",
     )
     .into_msg()
-    .wrap_msg()
-    .address_to(Some("someone-else"))
-    .sign(&key)
-    .bytes();
+    .wrap_msg();
+    let evil: Vec<u8> = msg.address_to(Some("someone-else")).sign(&key).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgself").await;
     assert!(victim.wait_body("barrier-msgself", T).await, "barrier lost");
@@ -819,8 +817,9 @@ async fn gap_future_timestamp_is_accepted() {
     // parents there is no check, and there is no absolute-time sanity bound.
     let (mut victim, attacker) = meshed_pair("future-ts").await;
     let key = test_key::new_key();
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future")
-        .wrap_a2a()
+    let wrapped: CraftedMsg =
+        CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future").wrap_a2a();
+    let evil: Vec<u8> = wrapped
         .timestamp(habilis_network::protocol::UnixSecs::from_secs(
             4_102_444_800,
         )) // 2100-01-01
