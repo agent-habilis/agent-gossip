@@ -121,7 +121,10 @@ fn a_long_poll_alone_sends_no_read_receipt() {
     // receipt the bell could have caused.
     let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
     poll_until_served(&mesh, &bob.nickname, Some(&ping_seq), "barrier");
-    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &barrier));
+    assert!(
+        wait_for_read_receipt(&mesh, &alice.nickname, &barrier),
+        "the barrier message gets its read receipt"
+    );
 
     assert_eq!(
         reads_of(&mesh, &alice.nickname, &id),
@@ -135,14 +138,20 @@ fn a_re_read_with_after_sends_no_second_read_receipt() {
     let (alice, bob, mesh) = pair("rl-reread");
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
     poll_until_served(&mesh, &bob.nickname, None, "ping");
-    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &id));
+    assert!(
+        wait_for_read_receipt(&mesh, &alice.nickname, &id),
+        "the first message gets its read receipt"
+    );
 
     cli_poll(&mesh, &bob.nickname, Some("0"));
     // Barrier: a later msg, read after the re-read. Its read receipt is sent
     // after any second receipt the re-read could have caused.
     let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
     poll_until_served(&mesh, &bob.nickname, None, "barrier");
-    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &barrier));
+    assert!(
+        wait_for_read_receipt(&mesh, &alice.nickname, &barrier),
+        "the barrier message gets its read receipt"
+    );
 
     assert_eq!(
         reads_of(&mesh, &alice.nickname, &id),

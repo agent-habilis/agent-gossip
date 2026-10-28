@@ -51,8 +51,6 @@ assert_no_message|crates/agent-gossip/tests/a2a_contract.rs|9|open: An assert na
 assert_no_message|crates/agent-gossip/tests/gossip_network.rs|39|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/mcp_stdio.rs|28|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/monitor_contract.rs|86|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/tests/reader_liveness.rs|3|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/tests/receipts.rs|4|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/tests/seal.rs|4|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/slot-template/src/tests.rs|24|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 bool_param_comment|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public function with a bool parameter writes its purpose in a comment above the parameter, so a call site says what true means

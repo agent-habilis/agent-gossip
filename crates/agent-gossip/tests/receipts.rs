@@ -57,7 +57,8 @@ async fn directed_msg_returns_a_delivered_receipt_whose_ref_is_the_msg_id() {
     );
     assert_eq!(
         receipts_from(&mut alice, "rc-msg-bob"),
-        vec![(id.as_str().to_owned(), "delivered".to_owned())]
+        vec![(id.as_str().to_owned(), "delivered".to_owned())],
+        "the message gets one delivered receipt"
     );
 
     alice.leave().await;
@@ -77,7 +78,10 @@ async fn broadcast_produces_no_receipt() {
         "broadcast lost"
     );
     let id = alice.message("rc-bcast-bob", "control").await;
-    assert!(wait_receipt(&mut alice, "rc-bcast-bob", id.as_str()).await);
+    assert!(
+        wait_receipt(&mut alice, "rc-bcast-bob", id.as_str()).await,
+        "the broadcast gets its delivered receipt"
+    );
 
     assert_eq!(
         receipts_from(&mut alice, "rc-bcast-bob"),
@@ -145,13 +149,17 @@ async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
     // The control msg follows the big one on the same path: once its receipt
     // is in, a second receipt for the big msg would have arrived as well.
     let control = alice.message("rc-big-bob", "control").await;
-    assert!(wait_receipt(&mut alice, "rc-big-bob", control.as_str()).await);
+    assert!(
+        wait_receipt(&mut alice, "rc-big-bob", control.as_str()).await,
+        "the control message gets its delivered receipt"
+    );
     assert_eq!(
         receipts_from(&mut alice, "rc-big-bob"),
         vec![
             (id.as_str().to_owned(), "delivered".to_owned()),
             (control.as_str().to_owned(), "delivered".to_owned()),
-        ]
+        ],
+        "both messages get a delivered receipt"
     );
 
     alice.leave().await;
