@@ -402,7 +402,6 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined N3: lifetimes such as `'a` on a struct with one borrowed field are clear, and renaming the about 260 uses in tests and fixtures touches over 30 sites.
 - Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
-- Declined O3: the APIs share one crate for trait-impl coherence and shared types, so no submodule split is planned.
 - Declined O9: a rough grep finds about 28 leaf files whose name does not match their primary item; renaming them touches their imports, so the names stay.
 - Declined O10: a leaf module without one primary item keeps its name, because renaming it touches every import of it.
 - Declined O13: it depends on O11, which the owner decides. Core code in non-leaf modules stays until that decision.
