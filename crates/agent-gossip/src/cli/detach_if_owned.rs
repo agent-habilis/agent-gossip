@@ -21,7 +21,8 @@ pub(super) fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
     child
         .args(std::env::args_os().skip(1))
         .arg("--detached-child")
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    child
         .stdout(detached_stdio(&std::io::stdout()))
         .stderr(detached_stdio(&std::io::stderr()));
     #[expect(
