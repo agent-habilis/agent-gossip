@@ -138,12 +138,6 @@ struct ChainStamp {
     parents: Vec<ContentHash>,
 }
 
-/// `Shard` has no constructor, so the header is built through its validating `Deserialize`.
-fn shard_header(group: &ShardGroup, index: u32, total: u32) -> Shard {
-    serde_json::from_value(serde_json::json!({ "group": group, "idx": index, "total": total }))
-        .expect("a shard header with an index below a bounded total is valid")
-}
-
 /// The identity + payload of one outbound chat frame — the fields `build_msg`
 /// shares with [`synthesize_logical_msg`], grouped so the chain-stamp/shard/
 /// signer args stay their own params.
@@ -436,7 +430,7 @@ pub(crate) async fn send_broadcast(
             prev: Some(hash_stub),
             parents: probe_parents,
         },
-        Some(shard_header(&group, max_parts - 1, max_parts)),
+        Some(Shard::new(group.clone(), max_parts - 1, max_parts)),
         &signer,
     );
     let budget = shard_body_budget(&probe);
@@ -472,8 +466,8 @@ pub(crate) async fn send_broadcast(
     let mut cache_frames = Vec::new();
     let mut header = None;
     for (index, chunk) in chunks.iter().enumerate() {
-        let shard = shard_header(
-            &group,
+        let shard = Shard::new(
+            group.clone(),
             u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
         );
@@ -646,7 +640,7 @@ async fn broadcast_directed_frame(
         kind.clone(),
         MessageBody::try_new(String::new()).expect("empty body is valid"),
     )
-    .with_shard(Some(shard_header(&group, max_parts - 1, max_parts)))
+    .with_shard(Some(Shard::new(group.clone(), max_parts - 1, max_parts)))
     .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
@@ -667,8 +661,8 @@ async fn broadcast_directed_frame(
     let mut frames = Vec::new();
     let mut shard_pending = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
-        let shard = shard_header(
-            &group,
+        let shard = Shard::new(
+            group.clone(),
             u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
         );
@@ -1848,8 +1842,8 @@ pub(crate) async fn send_directed_rpc(
         kind.clone(),
         MessageBody::try_new(String::new()).expect("empty body is valid"),
     )
-    .with_shard(Some(shard_header(
-        &group,
+    .with_shard(Some(Shard::new(
+        group.clone(),
         MAX_SHARD_TOTAL - 1,
         MAX_SHARD_TOTAL,
     )))
@@ -1869,8 +1863,8 @@ pub(crate) async fn send_directed_rpc(
         let chunk_body =
             MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
         let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
-            .with_shard(Some(shard_header(
-                &group,
+            .with_shard(Some(Shard::new(
+                group.clone(),
                 u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
                 total,
             )))

@@ -14,8 +14,8 @@
 use habilis_network::ops::doc;
 use habilis_network::ops::doc::MeshDoc;
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
-    MessageKind, Nickname, PresenceSubtype, UnixSecs, encode_pubkey,
+    AppFrameParams, ContentHash, Identity, MeshId, Message, MessageBody, MessageKind, Nickname,
+    PresenceSubtype, UnixSecs, encode_pubkey,
 };
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
@@ -528,17 +528,15 @@ impl CraftedMsg {
             .expect("valid shard group uuid");
         self.message = self
             .message
-            .with_shard(Some(habilis_network::protocol::Shard {
-                group,
-                idx: index,
-                total,
-            }));
+            .with_shard(Some(habilis_network::protocol::Shard::new(
+                group, index, total,
+            )));
         self
     }
 
     /// Stamp the cross-author DAG `parents` (Phase 3).
     pub fn parents(mut self, parents: impl IntoIterator<Item = ContentHash>) -> Self {
-        self.message = self.message.with_parents(parents.into_iter().collect());
+        self.message = self.message.with_parents(parents);
         self
     }
 
@@ -586,16 +584,11 @@ impl CraftedMsg {
                 to: None,
                 corr: None,
             },
-            MessageKind::App { .. }
-            | MessageKind::PeerInfo
-            | MessageKind::Digest
-            | MessageKind::StateDigest
-            | MessageKind::MetaDigest
-            | MessageKind::Ping
-            | MessageKind::Pong { .. }
-            | MessageKind::State
-            | MessageKind::Meta
-            | MessageKind::LinkState => panic!("flip_chat_kind takes a broadcast chat message"),
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+            )]
+            _ => panic!("flip_chat_kind takes a broadcast chat message"),
         };
         self
     }

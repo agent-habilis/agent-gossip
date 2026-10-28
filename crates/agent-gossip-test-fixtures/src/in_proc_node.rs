@@ -60,7 +60,7 @@ impl InProcNode {
     pub async fn create_with_nick(name: &str, nick: &str) -> Self {
         init_test_tracing();
         let mut config = CreateConfig::new(test_mesh_name(name));
-        config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        config.nickname = Some(Nickname::try_new(nick).expect("valid test nickname"));
         Self::with_session(
             MeshSession::create(config)
                 .await
@@ -85,7 +85,7 @@ impl InProcNode {
     pub async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
         init_test_tracing();
         let mut config = CreateConfig::new(test_mesh_name(name));
-        config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        config.nickname = Some(Nickname::try_new(nick).expect("valid test nickname"));
         config.max_peers = max_peers;
         Self::with_session(
             MeshSession::create(config)
@@ -99,7 +99,7 @@ impl InProcNode {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
-        config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        config.nickname = Some(Nickname::try_new(nick).expect("valid test nickname"));
         config.max_peers = max_peers;
         Self::with_session(
             MeshSession::join(config)
@@ -126,7 +126,7 @@ impl InProcNode {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
-        config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
+        config.nickname = Some(Nickname::try_new(nickname).expect("valid test nickname"));
         Self::with_session(
             MeshSession::join(config)
                 .await
@@ -139,7 +139,7 @@ impl InProcNode {
     pub async fn topic(string: &str, nickname: &str) -> Self {
         init_test_tracing();
         let mut config = agent_gossip::api::TopicConfig::new(string.to_owned());
-        config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
+        config.nickname = Some(Nickname::try_new(nickname).expect("valid test nickname"));
         Self::with_session(
             MeshSession::topic(config)
                 .await
@@ -156,7 +156,7 @@ impl InProcNode {
     ) -> Result<Self, agent_gossip::api::JoinError> {
         let target: JoinTarget = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
-        config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
+        config.nickname = Some(Nickname::try_new(nickname).expect("valid test nickname"));
         config.password = Some(password.to_owned());
         Ok(Self::with_session(MeshSession::join(config).await?))
     }
@@ -164,7 +164,7 @@ impl InProcNode {
     /// Broadcast a plain message to everyone; returns the new message id.
     pub async fn broadcast(&self, text: &str) -> MessageId {
         self.session
-            .broadcast(MessageBody::new(text).expect("valid body"))
+            .broadcast(MessageBody::try_new(text).expect("valid body"))
             .await
             .expect("in-process broadcast failed")
             .id
@@ -190,8 +190,8 @@ impl InProcNode {
     pub async fn try_msg(&self, to: &str, text: &str) -> Result<Authored, SessionError> {
         self.session
             .message(
-                Nickname::new(to).expect("valid test nickname"),
-                MessageBody::new(text).expect("valid body"),
+                Nickname::try_new(to).expect("valid test nickname"),
+                MessageBody::try_new(text).expect("valid body"),
             )
             .await
     }
@@ -249,6 +249,11 @@ impl InProcNode {
         match channel {
             Channel::State => self.state_merge(merge).await,
             Channel::Meta => self.meta_merge(merge).await,
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+            )]
+            _ => panic!("the fixture has no twin for this channel"),
         }
     }
 
@@ -257,6 +262,11 @@ impl InProcNode {
         match channel {
             Channel::State => self.state_get().await,
             Channel::Meta => self.meta_get().await,
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+            )]
+            _ => panic!("the fixture has no twin for this channel"),
         }
     }
 
@@ -401,7 +411,7 @@ impl InProcNode {
         params: serde_json::Value,
     ) -> serde_json::Value {
         let call = A2aCallParams::new(
-            Nickname::new(target).expect("valid target"),
+            Nickname::try_new(target).expect("valid target"),
             method.to_owned(),
             params,
             MSG_TIMEOUT,
@@ -443,7 +453,7 @@ impl InProcNode {
         method: &str,
         params: serde_json::Value,
     ) -> serde_json::Value {
-        let peer = Nickname::new(target).expect("valid target");
+        let peer = Nickname::try_new(target).expect("valid target");
         let deadline = Instant::now() + MSG_TIMEOUT;
         loop {
             let call =
