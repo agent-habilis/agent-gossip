@@ -411,6 +411,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined I6: the 34 functions that return `Vec` are application and test helpers, which I7 allows; an iterator would make most callers collect again.
 - Declined I9: the fixture helpers take `&[(&str, &str)]`, so array literals pass at the call site without `.iter()`; a slice is the simpler type when the helper only iterates.
 - Declined I11: the `impl Into<String>` constructors (`Part::text`, `invalid_params`, `internal`, `open`, the doctor `new` and `bare`) keep 7 call sites short, because callers pass both `&str` and `String`.
+- Declined I12: the same 7 sites are application code, where the call-site ergonomics above outweigh the rule's preference for plain types.
 
 ## Agent Restrictions
 
