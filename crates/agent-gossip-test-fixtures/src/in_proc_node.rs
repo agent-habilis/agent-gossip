@@ -43,7 +43,7 @@ impl InProcNode {
     /// Create a new private mesh. `self.mesh` holds the id.
     pub async fn create(name: &str) -> Self {
         init_test_tracing();
-        Self::from_session(
+        Self::with_session(
             MeshSession::create(CreateConfig::new(test_mesh_name(name)))
                 .await
                 .expect("in-process create failed"),
@@ -55,7 +55,7 @@ impl InProcNode {
         init_test_tracing();
         let mut config = CreateConfig::new(test_mesh_name(name));
         config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
-        Self::from_session(
+        Self::with_session(
             MeshSession::create(config)
                 .await
                 .expect("in-process create failed"),
@@ -67,7 +67,7 @@ impl InProcNode {
         init_test_tracing();
         let mut config = CreateConfig::new(test_mesh_name(name));
         config.password = Some(password.to_owned());
-        Self::from_session(
+        Self::with_session(
             MeshSession::create(config)
                 .await
                 .expect("in-process passworded create failed"),
@@ -81,7 +81,7 @@ impl InProcNode {
         let mut config = CreateConfig::new(test_mesh_name(name));
         config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         config.max_peers = max_peers;
-        Self::from_session(
+        Self::with_session(
             MeshSession::create(config)
                 .await
                 .expect("in-process transport create failed"),
@@ -95,14 +95,14 @@ impl InProcNode {
         let mut config = JoinConfig::new(target);
         config.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         config.max_peers = max_peers;
-        Self::from_session(
+        Self::with_session(
             MeshSession::join(config)
                 .await
                 .expect("in-process transport join failed"),
         )
     }
 
-    fn from_session(mut session: MeshSession) -> Self {
+    fn with_session(mut session: MeshSession) -> Self {
         let rx = session.events().expect("events() receiver");
         let mesh = session.mesh_id().to_string();
         let nickname = session.nickname().to_string();
@@ -121,7 +121,7 @@ impl InProcNode {
         let target = mesh.parse().expect("valid test join target");
         let mut config = JoinConfig::new(target);
         config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
-        Self::from_session(
+        Self::with_session(
             MeshSession::join(config)
                 .await
                 .expect("in-process join failed"),
@@ -134,7 +134,7 @@ impl InProcNode {
         init_test_tracing();
         let mut config = agent_gossip::api::TopicConfig::new(string.to_owned());
         config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
-        Self::from_session(
+        Self::with_session(
             MeshSession::topic(config)
                 .await
                 .expect("in-process topic join failed"),
@@ -152,7 +152,7 @@ impl InProcNode {
         let mut config = JoinConfig::new(target);
         config.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
         config.password = Some(password.to_owned());
-        Ok(Self::from_session(MeshSession::join(config).await?))
+        Ok(Self::with_session(MeshSession::join(config).await?))
     }
 
     /// Broadcast a plain message to everyone; returns the new message id.

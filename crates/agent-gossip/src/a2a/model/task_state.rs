@@ -58,7 +58,7 @@ impl TaskState {
 
     /// Parse the friendly kebab name (the CLI `--state` surface).
     #[must_use]
-    pub fn from_friendly(raw: &str) -> Option<Self> {
+    pub fn parse_friendly(raw: &str) -> Option<Self> {
         Some(match raw {
             "submitted" => TaskState::Submitted,
             "working" => TaskState::Working,

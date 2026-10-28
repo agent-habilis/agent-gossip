@@ -293,7 +293,7 @@ pub(crate) enum A2aAction {
 fn parse_state(raw: &str) -> Result<crate::a2a::TaskState, String> {
     use crate::a2a::TaskState;
 
-    TaskState::from_friendly(raw)
+    TaskState::parse_friendly(raw)
         .filter(|state| {
             matches!(
                 state,

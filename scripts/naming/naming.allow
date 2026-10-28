@@ -1,5 +1,2 @@
 
-ctor_name|crates/agent-gossip/src/api/mesh_session.rs|1|open: add the plain constructor or rename
-from_name|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|1|open: add the plain constructor or rename
-from_name|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: add the plain constructor or rename
-from_name|crates/agent-gossip/src/cli/password_flag.rs|1|open: add the plain constructor or rename
+from_name|crates/agent-gossip/src/cli/password_flag.rs|1|open: from_str is the FromStr trait method, and std fixes its name

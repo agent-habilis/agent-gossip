@@ -14,6 +14,6 @@ pub fn deserialize<'de, Input: Deserializer<'de>>(
     deserializer: Input,
 ) -> Result<TaskState, <Input as Deserializer<'de>>::Error> {
     let raw = String::deserialize(deserializer)?;
-    TaskState::from_friendly(&raw)
+    TaskState::parse_friendly(&raw)
         .ok_or_else(|| serde::de::Error::custom(format!("unknown task state: {raw}")))
 }
