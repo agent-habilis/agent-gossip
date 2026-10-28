@@ -60,13 +60,10 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
     // caller may have no part in, and that id set is the handle every other
     // task-plane attack needs. `CancelTask` has always made this check; the
     // reads did not, which left the reconnaissance step open.
-    let party_only = |wanted: TaskId, op: A2aOp| {
-        let is_peer = app
-            .tasks
-            .get(&wanted)
-            .map(|rec| &rec.peer)
-            .or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer))
-            .is_some_and(|peer| peer == requester);
+    let party_only: Box<dyn Fn(TaskId, A2aOp) -> Served + '_> = Box::new(|wanted, op| {
+        let owner: Option<&Nickname> = app.tasks.get(&wanted).map(|rec| &rec.peer);
+        let owner = owner.or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer));
+        let is_peer: bool = owner.is_some_and(|peer| peer == requester);
         if is_peer {
             Served::Op(op)
         } else {
@@ -74,7 +71,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
             // response cannot be used to probe which ids exist.
             Served::Reject(RpcError::task_not_found(&wanted))
         }
-    };
+    });
     match method {
         // `SubscribeToTask` returns the same snapshot as `GetTask`; the worker's
         // status/artifact frames already flood + heal to the task's parties (the

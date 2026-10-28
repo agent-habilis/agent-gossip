@@ -24,7 +24,7 @@ fn http(port: u16, request: &str) -> (u16, String) {
     stream.write_all(request.as_bytes()).expect("write request");
     let mut raw = String::new();
     stream.read_to_string(&mut raw).expect("read response");
-    let status = raw
+    let status: u16 = raw
         .split_whitespace()
         .nth(1)
         .and_then(|code| code.parse().ok())

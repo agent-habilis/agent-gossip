@@ -349,7 +349,7 @@ impl A2aApp {
     /// with the outcome. A failure is retried on the ticks that the backoff allows (see
     /// `on_tick`).
     async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        let failure = publish_own_card(state, context).await.err().map(|error| {
+        let failure: Option<String> = publish_own_card(state, context).await.err().map(|error| {
             // The reason is read by peers: one line, and no more than a line holds.
             let reason: String = error.to_string().chars().take(200).collect();
             reason
@@ -547,7 +547,7 @@ fn classify(message: &Authored) -> AppClass {
     // must not cross to api consumers, so drop it whole. `None` is a non-App
     // frame the engine gates itself.
     let directed = matches!(message.kind, MessageKind::App { to: Some(_), .. });
-    let valid = match tag {
+    let valid: bool = match tag {
         Some(wire::BROADCAST) => {
             !directed && crate::a2a::status_update_params::broadcast_payload(message).is_ok()
         }

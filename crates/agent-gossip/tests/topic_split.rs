@@ -53,7 +53,7 @@ async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Du
     let left_sees = format!("/peers/{}/card", right.nickname);
     let right_sees = format!("/peers/{}/card", left.nickname);
     loop {
-        let crossed = left.meta_get().await.pointer(&left_sees).is_some()
+        let crossed: bool = left.meta_get().await.pointer(&left_sees).is_some()
             && right.meta_get().await.pointer(&right_sees).is_some();
         if crossed {
             return;

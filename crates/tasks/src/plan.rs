@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use std::{fs, thread};
 
@@ -406,7 +406,7 @@ fn spawn(
     } = *site;
     let log_dir = base.join(format!("logs-{variant}-{index}"));
     let state_file = base.join(format!("{variant}-{index}.state.json"));
-    let child = Command::new(binary)
+    let child: Child = Command::new(binary)
         .arg(command)
         .args(extra)
         .args(["--nickname", &format!("idle-{variant}-{index}")])
@@ -441,7 +441,7 @@ fn spawn(
 /// identity — parsing the state file separately would be a second source of
 /// truth for the same fact.
 fn ready(binary: &Path, state_file: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let out = Command::new(binary)
+    let out: Output = Command::new(binary)
         .arg("ready")
         .arg("--state-file")
         .arg(state_file)
@@ -636,7 +636,7 @@ fn report_host(ambient_log: &Path, monitored: bool, elapsed: f64) {
     }
     let text = fs::read_to_string(ambient_log).unwrap_or_default();
     if cfg!(target_os = "linux") {
-        let total = text.lines().filter(|line| !line.trim().is_empty()).count();
+        let total: usize = text.lines().filter(|line| !line.trim().is_empty()).count();
         let rate = f64::from(u32::try_from(total).unwrap_or(u32::MAX)) / elapsed;
         println!("netlink: {total} msgs ({rate:.2}/s)");
         return;

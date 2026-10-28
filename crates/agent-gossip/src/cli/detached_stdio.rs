@@ -6,7 +6,7 @@
 /// file still gets startup errors.
 pub(super) fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
     use std::os::unix::fs::FileTypeExt as _;
-    let captured = stream
+    let captured: bool = stream
         .as_fd()
         .try_clone_to_owned()
         .and_then(|fd| std::fs::File::from(fd).metadata())

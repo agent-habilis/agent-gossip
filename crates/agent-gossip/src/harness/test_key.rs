@@ -214,10 +214,11 @@ impl CraftedMsg {
         // genesis — hence the same `peers` object id. Built on an *ungated* doc it
         // would be a different map, and whether the victim's gate even fires
         // would come down to which of two conflicting maps automerge keeps.
-        let change = habilis_network::ops::doc::MeshDoc::new_gated(crate::a2a::card_gate())
-            .build_change(&merge, author.as_str().as_bytes())
-            .expect("forge change builds")
-            .expect("forge merge is not a no-op");
+        let change: Vec<u8> =
+            habilis_network::ops::doc::MeshDoc::new_gated(crate::a2a::card_gate())
+                .build_change(&merge, author.as_str().as_bytes())
+                .expect("forge change builds")
+                .expect("forge merge is not a no-op");
         let body =
             habilis_network::ops::doc::change_body(&change, None).expect("change body composes");
         Self {

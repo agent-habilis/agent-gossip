@@ -118,7 +118,7 @@ async fn status_leg_returns_a_delivered_receipt() {
             .await,
         "the status leg never reached the initiator"
     );
-    let leg_id = alice
+    let leg_id: String = alice
         .tasks()
         .into_iter()
         .find(|(message, is_self)| !is_self && message.author.as_str() == "rc-leg-bob")

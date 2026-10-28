@@ -107,5 +107,4 @@ self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskStat
 untyped_generic_let|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|3|open: A let that takes its type from parse, into or try_into names the type (P4)
 untyped_generic_let|crates/agent-gossip/tests/adversarial.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)
 untyped_generic_let|crates/agent-gossip/tests/gossip_network.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)
-untyped_long_chain_let|crates/agent-gossip/tests/gossip_network.rs|1|open: A let of a chain of five or more calls names its type (P5)
-untyped_long_chain_let|crates/tasks/src/main.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/tasks/src/main.rs|1|The branches return anyhow::Result from cargo-zigbuild, and the tasks crate has no anyhow dependency (P5)

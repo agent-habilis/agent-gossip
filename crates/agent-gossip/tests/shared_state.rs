@@ -423,7 +423,7 @@ async fn foreign_card_forgery_is_rejected() {
         .await,
         "alice never saw bob's genuine card"
     );
-    let genuine_url = alice
+    let genuine_url: String = alice
         .meta_get()
         .await
         .pointer(&identity_ptr)

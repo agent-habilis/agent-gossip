@@ -80,7 +80,7 @@ pub(crate) fn run(
     // binary as `<exe> zig cc …` (it resolves itself via `current_exe()`); the
     // hidden `Zig` subcommand in main.rs handles that. `parse_from` feeds the
     // same flags the `cargo zigbuild` CLI would take.
-    let mut args = vec![
+    let mut args: Vec<String> = vec![
         "cargo-zigbuild".to_owned(),
         "--target".to_owned(),
         triple.clone(),

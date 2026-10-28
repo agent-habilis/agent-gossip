@@ -22,7 +22,7 @@ fn lock_path(mesh: &str, nickname: &str) -> PathBuf {
 pub(crate) async fn acquire(mesh: &str, nickname: &str) -> Option<File> {
     use std::os::unix::fs::OpenOptionsExt as _;
 
-    let file = OpenOptions::new()
+    let file: File = OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)

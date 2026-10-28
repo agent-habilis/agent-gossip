@@ -62,7 +62,7 @@ async fn unsigned_message_is_dropped() {
     // reject it.
     // `wrap_a2a` makes the body a valid chat payload, so the only thing that can drop it is the
     // signature gate. Without it the app layer drops the frame and the test proves nothing.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
         .wrap_a2a()
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
@@ -87,7 +87,7 @@ async fn tampered_message_is_dropped() {
     let key = test_key::new_key();
     // Sign "honest", then mutate the body → signature no longer matches.
     // The same shape as the control below: a nickname the victim surfaces, a2a-wrapped.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
         .wrap_a2a()
         .sign(&key)
         .tamper_body("tampered-after-sign")
@@ -154,7 +154,7 @@ async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
 async fn kind_flipped_after_signing_is_dropped() {
     let (mut victim, attacker) = meshed_pair("kindflip").await;
     let key = test_key::new_key();
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "flip-me")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "flip-me")
         .sign(&key)
         .flip_chat_kind()
         .bytes();
@@ -367,7 +367,7 @@ async fn junk_payload_chat_is_dropped() {
     let (mut victim, attacker) = meshed_pair("junk-payload").await;
     let key = test_key::new_key();
     // Validly signed, but the body is raw text, not a serialized A2A Message.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
@@ -388,7 +388,7 @@ async fn payload_frame_id_mismatch_is_dropped() {
     // Wrap a valid payload first, then re-id the FRAME — the payload's
     // messageId no longer names the frame, a mismatch only a crafted client
     // produces.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body")
         .wrap_a2a()
         .id("00000000-0000-0000-0000-00000000beef")
         .sign(&key)
@@ -455,7 +455,7 @@ async fn directed_broadcast_is_dropped() {
     // `a2a_broadcast` addressed to the victim: a private line wearing the
     // gossip-wide tag. Were it surfaced, a peer could make a 1:1 remark look
     // like something the whole gossip had seen.
-    let evil = CraftedMsg::new(
+    let evil: Vec<u8> = CraftedMsg::new(
         attacker.session.mesh_id(),
         "ghost",
         "evil-directed-broadcast",
@@ -484,7 +484,7 @@ async fn broadcast_shaped_msg_is_dropped() {
     let key = test_key::new_key();
     // `a2a_msg` with no addressee: a msg on the broadcast plane. This is the
     // leak direction — it would hand every peer a line meant for one.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
         .into_msg()
         .wrap_msg()
         .address_to(None)
@@ -512,7 +512,7 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
     // A msg carrying a broadcast payload: correctly addressed, but its A2A
     // body declares `mesh-broadcast`. `wrap_a2a` composes the broadcast
     // payload; retagging afterwards leaves the extension in place.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
         .wrap_a2a()
         .into_msg()
         .address_to(Some(victim.nickname.as_str()))
@@ -537,7 +537,7 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
     // A well-formed msg for someone else entirely, injected at the victim —
     // the shape a multihop relay legitimately carries. It must forward it
     // without ever surfacing it.
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
         .into_msg()
         .wrap_msg()
         .address_to(Some("someone-else"))
@@ -575,7 +575,7 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
     let (mut victim, attacker) = meshed_pair("msgself").await;
     let key = test_key::new_key();
     let victim_nick = victim.nickname.clone();
-    let evil = CraftedMsg::new(
+    let evil: Vec<u8> = CraftedMsg::new(
         attacker.session.mesh_id(),
         &victim_nick,
         "evil-msg-as-victim",
@@ -796,7 +796,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
         "the gossip barrier was lost"
     );
 
-    let forged_landed = sender.events().iter().any(|event| {
+    let forged_landed: bool = sender.events().iter().any(|event| {
         matches!(
             event,
             OutputEvent::Receipt { from, ref_id, .. }
@@ -824,7 +824,7 @@ async fn gap_future_timestamp_is_accepted() {
     // parents there is no check, and there is no absolute-time sanity bound.
     let (mut victim, attacker) = meshed_pair("future-ts").await;
     let key = test_key::new_key();
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future")
         .wrap_a2a()
         .timestamp(habilis_network::protocol::UnixSecs::from_secs(
             4_102_444_800,
@@ -851,7 +851,7 @@ async fn gap_nickname_impersonation_is_accepted() {
     let (mut victim, attacker) = meshed_pair("imposter").await;
     let victim_nick = victim.nickname.clone();
     let key = test_key::new_key(); // NOT the victim's key
-    let evil = CraftedMsg::new(attacker.session.mesh_id(), &victim_nick, "i-am-you")
+    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), &victim_nick, "i-am-you")
         .wrap_a2a()
         .sign(&key)
         .bytes();
@@ -1113,7 +1113,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
         // idx 0..4 of a claimed 1000: the group can never complete, so every
         // accepted slice sits in the store until the TTL sweep.
         for index in 0..4u32 {
-            let evil = CraftedMsg::new(
+            let evil: Vec<u8> = CraftedMsg::new(
                 attacker.session.mesh_id(),
                 &format!("sybil-{author}"),
                 &slice,

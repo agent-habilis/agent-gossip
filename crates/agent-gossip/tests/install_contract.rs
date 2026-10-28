@@ -87,7 +87,7 @@ fn reload_table_covers_every_harness() {
 
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("doctor --output json emits JSON");
-    let integrations = report["sections"]
+    let integrations: &serde_json::Value = report["sections"]
         .as_array()
         .expect("report has sections")
         .iter()
@@ -113,7 +113,7 @@ fn reload_table_covers_every_harness() {
         );
     }
 
-    let rows = DOC
+    let rows: usize = DOC
         .lines()
         .filter(|line| line.starts_with('|') && line.contains("/skills`"))
         .count();
@@ -252,21 +252,21 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
         .expect("failed to run `agent-gossip doctor`");
     let report: serde_json::Value =
         serde_json::from_slice(&doctor.stdout).expect("doctor emits JSON");
-    let checks = report["sections"]
+    let checks: &Vec<serde_json::Value> = report["sections"]
         .as_array()
         .expect("report has sections")
         .iter()
         .find(|section| section["title"] == "Integrations")
         .and_then(|section| section["checks"].as_array())
         .expect("Integrations section");
-    let state = |harness: &str| -> String {
+    let state: Box<dyn Fn(&str) -> String + '_> = Box::new(|harness| -> String {
         checks
             .iter()
             .find(|check| check["name"] == harness)
             .and_then(|check| check["detail"].as_str())
             .unwrap_or_else(|| panic!("no {harness} row in the Integrations section"))
             .to_owned()
-    };
+    });
     assert!(
         state("claude-code").starts_with("up to date"),
         "claude-code should be up to date, got {:?}",

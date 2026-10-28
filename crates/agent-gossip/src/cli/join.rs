@@ -22,7 +22,7 @@ pub(super) async fn join(
     // can be password-protected (a mesh id or an invite), so classify
     // either before erroring.
     if password.is_none() {
-        let requires = match &target {
+        let requires: Option<&str> = match &target {
             JoinTarget::Mesh(id) => LockedMesh::from_str(id.as_str())
                 .is_ok_and(|mesh| mesh.requires_password())
                 .then_some("gossip"),

@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
-use habilis_network::protocol::{DedupKey, MessageKind, Nickname};
+use habilis_network::protocol::{DedupKey, Message, MessageKind, Nickname};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::time::Instant as TokioInstant;
 
@@ -328,26 +328,27 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
 /// The author and frame id a `read` receipt goes back to.
 pub(crate) type ReadTarget = (Nickname, String);
 
+fn directed_to_us(message: &Message, tags: &[&str], me: &Nickname) -> Option<ReadTarget> {
+    matches!(
+        &message.kind,
+        MessageKind::App { tag, to: Some(to), .. }
+            if tags.contains(&tag.as_str()) && to == me
+    )
+    .then(|| (message.author.clone(), message.id.as_str().to_owned()))
+}
+
 /// A task brief comes by request/response and has no frame id, so its target
 /// names the A2A messageId instead.
 fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
-    let directed_to_us = |message: &habilis_network::protocol::Message, tags: &[&str]| {
-        matches!(
-            &message.kind,
-            MessageKind::App { tag, to: Some(to), .. }
-                if tags.contains(&tag.as_str()) && to == me
-        )
-        .then(|| (message.author.clone(), message.id.as_str().to_owned()))
-    };
     match event {
         OutputEvent::Message {
             message,
             is_self: false,
-        } => directed_to_us(message, &[wire::MSG]),
+        } => directed_to_us(message, &[wire::MSG], me),
         OutputEvent::Task {
             message,
             is_self: false,
-        } => directed_to_us(message, &[wire::STATUS, wire::ARTIFACT]),
+        } => directed_to_us(message, &[wire::STATUS, wire::ARTIFACT], me),
         OutputEvent::TaskMessage {
             id,
             author,

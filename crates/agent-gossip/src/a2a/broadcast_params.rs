@@ -631,7 +631,7 @@ async fn broadcast_directed_frame(
     let group =
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
     let max_parts = MAX_SHARD_TOTAL;
-    let probe = Message::new_frame(
+    let probe: Verified = Message::new_frame(
         mesh,
         author,
         kind.clone(),
@@ -668,7 +668,7 @@ async fn broadcast_directed_frame(
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let message = Message::new_frame(mesh, author, kind.clone(), chunk_body)
+        let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
             .sign(&signer);
         let bytes = message.serialize()?;
@@ -1828,7 +1828,7 @@ pub(crate) async fn send_directed_rpc(
     }
     let group = ShardGroup::from_uuid_str(crate::a2a::A2aRpcId::random().as_str())
         .expect("a freshly minted uuid is a valid shard group");
-    let probe = Message::new_frame(
+    let probe: Verified = Message::new_frame(
         mesh,
         author,
         kind.clone(),
@@ -1853,7 +1853,7 @@ pub(crate) async fn send_directed_rpc(
     let mut cache_frames = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let message = Message::new_frame(mesh, author, kind.clone(), chunk_body)
+        let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(Shard {
                 group: group.clone(),
                 idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),

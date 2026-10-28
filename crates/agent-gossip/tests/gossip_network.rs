@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
@@ -82,17 +82,18 @@ fn survivor_serves_rendezvous(mesh: &str, nick: &str) -> bool {
 /// link currently up.
 fn rendezvous_signals(mesh: &str, nick: &str) -> (bool, usize, usize) {
     let trace = trace_log(mesh, nick);
-    let rendezvous_links = |direction: &str| {
-        trace
-            .lines()
-            .filter(|line| line.contains(direction) && line.contains("is_rendezvous=true"))
-            .count()
-    };
     (
         trace.contains("beacon assumed"),
-        rendezvous_links("gossip neighbor up"),
-        rendezvous_links("gossip neighbor down"),
+        rendezvous_links(&trace, "gossip neighbor up"),
+        rendezvous_links(&trace, "gossip neighbor down"),
     )
+}
+
+fn rendezvous_links(trace: &str, direction: &str) -> usize {
+    trace
+        .lines()
+        .filter(|line| line.contains(direction) && line.contains("is_rendezvous=true"))
+        .count()
 }
 
 /// Why a survivor is not serving the rendezvous, for assertion messages. The
@@ -182,7 +183,7 @@ fn doctor_lists_active_mesh_as_json() {
     let (node, mesh) = Node::create_named("itest-doctor");
     assert!(node.wait_ready(&mesh), "daemon never ready");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["doctor", "--no-probe", "--output", "json"])
         .output()
         .expect("doctor command failed to spawn");
@@ -750,7 +751,7 @@ async fn test_interleaved_join_leave_order() {
 fn test_lookup_list_accepted() {
     let log = tmp_log("public");
     let file = File::create(&log).unwrap();
-    let mut child = common::test_cmd()
+    let mut child: Child = common::test_cmd()
         .args(["create", "--name", "pub-test", "--lookup", "mdns,dht,relay"])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
@@ -798,7 +799,7 @@ fn test_state_file_removed_on_signal() {
         ));
         let _ = fs::remove_file(&state_file);
 
-        let mut child = common::test_cmd()
+        let mut child: Child = common::test_cmd()
             .args(["create", "--name", "statefile-test"])
             .arg("--state-file")
             .arg(&state_file)
@@ -854,7 +855,7 @@ fn test_ready_gate_succeeds_when_serving() {
     ));
     let _ = fs::remove_file(&state_file);
 
-    let mut child = common::test_cmd()
+    let mut child: Child = common::test_cmd()
         .args(["create", "--name", "ready-test"])
         .arg("--state-file")
         .arg(&state_file)
@@ -864,7 +865,7 @@ fn test_ready_gate_succeeds_when_serving() {
         .expect("failed to spawn create --state-file");
 
     // Gate against the live daemon: exits 0 once it is serving.
-    let status = common::test_cmd()
+    let status: std::process::ExitStatus = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -915,7 +916,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         std::env::temp_dir().join(format!("agent-gossip-collide-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
-    let mut first = common::test_cmd()
+    let mut first: Child = common::test_cmd()
         .args(["create", "--name", "collide-first"])
         .arg("--state-file")
         .arg(&state_file)
@@ -925,7 +926,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         .expect("failed to spawn the first daemon");
 
     // Wait until the first daemon owns the file and is serving.
-    let status = common::test_cmd()
+    let status: std::process::ExitStatus = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -936,7 +937,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
 
     // Spawn rather than `output()`: a daemon that is *not* refused never
     // exits, so waiting on it would hang the suite instead of failing it.
-    let mut second = common::test_cmd()
+    let mut second: Child = common::test_cmd()
         .args(["create", "--name", "collide-second"])
         .arg("--state-file")
         .arg(&state_file)
@@ -999,7 +1000,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let _ = fs::remove_file(&state_file);
 
     // Start the gate first — nothing has written the file yet.
-    let mut gate = common::test_cmd()
+    let mut gate: Child = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -1009,7 +1010,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
-    let mut child = common::test_cmd()
+    let mut child: Child = common::test_cmd()
         .args(["create", "--name", "ready-race"])
         .arg("--state-file")
         .arg(&state_file)
@@ -1044,7 +1045,7 @@ fn test_ready_gate_times_out_without_a_daemon() {
     ));
     let _ = fs::remove_file(&state_file);
 
-    let status = common::test_cmd()
+    let status: std::process::ExitStatus = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -1074,7 +1075,7 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
     )
     .unwrap();
 
-    let status = common::test_cmd()
+    let status: std::process::ExitStatus = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -1110,7 +1111,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     )
     .unwrap();
 
-    let output = common::test_cmd()
+    let output: std::process::Output = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -1360,7 +1361,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
 /// broadcasting, which is what the old overload did.
 #[test]
 fn test_cli_a2a_call_requires_a_peer() {
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args([
             "a2a",
             "call",
@@ -1605,7 +1606,7 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
 /// reads it from its multihop handle, so it is empty when the session has none.
 /// `node` names the daemon that is asked, for the failure text.
 fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["topology", "--gossip", mesh, "--nickname", nickname])
         .output()
         .expect("failed to run topology");
@@ -1972,9 +1973,9 @@ fn test_creator_sigkill_independence() {
     assert_received(&alpha, &charlie.nickname, "ck-newcomer", RECOVERY_TIMEOUT);
 }
 
-/// Reaps a child on drop — `std::process::Child` does not, so a test that
+/// Reaps a child on drop — `Child` does not, so a test that
 /// panics before its explicit kill would otherwise leak the process.
-struct KillOnDrop(std::process::Child);
+struct KillOnDrop(Child);
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -2013,7 +2014,7 @@ fn test_orphaned_daemon_self_terminates() {
         out = joiner_log.display(),
         pid = pid_file.display(),
     );
-    // `std::process::Child` has no kill-on-drop, so guard the intermediate
+    // `Child` has no kill-on-drop, so guard the intermediate
     // shell: if an assertion panics before the explicit kill below, this drop
     // still reaps it (which orphans the daemon → the watcher terminates it).
     let mut parent = KillOnDrop(
@@ -2587,12 +2588,12 @@ fn test_steady_state_no_resend_churn() {
     // NOTE: greps the debug line emitted by `handle_digest` in
     // `src/gossip/antientropy.rs` ("anti-entropy: resent …"). Keep the two
     // in sync — if that message is reworded, update this match.
-    let resends = || -> usize {
+    let resends: Box<dyn Fn() -> usize + '_> = Box::new(|| -> usize {
         [&creator, &alpha, &bravo]
             .iter()
             .map(|node| node.log_contents().matches("anti-entropy: resent").count())
             .sum()
-    };
+    });
     // Settle past the convergence-era resends, then observe ≥2 more
     // anti-entropy cycles in a now-converged mesh. Inherent blind waits
     // (negative assertion), derived from the injected cadence.
@@ -2769,7 +2770,7 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     common::await_peer_card_cli(&mesh, &survivor.nickname, &ghost.nickname);
 
     // The doomed peer publishes an agent-side fact, as the join skill does.
-    let merged = common::test_cmd()
+    let merged: std::process::Output = common::test_cmd()
         .args(["meta", "merge", "--gossip", &mesh])
         .args(["--nickname", &ghost.nickname])
         .args([
@@ -2975,10 +2976,10 @@ fn test_flap_storm_all_rosters_recover() {
     clippy::zombie_processes,
     reason = "the child is returned; every caller kills and waits it"
 )]
-fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, String, String) {
+fn spawn_discoverable_daemon(name: &str) -> (Child, PathBuf, String, String) {
     let log = tmp_log(&format!("leave-{name}"));
     let file = File::create(&log).expect("the test temp dir is writable");
-    let mut child = common::test_cmd()
+    let mut child: Child = common::test_cmd()
         .args(["create", "--name", name])
         .stdout(Stdio::from(
             file.try_clone()
@@ -3053,7 +3054,7 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let (mut bystander, bystander_log, bystander_mesh, bystander_nick) =
         spawn_discoverable_daemon("leave-bystander");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", &victim_mesh])
         .output()
         .expect("failed to run agent-gossip leave");
@@ -3100,14 +3101,15 @@ fn ready_carries_the_stale_skill_warning() {
     // agent's own dotdir existing.
     fs::create_dir_all(home.join(".codex")).unwrap();
 
-    let ready = |fake_home: &std::path::Path| -> serde_json::Value {
-        let out = common::test_cmd()
-            .args(["ready", "--state-file", state_file.to_str().unwrap()])
-            .env("HOME", fake_home)
-            .output()
-            .expect("failed to run agent-gossip ready");
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
-    };
+    let ready: Box<dyn Fn(&std::path::Path) -> serde_json::Value + '_> =
+        Box::new(|fake_home| -> serde_json::Value {
+            let out: std::process::Output = common::test_cmd()
+                .args(["ready", "--state-file", state_file.to_str().unwrap()])
+                .env("HOME", fake_home)
+                .output()
+                .expect("failed to run agent-gossip ready");
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+        });
 
     // A fresh install of this very binary is not drift.
     let plugged = common::test_cmd()
@@ -3155,7 +3157,7 @@ fn ready_carries_the_stale_skill_warning() {
 fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
     let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("leave-serving");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", &mesh])
         .output()
         .expect("failed to run agent-gossip leave");
@@ -3198,7 +3200,7 @@ fn leave_report_carries_the_full_topic_string() {
     );
     let log = tmp_log("leave-topic");
     let file = File::create(&log).unwrap();
-    let mut child = common::test_cmd()
+    let mut child: Child = common::test_cmd()
         .args(["topic", &topic])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
@@ -3225,7 +3227,7 @@ fn leave_report_carries_the_full_topic_string() {
             .unwrap();
     assert_eq!(state["topic"], topic.as_str());
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", &mesh])
         .output()
         .expect("failed to run agent-gossip leave");
@@ -3244,12 +3246,12 @@ fn leave_report_carries_the_full_topic_string() {
 /// A daemon under a stand-in agent process: a shell that runs `create`, so a
 /// test can pass the shell's pid as `--session-pid`. Returns the shell, its
 /// pid, the gossip id, the nickname, and the daemon's log.
-fn spawn_decoy(name: &str) -> (std::process::Child, String, String, String, PathBuf) {
+fn spawn_decoy(name: &str) -> (Child, String, String, String, PathBuf) {
     let log = tmp_log(name);
     // The trailing `:` defeats the shell's exec-of-last-command optimization,
     // keeping the shell alive as the daemon's parent — the ancestry link the
     // session scope matches on.
-    let decoy = Command::new("sh")
+    let decoy: Child = Command::new("sh")
         .arg("-c")
         .arg(format!(
             "{} --log-dir {} create --name {name} > {} 2>&1; :",
@@ -3276,7 +3278,7 @@ fn spawn_decoy(name: &str) -> (std::process::Child, String, String, String, Path
 }
 
 fn session_report(session_pid: &str) -> serde_json::Value {
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["session", "--session-pid", session_pid])
         .output()
         .expect("failed to run agent-gossip session");
@@ -3333,7 +3335,7 @@ fn leave_nothing_owned_is_a_clean_noop() {
         .spawn()
         .expect("failed to spawn sleep");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", "--session-pid", &idle.id().to_string()])
         .output()
         .expect("failed to run agent-gossip leave");
@@ -3427,7 +3429,7 @@ fn bell_check_and_session_track_the_bell_lock() {
         "the reason names the problem and the session: {reason}"
     );
 
-    let mut session_start_bell = common::test_cmd()
+    let mut session_start_bell: Child = common::test_cmd()
         .args(["poll", "--state-file"])
         .arg(default_state_file(&mesh, &nickname))
         .arg("--long")
@@ -3446,7 +3448,7 @@ fn bell_check_and_session_track_the_bell_lock() {
         "a killed bell is gone"
     );
 
-    let mut settling_bell = common::test_cmd()
+    let mut settling_bell: Child = common::test_cmd()
         .args(["poll", "--gossip", &mesh, "--nickname", &nickname, "--long"])
         .args(["--settle-secs", "30"])
         .stdout(Stdio::null())
@@ -3539,7 +3541,7 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     let stderr_file = tmp_log(&format!("{name}-stderr"));
 
     let started = Instant::now();
-    let mut launcher = common::test_cmd()
+    let mut launcher: Child = common::test_cmd()
         .args(["create", "--name", name, "--owner-pid"])
         .arg(owner.0.id().to_string())
         .arg("--state-file")
@@ -3596,7 +3598,7 @@ fn detached_daemon_follows_its_owner() {
         daemon.launcher_stderr
     );
 
-    let ready = common::test_cmd()
+    let ready: std::process::Output = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&daemon.state_file)
@@ -3652,7 +3654,7 @@ fn detached_daemon_follows_its_owner() {
 fn detached_daemon_leaves_by_owner() {
     let _serial = serial_guard();
     let daemon = launch_detached_daemon("detach-leave");
-    let ready = common::test_cmd()
+    let ready: std::process::Output = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&daemon.state_file)
@@ -3660,7 +3662,7 @@ fn detached_daemon_leaves_by_owner() {
         .expect("failed to run ready");
     assert!(ready.status.success(), "ready failed: {ready:?}");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", "--session-pid", &daemon.owner.0.id().to_string()])
         .output()
         .expect("failed to run leave");
@@ -3694,7 +3696,7 @@ fn detached_daemon_releases_a_captured_pipe() {
     fs::create_dir_all(&sessions_dir).unwrap();
     let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
 
-    let mut launcher = common::test_cmd()
+    let mut launcher: Child = common::test_cmd()
         .args(["create", "--name", "detach-pipe", "--owner-pid"])
         .arg(owner.0.id().to_string())
         .arg("--state-file")
@@ -3725,7 +3727,7 @@ fn detached_daemon_releases_a_captured_pipe() {
         launcher_status.success(),
         "the launcher failed: {launcher_status}"
     );
-    let ready = common::test_cmd()
+    let ready: std::process::Output = common::test_cmd()
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
@@ -3765,7 +3767,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
     for owner in ["1", dead_pid.as_str(), zombie_pid.as_str()] {
         // CI sets RUST_BACKTRACE, which makes anyhow append a backtrace to the
         // error; the one-line check is about the output a user sees by default.
-        let out = common::test_cmd()
+        let out: std::process::Output = common::test_cmd()
             .args(["create", "--name", "owner-reject", "--owner-pid", owner])
             .env_remove("RUST_BACKTRACE")
             .env_remove("RUST_LIB_BACKTRACE")
@@ -3800,7 +3802,7 @@ fn owner_pid_launcher_reports_flag_errors() {
         &["create", "--name", "flag-error", "--transport", "relay"],
     ];
     for args in bad_invocations {
-        let out = common::test_cmd()
+        let out: std::process::Output = common::test_cmd()
             .args(args)
             .args(["--owner-pid", &owner_pid])
             .stdin(Stdio::null())

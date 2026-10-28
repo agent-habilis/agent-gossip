@@ -34,7 +34,7 @@ impl McpClient {
     /// Spawn the MCP server without performing the handshake — for tests that
     /// assert on the `initialize` response itself.
     fn spawn_raw() -> Self {
-        let mut child = test_cmd()
+        let mut child: Child = test_cmd()
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -54,7 +54,7 @@ impl McpClient {
     /// Spawn the MCP server with extra `mcp`-subcommand flags (e.g. the hidden
     /// `--directory-private` so the directory path runs on the loopback ladder).
     fn spawn_with_args(extra: &[&str]) -> Self {
-        let mut child = test_cmd()
+        let mut child: Child = test_cmd()
             .arg("mcp")
             .args(extra)
             .stdin(Stdio::piped())
@@ -263,7 +263,7 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
             serde_json::json!({ "after": FROM_START }),
         ))
         .expect("linkage-probe fetch_messages must succeed");
-        let linked = fetched["messages"]
+        let linked: bool = fetched["messages"]
             .as_array()
             .into_iter()
             .flatten()
@@ -353,7 +353,7 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     // Separate test that captures all stdout bytes and asserts every
     // non-empty line is JSON-RPC 2.0. Guards against any future
     // println! leak (the bug that motivated OutputMode::Silent).
-    let mut child = test_cmd()
+    let mut child: Child = test_cmd()
         .arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1014,7 +1014,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
                 serde_json::json!({ "after": cursor }),
             ))
             .expect("delta fetch");
-            let surfaced_four = second["messages"]
+            let surfaced_four: bool = second["messages"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -1111,7 +1111,7 @@ fn task_creation_surfaces_to_worker_via_fetch() {
             serde_json::json!({ "after": FROM_START }),
         ))
         .expect("fetch_messages must succeed");
-        let found = fetched["messages"]
+        let found: Option<serde_json::Value> = fetched["messages"]
             .as_array()
             .into_iter()
             .flatten()
@@ -1167,7 +1167,7 @@ fn task_creation_to_unknown_peer_errors() {
 #[test]
 fn mesh_info_reports_peer_roster() {
     let (mut creator, mut joiner, _mesh, _creator_nick) = create_pair(740);
-    let joiner_nick =
+    let joiner_nick: String =
         tool_result_json(&joiner.tool_call(741, "gossip_info", serde_json::json!({})))
             .expect("joiner gossip_info")["nickname"]
             .as_str()
@@ -1228,7 +1228,7 @@ const DIR_FLAGS: [(&str, &str); 4] = [
 fn discover_meshes_finds_an_advertised_mesh() {
     let adv_log = tmp_log("mcp-disc-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let mut advertiser: Child = test_cmd()
         .args([
             "create",
             "--advertise",
@@ -1265,7 +1265,7 @@ fn discover_meshes_finds_an_advertised_mesh() {
             serde_json::json!({ "directory": "mcdir" }),
         );
         let json = tool_result_json(&response).expect("discover_gossips returns a result");
-        let hit = json["gossips"]
+        let hit: bool = json["gossips"]
             .as_array()
             .into_iter()
             .flatten()
@@ -1291,7 +1291,7 @@ fn discover_meshes_finds_an_advertised_mesh() {
 fn ping_reports_rtt_to_a_peer() {
     let (mut creator, mut joiner, _mesh, _creator_nick) =
         create_pair_with(900, &["--ping-window-secs", "2"]);
-    let joiner_nick =
+    let joiner_nick: String =
         tool_result_json(&joiner.tool_call(901, "gossip_info", serde_json::json!({})))
             .expect("joiner gossip_info")["nickname"]
             .as_str()
@@ -1304,7 +1304,7 @@ fn ping_reports_rtt_to_a_peer() {
     let rtt = loop {
         let response = creator.tool_call(id, "ping", serde_json::json!({}));
         let json = tool_result_json(&response).expect("ping returns a result");
-        let hit = json["peers"]
+        let hit: Option<u64> = json["peers"]
             .as_array()
             .into_iter()
             .flatten()

@@ -170,7 +170,7 @@ async fn add_readers(rows: &mut [serde_json::Value], asks: ReaderAsks) {
         let Some(reader) = reader_from_reply(&reply) else {
             continue;
         };
-        let row = rows.iter_mut().find(|row| {
+        let row: Option<&mut serde_json::Value> = rows.iter_mut().find(|row| {
             row.get("nickname").and_then(serde_json::Value::as_str) == Some(peer.as_str())
         });
         if let Some(fields) = row.and_then(serde_json::Value::as_object_mut) {

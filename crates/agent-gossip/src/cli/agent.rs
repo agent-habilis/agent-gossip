@@ -649,7 +649,7 @@ mod tests {
     /// generic bell keeps its old text.
     #[test]
     fn claude_code_bells_end_before_the_harness_limit() {
-        let bells = |skill: &str| -> Vec<&'static str> {
+        let bells: fn(&str) -> Vec<&'static str> = |skill| {
             rendered(skill)
                 .lines()
                 .map(str::trim)
@@ -700,7 +700,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
         };
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let merge = body(skill)
+            let merge: &str = body(skill)
                 .lines()
                 .find(|line| {
                     line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"")
@@ -742,7 +742,7 @@ mod tests {
             let script = format!(
                 "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; {merge}"
             );
-            let out = std::process::Command::new("bash")
+            let out: std::process::Output = std::process::Command::new("bash")
                 .args(["-c", &script])
                 .current_dir(&cwd)
                 .env("HOME", &home)

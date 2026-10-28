@@ -50,7 +50,7 @@ fn directory_advertise_then_discover() {
     // Advertiser: a private mesh that lists itself in directory `dtest`.
     let adv_log = tmp_log("dir-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let mut advertiser: Child = test_cmd()
         .args(["create", "--advertise", "dtest", "--nickname", "adv"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(adv_file.try_clone().unwrap()))
@@ -73,7 +73,7 @@ fn directory_advertise_then_discover() {
     // Discoverer: browse `dtest` and stream directory events.
     let disc_log = tmp_log("dir-disc");
     let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer = test_cmd()
+    let mut discoverer: Child = test_cmd()
         .args(["discover", "--directory", "dtest"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))
@@ -129,7 +129,7 @@ fn discover_stops_on_sigterm() {
     // session — and its SIGTERM handler — running) before we signal it.
     let adv_log = tmp_log("term-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let mut advertiser: Child = test_cmd()
         .args([
             "create",
             "--advertise",
@@ -152,7 +152,7 @@ fn discover_stops_on_sigterm() {
 
     let disc_log = tmp_log("term-disc");
     let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer = test_cmd()
+    let mut discoverer: Child = test_cmd()
         .args(["discover", "--directory", "stoptest"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))
@@ -203,7 +203,7 @@ fn discover_stops_on_sigterm() {
 fn discover_window_exits_on_its_own() {
     let adv_log = tmp_log("win-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let mut advertiser: Child = test_cmd()
         .args([
             "create",
             "--advertise",
@@ -231,7 +231,7 @@ fn discover_window_exits_on_its_own() {
     // sibling directory tests run in parallel (contended loopback ladder).
     let disc_log = tmp_log("win-disc");
     let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer = test_cmd()
+    let mut discoverer: Child = test_cmd()
         .args(["discover", "--directory", "wintest", "--window-secs", "30"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))

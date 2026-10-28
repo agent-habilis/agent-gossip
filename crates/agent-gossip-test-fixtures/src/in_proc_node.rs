@@ -444,7 +444,7 @@ impl InProcNode {
         let peer = Nickname::new(target).expect("valid target");
         let deadline = Instant::now() + MSG_TIMEOUT;
         loop {
-            let response = self
+            let response: serde_json::Value = self
                 .session
                 .a2a_call(A2aCallParams {
                     peer: peer.clone(),

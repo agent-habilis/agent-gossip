@@ -415,7 +415,7 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         let task_id = parse_task_id(&args.task_id)?;
         let file = args.file.map(std::path::PathBuf::from);
-        let file_name = args.file_name.or_else(|| {
+        let file_name: Option<String> = args.file_name.or_else(|| {
             file.as_ref()
                 .and_then(|path| path.file_name())
                 .and_then(|name| name.to_str())

@@ -7,7 +7,7 @@ use super::output;
 /// abort the calling task — its own command surfaces a clear error if
 /// the tool is genuinely missing.
 pub(crate) fn ensure_installed(sh: &Shell, krate: &str, check: &[&str]) {
-    let ok = cmd!(sh, "cargo {check...}")
+    let ok: bool = cmd!(sh, "cargo {check...}")
         .quiet()
         .ignore_stdout()
         .ignore_stderr()

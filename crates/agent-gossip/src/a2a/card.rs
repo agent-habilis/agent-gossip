@@ -135,7 +135,7 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
     let extensions = meta_doc
         .pointer(&format!("/peers/{peer}/card/capabilities/extensions"))?
         .as_array()?;
-    let b58 = extensions
+    let b58: &str = extensions
         .iter()
         .find(|ext| {
             ext.get("uri")

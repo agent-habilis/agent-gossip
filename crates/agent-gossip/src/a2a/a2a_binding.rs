@@ -179,7 +179,7 @@ async fn rpc(
     token: &str,
     req_tx: &mpsc::Sender<A2aRequest>,
 ) -> Response<Full<Bytes>> {
-    let authorized = request
+    let authorized: bool = request
         .headers()
         .get("authorization")
         .and_then(|value| value.to_str().ok())

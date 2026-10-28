@@ -213,7 +213,7 @@ async fn network_section(no_probe: bool) -> Section {
 fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
     let mut checks = Vec::new();
 
-    let local = if capability.local_addrs.is_empty() {
+    let local: String = if capability.local_addrs.is_empty() {
         capability.node_id.clone()
     } else {
         let addrs: Vec<String> = capability

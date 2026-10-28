@@ -46,7 +46,7 @@ impl Node {
         let mut command = test_cmd();
         command.args(&args);
         apply_flags(&mut command, flags);
-        let child = command
+        let child: Child = command
             .stdout(Stdio::from(
                 file.try_clone()
                     .expect("clone the daemon log file handle for stdout"),
@@ -99,7 +99,7 @@ impl Node {
         command.args(["join", mesh, "--nickname", nickname]);
         command.args(extra);
         apply_flags(&mut command, flags);
-        let child = command
+        let child: Child = command
             .stdout(Stdio::from(
                 file.try_clone()
                     .expect("clone the daemon log file handle for stdout"),

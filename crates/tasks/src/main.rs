@@ -152,7 +152,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let outcome = match cli.task {
+    let outcome: TaskOutcome = match cli.task {
         Task::Test => test::run(&sh),
         Task::Build {
             target,

@@ -65,7 +65,7 @@ impl<'de> Deserialize<'de> for Part {
             metadata: Option<serde_json::Value>,
         }
         let raw = Wire::deserialize(deserializer)?;
-        let content = [
+        let content: usize = [
             raw.text.is_some(),
             raw.raw.is_some(),
             raw.url.is_some(),

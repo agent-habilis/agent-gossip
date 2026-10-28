@@ -50,7 +50,7 @@ fn spawn_create(name: &str) -> (Daemon, String, String) {
 fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
     let log = tmp_log(&format!("lossless-{name}"));
     let file = fs::File::create(&log).expect("the test temp dir is writable");
-    let child = test_cmd()
+    let child: Child = test_cmd()
         .args(["create", "--name", name])
         .args(flags)
         .stdout(Stdio::from(
@@ -86,7 +86,7 @@ fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
 fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
     use std::io::{BufRead as _, BufReader};
 
-    let mut child = test_cmd()
+    let mut child: Child = test_cmd()
         .args(["create", "--name", name])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -194,7 +194,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
     assert!(out.status.success(), "meta merge failed");
 
     // Arm the bell AFTER the report landed: it must park, not fire.
-    let mut bell = test_cmd()
+    let mut bell: Child = test_cmd()
         .args(["poll", "--gossip", &mesh, "--nickname", &nick, "--long"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -257,7 +257,7 @@ fn bell_exits_cleanly_when_the_daemon_leaves() {
     let (daemon, mesh, nick) = spawn_create("bellclean");
     let mut bell = park_bell(&mesh, &nick);
 
-    let out = std::process::Command::new("kill")
+    let out: std::process::Output = std::process::Command::new("kill")
         .args(["-TERM", &daemon.child.id().to_string()])
         .output()
         .expect("kill spawns");
@@ -288,7 +288,7 @@ fn bell_with_max_secs_ends_itself_as_a_quiet_ring() {
 
     let (_daemon, mesh, nick) = spawn_create_with("bellmax", &["--longpoll-max-ms", "1000"]);
     let started = Instant::now();
-    let mut bell = test_cmd()
+    let mut bell: Child = test_cmd()
         .args([
             "poll",
             "--gossip",
@@ -345,7 +345,7 @@ fn bell_max_secs_cuts_the_settle_wait() {
 
     let (_daemon, mesh, nick) = spawn_create_with("bellsettle", &["--longpoll-max-ms", "1000"]);
     let started = Instant::now();
-    let mut bell = test_cmd()
+    let mut bell: Child = test_cmd()
         .args([
             "poll",
             "--gossip",

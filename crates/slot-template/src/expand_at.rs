@@ -45,7 +45,7 @@ pub(crate) fn expand_at(
             line: number,
             reason,
         };
-        let interior = trimmed
+        let interior: &str = trimmed
             .strip_prefix("<!--")
             .and_then(|rest| rest.strip_suffix("-->"))
             .ok_or_else(|| malformed("unterminated include comment".to_owned()))?;
