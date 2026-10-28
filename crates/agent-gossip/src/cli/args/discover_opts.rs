@@ -81,7 +81,8 @@ mod tests {
         assert!(
             discover_opts(&["agent-gossip", "discover"])
                 .directory
-                .is_none()
+                .is_none(),
+            "bare discover has no directory"
         );
         // `--directory` is decoded into a MeshName.
         assert_eq!(
@@ -89,7 +90,8 @@ mod tests {
                 .directory
                 .as_ref()
                 .map(MeshName::as_str),
-            Some("gamedev")
+            Some("gamedev"),
+            "--directory decodes into a mesh name"
         );
     }
 
@@ -99,11 +101,13 @@ mod tests {
         assert!(
             discover_opts(&["agent-gossip", "discover"])
                 .window_secs
-                .is_none()
+                .is_none(),
+            "omitted window streams until interrupted"
         );
         assert_eq!(
             discover_opts(&["agent-gossip", "discover", "--window-secs", "25"]).window_secs,
-            Some(25)
+            Some(25),
+            "--window-secs 25 parses to 25"
         );
     }
 }

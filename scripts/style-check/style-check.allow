@@ -52,14 +52,10 @@ assert_no_message|crates/agent-gossip/src/bridge/tests.rs|1|open: An assert name
 assert_no_message|crates/agent-gossip/src/bridge/ticket_directory.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/agent.rs|22|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/create_opts.rs|10|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/cli/args/discover_opts.rs|4|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/doctor_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/cli/args/leave_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/lookup.rs|8|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/poll_opts.rs|19|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/resolved.rs|19|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/cli/args/topic_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/cli/args/transport.rs|5|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/password_flag.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/plug.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/session.rs|13|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
@@ -106,11 +102,6 @@ fn_import|crates/agent-gossip/src/mcp/agent_gossip_server.rs|2|open: Call a top-
 fn_import|crates/agent-gossip/src/output/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/agent-gossip/src/topic.rs|2|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
 fn_import|crates/tasks/src/plan.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
-generic_name|crates/agent-gossip/src/a2a/model/friendly_state.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
-generic_name|crates/agent-gossip/src/a2a/model/part.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
-generic_name|crates/agent-gossip/src/a2a/model/uuid_id.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
-generic_name|crates/agent-gossip/src/bridge/bridge.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
-generic_name|crates/agent-gossip/src/cli/send.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
 lifetime|crates/agent-gossip-test-fixtures/src/followup_params.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
 lifetime|crates/agent-gossip-wasm-client/src/gossip_driver.rs|3|open: Name a type lifetime for what it borrows ('frame, not 'a)
 lifetime|crates/agent-gossip/src/a2a/broadcast_params.rs|18|open: Name a type lifetime for what it borrows ('frame, not 'a)

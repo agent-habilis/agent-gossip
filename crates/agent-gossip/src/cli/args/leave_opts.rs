@@ -43,9 +43,18 @@ mod tests {
         let Commands::Leave { options } = cli.command else {
             panic!("expected Leave command");
         };
-        assert!(options.gossip.is_none());
-        assert!(options.nickname.is_none());
-        assert!(options.session_pid.is_none());
+        assert!(
+            options.gossip.is_none(),
+            "leave without --gossip leaves the gossip unset"
+        );
+        assert!(
+            options.nickname.is_none(),
+            "leave without --nickname leaves the nickname unset"
+        );
+        assert!(
+            options.session_pid.is_none(),
+            "leave without --session-pid leaves the pid unset"
+        );
         // A signalled daemon takes up to NODE_LEAVE to close its
         // rendezvous and drop its state file; confirming sooner reports a
         // live daemon as gone, and a relaunch then races it.
@@ -69,12 +78,23 @@ mod tests {
         let Commands::Leave { options } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(options.gossip.unwrap(), expected);
-        assert_eq!(options.nickname.unwrap().as_str(), "my-nick");
+        assert_eq!(
+            options.gossip.unwrap(),
+            expected,
+            "--gossip parses to the id given"
+        );
+        assert_eq!(
+            options.nickname.unwrap().as_str(),
+            "my-nick",
+            "--nickname sets the local nickname"
+        );
     }
 
     #[test]
     fn leave_nickname_requires_mesh() {
-        assert!(Cli::try_parse_from(["agent-gossip", "leave", "--nickname", "my-nick"]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "leave", "--nickname", "my-nick"]).is_err(),
+            "a nickname without a gossip is rejected"
+        );
     }
 }

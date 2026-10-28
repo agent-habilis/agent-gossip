@@ -71,7 +71,8 @@ mod tests {
                 multihop: false,
                 gossip: false,
                 relay_transport: false
-            }
+            },
+            "udp and webrtc alone enable no multihop, gossip or relay"
         );
     }
 
@@ -85,21 +86,33 @@ mod tests {
             Transport::Relay,
         ])
         .unwrap();
-        assert!(policy.multihop && policy.gossip && policy.relay_transport);
+        assert!(
+            policy.multihop && policy.gossip && policy.relay_transport,
+            "udp and webrtc together enable multihop, gossip and relay transport"
+        );
     }
 
     #[test]
     fn transport_empty_list_errors() {
-        assert!(transport_policy(&[]).is_err());
+        assert!(
+            transport_policy(&[]).is_err(),
+            "an empty transport list is rejected"
+        );
     }
 
     #[test]
     fn transport_relay_alone_errors() {
-        assert!(transport_policy(&[Transport::Relay]).is_err());
+        assert!(
+            transport_policy(&[Transport::Relay]).is_err(),
+            "a relay-only list cannot carry the gossip"
+        );
     }
 
     #[test]
     fn transport_rejects_unknown_value() {
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--transport", "bogus"]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "create", "--transport", "bogus"]).is_err(),
+            "an unknown transport name is rejected at parse time"
+        );
     }
 }

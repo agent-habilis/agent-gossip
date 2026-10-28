@@ -68,20 +68,27 @@ mod tests {
     #[test]
     fn topic_parses_string_and_nickname() {
         let options = topic_opts(&["agent-gossip", "topic", "agent-habilis", "--nickname", "me"]);
-        assert_eq!(options.string, "agent-habilis");
+        assert_eq!(
+            options.string, "agent-habilis",
+            "the topic string is kept as given"
+        );
         assert_eq!(
             options
                 .nickname
                 .as_ref()
                 .map(habilis_network::protocol::Nickname::as_str),
-            Some("me")
+            Some("me"),
+            "--nickname me is kept"
         );
     }
 
     #[test]
     fn topic_accepts_leading_hyphen_string() {
         let options = topic_opts(&["agent-gossip", "topic", "-release-2026"]);
-        assert_eq!(options.string, "-release-2026");
+        assert_eq!(
+            options.string, "-release-2026",
+            "a leading dash stays part of the topic string"
+        );
     }
 
     // A caller can build `topic <flags> -- <string>` so a string that
@@ -96,17 +103,26 @@ mod tests {
             "--",
             "--nickname",
         ]);
-        assert_eq!(options.string, "--nickname");
+        assert_eq!(
+            options.string, "--nickname",
+            "a flag-like topic string is taken as a value"
+        );
     }
 
     #[test]
     fn topic_string_is_required() {
-        assert!(Cli::try_parse_from(["agent-gossip", "topic"]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "topic"]).is_err(),
+            "a topic needs its string"
+        );
     }
 
     #[test]
     fn topic_rejects_empty_string() {
-        assert!(Cli::try_parse_from(["agent-gossip", "topic", ""]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "topic", ""]).is_err(),
+            "an empty topic string is rejected"
+        );
         assert!(
             Cli::try_parse_from(["agent-gossip", "topic", "   "]).is_err(),
             "whitespace-only must reject"
