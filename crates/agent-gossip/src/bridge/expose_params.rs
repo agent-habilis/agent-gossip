@@ -20,7 +20,7 @@ use tokio::net::TcpStream;
 
 use super::a2a_ticket::A2aTicket;
 use super::ticket_directory::{TicketAd, spawn_ticket_advertiser};
-use super::{A2A_ALPN, A2A_TICKET_LABEL, SECRET_LEN, wait_online};
+use super::{A2A_ALPN, A2A_TICKET_LABEL, SECRET_LEN};
 
 /// Close code for a consumer refused because the 1:1 bridge is already paired.
 const BRIDGE_BUSY: u32 = 4;
@@ -80,7 +80,7 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
         }
         None => None,
     };
-    super::announce(
+    super::announce::announce(
         &format!("A2A {origin} → gossip"),
         &format!("agent-gossip a2a connect {}", ticket.encode()),
     );
@@ -118,7 +118,7 @@ pub(super) async fn bind(
     )
     .await?;
     if !lookups.is_loopback() {
-        wait_online(&endpoint).await;
+        super::wait_online::wait_online(&endpoint).await;
     }
     let secret = TicketSecret::from_bytes(rand::random());
     let auth = TicketAuth::derive(&secret, password, A2A_TICKET_LABEL);
