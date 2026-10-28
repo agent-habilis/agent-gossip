@@ -9,7 +9,6 @@
 /// and has no business naming ours — the pins for a consumer's targets are the
 /// consumer's business.
 ///
-/// `pub` + `doc(hidden)` so `tests/log_pins.rs` can assert this list covers
-/// every `target:` the crate actually emits under. Not public API.
-#[doc(hidden)]
+/// `pub` so `tests/log_pins.rs` can assert this list covers every `target:`
+/// the crate actually emits under.
 pub const APP_LOG_PINS: &str = "agent_gossip::a2a=info,agent_gossip::directory=info";

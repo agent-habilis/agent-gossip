@@ -74,10 +74,9 @@ pub mod api;
 /// Roster and health values that `status` and `doctor` report.
 pub mod status;
 
-// Not public API. Feature-gated, doc-hidden shims that expose the engine's
+// Feature-gated test-support API, outside the supported surface. These shims expose the engine's
 // internals to the crate's own bench/adversarial suites. See harness/mod.rs.
 #[cfg(any(feature = "bench", feature = "adversarial"))]
-#[doc(hidden)]
 pub mod harness;
 
 pub use self::app_log_pins::APP_LOG_PINS;

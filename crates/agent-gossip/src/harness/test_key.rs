@@ -169,6 +169,10 @@ impl CraftedMsg {
     /// (NOT wrapped as an A2A payload — the attacker controls the raw body;
     /// use a serialized payload for a frame meant to pass the boundary). Unsigned
     /// until [`sign`](CraftedMsg::sign).
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn new(mesh: &MeshId, author: &str, body: &str) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
@@ -197,6 +201,10 @@ impl CraftedMsg {
     /// The payload is left as-is, so what is under test is the addressing
     /// rather than a malformed body. Call before `sign` — `to` is part of the
     /// canonical bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the addressee is a valid nickname.
     pub fn address_to(mut self, to: Option<&str>) -> Self {
         let MessageKind::App { tag, corr, .. } = self.message.kind.clone() else {
             panic!("address_to takes an app frame");
@@ -214,6 +222,10 @@ impl CraftedMsg {
     /// Retag this chat frame as a `a2a_msg` (chat addressed to one peer),
     /// keeping the body. Pair with [`address_to`](CraftedMsg::address_to) to
     /// build either a well-formed msg or the broadcast-shaped forgery.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the message is an app frame.
     pub fn into_msg(mut self) -> Self {
         let MessageKind::App { to, corr, .. } = self.message.kind.clone() else {
             panic!("into_msg takes an app frame");
@@ -229,6 +241,10 @@ impl CraftedMsg {
     /// Wrap the body as a valid **msg** A2A payload (no broadcast extension),
     /// the directed counterpart of [`wrap_a2a`](CraftedMsg::wrap_a2a). Call
     /// after any `id` mutation and before `sign`.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the frame id is a valid UUID.
     pub fn wrap_msg(mut self) -> Self {
         assert!(
             self.message.kind.is_app(wire::MSG),
@@ -248,6 +264,10 @@ impl CraftedMsg {
     /// engine no longer folds this shape (it is a deterministic no-op), so a test
     /// can assert the receiver never applies it — never a panic, never a change.
     /// Unsigned until [`sign`](CraftedMsg::sign).
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body =
@@ -264,6 +284,10 @@ impl CraftedMsg {
     /// the change is thus *applicable* at the victim and actually exercises the
     /// forgery gate (rather than being harmlessly buffered for missing deps).
     /// Unsigned until [`sign`](CraftedMsg::sign).
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn meta_forge_card(
         mesh: &MeshId,
         author: &str,
@@ -298,6 +322,10 @@ impl CraftedMsg {
     /// carries `frame_task_id` while the PAYLOAD claims `payload_task_id` — the
     /// cross-validation attack shape a correct client never produces. Both
     /// must be valid UUIDs. Unsigned until [`sign`](CraftedMsg::sign).
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn status_frame(mesh: &MeshId, params: StatusFrameParams<'_>) -> Self {
         let StatusFrameParams {
             author,
@@ -341,6 +369,10 @@ impl CraftedMsg {
     /// who authored it. The shape a bystander produces to drive a task it is
     /// not a party to; sealing needs nothing secret, since the addressee's key
     /// is published in the meta document.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn sealed_task_status(mesh: &MeshId, params: SealedTaskStatusParams<'_>) -> Self {
         let SealedTaskStatusParams {
             author,
@@ -380,6 +412,10 @@ impl CraftedMsg {
     }
 
     /// A directed `a2a_msg` with a valid payload, sealed to the addressee.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn sealed_msg(mesh: &MeshId, params: SealedMsgParams<'_>) -> Self {
         let SealedMsgParams {
             author,
@@ -411,6 +447,10 @@ impl CraftedMsg {
 
     /// A sealed `a2a_receipt` that says `to` sent frame `ref_id` and that it
     /// was read: what a bystander forges with a frame id it saw in a header.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
     pub fn sealed_receipt(mesh: &MeshId, params: SealedMsgParams<'_>) -> Self {
         let SealedMsgParams {
             author,
@@ -455,6 +495,10 @@ impl CraftedMsg {
 
     /// Override the message id — e.g. to replay another message's id (the
     /// dedup-ordering test). Must be a valid UUID string.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the crafted id is a valid UUID.
     pub fn id(mut self, id: &str) -> Self {
         self.message.id = id.parse().expect("crafted id must be a valid UUID");
         self
@@ -466,6 +510,10 @@ impl CraftedMsg {
     /// `sign` — the attack under test is then something *other* than a
     /// malformed payload. A frame built without this carries its raw body
     /// verbatim and is dropped at the boundary.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the frame id is a valid UUID.
     pub fn wrap_a2a(mut self) -> Self {
         assert!(
             self.message.kind.is_app(wire::BROADCAST),
@@ -485,6 +533,10 @@ impl CraftedMsg {
     /// out-of-range indexes). `group` must be a valid UUID string; `idx`/
     /// `total` are taken verbatim, valid or not (the receiver's parse gate is
     /// the thing under test).
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the shard group id is a valid UUID.
     pub fn shard(mut self, group: &str, index: u32, total: u32) -> Self {
         let group = habilis_network::protocol::ShardGroup::from_uuid_str(group)
             .expect("valid shard group uuid");
@@ -519,6 +571,10 @@ impl CraftedMsg {
 
     /// Mutate the body *after* signing → a tampered message whose signature
     /// no longer matches its canonical bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the body is a valid message body.
     pub fn tamper_body(mut self, body: &str) -> Self {
         self.message.body = MessageBody::new(body.to_owned()).expect("test body is valid");
         self
@@ -528,6 +584,10 @@ impl CraftedMsg {
     /// part of the canonical bytes, so a relay flipping a signed broadcast chat
     /// `A2aMsg` into a `Presence` beat (or the reverse) must break the
     /// signature and the victim must drop it.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the message is a broadcast chat message.
     pub fn flip_chat_kind(mut self) -> Self {
         self.message.kind = match self.message.kind.clone() {
             MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => {
@@ -561,6 +621,10 @@ impl CraftedMsg {
     }
 
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the crafted message serializes.
     #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
         use habilis_network::protocol::message::Verified;
