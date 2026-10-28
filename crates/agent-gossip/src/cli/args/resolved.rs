@@ -62,7 +62,10 @@ mod tests {
     #[test]
     fn relay_transport_without_relay_lookup_errors() {
         let relay = [Transport::Udp, Transport::WebRtc, Transport::Relay];
-        assert!(resolve(&[Lookup::Mdns], None, &relay).is_err());
+        assert!(
+            resolve(&[Lookup::Mdns], None, &relay).is_err(),
+            "an mdns lookup without a relay is rejected"
+        );
     }
 
     fn policy(multihop: bool, relay_transport: bool) -> TransportPolicy {
@@ -78,28 +81,48 @@ mod tests {
     #[test]
     fn create_without_flags_is_loopback_with_udp_webrtc_gossip() {
         let resolved = resolve(&[], None, &[]).expect("no flags resolves");
-        assert_eq!(resolved.lookups, LookupOpts::loopback());
-        assert_eq!(resolved.transport, policy(false, false));
+        assert_eq!(
+            resolved.lookups,
+            LookupOpts::loopback(),
+            "the default lookups are the loopback set"
+        );
+        assert_eq!(
+            resolved.transport,
+            policy(false, false),
+            "the default transport is the plain policy"
+        );
     }
 
     #[test]
     fn create_with_relay_lookup_adds_relay_transport() {
         let resolved = resolve(&[Lookup::Relay], None, &[]).expect("relay lookup resolves");
-        assert_eq!(resolved.transport, policy(false, true));
+        assert_eq!(
+            resolved.transport,
+            policy(false, true),
+            "the webrtc policy is enabled"
+        );
     }
 
     #[test]
     fn create_with_public_lookups_adds_relay_transport() {
         let resolved = resolve(&[Lookup::Mdns, Lookup::Dht, Lookup::Relay], None, &[])
             .expect("public lookups resolve");
-        assert_eq!(resolved.transport, policy(false, true));
+        assert_eq!(
+            resolved.transport,
+            policy(false, true),
+            "the webrtc policy stays enabled"
+        );
     }
 
     #[test]
     fn create_with_lan_lookups_has_no_relay_transport() {
         let resolved =
             resolve(&[Lookup::Mdns, Lookup::Dht], None, &[]).expect("lan lookups resolve");
-        assert_eq!(resolved.transport, policy(false, false));
+        assert_eq!(
+            resolved.transport,
+            policy(false, false),
+            "the udp-only policy is kept"
+        );
     }
 
     fn resolve_flags(flags: &[&str]) -> anyhow::Result<Resolved> {
@@ -116,7 +139,11 @@ mod tests {
     fn explicit_transport_list_is_literal() {
         let resolved = resolve_flags(&["--lookup", "relay", "--transport", "udp,webrtc,gossip"])
             .expect("an explicit list resolves");
-        assert_eq!(resolved.transport, policy(false, false));
+        assert_eq!(
+            resolved.transport,
+            policy(false, false),
+            "the plain policy is kept with no transport flag"
+        );
     }
 
     #[test]
@@ -128,7 +155,11 @@ mod tests {
             "udp,webrtc,gossip,relay",
         ])
         .expect("an explicit list with relay resolves");
-        assert_eq!(resolved.transport, policy(false, true));
+        assert_eq!(
+            resolved.transport,
+            policy(false, true),
+            "the webrtc policy is kept when given"
+        );
     }
 
     #[test]
@@ -140,14 +171,29 @@ mod tests {
         };
         let lookups = lookups_or_public(&options.lookups.lookup, options.advertise.is_some());
         let resolved = resolve(&lookups, None, &options.transport).expect("advertise resolves");
-        assert_eq!(resolved.lookups, LookupOpts::public_preset());
-        assert_eq!(resolved.transport, policy(false, true));
+        assert_eq!(
+            resolved.lookups,
+            LookupOpts::public_preset(),
+            "the public preset supplies the public lookups"
+        );
+        assert_eq!(
+            resolved.transport,
+            policy(false, true),
+            "the public preset keeps the webrtc policy"
+        );
     }
 
     #[test]
     fn advertise_keeps_the_lookups_that_are_named() {
-        assert_eq!(lookups_or_public(&[Lookup::Mdns], true), [Lookup::Mdns]);
-        assert!(lookups_or_public(&[], false).is_empty());
+        assert_eq!(
+            lookups_or_public(&[Lookup::Mdns], true),
+            [Lookup::Mdns],
+            "--public keeps the mdns lookup as given"
+        );
+        assert!(
+            lookups_or_public(&[], false).is_empty(),
+            "without lookups the public set is empty"
+        );
     }
 
     #[test]
@@ -162,25 +208,36 @@ mod tests {
                 multihop: true,
                 gossip: false,
                 relay_transport: false,
-            }
+            },
+            "multihop with direct paths gives the multihop policy"
         );
     }
 
     #[test]
     fn transport_multihop_alone_errors() {
-        assert!(resolve_flags(&["--transport", "multihop"]).is_err());
+        assert!(
+            resolve_flags(&["--transport", "multihop"]).is_err(),
+            "a multihop transport is rejected"
+        );
     }
 
     #[test]
     fn transport_relay_needs_relay_lookup() {
-        assert!(resolve_flags(&["--transport", "udp,webrtc,relay"]).is_err());
+        assert!(
+            resolve_flags(&["--transport", "udp,webrtc,relay"]).is_err(),
+            "a relay transport with udp and webrtc is rejected"
+        );
     }
 
     #[test]
     fn transport_p2p_is_rejected() {
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--transport", "p2p"]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-gossip", "create", "--transport", "p2p,relay"]).is_err()
+            Cli::try_parse_from(["agent-gossip", "create", "--transport", "p2p"]).is_err(),
+            "an unknown transport name is rejected"
+        );
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "create", "--transport", "p2p,relay"]).is_err(),
+            "a p2p,relay list is rejected"
         );
     }
 
@@ -190,7 +247,14 @@ mod tests {
         let Ok(resolved) = resolve(&[Lookup::Relay], None, &relay) else {
             panic!("relay lookup + relay transport must resolve");
         };
-        assert!(resolved.transport.relay_transport);
-        assert_eq!(resolved.lookups.relay_lookup, RelayChoice::Pinned);
+        assert!(
+            resolved.transport.relay_transport,
+            "a relay transport flag enables the relay transport"
+        );
+        assert_eq!(
+            resolved.lookups.relay_lookup,
+            RelayChoice::Pinned,
+            "a pinned relay lookup is recorded"
+        );
     }
 }
