@@ -394,6 +394,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
 - Accepted exception to C1: the test fixture's `SERIAL_GATE` recovers from a poisoned mutex, because it guards `()` and one panicking test must not stop the serial suite.
+- Declined U23: this is an application crate (S4), so its public enums do not use `#[non_exhaustive]`; the in-tree callers match them exhaustively and fix them in the same change.
 
 ## Agent Restrictions
 
