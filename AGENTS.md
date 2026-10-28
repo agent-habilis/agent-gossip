@@ -396,6 +396,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Accepted exception to C1: the test fixture's `SERIAL_GATE` recovers from a poisoned mutex, because it guards `()` and one panicking test must not stop the serial suite.
 - Declined U23: this is an application crate (S4), so its public enums do not use `#[non_exhaustive]`; the in-tree callers match them exhaustively and fix them in the same change.
 - Declined U26: this is an application crate (S4), so its public structs with public fields do not use `#[non_exhaustive]`; callers build them directly and fix them in the same change.
+- Declined D1: AGENTS drops derivable doc comments, so a public item gets a doc comment only when it states a why that the signature cannot.
 
 ## Agent Restrictions
 
