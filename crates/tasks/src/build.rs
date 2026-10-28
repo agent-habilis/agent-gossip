@@ -81,17 +81,18 @@ pub(crate) fn run(
     // binary as `<exe> zig cc …` (it resolves itself via `current_exe()`); the
     // hidden `Zig` subcommand in main.rs handles that. `parse_from` feeds the
     // same flags the `cargo zigbuild` CLI would take.
-    let mut args: Vec<String> = vec![
-        "cargo-zigbuild".to_owned(),
-        "--target".to_owned(),
-        triple.clone(),
+    let flags = [
+        "cargo-zigbuild",
+        "--target",
+        triple.as_str(),
         // `--package` as well as `--bin`: the root manifest is a virtual
         // workspace, so bin selection would otherwise lean on `default-members`.
-        "--package".to_owned(),
-        "agent-gossip".to_owned(),
-        "--bin".to_owned(),
-        "agent-gossip".to_owned(),
+        "--package",
+        "agent-gossip",
+        "--bin",
+        "agent-gossip",
     ];
+    let mut args: Vec<String> = flags.into_iter().map(str::to_owned).collect();
     if release {
         args.push("--release".to_owned());
     }
