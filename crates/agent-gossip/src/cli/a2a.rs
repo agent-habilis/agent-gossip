@@ -5,7 +5,7 @@ use super::a2a_call_sugar::A2aCallSugar;
 use super::advertised_file_name::advertised_file_name;
 use super::args::A2aAction;
 use super::finish_send::finish_send;
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 
 /// Post a message to a mesh via the running server's IPC socket.
 #[expect(
@@ -148,7 +148,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             note,
             waiting,
         } => {
-            crate::a2a::send::WorkerLeg::parse(state, waiting.as_deref())
+            crate::a2a::broadcast_params::WorkerLeg::parse(state, waiting.as_deref())
                 .map_err(|_| anyhow::anyhow!("--waiting requires --state working"))?;
             let cmd = IpcCommand::A2aStatus {
                 mesh,

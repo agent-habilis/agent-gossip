@@ -6,5 +6,5 @@ pub(crate) fn serialize_message_view<S: serde::Serializer>(
     message: &habilis_network::protocol::message::Authored,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    crate::a2a::ipc::message_record(message).serialize(serializer)
+    crate::a2a::ipc_command::message_record(message).serialize(serializer)
 }

@@ -49,7 +49,9 @@ impl<'a> A2aCallRequest<'a> {
                 text,
                 label,
             } => {
-                let message = crate::a2a::gossip::send_message_payload(mesh, task_id, text, label);
+                let message = crate::a2a::status_update_params::send_message_payload(
+                    mesh, task_id, text, label,
+                );
                 serde_json::json!({ "message": message })
             }
             Self::TaskById { task_id } => serde_json::json!({ "id": task_id }),

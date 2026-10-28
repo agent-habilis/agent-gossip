@@ -26,7 +26,15 @@ mod tests {
         let Commands::BellCheck { opts } = cli.command else {
             panic!("expected BellCheck command");
         };
-        assert_eq!(opts.session_pid, Some(42));
-        assert_eq!(opts.grace_ms, crate::a2a::tuning::BELL_CHECK_GRACE_MS);
+        assert_eq!(
+            opts.session_pid,
+            Some(42),
+            "--session-pid 42 must parse to 42"
+        );
+        assert_eq!(
+            opts.grace_ms,
+            crate::a2a::tuning::BELL_CHECK_GRACE_MS,
+            "the grace period defaults to the shared tuning constant"
+        );
     }
 }

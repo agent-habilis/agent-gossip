@@ -314,7 +314,7 @@ impl Output {
 
     /// A worker's agent has not polled for `check_secs` with no bell armed. JSON
     /// mode emits a visible `task_stalled` event; nothing is canceled.
-    pub(crate) fn task_stalled(&self, notice: &crate::a2a::task::StallNotice) {
+    pub(crate) fn task_stalled(&self, notice: &crate::a2a::task_record::StallNotice) {
         self.dispatch(
             || OutputEvent::TaskStalled {
                 task_id: notice.task_id.clone(),

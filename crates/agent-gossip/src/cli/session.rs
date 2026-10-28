@@ -141,9 +141,11 @@ struct Owner {
 async fn live_owners() -> Vec<Owner> {
     let mut owners = Vec::new();
     for path in habilis_network::runtime::ipc::active_socket_paths(&runtime_base()) {
-        let Ok(response) =
-            habilis_network::runtime::ipc::send_to_path(&path, &crate::a2a::ipc::IpcCommand::Info)
-                .await
+        let Ok(response) = habilis_network::runtime::ipc::send_to_path(
+            &path,
+            &crate::a2a::ipc_command::IpcCommand::Info,
+        )
+        .await
         else {
             continue;
         };

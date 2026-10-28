@@ -7,7 +7,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
-use super::rpc::{A2aOp, A2aRequest, RpcError, parse_op};
+use super::rpc_error::{A2aOp, A2aRequest, RpcError, parse_op};
 
 /// Largest accepted request body. JSON-RPC calls carry one A2A Message
 /// (whose wire form is itself capped by the gossip logical-body limit), so

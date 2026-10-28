@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::args::{MetaAction, MetaOpts};
 use super::msg_response::MsgResponse;
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 
 /// Read or change the mesh's `meta` channel via the running daemon — the
 /// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.

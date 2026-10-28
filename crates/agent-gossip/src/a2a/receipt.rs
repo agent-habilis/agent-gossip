@@ -2,7 +2,7 @@ use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::protocol::{AppTag, MessageBody, MessageKind, Nickname};
 use serde::{Deserialize, Serialize};
 
-use crate::a2a::send::{DirectedRpcParams, seal_directed, send_directed_rpc};
+use crate::a2a::broadcast_params::{DirectedRpcParams, seal_directed, send_directed_rpc};
 use crate::a2a::wire;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ pub(crate) async fn send_receipt(
 /// this cursor is about to serve. The bell is not a reader, so a long poll
 /// sends none.
 pub(crate) async fn send_read_receipts(
-    app: &mut crate::a2a::app::A2aApp,
+    app: &mut crate::a2a::a2a_app::A2aApp,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
     after: Option<u64>,

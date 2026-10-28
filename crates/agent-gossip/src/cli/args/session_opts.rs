@@ -27,7 +27,10 @@ mod tests {
         let Commands::Session { opts } = cli.command else {
             panic!("expected Session command");
         };
-        assert!(opts.session_pid.is_none());
+        assert!(
+            opts.session_pid.is_none(),
+            "without --session-pid the option stays unset"
+        );
     }
 
     #[test]
@@ -36,6 +39,10 @@ mod tests {
         let Commands::Session { opts } = cli.command else {
             panic!("expected Session command");
         };
-        assert_eq!(opts.session_pid, Some(42));
+        assert_eq!(
+            opts.session_pid,
+            Some(42),
+            "--session-pid 42 must parse to 42"
+        );
     }
 }

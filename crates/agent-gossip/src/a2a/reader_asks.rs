@@ -9,9 +9,9 @@ use habilis_network::protocol::{MeshId, Nickname};
 use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 
-use crate::a2a::app::{A2aApp, A2aResponder};
-use crate::a2a::gossip_rpc::READER_GET;
-use crate::a2a::send::{BroadcastA2aCallParams, broadcast_a2a_call};
+use crate::a2a::a2a_app::{A2aApp, A2aResponder};
+use crate::a2a::broadcast_params::{BroadcastA2aCallParams, broadcast_a2a_call};
+use crate::a2a::served::READER_GET;
 use crate::a2a::tuning::POLL_WAITERS_CAP;
 
 const KIND_ORDER: [&str; 6] = ["ip", "webrtc", "multihop", "gossip", "custom", "relay"];

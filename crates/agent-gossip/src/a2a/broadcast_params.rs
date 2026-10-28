@@ -18,8 +18,8 @@ use habilis_network::util::consts::{
     MAX_SHARD_TOTAL,
 };
 
-use crate::a2a::app::{A2aApp, DeliveredLeg, UnsentLeg};
-use crate::a2a::session::SessionRequest;
+use crate::a2a::a2a_app::{A2aApp, DeliveredLeg, UnsentLeg};
+use crate::a2a::session_request::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
 
@@ -287,7 +287,7 @@ pub(crate) struct BroadcastParams<'a> {
 /// command and the typed in-process `SessionRequest::Broadcast` both funnel
 /// through here so they cannot drift. `text` is the operator/agent input; it
 /// is wrapped here — and only here — into the A2A payload the wire carries
-/// (see [`crate::a2a::gossip::compose_broadcast`]), so role/context/extension
+/// (see [`crate::a2a::status_update_params::compose_broadcast`]), so role/context/extension
 /// stamping cannot drift between callers. A payload too large for one frame
 /// is transparently split into `shard`-tagged messages the receiver
 /// reassembles; the returned [`Message`] is the whole logical frame either
@@ -323,10 +323,10 @@ pub(crate) async fn send_broadcast(
         ));
     }
     let signer = state.identity().clone();
-    let payload = crate::a2a::gossip::compose_broadcast(mesh, text.as_str());
+    let payload = crate::a2a::status_update_params::compose_broadcast(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
-    let body = crate::a2a::gossip::payload_body(&payload)?;
+    let body = crate::a2a::status_update_params::payload_body(&payload)?;
     // On a passworded mesh, seal the chat body so a relay or a captured frame
     // can't read it. Everything downstream (dedup, the per-author chain, the
     // message log, anti-entropy) operates on the sealed frame; only the local
@@ -922,15 +922,15 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
         note,
         waiting,
     } = leg;
-    crate::a2a::gossip::status_update(
+    crate::a2a::status_update_params::status_update(
         mesh,
-        crate::a2a::gossip::StatusUpdateParams {
+        crate::a2a::status_update_params::StatusUpdateParams {
             task_id,
             state,
             note,
-            metadata: Some(crate::a2a::gossip::status_metadata(
+            metadata: Some(crate::a2a::status_update_params::status_metadata(
                 waiting,
-                crate::a2a::gossip::leg_order_ms(),
+                crate::a2a::status_update_params::leg_order_ms(),
             )),
         },
     )
@@ -974,7 +974,7 @@ pub(crate) async fn broadcast_task_status(
         note,
         waiting: leg.waiting(),
     });
-    let plain = crate::a2a::gossip::payload_body(&update)?;
+    let plain = crate::a2a::status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::STATUS),
@@ -1056,10 +1056,10 @@ pub(crate) async fn send_msg(
             text.as_str().len()
         ));
     }
-    let payload = crate::a2a::gossip::compose_msg(mesh, text.as_str());
+    let payload = crate::a2a::status_update_params::compose_msg(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
-    let plain = crate::a2a::gossip::payload_body(&payload)?;
+    let plain = crate::a2a::status_update_params::payload_body(&payload)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::MSG),
@@ -1132,8 +1132,8 @@ pub(crate) async fn broadcast_task_artifact(
         app,
     )
     .await?;
-    let update = crate::a2a::gossip::artifact_update_parts(mesh, task_id, parts);
-    let plain = crate::a2a::gossip::payload_body(&update)?;
+    let update = crate::a2a::status_update_params::artifact_update_parts(mesh, task_id, parts);
+    let plain = crate::a2a::status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::ARTIFACT),
@@ -1261,7 +1261,7 @@ pub(crate) struct CallFile<'a> {
 /// timed-out call that it replaces.
 fn call_blob_group(
     task_id: Option<crate::a2a::TaskId>,
-    tasks: &HashMap<crate::a2a::TaskId, crate::a2a::task::TaskRecord>,
+    tasks: &HashMap<crate::a2a::TaskId, crate::a2a::task_record::TaskRecord>,
 ) -> (crate::a2a::TaskId, bool) {
     match task_id {
         Some(task_id) if tasks.contains_key(&task_id) => (task_id, false),
@@ -1516,9 +1516,9 @@ fn echo_when_sent(
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
 pub(crate) fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
-    crate::a2a::task::ingest(
+    crate::a2a::task_record::ingest(
         &mut app.tasks,
-        crate::a2a::task::IngestLegParams {
+        crate::a2a::task_record::IngestLegParams {
             frame: msg,
             task_id,
             mine: true,
@@ -1641,7 +1641,7 @@ pub(crate) struct BroadcastA2aCallParams<'a> {
     pub(crate) method: &'a str,
     pub(crate) params: serde_json::Value,
     pub(crate) timeout: std::time::Duration,
-    pub(crate) responder: crate::a2a::app::A2aResponder,
+    pub(crate) responder: crate::a2a::a2a_app::A2aResponder,
     /// `a2a call --file`: attached only once the peer check passes, so a call
     /// that cannot go out spools nothing.
     pub(crate) file: Option<FileRef>,
@@ -1742,7 +1742,7 @@ pub(crate) async fn broadcast_a2a_call(
         );
     }
     let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
-    if let Some(unregistered) = app.register_a2a_waiter(crate::a2a::app::A2aWaiter {
+    if let Some(unregistered) = app.register_a2a_waiter(crate::a2a::a2a_app::A2aWaiter {
         corr,
         peer,
         deadline,
@@ -1767,7 +1767,7 @@ pub(crate) async fn broadcast_a2a_call(
     )
     .await
     {
-        if method == crate::a2a::gossip_rpc::READER_GET {
+        if method == crate::a2a::served::READER_GET {
             tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
         } else {
             tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
@@ -1971,11 +1971,11 @@ pub(crate) async fn handle_session_request(
                 crate::a2a::receipt::send_read_receipts(app, state, ctx, after).await;
             }
             app.surfaced
-                .poll_or_register(crate::a2a::surfaced::PollOrRegisterParams {
+                .poll_or_register(crate::a2a::surfaced_event::PollOrRegisterParams {
                     after,
                     long,
                     now: tokio::time::Instant::now(),
-                    responder: crate::a2a::surfaced::PollResponder::Typed(resp),
+                    responder: crate::a2a::surfaced_event::PollResponder::Typed(resp),
                 });
             false
         }
@@ -2089,7 +2089,7 @@ pub(crate) async fn handle_session_request(
                     method: &method,
                     params: rpc_params,
                     timeout,
-                    responder: crate::a2a::app::A2aResponder::Typed(resp),
+                    responder: crate::a2a::a2a_app::A2aResponder::Typed(resp),
                     file: None,
                 },
                 state,
@@ -2183,7 +2183,7 @@ mod call_blob_group_tests {
     use habilis_network::protocol::Nickname;
 
     use super::call_blob_group;
-    use crate::a2a::task::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
     use crate::a2a::{TaskId, TaskState};
 
     /// A follow-up on a task this node does not hold has no task of ours to
@@ -2322,7 +2322,7 @@ mod sharded_leg_tests {
     use tokio::sync::oneshot;
 
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
-    use crate::a2a::app::A2aApp;
+    use crate::a2a::a2a_app::A2aApp;
 
     fn shard(text: &str) -> habilis_network::protocol::message::Verified {
         shard_raw(text).sign(&habilis_network::protocol::Identity::generate())
@@ -2366,7 +2366,7 @@ mod sharded_leg_tests {
         let mut app = A2aApp::new();
         let (sent_tx, sent) = oneshot::channel::<bool>();
         drop(sent_tx);
-        app.unsent_legs.push(crate::a2a::app::UnsentLeg {
+        app.unsent_legs.push(crate::a2a::a2a_app::UnsentLeg {
             frames: vec![shard("a")],
             cache: None,
             sent,
@@ -2427,7 +2427,7 @@ mod status_leg_tests {
 
     use super::{StatusLegParams, worker_status_leg};
     use crate::a2a::TaskState;
-    use crate::a2a::gossip::{status_order, status_waiting};
+    use crate::a2a::status_update_params::{status_order, status_waiting};
 
     /// The worker's status leg carries the order value next to the waiting
     /// reason. Without the order value the initiator cannot tell two legs of one

@@ -49,7 +49,7 @@ mod tests {
         let Commands::Invite { opts } = cli.command else {
             panic!("expected Invite command");
         };
-        assert_eq!(opts.ttl.as_deref(), Some("1h"));
+        assert_eq!(opts.ttl.as_deref(), Some("1h"), "--ttl 1h is kept as given");
     }
 
     #[test]
@@ -65,6 +65,9 @@ mod tests {
         let Commands::Invite { opts } = cli.command else {
             panic!("expected Invite command");
         };
-        assert!(opts.ttl.is_none());
+        assert!(
+            opts.ttl.is_none(),
+            "without --ttl the invite uses the default lifetime"
+        );
     }
 }

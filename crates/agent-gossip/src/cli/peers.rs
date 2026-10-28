@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::args::PeersOpts;
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 
 pub(super) async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {

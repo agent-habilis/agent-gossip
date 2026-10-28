@@ -140,7 +140,7 @@ impl Directory {
                                 // Ads ride broadcast chat frames, so the ad
                                 // text is the payload's text projection, not
                                 // the raw frame body (a serialized A2A object).
-                                let Some(ad_text) = crate::a2a::gossip::chat_text(&message) else {
+                                let Some(ad_text) = crate::a2a::status_update_params::chat_text(&message) else {
                                     continue;
                                 };
                                 match dir.note(&ad_text, now) {

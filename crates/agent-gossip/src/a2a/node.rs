@@ -11,11 +11,11 @@ use habilis_network::protocol::{
 use habilis_network::runtime::state_file::StateFile;
 use tokio::time::Instant as TokioInstant;
 
-use crate::a2a::app::{A2aApp, A2aResponder};
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::a2a_app::{A2aApp, A2aResponder};
+use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
-use crate::a2a::rpc::{A2aOp, A2aRequest};
-use crate::a2a::session::SessionRequest;
+use crate::a2a::rpc_error::{A2aOp, A2aRequest};
+use crate::a2a::session_request::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
 
@@ -86,7 +86,7 @@ impl NodeApp for A2aApp {
         // self` passed alongside it. Tasks first, then waiters: a waiter must
         // never resolve while its task record is still live.
         let out = self.output.clone();
-        crate::a2a::task::fail_tasks_for_departed_peer(&mut self.tasks, nickname, &out);
+        crate::a2a::task_record::fail_tasks_for_departed_peer(&mut self.tasks, nickname, &out);
         self.fail_a2a_waiters_for_peer(nickname);
     }
 }
@@ -118,7 +118,7 @@ impl NodeDriver for A2aApp {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
-        crate::a2a::send::retain_sent_legs(self, state);
+        crate::a2a::broadcast_params::retain_sent_legs(self, state);
         // A card that did not publish is tried again, with a longer wait after each failure:
         // no peer can send to us without it.
         if self.card_error.is_some() {
@@ -128,11 +128,14 @@ impl NodeDriver for A2aApp {
                 self.card_retry_in -= 1;
             }
         }
-        crate::a2a::task::tick_task_sweep(state, self, ctx, &out).await;
-        crate::a2a::task::tick_task_keepalive(state, self, ctx).await;
+        crate::a2a::task_record::tick_task_sweep(state, self, ctx, &out).await;
+        crate::a2a::task_record::tick_task_keepalive(state, self, ctx).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
         // to re-send the missing shards from their sender-side cache.
-        crate::a2a::send::send_shard_repair_requests(ctx.mesh, ctx.author, state, ctx.sender).await;
+        crate::a2a::broadcast_params::send_shard_repair_requests(
+            ctx.mesh, ctx.author, state, ctx.sender,
+        )
+        .await;
     }
 
     async fn on_shutdown(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
@@ -184,8 +187,8 @@ impl NodeDriver for A2aApp {
         ctx: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
-        crate::a2a::send::handle_session_request(
-            crate::a2a::send::SessionRequestParams {
+        crate::a2a::broadcast_params::handle_session_request(
+            crate::a2a::broadcast_params::SessionRequestParams {
                 req,
                 mesh: ctx.mesh,
                 author: ctx.author,
@@ -214,8 +217,8 @@ impl NodeDriver for A2aApp {
             message,
         } = op
         {
-            crate::a2a::send::broadcast_a2a_call(
-                crate::a2a::send::BroadcastA2aCallParams {
+            crate::a2a::broadcast_params::broadcast_a2a_call(
+                crate::a2a::broadcast_params::BroadcastA2aCallParams {
                     mesh: ctx.mesh,
                     author: ctx.author,
                     peer,
@@ -234,8 +237,8 @@ impl NodeDriver for A2aApp {
         }
         let out = self.output.clone();
         let port = self.a2a_port();
-        let outcome = crate::a2a::rpc::handle_op(
-            crate::a2a::rpc::HandleOpParams {
+        let outcome = crate::a2a::rpc_error::handle_op(
+            crate::a2a::rpc_error::HandleOpParams {
                 op,
                 mesh: ctx.mesh,
                 author: ctx.author,
@@ -258,8 +261,8 @@ impl NodeDriver for A2aApp {
         ctx: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
-        crate::a2a::ipc::handle_ipc_command(
-            crate::a2a::ipc::IpcDispatchParams {
+        crate::a2a::ipc_command::handle_ipc_command(
+            crate::a2a::ipc_command::IpcDispatchParams {
                 cmd: req.cmd,
                 resp_tx: req.resp,
                 mesh: ctx.mesh,
@@ -420,12 +423,14 @@ fn is_empty_working_repeat(
 ) -> bool {
     use super::TaskState;
     prior == Some(TaskState::Working)
-        && super::gossip::status_payload(message).is_ok_and(|payload| {
-            !super::gossip::is_beat(&payload)
+        && super::status_update_params::status_payload(message).is_ok_and(|payload| {
+            !super::status_update_params::is_beat(&payload)
                 && payload.status.state == TaskState::Working
-                && super::gossip::status_waiting(&payload).as_deref() == prior_waiting
+                && super::status_update_params::status_waiting(&payload).as_deref() == prior_waiting
         })
-        && super::gossip::task_text(message).trim().is_empty()
+        && super::status_update_params::task_text(message)
+            .trim()
+            .is_empty()
 }
 
 /// Whether the local agent is reading: `(bell armed, seconds since its last
@@ -519,8 +524,8 @@ fn classify(message: &Authored) -> AppClass {
     );
     // A task liveness beat: a status update marked `mesh:beat`.
     let beat = message.kind.is_app(wire::STATUS)
-        && crate::a2a::gossip::status_payload(message)
-            .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload));
+        && crate::a2a::status_update_params::status_payload(message)
+            .is_ok_and(|payload| crate::a2a::status_update_params::is_beat(&payload));
     // The A2A boundary gate for a logical frame: a chat/task Message, status, or
     // artifact must parse and agree with its frame *and* carry the addressing its
     // tag mandates. `a2a_broadcast` is broadcast-only (`to: None`); `a2a_msg`,
@@ -536,11 +541,17 @@ fn classify(message: &Authored) -> AppClass {
     let directed = matches!(message.kind, MessageKind::App { to: Some(_), .. });
     let valid = match tag {
         Some(wire::BROADCAST) => {
-            !directed && crate::a2a::gossip::broadcast_payload(message).is_ok()
+            !directed && crate::a2a::status_update_params::broadcast_payload(message).is_ok()
         }
-        Some(wire::MSG) => directed && crate::a2a::gossip::msg_payload(message).is_ok(),
-        Some(wire::STATUS) => directed && crate::a2a::gossip::status_payload(message).is_ok(),
-        Some(wire::ARTIFACT) => directed && crate::a2a::gossip::artifact_payload(message).is_ok(),
+        Some(wire::MSG) => {
+            directed && crate::a2a::status_update_params::msg_payload(message).is_ok()
+        }
+        Some(wire::STATUS) => {
+            directed && crate::a2a::status_update_params::status_payload(message).is_ok()
+        }
+        Some(wire::ARTIFACT) => {
+            directed && crate::a2a::status_update_params::artifact_payload(message).is_ok()
+        }
         Some(wire::REQ | wire::RESP) => directed,
         Some(wire::RECEIPT) => directed && parse_receipt(message).is_some(),
         None => true,
@@ -716,7 +727,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
     if to == ctx.author
-        && let Some(task_id) = crate::a2a::gossip::frame_task_id(message)
+        && let Some(task_id) = crate::a2a::status_update_params::frame_task_id(message)
     {
         // …and being the addressee is not enough: the leg must come from the
         // task's own counterparty. Anyone can seal to us (the key is published
@@ -737,7 +748,8 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             .get(&task_id)
             .and_then(|rec| rec.waiting.as_deref());
         surface &= !is_empty_working_repeat(prior, prior_waiting, message);
-        if crate::a2a::task::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
+        if crate::a2a::task_record::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id)
+        {
             tracing::info!(
                 target: "agent_gossip::a2a",
                 %task_id,
@@ -749,9 +761,9 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             replay = true;
         }
         let now = Instant::now();
-        let reader = crate::a2a::task::ingest(
+        let reader = crate::a2a::task_record::ingest(
             &mut app.tasks,
-            crate::a2a::task::IngestLegParams {
+            crate::a2a::task_record::IngestLegParams {
                 frame: message,
                 task_id: &task_id,
                 mine: false,
@@ -760,12 +772,12 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
         );
         if let Some(reader) = reader
             && let Some(notice) =
-                crate::a2a::task::stall_notice(&mut app.tasks, &task_id, reader, now)
+                crate::a2a::task_record::stall_notice(&mut app.tasks, &task_id, reader, now)
         {
             app.output.task_stalled(&notice);
         }
         if surface {
-            crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
+            crate::a2a::task_record::note_surfaced(&mut app.tasks, &task_id, message);
         }
     }
     let loggable = handle_task(
@@ -908,8 +920,8 @@ fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
     }
     // Content legs log; a liveness beat (a status marked `mesh:beat`) is
     // plumbing — surfaced as a `task_progress` widget event but never retained.
-    !crate::a2a::gossip::status_payload(message)
-        .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload))
+    !crate::a2a::status_update_params::status_payload(message)
+        .is_ok_and(|payload| crate::a2a::status_update_params::is_beat(&payload))
 }
 
 /// Route an A2A RPC frame: a request addressed to us is served (and a response
@@ -984,64 +996,63 @@ async fn handle_a2a_req(
     app: &mut A2aApp,
     ctx: &HandlerCtx<'_>,
 ) {
-    use crate::a2a::gossip_rpc::Served;
+    use crate::a2a::served::Served;
     let A2aReqParams { message, corr } = req;
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
-    let outcome: Result<serde_json::Value, crate::a2a::rpc::RpcError> = match serde_json::from_str::<
-        serde_json::Value,
-    >(
-        message.body.as_str(),
-    ) {
-        Ok(envelope) => {
-            let method = envelope["method"].as_str().unwrap_or_default();
-            match crate::a2a::gossip_rpc::classify(method, &envelope["params"], &requester, app) {
-                Served::Op(op) => {
-                    let out = app.output.clone();
-                    crate::a2a::rpc::handle_op(
-                        crate::a2a::rpc::HandleOpParams {
-                            op,
-                            mesh: ctx.mesh,
-                            author: ctx.author,
-                            our_pubkey: ctx.our_pubkey,
-                            // No local HTTP port on the gossip path; only card
-                            // ops read it, and those aren't in the safe set here.
-                            a2a_port: 0,
-                            app,
-                        },
-                        state,
-                        ctx.sender,
-                        &out,
-                    )
-                    .await
+    let outcome: Result<serde_json::Value, crate::a2a::rpc_error::RpcError> =
+        match serde_json::from_str::<serde_json::Value>(message.body.as_str()) {
+            Ok(envelope) => {
+                let method = envelope["method"].as_str().unwrap_or_default();
+                match crate::a2a::served::classify(method, &envelope["params"], &requester, app) {
+                    Served::Op(op) => {
+                        let out = app.output.clone();
+                        crate::a2a::rpc_error::handle_op(
+                            crate::a2a::rpc_error::HandleOpParams {
+                                op,
+                                mesh: ctx.mesh,
+                                author: ctx.author,
+                                our_pubkey: ctx.our_pubkey,
+                                // No local HTTP port on the gossip path; only card
+                                // ops read it, and those aren't in the safe set here.
+                                a2a_port: 0,
+                                app,
+                            },
+                            state,
+                            ctx.sender,
+                            &out,
+                        )
+                        .await
+                    }
+                    Served::Ingest(payload) => {
+                        ingest_remote_message(&payload, &requester, app, ctx)
+                    }
+                    Served::ShardRepair { group, missing } => {
+                        resend_cached_shards(
+                            ShardRepairParams {
+                                group: &group,
+                                missing: &missing,
+                                requester: &requester,
+                            },
+                            state,
+                            ctx,
+                        )
+                        .await
+                    }
+                    Served::ReaderGet => {
+                        let (bell, last_poll_secs_ago) = reader_liveness(app, ctx);
+                        Ok(serde_json::json!({
+                            "bell": bell,
+                            "last_poll_secs_ago": last_poll_secs_ago,
+                        }))
+                    }
+                    Served::Reject(error) => Err(error),
                 }
-                Served::Ingest(payload) => ingest_remote_message(&payload, &requester, app, ctx),
-                Served::ShardRepair { group, missing } => {
-                    resend_cached_shards(
-                        ShardRepairParams {
-                            group: &group,
-                            missing: &missing,
-                            requester: &requester,
-                        },
-                        state,
-                        ctx,
-                    )
-                    .await
-                }
-                Served::ReaderGet => {
-                    let (bell, last_poll_secs_ago) = reader_liveness(app, ctx);
-                    Ok(serde_json::json!({
-                        "bell": bell,
-                        "last_poll_secs_ago": last_poll_secs_ago,
-                    }))
-                }
-                Served::Reject(error) => Err(error),
             }
-        }
-        Err(error) => Err(crate::a2a::rpc::RpcError::invalid_params(&format!(
-            "malformed JSON-RPC request: {error}"
-        ))),
-    };
+            Err(error) => Err(crate::a2a::rpc_error::RpcError::invalid_params(&format!(
+                "malformed JSON-RPC request: {error}"
+            ))),
+        };
     let response = match outcome {
         Ok(result) => serde_json::json!({ "result": result }),
         Err(error) => {
@@ -1053,7 +1064,7 @@ async fn handle_a2a_req(
         return;
     };
     // Seal the response to the requester — a relay forwards it but cannot read it.
-    let body = match crate::a2a::send::seal_directed(state, &requester, &body) {
+    let body = match crate::a2a::broadcast_params::seal_directed(state, &requester, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
             tracing::warn!(%error, "cannot seal a2a rpc response — dropping");
@@ -1067,8 +1078,8 @@ async fn handle_a2a_req(
     };
     // Directed reply over the shared RPC sender: unicast, transparently
     // splitting a large sealed response into shard frames.
-    if let Err(error) = crate::a2a::send::send_directed_rpc(
-        crate::a2a::send::DirectedRpcParams {
+    if let Err(error) = crate::a2a::broadcast_params::send_directed_rpc(
+        crate::a2a::broadcast_params::DirectedRpcParams {
             mesh: ctx.mesh,
             author: ctx.author,
             kind,
@@ -1099,7 +1110,7 @@ async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+) -> Result<serde_json::Value, crate::a2a::rpc_error::RpcError> {
     let ShardRepairParams {
         group,
         missing,
@@ -1142,18 +1153,21 @@ async fn resend_cached_shards(
 /// coarse machine, surface the message to our skill, and return the
 /// authoritative `Task`.
 /// Refusal for an offer the registry has no room for, or `None` to admit.
-fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<crate::a2a::rpc::RpcError> {
-    use crate::a2a::task::Admission;
+fn task_admission_error(
+    app: &A2aApp,
+    requester: &Nickname,
+) -> Option<crate::a2a::rpc_error::RpcError> {
+    use crate::a2a::task_record::Admission;
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     // A2A has no "too many tasks" error, so this is an application code in the
     // implementation-defined server range, alongside the party check's -32003.
     let refuse = |message: String| {
-        Some(crate::a2a::rpc::RpcError {
+        Some(crate::a2a::rpc_error::RpcError {
             code: -32004,
             message,
         })
     };
-    match crate::a2a::task::admit_new_task(&app.tasks, requester) {
+    match crate::a2a::task_record::admit_new_task(&app.tasks, requester) {
         Admission::Ok => None,
         Admission::RegistryFull => refuse(format!(
             "this peer is holding its maximum of {TASKS_CAP} tasks"
@@ -1169,8 +1183,8 @@ fn ingest_remote_message(
     requester: &Nickname,
     app: &mut A2aApp,
     ctx: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
-    use crate::a2a::task::{LegInfo, LegKind};
+) -> Result<serde_json::Value, crate::a2a::rpc_error::RpcError> {
+    use crate::a2a::task_record::{LegInfo, LegKind};
     let now = Instant::now();
     let (task_id, kind) = match &payload.task_id {
         Some(task_id) => (task_id.clone(), LegKind::Text),
@@ -1182,12 +1196,12 @@ fn ingest_remote_message(
     if kind == LegKind::Text {
         match app.tasks.get(&task_id) {
             None => {
-                return Err(crate::a2a::rpc::RpcError::invalid_params(
+                return Err(crate::a2a::rpc_error::RpcError::invalid_params(
                     "SendMessage names a taskId with no task on this peer",
                 ));
             }
             Some(rec) if &rec.peer != requester => {
-                return Err(crate::a2a::rpc::RpcError {
+                return Err(crate::a2a::rpc_error::RpcError {
                     code: -32003,
                     message: "not a party to the task named by taskId".to_string(),
                 });
@@ -1202,7 +1216,7 @@ fn ingest_remote_message(
         // loop, so an unbounded registry is a stall as well as a leak.
         return Err(error);
     }
-    crate::a2a::task::apply(
+    crate::a2a::task_record::apply(
         &mut app.tasks,
         &LegInfo {
             task_id: &task_id,
@@ -1215,8 +1229,8 @@ fn ingest_remote_message(
     );
     // Surface the incoming message to our skill (a `task` event, kind:message).
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
-    let text = crate::a2a::gossip::display_text(payload);
-    let label = crate::a2a::gossip::task_label(payload);
+    let text = crate::a2a::status_update_params::display_text(payload);
+    let label = crate::a2a::status_update_params::task_label(payload);
     app.output.task_message(&output::TaskMessageLeg {
         id: payload.message_id.as_str(),
         mesh: ctx.mesh.as_str(),
@@ -1233,8 +1247,8 @@ fn ingest_remote_message(
     // yields `{"task": <Task>}`.
     app.tasks
         .get(&task_id)
-        .map(|rec| serde_json::json!({ "task": crate::a2a::rpc::task_object(&task_id, rec, ctx.mesh) }))
-        .ok_or_else(|| crate::a2a::rpc::RpcError::internal("task record missing after ingest"))
+        .map(|rec| serde_json::json!({ "task": crate::a2a::rpc_error::task_object(&task_id, rec, ctx.mesh) }))
+        .ok_or_else(|| crate::a2a::rpc_error::RpcError::internal("task record missing after ingest"))
 }
 
 /// Adopt `author`'s published endpoint hint (`/peers/<nick>/card/endpoint`) into
@@ -1301,9 +1315,9 @@ mod classify_tests {
     // variable.
     fn chat_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
-        let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
+        let payload = crate::a2a::status_update_params::compose_broadcast(&sw, "hi");
         let id = MessageId::new(payload.message_id.as_str()).unwrap();
-        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let body = crate::a2a::status_update_params::payload_body(&payload).unwrap();
         Message::new_app(
             &sw,
             &Nickname::from("author"),
@@ -1324,9 +1338,9 @@ mod classify_tests {
     // The directed twin of [`chat_frame`]: a well-formed msg, `to` the variable.
     fn msg_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
-        let payload = crate::a2a::gossip::compose_msg(&sw, "hi");
+        let payload = crate::a2a::status_update_params::compose_msg(&sw, "hi");
         let id = MessageId::new(payload.message_id.as_str()).unwrap();
-        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let body = crate::a2a::status_update_params::payload_body(&payload).unwrap();
         Message::new_app(
             &sw,
             &Nickname::from("author"),
@@ -1350,7 +1364,7 @@ mod classify_tests {
     }
 
     fn status_frame_in_raw(state: TaskState, to: Option<Nickname>) -> Message {
-        crate::a2a::gossip::test_status_frame(&mesh(), state, to)
+        crate::a2a::status_update_params::test_status_frame(&mesh(), state, to)
     }
 
     fn status_frame_in(state: TaskState, to: Option<Nickname>) -> Authored {
@@ -1460,9 +1474,9 @@ mod classify_tests {
     }
 
     fn working_with_raw(note: Option<&str>, metadata: Option<serde_json::Value>) -> Message {
-        let status = crate::a2a::gossip::status_update(
+        let status = crate::a2a::status_update_params::status_update(
             &mesh(),
-            crate::a2a::gossip::StatusUpdateParams {
+            crate::a2a::status_update_params::StatusUpdateParams {
                 task_id: &crate::a2a::TaskId::random(),
                 state: TaskState::Working,
                 note,
@@ -1476,7 +1490,7 @@ mod classify_tests {
                 tag: AppTag::from(wire::STATUS),
                 to: Some(Nickname::from("initiator")),
                 corr: None,
-                body: crate::a2a::gossip::payload_body(&status).unwrap(),
+                body: crate::a2a::status_update_params::payload_body(&status).unwrap(),
             },
         )
     }
@@ -1503,7 +1517,10 @@ mod classify_tests {
             !is_empty_working_repeat(working, None, &working_with(Some("tests pass"), None)),
             "a progress note surfaces"
         );
-        let beat = working_with(None, Some(crate::a2a::gossip::beat_metadata(None)));
+        let beat = working_with(
+            None,
+            Some(crate::a2a::status_update_params::beat_metadata(None)),
+        );
         assert!(
             !is_empty_working_repeat(working, None, &beat),
             "a beat keeps its own path"
@@ -1526,7 +1543,10 @@ mod classify_tests {
     fn a_waiting_leg_and_its_clear_each_surface_once() {
         let working = Some(TaskState::Working);
         let reason = "asks its user";
-        let waiting = working_with(None, crate::a2a::gossip::waiting_metadata(Some(reason)));
+        let waiting = working_with(
+            None,
+            crate::a2a::status_update_params::waiting_metadata(Some(reason)),
+        );
         assert!(
             !is_empty_working_repeat(working, None, &waiting),
             "the --waiting leg surfaces"
@@ -1578,7 +1598,7 @@ mod classify_tests {
     // log is one every peer's digest re-offers.
     #[test]
     fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
-        let mut app = crate::a2a::app::A2aApp::detached(crate::output::Output::silent());
+        let mut app = crate::a2a::a2a_app::A2aApp::detached(crate::output::Output::silent());
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
 
         // A msg addressed to someone else: the handler declines, nothing recorded.
@@ -1686,9 +1706,9 @@ mod classify_tests {
     #[test]
     fn dm_declaring_the_broadcast_extension_is_invalid() {
         let sw = mesh();
-        let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
+        let payload = crate::a2a::status_update_params::compose_broadcast(&sw, "hi");
         let id = MessageId::new(payload.message_id.as_str()).unwrap();
-        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let body = crate::a2a::status_update_params::payload_body(&payload).unwrap();
         let frame = Message::new_app(
             &sw,
             &Nickname::from("author"),

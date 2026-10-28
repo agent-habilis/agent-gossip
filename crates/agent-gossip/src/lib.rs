@@ -46,7 +46,7 @@ pub use habilis_network::util::consts::{
 pub use habilis_network::util::logging::LogSink;
 pub use habilis_network::util::mesh_prefix;
 
-pub use self::a2a::surfaced::SurfacedEvent;
+pub use self::a2a::surfaced_event::SurfacedEvent;
 pub use self::a2a::{TaskId, TaskState};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting

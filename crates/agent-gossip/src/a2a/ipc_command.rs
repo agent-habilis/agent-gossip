@@ -10,14 +10,14 @@ use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-use crate::a2a::app::A2aApp;
-use crate::a2a::peer_path::{ReaderAskParams, ask_readers, respond_with_paths};
-use crate::a2a::receipt::send_read_receipts;
-use crate::a2a::send::{
+use crate::a2a::a2a_app::A2aApp;
+use crate::a2a::broadcast_params::{
     BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
     emit_task_status, send_broadcast, send_msg, when_sent,
 };
-use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
+use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::receipt::send_read_receipts;
+use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState};
 use crate::output;
 
@@ -207,7 +207,7 @@ pub(crate) async fn handle_ipc_command(
         app,
     } = params;
     app.drain_delivered_legs();
-    crate::a2a::send::retain_sent_legs(app, state);
+    crate::a2a::broadcast_params::retain_sent_legs(app, state);
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or
@@ -359,7 +359,7 @@ pub(crate) async fn handle_ipc_command(
             file_mime,
         } => {
             tracing::debug!(%task_id, "IPC a2a artifact command received");
-            let file = file.map(|path| crate::a2a::send::FileRef {
+            let file = file.map(|path| crate::a2a::broadcast_params::FileRef {
                 path,
                 name: file_name,
                 mime: file_mime,
@@ -473,16 +473,16 @@ pub(crate) async fn handle_ipc_command(
             // The response arrives later (the peer's `A2aResp`, or a timeout),
             // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
             // and answer nothing now.
-            crate::a2a::send::broadcast_a2a_call(
-                crate::a2a::send::BroadcastA2aCallParams {
+            crate::a2a::broadcast_params::broadcast_a2a_call(
+                crate::a2a::broadcast_params::BroadcastA2aCallParams {
                     mesh,
                     author,
                     peer: to,
                     method: &method,
                     params: rpc_params,
                     timeout: Duration::from_secs(timeout_secs),
-                    responder: crate::a2a::app::A2aResponder::Ipc(resp_tx),
-                    file: file.map(|path| crate::a2a::send::FileRef {
+                    responder: crate::a2a::a2a_app::A2aResponder::Ipc(resp_tx),
+                    file: file.map(|path| crate::a2a::broadcast_params::FileRef {
                         path,
                         name: file_name,
                         mime: file_mime,

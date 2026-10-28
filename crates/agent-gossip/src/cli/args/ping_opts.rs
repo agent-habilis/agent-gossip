@@ -40,6 +40,10 @@ mod tests {
         let Commands::Ping { opts } = cli.command else {
             panic!("expected Ping command");
         };
-        assert_eq!(opts.nickname.as_str(), "my-nick");
+        assert_eq!(
+            opts.nickname.as_str(),
+            "my-nick",
+            "--nickname sets the local nickname"
+        );
     }
 }

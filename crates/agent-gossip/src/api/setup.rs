@@ -21,7 +21,7 @@ pub(super) async fn create_setup(
 ) -> Result<
     (
         EventLoopConfig,
-        crate::a2a::app::SurfacedIo,
+        crate::a2a::a2a_app::SurfacedIo,
         Option<Advertiser>,
     ),
     CreateError,
@@ -62,7 +62,7 @@ pub(super) async fn create_setup(
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
-    let io = crate::a2a::app::SurfacedIo::new(output);
+    let io = crate::a2a::a2a_app::SurfacedIo::new(output);
     let sink = io.sink();
     // See `cli::run_session`: the advertiser's counter predates setup so the
     // returned config needs no patching.
@@ -108,7 +108,7 @@ pub(super) async fn create_setup(
 pub(super) async fn join_setup(
     cfg: JoinConfig,
     output: Output,
-) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
+) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
     let resolved = JoinParams {
         target: cfg.target,
         nickname: cfg.nickname,
@@ -127,7 +127,7 @@ pub(super) async fn join_setup(
 pub(super) async fn topic_setup(
     cfg: TopicConfig,
     output: Output,
-) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
+) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
     let resolved = resolve_topic(cfg.string, cfg.nickname).map_err(JoinError::Resolve)?;
     resolved_setup(resolved, cfg.max_peers, output).await
 }
@@ -138,10 +138,10 @@ async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
     output: Output,
-) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
+) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
     crate::register_build_version();
     let Resolved { kind, author, .. } = resolved;
-    let io = crate::a2a::app::SurfacedIo::new(output);
+    let io = crate::a2a::a2a_app::SurfacedIo::new(output);
     let sink = io.sink();
     let elc = setup_mesh(
         kind,

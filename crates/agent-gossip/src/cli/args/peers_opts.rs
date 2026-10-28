@@ -40,7 +40,11 @@ mod tests {
         let Commands::Peers { opts } = cli.command else {
             panic!("expected Peers command");
         };
-        assert_eq!(opts.nickname.as_str(), "my-nick");
+        assert_eq!(
+            opts.nickname.as_str(),
+            "my-nick",
+            "--nickname sets the local nickname"
+        );
     }
 
     #[test]
@@ -70,6 +74,10 @@ mod tests {
         else {
             panic!("expected Peers commands");
         };
-        assert_eq!(opts.gossip.as_str(), expected.gossip.as_str());
+        assert_eq!(
+            opts.gossip.as_str(),
+            expected.gossip.as_str(),
+            "the gossip id parses to the value given on the command line"
+        );
     }
 }

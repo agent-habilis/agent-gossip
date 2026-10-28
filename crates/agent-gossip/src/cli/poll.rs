@@ -3,7 +3,7 @@ use habilis_network::protocol::{MeshId, Nickname};
 
 use super::args::{PollIdentity, PollOpts};
 use super::ready::wait_for_ready;
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 
 /// Query the running daemon's live peer roster. Always emits the
 /// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
@@ -80,7 +80,7 @@ pub(super) async fn poll(mut opts: PollOpts) -> Result<()> {
         // and exit 0 — re-issuing would hit a socket that is about to vanish.
         // The sentinel is a control response and never reaches stdout. A
         // daemon that dies WITHOUT sending it (crash, SIGKILL) still errors.
-        if resp == crate::a2a::surfaced::SHUTDOWN_SENTINEL {
+        if resp == crate::a2a::surfaced_event::SHUTDOWN_SENTINEL {
             println!("[]");
             return Ok(());
         }

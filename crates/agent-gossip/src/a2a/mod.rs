@@ -13,22 +13,22 @@ pub(crate) use crate::bridge::{
     ExposeParams, TicketDirectory, TicketDirectoryEvent, connect, expose, ticket_requires_password,
 };
 
-pub(crate) mod app;
+pub(crate) mod a2a_app;
+pub(crate) mod a2a_binding;
+pub(crate) mod broadcast_params;
 pub(crate) mod card;
 mod card_gate;
 mod extensions;
-pub mod gossip;
-pub(crate) mod gossip_rpc;
-pub(crate) mod http;
-pub(crate) mod ipc;
+pub(crate) mod ipc_command;
 mod model;
 pub(crate) mod node;
-pub(crate) mod peer_path;
+pub(crate) mod reader_asks;
 pub(crate) mod receipt;
-pub(crate) mod rpc;
-pub(crate) mod send;
-pub(crate) mod session;
-pub(crate) mod surfaced;
-pub(crate) mod task;
+pub(crate) mod rpc_error;
+pub(crate) mod served;
+pub(crate) mod session_request;
+pub mod status_update_params;
+pub(crate) mod surfaced_event;
+pub(crate) mod task_record;
 pub(crate) mod tuning;
 pub(crate) mod wire;

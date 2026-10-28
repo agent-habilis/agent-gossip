@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 use crate::status as output;
 
 /// Budget for the machine net-report (build endpoint + first completed report).

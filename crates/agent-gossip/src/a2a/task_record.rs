@@ -25,9 +25,9 @@ use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-use super::gossip::ReaderBeat;
-use super::{META_REASON, TaskId, TaskState, gossip, wire};
-use crate::a2a::app::A2aApp;
+use super::status_update_params::ReaderBeat;
+use super::{META_REASON, TaskId, TaskState, status_update_params, wire};
+use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::tuning::{
     TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs,
     task_stall_check_secs, task_timeout_secs,
@@ -266,17 +266,17 @@ pub(crate) fn ingest(
     let mut reader = None;
     let (kind, fraction) = match tag.as_str() {
         wire::STATUS => {
-            let Ok(payload) = gossip::status_payload(frame) else {
+            let Ok(payload) = status_update_params::status_payload(frame) else {
                 return None;
             };
-            if gossip::is_beat(&payload) {
-                reader = gossip::beat_reader(&payload);
-                (LegKind::Beat, gossip::beat_fraction(&payload))
+            if status_update_params::is_beat(&payload) {
+                reader = status_update_params::beat_reader(&payload);
+                (LegKind::Beat, status_update_params::beat_fraction(&payload))
             } else {
                 if payload.status.state == TaskState::Working {
-                    waiting = gossip::status_waiting(&payload);
+                    waiting = status_update_params::status_waiting(&payload);
                 }
-                order = gossip::status_order(&payload);
+                order = status_update_params::status_order(&payload);
                 (LegKind::Status(payload.status.state), None)
             }
         }
@@ -408,7 +408,8 @@ pub(crate) fn note_surfaced(
     task_id: &TaskId,
     frame: &Message,
 ) {
-    let is_beat = gossip::status_payload(frame).is_ok_and(|payload| gossip::is_beat(&payload));
+    let is_beat = status_update_params::status_payload(frame)
+        .is_ok_and(|payload| status_update_params::is_beat(&payload));
     if is_beat {
         return;
     }
@@ -739,9 +740,9 @@ pub(crate) async fn tick_task_sweep(
                 .map(|(task_id, peer)| (task_id, peer, "call-timed-out")),
         );
     for (task_id, peer, reason) in cancels {
-        let update = gossip::status_update(
+        let update = status_update_params::status_update(
             ctx.mesh,
-            gossip::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id,
                 state: TaskState::Canceled,
                 note: None,
@@ -898,13 +899,15 @@ pub(crate) async fn tick_task_keepalive(
         .collect();
 
     for (task_id, peer, task_state, fraction) in due {
-        let update = gossip::status_update(
+        let update = status_update_params::status_update(
             ctx.mesh,
-            gossip::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &task_id,
                 state: task_state,
                 note: None,
-                metadata: Some(gossip::beat_metadata_with_reader(fraction, reader)),
+                metadata: Some(status_update_params::beat_metadata_with_reader(
+                    fraction, reader,
+                )),
             },
         );
         let sent = broadcast_status(
@@ -951,14 +954,14 @@ async fn broadcast_status(
         task_id: _task_id,
         update,
     } = params;
-    let Ok(body) = gossip::payload_body(update) else {
+    let Ok(body) = status_update_params::payload_body(update) else {
         return false;
     };
     // Directed status frames are sealed to the peer like every other directed
     // frame (the receive path always unseals a directed body). If the peer's key
     // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
     // a later one retries.
-    let Ok(body) = crate::a2a::send::seal_directed(state, peer, &body) else {
+    let Ok(body) = crate::a2a::broadcast_params::seal_directed(state, peer, &body) else {
         return false;
     };
     let kind = MessageKind::App {
@@ -990,7 +993,7 @@ mod tests {
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
-    use crate::a2a::gossip::ReaderBeat;
+    use crate::a2a::status_update_params::ReaderBeat;
 
     fn tid() -> TaskId {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
@@ -1115,13 +1118,13 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         let peer_clock = tasks[&tid()].last_peer_activity;
 
-        let payload = crate::a2a::gossip::status_update(
+        let payload = crate::a2a::status_update_params::status_update(
             &mesh,
-            crate::a2a::gossip::StatusUpdateParams {
+            crate::a2a::status_update_params::StatusUpdateParams {
                 task_id: &tid(),
                 state: TaskState::Working,
                 note: None,
-                metadata: Some(crate::a2a::gossip::beat_metadata(None)),
+                metadata: Some(crate::a2a::status_update_params::beat_metadata(None)),
             },
         );
         let mut beat = Message::new_app(
@@ -1157,7 +1160,7 @@ mod tests {
     fn status_leg(beat: bool) -> habilis_network::protocol::Message {
         status_frame(
             TaskState::Working,
-            beat.then(|| crate::a2a::gossip::beat_metadata(None)),
+            beat.then(|| crate::a2a::status_update_params::beat_metadata(None)),
         )
     }
 
@@ -1169,9 +1172,9 @@ mod tests {
         use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
-        let payload = crate::a2a::gossip::status_update(
+        let payload = crate::a2a::status_update_params::status_update(
             &mesh,
-            crate::a2a::gossip::StatusUpdateParams {
+            crate::a2a::status_update_params::StatusUpdateParams {
                 task_id: &tid(),
                 state,
                 note: None,
@@ -1215,7 +1218,9 @@ mod tests {
     fn beat_from_worker(reader: Option<ReaderBeat>) -> habilis_network::protocol::Message {
         status_frame(
             TaskState::Working,
-            Some(crate::a2a::gossip::beat_metadata_with_reader(None, reader)),
+            Some(crate::a2a::status_update_params::beat_metadata_with_reader(
+                None, reader,
+            )),
         )
     }
 
@@ -1334,7 +1339,7 @@ mod tests {
     fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> habilis_network::protocol::Message {
         let mut frame = status_frame(
             TaskState::Working,
-            crate::a2a::gossip::waiting_metadata(reason),
+            crate::a2a::status_update_params::waiting_metadata(reason),
         );
         frame.timestamp = at;
         frame
@@ -1406,7 +1411,7 @@ mod tests {
     /// just fetched look stalled.
     #[tokio::test]
     async fn an_explicit_after_long_fetch_keeps_a_reader_from_stalling() {
-        use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder, SurfacedState};
+        use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder, SurfacedState};
 
         let mut surfaced = SurfacedState::new();
         let plain_at = tokio::time::Instant::now();
@@ -1568,7 +1573,7 @@ mod tests {
     fn only_a_working_leg_sets_the_waiting_reason() {
         let first = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        let metadata = || crate::a2a::gossip::waiting_metadata(Some("asks its user"));
+        let metadata = || crate::a2a::status_update_params::waiting_metadata(Some("asks its user"));
         let mut leg = status_frame(TaskState::InputRequired, metadata());
         leg.timestamp = first;
         ingest_inbound(&mut tasks, &leg);
@@ -1670,9 +1675,9 @@ mod tests {
         use habilis_network::protocol::MeshId;
         use serde_json::json;
 
-        use crate::a2a::app::A2aApp;
-        use crate::a2a::gossip_rpc::{Served, classify};
-        use crate::a2a::rpc::A2aOp;
+        use crate::a2a::a2a_app::A2aApp;
+        use crate::a2a::rpc_error::A2aOp;
+        use crate::a2a::served::{Served, classify};
 
         let timeout = Duration::from_mins(2);
         let now = Instant::now();
@@ -1700,7 +1705,7 @@ mod tests {
             "another peer must still get task not found"
         );
 
-        let task = crate::a2a::rpc::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
+        let task = crate::a2a::rpc_error::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
         assert_eq!(task["id"], tid().as_str());
         assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED");
         assert_eq!(task["metadata"]["mesh:peer"], "calm-otter");
@@ -2155,7 +2160,7 @@ mod tests {
             },
         );
         assert!(
-            crate::a2a::gossip::frame_task_id(&sealed).is_none(),
+            crate::a2a::status_update_params::frame_task_id(&sealed).is_none(),
             "a sealed body yields no parseable task id — the condition under test"
         );
 
@@ -2179,7 +2184,8 @@ mod tests {
         // ①: the app surfaces the *plaintext* logical frame it built (the same
         // `task_id`, unsealed), so rendering that self-echo as JSON must not
         // panic and must carry the id.
-        let payload = crate::a2a::gossip::artifact_update(&mesh, &task_id, "result text");
+        let payload =
+            crate::a2a::status_update_params::artifact_update(&mesh, &task_id, "result text");
         let plaintext = Message::new_app(
             &mesh,
             &Nickname::from("worker-bot"),
@@ -2240,9 +2246,9 @@ mod tests {
             let body = if sealed {
                 "sealed-ciphertext-stand-in".to_owned()
             } else {
-                let payload = crate::a2a::gossip::status_update(
+                let payload = crate::a2a::status_update_params::status_update(
                     &mesh,
-                    crate::a2a::gossip::StatusUpdateParams {
+                    crate::a2a::status_update_params::StatusUpdateParams {
                         task_id: &task_id,
                         state,
                         note: None,
@@ -2296,7 +2302,7 @@ mod tests {
 
         // And so the idle sweep passes it over, however long it sits there.
         // This is `tick_task_sweep`'s expiry predicate, verbatim.
-        let timeout = Duration::from_secs(crate::a2a::task::task_timeout_secs());
+        let timeout = Duration::from_secs(crate::a2a::task_record::task_timeout_secs());
         let rec = tasks.get_mut(&tid()).expect("the record is live");
         rec.last_peer_activity = now.checked_sub(10 * timeout).expect("in range");
         let expired =

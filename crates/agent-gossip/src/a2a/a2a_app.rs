@@ -15,7 +15,7 @@ use tokio::sync::oneshot::error::TryRecvError;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::TaskId;
-use crate::a2a::surfaced::SurfacedState;
+use crate::a2a::surfaced_event::SurfacedState;
 use crate::output::{Output, OutputEvent};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
@@ -104,14 +104,14 @@ impl SurfacedIo {
 /// `EventLoopState` so the mesh engine and the a2a layer keep disjoint state.
 pub(crate) struct A2aApp {
     /// In-flight tasks this node is a party to, keyed by `task_id`
-    /// (see [`crate::a2a::task`]). The coarse state machine + the two
+    /// (see [`crate::a2a::task_record`]). The coarse state machine + the two
     /// task timers (debounce sweep, keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
-    pub tasks: HashMap<TaskId, crate::a2a::task::TaskRecord>,
+    pub tasks: HashMap<TaskId, crate::a2a::task_record::TaskRecord>,
     /// Tasks the sweep reaped after they closed, with their peer and last
     /// state. The record goes 2 min after close, but anti-entropy can serve a
     /// leg of it hours later, and the peer can still ask for the task.
-    pub closed_tasks: crate::a2a::task::ClosedTasks,
+    pub closed_tasks: crate::a2a::task_record::ClosedTasks,
     /// `Message::dedup_key` of every chat line surfaced, the same
     /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
     /// a bounded count of frames, and anti-entropy then serves the line again.
@@ -216,7 +216,7 @@ impl A2aApp {
         } = io;
         Self {
             tasks: HashMap::new(),
-            closed_tasks: crate::a2a::task::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
+            closed_tasks: crate::a2a::task_record::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
             surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
@@ -243,7 +243,7 @@ impl A2aApp {
     pub(crate) fn detached(output: Output) -> Self {
         Self {
             tasks: HashMap::new(),
-            closed_tasks: crate::a2a::task::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
+            closed_tasks: crate::a2a::task_record::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
             surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
@@ -303,7 +303,7 @@ impl A2aApp {
     /// Ingest the own task legs that the peer got since the last call.
     pub(crate) fn drain_delivered_legs(&mut self) {
         for DeliveredLeg { echo, task_id } in self.take_delivered_legs() {
-            crate::a2a::send::ingest_own_leg(self, &echo, &task_id);
+            crate::a2a::broadcast_params::ingest_own_leg(self, &echo, &task_id);
         }
     }
 
@@ -330,14 +330,14 @@ impl A2aApp {
     /// CLI when `--a2a-serve` is set.
     pub(crate) fn serve_a2a(
         &mut self,
-        binding: crate::a2a::http::A2aBinding,
-    ) -> tokio::sync::mpsc::Receiver<crate::a2a::rpc::A2aRequest> {
+        binding: crate::a2a::a2a_binding::A2aBinding,
+    ) -> tokio::sync::mpsc::Receiver<crate::a2a::rpc_error::A2aRequest> {
         self.a2a_port = Some(binding.port);
         self.a2a_token = Some(binding.token.clone());
-        let (tx, rx) = tokio::sync::mpsc::channel::<crate::a2a::rpc::A2aRequest>(
-            crate::a2a::http::REQUEST_QUEUE,
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::a2a::rpc_error::A2aRequest>(
+            crate::a2a::a2a_binding::REQUEST_QUEUE,
         );
-        crate::a2a::http::spawn(binding, tx);
+        crate::a2a::a2a_binding::spawn(binding, tx);
         rx
     }
 
@@ -509,9 +509,9 @@ impl A2aApp {
         let task_state = task["status"]["state"].as_str().and_then(|raw| {
             serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok()
         })?;
-        crate::a2a::task::adopt_initiator(
+        crate::a2a::task_record::adopt_initiator(
             &mut self.tasks,
-            crate::a2a::task::AdoptInitiatorParams {
+            crate::a2a::task_record::AdoptInitiatorParams {
                 task_id: &task_id,
                 peer,
                 task_state,
@@ -606,7 +606,7 @@ impl A2aApp {
 pub(crate) enum A2aResponder {
     Ipc(tokio::sync::oneshot::Sender<String>),
     Typed(tokio::sync::oneshot::Sender<serde_json::Value>),
-    Rpc(tokio::sync::oneshot::Sender<Result<serde_json::Value, crate::a2a::rpc::RpcError>>),
+    Rpc(tokio::sync::oneshot::Sender<Result<serde_json::Value, crate::a2a::rpc_error::RpcError>>),
 }
 
 impl A2aResponder {
@@ -652,7 +652,7 @@ impl A2aResponder {
                     tx.send(serde_json::json!({ "error": { "code": -32000, "message": message } }));
             }
             A2aResponder::Rpc(tx) => {
-                let _ = tx.send(Err(crate::a2a::rpc::RpcError {
+                let _ = tx.send(Err(crate::a2a::rpc_error::RpcError {
                     code: -32000,
                     message: message.to_string(),
                 }));
@@ -664,15 +664,15 @@ impl A2aResponder {
 /// Parse a peer's JSON-RPC response `body` (`{"result":…}` | `{"error":…}`)
 /// into the `Result<Value, RpcError>` the localhost binding's HTTP handler
 /// returns. A malformed/absent body reads as an internal error.
-fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc_error::RpcError> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return Err(crate::a2a::rpc::RpcError {
+        return Err(crate::a2a::rpc_error::RpcError {
             code: -32603,
             message: "peer returned a malformed a2a response".to_string(),
         });
     };
     if !value["error"].is_null() {
-        return Err(crate::a2a::rpc::RpcError {
+        return Err(crate::a2a::rpc_error::RpcError {
             code: value["error"]["code"].as_i64().unwrap_or(-32603),
             message: value["error"]["message"]
                 .as_str()

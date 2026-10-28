@@ -83,7 +83,7 @@ impl MeshSession {
         crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
         let (output, events_rx) = crate::output::capture_events();
-        let io = crate::a2a::app::SurfacedIo::new(output);
+        let io = crate::a2a::a2a_app::SurfacedIo::new(output);
         let sink = io.sink();
         let elc = setup_mesh(
             // Directory sessions (advertise/discover) never offload blobs, so no
@@ -128,7 +128,7 @@ impl MeshSession {
     /// signal handlers (the public api default).
     fn new_with_events(
         elc: EventLoopConfig,
-        io: crate::a2a::app::SurfacedIo,
+        io: crate::a2a::a2a_app::SurfacedIo,
         advertiser: Option<Advertiser>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
@@ -147,7 +147,7 @@ impl MeshSession {
     /// directory sessions pass `handle_signals: false`.
     fn new_with_events_and_signals(
         elc: EventLoopConfig,
-        io: crate::a2a::app::SurfacedIo,
+        io: crate::a2a::a2a_app::SurfacedIo,
         env: SpawnEnv,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
@@ -265,7 +265,7 @@ impl MeshSession {
     /// batch at the deadline just means the window elapsed quietly; call
     /// again. `false` is the immediate read.
     ///
-    /// Check [`PollBatch::missed_before`](crate::a2a::surfaced::PollBatch): when
+    /// Check [`PollBatch::missed_before`](crate::a2a::surfaced_event::PollBatch): when
     /// set, the cursor aged out of the ring and every event below that seq was
     /// lost. Re-baseline on the returned window.
     ///
@@ -275,7 +275,7 @@ impl MeshSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<crate::a2a::surfaced::PollBatch> {
+    ) -> anyhow::Result<crate::a2a::surfaced_event::PollBatch> {
         self.core.fetch(after, long).await
     }
 
@@ -301,7 +301,7 @@ impl MeshSession {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| crate::a2a::send::FileRef {
+        let file = file.map(|path| crate::a2a::broadcast_params::FileRef {
             path,
             name: file_name,
             mime: file_mime,

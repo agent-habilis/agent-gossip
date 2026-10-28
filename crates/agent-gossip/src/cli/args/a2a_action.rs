@@ -339,6 +339,10 @@ mod tests {
         let A2aAction::Call { timeout_secs, .. } = opts.action else {
             panic!("expected the call action");
         };
-        assert_eq!(timeout_secs, crate::a2a::tuning::CALL_TIMEOUT_SECS);
+        assert_eq!(
+            timeout_secs,
+            crate::a2a::tuning::CALL_TIMEOUT_SECS,
+            "a2a call defaults its timeout to the shared constant"
+        );
     }
 }

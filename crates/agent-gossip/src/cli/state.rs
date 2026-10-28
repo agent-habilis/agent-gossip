@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::args::{StateAction, StateOpts};
 use super::msg_response::MsgResponse;
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 
 /// Read or change the mesh's shared state via the running daemon. Emits the
 /// raw IPC JSON response — `{ok,...}` for `merge`, `{ok,document}` for `get`.

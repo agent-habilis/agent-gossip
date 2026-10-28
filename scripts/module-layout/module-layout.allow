@@ -1,15 +1,4 @@
 
-crates/agent-gossip/src/a2a/app.rs|1|rename pending: public type(s) SurfacedIo, Startup, A2aApp, UnsentLeg, DeliveredLeg, A2aResponder, A2aWaiter
-crates/agent-gossip/src/a2a/gossip.rs|1|rename pending: public type(s) StatusUpdateParams, ReaderBeat
-crates/agent-gossip/src/a2a/gossip_rpc.rs|1|rename pending: public type(s) Served
-crates/agent-gossip/src/a2a/http.rs|1|rename pending: public type(s) A2aBinding
-crates/agent-gossip/src/a2a/ipc.rs|1|rename pending: public type(s) IpcCommand, IpcDispatchParams
-crates/agent-gossip/src/a2a/peer_path.rs|1|rename pending: public type(s) ReaderAsks, ReaderAskParams
-crates/agent-gossip/src/a2a/rpc.rs|1|rename pending: public type(s) RpcError, A2aOp, A2aRequest, HandleOpParams
-crates/agent-gossip/src/a2a/send.rs|1|rename pending: public type(s) BroadcastParams, TaskStatusParams, WorkerLeg, TaskArtifactEmitParams, BroadcastTaskStatusParams, MsgParams, BroadcastTaskArtifactParams, FileRef, CallFile, CallBlob, BroadcastA2aCallParams, DirectedRpcParams, SessionRequestParams
-crates/agent-gossip/src/a2a/session.rs|1|rename pending: public type(s) SessionRequest
-crates/agent-gossip/src/a2a/surfaced.rs|1|rename pending: public type(s) SurfacedEvent, SurfacedEvents, PollBatch, PollResponder, PollBaseline, PollWaiter, PollOrRegisterParams, SurfacedState, ReadTarget
-crates/agent-gossip/src/a2a/task.rs|1|rename pending: public type(s) TaskRole, WaitingMark, TaskRecord, StallNotice, LegKind, LegInfo, IngestLegParams, ClosedTask, ClosedTasks, Admission, AdoptInitiatorParams
 crates/agent-gossip/src/api/advertise.rs|1|rename pending: public type(s) Advertiser
 crates/agent-gossip/src/api/config.rs|1|rename pending: public type(s) JoinConfig, TopicConfig, CreateConfig
 crates/agent-gossip/src/api/error.rs|1|rename pending: public type(s) CreateError, JoinError

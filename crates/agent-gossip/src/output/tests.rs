@@ -32,10 +32,11 @@ fn view(message: Message) -> Authored {
 }
 
 fn chat_frame_raw(author: &str, text: &str) -> Message {
-    let payload = crate::a2a::gossip::compose_broadcast(&sid(), text);
+    let payload = crate::a2a::status_update_params::compose_broadcast(&sid(), text);
     let frame_id = habilis_network::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
-    let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
+    let body =
+        crate::a2a::status_update_params::payload_body(&payload).expect("payload serializes");
     Message::new_app(
         &sid(),
         &nick(author),
@@ -201,16 +202,16 @@ fn status_frame_raw(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Messag
         metadata,
     } = args;
     let tid = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
-    let update = crate::a2a::gossip::status_update(
+    let update = crate::a2a::status_update_params::status_update(
         &sid(),
-        crate::a2a::gossip::StatusUpdateParams {
+        crate::a2a::status_update_params::StatusUpdateParams {
             task_id: &tid,
             state,
             note,
             metadata,
         },
     );
-    let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
+    let body = crate::a2a::status_update_params::payload_body(&update).expect("payload serializes");
     let kind = MessageKind::app_to(crate::a2a::wire::STATUS, nick(to), None);
     Message::new_frame(&sid(), &nick(author), kind, body)
 }
@@ -303,7 +304,9 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
         .expect("task event produces a JSON line");
         parse(&json)
     };
-    let waiting = line(crate::a2a::gossip::waiting_metadata(Some("asks its user")));
+    let waiting = line(crate::a2a::status_update_params::waiting_metadata(Some(
+        "asks its user",
+    )));
     assert_eq!(waiting["event"], "task");
     assert_eq!(waiting["waiting"], "asks its user");
     let plain = line(None);
@@ -323,7 +326,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::InputRequired,
             note: None,
-            metadata: crate::a2a::gossip::waiting_metadata(Some("asks its user")),
+            metadata: crate::a2a::status_update_params::waiting_metadata(Some("asks its user")),
         },
     );
     let json = super::json::event_json(&OutputEvent::Task {
@@ -346,7 +349,9 @@ fn task_progress_event_json_shape() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::Working,
             note: None,
-            metadata: Some(crate::a2a::gossip::beat_metadata(Some((35, 100)))),
+            metadata: Some(crate::a2a::status_update_params::beat_metadata(Some((
+                35, 100,
+            )))),
         },
     );
     let json = super::json::event_json(&OutputEvent::Task {
@@ -527,9 +532,9 @@ mod snapshots {
         metadata: Option<serde_json::Value>,
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
-        let mut update = crate::a2a::gossip::status_update(
+        let mut update = crate::a2a::status_update_params::status_update(
             &habilis_network::protocol::MeshId::from("test"),
-            crate::a2a::gossip::StatusUpdateParams {
+            crate::a2a::status_update_params::StatusUpdateParams {
                 task_id: &tid,
                 state,
                 note,
@@ -541,7 +546,8 @@ mod snapshots {
             message.message_id =
                 crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000002");
         }
-        let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
+        let body =
+            crate::a2a::status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
             MessageKind::app_to(
                 crate::a2a::wire::STATUS,
@@ -567,20 +573,23 @@ mod snapshots {
         insta::assert_snapshot!(snap_status(
             crate::a2a::TaskState::Working,
             None,
-            Some(crate::a2a::gossip::beat_metadata(Some((35, 100)))),
+            Some(crate::a2a::status_update_params::beat_metadata(Some((
+                35, 100
+            )))),
         ));
     }
 
     #[test]
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
-        let mut update = crate::a2a::gossip::artifact_update(
+        let mut update = crate::a2a::status_update_params::artifact_update(
             &habilis_network::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
-        let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
+        let body =
+            crate::a2a::status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
             MessageKind::app_to(
                 crate::a2a::wire::ARTIFACT,
@@ -596,12 +605,13 @@ mod snapshots {
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame_raw(text: &str) -> Message {
-        let mut payload = crate::a2a::gossip::compose_broadcast(
+        let mut payload = crate::a2a::status_update_params::compose_broadcast(
             &habilis_network::protocol::MeshId::from("test"),
             text,
         );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
-        let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
+        let body =
+            crate::a2a::status_update_params::payload_body(&payload).expect("payload serializes");
         Message::fixture(
             MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
             body.as_str(),
@@ -614,10 +624,13 @@ mod snapshots {
 
     /// The directed twin of [`snap_chat_frame`].
     fn snap_msg_frame_raw(text: &str) -> Message {
-        let mut payload =
-            crate::a2a::gossip::compose_msg(&habilis_network::protocol::MeshId::from("test"), text);
+        let mut payload = crate::a2a::status_update_params::compose_msg(
+            &habilis_network::protocol::MeshId::from("test"),
+            text,
+        );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
-        let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
+        let body =
+            crate::a2a::status_update_params::payload_body(&payload).expect("payload serializes");
         Message::fixture(
             MessageKind::app_to(
                 crate::a2a::wire::MSG,

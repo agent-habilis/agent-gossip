@@ -6,9 +6,11 @@ use tokio::sync::oneshot;
 
 use super::TaskId;
 use super::extensions::META_WAITING;
-use super::task::{TaskRecord, TaskRole};
-use crate::a2a::app::A2aApp;
-use crate::a2a::send::{BroadcastParams, emit_task_status, log_pending, send_broadcast};
+use super::task_record::{TaskRecord, TaskRole};
+use crate::a2a::a2a_app::A2aApp;
+use crate::a2a::broadcast_params::{
+    BroadcastParams, emit_task_status, log_pending, send_broadcast,
+};
 use crate::output;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
@@ -292,7 +294,7 @@ pub(crate) async fn handle_op(
                 return Err(RpcError::task_not_found(&task_id));
             }
             let (_echo, pending) = emit_task_status(
-                crate::a2a::send::TaskStatusParams {
+                crate::a2a::broadcast_params::TaskStatusParams {
                     mesh,
                     author,
                     task_id: &task_id,
@@ -411,7 +413,7 @@ async fn send_message(
             "directed message/send should be routed through the request/response waiter",
         ));
     }
-    let text = super::gossip::display_text(&message);
+    let text = super::status_update_params::display_text(&message);
     let body = MessageBody::new(text)
         .map_err(|error| RpcError::invalid_params(&format!("message text: {error}")))?;
     let (_id, frame) = send_broadcast(

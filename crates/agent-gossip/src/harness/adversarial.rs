@@ -167,11 +167,12 @@ impl CraftedMsg {
             self.msg.kind.is_app(wire::MSG),
             "wrap_msg applies to msg frames only"
         );
-        let mut payload = crate::a2a::gossip::compose_msg(&self.msg.mesh, self.msg.body.as_str());
+        let mut payload =
+            crate::a2a::status_update_params::compose_msg(&self.msg.mesh, self.msg.body.as_str());
         payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
             .expect("frame id is a valid uuid");
-        self.msg.body =
-            crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        self.msg.body = crate::a2a::status_update_params::payload_body(&payload)
+            .expect("crafted payload serializes");
         self
     }
 
@@ -244,16 +245,17 @@ impl CraftedMsg {
             crate::a2a::TaskId::from_uuid_str(frame_task_id).expect("valid frame task id");
         let payload_tid =
             crate::a2a::TaskId::from_uuid_str(payload_task_id).expect("valid payload task id");
-        let update = crate::a2a::gossip::status_update(
+        let update = crate::a2a::status_update_params::status_update(
             mesh,
-            crate::a2a::gossip::StatusUpdateParams {
+            crate::a2a::status_update_params::StatusUpdateParams {
                 task_id: &payload_tid,
                 state: crate::a2a::TaskState::Working,
                 note: None,
                 metadata: None,
             },
         );
-        let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
+        let body = crate::a2a::status_update_params::payload_body(&update)
+            .expect("crafted payload serializes");
         Self {
             msg: Message::new_app(
                 mesh,
@@ -286,16 +288,17 @@ impl CraftedMsg {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let to = Nickname::new(to.to_owned()).expect("valid target");
         let task_id = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
-        let update = crate::a2a::gossip::status_update(
+        let update = crate::a2a::status_update_params::status_update(
             mesh,
-            crate::a2a::gossip::StatusUpdateParams {
+            crate::a2a::status_update_params::StatusUpdateParams {
                 task_id: &task_id,
                 state,
                 note: None,
                 metadata: beat.then(|| serde_json::json!({ crate::a2a::META_BEAT: true })),
             },
         );
-        let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
+        let body = crate::a2a::status_update_params::payload_body(&update)
+            .expect("crafted payload serializes");
         let body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
         Self {
@@ -332,10 +335,11 @@ impl CraftedMsg {
                 body: MessageBody::new(String::new()).expect("empty body is valid"),
             },
         );
-        let mut payload = crate::a2a::gossip::compose_msg(mesh, text);
+        let mut payload = crate::a2a::status_update_params::compose_msg(mesh, text);
         payload.message_id =
             crate::a2a::MessageId::from_uuid_str(frame.id.as_str()).expect("frame id is a uuid");
-        let body = crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        let body = crate::a2a::status_update_params::payload_body(&payload)
+            .expect("crafted payload serializes");
         frame.body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
         Self { msg: frame }
@@ -403,12 +407,14 @@ impl CraftedMsg {
             self.msg.kind.is_app(wire::BROADCAST),
             "wrap_a2a applies to chat frames only"
         );
-        let mut payload =
-            crate::a2a::gossip::compose_broadcast(&self.msg.mesh, self.msg.body.as_str());
+        let mut payload = crate::a2a::status_update_params::compose_broadcast(
+            &self.msg.mesh,
+            self.msg.body.as_str(),
+        );
         payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
             .expect("frame id is a valid uuid");
-        self.msg.body =
-            crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        self.msg.body = crate::a2a::status_update_params::payload_body(&payload)
+            .expect("crafted payload serializes");
         self
     }
 

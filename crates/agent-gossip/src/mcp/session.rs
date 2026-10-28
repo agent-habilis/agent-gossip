@@ -129,7 +129,7 @@ impl Session {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| crate::a2a::send::FileRef {
+        let file = file.map(|path| crate::a2a::broadcast_params::FileRef {
             path,
             name: file_name,
             mime: file_mime,
@@ -212,7 +212,7 @@ impl Session {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> Result<crate::a2a::surfaced::PollBatch> {
+    ) -> Result<crate::a2a::surfaced_event::PollBatch> {
         let batch = self.inner.fetch(self.effective_after(after), long).await?;
         if after.is_none()
             && let Some(seq) = batch.events.last().map(|item| item.seq)
@@ -261,6 +261,7 @@ mod tests {
     use serde_json::json;
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
+    use crate::a2a::status_update_params::chat_text;
     use crate::api::{CreateConfig, JoinConfig};
 
     // All tests use the private network (loopback) so they work on
@@ -341,7 +342,7 @@ mod tests {
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
     /// the first event) — replaying from here re-includes the join and
     /// everything after.
-    fn seq_before_bob_join(events: &[crate::a2a::surfaced::SurfacedEvent]) -> Option<u64> {
+    fn seq_before_bob_join(events: &[crate::a2a::surfaced_event::SurfacedEvent]) -> Option<u64> {
         let join_idx = events.iter().position(|item| is_bob_join(&item.event))?;
         Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
     }
@@ -425,9 +426,8 @@ mod tests {
             let events = session.fetch_messages(None, false).await.ok()?.events;
             events.iter().find_map(|entry| {
                 let msg = as_message(&entry.event)?;
-                (msg.author.as_str() == author
-                    && crate::a2a::gossip::chat_text(msg).as_deref() == Some(body))
-                .then(|| msg.id.clone())
+                (msg.author.as_str() == author && chat_text(msg).as_deref() == Some(body))
+                    .then(|| msg.id.clone())
             })
         })
         .await
@@ -470,7 +470,7 @@ mod tests {
             let found = events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some(body));
+                .any(|msg| chat_text(msg).as_deref() == Some(body));
             if found {
                 break;
             }
@@ -612,10 +612,7 @@ mod tests {
             .expect("send_broadcast");
         assert_eq!(echo.id, sent);
         assert_eq!(echo.author.as_str(), "alice-replay");
-        assert_eq!(
-            crate::a2a::gossip::chat_text(&echo).as_deref(),
-            Some("self-echo")
-        );
+        assert_eq!(chat_text(&echo).as_deref(), Some("self-echo"));
         assert!(
             echo.timestamp > habilis_network::protocol::UnixSecs::ZERO,
             "echo must carry a unix timestamp"
@@ -724,7 +721,7 @@ mod tests {
             events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor"))
+                .any(|msg| chat_text(msg).as_deref() == Some("hi via cursor"))
                 .then_some(())
         })
         .await
@@ -745,7 +742,7 @@ mod tests {
             forced
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor")),
+                .any(|msg| chat_text(msg).as_deref() == Some("hi via cursor")),
             "explicit after must replay from the given seq"
         );
 

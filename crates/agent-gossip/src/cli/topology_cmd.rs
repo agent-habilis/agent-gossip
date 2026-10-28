@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::args::TopologyOpts;
 use super::msg_response::MsgResponse;
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 
 /// Print the multihop routing topology (assembled mesh graph) from the running
 /// daemon, as JSON.

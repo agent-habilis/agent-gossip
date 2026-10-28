@@ -2,7 +2,7 @@
 //! operations a peer serves to other peers over gossip (`A2aReq` → `A2aResp`).
 //!
 //! Unlike the localhost JSON-RPC binding (`--a2a-serve`), which is
-//! bearer-authenticated and exposes the full [`handle_op`](super::rpc::handle_op)
+//! bearer-authenticated and exposes the full [`handle_op`](super::rpc_error::handle_op)
 //! surface to a trusted local client, a gossip request is only
 //! mesh-member-signed. So the gate here refuses anything that would make the
 //! **serving** peer author state under its own identity on the caller's behalf
@@ -15,8 +15,8 @@ use habilis_network::protocol::{Channel, Nickname};
 use serde_json::Value;
 
 use super::TaskId;
-use super::rpc::{A2aOp, RpcError};
-use crate::a2a::app::A2aApp;
+use super::rpc_error::{A2aOp, RpcError};
+use crate::a2a::a2a_app::A2aApp;
 
 /// The internal method `peers` uses to ask a peer whether it has a reader.
 pub(crate) const READER_GET: &str = "mesh/reader.get";
@@ -177,8 +177,8 @@ mod tests {
     use serde_json::json;
 
     use super::{Served, classify};
-    use crate::a2a::app::A2aApp;
-    use crate::a2a::rpc::A2aOp;
+    use crate::a2a::a2a_app::A2aApp;
+    use crate::a2a::rpc_error::A2aOp;
 
     fn state() -> A2aApp {
         A2aApp::new()
@@ -191,12 +191,12 @@ mod tests {
     /// Open a task record with `peer` as the counterparty, as receiving its
     /// offer would.
     fn seed_task(app: &mut A2aApp, task_id: &str, peer: &str) {
-        crate::a2a::task::apply(
+        crate::a2a::task_record::apply(
             &mut app.tasks,
-            &crate::a2a::task::LegInfo {
+            &crate::a2a::task_record::LegInfo {
                 task_id: &crate::a2a::TaskId::from(task_id),
                 peer: &Nickname::from(peer),
-                kind: crate::a2a::task::LegKind::Offer,
+                kind: crate::a2a::task_record::LegKind::Offer,
                 mine: false,
                 fraction: None,
             },
@@ -255,7 +255,7 @@ mod tests {
             ));
         }
         // Not an `A2aOp`, so the localhost HTTP binding cannot reach it.
-        assert!(crate::a2a::rpc::parse_op("mesh/reader.get", &json!({}), None).is_err());
+        assert!(crate::a2a::rpc_error::parse_op("mesh/reader.get", &json!({}), None).is_err());
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
 
         // The local binding, whose caller owns the daemon, still lists all.
         let A2aOp::ListTasks { peer: locally } =
-            crate::a2a::rpc::parse_op("ListTasks", &json!({}), None)
+            crate::a2a::rpc_error::parse_op("ListTasks", &json!({}), None)
                 .expect("local ListTasks parses")
         else {
             panic!("expected ListTasks");

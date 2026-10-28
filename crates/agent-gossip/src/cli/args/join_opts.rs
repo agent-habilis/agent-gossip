@@ -94,6 +94,9 @@ mod tests {
         mistyped.replace_range(mistyped.len() - 1.., replacement);
 
         let error = Cli::try_parse_from(["agent-gossip", "join", &mistyped]).unwrap_err();
-        assert!(error.to_string().contains("invalid gossip hash"));
+        assert!(
+            error.to_string().contains("invalid gossip hash"),
+            "a non-hash id is rejected with the hash error"
+        );
     }
 }

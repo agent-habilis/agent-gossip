@@ -267,7 +267,7 @@ pub(crate) struct PollOrRegisterParams {
 }
 
 /// The surfaced-events ring plus the parked long-poll waiters — the a2a layer's
-/// slice of the daemon's surfacing state, held by [`A2aApp`](super::app::A2aApp)
+/// slice of the daemon's surfacing state, held by [`A2aApp`](super::a2a_app::A2aApp)
 /// so the daemon engine never names `OutputEvent`.
 pub(crate) struct SurfacedState {
     /// Local, seq-ordered record of everything surfaced to the operator/agent —
@@ -653,7 +653,7 @@ mod tests {
         PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
         render_poll_array,
     };
-    use crate::a2a::{TaskState, gossip, wire};
+    use crate::a2a::{TaskState, status_update_params, wire};
     use crate::output::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
@@ -681,7 +681,7 @@ mod tests {
     }
 
     fn self_task_echo() -> OutputEvent {
-        let msg = gossip::test_status_frame(
+        let msg = status_update_params::test_status_frame(
             &MeshId::from("test"),
             TaskState::Working,
             Some(nick("initiator")),
