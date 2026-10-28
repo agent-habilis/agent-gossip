@@ -37,6 +37,7 @@ pub fn start() {
 
 /// One membership of one mesh.
 #[wasm_bindgen]
+#[derive(Debug)]
 pub struct GossipPeer {
     mesh_id: String,
     name: String,

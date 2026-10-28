@@ -20,6 +20,7 @@ use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 /// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the
 /// all-on preset; `custom_relay` exercises the relay-URL codec.
+#[derive(Debug)]
 pub struct BenchConfig(MeshConfig);
 
 impl BenchConfig {
@@ -94,6 +95,7 @@ pub fn mesh_id_validate(value: &str) -> bool {
 
 // ── message serialize / deserialize ─────────────────────────────────
 
+#[derive(Debug)]
 pub struct BenchMessage(Message);
 
 impl BenchMessage {

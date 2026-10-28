@@ -28,6 +28,7 @@ use crate::a2a::wire;
 /// so a test can hold one and pass it to the builder/helpers without the
 /// rest of the `pub(crate)` identity surface leaking.
 #[must_use]
+#[derive(Debug)]
 pub struct TestKey(Identity);
 
 /// Mint a fresh signing key — an attacker / peer identity.
@@ -45,6 +46,7 @@ pub fn pubkey_hex(key: &TestKey) -> String {
 /// The value cluster for [`CraftedMsg::status_frame`]: the author/target
 /// nicknames plus the frame-vs-payload task-id pair under test.
 #[derive(Clone, Copy)]
+#[derive(Debug)]
 pub struct StatusFrameParams<'a> {
     pub author: &'a str,
     pub to: &'a str,
@@ -56,6 +58,7 @@ pub struct StatusFrameParams<'a> {
 /// status leg for an existing task, from an author who is not that task's
 /// counterparty.
 #[derive(Clone, Copy)]
+#[derive(Debug)]
 pub struct SealedTaskStatusParams<'a> {
     pub author: &'a str,
     pub to: &'a str,
@@ -70,6 +73,7 @@ pub struct SealedTaskStatusParams<'a> {
 
 /// The value cluster for [`CraftedMsg::sealed_msg`].
 #[derive(Clone, Copy)]
+#[derive(Debug)]
 pub struct SealedMsgParams<'a> {
     pub author: &'a str,
     pub to: &'a str,
@@ -91,6 +95,7 @@ pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicK
 /// [`tamper_body`](CraftedMsg::tamper_body)) yields a structurally-valid
 /// message whose signature no longer matches — the tampering case.
 #[must_use]
+#[derive(Debug)]
 pub struct CraftedMsg {
     msg: Message,
 }
