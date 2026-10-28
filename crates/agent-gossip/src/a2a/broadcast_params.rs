@@ -463,10 +463,10 @@ pub(crate) async fn send_broadcast(
     // which re-sends a directed shard point-to-point to its addressee.
     let mut cache_frames = Vec::new();
     let mut header = None;
-    for (idx, chunk) in chunks.iter().enumerate() {
+    for (index, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
+            idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
@@ -485,7 +485,7 @@ pub(crate) async fn send_broadcast(
             Some(shard),
             &signer,
         );
-        if idx == 0 {
+        if index == 0 {
             header = Some(message.clone());
         }
         let bytes = message.serialize()?;
@@ -661,10 +661,10 @@ async fn broadcast_directed_frame(
     let mut cache_frames = Vec::new();
     let mut frames = Vec::new();
     let mut shard_pending = Vec::new();
-    for (idx, chunk) in chunks.iter().enumerate() {
+    for (index, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
+            idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
@@ -1854,12 +1854,12 @@ pub(crate) async fn send_directed_rpc(
         ));
     }
     let mut cache_frames = Vec::new();
-    for (idx, chunk) in chunks.iter().enumerate() {
+    for (index, chunk) in chunks.iter().enumerate() {
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
         let message = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(Shard {
                 group: group.clone(),
-                idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
+                idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
                 total,
             }))
             .sign(&signer);

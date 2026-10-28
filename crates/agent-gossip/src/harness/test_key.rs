@@ -425,12 +425,16 @@ impl CraftedMsg {
     /// out-of-range indexes). `group` must be a valid UUID string; `idx`/
     /// `total` are taken verbatim, valid or not (the receiver's parse gate is
     /// the thing under test).
-    pub fn shard(mut self, group: &str, idx: u32, total: u32) -> Self {
+    pub fn shard(mut self, group: &str, index: u32, total: u32) -> Self {
         let group = habilis_network::protocol::ShardGroup::from_uuid_str(group)
             .expect("valid shard group uuid");
         self.message = self
             .message
-            .with_shard(Some(habilis_network::protocol::Shard { group, idx, total }));
+            .with_shard(Some(habilis_network::protocol::Shard {
+                group,
+                idx: index,
+                total,
+            }));
         self
     }
 

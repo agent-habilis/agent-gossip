@@ -1112,13 +1112,13 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
         let group = format!("00000000-0000-4000-8000-{author:012x}");
         // idx 0..4 of a claimed 1000: the group can never complete, so every
         // accepted slice sits in the store until the TTL sweep.
-        for idx in 0..4u32 {
+        for index in 0..4u32 {
             let evil = CraftedMsg::new(
                 attacker.session.mesh_id(),
                 &format!("sybil-{author}"),
                 &slice,
             )
-            .shard(&group, idx, 1000)
+            .shard(&group, index, 1000)
             .sign(&key)
             .bytes();
             attacker.session.inject_raw(evil).await.expect("inject");

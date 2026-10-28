@@ -2487,11 +2487,11 @@ fn test_interior_gap_recovered_via_rolling_window() {
     );
     let author = creator.nickname.clone();
 
-    let mut idx = 0usize;
+    let mut index = 0usize;
     // OLD: shared older history; alpha gets it live.
     for _ in 0..OLD {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
-        idx += 1;
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
+        index += 1;
     }
     assert_eq!(
         wait_until(
@@ -2505,8 +2505,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // Freeze alpha, send the GAP — the interior slice alpha never sees live.
     alpha.stop();
     for _ in 0..GAP {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
-        idx += 1;
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
+        index += 1;
     }
     assert_eq!(
         wait_until(
@@ -2526,8 +2526,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // only via the rolling older window.
     alpha.cont();
     for _ in 0..TAIL {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
-        idx += 1;
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
+        index += 1;
     }
     // The rolling older window needs several cycles to sweep across the
     // interior gap. Adaptive ceiling at the injected cadences.

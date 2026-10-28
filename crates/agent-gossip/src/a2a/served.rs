@@ -152,7 +152,9 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
                 .as_array()
                 .map(|idxs| {
                     idxs.iter()
-                        .filter_map(|idx| idx.as_u64().and_then(|idx| u32::try_from(idx).ok()))
+                        .filter_map(|index| {
+                            index.as_u64().and_then(|index| u32::try_from(index).ok())
+                        })
                         .take(habilis_network::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
                         .collect()
                 })
