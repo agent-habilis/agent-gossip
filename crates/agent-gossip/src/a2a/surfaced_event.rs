@@ -738,7 +738,11 @@ mod tests {
         state.push(event);
 
         let first = state.read_targets(None, &nick("me"));
-        assert_eq!(first, vec![expected]);
+        assert_eq!(
+            first,
+            vec![expected],
+            "the first batch is the expected event"
+        );
         let again = state.read_targets(Some(0), &nick("me"));
         assert!(again.is_empty(), "a re-read must not receipt twice");
     }
@@ -771,7 +775,10 @@ mod tests {
         });
         state.push(peer_return("alice"));
 
-        assert!(state.read_targets(None, &nick("me")).is_empty());
+        assert!(
+            state.read_targets(None, &nick("me")).is_empty(),
+            "a fresh state has no read targets"
+        );
     }
 
     #[test]
@@ -783,7 +790,11 @@ mod tests {
                 is_self: false,
             });
         }
-        assert_eq!(state.read_targets(None, &nick("me")).len(), 2);
+        assert_eq!(
+            state.read_targets(None, &nick("me")).len(),
+            2,
+            "two read targets are recorded"
+        );
     }
 
     #[test]
@@ -792,10 +803,10 @@ mod tests {
         buffer.push(peer_return("a"));
         buffer.push(peer_return("b"));
         let (events, missed_before) = buffer.since(None);
-        assert_eq!(events.len(), 2);
-        assert!(missed_before.is_none());
-        assert_eq!(events[0].seq, 1);
-        assert_eq!(events[1].seq, 2);
+        assert_eq!(events.len(), 2, "two events are buffered");
+        assert!(missed_before.is_none(), "no events were evicted");
+        assert_eq!(events[0].seq, 1, "the first event has seq 1");
+        assert_eq!(events[1].seq, 2, "the second event has seq 2");
     }
 
     #[test]
@@ -805,10 +816,13 @@ mod tests {
         buffer.push(peer_return("b"));
         buffer.push(peer_return("c"));
         let (events, missed_before) = buffer.since(Some(s1));
-        assert!(missed_before.is_none());
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].seq, 2);
-        assert_eq!(events[1].seq, 3);
+        assert!(
+            missed_before.is_none(),
+            "no events were evicted from the batch"
+        );
+        assert_eq!(events.len(), 2, "the batch holds two events");
+        assert_eq!(events[0].seq, 2, "the first batch event has seq 2");
+        assert_eq!(events[1].seq, 3, "the second batch event has seq 3");
     }
 
     #[test]
@@ -832,8 +846,11 @@ mod tests {
         buffer.push(peer_return("a"));
         let s2 = buffer.push(peer_return("b"));
         let (events, missed_before) = buffer.since(Some(s2));
-        assert!(events.is_empty());
-        assert!(missed_before.is_none());
+        assert!(events.is_empty(), "an empty buffer yields no events");
+        assert!(
+            missed_before.is_none(),
+            "an empty buffer reports no eviction"
+        );
     }
 
     #[test]
@@ -860,7 +877,7 @@ mod tests {
         buffer.push(peer_return("b")); // seq 2 → evicted unseen
         buffer.push(peer_return("c")); // seq 3
         buffer.push(peer_return("d")); // seq 4 → evicts seq 2; ring {3,4}
-        assert_eq!(buffer.count(), 2);
+        assert_eq!(buffer.count(), 2, "the buffer counts two events");
         let (events, missed_before) = buffer.since(Some(stale));
         assert_eq!(
             missed_before,
@@ -868,7 +885,7 @@ mod tests {
             "seq 2 aged out unseen; the oldest surviving seq is the new floor"
         );
         // Still returns the current window so the caller can re-baseline.
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 2, "the batch holds two events");
     }
 
     /// The gap must survive rendering. `since` has always computed it; the
@@ -905,7 +922,10 @@ mod tests {
         let mut state = SurfacedState::new();
         state.push(peer_return("a"));
         let batch = state.poll_since(Some(0));
-        assert!(batch.missed_before.is_none());
+        assert!(
+            batch.missed_before.is_none(),
+            "the batch reports no missed events"
+        );
         assert!(
             !render_poll_array(&batch).contains(r#""event":"gap""#),
             "a reader that lost nothing is told nothing"
@@ -917,7 +937,7 @@ mod tests {
         let mut buffer = SurfacedEvents::new(2);
         assert_eq!(buffer.latest_seq(), 0, "fresh ring has no surfaced events");
         buffer.push(peer_return("a"));
-        assert_eq!(buffer.latest_seq(), 1);
+        assert_eq!(buffer.latest_seq(), 1, "the latest seq is 1");
         buffer.push(peer_return("b"));
         buffer.push(peer_return("c")); // evicts seq 1; ring {2,3}
         assert_eq!(
@@ -933,7 +953,7 @@ mod tests {
         for name in ["a", "b", "c", "d", "e"] {
             buffer.push(peer_return(name));
         }
-        assert_eq!(buffer.count(), 3);
+        assert_eq!(buffer.count(), 3, "the buffer counts three events");
         let (events, _) = buffer.since(None);
         let seqs: Vec<u64> = events.iter().map(|item| item.seq).collect();
         assert_eq!(seqs, vec![3, 4, 5], "kept the three newest by seq");
@@ -958,9 +978,10 @@ mod tests {
         surfaced.push(peer_return("a"));
         surfaced.fulfill_ready_poll_waiters();
         let body = rx.await.expect("waiter was fulfilled");
+        let array_open = '[';
         assert!(
-            body.starts_with('[') && body.len() > 2,
-            "non-empty batch: {body}"
+            body.starts_with(array_open) && body.len() > 2,
+            "non-empty batch: {body}",
         );
         assert!(surfaced.poll_waiters.is_empty(), "fulfilled waiter removed");
     }
@@ -974,7 +995,10 @@ mod tests {
         // No event; the deadline (now) has passed.
         surfaced.expire_poll_waiters(TokioInstant::now() + Duration::from_millis(1));
         assert_eq!(rx.await.expect("waiter expired"), "[]", "timeout → empty");
-        assert!(surfaced.poll_waiters.is_empty());
+        assert!(
+            surfaced.poll_waiters.is_empty(),
+            "the poll waiters are drained"
+        );
     }
 
     #[tokio::test]
@@ -987,7 +1011,8 @@ mod tests {
             assert!(
                 surfaced
                     .register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(tx))
-                    .is_none()
+                    .is_none(),
+                "the waiter receives its batch"
             );
         }
         // One more must be handed back (degrade), not parked.
@@ -1000,7 +1025,8 @@ mod tests {
         );
         assert_eq!(
             surfaced.poll_waiters.len(),
-            crate::a2a::tuning::POLL_WAITERS_CAP
+            crate::a2a::tuning::POLL_WAITERS_CAP,
+            "the response carries the events"
         );
     }
 
@@ -1032,7 +1058,8 @@ mod tests {
         });
         assert_eq!(
             surfaced.last_poll_secs_ago(start + Duration::from_secs(42)),
-            Some(42)
+            Some(42),
+            "the response carries the events"
         );
     }
 
@@ -1074,7 +1101,10 @@ mod tests {
             responder: PollResponder::Json(first_tx),
         });
         let first = first_rx.await.expect("immediate");
-        assert!(first.contains("\"seq\":1") && first.contains("\"seq\":2"));
+        assert!(
+            first.contains("\"seq\":1") && first.contains("\"seq\":2"),
+            "the first batch includes seq 1 and 2"
+        );
         assert_eq!(surfaced.last_served, 2, "cursor advanced past the batch");
 
         // Nothing new → empty, cursor unchanged.
@@ -1085,8 +1115,12 @@ mod tests {
             now: TokioInstant::now(),
             responder: PollResponder::Json(empty_tx),
         });
-        assert_eq!(empty_rx.await.expect("immediate"), "[]");
-        assert_eq!(surfaced.last_served, 2);
+        assert_eq!(
+            empty_rx.await.expect("immediate"),
+            "[]",
+            "an immediate poll with no events returns an empty batch"
+        );
+        assert_eq!(surfaced.last_served, 2, "the last served cursor is 2");
 
         // One more event → only it is served.
         surfaced.push(peer_return("c"));
@@ -1098,8 +1132,11 @@ mod tests {
             responder: PollResponder::Json(third_tx),
         });
         let third = third_rx.await.expect("immediate");
-        assert!(third.contains("\"seq\":3") && !third.contains("\"seq\":2"));
-        assert_eq!(surfaced.last_served, 3);
+        assert!(
+            third.contains("\"seq\":3") && !third.contains("\"seq\":2"),
+            "the third batch carries seq 3 only"
+        );
+        assert_eq!(surfaced.last_served, 3, "the last served cursor is 3");
     }
 
     /// An explicit-`after` replay (hidden debug flag) advances via `max`, so
@@ -1200,7 +1237,7 @@ mod tests {
         });
         assert!(surfaced.poll_waiters.is_empty(), "never parked");
         let body = rx.await.expect("immediate fire");
-        assert!(body.contains("\"seq\":1"));
+        assert!(body.contains("\"seq\":1"), "the body carries seq 1");
     }
 
     /// The no-spurious-wake race: a foreground poll consuming the backlog
@@ -1227,13 +1264,16 @@ mod tests {
             now: TokioInstant::now(),
             responder: PollResponder::Json(fg_tx),
         });
-        assert!(fg_rx.await.expect("served").contains("\"seq\":1"));
+        assert!(
+            fg_rx.await.expect("served").contains("\"seq\":1"),
+            "the foreground poll is served seq 1"
+        );
         surfaced.fulfill_ready_poll_waiters();
         assert!(
             bell_rx.try_recv().is_err(),
             "everything is served — the bell must stay parked"
         );
-        assert_eq!(surfaced.poll_waiters.len(), 1);
+        assert_eq!(surfaced.poll_waiters.len(), 1, "one poll waiter is parked");
     }
 
     /// The shutdown drain is distinguishable from a timeout: the CLI/socket
@@ -1255,11 +1295,18 @@ mod tests {
         surfaced.close_poll_waiters();
         assert_eq!(
             json_rx.await.expect("json waiter answered"),
-            super::SHUTDOWN_SENTINEL
+            super::SHUTDOWN_SENTINEL,
+            "the response is the expected batch"
         );
         let batch = typed_rx.await.expect("typed waiter answered");
-        assert!(batch.events.is_empty() && batch.missed_before.is_none());
-        assert!(surfaced.poll_waiters.is_empty());
+        assert!(
+            batch.events.is_empty() && batch.missed_before.is_none(),
+            "the batch is empty without missed events"
+        );
+        assert!(
+            surfaced.poll_waiters.is_empty(),
+            "the poll waiters are drained"
+        );
     }
 
     /// Meta/state pushes bump `latest_seq` but never `latest_waking_seq`.
@@ -1267,10 +1314,10 @@ mod tests {
     fn waking_seq_ignores_document_echoes() {
         let mut buffer = SurfacedEvents::new(10);
         buffer.push(meta_changed());
-        assert_eq!(buffer.latest_seq(), 1);
-        assert_eq!(buffer.latest_waking_seq(), 0);
+        assert_eq!(buffer.latest_seq(), 1, "the latest seq is 1");
+        assert_eq!(buffer.latest_waking_seq(), 0, "no waking seq yet");
         buffer.push(peer_return("a"));
-        assert_eq!(buffer.latest_waking_seq(), 2);
+        assert_eq!(buffer.latest_waking_seq(), 2, "the waking seq is 2");
     }
 
     #[tokio::test]
@@ -1301,8 +1348,12 @@ mod tests {
             now: TokioInstant::now(),
             responder: PollResponder::Json(tx),
         });
-        assert_eq!(rx.await.expect("immediate"), "[]");
-        assert!(surfaced.poll_waiters.is_empty());
+        assert_eq!(
+            rx.await.expect("immediate"),
+            "[]",
+            "an immediate poll returns an empty batch"
+        );
+        assert!(surfaced.poll_waiters.is_empty(), "no poll waiter is left");
     }
 
     #[tokio::test]
@@ -1327,7 +1378,7 @@ mod tests {
         );
         surfaced.expire_poll_waiters(now + cap + Duration::from_millis(1));
         assert_eq!(rx.await.expect("expired"), "[]", "cap elapsed → empty");
-        assert!(surfaced.poll_waiters.is_empty());
+        assert!(surfaced.poll_waiters.is_empty(), "no poll waiter is left");
     }
     fn joined_event(name: &str) -> OutputEvent {
         OutputEvent::Presence {
