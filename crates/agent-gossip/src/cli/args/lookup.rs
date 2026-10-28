@@ -103,26 +103,51 @@ mod tests {
     #[test]
     fn lookup_list_resolves_to_only_named() {
         let set = lookup_set(&[Lookup::Mdns], None).unwrap();
-        assert!(set.mdns && !set.dht);
-        assert_eq!(set.relay_lookup, RelaySelection::Unset);
+        assert!(
+            set.mdns && !set.dht,
+            "a bare --lookup mdns sets mdns and not dht"
+        );
+        assert_eq!(
+            set.relay_lookup,
+            RelaySelection::Unset,
+            "no relay lookup is set without a relay flag"
+        );
         let options = resolve_lookups(set);
-        assert!(options.mdns && !options.dht);
-        assert_eq!(options.relay_lookup, RelayChoice::Disabled);
+        assert!(
+            options.mdns && !options.dht,
+            "the options carry mdns on and dht off"
+        );
+        assert_eq!(
+            options.relay_lookup,
+            RelayChoice::Disabled,
+            "a disabled relay lookup is kept as disabled"
+        );
     }
 
     #[test]
     fn lookup_relay_default_and_custom_ladder() {
         let bare = lookup_set(&[Lookup::Relay], None).unwrap();
-        assert_eq!(bare.relay_lookup, RelaySelection::Default);
+        assert_eq!(
+            bare.relay_lookup,
+            RelaySelection::Default,
+            "without a relay flag the relay lookup is the default"
+        );
 
         let ladder: RelayLadder = "https://a.example,https://b.example".parse().unwrap();
         let custom = lookup_set(&[Lookup::Relay], Some(ladder.clone())).unwrap();
-        assert_eq!(custom.relay_lookup, RelaySelection::Named(ladder));
+        assert_eq!(
+            custom.relay_lookup,
+            RelaySelection::Named(ladder),
+            "a custom relay ladder is kept as given"
+        );
     }
 
     #[test]
     fn lookup_rejects_unknown_value() {
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--lookup", "relai"]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "create", "--lookup", "relai"]).is_err(),
+            "an unknown lookup name is rejected"
+        );
     }
 
     #[test]
@@ -141,7 +166,10 @@ mod tests {
     #[test]
     fn relay_url_without_relay_lookup_errors() {
         let ladder: RelayLadder = "https://a.example".parse().unwrap();
-        assert!(lookup_set(&[Lookup::Mdns], Some(ladder)).is_err());
+        assert!(
+            lookup_set(&[Lookup::Mdns], Some(ladder)).is_err(),
+            "mdns cannot combine with a custom relay ladder"
+        );
     }
 
     #[test]

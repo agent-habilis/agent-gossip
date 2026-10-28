@@ -37,7 +37,7 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if the target can't be resolved;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        let (output, events_rx) = crate::output::capture_events();
+        let (output, events_rx) = crate::output::capture_events::capture_events();
         let (elc, io) = join_setup(config, output).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
@@ -50,7 +50,7 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        let (output, events_rx) = crate::output::capture_events();
+        let (output, events_rx) = crate::output::capture_events::capture_events();
         let (elc, io) = topic_setup(config, output).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
@@ -62,7 +62,7 @@ impl MeshSession {
     /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
     /// loopback-only mesh; [`CreateError::Setup`] on endpoint/gossip failure.
     pub async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        let (output, events_rx) = crate::output::capture_events();
+        let (output, events_rx) = crate::output::capture_events::capture_events();
         let (elc, io, advertiser) = create_setup(config, output).await?;
         Ok(Self::with_events(elc, io, advertiser, events_rx))
     }
@@ -83,7 +83,7 @@ impl MeshSession {
     ) -> anyhow::Result<Self> {
         crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
-        let (output, events_rx) = crate::output::capture_events();
+        let (output, events_rx) = crate::output::capture_events::capture_events();
         let io = crate::a2a::a2a_app::SurfacedIo::new(output);
         let sink = io.sink();
         let elc = setup_mesh(

@@ -1,4 +1,3 @@
-pub(crate) use self::capture_events::capture_events;
 pub(crate) use self::output::Output;
 pub(crate) use self::output_mode::OutputMode;
 pub(crate) use self::ready_params::ReadyParams;
@@ -14,7 +13,7 @@ pub(crate) use self::task_message_leg::TaskMessageLeg;
 use crate::a2a::TaskId;
 pub(crate) use crate::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 
-mod capture_events;
+pub(crate) mod capture_events;
 mod node_sink;
 #[expect(
     clippy::module_inception,

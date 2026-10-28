@@ -2290,7 +2290,7 @@ mod echo_when_sent_tests {
 
     #[tokio::test]
     async fn a_delivered_send_prints_the_echo() {
-        let (out, mut events) = output::capture_events();
+        let (out, mut events) = output::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
@@ -2308,7 +2308,7 @@ mod echo_when_sent_tests {
 
     #[tokio::test]
     async fn a_failed_send_prints_no_echo_and_passes_the_error_on() {
-        let (out, mut events) = output::capture_events();
+        let (out, mut events) = output::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
