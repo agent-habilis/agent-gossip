@@ -66,7 +66,7 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
     let lookups = if loopback {
         LookupOpts::loopback()
     } else {
-        crate::api::resolve_lookups_or_public(true, flags)
+        crate::api::directory::resolve_lookups_or_public(true, flags)
     };
     validate_advertise(&advertise, &lookups)?;
     let (endpoint, ticket, auth) = bind(lookups.clone(), password.as_ref()).await?;

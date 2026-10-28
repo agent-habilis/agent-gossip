@@ -25,7 +25,8 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
-use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession, resolve_lookups_or_public};
+use crate::api::directory::resolve_lookups_or_public;
+use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
 /// flood of hostile ads must not grow the picker without bound.

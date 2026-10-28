@@ -18,14 +18,13 @@ pub use self::join_config::{CreateConfig, JoinConfig, TopicConfig};
 pub use self::mesh_session::MeshSession;
 pub use self::session_error::SessionError;
 
-mod advertiser;
-mod directory;
-mod directory_error;
-mod join_config;
-pub(crate) use self::directory::resolve_lookups_or_public;
 mod a2a_call_params;
+mod advertiser;
 mod create_error;
+pub(crate) mod directory;
+mod directory_error;
 mod in_process_session;
+mod join_config;
 mod mesh_session;
 mod session_error;
 mod spawn_env;
