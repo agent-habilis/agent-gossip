@@ -351,6 +351,14 @@ fn rewrite_url(url: &str, local_base: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    const LOCAL_BASE: &str = "http://127.0.0.1:8080";
+    const LOCAL_RPC: &str = "http://127.0.0.1:8080/rpc";
+    const LOCAL_A2A: &str = "http://127.0.0.1:8080/a2a";
+    const LOCAL_PATH: &str = "http://127.0.0.1:8080/path?q=1";
+    const GRPC_ORIGIN: &str = "grpc://origin:9999";
+    const HTTP_ORIGIN: &str = "http://origin:9999";
+    const HTTPS_PATH_ORIGIN: &str = "https://origin:9999/path?q=1";
+
     use super::{CardRewriter, rewrite_url};
 
     const BASE: &str = "http://127.0.0.1:8080";
@@ -377,7 +385,9 @@ mod tests {
     }
 
     fn card_response(url: &str) -> Vec<u8> {
-        let body = format!(r#"{{"protocolVersion":"0.3.0","name":"x","url":"{url}","skills":[]}}"#);
+        let body =
+            serde_json::json!({"protocolVersion": "0.3.0", "name": "x", "url": url, "skills": []})
+                .to_string();
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
@@ -397,7 +407,10 @@ mod tests {
         let out = run(&card_response("http://origin.internal:9999/a2a"));
         let body = body_of(&out);
         assert!(
-            body.contains(r#""url":"http://127.0.0.1:8080/a2a""#),
+            body.contains(&format!(
+                "{q}url{q}:{q}http://127.0.0.1:8080/a2a{q}",
+                q = '"'
+            )),
             "url rewritten to the local base, path preserved: {body}"
         );
     }
@@ -424,14 +437,14 @@ mod tests {
     fn rewrites_the_url_when_streamed_one_byte_at_a_time() {
         let out = run_bytewise(&card_response("http://origin.internal:9999/rpc"));
         assert!(
-            body_of(&out).contains("http://127.0.0.1:8080/rpc"),
+            body_of(&out).contains(LOCAL_RPC),
             "the rpc url is rewritten to the local base"
         );
     }
 
     #[test]
     fn passes_a_non_card_json_response_through_unchanged() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"taskId":"abc","status":"working"}}"#;
+        let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"taskId": "abc", "status": "working"}}).to_string();
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
@@ -443,7 +456,7 @@ mod tests {
 
     #[test]
     fn rewrites_the_extended_card_inside_a_json_rpc_envelope() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"0.3.0","name":"x","url":"http://origin:9999/rpc","capabilities":{}}}"#;
+        let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "0.3.0", "name": "x", "url": "http://origin:9999/rpc", "capabilities": {}}}).to_string();
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
@@ -452,7 +465,7 @@ mod tests {
         .into_bytes();
         let out = run(&response);
         assert!(
-            body_of(&out).contains("http://127.0.0.1:8080/rpc"),
+            body_of(&out).contains(LOCAL_RPC),
             "the rpc url is rewritten to the local base"
         );
     }
@@ -481,7 +494,7 @@ mod tests {
         first.extend_from_slice(b"HTTP/1.1 204 No Content\r\n\r\n");
         let out = run(&first);
         let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("http://127.0.0.1:8080/a2a"), "card rewritten");
+        assert!(text.contains(LOCAL_A2A), "card rewritten");
         assert!(text.contains("204 No Content"), "trailing 204 survives");
     }
 
@@ -516,17 +529,19 @@ mod tests {
     #[test]
     fn rewrite_url_leaves_non_http_targets_alone() {
         assert_eq!(
-            rewrite_url("grpc://origin:9999", BASE),
+            rewrite_url(GRPC_ORIGIN, BASE),
             None,
             "a non-http origin is not rewritten"
         );
         assert_eq!(
-            rewrite_url("http://origin:9999", BASE).as_deref(),
-            Some("http://127.0.0.1:8080")
+            rewrite_url(HTTP_ORIGIN, BASE).as_deref(),
+            Some(LOCAL_BASE),
+            "an http origin is rewritten to the local base"
         );
         assert_eq!(
-            rewrite_url("https://origin:9999/path?q=1", BASE).as_deref(),
-            Some("http://127.0.0.1:8080/path?q=1")
+            rewrite_url(HTTPS_PATH_ORIGIN, BASE).as_deref(),
+            Some(LOCAL_PATH),
+            "the query and path survive the rewrite"
         );
     }
 }

@@ -36,7 +36,6 @@ assert_no_message|crates/agent-gossip/src/a2a/status_update_params.rs|16|open: A
 assert_no_message|crates/agent-gossip/src/a2a/surfaced_event.rs|40|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/a2a/task_record.rs|87|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/a2a_ticket.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/bridge/card_rewriter.rs|7|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/expose_params.rs|5|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/local_gate.rs|12|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/ticket_directory.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
