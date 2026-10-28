@@ -718,11 +718,11 @@ mod tests {
     use std::time::Instant;
 
     use habilis_network::ops::blob::ContentId;
-    use habilis_network::protocol::{AppTag, MeshId, Message, MessageBody, MessageKind, Nickname};
+    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
     use tokio::sync::oneshot;
 
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
-    use crate::a2a::{TaskId, tuning};
+    use crate::a2a::{TaskId, tuning, wire};
 
     fn leg(body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(

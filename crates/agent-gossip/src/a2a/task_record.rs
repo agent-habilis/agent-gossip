@@ -1131,7 +1131,7 @@ mod tests {
     /// the peer died must not keep the task alive.
     #[test]
     fn a_stale_beat_does_not_refresh_the_peer_clock() {
-        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let now = Instant::now();
@@ -1194,7 +1194,7 @@ mod tests {
         state: TaskState,
         metadata: Option<serde_json::Value>,
     ) -> habilis_network::protocol::Message {
-        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let payload = status_update_params::status_update(
@@ -2282,7 +2282,7 @@ mod tests {
     /// ciphertext) is not a valid payload.
     #[test]
     fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
-        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, MeshId, Message, MessageBody};
 
         let mut tasks = HashMap::new();
         let now = Instant::now();
@@ -2390,7 +2390,7 @@ mod tests {
     /// is actually observable.
     #[test]
     fn own_status_echo_completes_the_workers_own_record() {
-        use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+        use habilis_network::protocol::{AppFrameParams, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
         let task_id = tid();

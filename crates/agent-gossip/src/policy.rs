@@ -42,10 +42,8 @@ mod tests {
 
     #[test]
     fn a_relay_lookup_carries_the_relay() {
-        let lookups = LookupSet {
-            relay_lookup: RelaySelection::Default,
-            ..LookupSet::default()
-        };
+        let mut lookups = LookupSet::default();
+        lookups.relay_lookup = RelaySelection::Default;
         assert_eq!(
             app_transport_policy(&lookups),
             app_policy(true),
@@ -55,11 +53,9 @@ mod tests {
 
     #[test]
     fn mdns_and_dht_alone_carry_no_relay() {
-        let lookups = LookupSet {
-            mdns: true,
-            dht: true,
-            ..LookupSet::default()
-        };
+        let mut lookups = LookupSet::default();
+        lookups.mdns = true;
+        lookups.dht = true;
         assert!(
             !app_transport_policy(&lookups).relay_transport,
             "without a relay lookup the relay transport stays off"

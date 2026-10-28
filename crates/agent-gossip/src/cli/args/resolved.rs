@@ -69,13 +69,9 @@ mod tests {
     }
 
     fn policy(multihop: bool, relay_transport: bool) -> TransportPolicy {
-        TransportPolicy {
-            udp: true,
-            webrtc: true,
-            multihop,
-            gossip: true,
-            relay_transport,
-        }
+        TransportPolicy::default()
+            .with_multihop(multihop)
+            .with_relay_transport(relay_transport)
     }
 
     #[test]
@@ -202,13 +198,7 @@ mod tests {
             .expect("multihop with direct paths resolves");
         assert_eq!(
             resolved.transport,
-            TransportPolicy {
-                udp: true,
-                webrtc: true,
-                multihop: true,
-                gossip: false,
-                relay_transport: false,
-            },
+            TransportPolicy::default().with_gossip(false),
             "multihop with direct paths gives the multihop policy"
         );
     }

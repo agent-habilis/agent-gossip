@@ -36,6 +36,11 @@ fn label(channel: Channel) -> &'static str {
     match channel {
         Channel::State => "state",
         Channel::Meta => "meta",
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+        )]
+        _ => panic!("the test has no label for this channel"),
     }
 }
 

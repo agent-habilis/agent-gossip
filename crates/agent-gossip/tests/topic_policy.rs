@@ -11,32 +11,23 @@ use habilis_network::runtime::tuning::{Tuning, init};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mdns_only_topic_lane_uses_the_app_policy_without_relay() {
-    init(Tuning {
-        topic_mdns_only: true,
-        ..Tuning::DEFAULTS
-    });
+    let mut tuning = Tuning::DEFAULTS;
+    tuning.topic_mdns_only = true;
+    init(tuning);
     let topic = format!("topic-policy-{}", std::process::id());
 
     let node = InProcNode::topic(&topic, "policy-alice").await;
 
     let expected = derive_topic_mesh_config(
         &topic,
-        MeshConfig {
-            lookups: LookupOpts {
-                mdns: true,
-                dht: false,
-                relay_lookup: RelayChoice::Disabled,
-            },
-            password: None,
-            issuer_pubkey: None,
-            transport: TransportPolicy {
-                udp: true,
-                webrtc: true,
-                multihop: false,
-                gossip: true,
-                relay_transport: false,
-            },
-        },
+        MeshConfig::new(
+            LookupOpts::new(RelayChoice::Disabled).with_mdns(true),
+            None,
+            None,
+            TransportPolicy::default()
+                .with_multihop(false)
+                .with_relay_transport(false),
+        ),
     )
     .expect("a non-empty string derives");
     assert_eq!(

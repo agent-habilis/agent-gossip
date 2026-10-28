@@ -978,13 +978,13 @@ mod tests {
                 let expected_body = body.clone();
                 let identity = habilis_network::protocol::Identity::generate();
                 let (bytes, built) = habilis_network::protocol::build_msg_bytes(
-                    habilis_network::protocol::BuildMsgParams {
-                        tag: wire::app_tag(wire::BROADCAST),
-                        mesh: &mesh,
-                        author: &author,
+                    habilis_network::protocol::BuildMsgParams::new(
+                        wire::app_tag(wire::BROADCAST),
+                        &mesh,
+                        &author,
                         body,
-                        chain: habilis_network::protocol::ChainCtx::genesis(),
-                    },
+                        habilis_network::protocol::ChainCtx::genesis(),
+                    ),
                     &identity,
                 )
                 .unwrap();

@@ -1277,7 +1277,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &
 mod classify_tests {
     use habilis_network::protocol::message::Authored;
     use habilis_network::protocol::{
-        AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
+        AppFrameParams, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
@@ -1458,12 +1458,12 @@ mod classify_tests {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
         let directed = classify(&receipt_frame(Some(Nickname::from("peer")), body));
         assert!(
-            directed.valid && directed.sealed && !directed.loggable,
+            directed.valid() && directed.sealed() && !directed.loggable(),
             "a directed chat is valid, sealed and not loggable"
         );
-        assert!(!classify(&receipt_frame(None, body)).valid, "broadcast");
+        assert!(!classify(&receipt_frame(None, body)).valid(), "broadcast");
         assert!(
-            !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid,
+            !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid(),
             "no ref or state"
         );
     }
@@ -1644,14 +1644,17 @@ mod classify_tests {
     #[test]
     fn msg_is_loggable_but_rpc_is_not() {
         let message = classify(&app_frame(wire::BROADCAST));
-        assert!(message.loggable, "broadcast chat is loggable");
+        assert!(message.loggable(), "broadcast chat is loggable");
         assert!(
-            message.chained,
+            message.chained(),
             "broadcast chat carries the per-author chain"
         );
         let request = classify(&app_frame(wire::REQ));
-        assert!(!request.loggable, "an RPC request is plumbing, not logged");
-        assert!(!request.chained, "only broadcast chat is chained");
+        assert!(
+            !request.loggable(),
+            "an RPC request is plumbing, not logged"
+        );
+        assert!(!request.chained(), "only broadcast chat is chained");
     }
 
     // A msg is retained like broadcast chat but must stay out of the hash chain:
@@ -1660,18 +1663,18 @@ mod classify_tests {
     #[test]
     fn dm_is_loggable_and_sealed_but_never_chained() {
         let dm = classify(&msg_frame(Some(Nickname::from("bob"))));
-        assert!(dm.loggable, "a msg is retained");
-        assert!(dm.sealed, "a msg is sealed to its addressee");
-        assert!(!dm.chained, "a msg must not join the cross-author chain");
+        assert!(dm.loggable(), "a msg is retained");
+        assert!(dm.sealed(), "a msg is sealed to its addressee");
+        assert!(!dm.chained(), "a msg must not join the cross-author chain");
     }
 
     #[test]
     fn unknown_tag_is_invalid_and_not_loggable() {
         let cls = classify(&app_frame("admin"));
-        assert!(!cls.valid, "an unknown tag fails the boundary gate");
-        assert!(!cls.loggable, "an unknown tag is not logged");
-        assert!(!cls.beat, "an unknown tag is not a beat");
-        assert!(!cls.chained, "an unknown tag is not chained");
+        assert!(!cls.valid(), "an unknown tag fails the boundary gate");
+        assert!(!cls.loggable(), "an unknown tag is not logged");
+        assert!(!cls.beat(), "an unknown tag is not a beat");
+        assert!(!cls.chained(), "an unknown tag is not chained");
     }
 
     #[test]
@@ -1681,7 +1684,7 @@ mod classify_tests {
             &Nickname::from("author"),
             MessageBody::from("{}"),
         )));
-        assert!(!peer_info.loggable, "a peer info is not loggable");
+        assert!(!peer_info.loggable(), "a peer info is not loggable");
         let _ = MessageKind::PeerInfo;
     }
 
@@ -1692,7 +1695,7 @@ mod classify_tests {
     fn broadcast_status_is_invalid() {
         let cls = classify(&status_frame(None));
         assert!(
-            !cls.valid,
+            !cls.valid(),
             "a2a_status is directed-only; a `to: None` status is a forged broadcast"
         );
     }
@@ -1705,7 +1708,7 @@ mod classify_tests {
     fn directed_broadcast_is_invalid() {
         let cls = classify(&chat_frame(Some(Nickname::from("bob"))));
         assert!(
-            !cls.valid,
+            !cls.valid(),
             "a2a_broadcast is broadcast-only; a directed one must not cross the gate"
         );
     }
@@ -1714,7 +1717,7 @@ mod classify_tests {
     fn broadcast_dm_is_invalid() {
         let cls = classify(&msg_frame(None));
         assert!(
-            !cls.valid,
+            !cls.valid(),
             "a2a_msg is directed-only; a `to: None` msg would reach every peer"
         );
     }
@@ -1739,7 +1742,7 @@ mod classify_tests {
         )
         .with_id(id);
         assert!(
-            !classify(&view(frame)).valid,
+            !classify(&view(frame)).valid(),
             "a frame that is not a valid view is classified invalid"
         );
     }
@@ -1748,15 +1751,15 @@ mod classify_tests {
     #[test]
     fn legitimate_addressing_stays_valid() {
         assert!(
-            classify(&status_frame(Some(Nickname::from("bob")))).valid,
+            classify(&status_frame(Some(Nickname::from("bob")))).valid(),
             "a directed status is valid"
         );
         assert!(
-            classify(&chat_frame(None)).valid,
+            classify(&chat_frame(None)).valid(),
             "a broadcast chat message is valid"
         );
         assert!(
-            classify(&msg_frame(Some(Nickname::from("bob")))).valid,
+            classify(&msg_frame(Some(Nickname::from("bob")))).valid(),
             "a directed chat message is valid"
         );
     }

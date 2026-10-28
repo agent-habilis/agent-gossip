@@ -170,7 +170,7 @@ async fn multishard_message_reassembles_on_a_passworded_mesh() {
 async fn body_past_the_input_ceiling_is_refused() {
     let alice = InProcNode::create("mp-cap").await;
 
-    let body = MessageBody::new("x".repeat(MAX_LOGICAL_BODY_BYTES + 1)).expect("valid body");
+    let body = MessageBody::try_new("x".repeat(MAX_LOGICAL_BODY_BYTES + 1)).expect("valid body");
     let error = alice
         .session
         .broadcast(body)

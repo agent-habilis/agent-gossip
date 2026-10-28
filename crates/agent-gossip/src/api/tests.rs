@@ -105,13 +105,7 @@ fn create_config_default_transport_is_udp_webrtc_gossip() {
     let config = CreateConfig::new(MeshName::try_new("defaults").expect("valid name"));
     assert_eq!(
         config.transport,
-        TransportPolicy {
-            udp: true,
-            webrtc: true,
-            multihop: false,
-            gossip: true,
-            relay_transport: false,
-        },
+        TransportPolicy::default().with_multihop(false),
         "the default transport is udp and webrtc with gossip on"
     );
 }

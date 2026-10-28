@@ -256,7 +256,7 @@ async fn test_ready_event_shape() {
     let mesh = creator.mesh.clone();
     let nick = creator.nickname.clone();
     assert!(
-        agent_gossip::MeshId::new(&mesh).is_ok(),
+        agent_gossip::MeshId::try_new(&mesh).is_ok(),
         "the mesh id is valid"
     );
     assert!(!nick.is_empty(), "the nickname is not empty");

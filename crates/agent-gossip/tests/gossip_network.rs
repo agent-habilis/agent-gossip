@@ -911,7 +911,7 @@ fn test_ready_gate_succeeds_when_serving() {
     assert!(
         parsed["gossip"]
             .as_str()
-            .is_some_and(|mesh| agent_gossip::MeshId::new(mesh).is_ok()),
+            .is_some_and(|mesh| agent_gossip::MeshId::try_new(mesh).is_ok()),
         "the gate reports ready"
     );
     assert!(

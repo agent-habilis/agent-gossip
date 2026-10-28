@@ -149,7 +149,7 @@ async fn main() {
     eprintln!("transfer bench: {target_mb} MB → {chunk_count} chunks of {CHUNK_BODY_LEN} B");
 
     // Node A creates a loopback mesh.
-    let create_cfg = CreateConfig::new(MeshName::new("bench").expect("valid name"));
+    let create_cfg = CreateConfig::new(MeshName::try_new("bench").expect("valid name"));
     let node_a = MeshSession::create(create_cfg).await.expect("create");
 
     let target: JoinTarget = node_a
@@ -182,7 +182,7 @@ async fn main() {
     // not inflate the throughput number. (The receiver still regenerates
     // independently to verify — only the sender is inside the timed window.)
     let bodies: Vec<MessageBody> = (0..chunk_count)
-        .map(|index| MessageBody::new(body_for(index)).expect("valid body"))
+        .map(|index| MessageBody::try_new(body_for(index)).expect("valid body"))
         .collect();
 
     // Warm up the mesh: resend chunk 0 until the receiver sees it (deduped

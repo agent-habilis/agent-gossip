@@ -284,14 +284,10 @@ mod lookup_tests {
             "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)",
             "the directory topic id is stable across the lookup API"
         );
+        let mut mdns_only = LookupSet::default();
+        mdns_only.mdns = true;
         assert_eq!(
-            directory_topic(
-                true,
-                LookupSet {
-                    mdns: true,
-                    ..LookupSet::default()
-                }
-            ),
+            directory_topic(true, mdns_only),
             "TopicId(aaef8fe2a5ca5560cdecc153d4ee18d446e6448d831e97e1639e1ef8b6b42eaa)",
             "the directory topic id is stable across the lookup API"
         );

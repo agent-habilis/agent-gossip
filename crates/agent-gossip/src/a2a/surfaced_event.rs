@@ -653,7 +653,7 @@ mod tests {
 
     use habilis_network::protocol::message::Authored;
     use habilis_network::protocol::{
-        AppFrameParams, AppTag, Channel, MeshId, Message, MessageKind, Nickname,
+        AppFrameParams, Channel, MeshId, Message, MessageKind, Nickname,
     };
     use tokio::sync::oneshot;
     use tokio::time::Instant as TokioInstant;

@@ -65,13 +65,9 @@ mod tests {
     fn transport_list_is_literal() {
         assert_eq!(
             transport_policy(&[Transport::Udp, Transport::WebRtc]).unwrap(),
-            TransportPolicy {
-                udp: true,
-                webrtc: true,
-                multihop: false,
-                gossip: false,
-                relay_transport: false
-            },
+            TransportPolicy::default()
+                .with_multihop(false)
+                .with_gossip(false),
             "udp and webrtc alone enable no multihop, gossip or relay"
         );
     }

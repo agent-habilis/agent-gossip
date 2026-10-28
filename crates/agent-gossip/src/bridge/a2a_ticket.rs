@@ -210,15 +210,15 @@ mod tests {
     fn rejects_a_cross_kind_ticket() {
         // The blob ticket shares the bare-base58 shape but carries a different
         // kind byte, so it must not decode as an a2a ticket — and vice versa.
-        let blob = BlobTicket {
-            addr: sample_addr(3),
-            secret: TicketSecret::from_bytes([9u8; blob::SECRET_LEN]),
-            sha256: BlobDigest::from_bytes([7u8; blob::HASH_LEN]),
-            size: 1_234_567,
-            lookups: LookupOpts::public_preset(),
-            password: false,
-            relay_transport: false,
-        };
+        let blob = BlobTicket::new(
+            sample_addr(3),
+            TicketSecret::from_bytes([9u8; blob::SECRET_LEN]),
+            BlobDigest::from_bytes([7u8; blob::HASH_LEN]),
+            1_234_567,
+            LookupOpts::public_preset(),
+            false,
+            false.into(),
+        );
         let a2a = A2aTicket {
             address: sample_addr(4),
             secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),

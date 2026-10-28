@@ -481,7 +481,7 @@ fn create_mesh_twice_errors_cleanly() {
     let first = client.tool_call(20, "create_gossip", serde_json::json!({ "name": "twice1" }));
     let first_json = tool_result_json(&first).expect("first create_gossip should succeed");
     assert!(
-        agent_gossip::MeshId::new(first_json["gossip"].as_str().unwrap()).is_ok(),
+        agent_gossip::MeshId::try_new(first_json["gossip"].as_str().unwrap()).is_ok(),
         "create_gossip must return a valid mesh id, got {first_json}"
     );
     assert_eq!(
@@ -625,7 +625,7 @@ fn create_mesh_with_granular_relay_succeeds() {
     );
     let result = tool_result_json(&response).expect("granular relay create should succeed");
     assert!(
-        agent_gossip::MeshId::new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
+        agent_gossip::MeshId::try_new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
         "expected a mesh id, got: {result}"
     );
 }
@@ -638,7 +638,7 @@ fn create_mesh_without_name_mints_random() {
     let response = client.tool_call(100, "create_gossip", serde_json::json!({}));
     let result = tool_result_json(&response).expect("nameless create should succeed");
     assert!(
-        agent_gossip::MeshId::new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
+        agent_gossip::MeshId::try_new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
         "expected a mesh id, got: {result}"
     );
     assert!(
@@ -723,13 +723,9 @@ fn created_mesh(
 }
 
 fn app_policy(relay_transport: bool) -> habilis_network::protocol::TransportPolicy {
-    habilis_network::protocol::TransportPolicy {
-        udp: true,
-        webrtc: true,
-        multihop: false,
-        gossip: true,
-        relay_transport,
-    }
+    habilis_network::protocol::TransportPolicy::default()
+        .with_multihop(false)
+        .with_relay_transport(relay_transport)
 }
 
 #[test]
