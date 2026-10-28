@@ -3,24 +3,53 @@ use std::path::PathBuf;
 
 use crate::max_depth::MAX_DEPTH;
 
+/// Why a template did not render. Each variant is one failure kind; its text is
+/// the one the tests print.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub enum Error {
     /// The template names a slot the call site did not provide.
-    UnknownSlot { name: String },
+    UnknownSlot {
+        /// The slot name the template uses.
+        name: String,
+    },
     /// The call site passed an arg no `<!-- slot -->` in the template consumes.
-    UnusedArg { name: String },
+    UnusedArg {
+        /// The arg name the call site passed.
+        name: String,
+    },
     /// A comment starting `<!-- slot` that fails the directive grammar.
-    MalformedSlot { offset: usize, reason: String },
+    MalformedSlot {
+        /// Byte offset of the comment in the template.
+        offset: usize,
+        /// What is wrong with the directive.
+        reason: String,
+    },
     /// A comment starting `<!-- include` that fails the directive grammar
     /// (or is not alone on its own line).
-    MalformedInclude { line: usize, reason: String },
+    MalformedInclude {
+        /// One-based line of the include directive.
+        line: usize,
+        /// What is wrong with the directive.
+        reason: String,
+    },
     /// An include chain revisits a file.
-    IncludeCycle { path: PathBuf },
+    IncludeCycle {
+        /// The file the chain revisits.
+        path: PathBuf,
+    },
     /// An include chain nests deeper than [`MAX_DEPTH`].
-    DepthExceeded { path: PathBuf },
+    DepthExceeded {
+        /// The file at which the depth limit is hit.
+        path: PathBuf,
+    },
     /// The loader could not produce the file.
-    Load { path: PathBuf, reason: String },
+    Load {
+        /// The file the loader failed to produce.
+        path: PathBuf,
+        /// Why the loader failed.
+        reason: String,
+    },
 }
 
 impl fmt::Display for Error {
