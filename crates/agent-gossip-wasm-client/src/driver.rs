@@ -19,7 +19,7 @@ pub(crate) enum Request {
     Broadcast(String),
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct ChatMessage {
     pub seq: u32,
     pub from: String,
@@ -35,7 +35,7 @@ struct Peer<'a> {
     nickname: &'a str,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Buffered {
     messages: Vec<ChatMessage>,
     peers: BTreeSet<String>,
@@ -48,7 +48,7 @@ struct Buffered {
 /// "everything since seq N" on demand, not a stream it must drain to stay
 /// current. A tab backgrounded for a minute then asking once must not have
 /// missed anything.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Inbox {
     self_nick: String,
     inner: Arc<Mutex<Buffered>>,
