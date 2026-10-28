@@ -163,7 +163,10 @@ fn the_published_url_resolves_to_this_doc() {
     let (_, path) = URL
         .rsplit_once("/main/")
         .expect("the URL pins the main branch");
-    assert_eq!(path, "docs/agentic-installation.md");
+    assert_eq!(
+        path, "docs/agentic-installation.md",
+        "the installation doc is the one the skills point at"
+    );
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     assert!(
         root.join(path).is_file(),

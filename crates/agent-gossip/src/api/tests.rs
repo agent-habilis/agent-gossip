@@ -110,6 +110,7 @@ fn create_config_default_transport_is_udp_webrtc_gossip() {
             multihop: false,
             gossip: true,
             relay_transport: false,
-        }
+        },
+        "the default transport is udp and webrtc with gossip on"
     );
 }

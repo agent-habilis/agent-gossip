@@ -116,7 +116,10 @@ async fn staggered_topic_joiners_converge() {
     let alice = InProcNode::topic(&topic, "stag-alice").await;
     tokio::time::sleep(Duration::from_secs(3)).await;
     let bob = InProcNode::topic(&topic, "stag-bob").await;
-    assert_eq!(alice.mesh, bob.mesh);
+    assert_eq!(
+        alice.mesh, bob.mesh,
+        "both topic joiners derive the same gossip id"
+    );
 
     // Same bound as the simultaneous test, not the fixture's fixed 60s
     // helper: when host mDNS is slow, even the no-race path may fall back

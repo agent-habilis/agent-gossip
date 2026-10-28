@@ -285,7 +285,10 @@ mod tests {
         assert!(root.is_dir(), "unplug leaves the folder itself");
 
         // A second unplug is a no-op (nothing owned remains).
-        assert!(!remove_root(&root).unwrap());
+        assert!(
+            !remove_root(&root).unwrap(),
+            "a second unplug finds nothing to remove"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }

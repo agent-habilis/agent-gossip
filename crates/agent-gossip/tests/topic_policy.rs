@@ -39,7 +39,11 @@ async fn mdns_only_topic_lane_uses_the_app_policy_without_relay() {
         },
     )
     .expect("a non-empty string derives");
-    assert_eq!(node.mesh, expected.to_string());
+    assert_eq!(
+        node.mesh,
+        expected.to_string(),
+        "the topic joiner lands on the gossip id derived from the string"
+    );
 
     node.leave().await;
 }
