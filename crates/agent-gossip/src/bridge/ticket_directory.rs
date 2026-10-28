@@ -25,7 +25,6 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
-use crate::api::directory::resolve_lookups_or_public;
 use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
@@ -234,7 +233,10 @@ impl TicketDirectory {
     /// # Errors
     /// The directory session cannot be established.
     pub(crate) async fn open(name: MeshName, lookups: LookupSet) -> Result<Self> {
-        let resolved = resolve_lookups_or_public(!directory_private_for_test(), lookups);
+        let resolved = crate::api::directory::resolve_lookups_or_public(
+            !directory_private_for_test(),
+            lookups,
+        );
         let mesh = directory::directory_mesh(&name, resolved);
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
