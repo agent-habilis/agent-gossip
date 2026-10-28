@@ -775,7 +775,11 @@ mod tests {
 
         status_tx.send(true).expect("the queue holds the receiver");
         let taken = app.take_delivered_legs();
-        assert_eq!(bodies(&taken), ["status", "artifact"]);
+        assert_eq!(
+            bodies(&taken),
+            ["status", "artifact"],
+            "both legs are taken in order"
+        );
         assert!(app.take_delivered_legs().is_empty(), "a leg enters once");
     }
 
@@ -793,7 +797,11 @@ mod tests {
             .send(true)
             .expect("the queue holds the receiver");
         let taken = app.take_delivered_legs();
-        assert_eq!(bodies(&taken), ["artifact"]);
+        assert_eq!(
+            bodies(&taken),
+            ["artifact"],
+            "only the artifact is taken after the cancel"
+        );
     }
 
     /// A send whose task ended without an outcome is a failed send.
@@ -803,7 +811,10 @@ mod tests {
         let (status_tx, status_rx) = tokio::sync::oneshot::channel::<bool>();
         app.queue_own_leg(leg("status"), status_rx);
         drop(status_tx);
-        assert!(app.take_delivered_legs().is_empty());
+        assert!(
+            app.take_delivered_legs().is_empty(),
+            "delivered legs are taken once"
+        );
         assert!(app.own_legs.is_empty(), "the failed leg left the queue");
     }
 
@@ -816,17 +827,26 @@ mod tests {
         // A result comes back as Ok(the result value).
         let ok = rpc_result_from_body(r#"{"result":{"task":{"id":"t1"}}}"#)
             .expect("a result body is Ok");
-        assert_eq!(ok["task"]["id"], "t1");
+        assert_eq!(ok["task"]["id"], "t1", "an ok call returns the task id");
 
         // A JSON-RPC error carries the peer's code + message verbatim.
         let err = rpc_result_from_body(r#"{"error":{"code":-32602,"message":"unknown peer"}}"#)
             .expect_err("an error body is Err");
-        assert_eq!(err.code, -32602);
-        assert_eq!(err.message, "unknown peer");
+        assert_eq!(
+            err.code, -32602,
+            "an unknown peer is an invalid params error"
+        );
+        assert_eq!(
+            err.message, "unknown peer",
+            "the unknown peer error names the peer"
+        );
 
         // Garbage is an internal error, not a panic.
         let garbage = rpc_result_from_body("not json").expect_err("garbage is Err");
-        assert_eq!(garbage.code, -32603);
+        assert_eq!(
+            garbage.code, -32603,
+            "a garbage request is an internal error"
+        );
     }
 
     /// The `Rpc` responder delivers a fulfilled peer response and a deadline
@@ -837,14 +857,19 @@ mod tests {
         // A fulfilled response resolves to the parsed result.
         let (ok_tx, ok_rx) = tokio::sync::oneshot::channel();
         A2aResponder::Rpc(ok_tx).send_response(r#"{"result":{"task":{"id":"x"}}}"#);
-        assert_eq!(ok_rx.blocking_recv().unwrap().unwrap()["task"]["id"], "x");
+        assert_eq!(
+            ok_rx.blocking_recv().unwrap().unwrap()["task"]["id"],
+            "x",
+            "the call answers with the task id"
+        );
 
         // A deadline timeout resolves to the standard -32000 error.
         let (timeout_tx, timeout_rx) = tokio::sync::oneshot::channel();
         A2aResponder::Rpc(timeout_tx).send_timeout();
         assert_eq!(
             timeout_rx.blocking_recv().unwrap().unwrap_err().code,
-            -32000
+            -32000,
+            "the call is parked until the reply"
         );
     }
 
@@ -877,13 +902,20 @@ mod tests {
         app.fail_a2a_waiters_for_peer(&Nickname::from("bob"));
 
         let bob_response = bob_rx.blocking_recv().expect("bob's call resolves now");
-        assert_eq!(bob_response["error"]["code"], -32000);
         assert_eq!(
-            bob_response["error"]["message"],
-            "a2a peer 'bob' left the mesh"
+            bob_response["error"]["code"], -32000,
+            "bob receives the error code"
+        );
+        assert_eq!(
+            bob_response["error"]["message"], "a2a peer 'bob' left the mesh",
+            "the waiter is registered for the peer"
         );
         assert_eq!(app.a2a_waiters.len(), 1, "carol's waiter survives");
-        assert_eq!(app.a2a_waiters[0].peer, Nickname::from("carol"));
+        assert_eq!(
+            app.a2a_waiters[0].peer,
+            Nickname::from("carol"),
+            "the waiter belongs to carol"
+        );
         drop(app);
         assert!(
             carol_rx.blocking_recv().is_err(),
@@ -927,7 +959,8 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-1")]
+            vec![habilis_network::ops::blob::ContentId::new("group-1")],
+            "the task is created in the submitted state"
         );
     }
 
@@ -947,7 +980,8 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
-            vec![group("group-err")]
+            vec![group("group-err")],
+            "the reply carries the state"
         );
 
         app.a2a_waiters
@@ -955,7 +989,8 @@ mod tests {
         app.fail_a2a_waiters_for_peer(&Nickname::from("bob"));
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
-            vec![group("group-left")]
+            vec![group("group-left")],
+            "the status update is recorded"
         );
 
         app.a2a_waiters
@@ -963,7 +998,8 @@ mod tests {
         app.close_a2a_waiters();
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
-            vec![group("group-down")]
+            vec![group("group-down")],
+            "the artifact is recorded"
         );
     }
 
@@ -986,7 +1022,8 @@ mod tests {
         let timeout = std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
         assert_eq!(
             app.take_call_blobs(&[], Instant::now() + timeout),
-            vec![habilis_network::ops::blob::ContentId::new("group-late")]
+            vec![habilis_network::ops::blob::ContentId::new("group-late")],
+            "the task moves to working"
         );
     }
 
@@ -1020,11 +1057,13 @@ mod tests {
         let group = |name: &str| habilis_network::ops::blob::ContentId::new(name);
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
-            vec![group("group-bob")]
+            vec![group("group-bob")],
+            "the leg is delivered to the peer"
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![group("group-carol")]
+            vec![group("group-carol")],
+            "the leg keeps its correlation id"
         );
     }
 
@@ -1039,7 +1078,10 @@ mod tests {
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
         let corr = habilis_network::protocol::CorrId::from("corr-slow");
-        assert!(app.has_a2a_waiter(&corr, &Nickname::from("bob")));
+        assert!(
+            app.has_a2a_waiter(&corr, &Nickname::from("bob")),
+            "the waiter is still registered for bob"
+        );
 
         let task_id = TaskId::random();
         let created = serde_json::json!({
@@ -1059,7 +1101,8 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-slow")]
+            vec![habilis_network::ops::blob::ContentId::new("group-slow")],
+            "the cancel is recorded"
         );
     }
 
@@ -1083,10 +1126,15 @@ mod tests {
             &created.to_string(),
         );
 
-        assert_eq!(app.tasks[&task_id].state, crate::a2a::TaskState::Canceled);
+        assert_eq!(
+            app.tasks[&task_id].state,
+            crate::a2a::TaskState::Canceled,
+            "the task is canceled"
+        );
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, Nickname::from("bob"))]
+            vec![(task_id, Nickname::from("bob"))],
+            "the cancel reply is ok"
         );
     }
 
@@ -1112,11 +1160,19 @@ mod tests {
             &accepted.to_string(),
         );
 
-        assert_eq!(app.tasks[&task_id].state, crate::a2a::TaskState::Working);
-        assert!(app.take_late_cancels().is_empty());
+        assert_eq!(
+            app.tasks[&task_id].state,
+            crate::a2a::TaskState::Working,
+            "a late cancel leaves the task working"
+        );
+        assert!(
+            app.take_late_cancels().is_empty(),
+            "no late cancel is queued"
+        );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new(task_id.as_str())]
+            vec![habilis_network::ops::blob::ContentId::new(task_id.as_str())],
+            "the task reply is working"
         );
     }
 
@@ -1149,11 +1205,13 @@ mod tests {
 
         assert_eq!(
             evicted,
-            vec![habilis_network::ops::blob::ContentId::new("group-first")]
+            vec![habilis_network::ops::blob::ContentId::new("group-first")],
+            "the reply is the expected status"
         );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-retry")]
+            vec![habilis_network::ops::blob::ContentId::new("group-retry")],
+            "the reply is the expected status update"
         );
     }
 
@@ -1174,12 +1232,16 @@ mod tests {
             r#"{"error":{"code":-32602,"message":"no"}}"#,
         );
 
-        assert!(!app.has_a2a_waiter(&corr, &Nickname::from("bob")));
+        assert!(
+            !app.has_a2a_waiter(&corr, &Nickname::from("bob")),
+            "bobs waiter is gone after the reply"
+        );
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
             vec![habilis_network::ops::blob::ContentId::new(
                 "group-late-error"
-            )]
+            )],
+            "the reply carries no error"
         );
     }
 
@@ -1207,14 +1269,21 @@ mod tests {
 
         app.fulfill_a2a_waiter(&corr, &Nickname::from("bob"), &created.to_string());
 
-        assert!(!app.has_a2a_waiter(&corr, &Nickname::from("bob")));
-        assert!(app.take_call_blobs(&[], Instant::now()).is_empty());
+        assert!(
+            !app.has_a2a_waiter(&corr, &Nickname::from("bob")),
+            "bobs waiter is gone"
+        );
+        assert!(
+            app.take_call_blobs(&[], Instant::now()).is_empty(),
+            "no call blobs are taken without any"
+        );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![
                 habilis_network::ops::blob::ContentId::new("group-held"),
                 habilis_network::ops::blob::ContentId::new("group-late-held"),
-            ]
+            ],
+            "the call blobs are taken once"
         );
     }
 
@@ -1258,13 +1327,17 @@ mod tests {
     fn a_task_keeps_both_groups_when_the_on_time_reply_comes_first() {
         let (mut app, task_id) = two_follow_ups_on_one_task(false);
 
-        assert!(app.take_call_blobs(&[], Instant::now()).is_empty());
+        assert!(
+            app.take_call_blobs(&[], Instant::now()).is_empty(),
+            "no call blobs remain"
+        );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![
                 habilis_network::ops::blob::ContentId::new("group-second"),
                 habilis_network::ops::blob::ContentId::new("group-first"),
-            ]
+            ],
+            "the blob set is empty after the take"
         );
     }
 
@@ -1272,13 +1345,17 @@ mod tests {
     fn a_task_keeps_both_groups_when_the_late_reply_comes_first() {
         let (mut app, task_id) = two_follow_ups_on_one_task(true);
 
-        assert!(app.take_call_blobs(&[], Instant::now()).is_empty());
+        assert!(
+            app.take_call_blobs(&[], Instant::now()).is_empty(),
+            "no call blobs remain after the sweep"
+        );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![
                 habilis_network::ops::blob::ContentId::new("group-first"),
                 habilis_network::ops::blob::ContentId::new("group-second"),
-            ]
+            ],
+            "the sweep reports the expected blob"
         );
     }
 }
