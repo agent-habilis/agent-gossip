@@ -333,12 +333,14 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
 pub(crate) type ReadTarget = (Nickname, String);
 
 fn directed_to_us(message: &Message, tags: &[&str], me: &Nickname) -> Option<ReadTarget> {
+    let author = message.author.clone();
+    let frame_id = message.id.as_str().to_owned();
     matches!(
         &message.kind,
         MessageKind::App { tag, to: Some(to), .. }
             if tags.contains(&tag.as_str()) && to == me
     )
-    .then(|| (message.author.clone(), message.id.as_str().to_owned()))
+    .then(|| (author, frame_id))
 }
 
 /// A task brief comes by request/response and has no frame id, so its target
