@@ -4,12 +4,8 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy::LegacyOutput;
-
-pub(crate) enum PollIdentity {
-    Session { gossip: MeshId, nickname: Nickname },
-    StateFile(std::path::PathBuf),
-}
+use super::legacy_output::LegacyOutput;
+use super::poll_identity::PollIdentity;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {

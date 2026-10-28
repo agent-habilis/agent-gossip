@@ -1,7 +1,7 @@
 use clap::Parser;
 use habilis_network::protocol::Nickname;
 
-use super::shared::SharedServerOpts;
+use super::shared_server_opts::SharedServerOpts;
 
 /// Reject an empty / whitespace-only topic string at parse time — it would
 /// otherwise hash to a real (but useless, un-guessable-on-purpose) gossip.

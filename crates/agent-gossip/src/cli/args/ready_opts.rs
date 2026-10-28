@@ -7,7 +7,7 @@
 
 use clap::Parser;
 
-use super::legacy::LegacyOutput;
+use super::legacy_output::LegacyOutput;
 
 #[derive(Parser, Debug)]
 pub(crate) struct ReadyOpts {

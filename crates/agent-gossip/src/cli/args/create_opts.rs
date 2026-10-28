@@ -4,9 +4,9 @@ use clap::Parser;
 use habilis_network::protocol::{DirectorySelection, MeshName, Nickname};
 
 use super::lookup::LookupArgs;
-use super::shared::SharedServerOpts;
+use super::shared_server_opts::SharedServerOpts;
 use super::transport::Transport;
-use crate::cli::password::PasswordFlag;
+use crate::cli::password_flag::PasswordFlag;
 
 #[derive(Parser, Debug)]
 pub(crate) struct CreateOpts {
@@ -86,7 +86,7 @@ mod tests {
     use habilis_network::protocol::{DirectorySelection, MeshName, Nickname};
 
     use crate::cli::args::{Cli, Commands};
-    use crate::cli::password::PasswordFlag;
+    use crate::cli::password_flag::PasswordFlag;
 
     #[test]
     fn create_opts_with_nickname() {

@@ -8,8 +8,8 @@
 use clap::Parser;
 use habilis_network::util::tuning as defaults;
 
-use super::legacy::LegacyOutput;
-use super::tuning::TuningOpts;
+use super::legacy_output::LegacyOutput;
+use super::tuning_opts::TuningOpts;
 
 /// Shared options for the daemon commands.
 #[derive(Parser, Debug)]

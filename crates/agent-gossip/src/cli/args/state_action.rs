@@ -1,16 +1,5 @@
-//! `state` command args: read or change the gossip's shared state — a JSON
-//! document every member derives from a dedicated, gossiped log of RFC 7386 JSON
-//! Merge Patch changes. `state merge` applies a merge; `state get` reads the
-//! current document.
-
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use habilis_network::protocol::{MeshId, Nickname};
-
-#[derive(Parser, Debug)]
-pub(crate) struct StateOpts {
-    #[command(subcommand)]
-    pub action: StateAction,
-}
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum StateAction {

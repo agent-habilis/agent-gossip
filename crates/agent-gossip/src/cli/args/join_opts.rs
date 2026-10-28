@@ -3,8 +3,8 @@
 use clap::Parser;
 use habilis_network::protocol::{JoinTarget, JoinTargetError, Nickname};
 
-use super::shared::SharedServerOpts;
-use crate::cli::password::PasswordFlag;
+use super::shared_server_opts::SharedServerOpts;
+use crate::cli::password_flag::PasswordFlag;
 
 /// Classify a join token, pointing an unrecognized one at `topic` — which is
 /// what a plain shared string is for.

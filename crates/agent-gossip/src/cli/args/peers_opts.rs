@@ -5,7 +5,7 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy::LegacyOutput;
+use super::legacy_output::LegacyOutput;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {

@@ -4,9 +4,9 @@
 use clap::Parser;
 use habilis_network::protocol::MeshName;
 
-use super::legacy::LegacyOutput;
+use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
-use super::tuning::TuningOpts;
+use super::tuning_opts::TuningOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct DiscoverOpts {

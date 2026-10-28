@@ -66,7 +66,7 @@ use crate::api::{
     TaskStatusParams, TopicConfig,
 };
 use crate::cli::args::lookup::{Lookup, lookups_or_public};
-use crate::cli::args::mesh_config;
+use crate::cli::args::resolved;
 use crate::cli::args::transport::Transport;
 use crate::topic::derive_topic_mesh;
 
@@ -459,7 +459,7 @@ impl AgentGossipServer {
             )
         };
         let lookups = lookups_or_public(&args.lookup, args.advertise);
-        let resolved = mesh_config::resolve(&lookups, relay_urls, &args.transport)
+        let resolved = resolved::resolve(&lookups, relay_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI
         // (`opts.name.unwrap_or_else(MeshName::random)`).

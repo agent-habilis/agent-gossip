@@ -7,34 +7,9 @@ use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
 use super::bell;
+use super::discovery::Discovery;
+use super::target::Target;
 use crate::runtime_base;
-
-/// One live daemon on this machine, resolved from its state file. `mesh`
-/// and `pid` are required to act on an entry; `name`/`nickname`/`topic` are
-/// carried for reporting only.
-#[derive(Debug, Clone)]
-pub(crate) struct Target {
-    path: PathBuf,
-    mesh: String,
-    name: Option<String>,
-    nickname: Option<String>,
-    /// The raw topic string (topic gossips only) — what the leave report
-    /// echoes instead of the lossy derived `name`.
-    topic: Option<String>,
-    pid: u32,
-    /// The agent process a detached daemon (`--owner-pid`) answers to. Such a
-    /// daemon is no descendant of it, so ancestry alone cannot match.
-    owner_pid: Option<u32>,
-}
-
-pub(crate) struct Discovery {
-    live: Vec<Target>,
-    /// State files whose recorded pid is gone (or reused by a non-`agent-gossip`
-    /// process) — leftovers of a SIGKILL/power-loss that the daemon never
-    /// got to remove itself. Deleted during discovery so they stop
-    /// rendering as ghost sessions (e.g. a statusline pill).
-    cleaned: usize,
-}
 
 /// Walk every state file under [`runtime_base`] and resolve it to a live
 /// daemon or clean it up. Covers both per-mesh files

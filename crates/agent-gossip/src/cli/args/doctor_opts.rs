@@ -3,18 +3,10 @@
 //! capability, active gossips); with `--gossip <hash>` it analyzes the connection
 //! methods to a specific gossip.
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use habilis_network::protocol::MeshId;
 
-/// `doctor` is the one operator-facing report, so unlike every other command it
-/// renders for a human by default and keeps the machine form behind `--output
-/// json`. The agent commands stay JSON-only and keep the hidden
-/// [`super::legacy::LegacyOutput`] no-op.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum OutputFormat {
-    Human,
-    Json,
-}
+use super::output_format::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct DoctorOpts {

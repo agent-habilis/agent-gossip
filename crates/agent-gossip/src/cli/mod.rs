@@ -30,20 +30,22 @@ pub(crate) mod agent;
 pub(crate) mod args;
 pub(crate) mod bell;
 mod discover;
+mod discovery;
 mod doctor;
-mod ipc;
-mod password;
+mod password_flag;
 mod plug;
 mod ready;
+mod send;
 mod session;
 mod signal;
+mod target;
 
 /// Install both process tunings from one flag set. The flags are a single
 /// surface to an operator, but they land in two homes: engine knobs in
 /// `habilis_network::util::tuning`, the task/long-poll knobs in
 /// `a2a::tuning`. Kept together here so a new flag cannot reach one and miss
 /// the other.
-fn install_tuning(opts: &args::tuning::TuningOpts) {
+fn install_tuning(opts: &args::tuning_opts::TuningOpts) {
     habilis_network::runtime::tuning::init(opts.tuning());
     crate::a2a::tuning::init(opts.a2a_tuning());
 }
@@ -330,12 +332,12 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // Borrow-then-move: resolve the lookups and advertise selection (which
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
-    let password = password::resolve_password(opts.password.clone())?;
+    let password = password_flag::resolve_password(opts.password.clone())?;
     // Naming no lookup is loopback and naming any restricts to it, except
     // that `--advertise` needs a lookup that reaches other machines.
     let lookups = args::lookup::lookups_or_public(&opts.lookups.lookup, opts.advertise.is_some());
     let mesh_parts =
-        args::mesh_config::resolve(&lookups, opts.lookups.relay_url.clone(), &opts.transport)?;
+        args::resolved::resolve(&lookups, opts.lookups.relay_url.clone(), &opts.transport)?;
     let config = MeshConfig {
         lookups: mesh_parts.lookups,
         // The verifier is baked in at setup: its salt is the seed, which is
@@ -371,10 +373,10 @@ async fn create(opts: CreateOpts) -> Result<()> {
 async fn join(
     target: JoinTarget,
     nickname: Option<Nickname>,
-    password_flag: Option<password::PasswordFlag>,
+    password_flag: Option<password_flag::PasswordFlag>,
     shared: SharedServerOpts,
 ) -> Result<()> {
-    let mut password = password::resolve_password(password_flag)?;
+    let mut password = password_flag::resolve_password(password_flag)?;
     // A protected id/invite with the flag absent is a hard error naming the
     // requirement (there is no interactive prompt). Both join-target variants
     // can be password-protected (a mesh id or an invite), so classify
@@ -389,7 +391,7 @@ async fn join(
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
         };
         if let Some(what) = requires {
-            password = Some(password::require_password(what)?);
+            password = Some(password_flag::require_password(what)?);
         }
     }
     // `join` never advertises — that is a create-time decision.
@@ -448,7 +450,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             loopback,
             legacy_output: _,
         } => {
-            let password = password::resolve_password(password)?;
+            let password = password_flag::resolve_password(password)?;
             let advertise = habilis_network::protocol::DirectorySelection::from_flag(advertise);
             Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
                 to: &to,
@@ -470,9 +472,9 @@ async fn a2a(action: A2aAction) -> Result<()> {
             // (mirrors the mesh-join UX); otherwise resolve the given flag.
             let password = match password {
                 None if crate::a2a::ticket_requires_password(&ticket) => {
-                    Some(password::require_password("ticket")?)
+                    Some(password_flag::require_password("ticket")?)
                 }
-                other => password::resolve_password(other)?,
+                other => password_flag::resolve_password(other)?,
             };
             crate::a2a::connect(&ticket, port, password, allow_anonymous).await
         }
@@ -494,7 +496,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
         } => {
             let body = habilis_network::protocol::MessageBody::new(text)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
-            let resp = ipc::send(&IpcCommand::Broadcast { mesh, body }, &nickname).await?;
+            let resp = send::send(&IpcCommand::Broadcast { mesh, body }, &nickname).await?;
             let id = finish_send(&resp, "message")?;
             println!("{id}");
             Ok(())
@@ -507,7 +509,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
         } => {
             let body = habilis_network::protocol::MessageBody::new(text)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
-            let resp = ipc::send(&IpcCommand::Msg { mesh, to, body }, &nickname).await?;
+            let resp = send::send(&IpcCommand::Msg { mesh, to, body }, &nickname).await?;
             let id = finish_send(&resp, "message")?;
             println!("{id}");
             Ok(())
@@ -556,7 +558,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 file_name,
                 file_mime,
             };
-            let resp = ipc::send(&cmd, &nickname).await?;
+            let resp = send::send(&cmd, &nickname).await?;
             println!("{resp}");
             let parsed: serde_json::Value = serde_json::from_str(&resp)?;
             if !parsed["error"].is_null() {
@@ -581,7 +583,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 note,
                 waiting,
             };
-            let resp = ipc::send(&cmd, &nickname).await?;
+            let resp = send::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task status")?;
             println!("{id}");
             Ok(())
@@ -608,7 +610,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 file_name,
                 file_mime,
             };
-            let resp = ipc::send(&cmd, &nickname).await?;
+            let resp = send::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task artifact")?;
             println!("{id}");
             Ok(())
@@ -814,7 +816,7 @@ async fn poll(mut opts: PollOpts) -> Result<()> {
             return Ok(());
         }
         let started = tokio::time::Instant::now();
-        let resp = ipc::send(&cmd, &nickname).await?;
+        let resp = send::send(&cmd, &nickname).await?;
         // An empty response is the daemon closing the connection without
         // writing (shutdown mid-park) — `round_trip` maps that EOF to `""`.
         // Surface it instead of printing a blank line / retrying forever.
@@ -856,7 +858,7 @@ async fn ping(opts: PingOpts) -> Result<()> {
         legacy_output: _,
     } = opts;
     let cmd = IpcCommand::Ping { mesh };
-    let resp = ipc::send(&cmd, &nickname).await?;
+    let resp = send::send(&cmd, &nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
     if !parsed.ok {
         anyhow::bail!(
@@ -874,7 +876,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
         legacy_output: _,
     } = opts;
     let cmd = IpcCommand::Peers { mesh };
-    let resp = ipc::send(&cmd, &nickname).await?;
+    let resp = send::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
 }
@@ -913,7 +915,7 @@ async fn invite(opts: InviteOpts) -> Result<()> {
     } = opts;
     let ttl = parse_ttl(ttl.as_deref())?;
     let cmd = IpcCommand::Invite { mesh, ttl };
-    let resp = ipc::send(&cmd, &nickname).await?;
+    let resp = send::send(&cmd, &nickname).await?;
     println!("{resp}");
     let parsed: serde_json::Value = serde_json::from_str(&resp)?;
     if parsed.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
@@ -926,7 +928,7 @@ async fn invite(opts: InviteOpts) -> Result<()> {
 /// daemon, as JSON.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
     let cmd = IpcCommand::Topology { mesh: opts.gossip };
-    let resp = ipc::send(&cmd, &opts.nickname).await?;
+    let resp = send::send(&cmd, &opts.nickname).await?;
     println!("{resp}");
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
     if !parsed.ok {
@@ -960,7 +962,7 @@ async fn state(opts: StateOpts) -> Result<()> {
             nickname,
         } => (IpcCommand::StateGet { mesh }, nickname),
     };
-    let resp = ipc::send(&cmd, &nickname).await?;
+    let resp = send::send(&cmd, &nickname).await?;
     println!("{resp}");
     // A rejected merge must not exit 0: a shell-driven agent
     // reads the exit code to tell an applied change from a rejected one, and an
@@ -999,7 +1001,7 @@ async fn meta(opts: MetaOpts) -> Result<()> {
             nickname,
         } => (IpcCommand::MetaGet { mesh }, nickname),
     };
-    let resp = ipc::send(&cmd, &nickname).await?;
+    let resp = send::send(&cmd, &nickname).await?;
     println!("{resp}");
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
     if !parsed.ok {
