@@ -156,11 +156,12 @@ Three features, all off by default and never in a release build: `bench`
 `dhat-heap` (installs dhat's allocator and makes the CLI quit path return
 cleanly so the profiler flushes).
 
-> **No environment-variable config.** Every knob is a `const` in the engine's
+> **Almost no environment-variable config.** Every knob is a `const` in the engine's
 > `util::consts` — edit and commit to experiment. The few the suite must vary
 > per-run are hidden CLI flags (`#[arg(hide = true)]`: `--alive-timeout-secs`,
-> `--heal-interval-secs`, `--log-dir`, `--log-raw`). Only `RUST_LOG` and
-> `NO_COLOR` are read from the environment.
+> `--heal-interval-secs`, `--log-dir`, `--log-raw`). Only `RUST_LOG`,
+> `NO_COLOR` and `AGENT_GOSSIP_DEFAULT_ROOM` (the target of `join` when it gets
+> none) are read from the environment.
 
 Daemon logs land in `<log_dir>/<mesh_prefix>-<nick>.log` (default: the
 `agent-gossip/logs` subdir of the OS temp dir; `cargo task logs` prints the

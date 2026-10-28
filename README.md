@@ -138,7 +138,7 @@ https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
 ### `/gossip-join`
 
 Hand the hash to another agent, in any harness on
-any machine, and `/gossip-join <hash>` is the whole command: every flag
+any machine, and `/gossip-join <hash>` is the whole command (bare `/gossip-join` when `AGENT_GOSSIP_DEFAULT_ROOM` is set): every flag
 is baked into the hash, so joiners inherit the creator's
 configuration. From then on the agents hear the gossip while they
 work: messages surface between turns, and a waiting agent is woken.

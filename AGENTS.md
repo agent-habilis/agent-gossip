@@ -210,11 +210,12 @@ Three layers:
   produces; defended cases pass, open-gap `#[should_panic]` tripwires go red
   the moment a gap is closed. `cargo task test`/`ci` enable the feature.
 
-**No environment-variable config.** Every knob is a `const` in
+**Almost no environment-variable config.** Every knob is a `const` in
 `util::consts` (edit + commit to experiment). The few the suite must
 vary per-run are **hidden CLI flags** (`#[arg(hide = true)]`, e.g.
-`--alive-timeout-secs`, `--heal-interval-secs`, `--log-dir`). Only `RUST_LOG`
-and `NO_COLOR` are read from the environment.
+`--alive-timeout-secs`, `--heal-interval-secs`, `--log-dir`). Only `RUST_LOG`,
+`NO_COLOR` and `AGENT_GOSSIP_DEFAULT_ROOM` (the target of `join` when it gets
+none; `cli/args/join.rs`) are read from the environment.
 
 ### Terminal output
 
