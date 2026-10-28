@@ -24,9 +24,8 @@ fn http(port: u16, request: &str) -> (u16, String) {
     stream.write_all(request.as_bytes()).expect("write request");
     let mut raw = String::new();
     stream.read_to_string(&mut raw).expect("read response");
-    let status: u16 = raw
-        .split_whitespace()
-        .nth(1)
+    let status_code = raw.split_whitespace().nth(1);
+    let status: u16 = status_code
         .and_then(|code| code.parse().ok())
         .expect("status code");
     let body = raw
@@ -157,14 +156,16 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     let interfaces = card["supportedInterfaces"]
         .as_array()
         .expect("supportedInterfaces array");
+    let port_text = port.to_string();
+    let is_bound_jsonrpc_interface = |iface: &Value| {
+        iface["protocolBinding"] == "JSONRPC"
+            && iface["url"]
+                .as_str()
+                .is_some_and(|url| url.contains(&port_text))
+            && iface["protocolVersion"] == "1.0"
+    };
     assert!(
-        interfaces
-            .iter()
-            .any(|iface| iface["protocolBinding"] == "JSONRPC"
-                && iface["url"]
-                    .as_str()
-                    .is_some_and(|url| url.contains(&port.to_string()))
-                && iface["protocolVersion"] == "1.0"),
+        interfaces.iter().any(is_bound_jsonrpc_interface),
         "the card advertises the bound JSONRPC endpoint: {card}"
     );
 
@@ -211,15 +212,17 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     let (peer_card_status, peer_card) = get(port, "/peers/a2a-peer/.well-known/agent-card.json");
     assert_eq!(peer_card_status, 200, "peer card must be served");
     let peer_card: Value = serde_json::from_str(&peer_card).expect("peer card is JSON");
+    let is_relay_interface = |iface: &Value| {
+        iface["protocolBinding"] == "JSONRPC"
+            && iface["url"]
+                .as_str()
+                .is_some_and(|url| url.contains("/peers/a2a-peer"))
+    };
+    let advertises_relay = peer_card["supportedInterfaces"]
+        .as_array()
+        .is_some_and(|ifaces| ifaces.iter().any(is_relay_interface));
     assert!(
-        peer_card["supportedInterfaces"]
-            .as_array()
-            .is_some_and(|ifaces| ifaces
-                .iter()
-                .any(|iface| iface["protocolBinding"] == "JSONRPC"
-                    && iface["url"]
-                        .as_str()
-                        .is_some_and(|url| url.contains("/peers/a2a-peer")))),
+        advertises_relay,
         "peer card advertises the relaying JSONRPC interface: {peer_card}"
     );
 
@@ -268,10 +271,10 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         method: "ListTasks",
         params: &serde_json::json!({}),
     });
+    let has_created_task =
+        |tasks: &Vec<Value>| tasks.iter().any(|entry| entry["id"] == task_id.as_str());
     assert!(
-        listed["tasks"]
-            .as_array()
-            .is_some_and(|tasks| tasks.iter().any(|entry| entry["id"] == task_id.as_str())),
+        listed["tasks"].as_array().is_some_and(has_created_task),
         "tasks/list must include the created task: {listed}"
     );
 
