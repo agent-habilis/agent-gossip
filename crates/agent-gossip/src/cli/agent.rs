@@ -469,6 +469,12 @@ mod tests {
         fn is_bell(line: &str) -> bool {
             line.starts_with("agent-gossip poll ") && line.contains("--long")
         }
+        fn assert_launch_shapes(path: &str, long_running: &[&str]) {
+            let launches = long_running.iter().filter(|line| is_daemon_launch(line));
+            for line in launches {
+                assert_launch_shape(path, line);
+            }
+        }
 
         let mut daemon_starters_checked = 0;
         for skill in OWNED_SKILL_DIRS {
@@ -521,10 +527,7 @@ mod tests {
                     1,
                     "{path}: exactly one launch carries --owner-pid \"$PPID\": {long_running:?}"
                 );
-                long_running
-                    .iter()
-                    .filter(|line| is_daemon_launch(line))
-                    .for_each(|line| assert_launch_shape(&path, line));
+                assert_launch_shapes(&path, &long_running);
                 assert!(
                     long_running.iter().any(|line| is_bell(line)),
                     "{path}: expected a poll bell, found {long_running:?}"
