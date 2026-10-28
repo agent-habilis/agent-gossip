@@ -344,6 +344,12 @@ fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
     }
 }
 
+impl Default for SurfacedState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SurfacedState {
     pub(crate) fn new() -> Self {
         Self {
