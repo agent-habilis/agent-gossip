@@ -14,8 +14,8 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
     events.iter().any(|event| {
         matches!(
             event,
-            OutputEvent::Message { msg, is_self: true }
-                if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(text)
+            OutputEvent::Message { message, is_self: true }
+                if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(text)
         )
     })
 }
@@ -35,7 +35,7 @@ async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
 async fn msg_to_a_live_peer_echoes_after_delivery() {
     let (mut alice, bob) = meshed_pair("echo-live", "echo-live-bob").await;
 
-    alice.msg("echo-live-bob", "arrives").await;
+    alice.message("echo-live-bob", "arrives").await;
 
     assert!(
         alice

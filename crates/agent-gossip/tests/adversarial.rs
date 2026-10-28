@@ -677,8 +677,8 @@ async fn a_bystanders_task_status_is_dropped() {
     let forged_landed = initiator.events().iter().any(|event| {
         matches!(
             event,
-            OutputEvent::Task { msg, .. }
-                if agent_gossip::a2a::status_update_params::frame_task_state(msg)
+            OutputEvent::Task { message, .. }
+                if agent_gossip::a2a::status_update_params::frame_task_state(message)
                     == Some(TaskState::Completed)
         )
     });
@@ -736,7 +736,7 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
         victim.wait_body("after the injection", T).await,
         "the gossip barrier was lost"
     );
-    let barrier = attacker.msg(&victim.nickname, "barrier").await;
+    let barrier = attacker.message(&victim.nickname, "barrier").await;
     assert!(
         attacker
             .wait_for(T, |events| has_receipt_for(events, barrier.as_str()))
@@ -768,7 +768,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
     sender.await_peer_card(&addressee.nickname).await;
     attacker.await_peer_card(&sender.nickname).await;
 
-    let id = sender.msg(&addressee.nickname, "for your eyes").await;
+    let id = sender.message(&addressee.nickname, "for your eyes").await;
     assert!(
         sender
             .wait_for(T, |events| has_receipt_for(events, id.as_str()))
@@ -871,8 +871,8 @@ async fn gap_nickname_impersonation_is_accepted() {
 fn is_flood_message(event: &OutputEvent, body: &str) -> bool {
     matches!(
         event,
-        OutputEvent::Message { msg, is_self: false }
-            if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(body)
+        OutputEvent::Message { message, is_self: false }
+            if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(body)
     )
 }
 

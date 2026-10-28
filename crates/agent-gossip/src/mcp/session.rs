@@ -83,8 +83,8 @@ impl Session {
     /// # Errors
     /// Fails if the event loop has stopped.
     pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.broadcast(body).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.broadcast(body).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Send a chat message to one peer. Returns `(id, echo)`, like
@@ -98,8 +98,8 @@ impl Session {
         to: Nickname,
         body: MessageBody,
     ) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.msg(to, body).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.message(to, body).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Worker-emit a task `TaskStatusUpdate`. Returns `(id, echo)`.
@@ -110,8 +110,8 @@ impl Session {
         &self,
         status: TaskStatusParams,
     ) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.task_status(status).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.task_status(status).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Worker-emit a task `TaskArtifactUpdate` (the result). Returns `(id, echo)`.
@@ -134,8 +134,8 @@ impl Session {
             name: file_name,
             mime: file_mime,
         });
-        let msg = self.inner.task_artifact(task_id, text, file).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.task_artifact(task_id, text, file).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Call a peer's A2A server over gossip (request/response); returns the
@@ -286,9 +286,9 @@ mod tests {
     fn as_message(event: &crate::output::OutputEvent) -> Option<&Message> {
         use crate::output::OutputEvent;
         match event {
-            OutputEvent::Message { msg, .. }
-            | OutputEvent::Presence { msg }
-            | OutputEvent::Task { msg, .. } => Some(msg),
+            OutputEvent::Message { message, .. }
+            | OutputEvent::Presence { message }
+            | OutputEvent::Task { message, .. } => Some(message),
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }
             | OutputEvent::PeerReturn { .. }
@@ -310,8 +310,8 @@ mod tests {
     fn is_self_echo(event: &crate::output::OutputEvent, sent: &MessageId) -> bool {
         matches!(
             event,
-            crate::output::OutputEvent::Message { msg, is_self }
-                if *is_self && msg.id == *sent
+            crate::output::OutputEvent::Message { message, is_self }
+                if *is_self && message.id == *sent
         )
     }
 
@@ -376,13 +376,13 @@ mod tests {
     /// `implicit_cursor_returns_delta_on_subsequent_fetches` waits on to know
     /// its cursor baseline includes the join.
     fn is_bob_join(event: &crate::output::OutputEvent) -> bool {
-        as_message(event).is_some_and(|msg| {
+        as_message(event).is_some_and(|message| {
             matches!(
-                msg.kind,
+                message.kind,
                 MessageKind::Presence {
                     subtype: PresenceSubtype::Joined
                 }
-            ) && msg.author.as_str() == "bob-cursor"
+            ) && message.author.as_str() == "bob-cursor"
         })
     }
 
@@ -425,9 +425,9 @@ mod tests {
         poll_until(deadline, Duration::from_millis(200), || async {
             let events = session.fetch_messages(None, false).await.ok()?.events;
             events.iter().find_map(|entry| {
-                let msg = as_message(&entry.event)?;
-                (msg.author.as_str() == author && chat_text(msg).as_deref() == Some(body))
-                    .then(|| msg.id.clone())
+                let message = as_message(&entry.event)?;
+                (message.author.as_str() == author && chat_text(message).as_deref() == Some(body))
+                    .then(|| message.id.clone())
             })
         })
         .await
@@ -470,7 +470,7 @@ mod tests {
             let found = events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| chat_text(msg).as_deref() == Some(body));
+                .any(|message| chat_text(message).as_deref() == Some(body));
             if found {
                 break;
             }
@@ -721,7 +721,7 @@ mod tests {
             events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| chat_text(msg).as_deref() == Some("hi via cursor"))
+                .any(|message| chat_text(message).as_deref() == Some("hi via cursor"))
                 .then_some(())
         })
         .await
@@ -742,7 +742,7 @@ mod tests {
             forced
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| chat_text(msg).as_deref() == Some("hi via cursor")),
+                .any(|message| chat_text(message).as_deref() == Some("hi via cursor")),
             "explicit after must replay from the given seq"
         );
 

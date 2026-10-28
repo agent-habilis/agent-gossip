@@ -213,8 +213,8 @@ impl MeshSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response, or if the
     /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
-    pub async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Authored> {
-        self.core.msg(to, body).await
+    pub async fn message(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Authored> {
+        self.core.message(to, body).await
     }
 
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges

@@ -27,15 +27,15 @@ use crate::output;
 /// fork/DAG indexes on any eviction) and write the dev log. The operator
 /// echo is the caller's responsibility — it differs by kind
 /// (`print_message_ex` for `Msg`, `print_task` for `Task`).
-fn retain_outbound(state: &mut EventLoopState, msg: &Verified) {
-    if let Some(evicted) = state.message_log_mut().push(msg.clone()) {
+fn retain_outbound(state: &mut EventLoopState, message: &Verified) {
+    if let Some(evicted) = state.message_log_mut().push(message.clone()) {
         let evicted_hash = evicted.content_hash();
         state.forget_hash(&evicted_hash);
         if let Some(seq) = evicted.seq {
             state.forget_msg_seq(&evicted.key(), seq, &evicted_hash);
         }
     }
-    habilis_network::util::logging::log_out(msg);
+    habilis_network::util::logging::log_out(message);
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
@@ -45,17 +45,17 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Verified) {
 /// silently (`echo == false`); only the reassembled logical message is echoed.
 fn commit_outbound_part(
     state: &mut EventLoopState,
-    msg: &Verified,
+    message: &Verified,
     out: &output::Output,
     echo: bool,
 ) {
-    let hash = msg.content_hash();
+    let hash = message.content_hash();
     state.advance_chain(hash);
-    state.note_dag(hash, &msg.parents, msg.timestamp);
+    state.note_dag(hash, &message.parents, message.timestamp);
     if echo {
-        out.print_message_ex(&msg.authored(), true);
+        out.print_message_ex(&message.authored(), true);
     }
-    retain_outbound(state, msg);
+    retain_outbound(state, message);
 }
 
 /// Headroom subtracted from a shard's body budget so the first shard's measured
@@ -154,7 +154,7 @@ fn build_msg(
         body,
         id,
     } = frame;
-    let mut msg = Message::new_app(
+    let mut message = Message::new_app(
         mesh,
         author,
         AppFrameParams {
@@ -165,9 +165,10 @@ fn build_msg(
         },
     );
     if let Some(id) = id {
-        msg = msg.with_id(id);
+        message = message.with_id(id);
     }
-    msg.with_chain(stamp.seq, stamp.prev)
+    message
+        .with_chain(stamp.seq, stamp.prev)
         .with_parents(stamp.parents)
         .with_shard(shard)
         .sign(signer)
@@ -220,9 +221,9 @@ fn answer_when_sent(
     resp: tokio::sync::oneshot::Sender<anyhow::Result<Authored>>,
 ) -> bool {
     match outcome {
-        Ok((msg, pending)) => {
+        Ok((message, pending)) => {
             when_sent(pending, move |verdict| {
-                let _ = resp.send(verdict.map(|()| msg));
+                let _ = resp.send(verdict.map(|()| message));
             });
             true
         }
@@ -237,7 +238,7 @@ fn answer_when_sent(
 /// [`send_msg_part`] commits/delivers, grouped so the state/sender/out handles
 /// stay their own leading params.
 struct OutboundPart<'a> {
-    msg: &'a Verified,
+    message: &'a Verified,
     bytes: WireFrame,
     echo: bool,
 }
@@ -251,17 +252,21 @@ async fn send_msg_part(
     out: &output::Output,
     part: OutboundPart<'_>,
 ) -> anyhow::Result<()> {
-    let OutboundPart { msg, bytes, echo } = part;
+    let OutboundPart {
+        message,
+        bytes,
+        echo,
+    } = part;
     if state.is_meshed() {
-        commit_outbound_part(state, msg, out, echo);
+        commit_outbound_part(state, message, out, echo);
         // Single send decision: a directed message goes point-to-point over
         // unicast, a broadcast over gossip (see `transport::deliver`). Inline,
         // not `deliver_in_background`: the CLI needs the delivery verdict to
         // report an unreachable peer, and each IPC send is one-shot.
-        log_unless_done(habilis_network::ops::deliver(msg, bytes, state, sender).await?);
-    } else if state.pending_outbound_mut().push((msg.clone(), bytes)) {
+        log_unless_done(habilis_network::ops::deliver(message, bytes, state, sender).await?);
+    } else if state.pending_outbound_mut().push((message.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
-        commit_outbound_part(state, msg, out, echo);
+        commit_outbound_part(state, message, out, echo);
     } else {
         // Full buffer: the frame reaches no plane, so the reported drop matches
         // reality.
@@ -367,7 +372,7 @@ pub(crate) async fn send_broadcast(
                 sender,
                 out,
                 OutboundPart {
-                    msg: &single,
+                    message: &single,
                     bytes,
                     echo: false,
                 },
@@ -384,7 +389,7 @@ pub(crate) async fn send_broadcast(
             sender,
             out,
             OutboundPart {
-                msg: &single,
+                message: &single,
                 bytes,
                 echo: true,
             },
@@ -465,7 +470,7 @@ pub(crate) async fn send_broadcast(
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = build_msg(
+        let message = build_msg(
             ChatFrameParams {
                 mesh,
                 author,
@@ -481,9 +486,9 @@ pub(crate) async fn send_broadcast(
             &signer,
         );
         if idx == 0 {
-            header = Some(msg.clone());
+            header = Some(message.clone());
         }
-        let bytes = msg.serialize()?;
+        let bytes = message.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -492,7 +497,7 @@ pub(crate) async fn send_broadcast(
             sender,
             out,
             OutboundPart {
-                msg: &msg,
+                message: &message,
                 bytes,
                 echo: false,
             },
@@ -603,7 +608,7 @@ async fn broadcast_directed_frame(
             out,
             DirectedLegPart {
                 app,
-                msg: &single,
+                message: &single,
                 bytes,
                 echo: Some(&echo),
                 content,
@@ -663,10 +668,10 @@ async fn broadcast_directed_frame(
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = Message::new_frame(mesh, author, kind.clone(), chunk_body)
+        let message = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
             .sign(&signer);
-        let bytes = msg.serialize()?;
+        let bytes = message.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
@@ -678,7 +683,7 @@ async fn broadcast_directed_frame(
                 out,
                 DirectedLegPart {
                     app,
-                    msg: &msg,
+                    message: &message,
                     bytes,
                     echo: None,
                     content: false,
@@ -687,7 +692,7 @@ async fn broadcast_directed_frame(
             )
             .await?,
         );
-        frames.push(msg);
+        frames.push(message);
     }
     let cache = (!cache_frames.is_empty()).then(|| (group.clone(), cache_frames));
     let logical = synthesize_from(&frames[0], payload_body, &group);
@@ -774,7 +779,7 @@ pub(crate) async fn emit_task_status(
         out,
     )
     .await
-    .map(|(_id, msg, pending)| (msg, pending))
+    .map(|(_id, message, pending)| (message, pending))
 }
 
 /// A worker's status leg, parsed once from its state and waiting reason. The
@@ -863,7 +868,7 @@ pub(crate) async fn emit_task_artifact(
         out,
     )
     .await
-    .map(|(_id, msg, pending)| (msg, pending))
+    .map(|(_id, message, pending)| (message, pending))
 }
 
 /// Seal a directed payload `body` to `to`'s published X25519 key. A directed
@@ -1332,7 +1337,7 @@ pub(crate) async fn attach_call_file(
 struct DirectedLegPart<'a> {
     app: &'a mut A2aApp,
     echo_as: EchoAs,
-    msg: &'a Verified,
+    message: &'a Verified,
     bytes: WireFrame,
     echo: Option<&'a Authored>,
     content: bool,
@@ -1350,7 +1355,7 @@ async fn send_directed_leg(
 ) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
         app,
-        msg,
+        message,
         bytes,
         echo,
         content,
@@ -1360,9 +1365,9 @@ async fn send_directed_leg(
         // Meshed: a leg enters our log for anti-entropy only once it was sent
         // (see `A2aApp::unsent_legs`). Directed legs go unicast, broadcasts
         // gossip (see `transport::deliver`).
-        return match habilis_network::ops::deliver(msg, bytes, state, sender).await? {
+        return match habilis_network::ops::deliver(message, bytes, state, sender).await? {
             Delivered::Done => {
-                retain_leg(state, msg, content);
+                retain_leg(state, message, content);
                 if let Some(echo) = echo {
                     print_echo(out, echo, echo_as);
                 }
@@ -1370,7 +1375,7 @@ async fn send_directed_leg(
             }
             Delivered::Pending(pending) => {
                 let pending = if content {
-                    retain_when_sent(app, msg.clone(), pending)
+                    retain_when_sent(app, message.clone(), pending)
                 } else {
                     pending
                 };
@@ -1381,9 +1386,9 @@ async fn send_directed_leg(
                 Ok(pending.into_iter().next())
             }
         };
-    } else if state.pending_outbound_mut().push((msg.clone(), bytes)) {
+    } else if state.pending_outbound_mut().push((message.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
-        retain_leg(state, msg, content);
+        retain_leg(state, message, content);
         if let Some(echo) = echo {
             print_echo(out, echo, echo_as);
         }
@@ -1398,19 +1403,19 @@ async fn send_directed_leg(
 
 /// Retain a task leg locally. Content legs retain; the beat doesn't. The echo
 /// is the caller's, and it waits for the delivery verdict.
-fn retain_leg(state: &mut EventLoopState, msg: &Verified, content: bool) {
+fn retain_leg(state: &mut EventLoopState, message: &Verified, content: bool) {
     if content {
-        retain_outbound(state, msg);
+        retain_outbound(state, message);
     }
 }
 
 /// Queue `msg` for the message log, behind the verdict of its send. The handle is replaced by
 /// one that gives the same verdict.
-fn retain_when_sent(app: &mut A2aApp, msg: Verified, pending: PendingSend) -> PendingSend {
+fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -> PendingSend {
     let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
     let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
     app.unsent_legs.push(UnsentLeg {
-        frames: vec![msg],
+        frames: vec![message],
         cache: None,
         sent: sent_rx,
     });
@@ -1515,11 +1520,11 @@ fn echo_when_sent(
 /// body is sealed to the addressee, so a status leg's state could not be read
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
-pub(crate) fn ingest_own_leg(app: &mut A2aApp, msg: &Message, task_id: &crate::a2a::TaskId) {
+pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Message, task_id: &crate::a2a::TaskId) {
     crate::a2a::task_record::ingest(
         &mut app.tasks,
         crate::a2a::task_record::IngestLegParams {
-            frame: msg,
+            frame: message,
             task_id,
             mine: true,
             now: Instant::now(),
@@ -1851,19 +1856,19 @@ pub(crate) async fn send_directed_rpc(
     let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = Message::new_frame(mesh, author, kind.clone(), chunk_body)
+        let message = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(Shard {
                 group: group.clone(),
                 idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
                 total,
             }))
             .sign(&signer);
-        habilis_network::util::logging::log_out(&msg);
-        let bytes = msg.serialize()?;
+        habilis_network::util::logging::log_out(&message);
+        let bytes = message.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        log_unless_done(habilis_network::ops::deliver(&msg, bytes, state, sender).await?);
+        log_unless_done(habilis_network::ops::deliver(&message, bytes, state, sender).await?);
     }
     if !cache_frames.is_empty() {
         state.shard_cache_mut().insert(group, cache_frames);
@@ -1942,7 +1947,7 @@ pub(crate) async fn handle_session_request(
                 output,
             )
             .await
-            .map(|(_id, msg)| msg);
+            .map(|(_id, message)| message);
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
@@ -1961,7 +1966,10 @@ pub(crate) async fn handle_session_request(
                 output,
             )
             .await;
-            answer_when_sent(outcome.map(|(_id, msg, pending)| (msg, pending)), resp)
+            answer_when_sent(
+                outcome.map(|(_id, message, pending)| (message, pending)),
+                resp,
+            )
         }
         SessionRequest::Poll { after, long, resp } => {
             // Same policy as the CLI/IPC `Poll` arm: respond now if events are

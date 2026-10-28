@@ -57,8 +57,8 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     let (artifact, _) = alice
         .tasks()
         .into_iter()
-        .find(|(msg, _)| {
-            agent_gossip::a2a::status_update_params::frame_task_state(msg)
+        .find(|(message, _)| {
+            agent_gossip::a2a::status_update_params::frame_task_state(message)
                 == Some(TaskState::InputRequired)
         })
         .expect("initiator surfaced the artifact");

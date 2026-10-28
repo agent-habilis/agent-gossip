@@ -153,7 +153,7 @@ impl Node {
     pub fn count_from(&self, author: &str, body: &str) -> usize {
         self.messages()
             .iter()
-            .filter(|msg| msg.author == author && msg.body == body)
+            .filter(|message| message.author == author && message.body == body)
             .count()
     }
 
@@ -163,8 +163,8 @@ impl Node {
     pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
         self.messages()
             .iter()
-            .filter(|msg| msg.author == author && msg.body.starts_with(prefix))
-            .map(|msg| msg.body.clone())
+            .filter(|message| message.author == author && message.body.starts_with(prefix))
+            .map(|message| message.body.clone())
             .collect::<HashSet<_>>()
             .len()
     }

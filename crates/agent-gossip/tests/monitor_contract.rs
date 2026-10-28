@@ -312,24 +312,24 @@ async fn test_cross_peer_message_delivery() {
 
     let creator_msgs = creator.broadcast_events();
     let joiner_b_msgs = joiner_b.broadcast_events();
-    let msg = creator_msgs
+    let message = creator_msgs
         .iter()
         .chain(joiner_b_msgs.iter())
         .find(|value| value["body"] == "hello from A")
         .expect("no message with body 'hello from A' found");
 
-    assert_eq!(msg["event"], "message");
-    assert_eq!(msg["type"], "broadcast");
-    assert!(msg["id"].is_string(), "missing id field");
-    assert_eq!(msg["author"], "mon-xpeer-a");
-    assert!(msg["ts"].is_number(), "ts should be a number");
-    assert_eq!(msg["body"], "hello from A");
-    assert!(msg["to"].is_null(), "message should have to: null");
+    assert_eq!(message["event"], "message");
+    assert_eq!(message["type"], "broadcast");
+    assert!(message["id"].is_string(), "missing id field");
+    assert_eq!(message["author"], "mon-xpeer-a");
+    assert!(message["ts"].is_number(), "ts should be a number");
+    assert_eq!(message["body"], "hello from A");
+    assert!(message["to"].is_null(), "message should have to: null");
     assert_eq!(
-        msg["message"]["role"], "ROLE_USER",
+        message["message"]["role"], "ROLE_USER",
         "the embedded a2a payload rides the event"
     );
-    assert_eq!(msg["self"], false, "receiver should see self: false");
+    assert_eq!(message["self"], false, "receiver should see self: false");
 }
 
 /// Messages from both joiners are received by the other peers.
@@ -523,20 +523,29 @@ async fn test_message_event_has_all_required_fields() {
     );
 
     let msgs = creator.broadcast_events();
-    for msg in &msgs {
-        assert!(msg["event"].is_string(), "missing event field: {msg}");
-        assert!(msg["id"].is_string(), "missing id field: {msg}");
-        assert!(msg["type"].is_string(), "missing type field: {msg}");
-        assert!(msg["author"].is_string(), "missing author field: {msg}");
-        assert!(msg["ts"].is_number(), "missing ts field: {msg}");
-        assert!(msg["body"].is_string(), "missing body field: {msg}");
+    for message in &msgs {
+        assert!(
+            message["event"].is_string(),
+            "missing event field: {message}"
+        );
+        assert!(message["id"].is_string(), "missing id field: {message}");
+        assert!(message["type"].is_string(), "missing type field: {message}");
+        assert!(
+            message["author"].is_string(),
+            "missing author field: {message}"
+        );
+        assert!(message["ts"].is_number(), "missing ts field: {message}");
+        assert!(message["body"].is_string(), "missing body field: {message}");
         // to should be present (null or string).
         assert!(
-            msg["to"].is_null() || msg["to"].is_string(),
-            "to should be null or string: {msg}"
+            message["to"].is_null() || message["to"].is_string(),
+            "to should be null or string: {message}"
         );
         // self should be a boolean.
-        assert!(msg["self"].is_boolean(), "missing self field: {msg}");
+        assert!(
+            message["self"].is_boolean(),
+            "missing self field: {message}"
+        );
     }
 }
 
@@ -588,9 +597,9 @@ fn test_creator_departure_peers_survive() {
         "joiner_b did not receive message from joiner_a after creator left"
     );
 
-    let msg = &joiner_b.broadcast_events()[0];
-    assert_eq!(msg["author"], "survive-alpha");
-    assert_eq!(msg["body"], "still-here");
+    let message = &joiner_b.broadcast_events()[0];
+    assert_eq!(message["author"], "survive-alpha");
+    assert_eq!(message["body"], "still-here");
 }
 
 /// When the creator is hard-killed, joiners should stay alive.

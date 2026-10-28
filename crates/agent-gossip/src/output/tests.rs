@@ -56,8 +56,8 @@ fn chat_frame(author: &str, text: &str) -> Authored {
 
 #[test]
 fn json_message_has_all_fields() {
-    let msg = chat_frame("alice", "hello");
-    let json = format_msg_json(&msg, false);
+    let message = chat_frame("alice", "hello");
+    let json = format_msg_json(&message, false);
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "broadcast");
@@ -82,12 +82,12 @@ fn json_signed_message_exposes_full_pubkey() {
     // A real (signed) message carries the author's full Ed25519 public key
     // (hex) in the JSON event — the identity behind the display nickname.
     let identity = habilis_network::protocol::Identity::generate();
-    let msg = chat_frame_raw("alice", "hi").sign(&identity).authored();
-    let parsed = parse(&format_msg_json(&msg, false));
+    let message = chat_frame_raw("alice", "hi").sign(&identity).authored();
+    let parsed = parse(&format_msg_json(&message, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
     assert_eq!(
         pubkey,
-        msg.key().to_string(),
+        message.key().to_string(),
         "event pubkey must be the message's key"
     );
     assert_eq!(pubkey.len(), 64, "full 32-byte key as hex");
@@ -139,23 +139,23 @@ fn fork_event_json_shape() {
 
 #[test]
 fn json_self_flag_true() {
-    let msg = chat_frame("alice", "hi");
-    let parsed = parse(&format_msg_json(&msg, true));
+    let message = chat_frame("alice", "hi");
+    let parsed = parse(&format_msg_json(&message, true));
     assert_eq!(parsed["self"], true);
 }
 
 #[test]
 fn json_body_escapes_quotes() {
-    let msg = chat_frame("alice", r#"say "hello""#);
-    let json = format_msg_json(&msg, false);
+    let message = chat_frame("alice", r#"say "hello""#);
+    let json = format_msg_json(&message, false);
     let parsed = parse(&json);
     assert_eq!(parsed["body"], r#"say "hello""#);
 }
 
 #[test]
 fn json_body_escapes_backslashes() {
-    let msg = chat_frame("alice", r"path\to\file");
-    let json = format_msg_json(&msg, false);
+    let message = chat_frame("alice", r"path\to\file");
+    let json = format_msg_json(&message, false);
     let parsed = parse(&json);
     assert_eq!(parsed["body"], r"path\to\file");
 }
@@ -164,8 +164,8 @@ fn json_body_escapes_backslashes() {
 
 #[test]
 fn json_presence_joined() {
-    let msg = view(Message::new_joined(&sid(), &nick("alice")));
-    let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
+    let message = view(Message::new_joined(&sid(), &nick("alice")));
+    let parsed = parse(&format_presence_json(&message, PresenceSubtype::Joined));
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
@@ -176,8 +176,8 @@ fn json_presence_joined() {
 
 #[test]
 fn json_presence_left() {
-    let msg = view(Message::new_left(&sid(), &nick("bob")));
-    let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Left));
+    let message = view(Message::new_left(&sid(), &nick("bob")));
+    let parsed = parse(&format_presence_json(&message, PresenceSubtype::Left));
     assert_eq!(parsed["subtype"], "left");
     assert_eq!(parsed["author"], "bob");
 }
@@ -223,7 +223,7 @@ fn status_frame(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Authored {
 #[test]
 fn task_event_json_shape() {
     use super::OutputEvent;
-    let msg = status_frame(
+    let message = status_frame(
         "drift-oak",
         "calm-otter",
         StatusFrameArgs {
@@ -236,7 +236,7 @@ fn task_event_json_shape() {
     // Routed through `event_json` so the captured-event form is
     // byte-identical to the stdout `--output json` line.
     let json = super::simple_event::event_json(&OutputEvent::Task {
-        msg: Box::new(msg),
+        message: Box::new(message),
         is_self: false,
     })
     .expect("task event produces a JSON line");
@@ -261,7 +261,7 @@ fn task_event_json_shape() {
 #[test]
 fn task_self_echo_flag() {
     use super::OutputEvent;
-    let msg = status_frame(
+    let message = status_frame(
         "drift-oak",
         "calm-otter",
         StatusFrameArgs {
@@ -272,7 +272,7 @@ fn task_self_echo_flag() {
         },
     );
     let json = super::simple_event::event_json(&OutputEvent::Task {
-        msg: Box::new(msg),
+        message: Box::new(message),
         is_self: true,
     })
     .expect("task event produces a JSON line");
@@ -287,7 +287,7 @@ fn task_self_echo_flag() {
 fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
     use super::OutputEvent;
     let line = |metadata| {
-        let msg = status_frame(
+        let message = status_frame(
             "calm-otter",
             "drift-oak",
             StatusFrameArgs {
@@ -298,7 +298,7 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
             },
         );
         let json = super::simple_event::event_json(&OutputEvent::Task {
-            msg: Box::new(msg),
+            message: Box::new(message),
             is_self: false,
         })
         .expect("task event produces a JSON line");
@@ -319,7 +319,7 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
 #[test]
 fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
     use super::OutputEvent;
-    let msg = status_frame(
+    let message = status_frame(
         "calm-otter",
         "drift-oak",
         StatusFrameArgs {
@@ -330,7 +330,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
         },
     );
     let json = super::simple_event::event_json(&OutputEvent::Task {
-        msg: Box::new(msg),
+        message: Box::new(message),
         is_self: false,
     })
     .expect("task event produces a JSON line");
@@ -342,7 +342,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
 #[test]
 fn task_progress_event_json_shape() {
     use super::OutputEvent;
-    let msg = status_frame(
+    let message = status_frame(
         "calm-otter",
         "drift-oak",
         StatusFrameArgs {
@@ -355,7 +355,7 @@ fn task_progress_event_json_shape() {
         },
     );
     let json = super::simple_event::event_json(&OutputEvent::Task {
-        msg: Box::new(msg),
+        message: Box::new(message),
         is_self: false,
     })
     .expect("progress event produces a JSON line");
@@ -666,24 +666,24 @@ mod snapshots {
 
     #[test]
     fn snap_presence_joined() {
-        let msg = view(Message::fixture(
+        let message = view(Message::fixture(
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined,
             },
             "",
         ));
-        insta::assert_snapshot!(format_presence_json(&msg, PresenceSubtype::Joined));
+        insta::assert_snapshot!(format_presence_json(&message, PresenceSubtype::Joined));
     }
 
     #[test]
     fn snap_presence_left() {
-        let msg = view(Message::fixture(
+        let message = view(Message::fixture(
             MessageKind::Presence {
                 subtype: PresenceSubtype::Left,
             },
             "",
         ));
-        insta::assert_snapshot!(format_presence_json(&msg, PresenceSubtype::Left));
+        insta::assert_snapshot!(format_presence_json(&message, PresenceSubtype::Left));
     }
 
     /// The `{"event":"state",…}` line a shared-state change emits on the
@@ -732,14 +732,14 @@ mod snapshots {
     #[test]
     fn a_meta_event_carries_no_document() {
         let merge = serde_json::json!({"peers": {"aa": {"status": "busy"}}});
-        let msg = view(Message::fixture(
+        let message = view(Message::fixture(
             MessageKind::State,
             &format!(r#"{{"k":"merge","merge":{merge}}}"#),
         ));
         let document = four_card_meta_document();
         let line = super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::Meta,
-            &msg,
+            &message,
             &document,
             false,
         );
@@ -756,14 +756,14 @@ mod snapshots {
     #[test]
     fn a_state_event_keeps_its_document() {
         let merge = serde_json::json!({"turn": "b"});
-        let msg = view(Message::fixture(
+        let message = view(Message::fixture(
             MessageKind::State,
             &format!(r#"{{"k":"merge","merge":{merge}}}"#),
         ));
         let document = serde_json::json!({"turn": "b"});
         let line = super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
-            &msg,
+            &message,
             &document,
             false,
         );
@@ -834,8 +834,8 @@ mod prop {
             is_self in any::<bool>(),
         ) {
             let expected = body_text.clone();
-            let msg = super::chat_frame(author.as_str(), &body_text);
-            let json = format_msg_json(&msg, is_self);
+            let message = super::chat_frame(author.as_str(), &body_text);
+            let json = format_msg_json(&message, is_self);
             let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(parsed["body"].as_str().unwrap(), expected.as_str());
             prop_assert_eq!(
@@ -848,12 +848,12 @@ mod prop {
         #[test]
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
             let test_nick = habilis_network::protocol::Nickname::from("test-nick");
-            let (msg, subtype) = if is_join {
+            let (message, subtype) = if is_join {
                 (view(Message::new_joined(&sid(), &test_nick)), PresenceSubtype::Joined)
             } else {
                 (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
             };
-            let json = format_presence_json(&msg, subtype);
+            let json = format_presence_json(&message, subtype);
             let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(&parsed["type"], "presence");
         }

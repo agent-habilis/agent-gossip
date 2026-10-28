@@ -226,15 +226,15 @@ struct StateLine<'a> {
     is_self: bool,
 }
 
-fn message_header<'a>(msg: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
+fn message_header<'a>(message: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
     MessageHeader {
         event: "message",
-        id: msg.id.as_str(),
+        id: message.id.as_str(),
         ty,
-        gossip: msg.mesh.as_str(),
-        author: msg.author.as_str(),
-        pubkey: Some(msg.key().to_string()),
-        ts: msg.timestamp.as_secs(),
+        gossip: message.mesh.as_str(),
+        author: message.author.as_str(),
+        pubkey: Some(message.key().to_string()),
+        ts: message.timestamp.as_secs(),
     }
 }
 
@@ -383,8 +383,8 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskStalled { .. } => true,
-        OutputEvent::Presence { msg } => matches!(
-            &msg.kind,
+        OutputEvent::Presence { message } => matches!(
+            &message.kind,
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined | PresenceSubtype::Left
             }
@@ -419,12 +419,12 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Serializes the struct directly because the documented wire format
 /// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
-pub(super) fn format_presence_json(msg: &Authored, subtype: PresenceSubtype) -> String {
+pub(super) fn format_presence_json(message: &Authored, subtype: PresenceSubtype) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
-        header: message_header(msg, "presence"),
+        header: message_header(message, "presence"),
         subtype,
-        display: presence_display(msg.author.as_str(), subtype),
+        display: presence_display(message.author.as_str(), subtype),
     })
     .expect("presence event serialization should never fail");
     stamp_visibility(
@@ -440,8 +440,8 @@ pub(super) fn format_presence_json(msg: &Authored, subtype: PresenceSubtype) -> 
 /// consumer tells a private line from a public one: `type` (`"broadcast"` vs
 /// `"msg"`) and `to` (`null` vs the addressee, which also turns on the `→` in
 /// `display`).
-pub(super) fn format_msg_json(msg: &Authored, is_self: bool) -> String {
-    let to = match &msg.kind {
+pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
+    let to = match &message.kind {
         MessageKind::App { tag, to, .. } if tag.as_str() == crate::a2a::wire::MSG => to.as_ref(),
         MessageKind::App { tag, .. } if tag.as_str() == crate::a2a::wire::BROADCAST => None,
         MessageKind::App { .. }
@@ -462,16 +462,16 @@ pub(super) fn format_msg_json(msg: &Authored, is_self: bool) -> String {
     // are built by `send_broadcast`/`send_msg`, so the parse succeeds in
     // practice; the fallback keeps a display path from ever panicking on a
     // crafted body.
-    let payload = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).ok();
+    let payload = serde_json::from_str::<crate::a2a::Message>(message.body.as_str()).ok();
     let body = payload.as_ref().map_or_else(
-        || msg.body.as_str().to_owned(),
+        || message.body.as_str().to_owned(),
         crate::a2a::status_update_params::display_text,
     );
     let to = to.map(Nickname::as_str);
     stamp_visibility(
         serde_json::to_string(&MsgLine {
-            header: message_header(msg, if to.is_some() { "msg" } else { "broadcast" }),
-            display: msg_display(msg.author.as_str(), &body, to),
+            header: message_header(message, if to.is_some() { "msg" } else { "broadcast" }),
+            display: msg_display(message.author.as_str(), &body, to),
             body,
             to,
             message: payload,
@@ -482,16 +482,16 @@ pub(super) fn format_msg_json(msg: &Authored, is_self: bool) -> String {
     )
 }
 
-pub(super) fn print_message_json(msg: &Authored, is_self: bool) {
-    emit(&format_msg_json(msg, is_self));
+pub(super) fn print_message_json(message: &Authored, is_self: bool) {
+    emit(&format_msg_json(message, is_self));
 }
 
 /// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
 /// its JSON line. A beat renders as a `task_progress` event; every other leg
 /// as a `task` event carrying the native A2A `kind` + `state`, the text
 /// projection as `body`, and the whole A2A payload.
-pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
-    let to = match &msg.kind {
+pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
+    let to = match &message.kind {
         MessageKind::App { tag, to, .. }
             if matches!(
                 tag.as_str(),
@@ -517,12 +517,12 @@ pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
             unreachable!("format_task_json only handles status/artifact frames")
         }
     };
-    let task_id = crate::a2a::status_update_params::frame_task_id(msg)
+    let task_id = crate::a2a::status_update_params::frame_task_id(message)
         .expect("a task frame carries its task id")
         .as_str()
         .to_owned();
     // A liveness beat (a status marked `mesh:beat`) → task_progress widget.
-    if let Ok(payload) = crate::a2a::status_update_params::status_payload(msg)
+    if let Ok(payload) = crate::a2a::status_update_params::status_payload(message)
         && crate::a2a::status_update_params::is_beat(&payload)
     {
         let (done, total) = crate::a2a::status_update_params::beat_fraction(&payload)
@@ -530,32 +530,33 @@ pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
                 event: "task_progress",
-                id: msg.id.as_str(),
-                gossip: msg.mesh.as_str(),
-                author: msg.author.as_str(),
-                ts: msg.timestamp.as_secs(),
+                id: message.id.as_str(),
+                gossip: message.mesh.as_str(),
+                author: message.author.as_str(),
+                ts: message.timestamp.as_secs(),
                 to: to.as_str(),
                 task_id,
                 done,
                 total,
-                display: task_progress_display(msg.author.as_str(), to.as_str(), done, total),
+                display: task_progress_display(message.author.as_str(), to.as_str(), done, total),
                 is_self,
             })
             .expect("task_progress event serialization should never fail"),
             false,
         );
     }
-    let kind = crate::a2a::status_update_params::task_event_kind(msg).unwrap_or("status-update");
-    let state = crate::a2a::status_update_params::frame_task_state(msg);
-    let body = crate::a2a::status_update_params::task_text(msg);
+    let kind =
+        crate::a2a::status_update_params::task_event_kind(message).unwrap_or("status-update");
+    let state = crate::a2a::status_update_params::frame_task_state(message);
+    let body = crate::a2a::status_update_params::task_text(message);
     stamp_visibility(
         serde_json::to_string(&TaskLine {
             event: "task",
-            id: msg.id.as_str(),
-            gossip: msg.mesh.as_str(),
-            author: msg.author.as_str(),
-            pubkey: Some(msg.key().to_string()),
-            ts: msg.timestamp.as_secs(),
+            id: message.id.as_str(),
+            gossip: message.mesh.as_str(),
+            author: message.author.as_str(),
+            pubkey: Some(message.key().to_string()),
+            ts: message.timestamp.as_secs(),
             to: to.as_str(),
             task_id,
             kind,
@@ -564,19 +565,19 @@ pub(super) fn format_task_json(msg: &Authored, is_self: bool) -> String {
             // binding (`format_task_message_json`), never as a frame.
             label: None,
             // Only a `working` leg carries the reason, as in the record.
-            waiting: crate::a2a::status_update_params::status_payload(msg)
+            waiting: crate::a2a::status_update_params::status_payload(message)
                 .ok()
                 .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
                 .and_then(|payload| crate::a2a::status_update_params::status_waiting(&payload)),
             display: task_display(TaskDisplayParams {
-                author: msg.author.as_str(),
+                author: message.author.as_str(),
                 to: to.as_str(),
                 kind,
                 state,
                 body: &body,
             }),
             body,
-            payload: serde_json::from_str(msg.body.as_str()).ok(),
+            payload: serde_json::from_str(message.body.as_str()).ok(),
             is_self,
         })
         .expect("task event serialization should never fail"),
@@ -626,8 +627,8 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     )
 }
 
-pub(super) fn print_task_json(msg: &Authored, is_self: bool) {
-    emit(&format_task_json(msg, is_self));
+pub(super) fn print_task_json(message: &Authored, is_self: bool) {
+    emit(&format_task_json(message, is_self));
 }
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
@@ -796,9 +797,11 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             drift: drift.as_deref(),
             a2a_port: *a2a_port,
         }),
-        OutputEvent::Message { msg, is_self } => return Some(format_msg_json(msg, *is_self)),
-        OutputEvent::Task { msg, is_self } => {
-            return Some(format_task_json(msg, *is_self));
+        OutputEvent::Message { message, is_self } => {
+            return Some(format_msg_json(message, *is_self));
+        }
+        OutputEvent::Task { message, is_self } => {
+            return Some(format_task_json(message, *is_self));
         }
         OutputEvent::TaskMessage {
             id,
@@ -853,11 +856,11 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             state,
             ts: *ts,
         }),
-        OutputEvent::Presence { msg } => {
-            let MessageKind::Presence { subtype } = &msg.kind else {
+        OutputEvent::Presence { message } => {
+            let MessageKind::Presence { subtype } = &message.kind else {
                 return None;
             };
-            return Some(format_presence_json(msg, *subtype));
+            return Some(format_presence_json(message, *subtype));
         }
         OutputEvent::PeerTimeout {
             nickname,

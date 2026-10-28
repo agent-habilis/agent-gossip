@@ -94,7 +94,7 @@ pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicK
 #[must_use]
 #[derive(Debug)]
 pub struct CraftedMsg {
-    msg: Message,
+    message: Message,
 }
 
 impl CraftedMsg {
@@ -106,7 +106,7 @@ impl CraftedMsg {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
         Self {
-            msg: Message::new_app(
+            message: Message::new_app(
                 mesh,
                 &author,
                 AppFrameParams {
@@ -131,10 +131,10 @@ impl CraftedMsg {
     /// rather than a malformed body. Call before `sign` — `to` is part of the
     /// canonical bytes.
     pub fn address_to(mut self, to: Option<&str>) -> Self {
-        let MessageKind::App { tag, corr, .. } = self.msg.kind.clone() else {
+        let MessageKind::App { tag, corr, .. } = self.message.kind.clone() else {
             panic!("address_to takes an app frame");
         };
-        self.msg.kind = MessageKind::App {
+        self.message.kind = MessageKind::App {
             tag,
             to: to.map(|nick| {
                 Nickname::new(nick.to_owned()).expect("test addressee is a valid nickname")
@@ -148,10 +148,10 @@ impl CraftedMsg {
     /// keeping the body. Pair with [`address_to`](CraftedMsg::address_to) to
     /// build either a well-formed msg or the broadcast-shaped forgery.
     pub fn into_msg(mut self) -> Self {
-        let MessageKind::App { to, corr, .. } = self.msg.kind.clone() else {
+        let MessageKind::App { to, corr, .. } = self.message.kind.clone() else {
             panic!("into_msg takes an app frame");
         };
-        self.msg.kind = MessageKind::App {
+        self.message.kind = MessageKind::App {
             tag: AppTag::from(wire::MSG),
             to,
             corr,
@@ -164,14 +164,16 @@ impl CraftedMsg {
     /// after any `id` mutation and before `sign`.
     pub fn wrap_msg(mut self) -> Self {
         assert!(
-            self.msg.kind.is_app(wire::MSG),
+            self.message.kind.is_app(wire::MSG),
             "wrap_msg applies to msg frames only"
         );
-        let mut payload =
-            crate::a2a::status_update_params::compose_msg(&self.msg.mesh, self.msg.body.as_str());
-        payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
+        let mut payload = crate::a2a::status_update_params::compose_msg(
+            &self.message.mesh,
+            self.message.body.as_str(),
+        );
+        payload.message_id = crate::a2a::MessageId::from_uuid_str(self.message.id.as_str())
             .expect("frame id is a valid uuid");
-        self.msg.body = crate::a2a::status_update_params::payload_body(&payload)
+        self.message.body = crate::a2a::status_update_params::payload_body(&payload)
             .expect("crafted payload serializes");
         self
     }
@@ -186,7 +188,7 @@ impl CraftedMsg {
         let body = habilis_network::ops::doc::merge_body(merge)
             .expect("state merge envelope composes from any merge value");
         Self {
-            msg: Message::new_state(mesh, &author, body),
+            message: Message::new_state(mesh, &author, body),
         }
     }
 
@@ -219,7 +221,7 @@ impl CraftedMsg {
         let body =
             habilis_network::ops::doc::change_body(&change, None).expect("change body composes");
         Self {
-            msg: Message::new_channel_event(
+            message: Message::new_channel_event(
                 mesh,
                 &author,
                 body,
@@ -257,7 +259,7 @@ impl CraftedMsg {
         let body = crate::a2a::status_update_params::payload_body(&update)
             .expect("crafted payload serializes");
         Self {
-            msg: Message::new_app(
+            message: Message::new_app(
                 mesh,
                 &author,
                 AppFrameParams {
@@ -302,7 +304,7 @@ impl CraftedMsg {
         let body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
         Self {
-            msg: Message::new_app(
+            message: Message::new_app(
                 mesh,
                 &author,
                 AppFrameParams {
@@ -342,7 +344,7 @@ impl CraftedMsg {
             .expect("crafted payload serializes");
         frame.body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
-        Self { msg: frame }
+        Self { message: frame }
     }
 
     /// A sealed `a2a_receipt` that says `to` sent frame `ref_id` and that it
@@ -364,7 +366,7 @@ impl CraftedMsg {
         let body = habilis_network::protocol::seal_to_body(&seal_key, &plain)
             .expect("sealing to a published key succeeds");
         Self {
-            msg: Message::new_app(
+            message: Message::new_app(
                 mesh,
                 &author,
                 AppFrameParams {
@@ -380,19 +382,19 @@ impl CraftedMsg {
     /// The id that a receipt for this frame names in its `ref`.
     #[must_use]
     pub fn frame_id(&self) -> String {
-        self.msg.id.as_str().to_owned()
+        self.message.id.as_str().to_owned()
     }
 
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
     pub fn chain(mut self, seq: u64, prev: Option<ContentHash>) -> Self {
-        self.msg = self.msg.with_chain(seq, prev);
+        self.message = self.message.with_chain(seq, prev);
         self
     }
 
     /// Override the message id — e.g. to replay another message's id (the
     /// dedup-ordering test). Must be a valid UUID string.
     pub fn id(mut self, id: &str) -> Self {
-        self.msg.id = id.parse().expect("crafted id must be a valid UUID");
+        self.message.id = id.parse().expect("crafted id must be a valid UUID");
         self
     }
 
@@ -404,16 +406,16 @@ impl CraftedMsg {
     /// verbatim and is dropped at the boundary.
     pub fn wrap_a2a(mut self) -> Self {
         assert!(
-            self.msg.kind.is_app(wire::BROADCAST),
+            self.message.kind.is_app(wire::BROADCAST),
             "wrap_a2a applies to chat frames only"
         );
         let mut payload = crate::a2a::status_update_params::compose_broadcast(
-            &self.msg.mesh,
-            self.msg.body.as_str(),
+            &self.message.mesh,
+            self.message.body.as_str(),
         );
-        payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
+        payload.message_id = crate::a2a::MessageId::from_uuid_str(self.message.id.as_str())
             .expect("frame id is a valid uuid");
-        self.msg.body = crate::a2a::status_update_params::payload_body(&payload)
+        self.message.body = crate::a2a::status_update_params::payload_body(&payload)
             .expect("crafted payload serializes");
         self
     }
@@ -426,35 +428,35 @@ impl CraftedMsg {
     pub fn shard(mut self, group: &str, idx: u32, total: u32) -> Self {
         let group = habilis_network::protocol::ShardGroup::from_uuid_str(group)
             .expect("valid shard group uuid");
-        self.msg =
-            self.msg
-                .with_shard(Some(habilis_network::protocol::Shard { group, idx, total }));
+        self.message = self
+            .message
+            .with_shard(Some(habilis_network::protocol::Shard { group, idx, total }));
         self
     }
 
     /// Stamp the cross-author DAG `parents` (Phase 3).
     pub fn parents(mut self, parents: Vec<ContentHash>) -> Self {
-        self.msg = self.msg.with_parents(parents);
+        self.message = self.message.with_parents(parents);
         self
     }
 
     /// Set the timestamp (e.g. an implausibly old or future value).
     pub fn timestamp(mut self, ts: UnixSecs) -> Self {
-        self.msg.timestamp = ts;
+        self.message.timestamp = ts;
         self
     }
 
     /// Sign with `key`, binding the current fields. Call last — unless the
     /// test intends to tamper afterward.
     pub fn sign(mut self, key: &TestKey) -> Self {
-        self.msg = self.msg.sign(&key.0).into_message();
+        self.message = self.message.sign(&key.0).into_message();
         self
     }
 
     /// Mutate the body *after* signing → a tampered message whose signature
     /// no longer matches its canonical bytes.
     pub fn tamper_body(mut self, body: &str) -> Self {
-        self.msg.body = MessageBody::new(body.to_owned()).expect("test body is valid");
+        self.message.body = MessageBody::new(body.to_owned()).expect("test body is valid");
         self
     }
 
@@ -463,7 +465,7 @@ impl CraftedMsg {
     /// `A2aMsg` into a `Presence` beat (or the reverse) must break the
     /// signature and the victim must drop it.
     pub fn flip_chat_kind(mut self) -> Self {
-        self.msg.kind = match self.msg.kind.clone() {
+        self.message.kind = match self.message.kind.clone() {
             MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => {
                 MessageKind::Presence {
                     subtype: PresenceSubtype::Alive,
@@ -491,7 +493,7 @@ impl CraftedMsg {
     /// This message's content hash — use as another message's `prev`/parent.
     #[must_use]
     pub fn content_hash(&self) -> ContentHash {
-        self.msg.content_hash()
+        self.message.content_hash()
     }
 
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
@@ -500,8 +502,8 @@ impl CraftedMsg {
         use habilis_network::protocol::message::Verified;
         // A signed frame keeps its signature as built, or as stale after a tamper: the fixture keeps
         // the signer, and the engine's own serializer writes the bytes.
-        if self.msg.signer.is_some() {
-            let frame = Verified::fixture_with_signature(self.msg.clone());
+        if self.message.signer.is_some() {
+            let frame = Verified::fixture_with_signature(self.message.clone());
             return frame
                 .serialize()
                 .expect("crafted message serializes")
@@ -511,7 +513,7 @@ impl CraftedMsg {
         // An unsigned frame carries no key and no signature on the wire. The engine has no public
         // unsigned encoding, so the serialized frame has its two key fields removed here.
         let zero_key = habilis_network::protocol::AuthorKey::from_bytes([0; 32]);
-        let frame = Verified::fixture_unchecked(self.msg.clone(), zero_key);
+        let frame = Verified::fixture_unchecked(self.message.clone(), zero_key);
         let mut wire: serde_json::Value = serde_json::from_slice(
             frame
                 .serialize()

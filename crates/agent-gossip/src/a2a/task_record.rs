@@ -969,8 +969,8 @@ async fn broadcast_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).sign(state.identity());
-    let Ok(bytes) = msg.serialize() else {
+    let message = Message::new_frame(ctx.mesh, ctx.author, kind, body).sign(state.identity());
+    let Ok(bytes) = message.serialize() else {
         return false;
     };
     // Through `deliver`, not `sender.broadcast`: the frame is directed, so
@@ -981,7 +981,7 @@ async fn broadcast_status(
     // background because this runs from `on_tick`, inline on the event loop:
     // a cold `deliver` dials there and stops the whole node for the dial and
     // path-select budgets, once per due task.
-    habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await
+    habilis_network::ops::deliver_in_background(&message, bytes, state, ctx.sender).await
 }
 
 #[cfg(test)]
@@ -2200,7 +2200,7 @@ mod tests {
             },
         );
         let line = crate::output::event_json(&crate::output::OutputEvent::Task {
-            msg: Box::new(
+            message: Box::new(
                 plaintext
                     .sign(&habilis_network::protocol::Identity::generate())
                     .authored(),

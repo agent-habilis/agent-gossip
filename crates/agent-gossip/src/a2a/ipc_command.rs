@@ -234,8 +234,8 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_record(&msg_id, &msg));
+                Ok((msg_id, message)) => {
+                    let _ = resp_tx.send(json_ok_record(&msg_id, &message));
                     true
                 }
                 Err(error) => {
@@ -260,8 +260,8 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok((msg_id, msg, pending)) => {
-                    let ok = json_ok_record(&msg_id, &msg);
+                Ok((msg_id, message, pending)) => {
+                    let ok = json_ok_record(&msg_id, &message);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -334,8 +334,8 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok((msg, pending)) => {
-                    let ok = json_ok_record(&msg.id.clone(), &msg);
+                Ok((message, pending)) => {
+                    let ok = json_ok_record(&message.id.clone(), &message);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -379,8 +379,8 @@ pub(crate) async fn handle_ipc_command(
             )
             .await
             {
-                Ok((msg, pending)) => {
-                    let ok = json_ok_record(&msg.id.clone(), &msg);
+                Ok((message, pending)) => {
+                    let ok = json_ok_record(&message.id.clone(), &message);
                     when_sent(pending, move |verdict| {
                         let _ = resp_tx.send(match verdict {
                             Ok(()) => ok,
@@ -673,8 +673,8 @@ pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
 }
 
 /// The `msg` IPC answer: the id and the record of the message just sent.
-fn json_ok_record(id: &MessageId, msg: &Authored) -> String {
-    serde_json::json!({"ok": true, "id": id, "message": message_record(msg)}).to_string()
+fn json_ok_record(id: &MessageId, message: &Authored) -> String {
+    serde_json::json!({"ok": true, "id": id, "message": message_record(message)}).to_string()
 }
 
 #[cfg(test)]

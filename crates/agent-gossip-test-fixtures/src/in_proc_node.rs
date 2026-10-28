@@ -166,7 +166,7 @@ impl InProcNode {
     }
 
     /// Send a msg to one peer; returns the new message id.
-    pub async fn msg(&self, to: &str, text: &str) -> MessageId {
+    pub async fn message(&self, to: &str, text: &str) -> MessageId {
         self.try_msg(to, text)
             .await
             .expect("in-process msg failed")
@@ -183,7 +183,7 @@ impl InProcNode {
     /// is not known yet).
     pub async fn try_msg(&self, to: &str, text: &str) -> anyhow::Result<Authored> {
         self.session
-            .msg(
+            .message(
                 Nickname::new(to).expect("valid test nickname"),
                 MessageBody::new(text).expect("valid body"),
             )
@@ -313,14 +313,18 @@ impl InProcNode {
         // seal is one-shot, so wait for it first — otherwise, under the concurrent
         // suite's load, the request is silently dropped and the call hangs.
         self.await_peer_card(target).await;
-        let msg = agent_gossip::a2a::status_update_params::send_message_payload(
+        let message = agent_gossip::a2a::status_update_params::send_message_payload(
             self.session.mesh_id(),
             None,
             text,
             label,
         );
-        self.a2a_call_retrying(target, "SendMessage", serde_json::json!({ "message": msg }))
-            .await
+        self.a2a_call_retrying(
+            target,
+            "SendMessage",
+            serde_json::json!({ "message": message }),
+        )
+        .await
     }
 
     /// Block until `target`'s card is present in this node's `meta` doc — the
@@ -367,14 +371,18 @@ impl InProcNode {
         task_id: &TaskId,
         text: &str,
     ) -> serde_json::Value {
-        let msg = agent_gossip::a2a::status_update_params::send_message_payload(
+        let message = agent_gossip::a2a::status_update_params::send_message_payload(
             self.session.mesh_id(),
             Some(task_id),
             text,
             None,
         );
-        self.a2a_call_retrying(target, "SendMessage", serde_json::json!({ "message": msg }))
-            .await
+        self.a2a_call_retrying(
+            target,
+            "SendMessage",
+            serde_json::json!({ "message": message }),
+        )
+        .await
     }
 
     /// A directed A2A call to `target`, sent **exactly once**; returns the
@@ -514,7 +522,7 @@ impl InProcNode {
         self.drained
             .iter()
             .filter_map(|event| match event {
-                OutputEvent::Task { msg, is_self } => Some((&**msg, *is_self)),
+                OutputEvent::Task { message, is_self } => Some((&**message, *is_self)),
                 _ => None,
             })
             .collect()
@@ -536,8 +544,8 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Task { msg, .. }
-                        if agent_gossip::a2a::status_update_params::frame_task_state(msg) == Some(state)
+                    OutputEvent::Task { message, .. }
+                        if agent_gossip::a2a::status_update_params::frame_task_state(message) == Some(state)
                 )
             })
         })
@@ -631,7 +639,7 @@ impl InProcNode {
         self.drained
             .iter()
             .filter_map(|event| match event {
-                OutputEvent::Message { msg, .. } => Some(&**msg),
+                OutputEvent::Message { message, .. } => Some(&**message),
                 _ => None,
             })
             .collect()
@@ -646,9 +654,9 @@ impl InProcNode {
             .iter()
             .filter_map(|event| match event {
                 OutputEvent::Message {
-                    msg,
+                    message,
                     is_self: false,
-                } => Some(&**msg),
+                } => Some(&**message),
                 _ => None,
             })
             .collect()
@@ -661,8 +669,8 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { msg, is_self: false }
-                        if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(body)
+                    OutputEvent::Message { message, is_self: false }
+                        if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
         })
@@ -690,8 +698,8 @@ impl InProcNode {
             .filter(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { msg, is_self: false }
-                        if agent_gossip::a2a::status_update_params::chat_text(msg).as_deref() == Some(body)
+                    OutputEvent::Message { message, is_self: false }
+                        if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
             .count()
@@ -703,8 +711,8 @@ impl InProcNode {
         self.drained
             .iter()
             .filter(|event| match event {
-                OutputEvent::Presence { msg } => {
-                    matches!(&msg.kind, MessageKind::Presence { subtype } if *subtype == want)
+                OutputEvent::Presence { message } => {
+                    matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                 }
                 _ => false,
             })
@@ -720,9 +728,9 @@ impl InProcNode {
     ) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| match event {
-                OutputEvent::Presence { msg } => {
-                    msg.author.to_string() == nick
-                        && matches!(&msg.kind, MessageKind::Presence { subtype } if *subtype == want)
+                OutputEvent::Presence { message } => {
+                    message.author.to_string() == nick
+                        && matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                 }
                 _ => false,
             })
@@ -742,8 +750,8 @@ impl InProcNode {
             events
                 .iter()
                 .filter(|event| match event {
-                    OutputEvent::Presence { msg } => {
-                        matches!(&msg.kind, MessageKind::Presence { subtype } if *subtype == want)
+                    OutputEvent::Presence { message } => {
+                        matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                     }
                     _ => false,
                 })

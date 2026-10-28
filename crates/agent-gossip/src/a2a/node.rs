@@ -501,7 +501,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::Fork { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
-        OutputEvent::Task { msg, .. } => !classify(msg).beat,
+        OutputEvent::Task { message, .. } => !classify(message).beat,
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
@@ -1119,13 +1119,13 @@ async fn resend_cached_shards(
     let frames = state.shard_cache_mut().frames(group, missing);
     let mut resent = 0usize;
     for bytes in frames {
-        let Some(msg) = Message::parse(bytes.as_bytes())
+        let Some(message) = Message::parse(bytes.as_bytes())
             .ok()
-            .and_then(|msg| msg.verify().ok())
+            .and_then(|message| message.verify().ok())
         else {
             continue; // never: the cache holds frames we serialized ourselves
         };
-        if let Some(to) = habilis_network::protocol::sole_addressee(&msg.kind)
+        if let Some(to) = habilis_network::protocol::sole_addressee(&message.kind)
             && to != requester
         {
             continue;
@@ -1133,7 +1133,7 @@ async fn resend_cached_shards(
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
         // not start is asked for again on the requester's next tick.
-        if habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
+        if habilis_network::ops::deliver_in_background(&message, bytes, state, ctx.sender).await {
             resent += 1;
         }
     }
@@ -1371,9 +1371,9 @@ mod classify_tests {
         view(status_frame_in_raw(state, to))
     }
 
-    fn task_event(msg: Authored, is_self: bool) -> OutputEvent {
+    fn task_event(message: Authored, is_self: bool) -> OutputEvent {
         OutputEvent::Task {
-            msg: Box::new(msg),
+            message: Box::new(message),
             is_self,
         }
     }
@@ -1628,9 +1628,12 @@ mod classify_tests {
     // wrong one would still satisfy a test phrased in terms of chat.
     #[test]
     fn msg_is_loggable_but_rpc_is_not() {
-        let msg = classify(&app_frame(wire::BROADCAST));
-        assert!(msg.loggable, "broadcast chat is loggable");
-        assert!(msg.chained, "broadcast chat carries the per-author chain");
+        let message = classify(&app_frame(wire::BROADCAST));
+        assert!(message.loggable, "broadcast chat is loggable");
+        assert!(
+            message.chained,
+            "broadcast chat carries the per-author chain"
+        );
         let req = classify(&app_frame(wire::REQ));
         assert!(!req.loggable, "an RPC request is plumbing, not logged");
         assert!(!req.chained, "only broadcast chat is chained");

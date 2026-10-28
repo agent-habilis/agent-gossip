@@ -121,10 +121,10 @@ mod message {
 
     #[divan::bench]
     fn serialize(bencher: Bencher<'_, '_>) {
-        let msg = BenchMessage::sample(BODY);
+        let message = BenchMessage::sample(BODY);
         bencher
             .counter(BytesCount::new(BODY.len()))
-            .bench(|| msg.serialize());
+            .bench(|| message.serialize());
     }
 
     #[divan::bench]

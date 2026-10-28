@@ -212,10 +212,10 @@ pub fn status_update(mesh: &MeshId, params: StatusUpdateParams<'_>) -> TaskStatu
         metadata,
     } = params;
     let message = note.map(|text| {
-        let mut msg = Message::text(Role::Agent, text);
-        msg.context_id = Some(mesh.as_str().to_string());
-        msg.task_id = Some(task_id.clone());
-        Box::new(msg)
+        let mut message = Message::text(Role::Agent, text);
+        message.context_id = Some(mesh.as_str().to_string());
+        message.task_id = Some(task_id.clone());
+        Box::new(message)
     });
     TaskStatusUpdate {
         task_id: task_id.clone(),
@@ -509,7 +509,7 @@ pub fn task_text(frame: &Frame) -> String {
     {
         Some(wire::STATUS) => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
             .ok()
-            .and_then(|payload| payload.status.message.map(|msg| display_text(&msg)))
+            .and_then(|payload| payload.status.message.map(|message| display_text(&message)))
             .unwrap_or_default(),
         Some(wire::ARTIFACT) => serde_json::from_str::<TaskArtifactUpdate>(frame.body.as_str())
             .ok()

@@ -14,11 +14,11 @@ pub enum OutputEvent {
         a2a_port: Option<u16>,
     },
     Message {
-        msg: Box<Authored>,
+        message: Box<Authored>,
         is_self: bool,
     },
     Presence {
-        msg: Box<Authored>,
+        message: Box<Authored>,
     },
     PeerTimeout {
         nickname: Nickname,
@@ -46,7 +46,7 @@ pub enum OutputEvent {
         known: usize,
     },
     Task {
-        msg: Box<Authored>,
+        message: Box<Authored>,
         is_self: bool,
     },
     TaskMessage {

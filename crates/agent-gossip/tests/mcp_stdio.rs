@@ -186,12 +186,12 @@ fn tool_result_text(response: &serde_json::Value) -> Option<String> {
 fn tool_error(response: &serde_json::Value) -> Option<String> {
     // Either a JSON-RPC error (invalid args / not in mesh) or
     // `isError: true` in the result content.
-    if let Some(msg) = response
+    if let Some(message) = response
         .get("error")
         .and_then(|error_obj| error_obj.get("message"))
         .and_then(|message| message.as_str())
     {
-        return Some(msg.to_string());
+        return Some(message.to_string());
     }
     if response
         .get("result")
@@ -267,8 +267,9 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
             .as_array()
             .into_iter()
             .flatten()
-            .any(|msg| {
-                msg.get("author").and_then(|value| value.as_str()) == Some(creator_nick.as_str())
+            .any(|message| {
+                message.get("author").and_then(|value| value.as_str())
+                    == Some(creator_nick.as_str())
             });
         if linked {
             break;
@@ -856,7 +857,8 @@ fn send_empty_body_works() {
     .expect("fetch");
     let msgs = fetched["messages"].as_array().unwrap();
     assert!(
-        msgs.iter().any(|msg| msg["id"].as_str() == Some(&id)),
+        msgs.iter()
+            .any(|message| message["id"].as_str() == Some(&id)),
         "buffer should contain the just-sent message, got {msgs:?}"
     );
 }

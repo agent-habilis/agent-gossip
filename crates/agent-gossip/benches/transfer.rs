@@ -113,15 +113,15 @@ async fn receive_chunks(
 ) {
     let mut seen = vec![false; chunk_count as usize];
     loop {
-        let msg = match rx.recv().await {
-            Ok(msg) => msg,
+        let message = match rx.recv().await {
+            Ok(message) => message,
             Err(RecvError::Lagged(skipped)) => {
                 tally.lagged.fetch_add(skipped, Ordering::Relaxed);
                 continue;
             }
             Err(RecvError::Closed) => break,
         };
-        let Some(index) = verify_chunk(msg.body.as_str(), chunk_count) else {
+        let Some(index) = verify_chunk(message.body.as_str(), chunk_count) else {
             continue;
         };
         let slot = &mut seen[index as usize];
@@ -131,7 +131,7 @@ async fn receive_chunks(
         *slot = true;
         tally
             .delivered_bytes
-            .fetch_add(msg.body.as_str().len() as u64, Ordering::Relaxed);
+            .fetch_add(message.body.as_str().len() as u64, Ordering::Relaxed);
         if tally.delivered.fetch_add(1, Ordering::Relaxed) + 1 == chunk_count as usize {
             break;
         }

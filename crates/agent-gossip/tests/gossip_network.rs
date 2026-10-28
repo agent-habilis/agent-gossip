@@ -406,8 +406,8 @@ async fn test_three_node_full_delivery() {
         beta.wait_inbound(1, MSG_TIMEOUT).await && gamma.wait_inbound(1, MSG_TIMEOUT).await,
         "expected both beta and gamma to receive the broadcast"
     );
-    for msg in beta.inbound().into_iter().chain(gamma.inbound()) {
-        assert_eq!(chat_text(msg), "broadcast to all three nodes");
+    for message in beta.inbound().into_iter().chain(gamma.inbound()) {
+        assert_eq!(chat_text(message), "broadcast to all three nodes");
     }
 }
 
@@ -454,8 +454,8 @@ fn test_stdout_format_parseable() {
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    for msg in &msgs {
-        assert_eq!(msg.body, "format check message");
+    for message in &msgs {
+        assert_eq!(message.body, "format check message");
     }
 }
 
@@ -502,8 +502,11 @@ fn test_oversize_body_splits_and_reassembles() {
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    for msg in &got {
-        assert_eq!(msg.body, body, "the reassembled body matches the original");
+    for message in &got {
+        assert_eq!(
+            message.body, body,
+            "the reassembled body matches the original"
+        );
     }
 }
 
@@ -526,8 +529,8 @@ fn test_utf8_body_round_trip() {
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    for msg in &msgs {
-        assert_eq!(msg.body, body);
+    for message in &msgs {
+        assert_eq!(message.body, body);
     }
 }
 
@@ -615,13 +618,13 @@ async fn test_ask_targets_specific_agent_three_peers() {
             node.wait_body("tag-from-alpha", MSG_TIMEOUT).await,
             "alpha's message not delivered"
         );
-        let msg = node
+        let message = node
             .inbound()
             .into_iter()
-            .find(|msg| chat_text(msg) == "tag-from-alpha")
+            .find(|message| chat_text(message) == "tag-from-alpha")
             .expect("alpha's message missing");
         assert_eq!(
-            msg.author.to_string(),
+            message.author.to_string(),
             alpha_nick,
             "wrong author for alpha's message"
         );
@@ -640,7 +643,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
     assert_eq!(
         beta.inbound()
             .into_iter()
-            .find(|msg| chat_text(msg) == "tag-from-gamma")
+            .find(|message| chat_text(message) == "tag-from-gamma")
             .expect("gamma msg missing on beta")
             .author
             .to_string(),
@@ -1158,7 +1161,10 @@ fn test_poll_returns_messages() {
         .unwrap_or_else(|error| panic!("failed to parse poll JSON: {error}\nraw: {all_json}"));
 
     // Should have at least the 2 messages we sent (plus possible presence).
-    let msg_bodies: Vec<&str> = all.iter().filter_map(|msg| msg["body"].as_str()).collect();
+    let msg_bodies: Vec<&str> = all
+        .iter()
+        .filter_map(|message| message["body"].as_str())
+        .collect();
     assert!(
         msg_bodies.contains(&"hello from poll test"),
         "first message missing from poll: {msg_bodies:?}"
@@ -1251,12 +1257,12 @@ fn test_cli_broadcast_and_msg_wire_contract() {
     );
 
     // Msg: `type` says one peer, `to` names them, and the arrow marks it.
-    let msg = find(&bob_events, "to-bob-only").expect("bob received the msg");
-    assert_eq!(msg["type"], "msg");
-    assert_eq!(msg["to"], bob.nickname);
-    assert_eq!(msg["is_visible"], true);
+    let message = find(&bob_events, "to-bob-only").expect("bob received the msg");
+    assert_eq!(message["type"], "msg");
+    assert_eq!(message["to"], bob.nickname);
+    assert_eq!(message["is_visible"], true);
     assert_eq!(
-        msg["display"],
+        message["display"],
         format!(
             "💬️ `<{}>` → `<{}>`: to-bob-only",
             creator.nickname, bob.nickname
@@ -1550,7 +1556,7 @@ fn test_ping_reports_peer_rtt() {
         !joiner
             .messages()
             .iter()
-            .any(|msg| msg.body == "ping" || msg.body == "pong"),
+            .any(|message| message.body == "ping" || message.body == "pong"),
         "ping/pong leaked as chat messages to the joiner"
     );
 }
@@ -2687,7 +2693,7 @@ async fn same_nickname_peers_communicate() {
     let from_alpha = beta
         .inbound()
         .into_iter()
-        .find(|msg| chat_text(msg) == "from-alpha")
+        .find(|message| chat_text(message) == "from-alpha")
         .expect("alpha's message is present");
     let _: habilis_network::protocol::AuthorKey = from_alpha.key();
 
@@ -3137,7 +3143,7 @@ fn ready_carries_the_stale_skill_warning() {
     assert!(
         stale["drift"]
             .as_str()
-            .is_some_and(|msg| msg.contains("agent-gossip plug")),
+            .is_some_and(|message| message.contains("agent-gossip plug")),
         "a diverged install must surface drift on ready: {stale}"
     );
 }

@@ -17,9 +17,9 @@ use super::{CreateConfig, JoinError, MeshSession, TopicConfig};
 async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Authored>) -> bool {
     loop {
         match bob_rx.recv().await {
-            Ok(msg)
-                if msg.author.as_str() == "alice-topic"
-                    && crate::a2a::status_update_params::chat_text(&msg).as_deref()
+            Ok(message)
+                if message.author.as_str() == "alice-topic"
+                    && crate::a2a::status_update_params::chat_text(&message).as_deref()
                         == Some("hello topic") =>
             {
                 return true;

@@ -73,7 +73,7 @@ async fn a_msg_works_on_a_passworded_gossip() {
     alice.await_peer_card("msgpw-bob").await;
     bob.await_peer_card(&alice.nickname).await;
 
-    alice.msg("msgpw-bob", SECRET).await;
+    alice.message("msgpw-bob", SECRET).await;
     assert!(
         bob.wait_body(SECRET, MSG_TIMEOUT).await,
         "the addressee must surface the msg on a passworded gossip"
@@ -103,7 +103,7 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
     // A msg is sealed to its recipient, so the card must have replicated.
     alice.await_peer_card("msgpriv-bob").await;
 
-    alice.msg("msgpriv-bob", SECRET).await;
+    alice.message("msgpriv-bob", SECRET).await;
 
     // B is the addressee: it decrypts and renders the msg as a chat line.
     assert!(
@@ -184,7 +184,9 @@ async fn msgs_do_not_advance_the_chain_or_fork_the_gossip() {
     // A burst of msgs C cannot see. If these were chained, C would observe a
     // run of missing seqs from A.
     for index in 0..5 {
-        alice.msg("msgchain-bob", &format!("private {index}")).await;
+        alice
+            .message("msgchain-bob", &format!("private {index}"))
+            .await;
     }
     assert!(
         bob.wait_body("private 4", MSG_TIMEOUT).await,

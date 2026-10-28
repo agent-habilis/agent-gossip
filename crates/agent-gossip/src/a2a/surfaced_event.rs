@@ -306,9 +306,9 @@ pub(crate) struct SurfacedState {
 /// report) have no frame and are never a copy of anything.
 fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
     match event {
-        OutputEvent::Message { msg, .. }
-        | OutputEvent::Presence { msg }
-        | OutputEvent::Task { msg, .. } => Some(msg.dedup_key()),
+        OutputEvent::Message { message, .. }
+        | OutputEvent::Presence { message }
+        | OutputEvent::Task { message, .. } => Some(message.dedup_key()),
         OutputEvent::TaskMessage { .. }
         | OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
@@ -331,23 +331,23 @@ pub(crate) type ReadTarget = (Nickname, String);
 /// A task brief comes by request/response and has no frame id, so its target
 /// names the A2A messageId instead.
 fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
-    let directed_to_us = |msg: &habilis_network::protocol::Message, tags: &[&str]| {
+    let directed_to_us = |message: &habilis_network::protocol::Message, tags: &[&str]| {
         matches!(
-            &msg.kind,
+            &message.kind,
             MessageKind::App { tag, to: Some(to), .. }
                 if tags.contains(&tag.as_str()) && to == me
         )
-        .then(|| (msg.author.clone(), msg.id.as_str().to_owned()))
+        .then(|| (message.author.clone(), message.id.as_str().to_owned()))
     };
     match event {
         OutputEvent::Message {
-            msg,
+            message,
             is_self: false,
-        } => directed_to_us(msg, &[wire::MSG]),
+        } => directed_to_us(message, &[wire::MSG]),
         OutputEvent::Task {
-            msg,
+            message,
             is_self: false,
-        } => directed_to_us(msg, &[wire::STATUS, wire::ARTIFACT]),
+        } => directed_to_us(message, &[wire::STATUS, wire::ARTIFACT]),
         OutputEvent::TaskMessage {
             id,
             author,
@@ -681,14 +681,15 @@ mod tests {
     }
 
     fn self_task_echo() -> OutputEvent {
-        let msg = status_update_params::test_status_frame(
+        let message = status_update_params::test_status_frame(
             &MeshId::from("test"),
             TaskState::Working,
             Some(nick("initiator")),
         );
         OutputEvent::Task {
-            msg: Box::new(
-                msg.sign(&habilis_network::protocol::Identity::generate())
+            message: Box::new(
+                message
+                    .sign(&habilis_network::protocol::Identity::generate())
                     .authored(),
             ),
             is_self: true,
@@ -720,7 +721,7 @@ mod tests {
 
     fn directed_msg_event(author: &str, to: &str, is_self: bool) -> OutputEvent {
         OutputEvent::Message {
-            msg: Box::new(directed_frame(wire::MSG, author, to)),
+            message: Box::new(directed_frame(wire::MSG, author, to)),
             is_self,
         }
     }
@@ -729,10 +730,10 @@ mod tests {
     fn foreground_read_targets_a_directed_msg_to_us_once() {
         let mut state = SurfacedState::new();
         let event = directed_msg_event("alice", "me", false);
-        let OutputEvent::Message { msg, .. } = &event else {
+        let OutputEvent::Message { message, .. } = &event else {
             unreachable!()
         };
-        let expected = (nick("alice"), msg.id.as_str().to_owned());
+        let expected = (nick("alice"), message.id.as_str().to_owned());
         state.push(event);
 
         let first = state.read_targets(None, &nick("me"));
@@ -766,7 +767,7 @@ mod tests {
         state.push(directed_msg_event("alice", "me", true));
         state.push(directed_msg_event("alice", "someone-else", false));
         state.push(OutputEvent::Message {
-            msg: Box::new(directed_frame(wire::BROADCAST, "alice", "me")),
+            message: Box::new(directed_frame(wire::BROADCAST, "alice", "me")),
             is_self: false,
         });
         state.push(peer_return("alice"));
@@ -779,7 +780,7 @@ mod tests {
         let mut state = SurfacedState::new();
         for tag in [wire::STATUS, wire::ARTIFACT] {
             state.push(OutputEvent::Task {
-                msg: Box::new(directed_frame(tag, "worker", "me")),
+                message: Box::new(directed_frame(tag, "worker", "me")),
                 is_self: false,
             });
         }
@@ -1331,7 +1332,7 @@ mod tests {
     }
     fn joined_event(name: &str) -> OutputEvent {
         OutputEvent::Presence {
-            msg: Box::new(
+            message: Box::new(
                 Message::new_joined(&MeshId::from("test"), &nick(name))
                     .sign(&habilis_network::protocol::Identity::generate())
                     .authored(),
@@ -1345,10 +1346,12 @@ mod tests {
     fn the_same_frame_is_served_once() {
         let mut state = SurfacedState::new();
         let event = joined_event("swift-cedar");
-        let OutputEvent::Presence { msg } = &event else {
+        let OutputEvent::Presence { message } = &event else {
             unreachable!()
         };
-        let copy = OutputEvent::Presence { msg: msg.clone() };
+        let copy = OutputEvent::Presence {
+            message: message.clone(),
+        };
         state.push(event);
         state.push(copy);
         assert_eq!(

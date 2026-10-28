@@ -152,7 +152,11 @@ impl InProcessSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response, or if the
     /// peer's seal key has not replicated yet (a msg is never sent in plaintext).
-    pub(crate) async fn msg(&self, to: Nickname, body: MessageBody) -> anyhow::Result<Authored> {
+    pub(crate) async fn message(
+        &self,
+        to: Nickname,
+        body: MessageBody,
+    ) -> anyhow::Result<Authored> {
         self.call(|resp| SessionRequest::Msg { to, body, resp })
             .await?
     }

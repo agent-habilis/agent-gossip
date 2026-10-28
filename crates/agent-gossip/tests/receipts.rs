@@ -49,7 +49,7 @@ async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
 async fn directed_msg_returns_a_delivered_receipt_whose_ref_is_the_msg_id() {
     let (mut alice, bob) = meshed_pair("rc-msg", "rc-msg-bob").await;
 
-    let id = alice.msg("rc-msg-bob", "are you there").await;
+    let id = alice.message("rc-msg-bob", "are you there").await;
 
     assert!(
         wait_receipt(&mut alice, "rc-msg-bob", id.as_str()).await,
@@ -76,7 +76,7 @@ async fn broadcast_produces_no_receipt() {
         bob.wait_body("to everyone", MSG_TIMEOUT).await,
         "broadcast lost"
     );
-    let id = alice.msg("rc-bcast-bob", "control").await;
+    let id = alice.message("rc-bcast-bob", "control").await;
     assert!(wait_receipt(&mut alice, "rc-bcast-bob", id.as_str()).await);
 
     assert_eq!(
@@ -107,8 +107,8 @@ async fn status_leg_returns_a_delivered_receipt() {
         alice
             .wait_for(MSG_TIMEOUT, |events| {
                 events.iter().any(|event| {
-                    matches!(event, OutputEvent::Task { msg, is_self: false }
-                        if msg.author.as_str() == "rc-leg-bob")
+                    matches!(event, OutputEvent::Task { message, is_self: false }
+                        if message.author.as_str() == "rc-leg-bob")
                 })
             })
             .await,
@@ -117,8 +117,8 @@ async fn status_leg_returns_a_delivered_receipt() {
     let leg_id = alice
         .tasks()
         .into_iter()
-        .find(|(msg, is_self)| !is_self && msg.author.as_str() == "rc-leg-bob")
-        .map(|(msg, _)| msg.id.as_str().to_owned())
+        .find(|(message, is_self)| !is_self && message.author.as_str() == "rc-leg-bob")
+        .map(|(message, _)| message.id.as_str().to_owned())
         .expect("the leg is in the capture");
 
     assert!(
@@ -135,7 +135,7 @@ async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
     let (mut alice, bob) = meshed_pair("rc-big", "rc-big-bob").await;
 
     let id = alice
-        .msg("rc-big-bob", &"abcd ".repeat(MAX_MESSAGE_SIZE))
+        .message("rc-big-bob", &"abcd ".repeat(MAX_MESSAGE_SIZE))
         .await;
 
     assert!(
@@ -144,7 +144,7 @@ async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
     );
     // The control msg follows the big one on the same path: once its receipt
     // is in, a second receipt for the big msg would have arrived as well.
-    let control = alice.msg("rc-big-bob", "control").await;
+    let control = alice.message("rc-big-bob", "control").await;
     assert!(wait_receipt(&mut alice, "rc-big-bob", control.as_str()).await);
     assert_eq!(
         receipts_from(&mut alice, "rc-big-bob"),
@@ -165,7 +165,7 @@ async fn an_in_process_fetch_sends_the_read_receipt() {
     let (mut alice, mut bob) = meshed_pair("rc-fetch", "rc-fetch-bob").await;
     bob.await_peer_card(&alice.nickname).await;
 
-    let id = alice.msg("rc-fetch-bob", "read me in process").await;
+    let id = alice.message("rc-fetch-bob", "read me in process").await;
     assert!(
         bob.wait_body("read me in process", MSG_TIMEOUT).await,
         "bob never got the msg"
