@@ -3,9 +3,9 @@ use habilis_network::runtime::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, setup_mesh,
 };
 
-use super::advertise::{Advertiser, spawn_advertiser};
-use super::config::{CreateConfig, JoinConfig, TopicConfig};
-use super::error::{CreateError, JoinError};
+use super::advertiser::{Advertiser, spawn_advertiser};
+use super::create_error::{CreateError, JoinError};
+use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use crate::output::Output;
 use crate::topic::resolve_topic;
 

@@ -1,11 +1,4 @@
 
-crates/agent-gossip/src/api/advertise.rs|1|rename pending: public type(s) Advertiser
-crates/agent-gossip/src/api/config.rs|1|rename pending: public type(s) JoinConfig, TopicConfig, CreateConfig
-crates/agent-gossip/src/api/error.rs|1|rename pending: public type(s) CreateError, JoinError
-crates/agent-gossip/src/api/inproc.rs|1|rename pending: public type(s) InProcessSession
-crates/agent-gossip/src/api/params.rs|1|rename pending: public type(s) A2aCallParams, TaskArtifactParams, TaskStatusParams
-crates/agent-gossip/src/api/session.rs|1|rename pending: public type(s) MeshSession
-crates/agent-gossip/src/api/setup.rs|1|rename pending: public type(s) SpawnEnv
 crates/agent-gossip/src/bridge/card_rewrite.rs|1|rename pending: public type(s) CardRewriter
 crates/agent-gossip/src/bridge/connect.rs|1|rename pending: public type(s) Bridge, LocalSide, SharedConnection
 crates/agent-gossip/src/bridge/directory.rs|1|rename pending: public type(s) TicketAd, TicketListing, TicketChange, TicketListings, TicketDirectoryEvent, TicketDirectory

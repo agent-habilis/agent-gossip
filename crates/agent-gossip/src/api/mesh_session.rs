@@ -6,12 +6,12 @@ use habilis_network::runtime::{CoHostPolicy, EventLoopConfig, SetupKind, SetupPa
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
-use super::advertise::Advertiser;
-use super::config::{CreateConfig, JoinConfig, TopicConfig};
-use super::error::{CreateError, JoinError};
-use super::inproc::InProcessSession;
-use super::params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
-use super::setup::{SpawnEnv, create_setup, join_setup, topic_setup};
+use super::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
+use super::advertiser::Advertiser;
+use super::create_error::{CreateError, JoinError};
+use super::in_process_session::InProcessSession;
+use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
+use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::output::{OutputEvent, PingPeer};
 
 /// A live mesh membership (the public api): the shared
