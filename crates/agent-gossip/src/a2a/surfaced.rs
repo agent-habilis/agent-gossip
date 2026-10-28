@@ -122,7 +122,7 @@ impl SurfacedEvents {
     }
 
     #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.events.len()
     }
 }
@@ -823,7 +823,7 @@ mod tests {
         buf.push(peer_return("b")); // seq 2 → evicted unseen
         buf.push(peer_return("c")); // seq 3
         buf.push(peer_return("d")); // seq 4 → evicts seq 2; ring {3,4}
-        assert_eq!(buf.len(), 2);
+        assert_eq!(buf.count(), 2);
         let (events, missed_before) = buf.since(Some(stale));
         assert_eq!(
             missed_before,
@@ -846,7 +846,7 @@ mod tests {
             state.push(peer_return(name));
         }
         // Force the eviction the ring cap would cause in production.
-        while state.surfaced_events.len() > 1 {
+        while state.surfaced_events.count() > 1 {
             state.surfaced_events.events.pop_front();
         }
         let batch = state.poll_since(Some(1));
@@ -896,7 +896,7 @@ mod tests {
         for name in ["a", "b", "c", "d", "e"] {
             buf.push(peer_return(name));
         }
-        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.count(), 3);
         let (events, _) = buf.since(None);
         let seqs: Vec<u64> = events.iter().map(|item| item.seq).collect();
         assert_eq!(seqs, vec![3, 4, 5], "kept the three newest by seq");
