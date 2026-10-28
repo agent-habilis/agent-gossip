@@ -75,9 +75,9 @@ impl GossipPeer {
     ) -> Result<GossipPeer, JsValue> {
         console_error_panic_hook::set_once();
         let transports = parse_path_mode(path_mode.as_deref())?;
-        let target = mesh_id
+        let target: JoinTarget = mesh_id
             .trim()
-            .parse::<JoinTarget>()
+            .parse()
             .map_err(|error| err("parse gossip id", &error))?;
         let resolved = JoinParams {
             target,

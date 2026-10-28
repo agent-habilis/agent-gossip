@@ -10,9 +10,11 @@ pub(crate) fn parse_nickname(nickname: Option<String>) -> Result<Option<Nickname
         .filter(|nick| !nick.is_empty())
     {
         None => Ok(None),
-        Some(nick) => nick
-            .parse::<Nickname>()
-            .map(Some)
-            .map_err(|error| err("parse nickname", &error)),
+        Some(nick) => {
+            let nickname: Nickname = nick
+                .parse()
+                .map_err(|error| err("parse nickname", &error))?;
+            Ok(Some(nickname))
+        }
     }
 }
