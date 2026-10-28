@@ -251,7 +251,6 @@ pub_vec_return|crates/agent-gossip/src/api/session.rs|1|open: A public function 
 pub_vec_return|crates/agent-gossip/src/harness/adversarial.rs|1|open: A public function returns an iterator, not a Vec
 pub_vec_return|crates/agent-gossip/src/harness/bench.rs|1|open: A public function returns an iterator, not a Vec
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: A public as_ or to_ method takes a reference, and an into_ method takes self
-trait_import_scope|crates/agent-gossip/src/cli/bell.rs|1|open: A trait imported only for its methods is imported where it is used, or left at the top with a row: a top-level `as _` import shows the reader nothing about the fn that needs it (O22)
 turbofish_collect_parse|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip-wasm-client/src/driver.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip-wasm-client/src/gossip_peer.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)

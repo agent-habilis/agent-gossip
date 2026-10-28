@@ -1,5 +1,4 @@
 use std::fs::{File, OpenOptions, TryLockError};
-use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -21,6 +20,8 @@ fn lock_path(mesh: &str, nickname: &str) -> PathBuf {
 /// is never unlinked: removing it while another bell holds it would split the
 /// lock across two inodes.
 pub(crate) async fn acquire(mesh: &str, nickname: &str) -> Option<File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
