@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-use super::ticket::A2aTicket;
+use super::a2a_ticket::A2aTicket;
 use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession, resolve_lookups_or_public};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
@@ -337,7 +337,7 @@ mod tests {
     use habilis_network::protocol::LookupOpts;
 
     use super::{TicketAd, TicketChange, TicketListings};
-    use crate::bridge::ticket::A2aTicket;
+    use crate::bridge::a2a_ticket::A2aTicket;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
         let addr = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())

@@ -18,8 +18,8 @@ use habilis_network::protocol::{
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use super::directory::{TicketAd, spawn_ticket_advertiser};
-use super::ticket::A2aTicket;
+use super::a2a_ticket::A2aTicket;
+use super::ticket_directory::{TicketAd, spawn_ticket_advertiser};
 use super::{A2A_ALPN, A2A_TICKET_LABEL, SECRET_LEN, wait_online};
 
 /// Close code for a consumer refused because the 1:1 bridge is already paired.

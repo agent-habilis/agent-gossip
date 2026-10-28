@@ -1,10 +1,4 @@
 
-crates/agent-gossip/src/bridge/card_rewrite.rs|1|rename pending: public type(s) CardRewriter
-crates/agent-gossip/src/bridge/connect.rs|1|rename pending: public type(s) Bridge, LocalSide, SharedConnection
-crates/agent-gossip/src/bridge/directory.rs|1|rename pending: public type(s) TicketAd, TicketListing, TicketChange, TicketListings, TicketDirectoryEvent, TicketDirectory
-crates/agent-gossip/src/bridge/expose.rs|1|rename pending: public type(s) ExposeParams
-crates/agent-gossip/src/bridge/gate.rs|1|rename pending: public type(s) Refusal, LocalGate
-crates/agent-gossip/src/bridge/ticket.rs|1|rename pending: public type(s) A2aTicket
 crates/agent-gossip/src/cli/a2a_discover.rs|1|rename pending: public type(s) DiscoverParams
 crates/agent-gossip/src/cli/ready.rs|1|rename pending: public type(s) ReadyStateFile
 crates/agent-gossip/src/events.rs|1|rename pending: public type(s) OutputEvent, PingPeer, TaskGoneReason

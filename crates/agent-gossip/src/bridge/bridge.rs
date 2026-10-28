@@ -14,9 +14,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
-use super::card_rewrite::CardRewriter;
-use super::gate::{LocalGate, MAX_HEAD_BYTES, Refusal, refusal_response};
-use super::ticket::A2aTicket;
+use super::a2a_ticket::A2aTicket;
+use super::card_rewriter::CardRewriter;
+use super::local_gate::{LocalGate, MAX_HEAD_BYTES, Refusal, refusal_response};
 use super::{A2A_ALPN, A2A_TICKET_LABEL};
 
 /// How long the first dial keeps retrying while the exposer's address

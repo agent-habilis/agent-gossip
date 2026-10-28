@@ -13,10 +13,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::A2A_ALPN;
-use super::connect::{Bridge, LocalSide, SharedConnection, forward_one};
-use super::expose::{bind, serve_connection};
-use super::gate::{LocalGate, TOKEN_HEADER};
-use super::ticket::A2aTicket;
+use super::a2a_ticket::A2aTicket;
+use super::bridge::{Bridge, LocalSide, SharedConnection, forward_one};
+use super::expose_params::{bind, serve_connection};
+use super::local_gate::{LocalGate, TOKEN_HEADER};
 
 /// A local HTTP origin that answers every connection with the same
 /// `Content-Length`-framed response. Returns its `host:port`.
