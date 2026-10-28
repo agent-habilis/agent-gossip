@@ -73,14 +73,14 @@ impl LocalGate {
             .next()
             .filter(|line| !line.is_empty())
             .ok_or(Refusal("malformed request"))?;
-        let headers = lines
+        let headers: Vec<(String, &str, &str)> = lines
             .filter(|line| !line.is_empty())
             .map(|line| {
                 line.split_once(':')
                     .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim(), line))
                     .ok_or(Refusal("malformed header"))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<_, _>>()?;
         let values_of = |wanted: &str| -> Vec<&str> {
             headers
                 .iter()

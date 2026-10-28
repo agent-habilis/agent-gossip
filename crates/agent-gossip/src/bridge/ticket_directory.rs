@@ -98,9 +98,9 @@ impl TicketListings {
         let ad = TicketAd::parse(body)?;
         // The structural ticket decode is the validity gate (prefix + checksum).
         let password = A2aTicket::decode(&ad.ticket).ok()?.password;
-        let label = ad
+        let label: Option<String> = ad
             .label
-            .map(|label| label.chars().take(MAX_LABEL_CHARS).collect::<String>());
+            .map(|label| label.chars().take(MAX_LABEL_CHARS).collect());
 
         if let Some(listing) = self.entries.get_mut(&ad.ticket) {
             listing.last_seen = now;
