@@ -1120,10 +1120,8 @@ async fn resend_cached_shards(
     let frames = state.shard_cache_mut().frames(group, missing);
     let mut resent = 0usize;
     for bytes in frames {
-        let Some(message) = Message::parse(bytes.as_bytes())
-            .ok()
-            .and_then(|message| message.verify().ok())
-        else {
+        let parsed = Message::parse(bytes.as_bytes()).ok();
+        let Some(message) = parsed.and_then(|message| message.verify().ok()) else {
             continue; // never: the cache holds frames we serialized ourselves
         };
         if let Some(to) = habilis_network::protocol::sole_addressee(&message.kind)
@@ -1230,11 +1228,13 @@ fn ingest_remote_message(
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
     let label = status_update_params::task_label(payload);
+    let mesh_name: &str = context.mesh.as_str();
+    let peer_name: &str = context.author.as_str();
     app.output.task_message(&output::TaskMessageLeg {
         id: payload.message_id.as_str(),
-        mesh: context.mesh.as_str(),
+        mesh: mesh_name,
         author: requester.as_str(),
-        peer: context.author.as_str(),
+        peer: peer_name,
         task_id: task_id.as_str(),
         state: rec_state,
         text: &text,
@@ -1381,13 +1381,13 @@ mod classify_tests {
 
     fn task_message(is_self: bool) -> OutputEvent {
         OutputEvent::TaskMessage {
-            id: "m".to_owned(),
-            mesh: "sw".to_owned(),
-            author: "initiator".to_owned(),
-            peer: "worker".to_owned(),
-            task_id: "t".to_owned(),
+            id: String::from("m"),
+            mesh: String::from("sw"),
+            author: String::from("initiator"),
+            peer: String::from("worker"),
+            task_id: String::from("t"),
             state: Some(TaskState::Working),
-            text: "approved".to_owned(),
+            text: String::from("approved"),
             label: None,
             message: None,
             is_self,
