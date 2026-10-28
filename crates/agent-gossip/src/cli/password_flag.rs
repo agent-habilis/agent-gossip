@@ -110,14 +110,17 @@ mod tests {
 
     #[test]
     fn bare_sentinel_parses_to_bare() {
-        assert!(matches!(
-            PasswordFlag::from_str(super::BARE),
-            Ok(PasswordFlag::Bare)
-        ));
-        assert!(matches!(
-            PasswordFlag::from_str("hunter2"),
-            Ok(PasswordFlag::Inline(value)) if value == "hunter2"
-        ));
+        assert!(
+            matches!(PasswordFlag::from_str(super::BARE), Ok(PasswordFlag::Bare)),
+            "the bare sentinel parses to the bare flag"
+        );
+        assert!(
+            matches!(
+                PasswordFlag::from_str("hunter2"),
+                Ok(PasswordFlag::Inline(value)) if value == "hunter2"
+            ),
+            "a plain value parses to an inline password"
+        );
     }
 
     #[test]
