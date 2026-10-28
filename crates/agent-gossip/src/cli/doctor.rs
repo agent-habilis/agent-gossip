@@ -466,10 +466,11 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
                 "password-derived — need --password to compute",
             ));
         } else {
-            let ports: Vec<String> = mesh
+            let unlocked = mesh
                 .clone()
                 .unlock(None)
-                .expect("an open mesh unlocks without a password")
+                .expect("an open mesh unlocks without a password");
+            let ports: Vec<String> = unlocked
                 .rendezvous_ports()
                 .iter()
                 .map(ToString::to_string)
