@@ -602,12 +602,8 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
     // Active members only. The roster snapshot chains the *quiet* peers onto
     // the live ones, and a peer that died ungracefully lands exactly there —
     // counting it as live is what made this report empty in the first place.
-    let live: HashSet<&str> = snapshot
-        .peers
-        .iter()
-        .filter(|entry| !entry.quiet)
-        .map(|entry| entry.nickname.as_str())
-        .collect();
+    let active = snapshot.peers.iter().filter(|entry| !entry.quiet);
+    let live: HashSet<&str> = active.map(|entry| entry.nickname.as_str()).collect();
     let absent = card::absent_peers(&document, &live, author);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
@@ -642,7 +638,8 @@ pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
         "body".into(),
         serde_json::to_value(&message.body).expect("a body serializes"),
     );
-    record.insert("pubkey".into(), message.key().to_string().into());
+    let pubkey: String = message.key().to_string();
+    record.insert("pubkey".into(), pubkey.into());
     if let Some(seq) = message.seq {
         record.insert("seq".into(), seq.into());
     }
