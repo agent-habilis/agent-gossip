@@ -44,8 +44,6 @@ assert_no_message|crates/agent-gossip/src/bridge/local_gate.rs|12|open: An asser
 assert_no_message|crates/agent-gossip/src/bridge/tests.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/bridge/ticket_directory.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/agent.rs|22|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/cli/args/create_opts.rs|10|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
-assert_no_message|crates/agent-gossip/src/cli/args/doctor_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/lookup.rs|8|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/poll_opts.rs|19|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
 assert_no_message|crates/agent-gossip/src/cli/args/resolved.rs|19|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)

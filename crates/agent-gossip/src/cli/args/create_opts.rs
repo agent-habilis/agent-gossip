@@ -100,10 +100,15 @@ mod tests {
         ]);
         match cli.command {
             Commands::Create { options } => {
-                assert_eq!(options.name.as_ref().map(MeshName::as_str), Some("team"));
+                assert_eq!(
+                    options.name.as_ref().map(MeshName::as_str),
+                    Some("team"),
+                    "--name team is kept as the mesh name"
+                );
                 assert_eq!(
                     options.nickname.as_ref().map(Nickname::as_str),
-                    Some("my-nick")
+                    Some("my-nick"),
+                    "--nickname my-nick is kept"
                 );
             }
             Commands::Join { .. }
@@ -136,8 +141,15 @@ mod tests {
         let cli = Cli::parse_from(["agent-gossip", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { options } => {
-                assert_eq!(options.name.as_ref().map(MeshName::as_str), Some("team"));
-                assert_eq!(options.nickname, None);
+                assert_eq!(
+                    options.name.as_ref().map(MeshName::as_str),
+                    Some("team"),
+                    "--name team is kept as the mesh name"
+                );
+                assert_eq!(
+                    options.nickname, None,
+                    "without --nickname the nickname stays unset"
+                );
             }
             Commands::Join { .. }
             | Commands::Topic { .. }
@@ -168,7 +180,10 @@ mod tests {
     fn create_opts_name_optional() {
         let cli = Cli::parse_from(["agent-gossip", "create"]);
         match cli.command {
-            Commands::Create { options } => assert_eq!(options.name, None),
+            Commands::Create { options } => assert_eq!(
+                options.name, None,
+                "without --name the mesh name stays unset"
+            ),
             Commands::Join { .. }
             | Commands::Topic { .. }
             | Commands::Poll { .. }
@@ -196,7 +211,10 @@ mod tests {
 
     #[test]
     fn create_opts_rejects_invalid_name() {
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--name", ""]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "create", "--name", ""]).is_err(),
+            "an empty --name is rejected"
+        );
         assert!(
             Cli::try_parse_from(["agent-gossip", "create", "--name", "has space"]).is_err(),
             "whitespace must reject"
@@ -317,7 +335,10 @@ mod tests {
         // require_equals is load-bearing: a space-separated value must NOT
         // be swallowed as the password (it would eat positionals on the
         // connect-style commands).
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--password", "hunter2"]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "create", "--password", "hunter2"]).is_err(),
+            "a password typed on the command line is rejected"
+        );
     }
 
     #[test]
@@ -334,12 +355,21 @@ mod tests {
         ]);
         match cli.command {
             Commands::Create { options } => {
-                assert_eq!(options.name.as_ref().map(MeshName::as_str), Some("team"));
+                assert_eq!(
+                    options.name.as_ref().map(MeshName::as_str),
+                    Some("team"),
+                    "--name team is kept as the mesh name"
+                );
                 assert_eq!(
                     options.nickname.as_ref().map(Nickname::as_str),
-                    Some("custom-name")
+                    Some("custom-name"),
+                    "--nickname custom-name is kept"
                 );
-                assert_eq!(options.lookups.lookup.len(), 3);
+                assert_eq!(
+                    options.lookups.lookup.len(),
+                    3,
+                    "each --lookup flag adds one lookup"
+                );
             }
             Commands::Join { .. }
             | Commands::Topic { .. }

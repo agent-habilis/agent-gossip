@@ -38,9 +38,19 @@ mod tests {
         let Commands::Doctor { options } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(options.gossip.is_none());
-        assert!(!options.no_probe);
-        assert_eq!(options.output, OutputFormat::Human);
+        assert!(
+            options.gossip.is_none(),
+            "bare doctor checks the machine, not a gossip"
+        );
+        assert!(
+            !options.no_probe,
+            "the live probes run unless --no-probe is passed"
+        );
+        assert_eq!(
+            options.output,
+            OutputFormat::Human,
+            "the default output is the human report"
+        );
     }
 
     #[test]
@@ -57,8 +67,15 @@ mod tests {
         let Commands::Doctor { options } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(options.gossip.is_some());
-        assert!(options.no_probe);
-        assert_eq!(options.output, OutputFormat::Json);
+        assert!(
+            options.gossip.is_some(),
+            "--gossip selects a gossip to analyze"
+        );
+        assert!(options.no_probe, "--no-probe skips the live probes");
+        assert_eq!(
+            options.output,
+            OutputFormat::Json,
+            "--output json selects the structured report"
+        );
     }
 }
