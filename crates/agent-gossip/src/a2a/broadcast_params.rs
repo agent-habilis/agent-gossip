@@ -2327,13 +2327,8 @@ mod echo_when_sent_tests {
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
         verdict_tx.send(Ok(())).expect("receiver is held");
-        pending
-            .into_iter()
-            .next()
-            .expect("verdict handle")
-            .await
-            .expect("verdict")
-            .expect("ok");
+        let verdict = pending.into_iter().next().expect("verdict handle");
+        verdict.await.expect("verdict").expect("ok");
 
         assert_eq!(echoes(&mut events), 1, "one echo is sent");
     }
