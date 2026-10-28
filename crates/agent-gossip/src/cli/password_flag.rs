@@ -63,6 +63,8 @@ fn validated(value: String) -> Result<Password> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::{PasswordFlag, resolve_password};
 
     #[test]
@@ -96,11 +98,11 @@ mod tests {
     #[test]
     fn bare_sentinel_parses_to_bare() {
         assert!(matches!(
-            super::BARE.parse::<PasswordFlag>(),
+            PasswordFlag::from_str(super::BARE),
             Ok(PasswordFlag::Bare)
         ));
         assert!(matches!(
-            "hunter2".parse::<PasswordFlag>(),
+            PasswordFlag::from_str("hunter2"),
             Ok(PasswordFlag::Inline(value)) if value == "hunter2"
         ));
     }

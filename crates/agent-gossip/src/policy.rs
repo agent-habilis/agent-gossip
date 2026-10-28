@@ -29,9 +29,19 @@ mod tests {
     #[test]
     fn loopback_lookups_carry_no_relay() {
         let policy = app_transport_policy(&LookupSet::default());
-        assert_eq!(policy, app_policy(false));
-        assert!(policy.udp && policy.webrtc && policy.gossip);
-        assert!(!policy.multihop && !policy.relay_transport);
+        assert_eq!(
+            policy,
+            app_policy(false),
+            "the app policy is the default one"
+        );
+        assert!(
+            policy.udp && policy.webrtc && policy.gossip,
+            "the default policy keeps udp, webrtc and gossip"
+        );
+        assert!(
+            !policy.multihop && !policy.relay_transport,
+            "the default policy has no multihop or relay transport"
+        );
     }
 
     #[test]
@@ -40,7 +50,11 @@ mod tests {
             relay_lookup: RelaySelection::Default,
             ..LookupSet::default()
         };
-        assert_eq!(app_transport_policy(&lookups), app_policy(true));
+        assert_eq!(
+            app_transport_policy(&lookups),
+            app_policy(true),
+            "a relay lookup selects the relay policy"
+        );
     }
 
     #[test]
@@ -50,6 +64,9 @@ mod tests {
             dht: true,
             ..LookupSet::default()
         };
-        assert!(!app_transport_policy(&lookups).relay_transport);
+        assert!(
+            !app_transport_policy(&lookups).relay_transport,
+            "without a relay lookup the relay transport stays off"
+        );
     }
 }

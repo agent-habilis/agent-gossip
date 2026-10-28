@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -62,12 +63,9 @@ impl AgentGossipServer {
             None
         } else {
             Some(
-                args.relay_urls
-                    .join(",")
-                    .parse::<RelayLadder>()
-                    .map_err(|error| {
-                        McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
-                    })?,
+                RelayLadder::from_str(&args.relay_urls.join(",")).map_err(|error| {
+                    McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
+                })?,
             )
         };
         let lookups = lookup::lookups_or_public(&args.lookup, args.advertise);

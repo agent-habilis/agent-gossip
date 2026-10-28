@@ -1,5 +1,7 @@
 //! `join` command args: attach to an existing gossip by id/domain/repo.
 
+use std::str::FromStr;
+
 use clap::Parser;
 use habilis_network::protocol::{JoinTarget, JoinTargetError, Nickname};
 
@@ -15,7 +17,7 @@ use crate::cli::password_flag::PasswordFlag;
 /// `'` escaped POSIX-style — unquoted, whitespace would split into extra args
 /// and metacharacters could expand.
 fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
-    input.parse::<JoinTarget>().map_err(|error| match &error {
+    JoinTarget::from_str(input).map_err(|error| match &error {
         JoinTargetError::Unrecognized(token) => {
             let quoted = format!("'{}'", token.replace('\'', "'\\''"));
             format!(

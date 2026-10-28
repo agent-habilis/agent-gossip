@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use anyhow::Result;
 use habilis_network::protocol::{JoinTarget, LockedMesh, Nickname};
 use habilis_network::runtime::JoinParams;
@@ -21,9 +23,7 @@ pub(super) async fn join(
     // either before erroring.
     if password.is_none() {
         let requires = match &target {
-            JoinTarget::Mesh(id) => id
-                .as_str()
-                .parse::<LockedMesh>()
+            JoinTarget::Mesh(id) => LockedMesh::from_str(id.as_str())
                 .is_ok_and(|mesh| mesh.requires_password())
                 .then_some("gossip"),
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),

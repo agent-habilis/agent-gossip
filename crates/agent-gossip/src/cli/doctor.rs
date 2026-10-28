@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::time::Duration;
 
 use anstyle::{AnsiColor, Style};
@@ -357,7 +358,7 @@ struct InfoResponse {
 // ---- Mode 2: per-mesh connection analysis ---------------------------------
 
 async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
-    let mesh = match mesh_id.as_str().parse::<LockedMesh>() {
+    let mesh = match LockedMesh::from_str(mesh_id.as_str()) {
         Ok(mesh) => mesh,
         Err(error) => {
             let section = Section {
