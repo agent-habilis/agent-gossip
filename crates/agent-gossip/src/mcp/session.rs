@@ -491,9 +491,20 @@ mod tests {
         let session = Session::create(create_cfg("test1", "alice-test"))
             .await
             .expect("create");
-        assert!(MeshId::new(session.mesh().as_str()).is_ok());
-        assert_eq!(session.name().as_str(), "test1");
-        assert_eq!(session.nickname().as_str(), "alice-test");
+        assert!(
+            MeshId::new(session.mesh().as_str()).is_ok(),
+            "the mesh name is a valid mesh id"
+        );
+        assert_eq!(
+            session.name().as_str(),
+            "test1",
+            "the session reports the mesh name it joined"
+        );
+        assert_eq!(
+            session.nickname().as_str(),
+            "alice-test",
+            "the session reports its nickname"
+        );
         session.leave().await;
     }
 
@@ -507,7 +518,11 @@ mod tests {
         let joiner = Session::join(join_cfg(&mesh, "bob-two"))
             .await
             .expect("join");
-        assert_eq!(joiner.name().as_str(), "two");
+        assert_eq!(
+            joiner.name().as_str(),
+            "two",
+            "the joiner reports the mesh name"
+        );
 
         establish_link(&creator, &joiner, "alice-two").await;
         establish_link(&joiner, &creator, "bob-two").await;
@@ -531,7 +546,11 @@ mod tests {
             .await
             .expect("send_broadcast");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
-        assert_eq!(observed2, Some(reply_id));
+        assert_eq!(
+            observed2,
+            Some(reply_id),
+            "the observed reply is the one sent"
+        );
 
         joiner.leave().await;
         creator.leave().await;
@@ -619,9 +638,17 @@ mod tests {
             .send_broadcast(MessageBody::from("self-echo"))
             .await
             .expect("send_broadcast");
-        assert_eq!(echo.id, sent);
-        assert_eq!(echo.author.as_str(), "alice-replay");
-        assert_eq!(chat_text(&echo).as_deref(), Some("self-echo"));
+        assert_eq!(echo.id, sent, "the echo carries the sent message id");
+        assert_eq!(
+            echo.author.as_str(),
+            "alice-replay",
+            "the echo carries the author nickname"
+        );
+        assert_eq!(
+            chat_text(&echo).as_deref(),
+            Some("self-echo"),
+            "the echo text is the self echo"
+        );
         assert!(
             echo.timestamp > habilis_network::protocol::UnixSecs::ZERO,
             "echo must carry a unix timestamp"
@@ -789,7 +816,11 @@ mod tests {
             &first_mesh,
             "second create should mint a fresh mesh id"
         );
-        assert_eq!(second.nickname().as_str(), "cycler-b");
+        assert_eq!(
+            second.nickname().as_str(),
+            "cycler-b",
+            "the second session reports its own nickname"
+        );
         second.leave().await;
     }
 
@@ -808,7 +839,8 @@ mod tests {
             .expect("an object merge applies");
         assert_eq!(
             session.state_get().await.expect("state_get")["turn"],
-            json!("a")
+            json!("a"),
+            "the object merge sets turn to a"
         );
 
         // A non-object top-level merge cannot be represented on the automerge
@@ -819,7 +851,8 @@ mod tests {
         );
         assert_eq!(
             session.state_get().await.expect("state_get"),
-            json!({"turn": "a"})
+            json!({"turn": "a"}),
+            "a refused merge leaves the prior document"
         );
 
         session.leave().await;

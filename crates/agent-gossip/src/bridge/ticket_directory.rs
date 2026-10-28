@@ -368,7 +368,10 @@ mod tests {
     #[test]
     fn mesh_ads_and_ticket_ads_never_cross_parse() {
         // A mesh ad has `id`; a ticket ad `ticket`.
-        assert!(TicketAd::parse(r#"{"id":"abc","peers":2}"#).is_none());
+        assert!(
+            TicketAd::parse(r#"{"id":"abc","peers":2}"#).is_none(),
+            "a non-listing ad does not parse"
+        );
     }
 
     #[test]
@@ -377,10 +380,13 @@ mod tests {
         let mut dir = TicketListings::new();
         let start = Instant::now();
 
-        assert!(matches!(
-            dir.note(&ad_body(&ticket, Some("one")), start),
-            Some(TicketChange::Found(_))
-        ));
+        assert!(
+            matches!(
+                dir.note(&ad_body(&ticket, Some("one")), start),
+                Some(TicketChange::Found(_))
+            ),
+            "the first ad is a new listing"
+        );
         assert!(
             dir.note(
                 &ad_body(&ticket, Some("one")),
@@ -389,18 +395,28 @@ mod tests {
             .is_none(),
             "an unchanged re-ad refreshes liveness without an event"
         );
-        assert!(matches!(
-            dir.note(
-                &ad_body(&ticket, Some("two")),
-                start + Duration::from_secs(30)
+        assert!(
+            matches!(
+                dir.note(
+                    &ad_body(&ticket, Some("two")),
+                    start + Duration::from_secs(30)
+                ),
+                Some(TicketChange::Updated(_))
             ),
-            Some(TicketChange::Updated(_))
-        ));
-        assert_eq!(dir.snapshot()[0].label.as_deref(), Some("two"));
+            "a changed label is an update"
+        );
+        assert_eq!(
+            dir.snapshot()[0].label.as_deref(),
+            Some("two"),
+            "the listing label is the one advertised"
+        );
 
         let lost = dir.expire(Duration::from_mins(1), start + Duration::from_secs(200));
-        assert_eq!(lost, vec![ticket]);
-        assert!(dir.snapshot().is_empty());
+        assert_eq!(lost, vec![ticket], "a lost listing is reported once");
+        assert!(
+            dir.snapshot().is_empty(),
+            "the lost listing leaves the snapshot"
+        );
     }
 
     #[test]
@@ -408,7 +424,7 @@ mod tests {
         let ticket = a2a_ticket(5, true);
         let mut dir = TicketListings::new();
         dir.note(&ad_body(&ticket, Some("drop")), Instant::now());
-        assert!(dir.snapshot()[0].password);
+        assert!(dir.snapshot()[0].password, "a password listing is flagged");
     }
 
     #[test]
@@ -417,19 +433,32 @@ mod tests {
         let long = "x".repeat(10_000);
         let mut dir = TicketListings::new();
         dir.note(&ad_body(&ticket, Some(&long)), Instant::now());
-        assert_eq!(dir.snapshot()[0].label.as_ref().map(String::len), Some(64));
+        assert_eq!(
+            dir.snapshot()[0].label.as_ref().map(String::len),
+            Some(64),
+            "the label is capped at 64 characters"
+        );
     }
 
     #[test]
     fn junk_and_malformed_tickets_are_ignored() {
         let mut dir = TicketListings::new();
-        assert!(dir.note("", Instant::now()).is_none());
-        assert!(dir.note("not json", Instant::now()).is_none());
+        assert!(
+            dir.note("", Instant::now()).is_none(),
+            "an empty note is ignored"
+        );
+        assert!(
+            dir.note("not json", Instant::now()).is_none(),
+            "a note that is not json is ignored"
+        );
         assert!(
             dir.note(r#"{"ticket":"not-a-real-token"}"#, Instant::now())
                 .is_none(),
             "a ticket that fails the checksum decode is dropped"
         );
-        assert!(dir.snapshot().is_empty());
+        assert!(
+            dir.snapshot().is_empty(),
+            "an ignored note leaves the snapshot empty"
+        );
     }
 }

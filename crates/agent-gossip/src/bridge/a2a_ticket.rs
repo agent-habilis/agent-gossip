@@ -145,13 +145,31 @@ mod tests {
             password: false,
         };
         let encoded = ticket.encode();
-        assert!(encoded.is_ascii());
-        assert!(!encoded.contains("://"));
+        assert!(encoded.is_ascii(), "the ticket is plain ascii");
+        let scheme_separator = "://";
+        assert!(
+            !encoded.contains(scheme_separator),
+            "the ticket carries no url scheme"
+        );
         let decoded = A2aTicket::decode(&encoded).expect("decode");
-        assert_eq!(decoded.address.id, address.id);
-        assert_eq!(decoded.secret.as_bytes(), &[9u8; SECRET_LEN]);
-        assert_eq!(decoded.lookups, LookupOpts::public_preset());
-        assert!(!decoded.password);
+        assert_eq!(
+            decoded.address.id, address.id,
+            "the decoded address keeps the id"
+        );
+        assert_eq!(
+            decoded.secret.as_bytes(),
+            &[9u8; SECRET_LEN],
+            "the decoded secret is the one encoded"
+        );
+        assert_eq!(
+            decoded.lookups,
+            LookupOpts::public_preset(),
+            "the decoded lookups are the public preset"
+        );
+        assert!(
+            !decoded.password,
+            "a ticket without a password decodes with no password flag"
+        );
     }
 
     #[test]
@@ -163,7 +181,10 @@ mod tests {
             password: true,
         };
         let decoded = A2aTicket::decode(&ticket.encode()).expect("decode");
-        assert!(decoded.password);
+        assert!(
+            decoded.password,
+            "a ticket with a password decodes with the password flag"
+        );
     }
 
     #[test]
@@ -177,7 +198,10 @@ mod tests {
         )
         .expect("a mesh without a secret")
         .to_string();
-        assert!(A2aTicket::decode(&mesh).is_err());
+        assert!(
+            A2aTicket::decode(&mesh).is_err(),
+            "a mesh id is not a valid ticket"
+        );
     }
 
     #[test]
@@ -201,8 +225,14 @@ mod tests {
             lookups: LookupOpts::public_preset(),
             password: false,
         };
-        assert!(A2aTicket::decode(&blob.encode()).is_err());
-        assert!(habilis_network::ops::blob::BlobTicket::decode(&a2a.encode()).is_err());
+        assert!(
+            A2aTicket::decode(&blob.encode()).is_err(),
+            "a blob ticket is not an a2a ticket"
+        );
+        assert!(
+            habilis_network::ops::blob::BlobTicket::decode(&a2a.encode()).is_err(),
+            "an a2a ticket is not a blob ticket"
+        );
     }
 
     #[test]
@@ -216,6 +246,9 @@ mod tests {
         let mut encoded = ticket.encode();
         let last = encoded.pop().unwrap();
         encoded.push(if last == '1' { '2' } else { '1' });
-        assert!(A2aTicket::decode(&encoded).is_err());
+        assert!(
+            A2aTicket::decode(&encoded).is_err(),
+            "a truncated ticket is rejected"
+        );
     }
 }
