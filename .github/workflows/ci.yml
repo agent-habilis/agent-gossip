@@ -26,6 +26,40 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo fmt --all -- --check
 
+  # The rules of the Google Rust Style Guide that no lint checks. Each script keeps its
+  # exceptions as counted rows in a `.allow` file next to it: a count may only go down.
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Style rules without a lint
+        run: |
+          bun test scripts/style-check/style-check.test.ts
+          bun scripts/style-check/style-check.ts
+      - name: Script language
+        run: |
+          bun test scripts/script-language/script-language.test.ts
+          bun scripts/script-language/script-language.ts
+      - name: Macro rules
+        run: |
+          bun test scripts/macro-rules/macro-rules.test.ts
+          bun scripts/macro-rules/macro-rules.ts
+      - name: Pub traits
+        run: |
+          bun test scripts/pub-trait/pub-trait.test.ts
+          bun scripts/pub-trait/pub-trait.ts
+      - name: Module layout
+        run: |
+          bun test scripts/module-layout/module-layout.test.ts
+          bun scripts/module-layout/module-layout.ts
+      - name: Naming
+        run: |
+          bun test scripts/naming/naming.test.ts
+          bun scripts/naming/naming.ts
+
   clippy:
     runs-on: ubuntu-latest
     steps:

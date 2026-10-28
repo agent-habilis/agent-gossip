@@ -1,0 +1,317 @@
+
+abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|78|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip-wasm-client/src/driver.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip-wasm-client/src/gossip_peer.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/card.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/gossip.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/gossip_rpc.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/http.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/ipc.rs|23|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/model/tests.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/node.rs|114|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/peer_path.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/receipt.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/rpc.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/send.rs|119|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/session.rs|14|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/surfaced.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/task.rs|14|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/api/advertise.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/api/inproc.rs|35|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/api/session.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/api/setup.rs|18|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/api/tests.rs|5|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/bridge/connect.rs|30|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/bridge/expose.rs|12|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/bridge/tests.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/bridge/ticket.rs|7|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/a2a.rs|16|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/args/commands.rs|17|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/create.rs|11|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/discover.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/dispatch.rs|42|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/doctor.rs|15|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/finish_send.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/install_tuning.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/invite.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/meta.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/peers.rs|5|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/ping.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/poll.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/ready.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/run_session.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/send.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/session.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/state.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/topic.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/cli/topology_cmd.rs|7|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/events.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/harness/adversarial.rs|44|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/harness/bench.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/mcp/mod.rs|11|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/mcp/session.rs|19|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/output/json.rs|48|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/output/node_sink.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/output/output.rs|23|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/output/tests.rs|42|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/status.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/bench.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/build.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/ci.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/clean.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/coverage.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/fmt.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/idle_cpu.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/install.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/lint.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/proptest.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/release.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/run.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/test.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/uninstall.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/util/ensure_installed.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/tasks/src/util/sweep_stale_artifacts.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+anyhow_pub|crates/agent-gossip-test-fixtures/src/lib.rs|2|open: A public signature returns a typed error, not anyhow
+anyhow_pub|crates/agent-gossip/src/a2a/gossip.rs|4|open: A public signature returns a typed error, not anyhow
+anyhow_pub|crates/agent-gossip/src/api/directory.rs|2|open: A public signature returns a typed error, not anyhow
+anyhow_pub|crates/agent-gossip/src/api/session.rs|13|open: A public signature returns a typed error, not anyhow
+anyhow_pub|crates/agent-gossip/src/harness/session.rs|3|open: A public signature returns a typed error, not anyhow
+anyhow_pub|crates/agent-gossip/src/run_cli.rs|1|open: A public signature returns a typed error, not anyhow
+assert_no_message|crates/agent-gossip/src/a2a/app.rs|37|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/card.rs|13|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/gossip.rs|16|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/gossip_rpc.rs|18|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/ipc.rs|17|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/model/tests.rs|13|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/node.rs|15|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/peer_path.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/receipt.rs|2|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/send.rs|17|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/surfaced.rs|40|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/a2a/task.rs|87|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/api/directory.rs|3|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/api/tests.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/bridge/card_rewrite.rs|7|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/bridge/directory.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/bridge/expose.rs|5|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/bridge/gate.rs|12|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/bridge/tests.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/bridge/ticket.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/agent.rs|22|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/a2a_action.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/bell_check_opts.rs|2|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/create_opts.rs|10|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/discover_opts.rs|4|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/doctor_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/invite_opts.rs|2|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/join_opts.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/leave_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/lookup.rs|8|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/peers_opts.rs|2|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/ping_opts.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/poll_opts.rs|19|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/resolved.rs|19|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/session_opts.rs|2|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/topic_opts.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/args/transport.rs|5|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/password_flag.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/plug.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/session.rs|13|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/cli/tests.rs|6|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/mcp/session.rs|11|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/output/tests.rs|82|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/policy.rs|5|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/src/topic.rs|3|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/a2a_contract.rs|9|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/gossip_network.rs|39|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/install_contract.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/mcp_stdio.rs|28|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/monitor_contract.rs|86|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/reader_liveness.rs|3|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/receipts.rs|4|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/seal.rs|4|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/task.rs|2|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/topic_policy.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/agent-gossip/tests/topic_split.rs|1|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+assert_no_message|crates/slot-template/src/tests.rs|24|open: An assert names what it checks: a message that adds the value, or the reason, so a failure reads without the source (P13)
+bool_param_comment|crates/agent-gossip/src/api/session.rs|1|open: A public function with a bool parameter writes its purpose in a comment above the parameter, so a call site says what true means
+crate_example|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: Every library crate shows how it works: a doc example (a fenced code block in a /// or //! comment) somewhere in its source
+crate_example|crates/agent-gossip-wasm-client/src/lib.rs|1|open: Every library crate shows how it works: a doc example (a fenced code block in a /// or //! comment) somewhere in its source
+crate_example|crates/slot-template/src/lib.rs|1|open: Every library crate shows how it works: a doc example (a fenced code block in a /// or //! comment) somewhere in its source
+doc_basics|crates/agent-gossip/src/a2a/model/part.rs|1|open: A doc comment does not explain Rust: no `this is a function`, no `a struct that`, no `returns a Result` (D6)
+dyn_param|crates/slot-template/src/expand.rs|1|open: A library fn takes a generic (T: Trait or impl Trait), not a dyn Trait parameter
+fn_import|crates/agent-gossip/src/a2a/ipc.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/a2a/send.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/api/config.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/api/directory.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/api/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/api/setup.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/api/tests.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/bridge/expose.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/args/join_opts.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/args/resolved.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/doctor.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/poll.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/run_session.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/cli/topic.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/harness/bench.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/mcp/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/output/mod.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/src/topic.rs|2|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/tests/a2a_call_args.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/agent-gossip/tests/a2a_status_args.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+fn_import|crates/tasks/src/idle_cpu.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
+generic_name|crates/agent-gossip/src/a2a/model/friendly_state.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
+generic_name|crates/agent-gossip/src/a2a/model/part.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
+generic_name|crates/agent-gossip/src/a2a/model/uuid_id.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
+generic_name|crates/agent-gossip/src/bridge/connect.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
+generic_name|crates/agent-gossip/src/cli/send.rs|1|open: A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more
+lifetime|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip-wasm-client/src/driver.rs|3|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/gossip.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/ipc.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/node.rs|5|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/peer_path.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/rpc.rs|2|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/send.rs|18|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/a2a/task.rs|4|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/bridge/expose.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/cli/a2a_call_request.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/cli/a2a_call_sugar.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/harness/adversarial.rs|3|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/output/json.rs|8|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/output/ready_params.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/output/receipt_params.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/output/state_changed_params.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/output/task_message_leg.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/src/output/tests.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/agent-gossip/tests/a2a_contract.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+lifetime|crates/tasks/src/idle_cpu.rs|1|open: Name a type lifetime for what it borrows ('frame, not 'a)
+long_chain|crates/agent-gossip-test-fixtures/src/lib.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip-wasm-client/src/driver.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/benches/transfer.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/build.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/app.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/card.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/gossip.rs|5|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/gossip_rpc.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/http.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/ipc.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/model/part.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/model/tests.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/node.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/peer_path.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/send.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/surfaced.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/a2a/task.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/api/directory.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/bridge/card_rewrite.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/bridge/directory.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/bridge/gate.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/agent.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/args/tuning_opts.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/bell.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/detach_if_owned.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/detached_stdio.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/doctor.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/join.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/cli/session.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/harness/adversarial.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/main.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/mcp/mod.rs|4|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/mcp/session.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/output/json.rs|6|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/src/output/output.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/a2a_contract.rs|4|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/adversarial.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/directory.rs|6|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/gossip_network.rs|37|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/install_contract.rs|5|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/lossless_receive.rs|8|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/man_contract.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/mcp_stdio.rs|12|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/monitor_contract.rs|17|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/reader_liveness.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/receipts.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/shared_state.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/agent-gossip/tests/topic_split.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/slot-template/src/expand_at.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/slot-template/src/tests.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/tasks/src/build.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/tasks/src/idle_cpu.rs|11|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/tasks/src/install.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+long_chain|crates/tasks/src/util/ensure_installed.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
+poison|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: Never reach inside a poisoned mutex
+pub_const_fn|crates/agent-gossip/src/version.rs|1|open: Mark a public fn const only if it will stay const (a const context, a newtype accessor, or a trivial accessor)
+pub_vec_param|crates/agent-gossip/src/a2a/gossip.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
+pub_vec_param|crates/agent-gossip/src/harness/adversarial.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
+pub_vec_param|crates/agent-gossip/src/harness/session.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
+pub_vec_return|crates/agent-gossip-test-fixtures/src/lib.rs|10|open: A public function returns an iterator, not a Vec
+pub_vec_return|crates/agent-gossip/src/api/directory.rs|1|open: A public function returns an iterator, not a Vec
+pub_vec_return|crates/agent-gossip/src/api/session.rs|1|open: A public function returns an iterator, not a Vec
+pub_vec_return|crates/agent-gossip/src/harness/adversarial.rs|1|open: A public function returns an iterator, not a Vec
+pub_vec_return|crates/agent-gossip/src/harness/bench.rs|1|open: A public function returns an iterator, not a Vec
+self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: A public as_ or to_ method takes a reference, and an into_ method takes self
+trait_import_scope|crates/agent-gossip/src/cli/bell.rs|1|open: A trait imported only for its methods is imported where it is used, or left at the top with a row: a top-level `as _` import shows the reader nothing about the fn that needs it (O22)
+turbofish_collect_parse|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip-wasm-client/src/driver.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip-wasm-client/src/gossip_peer.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip-wasm-client/src/parse_nickname.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/a2a/gossip.rs|3|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/a2a/node.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/a2a/peer_path.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/a2a/send.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/a2a/surfaced.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/bridge/directory.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/bridge/gate.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/cli/agent.rs|2|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/cli/args/join_opts.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/cli/doctor.rs|5|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/cli/join.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/cli/password_flag.rs|2|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/cli/session.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/harness/bench.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/src/mcp/mod.rs|2|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/agent-gossip/tests/gossip_network.rs|3|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+turbofish_collect_parse|crates/tasks/src/idle_cpu.rs|5|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
+untyped_generic_let|crates/agent-gossip-test-fixtures/src/lib.rs|3|open: A let that takes its type from parse, into or try_into names the type (P4)
+untyped_generic_let|crates/agent-gossip/tests/adversarial.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)
+untyped_generic_let|crates/agent-gossip/tests/gossip_network.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)
+untyped_long_chain_let|crates/agent-gossip-test-fixtures/src/lib.rs|4|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/card.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/gossip.rs|2|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/gossip_rpc.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/http.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/model/part.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/node.rs|2|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/peer_path.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/send.rs|3|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/surfaced.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/a2a/task.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/bridge/card_rewrite.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/bridge/gate.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/cli/agent.rs|3|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/cli/bell.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/cli/detached_stdio.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/cli/doctor.rs|2|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/cli/join.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/harness/adversarial.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/src/mcp/mod.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/a2a_contract.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/adversarial.rs|9|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/directory.rs|6|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/gossip_network.rs|30|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/install_contract.rs|4|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/lossless_receive.rs|6|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/mcp_stdio.rs|11|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/monitor_contract.rs|17|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/reader_liveness.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/receipts.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/shared_state.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/agent-gossip/tests/topic_split.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/slot-template/src/expand_at.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/tasks/src/build.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/tasks/src/idle_cpu.rs|3|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/tasks/src/install.rs|1|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/tasks/src/main.rs|2|open: A let of a chain of five or more calls names its type (P5)
+untyped_long_chain_let|crates/tasks/src/util/ensure_installed.rs|1|open: A let of a chain of five or more calls names its type (P5)

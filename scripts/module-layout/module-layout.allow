@@ -1,0 +1,35 @@
+
+crates/agent-gossip-test-fixtures/src/lib.rs|1|open: definitions in mod.rs or lib.rs move to leaf files
+crates/agent-gossip-wasm-client/src/driver.rs|1|rename pending: public type(s) Request, ChatMessage, Inbox, GossipDriver
+crates/agent-gossip/src/a2a/app.rs|1|rename pending: public type(s) SurfacedIo, Startup, A2aApp, UnsentLeg, DeliveredLeg, A2aResponder, A2aWaiter
+crates/agent-gossip/src/a2a/gossip.rs|1|rename pending: public type(s) StatusUpdateParams, ReaderBeat
+crates/agent-gossip/src/a2a/gossip_rpc.rs|1|rename pending: public type(s) Served
+crates/agent-gossip/src/a2a/http.rs|1|rename pending: public type(s) A2aBinding
+crates/agent-gossip/src/a2a/ipc.rs|1|rename pending: public type(s) IpcCommand, IpcDispatchParams
+crates/agent-gossip/src/a2a/peer_path.rs|1|rename pending: public type(s) ReaderAsks, ReaderAskParams
+crates/agent-gossip/src/a2a/rpc.rs|1|rename pending: public type(s) RpcError, A2aOp, A2aRequest, HandleOpParams
+crates/agent-gossip/src/a2a/send.rs|1|rename pending: public type(s) BroadcastParams, TaskStatusParams, WorkerLeg, TaskArtifactEmitParams, BroadcastTaskStatusParams, MsgParams, BroadcastTaskArtifactParams, FileRef, CallFile, CallBlob, BroadcastA2aCallParams, DirectedRpcParams, SessionRequestParams
+crates/agent-gossip/src/a2a/session.rs|1|rename pending: public type(s) SessionRequest
+crates/agent-gossip/src/a2a/surfaced.rs|1|rename pending: public type(s) SurfacedEvent, SurfacedEvents, PollBatch, PollResponder, PollBaseline, PollWaiter, PollOrRegisterParams, SurfacedState, ReadTarget
+crates/agent-gossip/src/a2a/task.rs|1|rename pending: public type(s) TaskRole, WaitingMark, TaskRecord, StallNotice, LegKind, LegInfo, IngestLegParams, ClosedTask, ClosedTasks, Admission, AdoptInitiatorParams
+crates/agent-gossip/src/api/advertise.rs|1|rename pending: public type(s) Advertiser
+crates/agent-gossip/src/api/config.rs|1|rename pending: public type(s) JoinConfig, TopicConfig, CreateConfig
+crates/agent-gossip/src/api/error.rs|1|rename pending: public type(s) CreateError, JoinError
+crates/agent-gossip/src/api/inproc.rs|1|rename pending: public type(s) InProcessSession
+crates/agent-gossip/src/api/params.rs|1|rename pending: public type(s) A2aCallParams, TaskArtifactParams, TaskStatusParams
+crates/agent-gossip/src/api/session.rs|1|rename pending: public type(s) MeshSession
+crates/agent-gossip/src/api/setup.rs|1|rename pending: public type(s) SpawnEnv
+crates/agent-gossip/src/bridge/card_rewrite.rs|1|rename pending: public type(s) CardRewriter
+crates/agent-gossip/src/bridge/connect.rs|1|rename pending: public type(s) Bridge, LocalSide, SharedConnection
+crates/agent-gossip/src/bridge/directory.rs|1|rename pending: public type(s) TicketAd, TicketListing, TicketChange, TicketListings, TicketDirectoryEvent, TicketDirectory
+crates/agent-gossip/src/bridge/expose.rs|1|rename pending: public type(s) ExposeParams
+crates/agent-gossip/src/bridge/gate.rs|1|rename pending: public type(s) Refusal, LocalGate
+crates/agent-gossip/src/bridge/ticket.rs|1|rename pending: public type(s) A2aTicket
+crates/agent-gossip/src/cli/a2a_discover.rs|1|rename pending: public type(s) DiscoverParams
+crates/agent-gossip/src/cli/ready.rs|1|rename pending: public type(s) ReadyStateFile
+crates/agent-gossip/src/events.rs|1|rename pending: public type(s) OutputEvent, PingPeer, TaskGoneReason
+crates/agent-gossip/src/harness/adversarial.rs|1|rename pending: public type(s) TestKey, StatusFrameParams, SealedTaskStatusParams, SealedMsgParams, CraftedMsg
+crates/agent-gossip/src/harness/bench.rs|1|rename pending: public type(s) BenchConfig, BenchMessage
+crates/agent-gossip/src/mcp/mod.rs|1|open: definitions in mod.rs or lib.rs move to leaf files
+crates/agent-gossip/src/output/json.rs|1|rename pending: public type(s) SimpleEvent
+crates/tasks/src/idle_cpu.rs|1|rename pending: public type(s) Plan
