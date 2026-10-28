@@ -78,7 +78,7 @@ pub(crate) enum TicketChange {
 }
 
 /// The pure, network-free ticket collector.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct TicketListings {
     entries: HashMap<String, TicketListing>,
 }
