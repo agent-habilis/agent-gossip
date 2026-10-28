@@ -13,9 +13,9 @@ macro_rules! uuid_id {
         pub struct $name(String);
 
         impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            fn deserialize<Input>(deserializer: Input) -> Result<Self, Input::Error>
             where
-                D: Deserializer<'de>,
+                Input: Deserializer<'de>,
             {
                 let raw = String::deserialize(deserializer)?;
                 Uuid::parse_str(&raw).map_err(|_| serde::de::Error::custom($error))?;

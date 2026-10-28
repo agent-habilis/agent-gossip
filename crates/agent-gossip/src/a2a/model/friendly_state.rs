@@ -10,7 +10,9 @@ pub fn serialize<S: Serializer>(state: &TaskState, serializer: S) -> Result<S::O
 
 /// # Errors
 /// An unknown friendly state name.
-pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<TaskState, D::Error> {
+pub fn deserialize<'de, Input: Deserializer<'de>>(
+    deserializer: Input,
+) -> Result<TaskState, <Input as Deserializer<'de>>::Error> {
     let raw = String::deserialize(deserializer)?;
     TaskState::from_friendly(&raw)
         .ok_or_else(|| serde::de::Error::custom(format!("unknown task state: {raw}")))

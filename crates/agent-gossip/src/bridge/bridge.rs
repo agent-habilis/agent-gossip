@@ -210,9 +210,12 @@ async fn rewriting_proxy(
 
 /// Read the response side of the bi-stream, feed it through the rewriter, and
 /// write the (possibly rewritten) bytes to the client until EOF.
-async fn rewrite_response<W>(mut quic_recv: RecvStream, client_write: &mut W, local_base: &str)
-where
-    W: AsyncWriteExt + Unpin,
+async fn rewrite_response<Writer>(
+    mut quic_recv: RecvStream,
+    client_write: &mut Writer,
+    local_base: &str,
+) where
+    Writer: AsyncWriteExt + Unpin,
 {
     let mut rewriter = CardRewriter::new(local_base.to_owned());
     let mut buffer = vec![0u8; 16 * 1024];

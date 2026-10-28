@@ -50,9 +50,9 @@ impl Part {
 }
 
 impl<'de> Deserialize<'de> for Part {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<Input>(deserializer: Input) -> Result<Self, Input::Error>
     where
-        D: Deserializer<'de>,
+        Input: Deserializer<'de>,
     {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
