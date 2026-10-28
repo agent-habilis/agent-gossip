@@ -1,7 +1,7 @@
-use anyhow::{Context, Result, bail};
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
 use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
+use super::frame_payload_error::FramePayloadError;
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
@@ -75,9 +75,14 @@ pub(crate) fn send_message_payload_parts(
 ///
 /// # Errors
 /// A `serde_json` serialization failure.
-pub(crate) fn payload_body<T: serde::Serialize>(payload: &T) -> Result<MessageBody> {
-    let json = serde_json::to_string(payload).context("failed to serialize a2a payload")?;
-    MessageBody::new(json).map_err(|error| anyhow::anyhow!("{error}"))
+pub(crate) fn payload_body<T: serde::Serialize>(
+    payload: &T,
+) -> Result<MessageBody, FramePayloadError> {
+    let json = serde_json::to_string(payload).map_err(|source| FramePayloadError::Invalid {
+        what: "failed to serialize a2a payload",
+        source,
+    })?;
+    MessageBody::new(json).map_err(|error| FramePayloadError::Body(error.to_string()))
 }
 
 /// The checks both chat tags share, on a **logical** frame (a single wire
@@ -90,17 +95,26 @@ pub(crate) fn payload_body<T: serde::Serialize>(payload: &T) -> Result<MessageBo
 /// - `contextId` must name the frame's mesh (the receive path already gates
 ///   the frame's mesh against ours).
 /// - chat is `role: user` by construction (see [`compose_broadcast`]).
-fn chat_common(frame: &Frame) -> Result<Message> {
+fn chat_common(frame: &Frame) -> Result<Message, FramePayloadError> {
     let payload: Message =
-        serde_json::from_str(frame.body.as_str()).context("invalid a2a message payload")?;
+        serde_json::from_str(frame.body.as_str()).map_err(|source| FramePayloadError::Invalid {
+            what: "invalid a2a message payload",
+            source,
+        })?;
     if payload.message_id.as_str() != frame.id.as_str() {
-        bail!("a2a messageId does not match the frame id");
+        return Err(FramePayloadError::Shape(
+            "a2a messageId does not match the frame id",
+        ));
     }
     if payload.context_id.as_deref() != Some(frame.mesh.as_str()) {
-        bail!("a2a contextId does not name the frame's gossip");
+        return Err(FramePayloadError::Shape(
+            "a2a contextId does not name the frame's gossip",
+        ));
     }
     if payload.role != Role::User {
-        bail!("chat carries role user; got agent");
+        return Err(FramePayloadError::Shape(
+            "chat carries role user; got agent",
+        ));
     }
     Ok(payload)
 }
@@ -110,9 +124,9 @@ fn chat_common(frame: &Frame) -> Result<Message> {
 ///
 /// # Errors
 /// A payload that fails to parse or any frame/payload mismatch above.
-pub fn broadcast_payload(frame: &Frame) -> Result<Message> {
+pub fn broadcast_payload(frame: &Frame) -> Result<Message, FramePayloadError> {
     if !frame.kind.is_app(wire::BROADCAST) {
-        bail!("not an a2a_broadcast frame");
+        return Err(FramePayloadError::WrongKind("a2a_broadcast"));
     }
     let payload = chat_common(frame)?;
     if !payload
@@ -120,7 +134,9 @@ pub fn broadcast_payload(frame: &Frame) -> Result<Message> {
         .iter()
         .any(|uri| uri == EXT_MESH_BROADCAST)
     {
-        bail!("a2a_broadcast without the mesh-broadcast extension");
+        return Err(FramePayloadError::Shape(
+            "a2a_broadcast without the mesh-broadcast extension",
+        ));
     }
     Ok(payload)
 }
@@ -137,9 +153,9 @@ pub fn broadcast_payload(frame: &Frame) -> Result<Message> {
 ///
 /// # Errors
 /// A payload that fails to parse or any frame/payload mismatch above.
-pub fn msg_payload(frame: &Frame) -> Result<Message> {
+pub fn msg_payload(frame: &Frame) -> Result<Message, FramePayloadError> {
     if !frame.kind.is_app(wire::MSG) {
-        bail!("not an a2a_msg frame");
+        return Err(FramePayloadError::WrongKind("a2a_msg"));
     }
     let payload = chat_common(frame)?;
     if payload
@@ -147,10 +163,14 @@ pub fn msg_payload(frame: &Frame) -> Result<Message> {
         .iter()
         .any(|uri| uri == EXT_MESH_BROADCAST)
     {
-        bail!("a2a_msg carrying the mesh-broadcast extension");
+        return Err(FramePayloadError::Shape(
+            "a2a_msg carrying the mesh-broadcast extension",
+        ));
     }
     if payload.task_id.is_some() {
-        bail!("a2a_msg carrying a taskId is a task leg, not a msg");
+        return Err(FramePayloadError::Shape(
+            "a2a_msg carrying a taskId is a task leg, not a msg",
+        ));
     }
     Ok(payload)
 }
@@ -301,14 +321,19 @@ pub fn artifact_update_parts(
 ///
 /// # Errors
 /// A payload that fails to parse or contradicts its frame.
-pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
+pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate, FramePayloadError> {
     if !frame.kind.is_app(wire::STATUS) {
-        bail!("not an a2a_status frame");
+        return Err(FramePayloadError::WrongKind("a2a_status"));
     }
     let payload: TaskStatusUpdate =
-        serde_json::from_str(frame.body.as_str()).context("invalid a2a status payload")?;
+        serde_json::from_str(frame.body.as_str()).map_err(|source| FramePayloadError::Invalid {
+            what: "invalid a2a status payload",
+            source,
+        })?;
     if payload.context_id != frame.mesh.as_str() {
-        bail!("a2a status contextId does not name the frame's gossip");
+        return Err(FramePayloadError::Shape(
+            "a2a status contextId does not name the frame's gossip",
+        ));
     }
     Ok(payload)
 }
@@ -317,14 +342,19 @@ pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
 ///
 /// # Errors
 /// A payload that fails to parse or contradicts its frame.
-pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate> {
+pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate, FramePayloadError> {
     if !frame.kind.is_app(wire::ARTIFACT) {
-        bail!("not an a2a_artifact frame");
+        return Err(FramePayloadError::WrongKind("a2a_artifact"));
     }
     let payload: TaskArtifactUpdate =
-        serde_json::from_str(frame.body.as_str()).context("invalid a2a artifact payload")?;
+        serde_json::from_str(frame.body.as_str()).map_err(|source| FramePayloadError::Invalid {
+            what: "invalid a2a artifact payload",
+            source,
+        })?;
     if payload.context_id != frame.mesh.as_str() {
-        bail!("a2a artifact contextId does not name the frame's gossip");
+        return Err(FramePayloadError::Shape(
+            "a2a artifact contextId does not name the frame's gossip",
+        ));
     }
     Ok(payload)
 }
