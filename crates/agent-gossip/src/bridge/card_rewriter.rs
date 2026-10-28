@@ -306,7 +306,8 @@ fn rewrite_value(value: &mut Value, local_base: &str) -> bool {
 /// Agent Card carries — so an unrelated object that merely has a `url` is left
 /// alone.
 fn is_card(map: &serde_json::Map<String, Value>) -> bool {
-    map.get("url").is_some_and(Value::is_string)
+    let has_url: bool = map.get("url").is_some_and(Value::is_string);
+    has_url
         && (map.contains_key("skills")
             || map.contains_key("capabilities")
             || map.contains_key("protocolVersion"))
@@ -421,9 +422,10 @@ mod tests {
             "http://a-very-long-origin-hostname.example:9999/a2a",
         ));
         let text = String::from_utf8_lossy(&out);
-        let declared: usize = text
+        let header: Option<&str> = text
             .split("\r\n")
-            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .find_map(|line| line.strip_prefix("Content-Length: "));
+        let declared: usize = header
             .and_then(|value| value.parse().ok())
             .expect("a Content-Length header");
         assert_eq!(
