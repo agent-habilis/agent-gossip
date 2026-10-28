@@ -6,6 +6,7 @@ use super::{Message, Task};
 /// member by name, so the JSON-RPC `result` is `{"task":…}` or `{"message":…}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum SendMessageResponse {
     Task(Task),
     Message(Message),

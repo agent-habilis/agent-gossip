@@ -139,6 +139,8 @@ excessive_nesting = "warn"
 # Google Rust Style Guide, B3: a clone is a copy that is needed, and `Arc::clone(&x)` shows that it
 # only bumps a count.
 clone_on_ref_ptr = "warn"
+# Google Rust Style Guide, U23: a public enum is non_exhaustive, so a new variant is not a breaking change.
+exhaustive_enums = "warn"
 redundant_clone = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// prefix on the wire; [`TaskState::as_str`] keeps the friendly kebab name for
 /// our own `--output json` stream and CLI, which are the agent API, not A2A.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TaskState {
     #[serde(rename = "TASK_STATE_UNSPECIFIED")]
     Unspecified,

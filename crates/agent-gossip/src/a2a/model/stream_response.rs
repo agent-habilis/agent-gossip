@@ -6,6 +6,7 @@ use super::{Message, Task, TaskArtifactUpdate, TaskStatusUpdate};
 /// streamed event is one of these, ProtoJSON-tagged by member name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum StreamResponse {
     Task(Task),
     Message(Message),

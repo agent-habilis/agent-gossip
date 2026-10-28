@@ -36,6 +36,7 @@ pub struct MeshListing {
 
 /// A directory change observed by a [`Directory`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DirectoryEvent {
     /// A mesh appeared in the directory.
     Found(MeshListing),

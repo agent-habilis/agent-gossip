@@ -7,6 +7,7 @@ use crate::max_depth::MAX_DEPTH;
 /// the one the tests print.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
+#[non_exhaustive]
 pub enum Error {
     /// The template names a slot the call site did not provide.
     UnknownSlot {

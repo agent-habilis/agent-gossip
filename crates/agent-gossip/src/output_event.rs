@@ -101,6 +101,7 @@ pub struct PingPeer {
 /// the idle-debounce sweep, or its counterparty's graceful `Left`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum TaskGoneReason {
     Timeout,
     PeerLeft,

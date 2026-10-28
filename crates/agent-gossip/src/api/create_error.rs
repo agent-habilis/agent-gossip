@@ -5,6 +5,7 @@ use std::fmt;
 /// `invalid_params` error and [`CreateError::Setup`] to an internal one.
 #[derive(Debug)]
 #[must_use]
+#[non_exhaustive]
 pub enum CreateError {
     /// `advertise` was requested on a loopback-only mesh — a directory
     /// listing requires a mesh reachable across machines.
@@ -46,6 +47,7 @@ impl std::error::Error for CreateError {
 /// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
 #[must_use]
+#[non_exhaustive]
 pub enum JoinError {
     /// The target could not be resolved into a mesh.
     Resolve(anyhow::Error),
