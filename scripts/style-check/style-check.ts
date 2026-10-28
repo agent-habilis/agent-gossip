@@ -41,14 +41,26 @@ const ANYHOW_USE_BARE = /^\s*use (?:::)?anyhow::\{?[^;]*\bResult\b(?!\s+as\b)[^;
 const ANYHOW_MODULE_ALIAS = /\buse (?:::)?anyhow as (\w+)\s*;/g;
 const ANYHOW_TYPE_ALIAS = /\btype (\w+)(?:<[^=]*>)?\s*=\s*(?:::)?anyhow::Result\b/g;
 
+// The lexemes in which a `//`, a `/*` or a `"` is not what it looks like: a raw string, a string, a
+// char literal (`'"'`), then the two comment forms. Matched in this order, left to right, so a `//`
+// inside a string stays text and a quote inside a raw string does not end it.
+const LEXEME = /b?r(#*)"[\s\S]*?"\1|b?"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\\n]|\\.[^'\n]*)'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+
 /** Text with line comments and block comments blanked, so a commented-out signature counts nothing. */
 function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, "");
+  return text.replace(LEXEME, (lexeme) => {
+    if (lexeme.startsWith("/*")) return " ";
+    if (lexeme.startsWith("//")) return "";
+    return lexeme;
+  });
 }
 
 /** Text with the body of each string literal blanked, so a string that holds a signature counts nothing. */
 function blankStrings(text: string): string {
-  return text.replace(/"(?:[^"\\\n]|\\.)*"/g, "\"\"");
+  return text.replace(LEXEME, (lexeme) => {
+    if (lexeme.startsWith("/*") || lexeme.startsWith("//")) return lexeme;
+    return /^b?r?#*"/.test(lexeme) ? "\"\"" : lexeme;
+  });
 }
 
 /** The index of the `}` that closes the `{` at `open`. */

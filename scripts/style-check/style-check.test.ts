@@ -270,6 +270,15 @@ test("assert_no_message: an assert_eq! with two values and no message fails", ()
 test("assert_no_message: an assert_eq! with a message passes, across lines", () => {
   expectExit("crates/demo/src/lib.rs", "pub fn f(a: u8) {\n    assert_eq!(\n        a,\n        1,\n        \"a is {a}\"\n    );\n}", 0, "");
 });
+test("assert_no_message: a // inside a string literal is not a comment", () => {
+  expectExit("crates/demo/src/lib.rs", "fn f(url: &str) {\n    assert_eq!(url, \"http://host\", \"the url\");\n}", 0, "");
+});
+test("assert_no_message: a quote inside a raw string does not end the string", () => {
+  expectExit("crates/demo/src/lib.rs", "fn f(a: &str) {\n    assert_eq!(a, r#\"x\"y\"#, \"the text\");\n}", 0, "");
+});
+test("assert_no_message: a double-quote char literal does not open a string", () => {
+  expectExit("crates/demo/src/lib.rs", "fn f(a: char) {\n    assert_eq!(a, '\"', \"the char\");\n}", 0, "");
+});
 test("assert_no_message: a trailing comma adds no message", () => {
   expectExit("crates/demo/src/lib.rs", "fn f(x: bool) {\n    assert!(x,);\n}", 1, "");
 });
