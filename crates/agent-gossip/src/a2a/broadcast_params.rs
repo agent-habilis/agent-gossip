@@ -8,11 +8,14 @@ use std::time::Instant;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::blob::{ContentId, OffloadRequest};
-use habilis_network::ops::{Delivered, MeshSender, PendingSend, blob, doc};
+use habilis_network::ops::{
+    Delivered, MergeCtx, MeshSender, PendingSend, StateMergeParams, blob, broadcast_state_merge,
+    doc,
+};
 use habilis_network::protocol::message::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, Channel, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
-    MessageId, MessageKind, Nickname, Shard, ShardGroup, reassembly,
+    AppFrameParams, Channel, ContentHash, Identity, MeshId, Message, MessageBody, MessageId,
+    MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
 use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
@@ -135,6 +138,12 @@ struct ChainStamp {
     parents: Vec<ContentHash>,
 }
 
+/// `Shard` has no constructor, so the header is built through its validating `Deserialize`.
+fn shard_header(group: &ShardGroup, index: u32, total: u32) -> Shard {
+    serde_json::from_value(serde_json::json!({ "group": group, "idx": index, "total": total }))
+        .expect("a shard header with an index below a bounded total is valid")
+}
+
 /// The identity + payload of one outbound chat frame — the fields `build_msg`
 /// shares with [`synthesize_logical_msg`], grouped so the chain-stamp/shard/
 /// signer args stay their own params.
@@ -165,12 +174,7 @@ fn build_msg(
     let mut message = Message::new_app(
         mesh,
         author,
-        AppFrameParams {
-            tag: AppTag::from(wire::BROADCAST),
-            to: None,
-            corr: None,
-            body,
-        },
+        AppFrameParams::new(wire::app_tag(wire::BROADCAST), None, None, body),
     );
     if let Some(id) = id {
         message = message.with_id(id);
@@ -337,8 +341,8 @@ pub(crate) async fn send_broadcast(
     }
     let signer = Arc::clone(state.identity());
     let payload = status_update_params::compose_broadcast(mesh, text.as_str());
-    let payload_id =
-        MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
+    let payload_id = MessageId::try_new(payload.message_id.as_str())
+        .expect("an a2a message id is a valid frame id");
     let body = status_update_params::payload_body(&payload)?;
     // On a passworded mesh, seal the chat body so a relay or a captured frame
     // can't read it. Everything downstream (dedup, the per-author chain, the
@@ -364,7 +368,7 @@ pub(crate) async fn send_broadcast(
         ChainStamp {
             seq: chain_seq,
             prev: chain_prev,
-            parents: state.dag_parents(),
+            parents: state.dag_parents().collect(),
         },
         None,
         &signer,
@@ -419,12 +423,12 @@ pub(crate) async fn send_broadcast(
     // shard could hold (its current tips, never fewer than the one-hash link later
     // shards carry). The all-zero hash stands in for any content hash.
     let hash_stub = ContentHash::from_bytes([0; 32]);
-    let probe_parents = vec![hash_stub; state.dag_parents().len().max(1)];
+    let probe_parents = vec![hash_stub; state.dag_parents().count().max(1)];
     let probe = build_msg(
         ChatFrameParams {
             mesh,
             author,
-            body: MessageBody::new(String::new()).expect("empty body is valid"),
+            body: MessageBody::try_new(String::new()).expect("empty body is valid"),
             id: None,
         },
         ChainStamp {
@@ -432,11 +436,7 @@ pub(crate) async fn send_broadcast(
             prev: Some(hash_stub),
             parents: probe_parents,
         },
-        Some(Shard {
-            group: group.clone(),
-            idx: max_parts - 1,
-            total: max_parts,
-        }),
+        Some(shard_header(&group, max_parts - 1, max_parts)),
         &signer,
     );
     let budget = shard_body_budget(&probe);
@@ -472,12 +472,13 @@ pub(crate) async fn send_broadcast(
     let mut cache_frames = Vec::new();
     let mut header = None;
     for (index, chunk) in chunks.iter().enumerate() {
-        let shard = Shard {
-            group: group.clone(),
-            idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
+        let shard = shard_header(
+            &group,
+            u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
-        };
-        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        );
+        let chunk_body =
+            MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
         let message = build_msg(
             ChatFrameParams {
                 mesh,
@@ -488,7 +489,7 @@ pub(crate) async fn send_broadcast(
             ChainStamp {
                 seq: chain_seq,
                 prev: chain_prev,
-                parents: state.dag_parents(),
+                parents: state.dag_parents().collect(),
             },
             Some(shard),
             &signer,
@@ -643,13 +644,9 @@ async fn broadcast_directed_frame(
         mesh,
         author,
         kind.clone(),
-        MessageBody::new(String::new()).expect("empty body is valid"),
+        MessageBody::try_new(String::new()).expect("empty body is valid"),
     )
-    .with_shard(Some(Shard {
-        group: group.clone(),
-        idx: max_parts - 1,
-        total: max_parts,
-    }))
+    .with_shard(Some(shard_header(&group, max_parts - 1, max_parts)))
     .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
@@ -670,12 +667,13 @@ async fn broadcast_directed_frame(
     let mut frames = Vec::new();
     let mut shard_pending = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
-        let shard = Shard {
-            group: group.clone(),
-            idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
+        let shard = shard_header(
+            &group,
+            u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
-        };
-        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        );
+        let chunk_body =
+            MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
         let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
             .sign(&signer);
@@ -908,7 +906,7 @@ pub(crate) fn seal_directed(
             ),
         }
     })?;
-    habilis_network::protocol::seal_to_body(&key, body.as_str())
+    habilis_network::protocol::seal_to_body(&key, body.as_str()).map_err(anyhow::Error::from)
 }
 
 /// A worker-emitted status leg's identity, addressee, task, state/note, and
@@ -990,7 +988,7 @@ pub(crate) async fn broadcast_task_status(
     let plain = status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::STATUS),
+        tag: wire::app_tag(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
@@ -1070,12 +1068,12 @@ pub(crate) async fn send_msg(
         ));
     }
     let payload = status_update_params::compose_msg(mesh, text.as_str());
-    let payload_id =
-        MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
+    let payload_id = MessageId::try_new(payload.message_id.as_str())
+        .expect("an a2a message id is a valid frame id");
     let plain = status_update_params::payload_body(&payload)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::MSG),
+        tag: wire::app_tag(wire::MSG),
         to: Some(peer.clone()),
         corr: None,
     };
@@ -1149,7 +1147,7 @@ pub(crate) async fn broadcast_task_artifact(
     let plain = status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::ARTIFACT),
+        tag: wire::app_tag(wire::ARTIFACT),
         to: Some(peer.clone()),
         corr: None,
     };
@@ -1232,13 +1230,13 @@ async fn build_offload_parts(
     let ticket = blob::offload(
         &mut app.blob_server,
         &lookups,
-        relay_transport,
-        OffloadRequest {
-            path: file.path,
-            spool_dir: spool,
-            content_id: ContentId::new(task_id.as_str()),
-            password: password.cloned(),
-        },
+        relay_transport.into(),
+        OffloadRequest::new(
+            file.path,
+            spool,
+            ContentId::new(task_id.as_str()),
+            password.cloned(),
+        ),
     )
     .await?;
     // The engine hands back a ticket; turning it into a `Part.url` is A2A's shape.
@@ -1390,6 +1388,11 @@ async fn send_directed_leg(
                 };
                 Ok(pending.into_iter().next())
             }
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+            )]
+            _ => Err(anyhow::anyhow!("unsupported delivery outcome")),
         };
     } else if state.pending_outbound_mut().push((message.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
@@ -1597,13 +1600,16 @@ pub(crate) async fn send_shard_repair_requests(
     state: &mut EventLoopState,
     sender: &MeshSender,
 ) {
-    let tickets = state.reassembly_mut().repair_tickets(Instant::now());
+    let tickets: Vec<_> = state
+        .reassembly_mut()
+        .repair_tickets(Instant::now())
+        .collect();
     for ticket in tickets {
         let envelope = serde_json::json!({
             "method": "shard/repair",
             "params": { "group": ticket.group.as_str(), "missing": ticket.missing },
         });
-        let Ok(body) = MessageBody::new(envelope.to_string()) else {
+        let Ok(body) = MessageBody::try_new(envelope.to_string()) else {
             continue;
         };
         let sealed = match seal_directed(state, &ticket.author, &body) {
@@ -1613,16 +1619,16 @@ pub(crate) async fn send_shard_repair_requests(
                 continue;
             }
         };
-        let corr = CorrId::from(crate::a2a::A2aRpcId::random().as_str());
+        let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
         let frame = Message::new_app(
             mesh,
             author,
-            AppFrameParams {
-                tag: AppTag::from(wire::REQ),
-                to: Some(ticket.author.clone()),
-                corr: Some(corr),
-                body: sealed,
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::REQ),
+                Some(ticket.author.clone()),
+                Some(corr),
+                sealed,
+            ),
         )
         .sign(state.identity());
         logging::log_out(&frame);
@@ -1716,7 +1722,7 @@ pub(crate) async fn broadcast_a2a_call(
         app.note_sent_ref(message_id, &peer);
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
-    let Ok(body) = MessageBody::new(envelope.to_string()) else {
+    let Ok(body) = MessageBody::try_new(envelope.to_string()) else {
         app.orphan_blob(blob_group);
         responder.send_response(&rpc_error(
             -32602,
@@ -1735,9 +1741,9 @@ pub(crate) async fn broadcast_a2a_call(
     };
     // The a2a layer mints a UUID rpc id; the engine correlates on the generic
     // `CorrId` carried by the app frame.
-    let corr = CorrId::from(crate::a2a::A2aRpcId::random().as_str());
+    let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::REQ),
+        tag: wire::app_tag(wire::REQ),
         to: Some(peer.clone()),
         corr: Some(corr.clone()),
     };
@@ -1840,13 +1846,13 @@ pub(crate) async fn send_directed_rpc(
         mesh,
         author,
         kind.clone(),
-        MessageBody::new(String::new()).expect("empty body is valid"),
+        MessageBody::try_new(String::new()).expect("empty body is valid"),
     )
-    .with_shard(Some(Shard {
-        group: group.clone(),
-        idx: MAX_SHARD_TOTAL - 1,
-        total: MAX_SHARD_TOTAL,
-    }))
+    .with_shard(Some(shard_header(
+        &group,
+        MAX_SHARD_TOTAL - 1,
+        MAX_SHARD_TOTAL,
+    )))
     .sign(&signer);
     let budget = shard_body_budget(&probe);
     let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
@@ -1860,13 +1866,14 @@ pub(crate) async fn send_directed_rpc(
     }
     let mut cache_frames = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
-        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        let chunk_body =
+            MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
         let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
-            .with_shard(Some(Shard {
-                group: group.clone(),
-                idx: u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
+            .with_shard(Some(shard_header(
+                &group,
+                u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"),
                 total,
-            }))
+            )))
             .sign(&signer);
         logging::log_out(&message);
         let bytes = message.serialize()?;
@@ -2046,21 +2053,17 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::StateMerge { merge, response } => {
-            let outcome = habilis_network::ops::broadcast_state_merge(
+            let outcome = broadcast_state_merge(
                 state,
-                habilis_network::ops::StateMergeParams {
-                    mesh,
-                    author,
+                StateMergeParams::new(
+                    MergeCtx::new(mesh, author, sender, output),
+                    Channel::State,
                     merge,
-                    sender,
-                    sink: output,
-                    channel: Channel::State,
-                    surface: true,
-                },
+                ),
             )
             .await;
             let sent = outcome.is_ok();
-            let _ = response.send(outcome.map(|_| ()));
+            let _ = response.send(outcome.map(|_| ()).map_err(anyhow::Error::from));
             sent
         }
         SessionRequest::StateGet { response } => {
@@ -2068,21 +2071,17 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::MetaMerge { merge, response } => {
-            let outcome = habilis_network::ops::broadcast_state_merge(
+            let outcome = broadcast_state_merge(
                 state,
-                habilis_network::ops::StateMergeParams {
-                    mesh,
-                    author,
+                StateMergeParams::new(
+                    MergeCtx::new(mesh, author, sender, output),
+                    Channel::Meta,
                     merge,
-                    sender,
-                    sink: output,
-                    channel: Channel::Meta,
-                    surface: true,
-                },
+                ),
             )
             .await;
             let sent = outcome.is_ok();
-            let _ = response.send(outcome.map(|_| ()));
+            let _ = response.send(outcome.map(|_| ()).map_err(anyhow::Error::from));
             sent
         }
         SessionRequest::MetaGet { response } => {
@@ -2310,7 +2309,7 @@ mod echo_when_sent_tests {
             &MeshId::from("test"),
             &Nickname::from("alice"),
             MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
-            MessageBody::new("hi").expect("valid body"),
+            MessageBody::try_new("hi").expect("valid body"),
         )
     }
 
@@ -2373,7 +2372,7 @@ mod sharded_leg_tests {
             &MeshId::from("test"),
             &Nickname::from("alice"),
             MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
-            MessageBody::new(text).expect("valid body"),
+            MessageBody::try_new(text).expect("valid body"),
         )
     }
 

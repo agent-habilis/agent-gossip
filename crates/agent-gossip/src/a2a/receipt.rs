@@ -1,5 +1,5 @@
 use habilis_network::embed::{EventLoopState, HandlerCtx};
-use habilis_network::protocol::{AppTag, MessageBody, MessageKind, Nickname};
+use habilis_network::protocol::{MessageBody, MessageKind, Nickname};
 use serde::{Deserialize, Serialize};
 
 use crate::a2a::a2a_app::A2aApp;
@@ -64,10 +64,10 @@ async fn send_sealed(
     to: &Nickname,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
-    let plain = MessageBody::new(serde_json::to_string(receipt)?)?;
+    let plain = MessageBody::try_new(serde_json::to_string(receipt)?)?;
     let body = seal_directed(state, to, &plain)?;
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::RECEIPT),
+        tag: wire::app_tag(wire::RECEIPT),
         to: Some(to.clone()),
         corr: None,
     };

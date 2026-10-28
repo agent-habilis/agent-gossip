@@ -2,7 +2,9 @@ use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{Mesh, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
-use habilis_network::runtime::{CoHostPolicy, EventLoopConfig, SetupKind, SetupParams, setup_mesh};
+use habilis_network::runtime::{
+    CoHostPolicy, EventLoopConfig, SetupKind, SetupParams, SignalHandling, setup_mesh,
+};
 use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
@@ -96,23 +98,14 @@ impl MeshSession {
                 mesh,
                 password: None,
             },
-            SetupParams {
-                author,
-                max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
-                max_direct: 0,
-                runtime_base: Some(crate::runtime_base()),
-                state_file: None,
-                sink,
-                per_peer_gate: Some(crate::a2a::card_gate()),
-                // The mesh mints its own endpoint and serves no extra ALPNs on its
-                // Router: the A2A binding stands up a separate endpoint of its own
-                // (see `bridge::expose`), so there is no accept() loop to share.
-                endpoint: None,
-                protocols: Vec::new(),
-                transports: habilis_network::net::TransportOpts::default(),
-                cohost: Some(cohost),
-                live_count: None,
-            },
+            // The mesh mints its own endpoint and serves no extra ALPNs on its
+            // Router: the A2A binding stands up a separate endpoint of its own
+            // (see `bridge::expose`), so there is no accept() loop to share.
+            SetupParams::new(author, sink)
+                .with_max_peers(GOSSIP_ACTIVE_VIEW_CAPACITY)
+                .with_runtime_base(crate::runtime_base())
+                .with_per_peer_gate(crate::a2a::card_gate())
+                .with_cohost(cohost),
         )
         .await?;
         Ok(Self::with_events_and_signals(
@@ -120,7 +113,7 @@ impl MeshSession {
             io,
             SpawnEnv {
                 advertiser: None,
-                handle_signals: false,
+                handle_signals: SignalHandling::Leave,
             },
             events_rx,
         ))
@@ -141,14 +134,14 @@ impl MeshSession {
             io,
             SpawnEnv {
                 advertiser,
-                handle_signals: true,
+                handle_signals: SignalHandling::Handle,
             },
             events_rx,
         )
     }
 
     /// [`Self::with_events`] with the signal registration explicit — the
-    /// directory sessions pass `handle_signals: false`.
+    /// directory sessions pass `handle_signals: SignalHandling::Leave`.
     fn with_events_and_signals(
         elc: EventLoopConfig,
         io: SurfacedIo,

@@ -1,7 +1,7 @@
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, Nickname};
-use habilis_network::runtime::{EventLoopConfig, Node};
+use habilis_network::runtime::{EventLoopConfig, Node, SignalHandling};
 use tokio::sync::{broadcast, oneshot};
 
 use super::a2a_call_params::{A2aCallParams, TaskStatusParams};
@@ -93,7 +93,7 @@ impl InProcessSession {
             io,
             SpawnEnv {
                 advertiser,
-                handle_signals: true,
+                handle_signals: SignalHandling::Handle,
             },
             None,
         ))
@@ -110,7 +110,7 @@ impl InProcessSession {
             io,
             SpawnEnv {
                 advertiser: None,
-                handle_signals: true,
+                handle_signals: SignalHandling::Handle,
             },
             None,
         ))
@@ -129,7 +129,7 @@ impl InProcessSession {
             io,
             SpawnEnv {
                 advertiser: None,
-                handle_signals: true,
+                handle_signals: SignalHandling::Handle,
             },
             None,
         ))
@@ -357,6 +357,8 @@ impl InProcessSession {
         // Stop advertising first — we're leaving, so the listing should age out
         // rather than keep being re-broadcast while the loop winds down.
         drop(advertiser);
-        node.leave().await.map_err(SessionError::LeaveFailed)
+        node.leave()
+            .await
+            .map_err(|error| SessionError::LeaveFailed(anyhow::Error::from(error)))
     }
 }

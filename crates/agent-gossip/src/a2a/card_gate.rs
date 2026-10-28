@@ -7,8 +7,5 @@
 ///
 /// [`SelfWriteGate`]: habilis_network::embed::SelfWriteGate
 pub(crate) fn card_gate() -> habilis_network::embed::SelfWriteGate {
-    habilis_network::embed::SelfWriteGate {
-        map: "peers".to_owned(),
-        field: "card".to_owned(),
-    }
+    habilis_network::embed::SelfWriteGate::new("peers", "card")
 }

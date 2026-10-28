@@ -2,7 +2,7 @@ use anyhow::Result;
 use habilis_network::protocol::{
     LookupSet, Mesh, MeshConfig, Nickname, RelaySelection, resolve_lookups,
 };
-use habilis_network::runtime::{Resolved, SetupKind, derive_topic_mesh_config};
+use habilis_network::runtime::{Resolved, SetupKind, TopicParams, derive_topic_mesh_config};
 use habilis_network::util::tuning;
 
 use crate::policy;
@@ -13,40 +13,30 @@ use crate::policy;
 pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
     // The test lane reaches no further than the LAN and has no relay lookup,
     // so the policy gives it no relay transport.
-    let lookups = if tuning::topic_mdns_only_for_test() {
-        LookupSet {
-            mdns: true,
-            dht: false,
-            relay_lookup: RelaySelection::Unset,
-        }
-    } else {
-        LookupSet {
-            mdns: true,
-            dht: true,
-            relay_lookup: RelaySelection::Default,
-        }
-    };
-    derive_topic_mesh_config(
-        string,
-        MeshConfig {
-            transport: policy::app_transport_policy(&lookups),
-            lookups: resolve_lookups(lookups),
-            password: None,
-            issuer_pubkey: None,
-        },
-    )
+    let mut lookups = LookupSet::default();
+    lookups.mdns = true;
+    if !tuning::topic_mdns_only_for_test() {
+        lookups.dht = true;
+        lookups.relay_lookup = RelaySelection::Default;
+    }
+    let transport = policy::app_transport_policy(&lookups);
+    let config = MeshConfig::new(resolve_lookups(lookups), None, None, transport);
+    derive_topic_mesh_config(string, config).map_err(anyhow::Error::from)
 }
 
 pub(crate) fn resolve_topic(string: String, nickname: Option<Nickname>) -> Result<Resolved> {
     let mesh = derive_topic_mesh(&string)?;
-    Ok(Resolved {
-        kind: SetupKind::Topic {
-            mesh,
-            topic_string: string,
-        },
-        author: nickname.unwrap_or_else(Nickname::random),
-        advertise_directory: None,
-    })
+    // `Resolved` has no constructor, and `TopicParams::resolve` derives the engine's default
+    // transport policy, so the app's mesh replaces the derived kind.
+    let mut params = TopicParams::default();
+    params.string.clone_from(&string);
+    params.nickname = nickname;
+    let mut resolved = params.resolve()?;
+    resolved.kind = SetupKind::Topic {
+        mesh,
+        topic_string: string,
+    };
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -77,13 +67,9 @@ mod tests {
         );
         assert_eq!(
             mesh.config().transport,
-            TransportPolicy {
-                udp: true,
-                webrtc: true,
-                multihop: false,
-                gossip: true,
-                relay_transport: true,
-            },
+            TransportPolicy::default()
+                .with_multihop(false)
+                .with_relay_transport(true),
             "a topic mesh is udp, webrtc and gossip with relay, not multihop"
         );
     }

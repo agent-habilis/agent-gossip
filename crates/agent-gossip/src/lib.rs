@@ -20,7 +20,7 @@
 //! # async fn run() -> anyhow::Result<()> {
 //! let session = MeshSession::join(JoinConfig::new("<hash>".parse()?)).await?;
 //! let mut rx = session.messages();
-//! session.broadcast(MessageBody::new("hello")?).await?;
+//! session.broadcast(MessageBody::try_new("hello")?).await?;
 //! while let Ok(msg) = rx.recv().await {
 //!     println!("{} : {}", msg.author, msg.body);
 //! }

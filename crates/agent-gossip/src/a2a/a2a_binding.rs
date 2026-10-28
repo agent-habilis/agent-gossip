@@ -168,7 +168,7 @@ fn peer_card_nick(path: &str) -> Option<Nickname> {
     let nick = path
         .strip_prefix("/peers/")?
         .strip_suffix("/.well-known/agent-card.json")?;
-    Nickname::new(nick).ok()
+    Nickname::try_new(nick).ok()
 }
 
 /// The JSON-RPC POST path: authenticate, parse, resolve the URL target,
@@ -189,7 +189,7 @@ async fn rpc(
     }
     let target = match request.uri().path() {
         "/" | "/mesh" => None,
-        path => match path.strip_prefix("/peers/").map(Nickname::new) {
+        path => match path.strip_prefix("/peers/").map(Nickname::try_new) {
             Some(Ok(nick)) => Some(nick),
             Some(Err(_)) | None => return not_found(),
         },

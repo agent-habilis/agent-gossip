@@ -11,13 +11,9 @@ pub(crate) fn app_transport_policy(lookups: &LookupSet) -> TransportPolicy {
 /// [`app_transport_policy`] for a caller that already knows whether the relay
 /// is a lookup.
 pub(crate) fn app_policy(relay_lookup: bool) -> TransportPolicy {
-    TransportPolicy {
-        udp: true,
-        webrtc: true,
-        multihop: false,
-        gossip: true,
-        relay_transport: relay_lookup,
-    }
+    TransportPolicy::default()
+        .with_multihop(false)
+        .with_relay_transport(relay_lookup)
 }
 
 #[cfg(test)]

@@ -417,8 +417,7 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
         }
         RelayChoice::Pinned => {
             let rungs: Vec<String> = net::relay_ladder(&lookups.relay_lookup)
-                .iter()
-                .map(ToString::to_string)
+                .map(|rung| rung.to_string())
                 .collect();
             let rungs = rungs.join(", ");
             checks.push(Check::new(
@@ -436,6 +435,11 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
                 &format!("custom ladder: {rungs}"),
             ));
         }
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+        )]
+        _ => {}
     }
 
     checks.push(Check::new(
@@ -495,7 +499,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     let mut checks = Vec::new();
 
     // Relay rungs — show the whole ladder's health, not just the first pick.
-    let ladder = net::relay_ladder(&lookups.relay_lookup);
+    let ladder: Vec<_> = net::relay_ladder(&lookups.relay_lookup).collect();
     let mut first_reachable = None;
     if !ladder.is_empty() {
         for (rung, reachable) in net::probe_ladder(&ladder, RUNG_TIMEOUT).await {
@@ -610,9 +614,9 @@ mod tests {
         // Regression: an invite-only mesh withholds its derivation secret from
         // the bare hash, so deriving the loopback ladder used to panic in
         // `effective_seed`. `doctor` must report the reason instead of crashing.
-        let mut mesh = Mesh::new(
+        let mut mesh = Mesh::try_new(
             Seed::from_bytes([1u8; 32]),
-            MeshName::new("t").unwrap(),
+            MeshName::try_new("t").unwrap(),
             MeshConfig::loopback(),
         )
         .expect("a mesh without a secret");

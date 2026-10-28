@@ -85,11 +85,11 @@ pub(crate) fn lookup_set(
     } else {
         RelaySelection::Unset
     };
-    Ok(LookupSet {
-        mdns: lookups.contains(&Lookup::Mdns),
-        dht: lookups.contains(&Lookup::Dht),
-        relay_lookup,
-    })
+    let mut set = LookupSet::default();
+    set.mdns = lookups.contains(&Lookup::Mdns);
+    set.dht = lookups.contains(&Lookup::Dht);
+    set.relay_lookup = relay_lookup;
+    Ok(set)
 }
 
 #[cfg(test)]

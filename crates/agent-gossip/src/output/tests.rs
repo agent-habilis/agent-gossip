@@ -35,18 +35,18 @@ fn view(message: Message) -> Authored {
 
 fn chat_frame_raw(author: &str, text: &str) -> Message {
     let payload = status_update_params::compose_broadcast(&sid(), text);
-    let frame_id = habilis_network::protocol::MessageId::new(payload.message_id.as_str())
+    let frame_id = habilis_network::protocol::MessageId::try_new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
     let body = status_update_params::payload_body(&payload).expect("payload serializes");
     Message::new_app(
         &sid(),
         &nick(author),
-        habilis_network::protocol::AppFrameParams {
-            tag: habilis_network::protocol::AppTag::from(wire::BROADCAST),
-            to: None,
-            corr: None,
+        habilis_network::protocol::AppFrameParams::new(
+            wire::app_tag(wire::BROADCAST),
+            None,
+            None,
             body,
-        },
+        ),
     )
     .with_id(frame_id)
 }
@@ -117,7 +117,7 @@ fn ready_event_drift_is_present_only_when_stale() {
     let make = |drift: Option<&str>| {
         simple_event::event_json(&OutputEvent::Ready {
             mesh: sid(),
-            name: habilis_network::protocol::MeshName::new("team").unwrap(),
+            name: habilis_network::protocol::MeshName::try_new("team").unwrap(),
             nickname: nick("alice"),
             drift: drift.map(str::to_owned),
             a2a_port: None,
@@ -925,7 +925,7 @@ mod prop {
 
     fn arb_nickname() -> impl Strategy<Value = habilis_network::protocol::Nickname> {
         "[a-z]{3,8}-[a-z]{3,8}"
-            .prop_map(|raw| habilis_network::protocol::Nickname::new(raw).unwrap())
+            .prop_map(|raw| habilis_network::protocol::Nickname::try_new(raw).unwrap())
     }
 
     proptest! {

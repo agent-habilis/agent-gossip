@@ -137,9 +137,7 @@ mod snapshots {
                 habilis_network::protocol::MessageKind::app_to(
                     wire::REQ,
                     habilis_network::protocol::Nickname::from("addressed-nick"),
-                    Some(habilis_network::protocol::CorrId::from(
-                        "00000000-0000-0000-0000-0000000000aa",
-                    )),
+                    Some(wire::corr_id("00000000-0000-0000-0000-0000000000aa")),
                 ),
                 r#"{"method":"tasks/list","params":{}}"#,
             ),
@@ -157,9 +155,7 @@ mod snapshots {
                 habilis_network::protocol::MessageKind::app_to(
                     wire::RESP,
                     habilis_network::protocol::Nickname::from("addressed-nick"),
-                    Some(habilis_network::protocol::CorrId::from(
-                        "00000000-0000-0000-0000-0000000000aa",
-                    )),
+                    Some(wire::corr_id("00000000-0000-0000-0000-0000000000aa")),
                 ),
                 r#"{"result":{"tasks":[]}}"#,
             ),

@@ -84,7 +84,7 @@ pub(crate) fn payload_body<T: serde::Serialize>(
         what: "failed to serialize a2a payload",
         source,
     })?;
-    MessageBody::new(json).map_err(|error| FramePayloadError::Body(error.to_string()))
+    MessageBody::try_new(json).map_err(|error| FramePayloadError::Body(error.to_string()))
 }
 
 /// The checks both chat tags share, on a **logical** frame (a single wire
@@ -568,12 +568,12 @@ pub(crate) fn test_status_frame(
     Frame::new_app(
         mesh,
         &habilis_network::protocol::Nickname::from("author"),
-        habilis_network::protocol::AppFrameParams {
-            tag: habilis_network::protocol::AppTag::from(wire::STATUS),
+        habilis_network::protocol::AppFrameParams::new(
+            wire::app_tag(wire::STATUS),
             to,
-            corr: None,
-            body: payload_body(&status).expect("status body"),
-        },
+            None,
+            payload_body(&status).expect("status body"),
+        ),
     )
 }
 
@@ -599,7 +599,7 @@ mod tests {
     fn frame_for(payload: &super::Message) -> Frame {
         let body = payload_body(payload).expect("payload serializes");
         let mut frame = Frame::fixture(MessageKind::app_broadcast(wire::BROADCAST), body.as_str());
-        frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
+        frame.id = MessageId::try_new(payload.message_id.as_str()).expect("a2a id is a uuid");
         frame
     }
 
@@ -610,7 +610,7 @@ mod tests {
             MessageKind::app_to(wire::MSG, "addressed-nick".into(), None),
             body.as_str(),
         );
-        frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
+        frame.id = MessageId::try_new(payload.message_id.as_str()).expect("a2a id is a uuid");
         frame
     }
 

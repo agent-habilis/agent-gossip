@@ -70,7 +70,9 @@ pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
 
 #[must_use]
 pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
-    Mesh::new(Seed::from_bytes([7u8; 32]), name.clone(), config.0.clone()).to_string()
+    Mesh::try_new(Seed::from_bytes([7u8; 32]), name.clone(), config.0.clone())
+        .expect("a bench config is valid")
+        .to_string()
 }
 
 pub fn mesh_decode(token: &str) {
@@ -89,7 +91,7 @@ pub fn config_round_trip(config: &BenchConfig) {
 
 #[must_use]
 pub fn mesh_id_validate(value: &str) -> bool {
-    MeshId::new(value).is_ok()
+    MeshId::try_new(value).is_ok()
 }
 
 // ── message serialize / deserialize ─────────────────────────────────
@@ -100,19 +102,19 @@ pub struct BenchMessage(Message);
 impl BenchMessage {
     #[must_use]
     pub fn sample(body: &str) -> Self {
-        let name = MeshName::new("bench").expect("valid mesh name");
-        let mesh = MeshId::new(mesh_token(&name, &BenchConfig::loopback()))
+        let name = MeshName::try_new("bench").expect("valid mesh name");
+        let mesh = MeshId::try_new(mesh_token(&name, &BenchConfig::loopback()))
             .expect("Mesh::to_string is a valid MeshId");
-        let author = Nickname::new("bench-author").expect("valid nickname");
+        let author = Nickname::try_new("bench-author").expect("valid nickname");
         Self(Message::new_app(
             &mesh,
             &author,
-            habilis_network::protocol::AppFrameParams {
-                tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
-                to: None,
-                corr: None,
-                body: MessageBody::new(body).expect("valid body"),
-            },
+            habilis_network::protocol::AppFrameParams::new(
+                crate::a2a::wire::app_tag(crate::a2a::wire::BROADCAST),
+                None,
+                None,
+                MessageBody::try_new(body).expect("valid body"),
+            ),
         ))
     }
 

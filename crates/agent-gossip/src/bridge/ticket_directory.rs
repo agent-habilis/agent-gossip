@@ -51,7 +51,7 @@ impl TicketAd {
     /// # Errors
     /// The label carries a control character or the JSON exceeds the body cap.
     pub(crate) fn to_body(&self) -> Result<MessageBody> {
-        Ok(MessageBody::new(serde_json::to_string(self)?)?)
+        Ok(MessageBody::try_new(serde_json::to_string(self)?)?)
     }
 
     fn parse(body: &str) -> Option<Self> {

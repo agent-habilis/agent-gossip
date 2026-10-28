@@ -25,7 +25,11 @@ fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
                  use `agent-gossip topic {quoted}`."
             )
         }
-        JoinTargetError::MalformedMeshId(_) => error.to_string(),
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only `Unrecognized` needs its own text"
+        )]
+        _ => error.to_string(),
     })
 }
 

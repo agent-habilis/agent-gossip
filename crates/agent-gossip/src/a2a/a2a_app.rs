@@ -729,7 +729,7 @@ mod tests {
             &MeshId::from("test"),
             &Nickname::from("alice"),
             MessageKind::App {
-                tag: AppTag::from("status"),
+                tag: wire::app_tag("status"),
                 to: None,
                 corr: None,
             },
@@ -876,7 +876,7 @@ mod tests {
         let (bob_tx, bob_rx) = oneshot::channel();
         let (carol_tx, carol_rx) = oneshot::channel();
         app.a2a_waiters.push(super::A2aWaiter {
-            corr: habilis_network::protocol::CorrId::from("corr-bob"),
+            corr: wire::corr_id("corr-bob"),
             peer: Nickname::from("bob"),
             deadline: far,
             responder: A2aResponder::Typed(bob_tx),
@@ -884,7 +884,7 @@ mod tests {
             opens_task: true,
         });
         app.a2a_waiters.push(super::A2aWaiter {
-            corr: habilis_network::protocol::CorrId::from("corr-carol"),
+            corr: wire::corr_id("corr-carol"),
             peer: Nickname::from("carol"),
             deadline: far,
             responder: A2aResponder::Typed(carol_tx),
@@ -919,7 +919,7 @@ mod tests {
     fn waiter_with_blob(corr: &str, group: &str) -> super::A2aWaiter {
         let (tx, _rx) = oneshot::channel();
         super::A2aWaiter {
-            corr: habilis_network::protocol::CorrId::from(corr),
+            corr: wire::corr_id(corr),
             peer: Nickname::from("bob"),
             deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
             responder: A2aResponder::Typed(tx),
@@ -941,7 +941,7 @@ mod tests {
         });
 
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-1"),
+            &wire::corr_id("corr-1"),
             &Nickname::from("bob"),
             &created.to_string(),
         );
@@ -967,7 +967,7 @@ mod tests {
         app.a2a_waiters
             .push(waiter_with_blob("corr-err", "group-err"));
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-err"),
+            &wire::corr_id("corr-err"),
             &Nickname::from("bob"),
             r#"{"error":{"code":-32602,"message":"no"}}"#,
         );
@@ -1034,18 +1034,14 @@ mod tests {
         to_carol.peer = Nickname::from("carol");
         app.a2a_waiters.push(to_carol);
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-carol"),
+            &wire::corr_id("corr-carol"),
             &Nickname::from("carol"),
             &created,
         );
 
         app.a2a_waiters
             .push(waiter_with_blob("corr-bob", "group-bob"));
-        app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-bob"),
-            &Nickname::from("bob"),
-            &created,
-        );
+        app.fulfill_a2a_waiter(&wire::corr_id("corr-bob"), &Nickname::from("bob"), &created);
 
         let group = |name: &str| ContentId::new(name);
         assert_eq!(
@@ -1070,7 +1066,7 @@ mod tests {
         late.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
-        let corr = habilis_network::protocol::CorrId::from("corr-slow");
+        let corr = wire::corr_id("corr-slow");
         assert!(
             app.has_a2a_waiter(&corr, &Nickname::from("bob")),
             "the waiter is still registered for bob"
@@ -1114,7 +1110,7 @@ mod tests {
         });
 
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-slow"),
+            &wire::corr_id("corr-slow"),
             &Nickname::from("bob"),
             &created.to_string(),
         );
@@ -1148,7 +1144,7 @@ mod tests {
         });
 
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-follow-up"),
+            &wire::corr_id("corr-follow-up"),
             &Nickname::from("bob"),
             &accepted.to_string(),
         );
@@ -1188,7 +1184,7 @@ mod tests {
             "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_WORKING" } } }
         });
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-retry"),
+            &wire::corr_id("corr-retry"),
             &Nickname::from("bob"),
             &accepted.to_string(),
         );
@@ -1217,7 +1213,7 @@ mod tests {
         late.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
-        let corr = habilis_network::protocol::CorrId::from("corr-late-error");
+        let corr = wire::corr_id("corr-late-error");
 
         app.fulfill_a2a_waiter(
             &corr,
@@ -1248,7 +1244,7 @@ mod tests {
         app.a2a_waiters
             .push(waiter_with_blob("corr-held", "group-held"));
         app.fulfill_a2a_waiter(
-            &habilis_network::protocol::CorrId::from("corr-held"),
+            &wire::corr_id("corr-held"),
             &Nickname::from("bob"),
             &created.to_string(),
         );
@@ -1256,7 +1252,7 @@ mod tests {
         late.deadline = tokio::time::Instant::now();
         app.a2a_waiters.push(late);
         app.expire_a2a_waiters(tokio::time::Instant::now());
-        let corr = habilis_network::protocol::CorrId::from("corr-late-held");
+        let corr = wire::corr_id("corr-late-held");
 
         app.fulfill_a2a_waiter(&corr, &Nickname::from("bob"), &created.to_string());
 
@@ -1289,11 +1285,7 @@ mod tests {
         })
         .to_string();
         let reply = |target: &mut super::A2aApp, corr: &str| {
-            target.fulfill_a2a_waiter(
-                &habilis_network::protocol::CorrId::from(corr),
-                &Nickname::from("bob"),
-                &accepted,
-            );
+            target.fulfill_a2a_waiter(&wire::corr_id(corr), &Nickname::from("bob"), &accepted);
         };
         let mut timed_out = waiter_with_blob("corr-first", "group-first");
         timed_out.opens_task = false;

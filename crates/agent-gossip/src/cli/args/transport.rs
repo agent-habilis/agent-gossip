@@ -50,7 +50,7 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
     anyhow::ensure!(!transports.is_empty(), "the transport list is empty");
     let named: Vec<habilis_network::protocol::Transport> =
         transports.iter().copied().map(Into::into).collect();
-    TransportPolicy::from_transports(&named)
+    TransportPolicy::from_transports(&named).map_err(anyhow::Error::from)
 }
 
 #[cfg(test)]

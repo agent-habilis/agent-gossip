@@ -1,5 +1,5 @@
 use habilis_network::embed::EventLoopState;
-use habilis_network::ops::{MeshSender, StateMergeParams, broadcast_state_merge};
+use habilis_network::ops::{MergeCtx, MeshSender, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::{AuthorKey, Channel, MeshId, MessageBody, Nickname};
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -321,15 +321,7 @@ pub(crate) async fn handle_op(
         A2aOp::ChannelMerge { channel, merge } => {
             broadcast_state_merge(
                 state,
-                StateMergeParams {
-                    mesh,
-                    author,
-                    merge,
-                    sender,
-                    sink: output,
-                    channel,
-                    surface: true,
-                },
+                StateMergeParams::new(MergeCtx::new(mesh, author, sender, output), channel, merge),
             )
             .await
             .map_err(|error| RpcError::internal(&error.to_string()))?;
@@ -414,7 +406,7 @@ async fn send_message(
         ));
     }
     let text = super::status_update_params::display_text(&message);
-    let body = MessageBody::new(text)
+    let body = MessageBody::try_new(text)
         .map_err(|error| RpcError::invalid_params(&format!("message text: {error}")))?;
     let (_id, frame) = send_broadcast(
         BroadcastParams {

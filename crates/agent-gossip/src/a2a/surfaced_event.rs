@@ -360,7 +360,7 @@ fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
             author,
             is_self: false,
             ..
-        } => Some((Nickname::new(author.clone()).ok()?, id.clone())),
+        } => Some((Nickname::try_new(author.clone()).ok()?, id.clone())),
         OutputEvent::Message { .. }
         | OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
@@ -666,7 +666,7 @@ mod tests {
     use crate::output::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
-        Nickname::new(name.to_owned()).expect("valid test nickname")
+        Nickname::try_new(name.to_owned()).expect("valid test nickname")
     }
 
     fn peer_return(name: &str) -> OutputEvent {
@@ -715,12 +715,7 @@ mod tests {
         Message::new_app(
             &MeshId::from("test"),
             &nick(author),
-            AppFrameParams {
-                tag: AppTag::from(tag),
-                to: Some(nick(to)),
-                corr: None,
-                body: "{}".into(),
-            },
+            AppFrameParams::new(wire::app_tag(tag), Some(nick(to)), None, "{}".into()),
         )
     }
 

@@ -1,5 +1,7 @@
 use std::fmt;
 
+use habilis_network::protocol::AdvertiseRequiresReachable;
+
 /// Why [`MeshSession::create`](super::MeshSession::create) failed, classified so callers can react:
 /// the MCP server maps [`CreateError::AdvertiseRequiresReachable`] to an
 /// `invalid_params` error and [`CreateError::Setup`] to an internal one.
@@ -9,7 +11,7 @@ use std::fmt;
 pub enum CreateError {
     /// `advertise` was requested on a loopback-only mesh — a directory
     /// listing requires a mesh reachable across machines.
-    AdvertiseRequiresReachable,
+    AdvertiseRequiresReachable(AdvertiseRequiresReachable),
     /// Endpoint / gossip / setup failure.
     Setup(anyhow::Error),
 }
@@ -18,13 +20,7 @@ impl fmt::Display for CreateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             // Single source of truth for the message: the validator's error.
-            CreateError::AdvertiseRequiresReachable => {
-                write!(
-                    formatter,
-                    "{}",
-                    habilis_network::protocol::AdvertiseRequiresReachable
-                )
-            }
+            CreateError::AdvertiseRequiresReachable(error) => write!(formatter, "{error}"),
             CreateError::Setup(error) => write!(formatter, "{error}"),
         }
     }
@@ -33,7 +29,7 @@ impl fmt::Display for CreateError {
 impl std::error::Error for CreateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            CreateError::AdvertiseRequiresReachable => None,
+            CreateError::AdvertiseRequiresReachable(_) => None,
             CreateError::Setup(error) => {
                 let source: &(dyn std::error::Error + 'static) = error.as_ref();
                 Some(source)

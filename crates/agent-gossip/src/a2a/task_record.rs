@@ -966,7 +966,7 @@ async fn broadcast_status(
         return false;
     };
     let kind = MessageKind::App {
-        tag: habilis_network::protocol::AppTag::from(wire::STATUS),
+        tag: wire::app_tag(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
@@ -1151,12 +1151,12 @@ mod tests {
         let mut beat = Message::new_app(
             &mesh,
             &Nickname::from("calm-otter"),
-            AppFrameParams {
-                tag: AppTag::from(wire::STATUS),
-                to: Some(Nickname::from("worker-bot")),
-                corr: None,
-                body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::STATUS),
+                Some(Nickname::from("worker-bot")),
+                None,
+                MessageBody::try_new(serde_json::to_string(&payload).unwrap()).unwrap(),
+            ),
         );
         beat.timestamp = beat.timestamp - Duration::from_hours(1);
 
@@ -1209,12 +1209,12 @@ mod tests {
         Message::new_app(
             &mesh,
             &Nickname::from("calm-otter"),
-            AppFrameParams {
-                tag: AppTag::from(wire::STATUS),
-                to: Some(Nickname::from("worker-bot")),
-                corr: None,
-                body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::STATUS),
+                Some(Nickname::from("worker-bot")),
+                None,
+                MessageBody::try_new(serde_json::to_string(&payload).unwrap()).unwrap(),
+            ),
         )
     }
 
@@ -2307,12 +2307,12 @@ mod tests {
         let sealed = Message::new_app(
             &mesh,
             &Nickname::from("worker-bot"),
-            AppFrameParams {
-                tag: AppTag::from(wire::ARTIFACT),
-                to: Some(Nickname::from("calm-otter")),
-                corr: None,
-                body: MessageBody::new("sealed-ciphertext-stand-in").expect("valid body"),
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::ARTIFACT),
+                Some(Nickname::from("calm-otter")),
+                None,
+                MessageBody::try_new("sealed-ciphertext-stand-in").expect("valid body"),
+            ),
         );
         assert!(
             status_update_params::frame_task_id(&sealed).is_none(),
@@ -2343,15 +2343,13 @@ mod tests {
         let plaintext = Message::new_app(
             &mesh,
             &Nickname::from("worker-bot"),
-            AppFrameParams {
-                tag: AppTag::from(wire::ARTIFACT),
-                to: Some(Nickname::from("calm-otter")),
-                corr: None,
-                body: MessageBody::new(
-                    serde_json::to_string(&payload).expect("payload serializes"),
-                )
-                .expect("valid body"),
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::ARTIFACT),
+                Some(Nickname::from("calm-otter")),
+                None,
+                MessageBody::try_new(serde_json::to_string(&payload).expect("payload serializes"))
+                    .expect("valid body"),
+            ),
         );
         let line = crate::output::event_json(&crate::output::OutputEvent::Task {
             message: Box::new(
@@ -2418,12 +2416,12 @@ mod tests {
             Message::new_app(
                 &mesh,
                 &Nickname::from("worker-bot"),
-                AppFrameParams {
-                    tag: AppTag::from(wire::STATUS),
-                    to: Some(Nickname::from("calm-otter")),
-                    corr: None,
-                    body: MessageBody::new(&body).expect("valid body"),
-                },
+                AppFrameParams::new(
+                    wire::app_tag(wire::STATUS),
+                    Some(Nickname::from("calm-otter")),
+                    None,
+                    MessageBody::try_new(&body).expect("valid body"),
+                ),
             )
         };
         let ingest_own = |tasks: &mut HashMap<_, _>, frame: &Message| {

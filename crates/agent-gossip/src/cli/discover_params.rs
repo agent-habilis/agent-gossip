@@ -23,7 +23,7 @@ pub(super) struct DiscoverParams {
 pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
     let DiscoverParams { directory, lookups } = params;
     let name = directory.unwrap_or_else(|| {
-        MeshName::new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
+        MeshName::try_new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
     });
     let mut discoverer = TicketDirectory::open(name.clone(), lookups).await?;
     // Route the directory session's logs to its per-member file so the JSON

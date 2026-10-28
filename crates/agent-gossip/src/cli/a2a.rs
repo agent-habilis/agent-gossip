@@ -71,7 +71,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             nickname,
             text,
         } => {
-            let body = habilis_network::protocol::MessageBody::new(text)
+            let body = habilis_network::protocol::MessageBody::try_new(text)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
             let response =
                 super::send::send(&IpcCommand::Broadcast { mesh, body }, &nickname).await?;
@@ -85,7 +85,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             to,
             text,
         } => {
-            let body = habilis_network::protocol::MessageBody::new(text)
+            let body = habilis_network::protocol::MessageBody::try_new(text)
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
             let response =
                 super::send::send(&IpcCommand::Msg { mesh, to, body }, &nickname).await?;
@@ -245,7 +245,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
                         // from a failed transfer is meaningless, so drop it.
                         drop(file);
                         let _ = tokio::fs::remove_file(&path).await;
-                        return Err(error);
+                        return Err(error.into());
                     }
                     println!("{}", path.display());
                 }

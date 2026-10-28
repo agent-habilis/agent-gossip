@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
-use habilis_network::ops::{StateMergeParams, broadcast_state_merge, invite, start_ping_round};
+use habilis_network::ops::{
+    MergeCtx, StateMergeParams, broadcast_state_merge, invite, start_ping_round,
+};
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
@@ -412,18 +414,15 @@ pub(crate) async fn handle_ipc_command(
         IpcCommand::StateMerge { mesh: _, merge } => {
             let outcome = broadcast_state_merge(
                 state,
-                StateMergeParams {
-                    mesh,
-                    author,
+                StateMergeParams::new(
+                    MergeCtx::new(mesh, author, sender, output),
+                    habilis_network::protocol::Channel::State,
                     merge,
-                    sender,
-                    sink: output,
-                    channel: habilis_network::protocol::Channel::State,
-                    surface: true,
-                },
+                ),
             )
             .await;
-            let (response, broadcast) = state_merge_response(outcome.map(|_| ()));
+            let (response, broadcast) =
+                state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
             let _ = resp_tx.send(response);
             broadcast
         }
@@ -437,18 +436,15 @@ pub(crate) async fn handle_ipc_command(
         IpcCommand::MetaMerge { mesh: _, merge } => {
             let outcome = broadcast_state_merge(
                 state,
-                StateMergeParams {
-                    mesh,
-                    author,
+                StateMergeParams::new(
+                    MergeCtx::new(mesh, author, sender, output),
+                    habilis_network::protocol::Channel::Meta,
                     merge,
-                    sender,
-                    sink: output,
-                    channel: habilis_network::protocol::Channel::Meta,
-                    surface: true,
-                },
+                ),
             )
             .await;
-            let (response, broadcast) = state_merge_response(outcome.map(|_| ()));
+            let (response, broadcast) =
+                state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
             let _ = resp_tx.send(response);
             broadcast
         }
@@ -977,13 +973,13 @@ mod tests {
                 body in arb_ascii_body(),
                 author in arb_nickname(),
             ) {
-                let author = Nickname::new(author).unwrap();
-                let body = MessageBody::new(body).unwrap();
+                let author = Nickname::try_new(author).unwrap();
+                let body = MessageBody::try_new(body).unwrap();
                 let expected_body = body.clone();
                 let identity = habilis_network::protocol::Identity::generate();
                 let (bytes, built) = habilis_network::protocol::build_msg_bytes(
                     habilis_network::protocol::BuildMsgParams {
-                        tag: habilis_network::protocol::AppTag::from(wire::BROADCAST),
+                        tag: wire::app_tag(wire::BROADCAST),
                         mesh: &mesh,
                         author: &author,
                         body,

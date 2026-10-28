@@ -107,11 +107,10 @@ impl Directory {
     /// panic in the background task — not reachable in normal use.
     pub async fn open(name: Option<&str>, lookups: LookupSet) -> Result<Self, DirectoryError> {
         let directory_name = match name {
-            Some(value) => MeshName::new(value.to_owned())
+            Some(value) => MeshName::try_new(value.to_owned())
                 .map_err(|error| DirectoryError::InvalidName(error.to_string()))?,
-            None => {
-                MeshName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid mesh name")
-            }
+            None => MeshName::try_new(DEFAULT_DIRECTORY)
+                .expect("DEFAULT_DIRECTORY is a valid mesh name"),
         };
         // Directories are inherently networked, so resolve as all-on:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
@@ -152,7 +151,11 @@ impl Directory {
                                     Some(ListingChange::Updated(id)) => dir
                                         .get(&id)
                                         .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
-                                    None => None,
+                                    #[expect(
+                                        clippy::wildcard_enum_match_arm,
+                                        reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+                                    )]
+                                    _ => None,
                                 }
                             };
                             if let Some(event) = event {
@@ -168,7 +171,7 @@ impl Directory {
                         let now = Instant::now();
                         let lost = {
                             let mut dir = collector.lock().expect("directory mutex not poisoned");
-                            dir.expire(ttl, now)
+                            dir.expire(ttl, now).collect::<Vec<_>>()
                         };
                         for id in lost {
                             let _ = events_tx.send(DirectoryEvent::Lost(id));
@@ -193,12 +196,11 @@ impl Directory {
     /// prior panic in the background task — not reachable in normal use.
     #[must_use]
     pub fn snapshot(&self) -> Vec<MeshListing> {
-        let listings = self
-            .listings
-            .lock()
-            .expect("directory mutex not poisoned")
-            .snapshot();
-        listings.iter().map(public_listing).collect()
+        let listings = self.listings.lock().expect("directory mutex not poisoned");
+        listings
+            .snapshot()
+            .map(|listing| public_listing(&listing))
+            .collect()
     }
 
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).
@@ -262,7 +264,7 @@ mod lookup_tests {
     use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
     fn directory_topic(public: bool, lookups: LookupSet) -> String {
-        let name = MeshName::new(DEFAULT_DIRECTORY).unwrap();
+        let name = MeshName::try_new(DEFAULT_DIRECTORY).unwrap();
         format!(
             "{:?}",
             directory::directory_mesh(&name, super::resolve_lookups_or_public(public, lookups))

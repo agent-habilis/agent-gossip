@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use habilis_network::ops::directory;
 use habilis_network::ops::directory::directory_mesh;
-use habilis_network::protocol::{LookupOpts, MeshName};
+use habilis_network::protocol::{LookupOpts, MeshId, MeshName};
 pub(crate) use habilis_network::runtime::DIRECTORY_ADVERTISER_COHOST;
 use habilis_network::runtime::EventLoopConfig;
 use habilis_network::runtime::tuning::advertise_interval;
@@ -69,10 +69,7 @@ pub(crate) fn spawn_advertiser(
         let mut ticker = tokio::time::interval(advertise_interval());
         loop {
             ticker.tick().await;
-            let ad = directory::Ad {
-                id: mesh_id.clone(),
-                peers: live_count.load(Ordering::Relaxed),
-            };
+            let ad = ad_with_peers(&mesh_id, live_count.load(Ordering::Relaxed));
             if let Err(error) = session.broadcast(ad.to_body()).await {
                 tracing::debug!(
                     target: "agent_gossip::directory",
@@ -82,4 +79,10 @@ pub(crate) fn spawn_advertiser(
             }
         }
     }))
+}
+
+/// `Ad` has no constructor, so the ad is built through its validating `Deserialize`.
+fn ad_with_peers(id: &MeshId, peers: usize) -> directory::Ad {
+    serde_json::from_value(serde_json::json!({ "id": id, "peers": peers }))
+        .expect("a mesh id and a peer count make a valid ad")
 }

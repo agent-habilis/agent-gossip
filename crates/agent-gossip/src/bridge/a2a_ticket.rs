@@ -193,9 +193,9 @@ mod tests {
     fn rejects_a_mesh_token() {
         // A bare mesh id shares the base58 shape but frames a different
         // payload, so it fails ticket decode on the checksum/kind check.
-        let mesh = habilis_network::protocol::Mesh::new(
+        let mesh = habilis_network::protocol::Mesh::try_new(
             habilis_network::protocol::Seed::from_bytes([1u8; 32]),
-            habilis_network::protocol::MeshName::new("t").unwrap(),
+            habilis_network::protocol::MeshName::try_new("t").unwrap(),
             habilis_network::protocol::MeshConfig::loopback(),
         )
         .expect("a mesh without a secret")

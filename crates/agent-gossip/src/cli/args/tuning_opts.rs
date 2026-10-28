@@ -127,27 +127,28 @@ fn secs(duration: Duration) -> u64 {
 impl TuningOpts {
     /// The process tuning carried by these flags, for [`habilis_network::runtime::tuning::init`].
     pub(crate) fn tuning(&self) -> Tuning {
-        Tuning {
-            alive_timeout: Duration::from_secs(self.alive_timeout_secs),
-            sweep_interval: Duration::from_secs(self.sweep_interval_secs),
-            heal_interval: Duration::from_secs(self.heal_interval_secs),
-            cohost_grace: Duration::from_secs(self.beacon_cohost_grace_secs),
-            ping_window: Duration::from_secs(self.ping_window_secs),
-            ppid_watch_interval: Duration::from_millis(self.ppid_watch_interval_ms),
-            heal_stall_threshold: Duration::from_secs(self.heal_stall_threshold_secs),
-            starvation_threshold: Duration::from_secs(self.starvation_threshold_secs),
-            advertise_interval: Duration::from_secs(self.advertise_interval_secs),
-            directory_expiry: Duration::from_secs(self.directory_expiry_secs),
-            antientropy_interval: Duration::from_secs(self.antientropy_interval_secs),
-            antientropy_max_resend: self.antientropy_max_resend,
-            directory_private: self.directory_private,
-            rival_recheck_first: Duration::from_secs(self.rival_recheck_first_secs),
-            rival_recheck: Duration::from_secs(self.rival_recheck_secs),
-            rival_recheck_meshed: Duration::from_secs(self.rival_recheck_meshed_secs),
-            rival_recheck_alone: Duration::from_secs(self.rival_recheck_alone_secs),
-            rendezvous_periodic_return: Duration::from_secs(self.rendezvous_periodic_return_secs),
-            topic_mdns_only: self.topic_mdns_only,
-        }
+        let mut tuning = Tuning::DEFAULTS;
+        tuning.alive_timeout = Duration::from_secs(self.alive_timeout_secs);
+        tuning.sweep_interval = Duration::from_secs(self.sweep_interval_secs);
+        tuning.heal_interval = Duration::from_secs(self.heal_interval_secs);
+        tuning.cohost_grace = Duration::from_secs(self.beacon_cohost_grace_secs);
+        tuning.ping_window = Duration::from_secs(self.ping_window_secs);
+        tuning.ppid_watch_interval = Duration::from_millis(self.ppid_watch_interval_ms);
+        tuning.heal_stall_threshold = Duration::from_secs(self.heal_stall_threshold_secs);
+        tuning.starvation_threshold = Duration::from_secs(self.starvation_threshold_secs);
+        tuning.advertise_interval = Duration::from_secs(self.advertise_interval_secs);
+        tuning.directory_expiry = Duration::from_secs(self.directory_expiry_secs);
+        tuning.antientropy_interval = Duration::from_secs(self.antientropy_interval_secs);
+        tuning.antientropy_max_resend = self.antientropy_max_resend;
+        tuning.directory_private = self.directory_private;
+        tuning.rival_recheck_first = Duration::from_secs(self.rival_recheck_first_secs);
+        tuning.rival_recheck = Duration::from_secs(self.rival_recheck_secs);
+        tuning.rival_recheck_meshed = Duration::from_secs(self.rival_recheck_meshed_secs);
+        tuning.rival_recheck_alone = Duration::from_secs(self.rival_recheck_alone_secs);
+        tuning.rendezvous_periodic_return =
+            Duration::from_secs(self.rendezvous_periodic_return_secs);
+        tuning.topic_mdns_only = self.topic_mdns_only;
+        tuning
     }
 
     /// The A2A-layer tuning carried by these flags, for

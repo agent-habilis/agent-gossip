@@ -213,16 +213,11 @@ impl Output {
                 (wire::STATUS | wire::ARTIFACT, Some(_)) => {}
                 _ => return,
             },
-            MessageKind::Presence { .. }
-            | MessageKind::PeerInfo
-            | MessageKind::Digest
-            | MessageKind::StateDigest
-            | MessageKind::MetaDigest
-            | MessageKind::Ping
-            | MessageKind::Pong { .. }
-            | MessageKind::State
-            | MessageKind::Meta
-            | MessageKind::LinkState => return,
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every other variant takes this arm"
+            )]
+            _ => return,
         }
         if is_self && self.filters_self() {
             return;

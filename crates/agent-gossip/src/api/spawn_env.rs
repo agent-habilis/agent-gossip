@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicUsize;
 
 use habilis_network::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
 use habilis_network::runtime::{
-    CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, setup_mesh,
+    CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, SignalHandling, setup_mesh,
 };
 
 use super::advertiser::{Advertiser, spawn_advertiser};
@@ -23,14 +23,14 @@ pub(super) async fn create_setup(
     output: Output,
 ) -> Result<(EventLoopConfig, SurfacedIo, Option<Advertiser>), CreateError> {
     crate::register_build_version();
-    let mesh_config = MeshConfig {
+    let mesh_config = MeshConfig::new(
         // No sugar flag left in the api: naming no lookup is loopback,
         // naming any restricts to those.
-        lookups: resolve_lookups(config.lookups),
-        password: None,
-        issuer_pubkey: None,
-        transport: config.transport,
-    };
+        resolve_lookups(config.lookups),
+        None,
+        None,
+        config.transport,
+    );
     // The advertiser reaches the directory over this mesh's own lookups.
     let directory_lookups = mesh_config.lookups.clone();
     // Map the api's `advertise: bool` + `directory` onto the shared
@@ -46,20 +46,17 @@ pub(super) async fn create_setup(
         kind,
         author,
         advertise_directory,
-    } = CreateParams {
-        name: config.name,
-        nickname: config.nickname,
-        config: mesh_config,
-        advertise,
-        password: config
-            .password
-            .map(habilis_network::protocol::Password::new),
+        ..
+    } = CreateParams::new(config.name, config.nickname, mesh_config, advertise)
         // Invite-only is a CLI-driven feature; the library api does not expose
         // it yet (a documented follow-up).
-        invite_only: false,
-    }
-    .resolve()
-    .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
+        .with_password(
+            config
+                .password
+                .map(habilis_network::protocol::Password::new),
+        )
+        .resolve()
+        .map_err(CreateError::AdvertiseRequiresReachable)?;
     let io = SurfacedIo::new(output);
     let sink = io.sink();
     // See `cli::run_session`: the advertiser's counter predates setup so the
@@ -67,28 +64,17 @@ pub(super) async fn create_setup(
     let live_count = advertise_directory
         .as_ref()
         .map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
-    let elc = setup_mesh(
-        kind,
-        SetupParams {
-            author,
-            max_peers,
-            max_direct: 0,
-            runtime_base: Some(crate::runtime_base()),
-            state_file: None,
-            sink,
-            // The mesh mints its own endpoint and serves no extra ALPNs on its
-            // Router: the A2A binding stands up a separate endpoint of its own
-            // (see `bridge::expose`), so there is no accept() loop to share.
-            endpoint: None,
-            protocols: Vec::new(),
-            transports: habilis_network::net::TransportOpts::default(),
-            per_peer_gate: Some(crate::a2a::card_gate()),
-            cohost: None,
-            live_count: live_count.clone(),
-        },
-    )
-    .await
-    .map_err(|error| CreateError::Setup(error.context("setup_mesh failed")))?;
+    // The mesh mints its own endpoint and serves no extra ALPNs on its
+    // Router: the A2A binding stands up a separate endpoint of its own
+    // (see `bridge::expose`), so there is no accept() loop to share.
+    let mut setup_params = SetupParams::new(author, sink)
+        .with_max_peers(max_peers)
+        .with_runtime_base(crate::runtime_base())
+        .with_per_peer_gate(crate::a2a::card_gate());
+    setup_params.live_count = live_count.clone();
+    let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
+        CreateError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
+    })?;
     // When advertising, start the re-broadcast task (tied to this session);
     // it reaches the directory over this mesh's own lookups (moved into the
     // at-most-once closure, so no clone).
@@ -107,15 +93,15 @@ pub(super) async fn join_setup(
     config: JoinConfig,
     output: Output,
 ) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
-    let resolved = JoinParams {
-        target: config.target,
-        nickname: config.nickname,
-        password: config
+    let resolved = JoinParams::new(
+        config.target,
+        config.nickname,
+        config
             .password
             .map(habilis_network::protocol::Password::new),
-    }
+    )
     .resolve()
-    .map_err(JoinError::Resolve)?;
+    .map_err(|error| JoinError::Resolve(anyhow::Error::from(error)))?;
     resolved_setup(resolved, config.max_peers, output).await
 }
 
@@ -144,28 +130,16 @@ async fn resolved_setup(
     let Resolved { kind, author, .. } = resolved;
     let io = SurfacedIo::new(output);
     let sink = io.sink();
-    let elc = setup_mesh(
-        kind,
-        SetupParams {
-            author,
-            max_peers,
-            max_direct: 0,
-            runtime_base: Some(crate::runtime_base()),
-            state_file: None,
-            sink,
-            // The mesh mints its own endpoint and serves no extra ALPNs on its
-            // Router: the A2A binding stands up a separate endpoint of its own
-            // (see `bridge::expose`), so there is no accept() loop to share.
-            endpoint: None,
-            protocols: Vec::new(),
-            transports: habilis_network::net::TransportOpts::default(),
-            per_peer_gate: Some(crate::a2a::card_gate()),
-            cohost: None,
-            live_count: None,
-        },
-    )
-    .await
-    .map_err(|error| JoinError::Setup(error.context("setup_mesh failed")))?;
+    // The mesh mints its own endpoint and serves no extra ALPNs on its
+    // Router: the A2A binding stands up a separate endpoint of its own
+    // (see `bridge::expose`), so there is no accept() loop to share.
+    let setup_params = SetupParams::new(author, sink)
+        .with_max_peers(max_peers)
+        .with_runtime_base(crate::runtime_base())
+        .with_per_peer_gate(crate::a2a::card_gate());
+    let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
+        JoinError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
+    })?;
     Ok((elc, io))
 }
 
@@ -175,5 +149,5 @@ async fn resolved_setup(
 /// than the mesh itself.
 pub(super) struct SpawnEnv {
     pub(super) advertiser: Option<Advertiser>,
-    pub(super) handle_signals: bool,
+    pub(super) handle_signals: SignalHandling,
 }

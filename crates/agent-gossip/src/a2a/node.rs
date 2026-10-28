@@ -5,6 +5,7 @@ use habilis_network::embed::{
     AppClass, EventLoopState, HandlerCtx, InboundApp, IpcRequest, NodeApp, NodeDriver,
 };
 use habilis_network::net::add_peer_addr;
+use habilis_network::ops::{MergeCtx, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{
     AppTag, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
@@ -43,6 +44,7 @@ impl NodeApp for A2aApp {
         let InboundApp {
             message,
             surfaceable,
+            ..
         } = frame;
         // A directed, correlated RPC frame (request/response) is plumbing —
         // never retained. Everything else is content routed to its lifecycle
@@ -272,8 +274,8 @@ impl NodeDriver for A2aApp {
         let out = self.output.clone();
         ipc_command::handle_ipc_command(
             ipc_command::IpcDispatchParams {
-                command: request.cmd,
-                resp_tx: request.resp,
+                command: request.command,
+                resp_tx: request.response,
                 mesh: context.mesh,
                 name: request.name,
                 author: context.author,
@@ -395,19 +397,11 @@ async fn merge_own_meta_entry(
     merge: serde_json::Value,
     farewell: bool,
 ) -> anyhow::Result<()> {
-    match habilis_network::ops::broadcast_state_merge(
+    match broadcast_state_merge(
         state,
-        habilis_network::ops::StateMergeParams {
-            mesh: context.mesh,
-            author: context.author,
-            merge,
-            sender: context.sender,
-            sink: context.sink,
-            channel: Channel::Meta,
-            // Daemon plumbing: the agent didn't write this, so don't surface it
-            // as a "you changed shared state" event (nor race a fetch long-poll).
-            surface: false,
-        },
+        // Daemon plumbing: the agent didn't write this, so don't surface it
+        // as a "you changed shared state" event (nor race a fetch long-poll).
+        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge).with_surface(false),
     )
     .await
     {
@@ -418,7 +412,7 @@ async fn merge_own_meta_entry(
         Ok(_) => Ok(()),
         Err(error) => {
             tracing::warn!(%error, "own /peers entry merge failed");
-            Err(error)
+            Err(anyhow::Error::from(error))
         }
     }
 }
@@ -512,7 +506,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::Fork { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
-        OutputEvent::Task { message, .. } => !classify(message).beat,
+        OutputEvent::Task { message, .. } => !classify(message).beat(),
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
@@ -578,13 +572,12 @@ fn classify(message: &Authored) -> AppClass {
         tag,
         Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
     );
-    AppClass {
-        loggable,
-        beat,
-        valid,
-        chained,
-        sealed,
-    }
+    AppClass::NONE
+        .with_if(AppClass::LOGGABLE, loggable)
+        .with_if(AppClass::BEAT, beat)
+        .with_if(AppClass::VALID, valid)
+        .with_if(AppClass::CHAINED, chained)
+        .with_if(AppClass::SEALED, sealed)
 }
 
 /// Route a content frame — chat, or one of the three task shapes — to its
@@ -667,6 +660,11 @@ fn route_content(
         | MessageKind::State
         | MessageKind::Meta
         | MessageKind::LinkState => Routed::default(),
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+        )]
+        _ => Routed::default(),
     }
 }
 
@@ -952,6 +950,11 @@ async fn handle_a2a_rpc(
         | MessageKind::Meta
         | MessageKind::MetaDigest
         | MessageKind::LinkState => return,
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+        )]
+        _ => return,
     };
     // The engine keeps `corr` generic (a length-bounded string); the a2a layer
     // restores the UUID contract. A non-UUID corr never came from a correct
@@ -1060,7 +1063,7 @@ async fn handle_a2a_req(
             serde_json::json!({ "error": { "code": error.code, "message": error.message } })
         }
     };
-    let Ok(body) = MessageBody::new(response.to_string()) else {
+    let Ok(body) = MessageBody::try_new(response.to_string()) else {
         tracing::warn!("a2a rpc response body invalid");
         return;
     };
@@ -1073,7 +1076,7 @@ async fn handle_a2a_req(
         }
     };
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::RESP),
+        tag: wire::app_tag(wire::RESP),
         to: Some(requester),
         corr: Some(corr.clone()),
     };
@@ -1117,7 +1120,7 @@ async fn resend_cached_shards(
         missing,
         requester,
     } = params;
-    let frames = state.shard_cache_mut().frames(group, missing);
+    let frames: Vec<_> = state.shard_cache_mut().frames(group, missing).collect();
     let mut resent = 0usize;
     for bytes in frames {
         let parsed = Message::parse(bytes.as_bytes()).ok();
@@ -1298,12 +1301,7 @@ mod classify_tests {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(tag),
-                to: None,
-                corr: None,
-                body: MessageBody::from("{}"),
-            },
+            AppFrameParams::new(wire::app_tag(tag), None, None, MessageBody::from("{}")),
         )
     }
 
@@ -1317,17 +1315,12 @@ mod classify_tests {
     fn chat_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let payload = status_update_params::compose_broadcast(&sw, "hi");
-        let id = MessageId::new(payload.message_id.as_str()).unwrap();
+        let id = MessageId::try_new(payload.message_id.as_str()).unwrap();
         let body = status_update_params::payload_body(&payload).unwrap();
         Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::BROADCAST),
-                to,
-                corr: None,
-                body,
-            },
+            AppFrameParams::new(wire::app_tag(wire::BROADCAST), to, None, body),
         )
         .with_id(id)
     }
@@ -1340,17 +1333,12 @@ mod classify_tests {
     fn msg_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let payload = status_update_params::compose_msg(&sw, "hi");
-        let id = MessageId::new(payload.message_id.as_str()).unwrap();
+        let id = MessageId::try_new(payload.message_id.as_str()).unwrap();
         let body = status_update_params::payload_body(&payload).unwrap();
         Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::MSG),
-                to,
-                corr: None,
-                body,
-            },
+            AppFrameParams::new(wire::app_tag(wire::MSG), to, None, body),
         )
         .with_id(id)
     }
@@ -1452,12 +1440,12 @@ mod classify_tests {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::RECEIPT),
+            AppFrameParams::new(
+                wire::app_tag(wire::RECEIPT),
                 to,
-                corr: None,
-                body: MessageBody::from(body),
-            },
+                None,
+                MessageBody::from(body),
+            ),
         )
     }
 
@@ -1493,12 +1481,12 @@ mod classify_tests {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::STATUS),
-                to: Some(Nickname::from("initiator")),
-                corr: None,
-                body: status_update_params::payload_body(&status).unwrap(),
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::STATUS),
+                Some(Nickname::from("initiator")),
+                None,
+                status_update_params::payload_body(&status).unwrap(),
+            ),
         )
     }
 
@@ -1737,17 +1725,17 @@ mod classify_tests {
     fn dm_declaring_the_broadcast_extension_is_invalid() {
         let sw = mesh();
         let payload = status_update_params::compose_broadcast(&sw, "hi");
-        let id = MessageId::new(payload.message_id.as_str()).unwrap();
+        let id = MessageId::try_new(payload.message_id.as_str()).unwrap();
         let body = status_update_params::payload_body(&payload).unwrap();
         let frame = Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::MSG),
-                to: Some(Nickname::from("bob")),
-                corr: None,
+            AppFrameParams::new(
+                wire::app_tag(wire::MSG),
+                Some(Nickname::from("bob")),
+                None,
                 body,
-            },
+            ),
         )
         .with_id(id);
         assert!(

@@ -22,28 +22,21 @@ pub(super) async fn create(options: CreateOpts) -> Result<()> {
         options.lookups.relay_url.clone(),
         &options.transport,
     )?;
-    let config = MeshConfig {
-        lookups: mesh_parts.lookups,
-        // The verifier is baked in at setup: its salt is the seed, which is
-        // minted there. The flag's presence is all `resolve` needs.
-        password: None,
-        // Likewise the issuer pubkey: `set_invite` mints the keypair at setup
-        // and bakes the pubkey; the `--invite-only` flag rides `CreateParams`.
-        issuer_pubkey: None,
-        transport: mesh_parts.transport,
-        // `--no-gossip` is a mesh-wide characteristic baked into the id, so
-        // every joiner inherits it from the ticket alone.
-    };
+    // The verifier is baked in at setup: its salt is the seed, which is
+    // minted there. The flag's presence is all `resolve` needs. Likewise the
+    // issuer pubkey: `set_invite` mints the keypair at setup and bakes the
+    // pubkey; the `--invite-only` flag rides `CreateParams`.
+    let config = MeshConfig::new(mesh_parts.lookups, None, None, mesh_parts.transport);
     // `resolve` validates `--advertise` against the config (never a silent
     // no-op) before any setup work.
-    let resolved = CreateParams {
-        name: options.name.unwrap_or_else(MeshName::random),
-        nickname: options.nickname,
+    let resolved = CreateParams::new(
+        options.name.unwrap_or_else(MeshName::random),
+        options.nickname,
         config,
         advertise,
-        password,
-        invite_only: options.invite_only,
-    }
+    )
+    .with_password(password)
+    .with_invite_only(options.invite_only)
     .resolve()?;
     // Boxed: the session future carries the full `EventLoopConfig` and sits
     // just over clippy's `large_futures` budget (same reason the event loop

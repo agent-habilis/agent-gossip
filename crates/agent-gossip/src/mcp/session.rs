@@ -277,7 +277,7 @@ mod tests {
 
     /// A loopback create config with an explicit nickname, no advertising.
     fn create_cfg(name: &str, nick: &str) -> CreateConfig {
-        let mut config = CreateConfig::new(MeshName::new(name).unwrap());
+        let mut config = CreateConfig::new(MeshName::try_new(name).unwrap());
         config.nickname = Some(Nickname::from(nick));
         config
     }
@@ -491,7 +491,7 @@ mod tests {
             .await
             .expect("create");
         assert!(
-            MeshId::new(session.mesh().as_str()).is_ok(),
+            MeshId::try_new(session.mesh().as_str()).is_ok(),
             "the mesh name is a valid mesh id"
         );
         assert_eq!(

@@ -29,17 +29,17 @@ pub(super) async fn join(
                     .then_some("gossip")
             }
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+            )]
+            _ => None,
         };
         if let Some(what) = requires {
             password = Some(super::password_flag::require_password(what)?);
         }
     }
     // `join` never advertises — that is a create-time decision.
-    let resolved = JoinParams {
-        target,
-        nickname,
-        password,
-    }
-    .resolve()?;
+    let resolved = JoinParams::new(target, nickname, password).resolve()?;
     Box::pin(run_session(resolved, shared)).await
 }

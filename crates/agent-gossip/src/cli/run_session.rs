@@ -24,6 +24,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         kind,
         author,
         advertise_directory,
+        ..
     } = resolved;
     // Refuse to share a state file with a daemon that is still using it.
     // Failing loudly here beats two daemons alternating ownership of one file
@@ -46,6 +47,11 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     let directory_lookups = match &kind {
         SetupKind::Create { config, .. } => Some(config.lookups.clone()),
         SetupKind::Join { .. } | SetupKind::Topic { .. } => None,
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the named variants are listed before it"
+        )]
+        _ => None,
     };
     let out = Output::new(OutputMode::Json, shared.filter_self);
     // Nag once at startup if an installed integration has fallen behind this
@@ -78,27 +84,16 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // than patched afterwards.
     let advertising = advertise_directory.as_ref().zip(directory_lookups.as_ref());
     let live_count = advertising.map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
-    let config = setup_mesh(
-        kind,
-        SetupParams {
-            author,
-            max_peers: shared.max_peers,
-            max_direct: 0,
-            runtime_base: Some(crate::runtime_base()),
-            state_file: shared.state_file,
-            sink,
-            // The mesh mints its own endpoint and serves no extra ALPNs on its
-            // Router: the A2A binding stands up a separate endpoint of its own
-            // (see `bridge::expose`), so there is no accept() loop to share.
-            endpoint: None,
-            protocols: Vec::new(),
-            transports: habilis_network::net::TransportOpts::default(),
-            per_peer_gate: Some(crate::a2a::card_gate()),
-            cohost: None,
-            live_count: live_count.clone(),
-        },
-    )
-    .await?;
+    // The mesh mints its own endpoint and serves no extra ALPNs on its
+    // Router: the A2A binding stands up a separate endpoint of its own
+    // (see `bridge::expose`), so there is no accept() loop to share.
+    let mut setup_params = SetupParams::new(author, sink)
+        .with_max_peers(shared.max_peers)
+        .with_runtime_base(crate::runtime_base())
+        .with_per_peer_gate(crate::a2a::card_gate());
+    setup_params.state_file = shared.state_file;
+    setup_params.live_count = live_count.clone();
+    let config = setup_mesh(kind, setup_params).await?;
     let config = match shared.owner_pid {
         Some(owner) => config.with_owner_pid(owner)?,
         None => config,
@@ -119,5 +114,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // Boxed for the same reason `create` boxes the session future: it carries
     // the whole `EventLoopConfig` and sits just over clippy's `large_futures`
     // budget on 64-bit Linux (it fits under it on aarch64 macOS).
-    Box::pin(run_event_loop(config, app, None, http_rx)).await
+    Box::pin(run_event_loop(config, app, None, http_rx))
+        .await
+        .map_err(anyhow::Error::from)
 }

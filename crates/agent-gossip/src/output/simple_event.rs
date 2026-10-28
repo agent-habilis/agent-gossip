@@ -445,17 +445,11 @@ pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
     let to = match &message.kind {
         MessageKind::App { tag, to, .. } if tag.as_str() == wire::MSG => to.as_ref(),
         MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => None,
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every other variant takes this arm"
+        )]
+        _ => {
             unreachable!("format_msg_json only handles chat frames")
         }
     };
@@ -501,17 +495,11 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
                 None => unreachable!("a status/artifact frame is always directed"),
             }
         }
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every other variant takes this arm"
+        )]
+        _ => {
             unreachable!("format_task_json only handles status/artifact frames")
         }
     };

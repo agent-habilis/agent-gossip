@@ -6,5 +6,5 @@ use crate::version::version;
 /// app's number instead of the engine's own. Idempotent; call before any
 /// daemon spawns.
 pub(crate) fn register_build_version() {
-    engine_version::set_build_version(version());
+    engine_version::set_build_string(version());
 }

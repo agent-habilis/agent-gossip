@@ -63,14 +63,14 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
 
     let alice = MeshSession::join_decoded(
         first,
-        Some(Nickname::new("alice-topic").unwrap()),
+        Some(Nickname::try_new("alice-topic").unwrap()),
         CoHostPolicy::EagerProbed,
     )
     .await
     .expect("alice topic session");
     let bob = MeshSession::join_decoded(
         second,
-        Some(Nickname::new("bob-topic").unwrap()),
+        Some(Nickname::try_new("bob-topic").unwrap()),
         CoHostPolicy::EagerProbed,
     )
     .await
@@ -102,7 +102,7 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
 /// The app default carries no multihop: a mesh that wants it names it.
 #[test]
 fn create_config_default_transport_is_udp_webrtc_gossip() {
-    let config = CreateConfig::new(MeshName::new("defaults").expect("valid name"));
+    let config = CreateConfig::new(MeshName::try_new("defaults").expect("valid name"));
     assert_eq!(
         config.transport,
         TransportPolicy {

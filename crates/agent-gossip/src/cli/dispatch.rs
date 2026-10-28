@@ -32,12 +32,12 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // subcommand resolves its log file (the buffered sink flushes at
     // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
     // AHS_LOG_MAX_BYTES env reads.
-    logs::configure(LogConfig {
-        base: Some(crate::runtime_base()),
-        dir: cli.log_dir,
-        max_bytes: cli.log_max_bytes,
-        raw: cli.log_raw,
-    });
+    let mut log_config = LogConfig::default();
+    log_config.base = Some(crate::runtime_base());
+    log_config.dir = cli.log_dir;
+    log_config.max_bytes = cli.log_max_bytes;
+    log_config.raw = cli.log_raw;
+    logs::configure(log_config);
     // Source the process tuning from the (hidden) flags before any handler
     // resolution reads it — e.g. `create --advertise` checks the
     // `directory_private` guard while building its `SetupKind`, before the
@@ -103,11 +103,10 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
-            tuning::init(Tuning {
-                ping_window: std::time::Duration::from_secs(ping_window_secs),
-                directory_private,
-                ..Tuning::DEFAULTS
-            });
+            let mut mcp_tuning = Tuning::DEFAULTS;
+            mcp_tuning.ping_window = std::time::Duration::from_secs(ping_window_secs);
+            mcp_tuning.directory_private = directory_private;
+            tuning::init(mcp_tuning);
             a2a_tuning::init(A2aTuning {
                 longpoll_max_ms,
                 ..A2aTuning::DEFAULTS
