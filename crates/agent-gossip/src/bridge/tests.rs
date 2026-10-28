@@ -144,7 +144,10 @@ async fn bridge_rewrites_the_agent_card_url_to_the_local_base() {
 
     let text = String::from_utf8_lossy(&response);
     assert!(
-        text.contains(r#""url":"http://127.0.0.1:7777/a2a""#),
+        text.contains(&format!(
+            "{q}url{q}:{q}http://127.0.0.1:7777/a2a{q}",
+            q = '"'
+        )),
         "the card url must be rewritten to the local base: {text}"
     );
 
