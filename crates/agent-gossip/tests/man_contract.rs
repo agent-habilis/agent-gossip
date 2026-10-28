@@ -49,11 +49,10 @@ fn man_prints_manual_to_stdout() {
 
 fn carries_banned_word(line: &str) -> bool {
     let lower = line.to_lowercase();
-    lower.contains("square")
-        || lower.contains("participant")
-        || lower
-            .split(|ch: char| !ch.is_ascii_alphabetic())
-            .any(|word| word == "room" || word == "rooms")
+    let has_room_word = lower
+        .split(|ch: char| !ch.is_ascii_alphabetic())
+        .any(|word| word == "room" || word == "rooms");
+    lower.contains("square") || lower.contains("participant") || has_room_word
 }
 
 #[test]
@@ -102,10 +101,11 @@ fn manual_carries_no_pre_rename_vocabulary() {
     // The env var name is an identifier the manual must quote, and its `ROOM`
     // segment would otherwise read as the retired word.
     let prose = stdout.replace("AGENT_GOSSIP_DEFAULT_ROOM", "");
-    let offenders: Vec<_> = prose
+    let banned_lines = prose
         .lines()
         .enumerate()
-        .filter(|(_, line)| carries_banned_word(line))
+        .filter(|(_, line)| carries_banned_word(line));
+    let offenders: Vec<_> = banned_lines
         .map(|(number, line)| format!("  {}: {line}", number + 1))
         .collect();
 
