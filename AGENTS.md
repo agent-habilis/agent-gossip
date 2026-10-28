@@ -403,6 +403,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
 - Declined O9: a rough grep finds about 28 leaf files whose name does not match their primary item; renaming them touches their imports, so the names stay.
+- Declined B3: the 310 `.clone()` calls are judged per site, and a clone stays where the borrow would tie up a value that a later step still needs; only clones of values dropped unused are removed.
 - Declined O13: it depends on O11, which the owner decides. Core code in non-leaf modules stays until that decision.
 - Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.
 - Declined I6: the 34 functions that return `Vec` are application and test helpers, which I7 allows; an iterator would make most callers collect again.
