@@ -12,11 +12,12 @@ pub(crate) struct MeshRef {
 
 impl From<&Session> for MeshRef {
     fn from(session: &Session) -> Self {
+        // `MeshRef` is the serialized tool output; the wire shape
+        // keeps `name` a plain string.
+        let name: String = session.name().as_str().to_owned();
         MeshRef {
             gossip: session.mesh().clone(),
-            // `MeshRef` is the serialized tool output; the wire shape
-            // keeps `name` a plain string.
-            name: session.name().as_str().to_owned(),
+            name,
             nickname: session.nickname().clone(),
         }
     }
