@@ -844,9 +844,8 @@ fn census(log_dir: &Path) -> Census {
 fn field(line: &str, key: &str) -> u64 {
     line.split_once(&format!("{key}="))
         .map(|(_, rest)| {
-            rest.chars()
-                .take_while(char::is_ascii_digit)
-                .collect::<String>()
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            digits
         })
         .and_then(|digits| digits.parse().ok())
         .unwrap_or(0)
