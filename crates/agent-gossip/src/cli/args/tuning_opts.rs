@@ -23,15 +23,15 @@ use crate::a2a::tuning::Tuning as A2aTuning;
 #[derive(Parser, Debug)]
 pub(crate) struct TuningOpts {
     /// Peer-eviction silence timeout (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::ALIVE_TIMEOUT.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::ALIVE_TIMEOUT))]
     pub alive_timeout_secs: u64,
 
     /// How often the sweeper scans for expired peers (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::SWEEP_INTERVAL.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::SWEEP_INTERVAL))]
     pub sweep_interval_secs: u64,
 
     /// Cadence of the unconditional gossip healer (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::HEAL_INTERVAL.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::HEAL_INTERVAL))]
     pub heal_interval_secs: u64,
 
     /// Task idle-debounce timeout (seconds).
@@ -51,11 +51,11 @@ pub(crate) struct TuningOpts {
     pub task_stall_check_secs: u64,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::BEACON_COHOST_GRACE.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::BEACON_COHOST_GRACE))]
     pub beacon_cohost_grace_secs: u64,
 
     /// How long an `agent-gossip ping` round collects pongs (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::PING_WINDOW.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::PING_WINDOW))]
     pub ping_window_secs: u64,
 
     /// How often the daemon checks for orphaning by its spawning agent (millis).
@@ -67,23 +67,23 @@ pub(crate) struct TuningOpts {
     pub longpoll_max_ms: u64,
 
     /// Heal inter-tick gap above which the process hard re-bootstraps (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::HEAL_STALL_THRESHOLD.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::HEAL_STALL_THRESHOLD))]
     pub heal_stall_threshold_secs: u64,
 
     /// No inbound gossip for this long, with peers known, trips the starvation watchdog (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::STARVATION_THRESHOLD.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::STARVATION_THRESHOLD))]
     pub starvation_threshold_secs: u64,
 
     /// Directory re-broadcast cadence for an advertiser (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::ADVERTISE_INTERVAL.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::ADVERTISE_INTERVAL))]
     pub advertise_interval_secs: u64,
 
     /// How long a discoverer keeps showing a gossip after its last ad (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::DIRECTORY_EXPIRY.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::DIRECTORY_EXPIRY))]
     pub directory_expiry_secs: u64,
 
     /// How often a member broadcasts its anti-entropy digest (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::ANTIENTROPY_INTERVAL.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::ANTIENTROPY_INTERVAL))]
     pub antientropy_interval_secs: u64,
 
     /// Max messages re-sent in response to one anti-entropy digest.
@@ -95,28 +95,33 @@ pub(crate) struct TuningOpts {
     pub directory_private: bool,
 
     /// First rival re-check shed of an `EagerProbed` public beacon (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_FIRST.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK_FIRST))]
     pub rival_recheck_first_secs: u64,
 
     /// Steady rival re-check cadence for a lone beacon holder (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK))]
     pub rival_recheck_secs: u64,
 
     /// Steady rival re-check cadence while meshed (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_MESHED.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK_MESHED))]
     pub rival_recheck_meshed_secs: u64,
 
     /// Rival re-check cadence ceiling for a beacon holder with no peers (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::RIVAL_RECHECK_ALONE.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::RIVAL_RECHECK_ALONE))]
     pub rival_recheck_alone_secs: u64,
 
     /// How long a member that let go of the rendezvous waits before it comes back to it (seconds).
-    #[arg(long, hide = true, default_value_t = defaults::RENDEZVOUS_PERIODIC_RETURN.as_secs())]
+    #[arg(long, hide = true, default_value_t = secs(defaults::RENDEZVOUS_PERIODIC_RETURN))]
     pub rendezvous_periodic_return_secs: u64,
 
     /// Narrow topic-mesh lookups to mDNS only (no DHT, no relay).
     #[arg(long, hide = true, default_value_t = false)]
     pub topic_mdns_only: bool,
+}
+
+/// The whole seconds of a tuning default, the `u64` the flag takes.
+fn secs(duration: Duration) -> u64 {
+    duration.as_secs()
 }
 
 impl TuningOpts {
