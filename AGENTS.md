@@ -399,6 +399,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined D1: AGENTS drops derivable doc comments, so a public item gets a doc comment only when it states a why that the signature cannot.
 - Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
 - Declined P2: the turbofish sites are over 30 and a blanket change to `let` types is not clearer at each one, so a turbofish stays where it reads better.
+- Declined N3: lifetimes such as `'a` on a struct with one borrowed field are clear, and renaming the about 260 uses in tests and fixtures touches over 30 sites.
 
 ## Agent Restrictions
 
