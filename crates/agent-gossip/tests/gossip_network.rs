@@ -100,18 +100,13 @@ fn rendezvous_signals(mesh: &str, nick: &str) -> (bool, usize, usize) {
 /// clean roster — so a bare stdout tail left CI handoff failures unreadable.
 fn rendezvous_diagnosis(mesh: &str, nick: &str) -> String {
     let (assumed, ups, downs) = rendezvous_signals(mesh, nick);
+    let trace = trace_log(mesh, nick);
+    let mut tail: Vec<&str> = trace.lines().rev().take(25).collect();
+    tail.reverse();
     format!(
         "<{nick}>: beacon assumed={assumed}, rendezvous links up={ups} down={downs} \
          (needs assumed=true and up>down)\ntrace tail:\n{}",
-        trace_log(mesh, nick)
-            .lines()
-            .rev()
-            .take(25)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n")
+        tail.join("\n")
     )
 }
 
@@ -2232,15 +2227,14 @@ fn test_resume_triggers_hard_rebootstrap() {
                 && trace.contains("rendezvous-independent re-bridge"),
         )
     };
+    let reached = wait_until(both_markers, 1, wake_settle) >= 1;
+    let sink = trace_log(&mesh, &sleeper.nickname);
+    let mut sink_tail: Vec<&str> = sink.lines().rev().take(30).collect();
+    sink_tail.reverse();
     assert!(
-        wait_until(both_markers, 1, wake_settle) >= 1,
+        reached,
         "woken peer never took the hard re-bootstrap path (or skipped the re-bridge)\nsink tail:\n{}",
-        trace_log(&mesh, &sleeper.nickname)
-            .lines()
-            .rev()
-            .take(30)
-            .collect::<Vec<_>>()
-            .join("\n"),
+        sink_tail.join("\n"),
     );
     let _ = cli_message(&mesh, &creator.nickname, "rb-post");
     assert_received(&sleeper, &creator.nickname, "rb-post", RECOVERY_TIMEOUT);
