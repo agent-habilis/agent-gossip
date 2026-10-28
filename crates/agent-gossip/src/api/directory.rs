@@ -193,13 +193,12 @@ impl Directory {
     /// prior panic in the background task — not reachable in normal use.
     #[must_use]
     pub fn snapshot(&self) -> Vec<MeshListing> {
-        self.listings
+        let listings = self
+            .listings
             .lock()
             .expect("directory mutex not poisoned")
-            .snapshot()
-            .iter()
-            .map(public_listing)
-            .collect()
+            .snapshot();
+        listings.iter().map(public_listing).collect()
     }
 
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).
