@@ -94,10 +94,10 @@ fn bridge_for(shared: &SharedConnection, ticket: &A2aTicket, gate: LocalGate) ->
 /// the connect side's per-connection listener) and return the response.
 async fn drive_gated(bridge: &Bridge, request: &[u8]) -> Vec<u8> {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind local");
-    let addr = listener.local_addr().expect("local addr");
+    let address = listener.local_addr().expect("local addr");
     let request = request.to_vec();
     let client = tokio::spawn(async move {
-        let mut stream = TcpStream::connect(addr).await.expect("connect local");
+        let mut stream = TcpStream::connect(address).await.expect("connect local");
         stream.write_all(&request).await.expect("write request");
         stream.shutdown().await.expect("shutdown client write");
         let mut got = Vec::new();
@@ -129,8 +129,8 @@ async fn consumer(ticket: &A2aTicket) -> (habilis_network::iroh::Endpoint, Share
     let endpoint = build_peer_endpoint(&ticket.lookups)
         .await
         .expect("consumer endpoint");
-    add_peer_addr(&address_book(&endpoint), ticket.addr.clone());
-    let shared = SharedConnection::new(endpoint.clone(), ticket.addr.clone());
+    add_peer_addr(&address_book(&endpoint), ticket.address.clone());
+    let shared = SharedConnection::new(endpoint.clone(), ticket.address.clone());
     (endpoint, shared)
 }
 
@@ -251,7 +251,7 @@ async fn raw_secret_is_rejected_on_a_passworded_bridge() {
     // Impostor: present the raw ticket secret (what a directory ad leaks)
     // instead of the password-stretched token.
     let connection = consumer_endpoint
-        .connect(ticket.addr.clone(), A2A_ALPN)
+        .connect(ticket.address.clone(), A2A_ALPN)
         .await
         .expect("dial");
     let (mut send, mut recv) = connection.open_bi().await.expect("open stream");
@@ -287,7 +287,7 @@ async fn a_second_consumer_is_refused_while_the_bridge_is_paired() {
     // Consumer B: a second connection must be closed with BRIDGE_BUSY (4).
     let (endpoint_b, _shared_b) = consumer(&ticket).await;
     let conn_b = endpoint_b
-        .connect(ticket.addr.clone(), A2A_ALPN)
+        .connect(ticket.address.clone(), A2A_ALPN)
         .await
         .expect("B dial");
     let closed = conn_b.closed().await;

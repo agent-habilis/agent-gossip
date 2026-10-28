@@ -22,7 +22,7 @@ const KIND_ORDER: [&str; 6] = ["ip", "webrtc", "multihop", "gossip", "custom", "
 pub(crate) fn path_label(active: &[TransportAddr]) -> String {
     let kinds: Vec<&str> = KIND_ORDER
         .into_iter()
-        .filter(|kind| active.iter().any(|addr| kind_of(addr) == Some(kind)))
+        .filter(|kind| active.iter().any(|address| kind_of(address) == Some(kind)))
         .collect();
     if kinds.is_empty() {
         return "unknown".to_owned();
@@ -30,8 +30,8 @@ pub(crate) fn path_label(active: &[TransportAddr]) -> String {
     kinds.join("+")
 }
 
-fn kind_of(addr: &TransportAddr) -> Option<&'static str> {
-    match addr {
+fn kind_of(address: &TransportAddr) -> Option<&'static str> {
+    match address {
         TransportAddr::Ip(_) => Some("ip"),
         TransportAddr::Relay(_) => Some("relay"),
         TransportAddr::Custom(custom) => Some(match custom.id() {
@@ -197,8 +197,8 @@ async fn active_path(endpoint: &Endpoint, peer: habilis_network::iroh::EndpointI
     };
     let active: Vec<TransportAddr> = info
         .addrs()
-        .filter(|addr| matches!(addr.usage(), TransportAddrUsage::Active))
-        .map(|addr| addr.addr().clone())
+        .filter(|address| matches!(address.usage(), TransportAddrUsage::Active))
+        .map(|address| address.addr().clone())
         .collect();
     path_label(&active)
 }

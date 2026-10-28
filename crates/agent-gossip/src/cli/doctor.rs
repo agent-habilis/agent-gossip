@@ -268,11 +268,11 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
         )),
         (v4, v6) => {
             let mut parts = Vec::new();
-            if let Some(addr) = v4 {
-                parts.push(addr.clone());
+            if let Some(address) = v4 {
+                parts.push(address.clone());
             }
-            if let Some(addr) = v6 {
-                parts.push(addr.clone());
+            if let Some(address) = v6 {
+                parts.push(address.clone());
             }
             checks.push(Check::new("public address", Verdict::Ok, &parts.join(", ")));
         }
@@ -522,19 +522,19 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     match net::build_peer_endpoint(lookups).await {
         Ok(endpoint) => {
             let rendezvous_id = mesh.rendezvous_id();
-            let mut addr = habilis_network::iroh::EndpointAddr::new(rendezvous_id);
+            let mut address = habilis_network::iroh::EndpointAddr::new(rendezvous_id);
             if mesh.is_loopback() {
                 for port in mesh.rendezvous_ports() {
-                    addr = addr.with_ip_addr(std::net::SocketAddr::from((
+                    address = address.with_ip_addr(std::net::SocketAddr::from((
                         std::net::Ipv4Addr::LOCALHOST,
                         port,
                     )));
                 }
             } else if let Some(rung) = first_reachable {
-                addr = addr.with_relay_url(rung);
+                address = address.with_relay_url(rung);
             }
 
-            let reached = net::probe_connect(&endpoint, addr, RENDEZVOUS_TIMEOUT).await;
+            let reached = net::probe_connect(&endpoint, address, RENDEZVOUS_TIMEOUT).await;
             if reached {
                 let (path, relay) = net::conn_path(&endpoint, rendezvous_id).await;
                 let detail = match relay {

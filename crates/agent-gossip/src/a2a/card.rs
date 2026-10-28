@@ -158,10 +158,10 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
 /// dial without waiting for a `PeerInfo` to arrive.
 #[must_use]
 pub(crate) fn endpoint_hint(endpoint: &Endpoint) -> serde_json::Value {
-    let addr = endpoint.addr();
+    let address = endpoint.addr();
     serde_json::json!({
-        "id": addr.id.to_string(),
-        "relay": addr.relay_urls().next().map(ToString::to_string),
+        "id": address.id.to_string(),
+        "relay": address.relay_urls().next().map(ToString::to_string),
     })
 }
 

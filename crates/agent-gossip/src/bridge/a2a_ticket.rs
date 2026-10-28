@@ -29,7 +29,7 @@ const PASSWORD_BIT: u8 = 0b0000_0001;
 
 /// A decoded a2a bridge ticket.
 pub(crate) struct A2aTicket {
-    pub addr: EndpointAddr,
+    pub address: EndpointAddr,
     pub secret: TicketSecret,
     pub lookups: LookupOpts,
     /// Password-protected: the consumer must present the Argon2id stretch of
@@ -46,7 +46,7 @@ impl A2aTicket {
         payload.extend_from_slice(self.secret.as_bytes());
         payload.push(if self.password { PASSWORD_BIT } else { 0 });
         self.lookups.encode_into(&mut payload);
-        let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
+        let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.address))
             .expect("EndpointAddr JSON always serializes");
         payload.extend_from_slice(&addr_json);
         let mut framed = Vec::with_capacity(2 + payload.len());
@@ -85,9 +85,9 @@ impl A2aTicket {
         let addr_json = payload.get(pos..).context("ticket missing address")?;
         let value: serde_json::Value =
             serde_json::from_slice(addr_json).context("invalid ticket address json")?;
-        let (_id, addr) = endpoint_addr_from_json(&value)?;
+        let (_id, address) = endpoint_addr_from_json(&value)?;
         Ok(Self {
-            addr,
+            address,
             secret,
             lookups,
             password,
@@ -137,9 +137,9 @@ mod tests {
 
     #[test]
     fn ticket_round_trips() {
-        let addr = sample_addr(3);
+        let address = sample_addr(3);
         let ticket = A2aTicket {
-            addr: addr.clone(),
+            address: address.clone(),
             secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -148,7 +148,7 @@ mod tests {
         assert!(encoded.is_ascii());
         assert!(!encoded.contains("://"));
         let decoded = A2aTicket::decode(&encoded).expect("decode");
-        assert_eq!(decoded.addr.id, addr.id);
+        assert_eq!(decoded.address.id, address.id);
         assert_eq!(decoded.secret.as_bytes(), &[9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
         assert!(!decoded.password);
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn password_flag_round_trips() {
         let ticket = A2aTicket {
-            addr: sample_addr(11),
+            address: sample_addr(11),
             secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: true,
@@ -196,7 +196,7 @@ mod tests {
             relay_transport: false,
         };
         let a2a = A2aTicket {
-            addr: sample_addr(4),
+            address: sample_addr(4),
             secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn rejects_bad_checksum() {
         let ticket = A2aTicket {
-            addr: sample_addr(5),
+            address: sample_addr(5),
             secret: TicketSecret::from_bytes([1u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: false,

@@ -43,7 +43,7 @@ pub(crate) async fn connect(
         _ => {}
     }
     let endpoint = build_peer_endpoint(&ticket.lookups).await?;
-    add_peer_addr(&address_book(&endpoint), ticket.addr.clone());
+    add_peer_addr(&address_book(&endpoint), ticket.address.clone());
     let bind_addr = format!("127.0.0.1:{}", local_port.unwrap_or(0));
     let listener = TcpListener::bind(&bind_addr)
         .await
@@ -62,7 +62,7 @@ pub(crate) async fn connect(
     let bridge = Bridge::new(
         &ticket,
         password.as_ref(),
-        SharedConnection::new(endpoint.clone(), ticket.addr.clone()),
+        SharedConnection::new(endpoint.clone(), ticket.address.clone()),
         LocalSide {
             base: local_base,
             gate,
@@ -240,15 +240,15 @@ where
 #[derive(Clone)]
 pub(super) struct SharedConnection {
     endpoint: Endpoint,
-    addr: EndpointAddr,
+    address: EndpointAddr,
     connection: Arc<Mutex<Option<Connection>>>,
 }
 
 impl SharedConnection {
-    pub(super) fn new(endpoint: Endpoint, addr: EndpointAddr) -> Self {
+    pub(super) fn new(endpoint: Endpoint, address: EndpointAddr) -> Self {
         Self {
             endpoint,
-            addr,
+            address,
             connection: Arc::new(Mutex::new(None)),
         }
     }
@@ -265,7 +265,7 @@ impl SharedConnection {
         }
         let started = Instant::now();
         let connection = loop {
-            match self.endpoint.connect(self.addr.clone(), A2A_ALPN).await {
+            match self.endpoint.connect(self.address.clone(), A2A_ALPN).await {
                 Ok(connection) => break connection,
                 Err(error) if started.elapsed() < DISCOVERY_DEADLINE => {
                     tracing::debug!(%error, "a2a dial retrying while the address propagates");

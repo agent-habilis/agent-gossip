@@ -340,10 +340,10 @@ mod tests {
     use crate::bridge::a2a_ticket::A2aTicket;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
-        let addr = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())
+        let address = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())
             .with_ip_addr("127.0.0.1:4242".parse().unwrap());
         A2aTicket {
-            addr,
+            address,
             secret: habilis_network::protocol::TicketSecret::from_bytes([secret; 32]),
             lookups: LookupOpts::loopback(),
             password,
