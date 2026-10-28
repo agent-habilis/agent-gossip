@@ -227,13 +227,14 @@ struct StateLine<'source> {
 }
 
 fn message_header<'a>(message: &'a Authored, ty: &'static str) -> MessageHeader<'a> {
+    let pubkey = Some(message.key().to_string());
     MessageHeader {
         event: "message",
         id: message.id.as_str(),
         ty,
         gossip: message.mesh.as_str(),
         author: message.author.as_str(),
-        pubkey: Some(message.key().to_string()),
+        pubkey,
         ts: message.timestamp.as_secs(),
     }
 }
@@ -524,18 +525,21 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
     {
         let (done, total) = status_update_params::beat_fraction(&payload)
             .map_or((None, None), |(done, total)| (Some(done), Some(total)));
+        let author = message.author.as_str();
+        let to_name = to.as_str();
+        let display = task_progress_display(author, to_name, done, total);
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
                 event: "task_progress",
                 id: message.id.as_str(),
                 gossip: message.mesh.as_str(),
-                author: message.author.as_str(),
+                author,
                 ts: message.timestamp.as_secs(),
-                to: to.as_str(),
+                to: to_name,
                 task_id,
                 done,
                 total,
-                display: task_progress_display(message.author.as_str(), to.as_str(), done, total),
+                display,
                 is_self,
             })
             .expect("task_progress event serialization should never fail"),
@@ -545,35 +549,41 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
     let kind = status_update_params::task_event_kind(message).unwrap_or("status-update");
     let state = status_update_params::frame_task_state(message);
     let body = status_update_params::task_text(message);
+    let author = message.author.as_str();
+    let to_name = to.as_str();
+    let pubkey = Some(message.key().to_string());
+    // Only a `working` leg carries the reason, as in the record.
+    let waiting = status_update_params::status_payload(message)
+        .ok()
+        .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
+        .and_then(|payload| status_update_params::status_waiting(&payload));
+    let display = task_display(TaskDisplayParams {
+        author,
+        to: to_name,
+        kind,
+        state,
+        body: &body,
+    });
+    let payload: Option<serde_json::Value> = serde_json::from_str(message.body.as_str()).ok();
     stamp_visibility(
         serde_json::to_string(&TaskLine {
             event: "task",
             id: message.id.as_str(),
             gossip: message.mesh.as_str(),
-            author: message.author.as_str(),
-            pubkey: Some(message.key().to_string()),
+            author,
+            pubkey,
             ts: message.timestamp.as_secs(),
-            to: to.as_str(),
+            to: to_name,
             task_id,
             kind,
             state: state.map(crate::a2a::TaskState::as_str),
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
-            // Only a `working` leg carries the reason, as in the record.
-            waiting: status_update_params::status_payload(message)
-                .ok()
-                .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
-                .and_then(|payload| status_update_params::status_waiting(&payload)),
-            display: task_display(TaskDisplayParams {
-                author: message.author.as_str(),
-                to: to.as_str(),
-                kind,
-                state,
-                body: &body,
-            }),
+            waiting,
+            display,
             body,
-            payload: serde_json::from_str(message.body.as_str()).ok(),
+            payload,
             is_self,
         })
         .expect("task event serialization should never fail"),
@@ -638,10 +648,10 @@ pub(super) fn print_task_json(message: &Authored, is_self: bool) {
 ///
 /// and cap the length so one key can't flood the line.
 fn sanitize_path(path: &str) -> String {
-    path.chars()
-        .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'))
-        .take(80)
-        .collect()
+    let visible = path
+        .chars()
+        .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'));
+    visible.take(80).collect()
 }
 
 /// The `changed …` clause for a `state` display, built from a `State` body's
@@ -694,11 +704,8 @@ fn push_changed_paths(key: &str, value: &serde_json::Value, push: &mut impl FnMu
 /// absent (an internal write, or an opaque/unparseable body).
 fn body_merge(body: &str) -> Option<serde_json::Value> {
     let parsed = serde_json::from_str::<serde_json::Value>(body).ok()?;
-    parsed
-        .get("m")
-        .or_else(|| parsed.get("merge"))
-        .filter(|value| !value.is_null())
-        .cloned()
+    let merged = parsed.get("m").or_else(|| parsed.get("merge"));
+    merged.filter(|value| !value.is_null()).cloned()
 }
 
 /// `display` line for a `state` event: `` 💬️ `<author>` changed /board, /turn ``,
@@ -727,22 +734,26 @@ pub(super) fn format_state_json(
     // body under `merge`); an internal write carries none.
     let merge = body_merge(event.body.as_str());
     let what = state_change_summary(merge.as_ref());
+    let label = channel.label();
+    let author = event.author.as_str();
+    let pubkey = Some(event.key().to_string());
+    let merge_value = merge.unwrap_or(serde_json::Value::Null);
     stamp_visibility(
         serde_json::to_string(&StateLine {
-            event: channel.label(),
+            event: label,
             id: event.id.as_str(),
-            ty: channel.label(),
+            ty: label,
             gossip: event.mesh.as_str(),
-            author: event.author.as_str(),
-            pubkey: Some(event.key().to_string()),
+            author,
+            pubkey,
             ts: event.timestamp.as_secs(),
-            merge: merge.unwrap_or(serde_json::Value::Null),
+            merge: merge_value,
             // The meta document is every peer's agent card, ~4k tokens with
             // four peers, repeated on each change; readers take it on demand
             // with `meta get`. Only this JSON form drops it: the typed
             // `OutputEvent::StateChanged` keeps it for in-process readers.
             document: (channel != habilis_network::protocol::Channel::Meta).then_some(document),
-            display: state_display(event.author.as_str(), is_self, &what),
+            display: state_display(author, is_self, &what),
             is_self,
         })
         .expect("state event serialization should never fail"),
