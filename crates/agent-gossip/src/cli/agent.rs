@@ -128,18 +128,19 @@ impl Agent {
 
     /// The skill root this agent reads once installed.
     pub(crate) fn install_path(self, home: &Path) -> PathBuf {
-        match self {
-            Agent::ClaudeCode => home.join(".claude/skills"),
-            Agent::Pi => home.join(".pi/agent/skills"),
-            Agent::Codex => home.join(".codex/skills"),
-            Agent::Cursor => home.join(".cursor/skills"),
-            Agent::OpenCode => home.join(".config/opencode/skills"),
-        }
+        let relative = match self {
+            Agent::ClaudeCode => ".claude/skills",
+            Agent::Pi => ".pi/agent/skills",
+            Agent::Codex => ".codex/skills",
+            Agent::Cursor => ".cursor/skills",
+            Agent::OpenCode => ".config/opencode/skills",
+        };
+        home.join(relative)
     }
 
     pub(crate) fn installed(self, home: &Path) -> bool {
-        self.owned_skill_dirs(home)
-            .into_iter()
+        let dirs = self.owned_skill_dirs(home);
+        dirs.into_iter()
             .any(|path| path.is_symlink() || path.exists())
     }
 
@@ -182,9 +183,8 @@ pub(crate) fn owned_skill_dirs_under(root: &Path) -> Vec<PathBuf> {
 /// Is this embedded path's final component in the skip list? Shared by the
 /// `plug` writer and the `in_sync` comparison so both filter identically.
 pub(crate) fn skipped(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| SKIP.contains(&name))
+    let name = path.file_name().and_then(|name| name.to_str());
+    name.is_some_and(|name| SKIP.contains(&name))
 }
 
 /// True iff every embedded file under `dir` (skipping [`SKIP`], recursing
@@ -225,9 +225,11 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 /// Each agent, its install path, and its state — in display order. Drives
 /// `agent-gossip doctor`'s Integrations section.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
-    Agent::ALL
+    let paths = Agent::ALL
         .into_iter()
-        .map(|agent| (agent, agent.install_path(home), agent.state(home)))
+        .map(|agent| (agent, agent.install_path(home)));
+    paths
+        .map(|(agent, path)| (agent, path, agent.state(home)))
         .collect()
 }
 
@@ -662,10 +664,12 @@ mod tests {
     #[test]
     fn claude_code_bells_end_before_the_harness_limit() {
         let bells: fn(&str) -> Vec<&'static str> = |skill| {
+            let is_bell =
+                |line: &&str| line.starts_with("agent-gossip poll ") && line.contains("--long");
             rendered(skill)
                 .lines()
                 .map(str::trim)
-                .filter(|line| line.starts_with("agent-gossip poll ") && line.contains("--long"))
+                .filter(is_bell)
                 .collect()
         };
         for skill in OWNED_SKILL_DIRS {
@@ -732,9 +736,9 @@ mod tests {
     fn ready_gate_merge(skill: &str) -> &'static str {
         let is_merge =
             |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");
-        SKILLS
-            .get_file(format!("{skill}/SKILL.md"))
-            .and_then(include_dir::File::contents_utf8)
+        let file = SKILLS.get_file(format!("{skill}/SKILL.md"));
+        let contents = file.and_then(include_dir::File::contents_utf8);
+        contents
             .and_then(|body| body.lines().find(is_merge))
             .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"))
     }
@@ -757,12 +761,9 @@ mod tests {
             let script = format!(
                 "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; {merge}"
             );
-            let out: std::process::Output = std::process::Command::new("bash")
-                .args(["-c", &script])
-                .current_dir(&cwd)
-                .env("HOME", &home)
-                .output()
-                .expect("run bash");
+            let mut command = std::process::Command::new("bash");
+            command.args(["-c", &script]).current_dir(&cwd);
+            let out: std::process::Output = command.env("HOME", &home).output().expect("run bash");
             let json: serde_json::Value =
                 serde_json::from_slice(&out.stdout).unwrap_or_else(|error| {
                     panic!(
