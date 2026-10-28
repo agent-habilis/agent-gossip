@@ -397,7 +397,7 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
 /// (a `\n` would forge a second row) are stripped and the length capped.
 #[must_use]
 pub fn task_label(message: &Message) -> Option<String> {
-    let raw = message
+    let raw: String = message
         .metadata
         .as_ref()?
         .get(META_LABEL)?
@@ -405,7 +405,7 @@ pub fn task_label(message: &Message) -> Option<String> {
         .chars()
         .filter(|ch| !ch.is_control())
         .take(super::tuning::TASK_LABEL_MAX_CHARS)
-        .collect::<String>();
+        .collect();
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
@@ -469,7 +469,7 @@ fn wall_clock_ms() -> u64 {
 /// gets the same control-character strip and length cap as [`task_label`].
 #[must_use]
 pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
-    let raw = update
+    let raw: String = update
         .metadata
         .as_ref()?
         .get(META_WAITING)?
@@ -477,7 +477,7 @@ pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
         .chars()
         .filter(|ch| !ch.is_control())
         .take(super::tuning::TASK_LABEL_MAX_CHARS)
-        .collect::<String>();
+        .collect();
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }

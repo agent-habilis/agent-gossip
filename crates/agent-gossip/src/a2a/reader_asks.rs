@@ -219,11 +219,8 @@ mod tests {
     }
 
     fn relay() -> TransportAddr {
-        TransportAddr::Relay(
-            "https://relay.example"
-                .parse::<RelayUrl>()
-                .expect("valid url"),
-        )
+        let url: RelayUrl = "https://relay.example".parse().expect("valid url");
+        TransportAddr::Relay(url)
     }
 
     fn custom(id: u64) -> TransportAddr {

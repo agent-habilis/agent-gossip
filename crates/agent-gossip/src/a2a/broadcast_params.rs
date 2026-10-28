@@ -1207,12 +1207,9 @@ async fn build_offload_parts(
     let Some(file) = file else {
         return Ok(vec![crate::a2a::Part::text(text)]);
     };
-    let parsed = mesh
-        .as_str()
-        .parse::<habilis_network::protocol::LockedMesh>()
-        .map_err(|error| {
-            anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
-        })?;
+    let parsed: habilis_network::protocol::LockedMesh = mesh.as_str().parse().map_err(|error| {
+        anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
+    })?;
     let lookups = parsed.config().lookups.clone();
     let relay_transport = parsed.config().transport.relay_transport;
     // Route through the choke point so the base is validated (0700, ours) before
