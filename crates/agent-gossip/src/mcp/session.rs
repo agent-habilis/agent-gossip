@@ -30,8 +30,8 @@ impl Session {
     /// # Errors
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
-    pub(super) async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
-        Ok(Self::wrap(InProcessSession::create_poll(cfg).await?))
+    pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
+        Ok(Self::wrap(InProcessSession::create_poll(config).await?))
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -39,8 +39,8 @@ impl Session {
     ///
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
-    pub(super) async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::join_poll(cfg).await?))
+    pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::join_poll(config).await?))
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -48,8 +48,8 @@ impl Session {
     ///
     /// # Errors
     /// [`JoinError`] on setup failure.
-    pub(super) async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::topic_poll(cfg).await?))
+    pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::topic_poll(config).await?))
     }
 
     fn wrap(inner: InProcessSession) -> Self {
@@ -269,16 +269,16 @@ mod tests {
 
     /// A loopback create config with an explicit nickname, no advertising.
     fn create_cfg(name: &str, nick: &str) -> CreateConfig {
-        let mut cfg = CreateConfig::new(MeshName::new(name).unwrap());
-        cfg.nickname = Some(Nickname::from(nick));
-        cfg
+        let mut config = CreateConfig::new(MeshName::new(name).unwrap());
+        config.nickname = Some(Nickname::from(nick));
+        config
     }
 
     /// A join config for an existing mesh id with an explicit nickname.
     fn join_cfg(mesh: &MeshId, nick: &str) -> JoinConfig {
-        let mut cfg = JoinConfig::new(JoinTarget::Mesh(mesh.clone()));
-        cfg.nickname = Some(Nickname::from(nick));
-        cfg
+        let mut config = JoinConfig::new(JoinTarget::Mesh(mesh.clone()));
+        config.nickname = Some(Nickname::from(nick));
+        config
     }
 
     /// The `Message` inside a surfaced `msg`/`presence`/`task` event, if

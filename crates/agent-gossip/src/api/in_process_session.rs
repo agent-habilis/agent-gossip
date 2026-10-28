@@ -73,8 +73,8 @@ impl InProcessSession {
     ///
     /// # Errors
     /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
-    pub(crate) async fn create_poll(cfg: CreateConfig) -> Result<Self, CreateError> {
-        let (elc, io, advertiser) = create_setup(cfg, Output::silent()).await?;
+    pub(crate) async fn create_poll(config: CreateConfig) -> Result<Self, CreateError> {
+        let (elc, io, advertiser) = create_setup(config, Output::silent()).await?;
         Ok(Self::spawn(
             elc,
             io,
@@ -90,8 +90,8 @@ impl InProcessSession {
     ///
     /// # Errors
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
-    pub(crate) async fn join_poll(cfg: JoinConfig) -> Result<Self, JoinError> {
-        let (elc, io) = join_setup(cfg, Output::silent()).await?;
+    pub(crate) async fn join_poll(config: JoinConfig) -> Result<Self, JoinError> {
+        let (elc, io) = join_setup(config, Output::silent()).await?;
         Ok(Self::spawn(
             elc,
             io,
@@ -109,8 +109,8 @@ impl InProcessSession {
     /// # Errors
     /// [`JoinError::Resolve`] on an empty string; [`JoinError::Setup`] on
     /// endpoint/gossip failure.
-    pub(crate) async fn topic_poll(cfg: TopicConfig) -> Result<Self, JoinError> {
-        let (elc, io) = topic_setup(cfg, Output::silent()).await?;
+    pub(crate) async fn topic_poll(config: TopicConfig) -> Result<Self, JoinError> {
+        let (elc, io) = topic_setup(config, Output::silent()).await?;
         Ok(Self::spawn(
             elc,
             io,

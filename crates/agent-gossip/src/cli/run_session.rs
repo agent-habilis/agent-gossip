@@ -74,7 +74,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     let advertising = advertise_directory.as_ref().zip(directory_lookups.as_ref());
     let live_count =
         advertising.map(|_| std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1)));
-    let cfg = setup_mesh(
+    let config = setup_mesh(
         kind,
         SetupParams {
             author,
@@ -95,9 +95,9 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         },
     )
     .await?;
-    let cfg = match shared.owner_pid {
-        Some(owner) => cfg.with_owner_pid(owner)?,
-        None => cfg,
+    let config = match shared.owner_pid {
+        Some(owner) => config.with_owner_pid(owner)?,
+        None => config,
     };
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this mesh's own lookups. The handle is
@@ -106,12 +106,14 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     let _advertiser = advertise_directory
         .zip(directory_lookups)
         .zip(live_count)
-        .map(|((directory, lookups), counter)| spawn_advertiser(&cfg, counter, directory, lookups));
+        .map(|((directory, lookups), counter)| {
+            spawn_advertiser(&config, counter, directory, lookups)
+        });
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).
-    habilis_network::util::logging::attach(cfg.mesh_id(), cfg.author());
+    habilis_network::util::logging::attach(config.mesh_id(), config.author());
     // Boxed for the same reason `create` boxes the session future: it carries
     // the whole `EventLoopConfig` and sits just over clippy's `large_futures`
     // budget on 64-bit Linux (it fits under it on aarch64 macOS).
-    Box::pin(run_event_loop(cfg, app, None, http_rx)).await
+    Box::pin(run_event_loop(config, app, None, http_rx)).await
 }

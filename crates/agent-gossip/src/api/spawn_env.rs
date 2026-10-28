@@ -16,7 +16,7 @@ use crate::topic::resolve_topic;
 /// # Errors
 /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
 pub(super) async fn create_setup(
-    cfg: CreateConfig,
+    config: CreateConfig,
     output: Output,
 ) -> Result<
     (
@@ -27,35 +27,37 @@ pub(super) async fn create_setup(
     CreateError,
 > {
     crate::register_build_version();
-    let config = MeshConfig {
+    let mesh_config = MeshConfig {
         // No sugar flag left in the api: naming no lookup is loopback,
         // naming any restricts to those.
-        lookups: resolve_lookups(cfg.lookups),
+        lookups: resolve_lookups(config.lookups),
         password: None,
         issuer_pubkey: None,
-        transport: cfg.transport,
+        transport: config.transport,
     };
     // The advertiser reaches the directory over this mesh's own lookups.
-    let directory_lookups = config.lookups.clone();
+    let directory_lookups = mesh_config.lookups.clone();
     // Map the api's `advertise: bool` + `directory` onto the shared
     // `DirectorySelection`; `resolve` validates it against the config
     // (loopback-only advertise is rejected before any setup work).
-    let advertise = match (cfg.advertise, cfg.directory) {
+    let advertise = match (config.advertise, config.directory) {
         (false, _) => DirectorySelection::Unset,
         (true, None) => DirectorySelection::Default,
         (true, Some(directory)) => DirectorySelection::Named(directory),
     };
-    let max_peers = cfg.max_peers;
+    let max_peers = config.max_peers;
     let Resolved {
         kind,
         author,
         advertise_directory,
     } = CreateParams {
-        name: cfg.name,
-        nickname: cfg.nickname,
-        config,
+        name: config.name,
+        nickname: config.nickname,
+        config: mesh_config,
         advertise,
-        password: cfg.password.map(habilis_network::protocol::Password::new),
+        password: config
+            .password
+            .map(habilis_network::protocol::Password::new),
         // Invite-only is a CLI-driven feature; the library api does not expose
         // it yet (a documented follow-up).
         invite_only: false,
@@ -106,17 +108,19 @@ pub(super) async fn create_setup(
 /// # Errors
 /// [`JoinError::Resolve`] / [`JoinError::Setup`].
 pub(super) async fn join_setup(
-    cfg: JoinConfig,
+    config: JoinConfig,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
     let resolved = JoinParams {
-        target: cfg.target,
-        nickname: cfg.nickname,
-        password: cfg.password.map(habilis_network::protocol::Password::new),
+        target: config.target,
+        nickname: config.nickname,
+        password: config
+            .password
+            .map(habilis_network::protocol::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, output).await
+    resolved_setup(resolved, config.max_peers, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public mesh).
@@ -125,11 +129,11 @@ pub(super) async fn join_setup(
 /// [`JoinError::Resolve`] if the string is empty/whitespace;
 /// [`JoinError::Setup`] on endpoint/gossip failure.
 pub(super) async fn topic_setup(
-    cfg: TopicConfig,
+    config: TopicConfig,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
-    let resolved = resolve_topic(cfg.string, cfg.nickname).map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, output).await
+    let resolved = resolve_topic(config.string, config.nickname).map_err(JoinError::Resolve)?;
+    resolved_setup(resolved, config.max_peers, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_mesh` for

@@ -35,9 +35,9 @@ impl MeshSession {
     /// # Errors
     /// [`JoinError::Resolve`] if the target can't be resolved;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
-    pub async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
+    pub async fn join(config: JoinConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = crate::output::capture_events();
-        let (elc, io) = join_setup(cfg, output).await?;
+        let (elc, io) = join_setup(config, output).await?;
         Ok(Self::new_with_events(elc, io, None, events_rx))
     }
 
@@ -48,9 +48,9 @@ impl MeshSession {
     /// # Errors
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
-    pub async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
+    pub async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = crate::output::capture_events();
-        let (elc, io) = topic_setup(cfg, output).await?;
+        let (elc, io) = topic_setup(config, output).await?;
         Ok(Self::new_with_events(elc, io, None, events_rx))
     }
 
@@ -60,9 +60,9 @@ impl MeshSession {
     /// # Errors
     /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
     /// loopback-only mesh; [`CreateError::Setup`] on endpoint/gossip failure.
-    pub async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
+    pub async fn create(config: CreateConfig) -> Result<Self, CreateError> {
         let (output, events_rx) = crate::output::capture_events();
-        let (elc, io, advertiser) = create_setup(cfg, output).await?;
+        let (elc, io, advertiser) = create_setup(config, output).await?;
         Ok(Self::new_with_events(elc, io, advertiser, events_rx))
     }
 

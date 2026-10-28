@@ -38,12 +38,12 @@ impl Drop for Advertiser {
 }
 
 pub(crate) fn spawn_advertiser(
-    cfg: &EventLoopConfig,
+    config: &EventLoopConfig,
     live_count: Arc<AtomicUsize>,
     directory: MeshName,
     lookups: LookupOpts,
 ) -> Advertiser {
-    let mesh_id = cfg.mesh_id().clone();
+    let mesh_id = config.mesh_id().clone();
     Advertiser(tokio::spawn(async move {
         // Reach the directory over the advertised mesh's own lookups, so an
         // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and

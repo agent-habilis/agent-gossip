@@ -101,9 +101,9 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
 /// The app default carries no multihop: a mesh that wants it names it.
 #[test]
 fn create_config_default_transport_is_udp_webrtc_gossip() {
-    let cfg = CreateConfig::new(MeshName::new("defaults").expect("valid name"));
+    let config = CreateConfig::new(MeshName::new("defaults").expect("valid name"));
     assert_eq!(
-        cfg.transport,
+        config.transport,
         TransportPolicy {
             udp: true,
             webrtc: true,

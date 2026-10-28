@@ -26,12 +26,12 @@ pub struct BenchConfig(MeshConfig);
 impl BenchConfig {
     #[must_use]
     pub fn loopback() -> Self {
-        Self(cfg(LookupOpts::loopback()))
+        Self(config(LookupOpts::loopback()))
     }
 
     #[must_use]
     pub fn public() -> Self {
-        Self(cfg(LookupOpts::public_preset()))
+        Self(config(LookupOpts::public_preset()))
     }
 
     /// Public preset with a 2-rung custom relay ladder, so the encode/
@@ -46,11 +46,11 @@ impl BenchConfig {
                 "https://b.example".parse().expect("valid relay url"),
             ]),
         };
-        Self(cfg(lookups))
+        Self(config(lookups))
     }
 }
 
-fn cfg(lookups: LookupOpts) -> MeshConfig {
+fn config(lookups: LookupOpts) -> MeshConfig {
     let transport = app_policy(lookups.relay_lookup != RelayChoice::Disabled);
     MeshConfig {
         lookups,

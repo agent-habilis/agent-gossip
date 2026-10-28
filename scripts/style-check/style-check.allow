@@ -1,5 +1,4 @@
 abbrev_name|crates/agent-gossip-test-fixtures/src/apply_flags.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|24|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-test-fixtures/src/node.rs|12|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-test-fixtures/src/test_cmd.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
@@ -13,11 +12,6 @@ abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|9|open: An identifier is 
 abbrev_name|crates/agent-gossip/src/a2a/receipt.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/served.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/task_record.rs|11|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/api/advertiser.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/api/in_process_session.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/api/mesh_session.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/api/spawn_env.rs|18|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/api/tests.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/a2a_ticket.rs|7|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/bridge.rs|30|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|12|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
@@ -29,15 +23,11 @@ abbrev_name|crates/agent-gossip/src/cli/meta.rs|2|open: An identifier is not a l
 abbrev_name|crates/agent-gossip/src/cli/peers.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/ping.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/poll.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/cli/run_session.rs|8|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/send.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/state.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/cli/topology_cmd.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/harness/bench_config.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/harness/test_key.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/mcp/agent_gossip_server.rs|5|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/mcp/mcp_instructions.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/mcp/session.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/output/node_sink.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/tasks/src/bench.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/tasks/src/build.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on

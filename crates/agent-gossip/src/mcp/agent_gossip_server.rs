@@ -96,7 +96,7 @@ impl AgentGossipServer {
             .map_err(|error| {
                 McpError::invalid_params(format!("invalid directory name: {error}"), None)
             })?;
-        let cfg = CreateConfig {
+        let config = CreateConfig {
             name,
             nickname,
             lookups: resolved.set,
@@ -106,7 +106,7 @@ impl AgentGossipServer {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
         };
-        let session = Session::create(cfg).await.map_err(|error| match error {
+        let session = Session::create(config).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
                 McpError::invalid_params(error.to_string(), None)
             }
@@ -171,9 +171,9 @@ impl AgentGossipServer {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?),
         };
-        let mut cfg = TopicConfig::new(args.string);
-        cfg.nickname = nickname;
-        let session = Session::topic(cfg).await.map_err(join_error_to_mcp)?;
+        let mut config = TopicConfig::new(args.string);
+        config.nickname = nickname;
+        let session = Session::topic(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
         ok_json(result)
