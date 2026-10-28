@@ -22,13 +22,9 @@ fn lock_path(mesh: &str, nickname: &str) -> PathBuf {
 pub(crate) async fn acquire(mesh: &str, nickname: &str) -> Option<File> {
     use std::os::unix::fs::OpenOptionsExt as _;
 
-    let file: File = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(lock_path(mesh, nickname))
-        .ok()?;
+    let mut options: OpenOptions = OpenOptions::new();
+    options.create(true).truncate(false).write(true).mode(0o600);
+    let file: File = options.open(lock_path(mesh, nickname)).ok()?;
     // Retry to ride out a probe's momentary shared lock.
     let deadline = tokio::time::Instant::now() + ACQUIRE_RETRY_FOR;
     loop {
