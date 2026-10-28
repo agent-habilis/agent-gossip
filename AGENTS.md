@@ -397,6 +397,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined U23: this is an application crate (S4), so its public enums do not use `#[non_exhaustive]`; the in-tree callers match them exhaustively and fix them in the same change.
 - Declined U26: this is an application crate (S4), so its public structs with public fields do not use `#[non_exhaustive]`; callers build them directly and fix them in the same change.
 - Declined D1: AGENTS drops derivable doc comments, so a public item gets a doc comment only when it states a why that the signature cannot.
+- Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
 
 ## Agent Restrictions
 
