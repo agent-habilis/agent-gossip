@@ -287,7 +287,10 @@ mod tests {
                 "{skill}: generated skill carries an unrendered directive"
             );
         }
-        assert!(SKILLS.get_dir("shared").is_none());
+        assert!(
+            SKILLS.get_dir("shared").is_none(),
+            "the renderer must not emit a shared skill dir"
+        );
         // The loop above only catches a name OWNED_SKILL_DIRS claims but the
         // renderer didn't emit. This catches the other direction — a build.rs
         // prefix filter wide enough to sweep in a dir nobody owns, which plug
@@ -350,7 +353,10 @@ mod tests {
                 .is_file(),
             "gossip-discover still has a Monitor adapter (tracked follow-up)"
         );
-        assert!(!root.join("shared/SKILL.md").exists());
+        assert!(
+            !root.join("shared/SKILL.md").exists(),
+            "the shared partials dir must not hold a SKILL.md"
+        );
     }
 
     fn rendered(skill: &str) -> &'static str {
@@ -467,7 +473,10 @@ mod tests {
                 );
             }
         }
-        assert!(rendered("gossip-topic").contains("--long --settle-secs 5 > /dev/null 2>&1"));
+        assert!(
+            rendered("gossip-topic").contains("--long --settle-secs 5 > /dev/null 2>&1"),
+            "gossip-topic must poll with a long settle wait and silence its output"
+        );
     }
 
     /// The Monitor prohibition, pinned on the *generated* content: the daemon
@@ -612,7 +621,10 @@ mod tests {
                 daemon_starters_checked += 1;
             }
         }
-        assert_eq!(daemon_starters_checked, 3);
+        assert_eq!(
+            daemon_starters_checked, 3,
+            "three skills start a daemon, so all three must be checked"
+        );
     }
 
     /// Pi, Codex and Cursor must keep the launch text they have today, so the
@@ -711,7 +723,10 @@ mod tests {
                 "{skill}: merge must report cwd: {merge}"
             );
         }
-        assert!(body("gossip-status").contains("| host | cwd |"));
+        assert!(
+            body("gossip-status").contains("| host | cwd |"),
+            "gossip-status must print a host and cwd column"
+        );
     }
 
     fn ready_gate_merge(skill: &str) -> &'static str {
@@ -768,8 +783,14 @@ mod tests {
             .get_file("gossip-status/SKILL.md")
             .and_then(include_dir::File::contents_utf8)
             .expect("gossip-status/SKILL.md is embedded utf-8");
-        assert!(body.contains("`$NICKNAME (you)`"));
-        assert!(!body.contains("no peers yet"));
+        assert!(
+            body.contains("`$NICKNAME (you)`"),
+            "the status table must list the own peer as `you`"
+        );
+        assert!(
+            !body.contains("no peers yet"),
+            "the status table must not say there are no peers when self is listed"
+        );
     }
 
     /// A printed line is chat markdown, so a command left outside backticks
@@ -797,13 +818,26 @@ mod tests {
         assert!(
             Agent::ClaudeCode
                 .install_path(home)
-                .ends_with(".claude/skills")
+                .ends_with(".claude/skills"),
+            "Claude Code must install under .claude/skills"
         );
-        assert!(Agent::Pi.install_path(home).ends_with(".pi/agent/skills"));
-        assert!(Agent::Codex.install_path(home).ends_with(".codex/skills"));
-        assert!(Agent::Cursor.install_path(home).ends_with(".cursor/skills"));
+        assert!(
+            Agent::Pi.install_path(home).ends_with(".pi/agent/skills"),
+            "Pi must install under .pi/agent/skills"
+        );
+        assert!(
+            Agent::Codex.install_path(home).ends_with(".codex/skills"),
+            "Codex must install under .codex/skills"
+        );
+        assert!(
+            Agent::Cursor.install_path(home).ends_with(".cursor/skills"),
+            "Cursor must install under .cursor/skills"
+        );
         let opencode = Agent::OpenCode.install_path(home);
-        assert!(opencode.ends_with(".config/opencode/skills"));
+        assert!(
+            opencode.ends_with(".config/opencode/skills"),
+            "OpenCode must install under .config/opencode/skills, got {opencode:?}"
+        );
     }
 
     #[test]
@@ -812,16 +846,25 @@ mod tests {
         let dir = Agent::Codex.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
-        assert!(!Agent::Codex.in_sync(&home));
+        assert!(
+            !Agent::Codex.in_sync(&home),
+            "a home with no skills must count as out of sync"
+        );
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(Agent::Codex.in_sync(&home));
+        assert!(
+            Agent::Codex.in_sync(&home),
+            "a tree written from the embedded skills must count as in sync"
+        );
 
         let file = dir.join("gossip-create/SKILL.md");
         let mut contents = std::fs::read_to_string(&file).unwrap();
         contents.push('\n');
         std::fs::write(&file, contents).unwrap();
-        assert!(!Agent::Codex.in_sync(&home));
+        assert!(
+            !Agent::Codex.in_sync(&home),
+            "an edited skill file must count as out of sync"
+        );
 
         std::fs::remove_dir_all(&home).unwrap();
     }
@@ -833,18 +876,30 @@ mod tests {
         let dir = Agent::Cursor.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
-        assert!(!Agent::Cursor.in_sync(&home));
+        assert!(
+            !Agent::Cursor.in_sync(&home),
+            "a home with no skills must count as out of sync"
+        );
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(Agent::Cursor.in_sync(&home));
+        assert!(
+            Agent::Cursor.in_sync(&home),
+            "a tree written from the embedded skills must count as in sync"
+        );
 
         // A stale `shared/` dir from a pre-single-file install is extra
         // content, not drift — the embedded files all still match.
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::write(dir.join("shared/extra.md"), "extra").unwrap();
-        assert!(Agent::Cursor.in_sync(&home));
+        assert!(
+            Agent::Cursor.in_sync(&home),
+            "an extra file must not count as drift"
+        );
         std::fs::remove_file(dir.join("gossip-join/SKILL.md")).unwrap();
-        assert!(!Agent::Cursor.in_sync(&home));
+        assert!(
+            !Agent::Cursor.in_sync(&home),
+            "a missing skill file must count as out of sync"
+        );
 
         std::fs::remove_dir_all(&home).unwrap();
     }
@@ -856,12 +911,22 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(super::drift_warning(&home).is_none());
+        assert!(
+            super::drift_warning(&home).is_none(),
+            "a matching install must not warn"
+        );
 
         std::fs::write(dir.join("gossip-join/SKILL.md"), "stale").unwrap();
         let warning = super::drift_warning(&home).expect("diverged install warns");
-        assert_eq!(warning, super::SKILL_DRIFT_MSG);
-        assert!(warning.contains("agent-gossip plug"));
+        assert_eq!(
+            warning,
+            super::SKILL_DRIFT_MSG,
+            "a drift warning must use the shared drift message"
+        );
+        assert!(
+            warning.contains("agent-gossip plug"),
+            "the drift warning must name the plug command, got: {warning}"
+        );
 
         std::fs::remove_dir_all(&home).unwrap();
     }
