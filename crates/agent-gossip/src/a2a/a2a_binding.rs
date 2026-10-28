@@ -96,10 +96,11 @@ async fn serve_connection(stream: TcpStream, token: String, req_tx: mpsc::Sender
 }
 
 fn json_response(status: StatusCode, body: &serde_json::Value) -> Response<Full<Bytes>> {
+    let text: String = body.to_string();
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(Full::new(Bytes::from(text)))
         .expect("static response builds")
 }
 
@@ -177,12 +178,9 @@ async fn rpc(
     token: &str,
     req_tx: &mpsc::Sender<A2aRequest>,
 ) -> Response<Full<Bytes>> {
-    let authorized: bool = request
-        .headers()
-        .get("authorization")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        == Some(token);
+    let header = request.headers().get("authorization");
+    let text: Option<&str> = header.and_then(|value| value.to_str().ok());
+    let authorized: bool = text.and_then(|value| value.strip_prefix("Bearer ")) == Some(token);
     if !authorized {
         return json_response(
             StatusCode::UNAUTHORIZED,
