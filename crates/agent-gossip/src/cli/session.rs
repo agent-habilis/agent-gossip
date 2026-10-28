@@ -72,12 +72,11 @@ fn state_file_paths() -> Vec<PathBuf> {
     let Ok(mesh_dirs) = std::fs::read_dir(runtime_base()) else {
         return Vec::new();
     };
-    mesh_dirs
-        .flatten()
-        .map(|dir_entry| dir_entry.path())
-        .filter(|path| path.is_dir())
-        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
-        .map(|file_entry| file_entry.path())
+    let entries = mesh_dirs.flatten().map(|dir_entry| dir_entry.path());
+    let dirs = entries.filter(|path| path.is_dir());
+    let files = dirs.flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten());
+    let paths = files.map(|file_entry| file_entry.path());
+    paths
         .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
         .collect()
 }
@@ -96,8 +95,10 @@ fn split_owned(live: Vec<Target>, is_owned: impl Fn(&Target) -> bool) -> (Vec<Ta
 /// Select by explicit mesh id (full or prefix) and optional nickname — no
 /// ownership check: naming the mesh is the intent.
 fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec<Target> {
-    live.into_iter()
-        .filter(|target| target.mesh.starts_with(mesh))
+    let in_mesh = live
+        .into_iter()
+        .filter(|target| target.mesh.starts_with(mesh));
+    in_mesh
         .filter(|target| nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted)))
         .collect()
 }
@@ -149,13 +150,12 @@ async fn live_owners() -> Vec<Owner> {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
             continue;
         };
-        let (Some(gossip), Some(nickname), Some(pid)) = (
-            value["gossip"].as_str(),
-            value["nickname"].as_str(),
-            value["pid"]
-                .as_u64()
-                .and_then(|pid| u32::try_from(pid).ok()),
-        ) else {
+        let pid = value["pid"]
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok());
+        let (Some(gossip), Some(nickname), Some(pid)) =
+            (value["gossip"].as_str(), value["nickname"].as_str(), pid)
+        else {
             continue;
         };
         owners.push(Owner {
