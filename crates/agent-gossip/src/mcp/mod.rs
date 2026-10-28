@@ -1140,7 +1140,8 @@ mod tests {
     fn the_instructions_name_only_tools_that_exist() {
         let tools = declared_tools();
         let mut unknown: Vec<&str> = Vec::new();
-        for chunk in MCP_INSTRUCTIONS.split('`').skip(1).step_by(2) {
+        let code_spans = MCP_INSTRUCTIONS.split('`').skip(1).step_by(2);
+        for chunk in code_spans {
             let tool_shaped = chunk.contains('_')
                 && chunk
                     .chars()
