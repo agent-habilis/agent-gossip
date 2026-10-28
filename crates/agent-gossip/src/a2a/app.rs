@@ -20,7 +20,7 @@ use crate::output::{Output, OutputEvent};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
-/// its base `Output` and handed to [`A2aApp::with_io`].
+/// its base `Output` and handed to [`A2aApp::new_with_io`].
 pub(crate) struct SurfacedIo {
     output: Output,
     surfaced_rx: UnboundedReceiver<OutputEvent>,
@@ -75,7 +75,7 @@ impl SurfacedIo {
     pub(crate) fn new(base: Output) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
-            output: base.with_tap(tx),
+            output: base.set_tap(tx),
             surfaced_rx: rx,
             startup: Startup::default(),
         }
@@ -83,7 +83,7 @@ impl SurfacedIo {
 
     /// Attach this product's startup diagnostics to the `ready` announcement.
     /// The in-process paths skip it — they compute no drift and bind no port.
-    pub(crate) fn with_startup(mut self, startup: Startup) -> Self {
+    pub(crate) fn set_startup(mut self, startup: Startup) -> Self {
         self.startup = startup;
         self
     }
@@ -207,7 +207,7 @@ impl A2aApp {
 
     /// Build the a2a-application state wired to a live surfacing tap: the tapped
     /// `Output` for a2a renders and the receiver drained into the ring.
-    pub(crate) fn with_io(io: SurfacedIo) -> Self {
+    pub(crate) fn new_with_io(io: SurfacedIo) -> Self {
         let SurfacedIo {
             output,
             surfaced_rx,

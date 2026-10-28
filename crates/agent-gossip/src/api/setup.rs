@@ -169,7 +169,7 @@ async fn resolved_setup(
 }
 
 /// The advertiser handle / signal-handling flag shared by
-/// [`InProcessSession::spawn`] and [`MeshSession::with_events_and_signals`] —
+/// [`InProcessSession::spawn`] and [`MeshSession::new_with_events_and_signals`] —
 /// the bits of the spawn call that are about the *process* environment rather
 /// than the mesh itself.
 pub(super) struct SpawnEnv {

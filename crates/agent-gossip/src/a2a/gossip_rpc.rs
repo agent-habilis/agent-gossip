@@ -190,7 +190,7 @@ mod tests {
 
     /// Open a task record with `peer` as the counterparty, as receiving its
     /// offer would.
-    fn with_task(app: &mut A2aApp, task_id: &str, peer: &str) {
+    fn seed_task(app: &mut A2aApp, task_id: &str, peer: &str) {
         crate::a2a::task::apply(
             &mut app.tasks,
             &crate::a2a::task::LegInfo {
@@ -211,7 +211,7 @@ mod tests {
     fn reads_are_served() {
         let caller = Nickname::from("alice");
         let mut st = state();
-        with_task(&mut st, TASK_A, "alice");
+        seed_task(&mut st, TASK_A, "alice");
         assert!(matches!(
             classify("ListTasks", &json!({}), &caller, &st),
             Served::Op(_)
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn task_reads_require_being_the_task_peer() {
         let mut st = state();
-        with_task(&mut st, TASK_A, "alice");
+        seed_task(&mut st, TASK_A, "alice");
         let outsider = Nickname::from("wire-thistle");
 
         for method in ["GetTask", "SubscribeToTask"] {
@@ -355,8 +355,8 @@ mod tests {
     #[test]
     fn list_tasks_over_gossip_is_scoped_to_the_caller() {
         let mut st = state();
-        with_task(&mut st, TASK_A, "alice");
-        with_task(&mut st, TASK_B, "bob");
+        seed_task(&mut st, TASK_A, "alice");
+        seed_task(&mut st, TASK_B, "bob");
 
         let Served::Op(A2aOp::ListTasks { peer: over_gossip }) =
             classify("ListTasks", &json!({}), &Nickname::from("alice"), &st)

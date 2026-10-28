@@ -178,7 +178,7 @@ impl CardRewriter {
     /// emit it verbatim.
     fn emit_buffered(&self, header: &[u8], body: &[u8], out: &mut Vec<u8>) {
         if let Some(rewritten) = rewrite_card_body(body, &self.local_base) {
-            out.extend_from_slice(&with_content_length(header, rewritten.len()));
+            out.extend_from_slice(&rewrite_content_length(header, rewritten.len()));
             out.extend_from_slice(&rewritten);
         } else {
             out.extend_from_slice(header);
@@ -254,7 +254,7 @@ fn parse_status_code(line: &str) -> Option<u16> {
 /// grows or shrinks when its URLs are rewritten). A header block always has a
 /// `Content-Length` here — this branch only runs for a buffered, length-framed
 /// response — so the value is replaced in place.
-fn with_content_length(header: &[u8], len: usize) -> Vec<u8> {
+fn rewrite_content_length(header: &[u8], len: usize) -> Vec<u8> {
     let text = String::from_utf8_lossy(header);
     let mut rebuilt = String::with_capacity(text.len());
     for (index, line) in text.split("\r\n").enumerate() {

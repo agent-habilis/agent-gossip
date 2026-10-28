@@ -47,7 +47,7 @@ impl InProcessSession {
         // engine emits `NodeEvent`s through `io.sink()`, and the app renders the
         // same tap. Build the app from that same `io` so surfaced events reach
         // the app-side ring the in-process `Poll` drains.
-        let app = crate::a2a::app::A2aApp::with_io(io);
+        let app = crate::a2a::app::A2aApp::new_with_io(io);
         Self {
             node: Node::spawn(elc, app, push, handle_signals),
             advertiser,

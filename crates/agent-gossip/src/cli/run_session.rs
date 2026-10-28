@@ -61,12 +61,12 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         None => None,
     };
     let a2a_serve_port = binding.as_ref().map(|bound| bound.port);
-    let io = crate::a2a::app::SurfacedIo::new(out).with_startup(crate::a2a::app::Startup {
+    let io = crate::a2a::app::SurfacedIo::new(out).set_startup(crate::a2a::app::Startup {
         drift,
         a2a_port: a2a_serve_port,
     });
     let sink = io.sink();
-    let mut app = crate::a2a::app::A2aApp::with_io(io);
+    let mut app = crate::a2a::app::A2aApp::new_with_io(io);
     let http_rx = binding.map(|bound| app.serve_a2a(bound));
     // Advertising needs a live-peer counter shared with the re-broadcast task.
     // Built before setup so the config is complete when it is returned, rather

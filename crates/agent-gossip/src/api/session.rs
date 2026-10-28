@@ -38,7 +38,7 @@ impl MeshSession {
     pub async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = crate::output::capture_events();
         let (elc, io) = join_setup(cfg, output).await?;
-        Ok(Self::with_events(elc, io, None, events_rx))
+        Ok(Self::new_with_events(elc, io, None, events_rx))
     }
 
     /// Join a topic — a public mesh derived deterministically from
@@ -51,7 +51,7 @@ impl MeshSession {
     pub async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = crate::output::capture_events();
         let (elc, io) = topic_setup(cfg, output).await?;
-        Ok(Self::with_events(elc, io, None, events_rx))
+        Ok(Self::new_with_events(elc, io, None, events_rx))
     }
 
     /// Create a new mesh and spawn its event loop in the background.
@@ -63,7 +63,7 @@ impl MeshSession {
     pub async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
         let (output, events_rx) = crate::output::capture_events();
         let (elc, io, advertiser) = create_setup(cfg, output).await?;
-        Ok(Self::with_events(elc, io, advertiser, events_rx))
+        Ok(Self::new_with_events(elc, io, advertiser, events_rx))
     }
 
     /// Join an already-decoded [`Mesh`] with an explicit co-host policy —
@@ -111,7 +111,7 @@ impl MeshSession {
             },
         )
         .await?;
-        Ok(Self::with_events_and_signals(
+        Ok(Self::new_with_events_and_signals(
             elc,
             io,
             SpawnEnv {
@@ -126,13 +126,13 @@ impl MeshSession {
     /// captured-event stream, over a freshly-spawned [`InProcessSession`]
     /// (which pushes inbound to the broadcast). Registers the process
     /// signal handlers (the public api default).
-    fn with_events(
+    fn new_with_events(
         elc: EventLoopConfig,
         io: crate::a2a::app::SurfacedIo,
         advertiser: Option<Advertiser>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
-        Self::with_events_and_signals(
+        Self::new_with_events_and_signals(
             elc,
             io,
             SpawnEnv {
@@ -143,9 +143,9 @@ impl MeshSession {
         )
     }
 
-    /// [`Self::with_events`] with the signal registration explicit — the
+    /// [`Self::new_with_events`] with the signal registration explicit — the
     /// directory sessions pass `handle_signals: false`.
-    fn with_events_and_signals(
+    fn new_with_events_and_signals(
         elc: EventLoopConfig,
         io: crate::a2a::app::SurfacedIo,
         env: SpawnEnv,

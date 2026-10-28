@@ -126,7 +126,7 @@ impl Output {
     /// subscription does); replaces any existing tap (there is only ever one
     /// attach site). Lets the event loop wrap the sink it was handed without
     /// `EventLoopConfig` carrying a receiver.
-    pub(crate) fn with_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
+    pub(crate) fn set_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
         match self {
             Output::Stream {
                 mode, filter_self, ..
