@@ -2143,10 +2143,26 @@ mod split_body_tests {
 
     #[test]
     fn escaped_len_counts_json_escapes() {
-        assert_eq!(escaped_char_len('a'), 1);
-        assert_eq!(escaped_char_len('"'), 2);
-        assert_eq!(escaped_char_len('\\'), 2);
-        assert_eq!(escaped_char_len('\n'), 2);
+        assert_eq!(
+            escaped_char_len('a'),
+            1,
+            "a plain ascii char counts one byte"
+        );
+        assert_eq!(
+            escaped_char_len('"'),
+            2,
+            "a quote counts as two escape bytes"
+        );
+        assert_eq!(
+            escaped_char_len('\\'),
+            2,
+            "a backslash counts as two escape bytes"
+        );
+        assert_eq!(
+            escaped_char_len('\n'),
+            2,
+            "a newline counts as two escape bytes"
+        );
         assert_eq!(
             escaped_char_len('世'),
             3,
@@ -2159,7 +2175,10 @@ mod split_body_tests {
         let body = "0123456789".repeat(6); // 60 ASCII bytes
         let chunks = split_body(&body, 16).expect("60 bytes at budget 16 fits in MAX shards");
         assert!(chunks.len() > 1, "the body must actually split");
-        assert!(chunks.len() <= MAX_SHARD_TOTAL as usize);
+        assert!(
+            chunks.len() <= MAX_SHARD_TOTAL as usize,
+            "the shard count stays within the protocol maximum"
+        );
         assert_eq!(chunks.concat(), body, "chunks reassemble to the original");
         for chunk in &chunks {
             let escaped: usize = chunk.chars().map(escaped_char_len).sum();
@@ -2172,7 +2191,10 @@ mod split_body_tests {
         let body = "héllo🌍".repeat(8); // 2-byte é and 4-byte emoji
         let chunks = split_body(&body, 8).expect("fits in MAX shards");
         assert_eq!(chunks.concat(), body, "no char is split mid-codepoint");
-        assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
+        assert!(
+            chunks.iter().all(|chunk| !chunk.is_empty()),
+            "no shard is empty"
+        );
     }
 
     #[test]
@@ -2180,7 +2202,10 @@ mod split_body_tests {
         // One byte per shard would need one shard per byte; a body one byte past
         // `MAX_SHARD_TOTAL` therefore needs more than the cap and is refused.
         let body = "x".repeat(MAX_SHARD_TOTAL as usize + 1);
-        assert!(split_body(&body, 1).is_none());
+        assert!(
+            split_body(&body, 1).is_none(),
+            "a body of one shard is not split"
+        );
     }
 }
 
@@ -2229,7 +2254,7 @@ mod call_blob_group_tests {
 
         let (task_id, fresh_group) = super::call_blob_group(Some(known.clone()), &tasks);
 
-        assert_eq!(task_id, known);
+        assert_eq!(task_id, known, "the known task is the one found");
         assert!(!fresh_group, "the task sweep reaps the blob");
     }
 
@@ -2244,14 +2269,14 @@ mod call_blob_group_tests {
         let (first, _) = super::call_blob_group(Some(unknown.clone()), &tasks);
         let (retry, _) = super::call_blob_group(Some(unknown), &tasks);
 
-        assert_ne!(first, retry);
+        assert_ne!(first, retry, "a retry gets a different group");
     }
 
     #[test]
     fn a_first_call_owns_a_fresh_group() {
         let (_, fresh_group) = super::call_blob_group(None, &HashMap::new());
 
-        assert!(fresh_group);
+        assert!(fresh_group, "a first call owns a fresh group");
     }
 }
 
@@ -2300,7 +2325,7 @@ mod echo_when_sent_tests {
             .expect("verdict")
             .expect("ok");
 
-        assert_eq!(echoes(&mut events), 1);
+        assert_eq!(echoes(&mut events), 1, "one echo is sent");
     }
 
     #[tokio::test]
@@ -2320,7 +2345,7 @@ mod echo_when_sent_tests {
             .expect("verdict");
 
         assert!(verdict.is_err(), "the caller still sees the failure");
-        assert_eq!(echoes(&mut events), 0);
+        assert_eq!(echoes(&mut events), 0, "no echo follows a failure");
     }
 }
 
@@ -2399,7 +2424,7 @@ mod sharded_leg_tests {
             .iter()
             .map(|leg| leg.frames.len())
             .sum();
-        assert_eq!(logged, 2);
+        assert_eq!(logged, 2, "two shards are logged");
     }
 }
 
@@ -2412,8 +2437,14 @@ mod waiting_tests {
     /// library caller cannot leave `mesh:waiting` on an `input-required` task.
     #[test]
     fn a_waiting_reason_needs_the_working_state() {
-        assert!(WorkerLeg::parse(TaskState::Working, Some("asks its user")).is_ok());
-        assert!(WorkerLeg::parse(TaskState::InputRequired, None).is_ok());
+        assert!(
+            WorkerLeg::parse(TaskState::Working, Some("asks its user")).is_ok(),
+            "a worker leg may wait on its user while working"
+        );
+        assert!(
+            WorkerLeg::parse(TaskState::InputRequired, None).is_ok(),
+            "an input-required leg parses without a wait"
+        );
         for state in [
             TaskState::InputRequired,
             TaskState::Completed,
@@ -2424,7 +2455,11 @@ mod waiting_tests {
             let error = WorkerLeg::parse(state, Some("asks its user"))
                 .err()
                 .expect("a reason with a non-working state must be refused");
-            assert_eq!(error.to_string(), "waiting requires state working");
+            assert_eq!(
+                error.to_string(),
+                "waiting requires state working",
+                "waiting requires a working state"
+            );
         }
     }
 }
@@ -2452,6 +2487,10 @@ mod status_leg_tests {
             waiting: Some("asks its user"),
         });
         assert!(status_order(&leg).is_some(), "the leg has no mesh:order_ms");
-        assert_eq!(status_waiting(&leg).as_deref(), Some("asks its user"));
+        assert_eq!(
+            status_waiting(&leg).as_deref(),
+            Some("asks its user"),
+            "the status waiting reason is kept"
+        );
     }
 }
