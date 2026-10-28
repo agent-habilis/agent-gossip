@@ -46,7 +46,7 @@ pub(crate) async fn send_read_receipts(
     ctx: &HandlerCtx<'_>,
     after: Option<u64>,
 ) {
-    for (to, ref_id) in app.surfaced.take_read_targets(after, ctx.author) {
+    for (to, ref_id) in app.surfaced.read_targets(after, ctx.author) {
         let receipt = Receipt {
             ref_id,
             state: ReceiptState::Read,

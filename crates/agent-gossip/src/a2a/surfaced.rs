@@ -429,11 +429,7 @@ impl SurfacedState {
     /// are owed a `read` receipt, each reported once. Call it before
     /// [`poll_or_register`](Self::poll_or_register), never for a long poll:
     /// the bell is not a reader.
-    pub(crate) fn take_read_targets(
-        &mut self,
-        after: Option<u64>,
-        me: &Nickname,
-    ) -> Vec<ReadTarget> {
+    pub(crate) fn read_targets(&mut self, after: Option<u64>, me: &Nickname) -> Vec<ReadTarget> {
         let batch = self.poll_since(Some(after.unwrap_or(self.last_served)));
         let mut targets = Vec::new();
         for item in &batch.events {
@@ -704,9 +700,9 @@ mod tests {
         let expected = (nick("alice"), msg.id.as_str().to_owned());
         state.push(event);
 
-        let first = state.take_read_targets(None, &nick("me"));
+        let first = state.read_targets(None, &nick("me"));
         assert_eq!(first, vec![expected]);
-        let again = state.take_read_targets(Some(0), &nick("me"));
+        let again = state.read_targets(Some(0), &nick("me"));
         assert!(again.is_empty(), "a re-read must not receipt twice");
     }
 
@@ -716,9 +712,9 @@ mod tests {
         state.push(directed_msg_event("alice", "me", false));
         state.push(directed_msg_event("bob", "me", false));
 
-        let jumped = state.take_read_targets(Some(1), &nick("me"));
+        let jumped = state.read_targets(Some(1), &nick("me"));
         assert_eq!(jumped.len(), 1, "only the frame after the cursor is read");
-        let skipped = state.take_read_targets(Some(0), &nick("me"));
+        let skipped = state.read_targets(Some(0), &nick("me"));
         assert_eq!(
             skipped
                 .iter()
@@ -740,7 +736,7 @@ mod tests {
         });
         state.push(peer_return("alice"));
 
-        assert!(state.take_read_targets(None, &nick("me")).is_empty());
+        assert!(state.read_targets(None, &nick("me")).is_empty());
     }
 
     #[test]
@@ -752,7 +748,7 @@ mod tests {
                 is_self: false,
             });
         }
-        assert_eq!(state.take_read_targets(None, &nick("me")).len(), 2);
+        assert_eq!(state.read_targets(None, &nick("me")).len(), 2);
     }
 
     #[test]
