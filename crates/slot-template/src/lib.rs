@@ -13,6 +13,19 @@
 //! comment that starts as a directive but fails the grammar is an error,
 //! never silently literal; every other HTML comment and every other byte
 //! passes through byte-exact.
+//!
+//! # Example
+//!
+//! ```
+//! use std::path::Path;
+//!
+//! use slot_template::expand;
+//!
+//! let template = "Hello <!-- slot name=\"who\" -->\n";
+//! let mut loader = |_: &Path| Ok(template.to_owned());
+//! let out = expand(Path::new("greeting.md"), &[("who", "world")], &mut loader);
+//! assert_eq!(out.expect("the template renders"), "Hello world\n");
+//! ```
 
 pub use self::error::Error;
 pub use self::expand::expand;

@@ -18,6 +18,14 @@
 //! it forced also hid genuinely dead helpers. A library's `pub` surface is
 //! exempt from the lint by construction, so the suppression is gone — while the
 //! crate's own private helpers stay `dead_code`-checked.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use agent_gossip_test_fixtures::{InProcNode, init_test_tracing};
+//!
+//! init_test_tracing();
+//! ```
 
 pub use agent_gossip::{PresenceSubtype, runtime_base};
 

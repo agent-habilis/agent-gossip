@@ -10,6 +10,15 @@
 //! every peer pre-registers that identity at a known relay rung. A browser has
 //! no mDNS and no DHT; it does not need them, and asking for them costs nothing
 //! — a CLI peer on the same mesh still uses both.
+//!
+//! # Example
+//!
+//! ```js
+//! import init, { GossipPeer } from "./agent_gossip_wasm_client.js";
+//!
+//! await init();
+//! const peer = await GossipPeer.create(null, null);
+//! ```
 
 pub use self::gossip_peer::GossipPeer;
 pub use self::start::start;
