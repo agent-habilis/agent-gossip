@@ -20,6 +20,7 @@ use std::path::{Component, Path, PathBuf};
 const MAX_DEPTH: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
 pub enum Error {
     /// The template names a slot the call site did not provide.
     UnknownSlot { name: String },

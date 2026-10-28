@@ -4,6 +4,7 @@ use std::fmt;
 /// the MCP server maps [`CreateError::AdvertiseRequiresReachable`] to an
 /// `invalid_params` error and [`CreateError::Setup`] to an internal one.
 #[derive(Debug)]
+#[must_use]
 pub enum CreateError {
     /// `advertise` was requested on a loopback-only mesh — a directory
     /// listing requires a mesh reachable across machines.
@@ -44,6 +45,7 @@ impl std::error::Error for CreateError {
 /// [`CreateError`]. `Resolve` is a malformed id; `Setup` is an
 /// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
+#[must_use]
 pub enum JoinError {
     /// The target could not be resolved into a mesh.
     Resolve(anyhow::Error),

@@ -13,6 +13,7 @@ use crate::output;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
 #[derive(Debug)]
+#[must_use]
 pub(crate) struct RpcError {
     pub code: i64,
     pub message: String,
