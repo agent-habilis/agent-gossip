@@ -343,10 +343,10 @@ fn include_depth_is_capped() {
             )
         })
         .collect();
-    let files: Vec<(&str, &str)> = chain
+    let borrowed_chain = chain
         .iter()
-        .map(|(path, body)| (path.as_str(), body.as_str()))
-        .collect();
+        .map(|(path, body)| (path.as_str(), body.as_str()));
+    let files: Vec<(&str, &str)> = borrowed_chain.collect();
     assert!(
         matches!(
             expand_files(&files, "f0.md"),
