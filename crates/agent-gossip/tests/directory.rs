@@ -50,13 +50,14 @@ fn directory_advertise_then_discover() {
     // Advertiser: a private mesh that lists itself in directory `dtest`.
     let adv_log = tmp_log("dir-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser: Child = test_cmd()
+    let advertiser_stdout = adv_file.try_clone().unwrap();
+    let mut advertiser_command = test_cmd();
+    advertiser_command
         .args(["create", "--advertise", "dtest", "--nickname", "adv"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
-        .stderr(Stdio::from(adv_file))
-        .spawn()
-        .expect("spawn advertiser");
+        .stdout(Stdio::from(advertiser_stdout))
+        .stderr(Stdio::from(adv_file));
+    let mut advertiser: Child = advertiser_command.spawn().expect("spawn advertiser");
 
     // Pull the advertised mesh id out of the advertiser's `ready` event.
     let ready = wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT);
@@ -73,13 +74,14 @@ fn directory_advertise_then_discover() {
     // Discoverer: browse `dtest` and stream directory events.
     let disc_log = tmp_log("dir-disc");
     let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer: Child = test_cmd()
+    let discoverer_stdout = disc_file.try_clone().unwrap();
+    let mut discoverer_command = test_cmd();
+    discoverer_command
         .args(["discover", "--directory", "dtest"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
-        .stderr(Stdio::from(disc_file))
-        .spawn()
-        .expect("spawn discoverer");
+        .stdout(Stdio::from(discoverer_stdout))
+        .stderr(Stdio::from(disc_file));
+    let mut discoverer: Child = discoverer_command.spawn().expect("spawn discoverer");
 
     // The advertised mesh should surface as `gossip_found`.
     let found = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT);
@@ -129,7 +131,9 @@ fn discover_stops_on_sigterm() {
     // session — and its SIGTERM handler — running) before we signal it.
     let adv_log = tmp_log("term-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser: Child = test_cmd()
+    let advertiser_stdout = adv_file.try_clone().unwrap();
+    let mut advertiser_command = test_cmd();
+    advertiser_command
         .args([
             "create",
             "--advertise",
@@ -141,10 +145,9 @@ fn discover_stops_on_sigterm() {
             "adv",
         ])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
-        .stderr(Stdio::from(adv_file))
-        .spawn()
-        .expect("spawn advertiser");
+        .stdout(Stdio::from(advertiser_stdout))
+        .stderr(Stdio::from(adv_file));
+    let mut advertiser: Child = advertiser_command.spawn().expect("spawn advertiser");
     if wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT).is_none() {
         reap(&mut advertiser);
         panic!("advertiser never became ready");
@@ -152,13 +155,14 @@ fn discover_stops_on_sigterm() {
 
     let disc_log = tmp_log("term-disc");
     let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer: Child = test_cmd()
+    let discoverer_stdout = disc_file.try_clone().unwrap();
+    let mut discoverer_command = test_cmd();
+    discoverer_command
         .args(["discover", "--directory", "stoptest"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
-        .stderr(Stdio::from(disc_file))
-        .spawn()
-        .expect("spawn discoverer");
+        .stdout(Stdio::from(discoverer_stdout))
+        .stderr(Stdio::from(disc_file));
+    let mut discoverer: Child = discoverer_command.spawn().expect("spawn discoverer");
 
     // Proven fully up once it surfaces the advertised mesh.
     let up = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT).is_some();
@@ -203,7 +207,9 @@ fn discover_stops_on_sigterm() {
 fn discover_window_exits_on_its_own() {
     let adv_log = tmp_log("win-adv");
     let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser: Child = test_cmd()
+    let advertiser_stdout = adv_file.try_clone().unwrap();
+    let mut advertiser_command = test_cmd();
+    advertiser_command
         .args([
             "create",
             "--advertise",
@@ -215,10 +221,9 @@ fn discover_window_exits_on_its_own() {
             "adv",
         ])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
-        .stderr(Stdio::from(adv_file))
-        .spawn()
-        .expect("spawn advertiser");
+        .stdout(Stdio::from(advertiser_stdout))
+        .stderr(Stdio::from(adv_file));
+    let mut advertiser: Child = advertiser_command.spawn().expect("spawn advertiser");
     let ready = wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT);
     let Some(ready) = ready else {
         reap(&mut advertiser);
@@ -231,13 +236,14 @@ fn discover_window_exits_on_its_own() {
     // sibling directory tests run in parallel (contended loopback ladder).
     let disc_log = tmp_log("win-disc");
     let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer: Child = test_cmd()
+    let discoverer_stdout = disc_file.try_clone().unwrap();
+    let mut discoverer_command = test_cmd();
+    discoverer_command
         .args(["discover", "--directory", "wintest", "--window-secs", "30"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
-        .stderr(Stdio::from(disc_file))
-        .spawn()
-        .expect("spawn discoverer");
+        .stdout(Stdio::from(discoverer_stdout))
+        .stderr(Stdio::from(disc_file));
+    let mut discoverer: Child = discoverer_command.spawn().expect("spawn discoverer");
 
     // The bounded run must still surface the advertised mesh.
     let found = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT);
