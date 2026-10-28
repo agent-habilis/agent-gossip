@@ -12,7 +12,7 @@ SYNOPSIS
                   [--state-file PATH] [--owner-pid PID]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip join GOSSIP [--nickname NAME] [--password[=PW]]
+       agent-gossip join [GOSSIP] [--nickname NAME] [--password[=PW]]
                   [--state-file PATH] [--owner-pid PID]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
@@ -276,8 +276,10 @@ COMMANDS
               readiness — see the meta merge convention
               /peers/<nick> = {model, harness, host, cwd}.
 
-       join GOSSIP [OPTIONS]
+       join [GOSSIP] [OPTIONS]
               Join an existing gossip by its identifier. Long-running.
+              If GOSSIP is omitted or empty, join uses the AGENT_GOSSIP_DEFAULT_ROOM
+              environment variable; if that is unset or empty, join fails.
               Prints a ready event once connected. To join a public gossip by a
               shared word instead of an id, see topic.
 
@@ -1665,10 +1667,23 @@ EXIT STATUS
        non-0  An error occurred. Fatal errors are printed to stderr.
 
 ENVIRONMENT
+       AGENT_GOSSIP_DEFAULT_ROOM
+              Gossip identifier that join uses when it gets no GOSSIP
+              argument. An argument always wins. Unset or empty means no
+              default.
+
        RUST_LOG
               Tracing filter for developer logs (e.g. info, debug, or a
               per-module filter). Logs are additive and never touch the
               stream.
+
+       NO_COLOR
+              Turns off color in human reports (plug, unplug, doctor, man).
+              JSON is never colored.
+
+       HOME
+              Base path for skill install. plug and doctor fail if it is
+              unset.
 
 FILES
        Each gossip's runtime files live together in a per-gossip folder, keyed by
