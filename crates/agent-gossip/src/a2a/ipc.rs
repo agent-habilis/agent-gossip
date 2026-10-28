@@ -926,7 +926,7 @@ mod tests {
         use super::{MeshId, MessageBody, Nickname};
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
-            arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
+            arb_vec(0x20u8..0x7eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
         }
 
         fn arb_nickname() -> impl Strategy<Value = String> {

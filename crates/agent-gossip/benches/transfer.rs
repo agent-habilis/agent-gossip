@@ -55,13 +55,13 @@ const _: () = assert!(
 /// `33..=126`). Pure function of the index, so the receiver regenerates
 /// the expected bytes independently — no shared state, order-agnostic.
 fn payload_for(index: u32) -> String {
-    let mut state = 0x9E37_79B9_7F4A_7C15u64 ^ u64::from(index).wrapping_mul(0x2545_F491_4F6C_DD1D);
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ u64::from(index).wrapping_mul(0x2545_f491_4f6c_dd1d);
     let mut out = String::with_capacity(PAYLOAD_LEN);
     for _ in 0..PAYLOAD_LEN {
-        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut mixed = state;
-        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         mixed ^= mixed >> 31;
         out.push(char::from(
             ASCII_LO + u8::try_from(mixed % ASCII_SPAN).expect("< 94 fits u8"),
