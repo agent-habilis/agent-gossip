@@ -454,12 +454,11 @@ impl A2aApp {
             .partition(|orphan| orphan.evict_at <= now);
         self.orphan_blobs = waiting;
         let mut groups: Vec<_> = due.into_iter().map(|orphan| orphan.group).collect();
-        groups.extend(
-            reaped
-                .iter()
-                .filter_map(|task_id| self.call_blobs.remove(task_id))
-                .flatten(),
-        );
+        let reaped_groups: Vec<Vec<ContentId>> = reaped
+            .iter()
+            .filter_map(|task_id| self.call_blobs.remove(task_id))
+            .collect();
+        groups.extend(reaped_groups.into_iter().flatten());
         groups
     }
 
@@ -471,9 +470,11 @@ impl A2aApp {
         corr: &habilis_network::protocol::CorrId,
         peer: &Nickname,
     ) -> bool {
-        self.a2a_waiters
+        let waiting: bool = self
+            .a2a_waiters
             .iter()
-            .any(|waiter| waiter.corr == *corr && waiter.peer == *peer)
+            .any(|waiter| waiter.corr == *corr && waiter.peer == *peer);
+        waiting
             || self
                 .orphan_blobs
                 .iter()
@@ -663,13 +664,12 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, RpcError> {
         });
     };
     if !value["error"].is_null() {
-        return Err(RpcError {
-            code: value["error"]["code"].as_i64().unwrap_or(-32603),
-            message: value["error"]["message"]
-                .as_str()
-                .unwrap_or("peer error")
-                .to_string(),
-        });
+        let code: i64 = value["error"]["code"].as_i64().unwrap_or(-32603);
+        let message: String = value["error"]["message"]
+            .as_str()
+            .unwrap_or("peer error")
+            .to_string();
+        return Err(RpcError { code, message });
     }
     Ok(value["result"].clone())
 }
