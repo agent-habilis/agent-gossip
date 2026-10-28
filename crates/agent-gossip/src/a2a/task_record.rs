@@ -733,15 +733,15 @@ pub(crate) async fn tick_task_sweep(
     // A task a late reply opened is unknown to the caller's agent, so it gets
     // no `task_timeout` line — only the worker is told.
     let late_cancels = app.take_late_cancels();
-    let cancels: Vec<(&TaskId, &Nickname, &str)> = expired
+    let mut cancels: Vec<(&TaskId, &Nickname, &str)> = expired
         .iter()
         .map(|(task_id, peer)| (task_id, peer, "timeout"))
-        .chain(
-            late_cancels
-                .iter()
-                .map(|(task_id, peer)| (task_id, peer, "call-timed-out")),
-        )
         .collect();
+    let late: Vec<(&TaskId, &Nickname, &str)> = late_cancels
+        .iter()
+        .map(|(task_id, peer)| (task_id, peer, "call-timed-out"))
+        .collect();
+    cancels.extend(late);
     for (task_id, peer, reason) in cancels {
         let update = status_update_params::status_update(
             context.mesh,
