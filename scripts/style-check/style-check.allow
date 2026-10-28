@@ -93,16 +93,13 @@ long_chain|crates/tasks/src/build.rs|1|open: A statement with a chain of five or
 long_chain|crates/tasks/src/install.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/plan.rs|10|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/util/ensure_installed.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-pub_vec_param|crates/agent-gossip/src/a2a/status_update_params.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
-pub_vec_param|crates/agent-gossip/src/harness/session.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
-pub_vec_param|crates/agent-gossip/src/harness/test_key.rs|1|open: A public function takes an impl IntoIterator, not a Vec, when it only iterates
-pub_vec_return|crates/agent-gossip-test-fixtures/src/flag_args.rs|1|open: A public function returns an iterator, not a Vec
-pub_vec_return|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|8|open: A public function returns an iterator, not a Vec
-pub_vec_return|crates/agent-gossip-test-fixtures/src/node.rs|1|open: A public function returns an iterator, not a Vec
-pub_vec_return|crates/agent-gossip/src/api/directory.rs|1|open: A public function returns an iterator, not a Vec
-pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|open: A public function returns an iterator, not a Vec
-pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|open: A public function returns an iterator, not a Vec
-pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|open: A public function returns an iterator, not a Vec
+pub_impl_into|crates/agent-gossip/src/harness/session.rs|1|open: A public function takes impl Into<T> only where call-site ergonomics matter most in a library. Each such function has a counted row with its reason.
+pub_vec_return|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|8|An owned snapshot: a borrowed iterator would hold &mut self, so the test could not use the node while it reads the list (I7)
+pub_vec_return|crates/agent-gossip-test-fixtures/src/node.rs|1|An owned list parsed from the log text, which is a temporary inside the function (I7)
+pub_vec_return|crates/agent-gossip/src/api/directory.rs|1|An owned snapshot: a borrowed iterator would hold the collector mutex guard across the caller work (I7)
+pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|An owned list of pings collected from the replies, returned through the async call (I7)
+pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|A public function that builds a byte buffer returns a Vec (I7)
+pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|A public function that builds a byte buffer returns a Vec (I7)
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskState is Copy, so a by-value as_str is the clippy-accepted form for a Copy type; kept as a counted row
 untyped_generic_let|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|3|open: A let that takes its type from parse, into or try_into names the type (P4)
 untyped_generic_let|crates/agent-gossip/tests/adversarial.rs|1|open: A let that takes its type from parse, into or try_into names the type (P4)

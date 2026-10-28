@@ -294,14 +294,14 @@ pub fn artifact_update(mesh: &MeshId, task_id: &TaskId, text: &str) -> TaskArtif
 pub fn artifact_update_parts(
     mesh: &MeshId,
     task_id: &TaskId,
-    parts: Vec<Part>,
+    parts: impl IntoIterator<Item = Part>,
 ) -> TaskArtifactUpdate {
     TaskArtifactUpdate {
         task_id: task_id.clone(),
         context_id: mesh.as_str().to_string(),
         artifact: super::Artifact {
             artifact_id: uuid::Uuid::new_v4().to_string(),
-            parts,
+            parts: parts.into_iter().collect(),
             name: None,
             description: None,
             extensions: Vec::new(),

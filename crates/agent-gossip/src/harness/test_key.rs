@@ -440,8 +440,8 @@ impl CraftedMsg {
     }
 
     /// Stamp the cross-author DAG `parents` (Phase 3).
-    pub fn parents(mut self, parents: Vec<ContentHash>) -> Self {
-        self.message = self.message.with_parents(parents);
+    pub fn parents(mut self, parents: impl IntoIterator<Item = ContentHash>) -> Self {
+        self.message = self.message.with_parents(parents.into_iter().collect());
         self
     }
 
