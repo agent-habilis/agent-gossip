@@ -395,7 +395,6 @@ This file wins over the guide. If the two conflict, follow this file.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
 - Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
-- Declined P5: a complex iterator chain is typed by its binding or its `collect` target, and the compiler checks that type, so no extra annotation is added.
 - Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined B5: no clone is timed against a borrow, because the crate runs on the network path where the copy cost is small next to a send, so the choice is made per site on readability.
 - Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.

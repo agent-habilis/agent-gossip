@@ -219,7 +219,7 @@ fn run_as_zig_multicall() -> Option<ExitCode> {
         .to_string_lossy()
         .into_owned();
 
-    let result = if name.eq_ignore_ascii_case("ar") {
+    let result: anyhow::Result<()> = if name.eq_ignore_ascii_case("ar") {
         Zig::Ar {
             args: args.collect(),
         }
