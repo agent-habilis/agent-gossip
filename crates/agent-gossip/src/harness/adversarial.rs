@@ -45,8 +45,7 @@ pub fn pubkey_hex(key: &TestKey) -> String {
 
 /// The value cluster for [`CraftedMsg::status_frame`]: the author/target
 /// nicknames plus the frame-vs-payload task-id pair under test.
-#[derive(Clone, Copy)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct StatusFrameParams<'a> {
     pub author: &'a str,
     pub to: &'a str,
@@ -57,8 +56,7 @@ pub struct StatusFrameParams<'a> {
 /// The value cluster for [`CraftedMsg::sealed_task_status`]: a *well-formed*
 /// status leg for an existing task, from an author who is not that task's
 /// counterparty.
-#[derive(Clone, Copy)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SealedTaskStatusParams<'a> {
     pub author: &'a str,
     pub to: &'a str,
@@ -72,8 +70,7 @@ pub struct SealedTaskStatusParams<'a> {
 }
 
 /// The value cluster for [`CraftedMsg::sealed_msg`].
-#[derive(Clone, Copy)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SealedMsgParams<'a> {
     pub author: &'a str,
     pub to: &'a str,
