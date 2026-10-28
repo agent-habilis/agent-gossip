@@ -619,8 +619,12 @@ mod tests {
         let payload = compose_broadcast(&mesh(), "What is Rust?");
         let frame = frame_for(&payload);
         let parsed = broadcast_payload(&frame).expect("valid broadcast payload");
-        assert_eq!(parsed, payload);
-        assert_eq!(display_text(&parsed), "What is Rust?");
+        assert_eq!(parsed, payload, "a payload round-trips");
+        assert_eq!(
+            display_text(&parsed),
+            "What is Rust?",
+            "the display text is the question"
+        );
     }
 
     #[test]
@@ -628,8 +632,12 @@ mod tests {
         let payload = compose_msg(&mesh(), "just between us");
         let frame = msg_frame_for(&payload);
         let parsed = msg_payload(&frame).expect("valid dm payload");
-        assert_eq!(parsed, payload);
-        assert_eq!(display_text(&parsed), "just between us");
+        assert_eq!(parsed, payload, "a payload round-trips between peers");
+        assert_eq!(
+            display_text(&parsed),
+            "just between us",
+            "the display text is kept between us"
+        );
     }
 
     #[test]
@@ -637,7 +645,10 @@ mod tests {
         let payload = compose_broadcast(&mesh(), "hi");
         let mut frame = frame_for(&payload);
         frame.id = "00000000-0000-0000-0000-0000000000ff".into();
-        assert!(broadcast_payload(&frame).is_err());
+        assert!(
+            broadcast_payload(&frame).is_err(),
+            "a broadcast with a malformed payload is refused"
+        );
     }
 
     #[test]
@@ -645,7 +656,10 @@ mod tests {
         let mut payload = compose_broadcast(&mesh(), "hi");
         payload.context_id = Some("other".to_string());
         let frame = frame_for(&payload);
-        assert!(broadcast_payload(&frame).is_err());
+        assert!(
+            broadcast_payload(&frame).is_err(),
+            "a broadcast frame without a payload is refused"
+        );
     }
 
     #[test]
@@ -653,7 +667,10 @@ mod tests {
         let mut payload = compose_broadcast(&mesh(), "hi");
         payload.extensions.clear();
         let frame = frame_for(&payload);
-        assert!(broadcast_payload(&frame).is_err());
+        assert!(
+            broadcast_payload(&frame).is_err(),
+            "a broadcast of an unknown kind is refused"
+        );
     }
 
     /// The two chat shapes must not be interchangeable: a broadcast payload
@@ -662,10 +679,16 @@ mod tests {
     #[test]
     fn chat_payloads_do_not_cross_tags() {
         let broadcast = compose_broadcast(&mesh(), "hi");
-        assert!(msg_payload(&msg_frame_for(&broadcast)).is_err());
+        assert!(
+            msg_payload(&msg_frame_for(&broadcast)).is_err(),
+            "a message frame for a broadcast is refused"
+        );
 
         let dm = compose_msg(&mesh(), "hi");
-        assert!(broadcast_payload(&frame_for(&dm)).is_err());
+        assert!(
+            broadcast_payload(&frame_for(&dm)).is_err(),
+            "a direct frame is not a broadcast payload"
+        );
     }
 
     #[test]
@@ -673,7 +696,10 @@ mod tests {
         let mut payload = compose_msg(&mesh(), "hi");
         payload.task_id = Some(crate::a2a::TaskId::random());
         let frame = msg_frame_for(&payload);
-        assert!(msg_payload(&frame).is_err());
+        assert!(
+            msg_payload(&frame).is_err(),
+            "a message frame without a payload is refused"
+        );
     }
 
     #[test]
@@ -682,7 +708,10 @@ mod tests {
             MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
             "plain text",
         );
-        assert!(broadcast_payload(&frame).is_err());
+        assert!(
+            broadcast_payload(&frame).is_err(),
+            "a broadcast frame with no body is refused"
+        );
     }
 
     /// The producer (`waiting_metadata`, used by `a2a status --waiting`) and the
@@ -703,9 +732,14 @@ mod tests {
         };
         assert_eq!(
             status_waiting(&update(waiting_metadata(Some("asks its user")))).as_deref(),
-            Some("asks its user")
+            Some("asks its user"),
+            "the status payload is the one sent"
         );
-        assert_eq!(status_waiting(&update(waiting_metadata(None))), None);
+        assert_eq!(
+            status_waiting(&update(waiting_metadata(None))),
+            None,
+            "a status without a waiting reason has none"
+        );
     }
 
     /// A status leg carries its order value next to the reason, and the reader
@@ -726,11 +760,20 @@ mod tests {
             )
         };
         let leg = update(status_metadata(Some("asks its user"), 7));
-        assert_eq!(status_order(&leg), Some(7));
-        assert_eq!(status_waiting(&leg).as_deref(), Some("asks its user"));
+        assert_eq!(
+            status_order(&leg),
+            Some(7),
+            "the status order is the sequence number"
+        );
+        assert_eq!(
+            status_waiting(&leg).as_deref(),
+            Some("asks its user"),
+            "the waiting reason is the one given"
+        );
         assert_eq!(
             status_order(&update(waiting_metadata(Some("asks its user")).unwrap())),
-            None
+            None,
+            "the status payload carries its fields"
         );
     }
 
