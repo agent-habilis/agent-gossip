@@ -1,5 +1,3 @@
-use std::fmt::Write as _;
-
 use habilis_network::protocol::ct_eq;
 
 use super::SECRET_LEN;
@@ -40,6 +38,8 @@ impl LocalGate {
     /// A gate for a bridge bound at `authority` (`host:port`), minting a fresh
     /// token unless `anonymous`. Returns the gate and the token to print, if any.
     pub(super) fn new(authority: String, anonymous: bool) -> (Self, Option<String>) {
+        use std::fmt::Write as _;
+
         if anonymous {
             return (
                 Self {

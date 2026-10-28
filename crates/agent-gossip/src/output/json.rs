@@ -6,9 +6,6 @@
 //! parent module renders through these so the captured-event and
 //! stdout forms stay byte-identical.
 
-use std::fmt::Write as _;
-use std::io::Write;
-
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
@@ -340,6 +337,8 @@ pub(super) fn peer_return_display(nickname: &str) -> String {
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
 pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
+    use std::fmt::Write as _;
+
     if peers.is_empty() {
         return format!("{DISPLAY_GLYPH} ping: no peers responded");
     }
@@ -355,6 +354,8 @@ pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
 /// Required for Monitor compatibility — piped stdout is fully buffered,
 /// so without explicit flush, events stall in an 8KB buffer.
 pub(super) fn emit(line: &str) {
+    use std::io::Write;
+
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     let _ = writeln!(lock, "{line}");
