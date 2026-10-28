@@ -110,7 +110,6 @@ self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskStat
 turbofish_collect_parse|crates/agent-gossip/src/a2a/status_update_params.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/a2a/surfaced_event.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/src/bridge/local_gate.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
-turbofish_collect_parse|crates/agent-gossip/src/mcp/tests.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/agent-gossip/tests/gossip_network.rs|3|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 turbofish_collect_parse|crates/tasks/src/plan.rs|1|open: Name the type on the variable, not in a turbofish, for collect and parse (P2)
 untyped_generic_let|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|3|open: A let that takes its type from parse, into or try_into names the type (P4)

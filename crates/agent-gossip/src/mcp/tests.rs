@@ -65,11 +65,11 @@ fn the_instructions_name_only_tools_that_exist() {
 #[test]
 fn the_module_doc_lists_every_tool() {
     let source = include_str!("mod.rs");
-    let doc: String = source
+    let header: Vec<&str> = source
         .lines()
         .take_while(|line| line.starts_with("//!"))
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
+    let doc = header.join("\n");
     let tools = declared_tools();
     for tool in &tools {
         assert!(
