@@ -143,6 +143,8 @@ clone_on_ref_ptr = "warn"
 exhaustive_enums = "warn"
 # Google Rust Style Guide, U26: a public struct with public fields is non_exhaustive, so a new field is not a breaking change.
 exhaustive_structs = "warn"
+# Google Rust Style Guide, O27: import the type or the parent module; a path names at most three segments (clippy.toml).
+absolute_paths = "warn"
 redundant_clone = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error

@@ -8,8 +8,10 @@
 use std::time::Duration;
 
 use agent_gossip::TaskState;
+use agent_gossip::a2a::status_update_params;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT};
+use habilis_network::ops::blob::BlobTicket;
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;
 
@@ -58,8 +60,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
         .tasks()
         .into_iter()
         .find(|(message, _)| {
-            agent_gossip::a2a::status_update_params::frame_task_state(message)
-                == Some(TaskState::InputRequired)
+            status_update_params::frame_task_state(message) == Some(TaskState::InputRequired)
         })
         .expect("initiator surfaced the artifact");
     let payload: serde_json::Value =
@@ -67,7 +68,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     let part = &payload["artifact"]["parts"][0];
     let url = part["url"].as_str().expect("the file part carries a url");
     assert!(
-        habilis_network::ops::blob::BlobTicket::decode(url).is_ok(),
+        BlobTicket::decode(url).is_ok(),
         "the result must be a blob ticket, got: {url}"
     );
     assert!(

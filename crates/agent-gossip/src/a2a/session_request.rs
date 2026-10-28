@@ -5,6 +5,8 @@ use habilis_network::protocol::{MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
+use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::surfaced_event::PollBatch;
 
 /// A typed in-process request from an in-process session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
@@ -27,7 +29,7 @@ pub(crate) enum SessionRequest {
         /// Long-poll: park the read up to the server cap, returning early on
         /// the first new event. `false` is an immediate read.
         long: bool,
-        response: oneshot::Sender<crate::a2a::surfaced_event::PollBatch>,
+        response: oneshot::Sender<PollBatch>,
     },
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving (`a2a status`):
     /// the daemon resolves the peer from the task record and pushes it.
@@ -43,7 +45,7 @@ pub(crate) enum SessionRequest {
     TaskArtifact {
         task_id: TaskId,
         text: String,
-        file: Option<crate::a2a::broadcast_params::FileRef>,
+        file: Option<FileRef>,
         response: oneshot::Sender<Result<Authored>>,
     },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).

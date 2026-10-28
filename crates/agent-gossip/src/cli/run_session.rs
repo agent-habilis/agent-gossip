@@ -1,11 +1,16 @@
+use std::sync::atomic::AtomicUsize;
+
 use anyhow::Result;
 use habilis_network::runtime::{
     Resolved, SetupKind, SetupParams, run as run_event_loop, setup_mesh,
 };
+use habilis_network::util::logging;
 
 use super::args::SharedServerOpts;
 use super::detach_if_owned::detach_if_owned;
 use super::drift_warning::drift_warning;
+use crate::a2a::a2a_app::{A2aApp, Startup, SurfacedIo};
+use crate::a2a::a2a_binding;
 use crate::api;
 use crate::output::{Output, OutputMode};
 
@@ -57,23 +62,22 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // splices into `ready`; only handing the app its request channel has to
     // wait for the app to exist.
     let binding = match shared.a2a_serve {
-        Some(port) => Some(crate::a2a::a2a_binding::bind(port).await?),
+        Some(port) => Some(a2a_binding::bind(port).await?),
         None => None,
     };
     let a2a_serve_port = binding.as_ref().map(|bound| bound.port);
-    let io = crate::a2a::a2a_app::SurfacedIo::new(out).set_startup(crate::a2a::a2a_app::Startup {
+    let io = SurfacedIo::new(out).set_startup(Startup {
         drift,
         a2a_port: a2a_serve_port,
     });
     let sink = io.sink();
-    let mut app = crate::a2a::a2a_app::A2aApp::new_with_io(io);
+    let mut app = A2aApp::new_with_io(io);
     let http_rx = binding.map(|bound| app.serve_a2a(bound));
     // Advertising needs a live-peer counter shared with the re-broadcast task.
     // Built before setup so the config is complete when it is returned, rather
     // than patched afterwards.
     let advertising = advertise_directory.as_ref().zip(directory_lookups.as_ref());
-    let live_count =
-        advertising.map(|_| std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1)));
+    let live_count = advertising.map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
     let config = setup_mesh(
         kind,
         SetupParams {
@@ -111,7 +115,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         });
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).
-    habilis_network::util::logging::attach(config.mesh_id(), config.author());
+    logging::attach(config.mesh_id(), config.author());
     // Boxed for the same reason `create` boxes the session future: it carries
     // the whole `EventLoopConfig` and sits just over clippy's `large_futures`
     // budget on 64-bit Linux (it fits under it on aarch64 macOS).

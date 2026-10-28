@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
 use habilis_network::runtime::state_file::read_session_entry;
+use habilis_network::runtime::{ipc, state_file};
 use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
 use super::bell;
 use super::discovery::Discovery;
 use super::target::Target;
+use crate::a2a::ipc_command::IpcCommand::Info;
 use crate::runtime_base;
 
 /// Walk every state file under [`runtime_base`] and resolve it to a live
@@ -140,13 +142,8 @@ struct Owner {
 /// tell apart from a live one.
 async fn live_owners() -> Vec<Owner> {
     let mut owners = Vec::new();
-    for path in habilis_network::runtime::ipc::active_socket_paths(&runtime_base()) {
-        let Ok(response) = habilis_network::runtime::ipc::send_to_path(
-            &path,
-            &crate::a2a::ipc_command::IpcCommand::Info,
-        )
-        .await
-        else {
+    for path in ipc::active_socket_paths(&runtime_base()) {
+        let Ok(response) = ipc::send_to_path(&path, &Info).await else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
@@ -375,7 +372,7 @@ fn unarmed(
 }
 
 fn is_ready(target: &Target) -> bool {
-    habilis_network::runtime::state_file::read_snapshot(&target.path)
+    state_file::read_snapshot(&target.path)
         .ok()
         .flatten()
         .is_some_and(|snapshot| {
@@ -419,6 +416,8 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use habilis_network::util::process;
+
     use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
@@ -495,8 +494,7 @@ mod tests {
     #[test]
     fn owned_by_follows_the_recorded_owner() {
         let own = std::process::id();
-        let parent =
-            habilis_network::util::process::parent_of(own).expect("test process has a parent");
+        let parent = process::parent_of(own).expect("test process has a parent");
         let mut detached = target("aaaa", "one-two", u32::MAX);
         assert!(!owned_by(&detached, own), "no owner recorded");
         detached.owner_pid = Some(own);

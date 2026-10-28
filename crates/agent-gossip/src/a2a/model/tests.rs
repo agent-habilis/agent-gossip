@@ -109,10 +109,13 @@ fn message_round_trips() {
 }
 
 mod snapshots {
+    use habilis_network::protocol::message::Verified;
+
     use super::{
         Artifact, Part, Task, TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate,
         fixture_message,
     };
+    use crate::a2a::wire;
 
     #[test]
     fn snap_a2a_message() {
@@ -129,10 +132,10 @@ mod snapshots {
     /// inside a real frame) is pinned by the layer that owns the payload.
     #[test]
     fn snap_a2a_req_frame_wire() {
-        let message = habilis_network::protocol::message::Verified::fixture_unchecked(
+        let message = Verified::fixture_unchecked(
             habilis_network::protocol::Message::fixture(
                 habilis_network::protocol::MessageKind::app_to(
-                    crate::a2a::wire::REQ,
+                    wire::REQ,
                     habilis_network::protocol::Nickname::from("addressed-nick"),
                     Some(habilis_network::protocol::CorrId::from(
                         "00000000-0000-0000-0000-0000000000aa",
@@ -150,10 +153,10 @@ mod snapshots {
     /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
     #[test]
     fn snap_a2a_resp_frame_wire() {
-        let message = habilis_network::protocol::message::Verified::fixture_unchecked(
+        let message = Verified::fixture_unchecked(
             habilis_network::protocol::Message::fixture(
                 habilis_network::protocol::MessageKind::app_to(
-                    crate::a2a::wire::RESP,
+                    wire::RESP,
                     habilis_network::protocol::Nickname::from("addressed-nick"),
                     Some(habilis_network::protocol::CorrId::from(
                         "00000000-0000-0000-0000-0000000000aa",

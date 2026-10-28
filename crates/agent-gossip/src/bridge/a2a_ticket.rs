@@ -126,6 +126,8 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use habilis_network::iroh::{EndpointAddr, SecretKey};
+    use habilis_network::ops::blob;
+    use habilis_network::ops::blob::{BlobDigest, BlobTicket};
     use habilis_network::protocol::{LookupOpts, TicketSecret};
 
     use super::{A2aTicket, SECRET_LEN};
@@ -208,12 +210,10 @@ mod tests {
     fn rejects_a_cross_kind_ticket() {
         // The blob ticket shares the bare-base58 shape but carries a different
         // kind byte, so it must not decode as an a2a ticket — and vice versa.
-        let blob = habilis_network::ops::blob::BlobTicket {
+        let blob = BlobTicket {
             addr: sample_addr(3),
-            secret: TicketSecret::from_bytes([9u8; habilis_network::ops::blob::SECRET_LEN]),
-            sha256: habilis_network::ops::blob::BlobDigest::from_bytes(
-                [7u8; habilis_network::ops::blob::HASH_LEN],
-            ),
+            secret: TicketSecret::from_bytes([9u8; blob::SECRET_LEN]),
+            sha256: BlobDigest::from_bytes([7u8; blob::HASH_LEN]),
             size: 1_234_567,
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -230,7 +230,7 @@ mod tests {
             "a blob ticket is not an a2a ticket"
         );
         assert!(
-            habilis_network::ops::blob::BlobTicket::decode(&a2a.encode()).is_err(),
+            BlobTicket::decode(&a2a.encode()).is_err(),
             "an a2a ticket is not a blob ticket"
         );
     }

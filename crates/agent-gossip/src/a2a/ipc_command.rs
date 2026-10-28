@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
-use habilis_network::ops::{StateMergeParams, broadcast_state_merge, start_ping_round};
+use habilis_network::ops::{StateMergeParams, broadcast_state_merge, invite, start_ping_round};
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
@@ -11,13 +11,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::a2a::a2a_app::A2aApp;
+use crate::a2a::a2a_app::A2aResponder::Ipc;
 use crate::a2a::broadcast_params::{
-    BroadcastParams, MsgParams, TaskArtifactEmitParams, TaskStatusParams, emit_task_artifact,
-    emit_task_status, send_broadcast, send_msg, when_sent,
+    BroadcastParams, FileRef, MsgParams, TaskArtifactEmitParams, TaskStatusParams,
+    emit_task_artifact, emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
-use crate::a2a::{TaskId, TaskState, receipt};
+use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
 use crate::output;
 
 /// Command sent from CLI to the running server over IPC. App-side because its
@@ -206,7 +207,7 @@ pub(crate) async fn handle_ipc_command(
         app,
     } = params;
     app.drain_delivered_legs();
-    crate::a2a::broadcast_params::retain_sent_legs(app, state);
+    broadcast_params::retain_sent_legs(app, state);
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or
@@ -358,7 +359,7 @@ pub(crate) async fn handle_ipc_command(
             file_mime,
         } => {
             tracing::debug!(%task_id, "IPC a2a artifact command received");
-            let file = file.map(|path| crate::a2a::broadcast_params::FileRef {
+            let file = file.map(|path| FileRef {
                 path,
                 name: file_name,
                 mime: file_mime,
@@ -472,16 +473,16 @@ pub(crate) async fn handle_ipc_command(
             // The response arrives later (the peer's `A2aResp`, or a timeout),
             // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
             // and answer nothing now.
-            crate::a2a::broadcast_params::broadcast_a2a_call(
-                crate::a2a::broadcast_params::BroadcastA2aCallParams {
+            broadcast_params::broadcast_a2a_call(
+                broadcast_params::BroadcastA2aCallParams {
                     mesh,
                     author,
                     peer: to,
                     method: &method,
                     params: rpc_params,
                     timeout: Duration::from_secs(timeout_secs),
-                    responder: crate::a2a::a2a_app::A2aResponder::Ipc(resp_tx),
-                    file: file.map(|path| crate::a2a::broadcast_params::FileRef {
+                    responder: Ipc(resp_tx),
+                    file: file.map(|path| FileRef {
                         path,
                         name: file_name,
                         mime: file_mime,
@@ -516,11 +517,7 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
         })
         .to_string();
     };
-    match habilis_network::ops::invite::mint(
-        mesh,
-        Some(Duration::from_secs(ttl)),
-        state.mesh_password(),
-    ) {
+    match invite::mint(mesh, Some(Duration::from_secs(ttl)), state.mesh_password()) {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
@@ -611,7 +608,7 @@ fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
         .filter(|entry| !entry.quiet)
         .map(|entry| entry.nickname.as_str())
         .collect();
-    let absent = crate::a2a::card::absent_peers(&document, &live, author);
+    let absent = card::absent_peers(&document, &live, author);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
@@ -959,6 +956,7 @@ mod tests {
         use proptest::{prop_assert, prop_assert_eq, proptest};
 
         use super::{MeshId, MessageBody, Nickname};
+        use crate::a2a::wire;
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
             arb_vec(0x20u8..0x7eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
@@ -988,7 +986,7 @@ mod tests {
                 let identity = habilis_network::protocol::Identity::generate();
                 let (bytes, built) = habilis_network::protocol::build_msg_bytes(
                     habilis_network::protocol::BuildMsgParams {
-                        tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+                        tag: habilis_network::protocol::AppTag::from(wire::BROADCAST),
                         mesh: &mesh,
                         author: &author,
                         body,
@@ -1005,7 +1003,7 @@ mod tests {
                 prop_assert_eq!(
                     parsed.kind,
                     habilis_network::protocol::MessageKind::app_broadcast(
-                        crate::a2a::wire::BROADCAST
+                        wire::BROADCAST
                     )
                 );
             }

@@ -22,6 +22,7 @@ use super::{
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
     parse_task_state, rejoin_existing, to_mcp_error,
 };
+use crate::a2a::card;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
@@ -537,7 +538,7 @@ impl AgentGossipServer {
             .filter(|entry| !entry.quiet)
             .map(|entry| entry.nickname.as_str())
             .collect();
-        let absent = crate::a2a::card::absent_peers(&document, &live, session.nickname());
+        let absent = card::absent_peers(&document, &live, session.nickname());
         ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
 }

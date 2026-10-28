@@ -11,7 +11,10 @@ use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
+use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
+use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::session_request::SessionRequest;
+use crate::a2a::surfaced_event::PollBatch;
 use crate::output::Output;
 
 /// The in-process session core shared by the public [`MeshSession`] and the MCP
@@ -22,7 +25,7 @@ use crate::output::Output;
 
 #[derive(Debug)]
 pub(crate) struct InProcessSession {
-    node: Node<crate::a2a::a2a_app::A2aApp>,
+    node: Node<A2aApp>,
     /// Directory re-broadcast task (when created with `advertise`). Aborts on
     /// drop — see [`Advertiser`].
     advertiser: Option<Advertiser>,
@@ -36,7 +39,7 @@ impl InProcessSession {
     /// foreground command that owns its own lifetime.
     pub(super) fn spawn(
         elc: EventLoopConfig,
-        io: crate::a2a::a2a_app::SurfacedIo,
+        io: SurfacedIo,
         env: SpawnEnv,
         push: Option<broadcast::Sender<Authored>>,
     ) -> Self {
@@ -48,7 +51,7 @@ impl InProcessSession {
         // engine emits `NodeEvent`s through `io.sink()`, and the app renders the
         // same tap. Build the app from that same `io` so surfaced events reach
         // the app-side ring the in-process `Poll` drains.
-        let app = crate::a2a::a2a_app::A2aApp::new_with_io(io);
+        let app = A2aApp::new_with_io(io);
         Self {
             node: Node::spawn(elc, app, push, handle_signals),
             advertiser,
@@ -182,7 +185,7 @@ impl InProcessSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> Result<crate::a2a::surfaced_event::PollBatch, SessionError> {
+    ) -> Result<PollBatch, SessionError> {
         self.call(|response| SessionRequest::Poll {
             after,
             long,
@@ -224,7 +227,7 @@ impl InProcessSession {
         &self,
         task_id: TaskId,
         text: String,
-        file: Option<crate::a2a::broadcast_params::FileRef>,
+        file: Option<FileRef>,
     ) -> Result<Authored, SessionError> {
         self.call_loop(|response| SessionRequest::TaskArtifact {
             task_id,

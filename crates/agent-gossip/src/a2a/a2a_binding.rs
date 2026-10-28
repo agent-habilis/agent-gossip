@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use habilis_network::protocol::Nickname;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
+use hyper::server::conn::http1::Builder;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
@@ -89,10 +90,7 @@ async fn serve_connection(stream: TcpStream, token: String, req_tx: mpsc::Sender
         let req_tx = req_tx.clone();
         async move { Ok::<_, std::convert::Infallible>(handle(request, &token, &req_tx).await) }
     });
-    if let Err(error) = hyper::server::conn::http1::Builder::new()
-        .serve_connection(io, service)
-        .await
-    {
+    if let Err(error) = Builder::new().serve_connection(io, service).await {
         tracing::debug!(%error, "a2a: connection ended with error");
     }
 }

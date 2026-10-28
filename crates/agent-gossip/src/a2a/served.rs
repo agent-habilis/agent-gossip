@@ -12,6 +12,7 @@
 //! caller asks the peer to take work; the peer ingests it and answers).
 
 use habilis_network::protocol::{Channel, Nickname};
+use habilis_network::util::consts;
 use serde_json::Value;
 
 use super::TaskId;
@@ -152,7 +153,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
                         .filter_map(|index| {
                             index.as_u64().and_then(|index| u32::try_from(index).ok())
                         })
-                        .take(habilis_network::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
+                        .take(consts::REASSEMBLY_REPAIR_MAX_IDXS)
                         .collect()
                 })
                 .unwrap_or_default();
@@ -178,6 +179,8 @@ mod tests {
     use super::{Served, classify};
     use crate::a2a::a2a_app::A2aApp;
     use crate::a2a::rpc_error::A2aOp;
+    use crate::a2a::task_record::LegKind::Offer;
+    use crate::a2a::{rpc_error, task_record};
 
     fn state() -> A2aApp {
         A2aApp::new()
@@ -190,12 +193,12 @@ mod tests {
     /// Open a task record with `peer` as the counterparty, as receiving its
     /// offer would.
     fn seed_task(app: &mut A2aApp, task_id: &str, peer: &str) {
-        crate::a2a::task_record::apply(
+        task_record::apply(
             &mut app.tasks,
-            &crate::a2a::task_record::LegInfo {
+            &task_record::LegInfo {
                 task_id: &crate::a2a::TaskId::from(task_id),
                 peer: &Nickname::from(peer),
-                kind: crate::a2a::task_record::LegKind::Offer,
+                kind: Offer,
                 mine: false,
                 fraction: None,
             },
@@ -273,7 +276,7 @@ mod tests {
         }
         // Not an `A2aOp`, so the localhost HTTP binding cannot reach it.
         assert!(
-            crate::a2a::rpc_error::parse_op("mesh/reader.get", &json!({}), None).is_err(),
+            rpc_error::parse_op("mesh/reader.get", &json!({}), None).is_err(),
             "a reader ask is not an a2a op"
         );
     }
@@ -402,8 +405,7 @@ mod tests {
 
         // The local binding, whose caller owns the daemon, still lists all.
         let A2aOp::ListTasks { peer: locally } =
-            crate::a2a::rpc_error::parse_op("ListTasks", &json!({}), None)
-                .expect("local ListTasks parses")
+            rpc_error::parse_op("ListTasks", &json!({}), None).expect("local ListTasks parses")
         else {
             panic!("expected ListTasks");
         };

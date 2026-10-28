@@ -21,6 +21,7 @@ use tokio::net::TcpStream;
 use super::a2a_ticket::A2aTicket;
 use super::ticket_directory::{TicketAd, spawn_ticket_advertiser};
 use super::{A2A_ALPN, A2A_TICKET_LABEL, SECRET_LEN};
+use crate::api::directory;
 
 /// Close code for a consumer refused because the 1:1 bridge is already paired.
 const BRIDGE_BUSY: u32 = 4;
@@ -66,7 +67,7 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
     let lookups = if loopback {
         LookupOpts::loopback()
     } else {
-        crate::api::directory::resolve_lookups_or_public(true, flags)
+        directory::resolve_lookups_or_public(true, flags)
     };
     validate_advertise(&advertise, &lookups)?;
     let (endpoint, ticket, auth) = bind(lookups.clone(), password.as_ref()).await?;

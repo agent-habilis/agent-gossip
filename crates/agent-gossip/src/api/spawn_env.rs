@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicUsize;
+
 use habilis_network::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
 use habilis_network::runtime::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, setup_mesh,
@@ -6,6 +8,7 @@ use habilis_network::runtime::{
 use super::advertiser::{Advertiser, spawn_advertiser};
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
+use crate::a2a::a2a_app::SurfacedIo;
 use crate::output::Output;
 use crate::topic;
 
@@ -18,14 +21,7 @@ use crate::topic;
 pub(super) async fn create_setup(
     config: CreateConfig,
     output: Output,
-) -> Result<
-    (
-        EventLoopConfig,
-        crate::a2a::a2a_app::SurfacedIo,
-        Option<Advertiser>,
-    ),
-    CreateError,
-> {
+) -> Result<(EventLoopConfig, SurfacedIo, Option<Advertiser>), CreateError> {
     crate::register_build_version();
     let mesh_config = MeshConfig {
         // No sugar flag left in the api: naming no lookup is loopback,
@@ -64,13 +60,13 @@ pub(super) async fn create_setup(
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
-    let io = crate::a2a::a2a_app::SurfacedIo::new(output);
+    let io = SurfacedIo::new(output);
     let sink = io.sink();
     // See `cli::run_session`: the advertiser's counter predates setup so the
     // returned config needs no patching.
     let live_count = advertise_directory
         .as_ref()
-        .map(|_| std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1)));
+        .map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
     let elc = setup_mesh(
         kind,
         SetupParams {
@@ -110,7 +106,7 @@ pub(super) async fn create_setup(
 pub(super) async fn join_setup(
     config: JoinConfig,
     output: Output,
-) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
+) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     let resolved = JoinParams {
         target: config.target,
         nickname: config.nickname,
@@ -131,7 +127,7 @@ pub(super) async fn join_setup(
 pub(super) async fn topic_setup(
     config: TopicConfig,
     output: Output,
-) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
+) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     let resolved =
         topic::resolve_topic(config.string, config.nickname).map_err(JoinError::Resolve)?;
     resolved_setup(resolved, config.max_peers, output).await
@@ -143,10 +139,10 @@ async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
     output: Output,
-) -> Result<(EventLoopConfig, crate::a2a::a2a_app::SurfacedIo), JoinError> {
+) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     crate::register_build_version();
     let Resolved { kind, author, .. } = resolved;
-    let io = crate::a2a::a2a_app::SurfacedIo::new(output);
+    let io = SurfacedIo::new(output);
     let sink = io.sink();
     let elc = setup_mesh(
         kind,

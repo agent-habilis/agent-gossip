@@ -1,3 +1,5 @@
+use habilis_network::util::logging;
+
 use crate::app_log_pins::APP_LOG_PINS;
 
 /// The default tracing directive filter; pass to
@@ -5,5 +7,5 @@ use crate::app_log_pins::APP_LOG_PINS;
 /// it. See `logging`.
 #[must_use]
 pub fn log_filter() -> tracing_subscriber::EnvFilter {
-    habilis_network::util::logging::log_filter(APP_LOG_PINS)
+    logging::log_filter(APP_LOG_PINS)
 }

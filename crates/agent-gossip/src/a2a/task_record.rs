@@ -22,6 +22,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
+use habilis_network::ops::blob::ContentId;
 use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
@@ -32,6 +33,7 @@ use crate::a2a::tuning::{
     TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs,
     task_stall_check_secs, task_timeout_secs,
 };
+use crate::a2a::{broadcast_params, tuning};
 use crate::output;
 
 /// My part in a task: did I open it (client side), or receive the offer
@@ -439,14 +441,14 @@ pub(crate) enum Admission {
 /// backstop behind it, since nothing stops an attacker minting fresh
 /// identities.
 pub(crate) fn admit_new_task(tasks: &HashMap<TaskId, TaskRecord>, peer: &Nickname) -> Admission {
-    if tasks.len() >= crate::a2a::tuning::TASKS_CAP {
+    if tasks.len() >= tuning::TASKS_CAP {
         return Admission::RegistryFull;
     }
     let live_with_peer = tasks
         .values()
         .filter(|rec| rec.peer == *peer && !rec.state.is_terminal())
         .count();
-    if live_with_peer >= crate::a2a::tuning::TASKS_PER_PEER_CAP {
+    if live_with_peer >= tuning::TASKS_PER_PEER_CAP {
         return Admission::PeerAtCap;
     }
     Admission::Ok
@@ -768,9 +770,7 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_content(&habilis_network::ops::blob::ContentId::new(
-                    task_id.as_str(),
-                ))
+                .evict_content(&ContentId::new(task_id.as_str()))
                 .await;
         }
         for group in &call_blobs {
@@ -962,7 +962,7 @@ async fn broadcast_status(
     // frame (the receive path always unseals a directed body). If the peer's key
     // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
     // a later one retries.
-    let Ok(body) = crate::a2a::broadcast_params::seal_directed(state, peer, &body) else {
+    let Ok(body) = broadcast_params::seal_directed(state, peer, &body) else {
         return false;
     };
     let kind = MessageKind::App {
@@ -992,10 +992,13 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use habilis_network::protocol::{Nickname, UnixSecs};
+    use tokio::sync::oneshot;
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
-    use crate::a2a::TaskId;
     use crate::a2a::status_update_params::ReaderBeat;
+    use crate::a2a::{
+        TaskId, extensions, rpc_error, status_update_params, task_record, tuning, wire,
+    };
 
     fn tid() -> TaskId {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
@@ -1120,20 +1123,20 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
         let peer_clock = tasks[&tid()].last_peer_activity;
 
-        let payload = crate::a2a::status_update_params::status_update(
+        let payload = status_update_params::status_update(
             &mesh,
-            crate::a2a::status_update_params::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &tid(),
                 state: TaskState::Working,
                 note: None,
-                metadata: Some(crate::a2a::status_update_params::beat_metadata(None)),
+                metadata: Some(status_update_params::beat_metadata(None)),
             },
         );
         let mut beat = Message::new_app(
             &mesh,
             &Nickname::from("calm-otter"),
             AppFrameParams {
-                tag: AppTag::from(crate::a2a::wire::STATUS),
+                tag: AppTag::from(wire::STATUS),
                 to: Some(Nickname::from("worker-bot")),
                 corr: None,
                 body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
@@ -1162,7 +1165,7 @@ mod tests {
     fn status_leg(beat: bool) -> habilis_network::protocol::Message {
         status_frame(
             TaskState::Working,
-            beat.then(|| crate::a2a::status_update_params::beat_metadata(None)),
+            beat.then(|| status_update_params::beat_metadata(None)),
         )
     }
 
@@ -1174,9 +1177,9 @@ mod tests {
         use habilis_network::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
-        let payload = crate::a2a::status_update_params::status_update(
+        let payload = status_update_params::status_update(
             &mesh,
-            crate::a2a::status_update_params::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &tid(),
                 state,
                 note: None,
@@ -1187,7 +1190,7 @@ mod tests {
             &mesh,
             &Nickname::from("calm-otter"),
             AppFrameParams {
-                tag: AppTag::from(crate::a2a::wire::STATUS),
+                tag: AppTag::from(wire::STATUS),
                 to: Some(Nickname::from("worker-bot")),
                 corr: None,
                 body: MessageBody::new(serde_json::to_string(&payload).unwrap()).unwrap(),
@@ -1220,7 +1223,7 @@ mod tests {
     fn beat_from_worker(reader: Option<ReaderBeat>) -> habilis_network::protocol::Message {
         status_frame(
             TaskState::Working,
-            Some(crate::a2a::status_update_params::beat_metadata_with_reader(
+            Some(status_update_params::beat_metadata_with_reader(
                 None, reader,
             )),
         )
@@ -1341,7 +1344,7 @@ mod tests {
     fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> habilis_network::protocol::Message {
         let mut frame = status_frame(
             TaskState::Working,
-            crate::a2a::status_update_params::waiting_metadata(reason),
+            status_update_params::waiting_metadata(reason),
         );
         frame.timestamp = at;
         frame
@@ -1417,7 +1420,7 @@ mod tests {
 
         let mut surfaced = SurfacedState::new();
         let plain_at = tokio::time::Instant::now();
-        let (plain_tx, _plain_rx) = tokio::sync::oneshot::channel::<String>();
+        let (plain_tx, _plain_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: false,
@@ -1425,7 +1428,7 @@ mod tests {
             responder: PollResponder::Json(plain_tx),
         });
         let fetch_at = plain_at + STALL_CHECK;
-        let (mcp_tx, _mcp_rx) = tokio::sync::oneshot::channel::<String>();
+        let (mcp_tx, _mcp_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: Some(0),
             long: true,
@@ -1575,7 +1578,7 @@ mod tests {
     fn only_a_working_leg_sets_the_waiting_reason() {
         let first = UnixSecs::now();
         let mut tasks = working_task_we_opened(Instant::now());
-        let metadata = || crate::a2a::status_update_params::waiting_metadata(Some("asks its user"));
+        let metadata = || status_update_params::waiting_metadata(Some("asks its user"));
         let mut leg = status_frame(TaskState::InputRequired, metadata());
         leg.timestamp = first;
         ingest_inbound(&mut tasks, &leg);
@@ -1627,7 +1630,7 @@ mod tests {
             );
         };
 
-        let waiting = serde_json::json!({ crate::a2a::extensions::META_WAITING: "asks its user" });
+        let waiting = serde_json::json!({ extensions::META_WAITING: "asks its user" });
         ingest_leg(&mut tasks, status_frame(TaskState::Working, Some(waiting)));
         assert_eq!(tasks[&tid()].waiting.as_deref(), Some("asks its user"));
 
@@ -1707,7 +1710,7 @@ mod tests {
             "another peer must still get task not found"
         );
 
-        let task = crate::a2a::rpc_error::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
+        let task = rpc_error::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
         assert_eq!(task["id"], tid().as_str());
         assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED");
         assert_eq!(task["metadata"]["mesh:peer"], "calm-otter");
@@ -1901,7 +1904,7 @@ mod tests {
         };
 
         let mut minted = Vec::new();
-        for index in 0..crate::a2a::tuning::TASKS_PER_PEER_CAP {
+        for index in 0..tuning::TASKS_PER_PEER_CAP {
             minted.push(open(&flooder, index));
         }
 
@@ -2155,14 +2158,14 @@ mod tests {
             &mesh,
             &Nickname::from("worker-bot"),
             AppFrameParams {
-                tag: AppTag::from(crate::a2a::wire::ARTIFACT),
+                tag: AppTag::from(wire::ARTIFACT),
                 to: Some(Nickname::from("calm-otter")),
                 corr: None,
                 body: MessageBody::new("sealed-ciphertext-stand-in").expect("valid body"),
             },
         );
         assert!(
-            crate::a2a::status_update_params::frame_task_id(&sealed).is_none(),
+            status_update_params::frame_task_id(&sealed).is_none(),
             "a sealed body yields no parseable task id — the condition under test"
         );
 
@@ -2186,13 +2189,12 @@ mod tests {
         // ①: the app surfaces the *plaintext* logical frame it built (the same
         // `task_id`, unsealed), so rendering that self-echo as JSON must not
         // panic and must carry the id.
-        let payload =
-            crate::a2a::status_update_params::artifact_update(&mesh, &task_id, "result text");
+        let payload = status_update_params::artifact_update(&mesh, &task_id, "result text");
         let plaintext = Message::new_app(
             &mesh,
             &Nickname::from("worker-bot"),
             AppFrameParams {
-                tag: AppTag::from(crate::a2a::wire::ARTIFACT),
+                tag: AppTag::from(wire::ARTIFACT),
                 to: Some(Nickname::from("calm-otter")),
                 corr: None,
                 body: MessageBody::new(
@@ -2248,9 +2250,9 @@ mod tests {
             let body = if sealed {
                 "sealed-ciphertext-stand-in".to_owned()
             } else {
-                let payload = crate::a2a::status_update_params::status_update(
+                let payload = status_update_params::status_update(
                     &mesh,
-                    crate::a2a::status_update_params::StatusUpdateParams {
+                    status_update_params::StatusUpdateParams {
                         task_id: &task_id,
                         state,
                         note: None,
@@ -2263,7 +2265,7 @@ mod tests {
                 &mesh,
                 &Nickname::from("worker-bot"),
                 AppFrameParams {
-                    tag: AppTag::from(crate::a2a::wire::STATUS),
+                    tag: AppTag::from(wire::STATUS),
                     to: Some(Nickname::from("calm-otter")),
                     corr: None,
                     body: MessageBody::new(&body).expect("valid body"),
@@ -2304,7 +2306,7 @@ mod tests {
 
         // And so the idle sweep passes it over, however long it sits there.
         // This is `tick_task_sweep`'s expiry predicate, verbatim.
-        let timeout = Duration::from_secs(crate::a2a::task_record::task_timeout_secs());
+        let timeout = Duration::from_secs(task_record::task_timeout_secs());
         let rec = tasks.get_mut(&tid()).expect("the record is live");
         rec.last_peer_activity = now.checked_sub(10 * timeout).expect("in range");
         let expired =

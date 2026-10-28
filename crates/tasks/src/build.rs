@@ -7,6 +7,7 @@
 //! reproducible. `--arch` is sugar for a glibc Linux target — the shape we
 //! deploy to the Raspberry Pi fleet.
 
+use std::env::consts;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -134,12 +135,12 @@ fn ensure_zig(sh: &Shell) -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 /// The host's zig tarball infix (`<arch>-<os>`, zig's ≥0.14 naming).
 fn host_zig_infix() -> Result<String, Box<dyn std::error::Error>> {
-    let arch = match std::env::consts::ARCH {
+    let arch = match consts::ARCH {
         "aarch64" => "aarch64",
         "x86_64" => "x86_64",
         other => return Err(format!("unsupported host arch for zig: {other}").into()),
     };
-    let os = match std::env::consts::OS {
+    let os = match consts::OS {
         "macos" => "macos",
         "linux" => "linux",
         other => return Err(format!("unsupported host OS for zig: {other}").into()),

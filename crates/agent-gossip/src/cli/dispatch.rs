@@ -1,4 +1,8 @@
 use anyhow::Result;
+use habilis_network::runtime::tuning;
+use habilis_network::runtime::tuning::Tuning;
+use habilis_network::util::logs;
+use habilis_network::util::logs::LogConfig;
 
 use super::a2a::a2a;
 use super::args::{self, Cli, Commands};
@@ -15,6 +19,8 @@ use super::reject_id_encoded_flag::reject_id_encoded_flag;
 use super::state::state;
 use super::topic::topic;
 use super::topology_cmd::topology_cmd;
+use crate::a2a::tuning as a2a_tuning;
+use crate::a2a::tuning::Tuning as A2aTuning;
 
 /// Run the selected subcommand to completion.
 ///
@@ -26,7 +32,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // subcommand resolves its log file (the buffered sink flushes at
     // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
     // AHS_LOG_MAX_BYTES env reads.
-    habilis_network::util::logs::configure(habilis_network::util::logs::LogConfig {
+    logs::configure(LogConfig {
         base: Some(crate::runtime_base()),
         dir: cli.log_dir,
         max_bytes: cli.log_max_bytes,
@@ -97,14 +103,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
-            habilis_network::runtime::tuning::init(habilis_network::runtime::tuning::Tuning {
+            tuning::init(Tuning {
                 ping_window: std::time::Duration::from_secs(ping_window_secs),
                 directory_private,
-                ..habilis_network::runtime::tuning::Tuning::DEFAULTS
+                ..Tuning::DEFAULTS
             });
-            crate::a2a::tuning::init(crate::a2a::tuning::Tuning {
+            a2a_tuning::init(A2aTuning {
                 longpoll_max_ms,
-                ..crate::a2a::tuning::Tuning::DEFAULTS
+                ..A2aTuning::DEFAULTS
             });
             Box::pin(crate::mcp::run()).await
         }

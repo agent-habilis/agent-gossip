@@ -1,4 +1,6 @@
 use anyhow::Result;
+use habilis_network::ops::blob;
+use habilis_network::ops::blob::BlobTicket;
 
 use super::a2a_call_request::A2aCallRequest;
 use super::a2a_call_sugar::A2aCallSugar;
@@ -6,6 +8,7 @@ use super::advertised_file_name::advertised_file_name;
 use super::args::A2aAction;
 use super::finish_send::finish_send;
 use crate::a2a::ipc_command::IpcCommand;
+use crate::bridge::bridge;
 
 /// Post a message to a mesh via the running server's IPC socket.
 #[expect(
@@ -48,7 +51,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
                 }
                 other => super::password_flag::resolve_password(other)?,
             };
-            crate::bridge::bridge::connect(&ticket, port, password, allow_anonymous).await
+            bridge::connect(&ticket, port, password, allow_anonymous).await
         }
         A2aAction::Discover {
             directory,
@@ -197,7 +200,7 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             output,
             password,
         } => {
-            let ticket = habilis_network::ops::blob::BlobTicket::decode(&ticket)?;
+            let ticket = BlobTicket::decode(&ticket)?;
             let password = password.map(habilis_network::protocol::Password::new);
 
             // Where the bytes land, `None` meaning stdout. Precedence:
@@ -233,13 +236,11 @@ pub(super) async fn a2a(action: A2aAction) -> Result<()> {
             match dest {
                 None => {
                     let mut stdout = tokio::io::stdout();
-                    habilis_network::ops::blob::fetch(&ticket, &mut stdout, password).await?;
+                    blob::fetch(&ticket, &mut stdout, password).await?;
                 }
                 Some(path) => {
                     let mut file = tokio::fs::File::create(&path).await?;
-                    if let Err(error) =
-                        habilis_network::ops::blob::fetch(&ticket, &mut file, password).await
-                    {
+                    if let Err(error) = blob::fetch(&ticket, &mut file, password).await {
                         // fetch verifies the hash as it streams; a partial file
                         // from a failed transfer is meaningless, so drop it.
                         drop(file);

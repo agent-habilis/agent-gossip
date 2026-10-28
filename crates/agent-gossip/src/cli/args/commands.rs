@@ -17,6 +17,7 @@ use super::session_opts::SessionOpts;
 use super::state_opts::StateOpts;
 use super::topic_opts::TopicOpts;
 use super::topology_opts::TopologyOpts;
+use crate::cli::agent::Agent;
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
@@ -217,7 +218,7 @@ pub(crate) enum Commands {
     Plug {
         /// Agent to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
-        agents: Vec<crate::cli::agent::Agent>,
+        agents: Vec<Agent>,
         /// Install into an explicit directory as a skill root (repeatable). No
         /// agent detection — the skills are written there unconditionally.
         #[arg(long = "path")]
@@ -231,7 +232,7 @@ pub(crate) enum Commands {
         /// Agent to remove from (repeatable). Defaults to agents that have
         /// the integration installed.
         #[arg(long = "agent", value_enum)]
-        agents: Vec<crate::cli::agent::Agent>,
+        agents: Vec<Agent>,
         /// Remove from an explicit directory that was plugged with `--path`
         /// (repeatable). Only the installed skill dirs are removed; the folder
         /// and anything else in it are left.

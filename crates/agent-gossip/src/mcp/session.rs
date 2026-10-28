@@ -10,6 +10,8 @@ use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 
+use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
     SessionError, TaskArtifactParams, TaskStatusParams, TopicConfig,
@@ -129,7 +131,7 @@ impl Session {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| crate::a2a::broadcast_params::FileRef {
+        let file = file.map(|path| FileRef {
             path,
             name: file_name,
             mime: file_mime,
@@ -217,11 +219,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn fetch_messages(
-        &self,
-        after: Option<u64>,
-        long: bool,
-    ) -> Result<crate::a2a::surfaced_event::PollBatch> {
+    pub(super) async fn fetch_messages(&self, after: Option<u64>, long: bool) -> Result<PollBatch> {
         let batch = self.inner.fetch(self.effective_after(after), long).await?;
         if after.is_none()
             && let Some(seq) = batch.events.last().map(|item| item.seq)
@@ -271,6 +269,7 @@ mod tests {
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
     use crate::a2a::status_update_params::chat_text;
+    use crate::a2a::surfaced_event::SurfacedEvent;
     use crate::api::{CreateConfig, JoinConfig};
 
     // All tests use the private network (loopback) so they work on
@@ -351,7 +350,7 @@ mod tests {
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
     /// the first event) — replaying from here re-includes the join and
     /// everything after.
-    fn seq_before_bob_join(events: &[crate::a2a::surfaced_event::SurfacedEvent]) -> Option<u64> {
+    fn seq_before_bob_join(events: &[SurfacedEvent]) -> Option<u64> {
         let join_idx = events.iter().position(|item| is_bob_join(&item.event))?;
         Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
     }

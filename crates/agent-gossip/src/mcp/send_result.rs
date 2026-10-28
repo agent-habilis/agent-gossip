@@ -1,4 +1,5 @@
 use habilis_network::protocol::MessageId;
+use habilis_network::protocol::message::Authored;
 use serde::Serialize;
 
 use super::serialize_message_view;
@@ -11,5 +12,5 @@ pub(crate) struct SendResult {
     /// Agents should read this instead of issuing a follow-up fetch just
     /// to learn their own timestamp.
     #[serde(serialize_with = "serialize_message_view")]
-    pub(crate) message: habilis_network::protocol::message::Authored,
+    pub(crate) message: Authored,
 }

@@ -8,6 +8,7 @@
 
 use anyhow::Result;
 use habilis_network::protocol::MeshName;
+use habilis_network::util::logging;
 
 use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};
@@ -28,7 +29,7 @@ pub(super) async fn discover(options: DiscoverOpts) -> Result<()> {
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the JSON stream isn't drowned in INFO lines on stderr.
     if let Some((mesh, nickname)) = discoverer.session_identity() {
-        habilis_network::util::logging::attach(mesh, nickname);
+        logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()

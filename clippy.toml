@@ -31,3 +31,7 @@ doc-valid-idents = [
     "EndpointId",
     "JSON-RPC",
 ]
+
+# Google Rust Style Guide, O27: a path names at most three segments; a longer one imports its parent
+# module or its type (absolute_paths, Cargo.toml).
+absolute-paths-max-segments = 3

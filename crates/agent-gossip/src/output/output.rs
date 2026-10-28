@@ -8,6 +8,8 @@ use super::{
     peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
     simple_event, task_stalled_event,
 };
+use crate::a2a::task_record::StallNotice;
+use crate::a2a::wire;
 
 /// Per-event-loop output destination. Replaces the former
 /// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
@@ -208,7 +210,7 @@ impl Output {
         // Only worker-pushed status/artifact frames surface as a `task` event.
         match &message.kind {
             MessageKind::App { tag, to, .. } => match (tag.as_str(), to) {
-                (crate::a2a::wire::STATUS | crate::a2a::wire::ARTIFACT, Some(_)) => {}
+                (wire::STATUS | wire::ARTIFACT, Some(_)) => {}
                 _ => return,
             },
             MessageKind::Presence { .. }
@@ -316,7 +318,7 @@ impl Output {
 
     /// A worker's agent has not polled for `check_secs` with no bell armed. JSON
     /// mode emits a visible `task_stalled` event; nothing is canceled.
-    pub(crate) fn task_stalled(&self, notice: &crate::a2a::task_record::StallNotice) {
+    pub(crate) fn task_stalled(&self, notice: &StallNotice) {
         self.dispatch(
             || OutputEvent::TaskStalled {
                 task_id: notice.task_id.clone(),

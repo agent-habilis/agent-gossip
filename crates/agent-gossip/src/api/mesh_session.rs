@@ -13,7 +13,10 @@ use super::in_process_session::InProcessSession;
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
-use crate::output::{OutputEvent, PingPeer};
+use crate::a2a::a2a_app::SurfacedIo;
+use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::surfaced_event::PollBatch;
+use crate::output::{OutputEvent, PingPeer, capture_events};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
@@ -37,7 +40,7 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if the target can't be resolved;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        let (output, events_rx) = crate::output::capture_events::capture_events();
+        let (output, events_rx) = capture_events::capture_events();
         let (elc, io) = join_setup(config, output).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
@@ -50,7 +53,7 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        let (output, events_rx) = crate::output::capture_events::capture_events();
+        let (output, events_rx) = capture_events::capture_events();
         let (elc, io) = topic_setup(config, output).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
@@ -62,7 +65,7 @@ impl MeshSession {
     /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
     /// loopback-only mesh; [`CreateError::Setup`] on endpoint/gossip failure.
     pub async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        let (output, events_rx) = crate::output::capture_events::capture_events();
+        let (output, events_rx) = capture_events::capture_events();
         let (elc, io, advertiser) = create_setup(config, output).await?;
         Ok(Self::with_events(elc, io, advertiser, events_rx))
     }
@@ -83,8 +86,8 @@ impl MeshSession {
     ) -> anyhow::Result<Self> {
         crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
-        let (output, events_rx) = crate::output::capture_events::capture_events();
-        let io = crate::a2a::a2a_app::SurfacedIo::new(output);
+        let (output, events_rx) = capture_events::capture_events();
+        let io = SurfacedIo::new(output);
         let sink = io.sink();
         let elc = setup_mesh(
             // Directory sessions (advertise/discover) never offload blobs, so no
@@ -129,7 +132,7 @@ impl MeshSession {
     /// signal handlers (the public api default).
     fn with_events(
         elc: EventLoopConfig,
-        io: crate::a2a::a2a_app::SurfacedIo,
+        io: SurfacedIo,
         advertiser: Option<Advertiser>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
@@ -148,7 +151,7 @@ impl MeshSession {
     /// directory sessions pass `handle_signals: false`.
     fn with_events_and_signals(
         elc: EventLoopConfig,
-        io: crate::a2a::a2a_app::SurfacedIo,
+        io: SurfacedIo,
         env: SpawnEnv,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
@@ -277,7 +280,7 @@ impl MeshSession {
         after: Option<u64>,
         // true long-polls up to the server cap when the buffer is empty; false reads at once.
         long: bool,
-    ) -> Result<crate::a2a::surfaced_event::PollBatch, SessionError> {
+    ) -> Result<PollBatch, SessionError> {
         self.core.fetch(after, long).await
     }
 
@@ -306,7 +309,7 @@ impl MeshSession {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| crate::a2a::broadcast_params::FileRef {
+        let file = file.map(|path| FileRef {
             path,
             name: file_name,
             mime: file_mime,

@@ -2,6 +2,7 @@ use anyhow::Result;
 use habilis_network::protocol::MeshId;
 
 use super::a2a_call_sugar::A2aCallSugar;
+use crate::a2a::status_update_params;
 
 /// An `a2a call` request typed by method, so a task method cannot exist
 /// without its task id.
@@ -49,9 +50,8 @@ impl<'a> A2aCallRequest<'a> {
                 text,
                 label,
             } => {
-                let message = crate::a2a::status_update_params::send_message_payload(
-                    mesh, task_id, text, label,
-                );
+                let message =
+                    status_update_params::send_message_payload(mesh, task_id, text, label);
                 serde_json::json!({ "message": message })
             }
             Self::TaskById { task_id } => serde_json::json!({ "id": task_id }),

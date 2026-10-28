@@ -11,6 +11,7 @@ use habilis_network::runtime::CoHostPolicy;
 use tokio::sync::broadcast;
 
 use super::{CreateConfig, JoinError, MeshSession, TopicConfig};
+use crate::a2a::status_update_params;
 
 /// Wait for alice's topic message on `bob_rx`, ignoring anything else
 /// (e.g. earlier retries' echoes) until the channel closes.
@@ -19,7 +20,7 @@ async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Authored>) -> bool {
         match bob_rx.recv().await {
             Ok(message)
                 if message.author.as_str() == "alice-topic"
-                    && crate::a2a::status_update_params::chat_text(&message).as_deref()
+                    && status_update_params::chat_text(&message).as_deref()
                         == Some("hello topic") =>
             {
                 return true;

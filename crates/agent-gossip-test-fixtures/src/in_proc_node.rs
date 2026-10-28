@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use agent_gossip::a2a::status_update_params;
 use agent_gossip::api::{
     A2aCallParams, CreateConfig, JoinConfig, MeshSession, SessionError, TaskArtifactParams,
     TaskStatusParams,
@@ -314,12 +315,8 @@ impl InProcNode {
         // seal is one-shot, so wait for it first — otherwise, under the concurrent
         // suite's load, the request is silently dropped and the call hangs.
         self.await_peer_card(target).await;
-        let message = agent_gossip::a2a::status_update_params::send_message_payload(
-            self.session.mesh_id(),
-            None,
-            text,
-            label,
-        );
+        let message =
+            status_update_params::send_message_payload(self.session.mesh_id(), None, text, label);
         self.a2a_call_retrying(
             target,
             "SendMessage",
@@ -372,7 +369,7 @@ impl InProcNode {
         task_id: &TaskId,
         text: &str,
     ) -> serde_json::Value {
-        let message = agent_gossip::a2a::status_update_params::send_message_payload(
+        let message = status_update_params::send_message_payload(
             self.session.mesh_id(),
             Some(task_id),
             text,
@@ -530,7 +527,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Task { message, .. }
-                        if agent_gossip::a2a::status_update_params::frame_task_state(message) == Some(state)
+                        if status_update_params::frame_task_state(message) == Some(state)
                 )
             })
         })
@@ -655,7 +652,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Message { message, is_self: false }
-                        if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(body)
+                        if status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
         })
@@ -684,7 +681,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Message { message, is_self: false }
-                        if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(body)
+                        if status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
             .count()

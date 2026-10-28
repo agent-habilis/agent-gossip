@@ -1,10 +1,11 @@
 use anyhow::Result;
+use habilis_network::util::consts;
 
 /// Parse a `--ttl` value into seconds: a bare number (seconds), a `s`/`m`/`h`/`d`
 /// suffixed duration, or `none`/`0` for no expiry. Absent ⇒ the 24h default.
 pub(super) fn parse_ttl(raw: Option<&str>) -> Result<u64> {
     let Some(raw) = raw.map(str::trim) else {
-        return Ok(habilis_network::util::consts::INVITE_DEFAULT_TTL.as_secs());
+        return Ok(consts::INVITE_DEFAULT_TTL.as_secs());
     };
     if raw.eq_ignore_ascii_case("none") {
         return Ok(0);

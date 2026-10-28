@@ -314,6 +314,7 @@ mod tests {
     use clap::Parser as _;
 
     use super::A2aAction;
+    use crate::a2a::tuning;
     use crate::cli::args::{Cli, Commands};
 
     /// `--timeout-secs` must default to the shared constant, not a literal.
@@ -341,7 +342,7 @@ mod tests {
         };
         assert_eq!(
             timeout_secs,
-            crate::a2a::tuning::CALL_TIMEOUT_SECS,
+            tuning::CALL_TIMEOUT_SECS,
             "a2a call defaults its timeout to the shared constant"
         );
     }

@@ -1,3 +1,5 @@
+use std::os::unix::net::UnixStream;
+
 use crate::socket_path;
 
 /// Send one raw JSON command line straight to a daemon's Unix socket and
@@ -7,8 +9,8 @@ use crate::socket_path;
 /// re-issue loop).
 pub fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
     use std::io::{BufRead, BufReader, Write};
-    let mut stream = std::os::unix::net::UnixStream::connect(socket_path(mesh, nickname))
-        .expect("connect to daemon socket");
+    let mut stream =
+        UnixStream::connect(socket_path(mesh, nickname)).expect("connect to daemon socket");
     stream
         .write_all(format!("{line}\n").as_bytes())
         .expect("write IPC command");

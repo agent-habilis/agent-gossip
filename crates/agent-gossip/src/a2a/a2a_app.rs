@@ -8,14 +8,21 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
+use habilis_network::ops::blob::{BlobServer, ContentId};
+use habilis_network::protocol::message::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{DedupKey, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::error::TryRecvError;
+use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
 
-use crate::a2a::TaskId;
+use crate::a2a::a2a_binding::A2aBinding;
+use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
+use crate::a2a::task_record::{ClosedTasks, TaskRecord};
+use crate::a2a::{TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
 use crate::output::{Output, OutputEvent};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
@@ -73,7 +80,7 @@ impl habilis_network::embed::NodeSink for StartupSink {
 impl SurfacedIo {
     /// Tap `base` so every surfaced event is mirrored into the ring receiver.
     pub(crate) fn new(base: Output) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
         Self {
             output: base.set_tap(tx),
             surfaced_rx: rx,
@@ -107,11 +114,11 @@ pub(crate) struct A2aApp {
     /// (see [`crate::a2a::task_record`]). The coarse state machine + the two
     /// task timers (debounce sweep, keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
-    pub tasks: HashMap<TaskId, crate::a2a::task_record::TaskRecord>,
+    pub tasks: HashMap<TaskId, TaskRecord>,
     /// Tasks the sweep reaped after they closed, with their peer and last
     /// state. The record goes 2 min after close, but anti-entropy can serve a
     /// leg of it hours later, and the peer can still ask for the task.
-    pub closed_tasks: crate::a2a::task_record::ClosedTasks,
+    pub closed_tasks: ClosedTasks,
     /// `Message::dedup_key` of every chat line surfaced, the same
     /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
     /// a bounded count of frames, and anti-entropy then serves the line again.
@@ -125,10 +132,10 @@ pub(crate) struct A2aApp {
     /// lazily on the first large-file offload (an `a2a artifact`/`call --file`)
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
-    pub blob_server: Option<habilis_network::ops::blob::BlobServer>,
+    pub blob_server: Option<BlobServer>,
     /// Every blob group of a task's calls, keyed by the task, so the task
     /// sweep reaps them with the task.
-    call_blobs: HashMap<TaskId, Vec<habilis_network::ops::blob::ContentId>>,
+    call_blobs: HashMap<TaskId, Vec<ContentId>>,
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
@@ -176,25 +183,22 @@ pub(crate) struct A2aApp {
 
 /// Own frames that enter the message log once `sent` resolves to true.
 pub(crate) struct UnsentLeg {
-    pub(crate) frames: Vec<habilis_network::protocol::message::Verified>,
+    pub(crate) frames: Vec<Verified>,
     /// A big shard group's wire frames, for the `shard/repair` cache.
-    pub(crate) cache: Option<(
-        ShardGroup,
-        Vec<habilis_network::protocol::message::WireFrame>,
-    )>,
-    pub(crate) sent: tokio::sync::oneshot::Receiver<bool>,
+    pub(crate) cache: Option<(ShardGroup, Vec<WireFrame>)>,
+    pub(crate) sent: Receiver<bool>,
 }
 
 /// An own task leg to ingest into the task record once the peer got it.
 pub(crate) struct DeliveredLeg {
-    pub(crate) echo: habilis_network::protocol::message::Authored,
+    pub(crate) echo: Authored,
     pub(crate) task_id: TaskId,
 }
 
 struct QueuedLeg {
     leg: DeliveredLeg,
     /// Whether the send of the leg reached the peer. Resolved when the send has an outcome.
-    delivered: tokio::sync::oneshot::Receiver<bool>,
+    delivered: Receiver<bool>,
 }
 
 impl A2aApp {
@@ -216,8 +220,8 @@ impl A2aApp {
         } = io;
         Self {
             tasks: HashMap::new(),
-            closed_tasks: crate::a2a::task_record::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
-            surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
+            closed_tasks: ClosedTasks::new(tuning::TASKS_CAP),
+            surfaced_chat: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
             call_blobs: HashMap::new(),
@@ -230,7 +234,7 @@ impl A2aApp {
             surfaced_rx: Some(surfaced_rx),
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
-            sent_refs: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
+            sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             card_error: None,
             card_retry_in: 0,
             card_retry_wait: 0,
@@ -243,8 +247,8 @@ impl A2aApp {
     pub(crate) fn detached(output: Output) -> Self {
         Self {
             tasks: HashMap::new(),
-            closed_tasks: crate::a2a::task_record::ClosedTasks::new(crate::a2a::tuning::TASKS_CAP),
-            surfaced_chat: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
+            closed_tasks: ClosedTasks::new(tuning::TASKS_CAP),
+            surfaced_chat: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             a2a_waiters: Vec::new(),
             blob_server: None,
             call_blobs: HashMap::new(),
@@ -257,7 +261,7 @@ impl A2aApp {
             surfaced_rx: None,
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
-            sent_refs: BoundedFifoSet::new(crate::a2a::tuning::CHAT_SURFACED_IDS_CAP),
+            sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             card_error: None,
             card_retry_in: 0,
             card_retry_wait: 0,
@@ -266,11 +270,7 @@ impl A2aApp {
 
     /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
     /// peer got the leg.
-    pub(crate) fn queue_own_leg(
-        &mut self,
-        leg: DeliveredLeg,
-        delivered: tokio::sync::oneshot::Receiver<bool>,
-    ) {
+    pub(crate) fn queue_own_leg(&mut self, leg: DeliveredLeg, delivered: Receiver<bool>) {
         self.own_legs.push_back(QueuedLeg { leg, delivered });
     }
 
@@ -303,7 +303,7 @@ impl A2aApp {
     /// Ingest the own task legs that the peer got since the last call.
     pub(crate) fn drain_delivered_legs(&mut self) {
         for DeliveredLeg { echo, task_id } in self.take_delivered_legs() {
-            crate::a2a::broadcast_params::ingest_own_leg(self, &echo, &task_id);
+            broadcast_params::ingest_own_leg(self, &echo, &task_id);
         }
     }
 
@@ -317,7 +317,7 @@ impl A2aApp {
             }
         }
         for event in drained {
-            if crate::a2a::node::is_pollable(&event) {
+            if node::is_pollable(&event) {
                 self.surfaced.push(event);
             }
         }
@@ -328,16 +328,11 @@ impl A2aApp {
     /// port + bearer token (for the state file) and spawn the HTTP task,
     /// returning the request channel the event loop services. Called by the
     /// CLI when `--a2a-serve` is set.
-    pub(crate) fn serve_a2a(
-        &mut self,
-        binding: crate::a2a::a2a_binding::A2aBinding,
-    ) -> tokio::sync::mpsc::Receiver<crate::a2a::rpc_error::A2aRequest> {
+    pub(crate) fn serve_a2a(&mut self, binding: A2aBinding) -> mpsc::Receiver<A2aRequest> {
         self.a2a_port = Some(binding.port);
         self.a2a_token = Some(binding.token.clone());
-        let (tx, rx) = tokio::sync::mpsc::channel::<crate::a2a::rpc_error::A2aRequest>(
-            crate::a2a::a2a_binding::REQUEST_QUEUE,
-        );
-        crate::a2a::a2a_binding::spawn(binding, tx);
+        let (tx, rx) = mpsc::channel::<A2aRequest>(a2a_binding::REQUEST_QUEUE);
+        a2a_binding::spawn(binding, tx);
         rx
     }
 
@@ -357,7 +352,7 @@ impl A2aApp {
     /// caller can fail it fast instead of parking silently.
     #[must_use]
     pub(crate) fn register_a2a_waiter(&mut self, waiter: A2aWaiter) -> Option<A2aResponder> {
-        if self.a2a_waiters.len() >= crate::a2a::tuning::POLL_WAITERS_CAP {
+        if self.a2a_waiters.len() >= tuning::POLL_WAITERS_CAP {
             self.orphan_blob(waiter.blob_group);
             return Some(waiter.responder);
         }
@@ -443,7 +438,7 @@ impl A2aApp {
         std::mem::take(&mut self.late_cancels)
     }
 
-    pub(crate) fn orphan_blob(&mut self, group: Option<habilis_network::ops::blob::ContentId>) {
+    pub(crate) fn orphan_blob(&mut self, group: Option<ContentId>) {
         self.orphan_blobs.extend(group.map(|group| OrphanBlob {
             group,
             evict_at: Instant::now(),
@@ -453,11 +448,7 @@ impl A2aApp {
 
     /// The blob groups the task sweep must evict at `now`: every group of the
     /// `reaped` tasks' calls, and every orphan that is due.
-    pub(crate) fn take_call_blobs(
-        &mut self,
-        reaped: &[TaskId],
-        now: Instant,
-    ) -> Vec<habilis_network::ops::blob::ContentId> {
+    pub(crate) fn take_call_blobs(&mut self, reaped: &[TaskId], now: Instant) -> Vec<ContentId> {
         let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.orphan_blobs)
             .into_iter()
             .partition(|orphan| orphan.evict_at <= now);
@@ -509,9 +500,9 @@ impl A2aApp {
         let task_state = task["status"]["state"].as_str().and_then(|raw| {
             serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok()
         })?;
-        crate::a2a::task_record::adopt_initiator(
+        task_record::adopt_initiator(
             &mut self.tasks,
-            crate::a2a::task_record::AdoptInitiatorParams {
+            task_record::AdoptInitiatorParams {
                 task_id: &task_id,
                 peer,
                 task_state,
@@ -541,7 +532,7 @@ impl A2aApp {
                     // the group waits one task timeout for a late reply that
                     // adopts the task.
                     let evict_at = Instant::now()
-                        + std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
+                        + std::time::Duration::from_secs(tuning::task_timeout_secs());
                     let late_reply = Some(LateReply {
                         corr: waiter.corr,
                         peer: waiter.peer,
@@ -604,9 +595,9 @@ impl A2aApp {
 /// over the same request/response waiter — task creation over the compliant
 /// transport).
 pub(crate) enum A2aResponder {
-    Ipc(tokio::sync::oneshot::Sender<String>),
-    Typed(tokio::sync::oneshot::Sender<serde_json::Value>),
-    Rpc(tokio::sync::oneshot::Sender<Result<serde_json::Value, crate::a2a::rpc_error::RpcError>>),
+    Ipc(Sender<String>),
+    Typed(Sender<serde_json::Value>),
+    Rpc(Sender<Result<serde_json::Value, RpcError>>),
 }
 
 impl A2aResponder {
@@ -652,7 +643,7 @@ impl A2aResponder {
                     tx.send(serde_json::json!({ "error": { "code": -32000, "message": message } }));
             }
             A2aResponder::Rpc(tx) => {
-                let _ = tx.send(Err(crate::a2a::rpc_error::RpcError {
+                let _ = tx.send(Err(RpcError {
                     code: -32000,
                     message: message.to_string(),
                 }));
@@ -664,15 +655,15 @@ impl A2aResponder {
 /// Parse a peer's JSON-RPC response `body` (`{"result":…}` | `{"error":…}`)
 /// into the `Result<Value, RpcError>` the localhost binding's HTTP handler
 /// returns. A malformed/absent body reads as an internal error.
-fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc_error::RpcError> {
+fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, RpcError> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return Err(crate::a2a::rpc_error::RpcError {
+        return Err(RpcError {
             code: -32603,
             message: "peer returned a malformed a2a response".to_string(),
         });
     };
     if !value["error"].is_null() {
-        return Err(crate::a2a::rpc_error::RpcError {
+        return Err(RpcError {
             code: value["error"]["code"].as_i64().unwrap_or(-32603),
             message: value["error"]["message"]
                 .as_str()
@@ -685,7 +676,7 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc
 
 /// A call blob group whose call produced no task of ours.
 struct OrphanBlob {
-    group: habilis_network::ops::blob::ContentId,
+    group: ContentId,
     evict_at: Instant,
     /// A timed-out call, whose late reply can still adopt the task and take
     /// the group.
@@ -716,7 +707,7 @@ pub(crate) struct A2aWaiter {
     pub(crate) responder: A2aResponder,
     /// The blob group of an `a2a call --file` that no task of ours holds yet,
     /// owned by this call until a task adopts it.
-    pub(crate) blob_group: Option<habilis_network::ops::blob::ContentId>,
+    pub(crate) blob_group: Option<ContentId>,
     /// Whether this call creates the task, so that a late reply's task is
     /// cancelled. A follow-up does not.
     pub(crate) opens_task: bool,
@@ -726,10 +717,12 @@ pub(crate) struct A2aWaiter {
 mod tests {
     use std::time::Instant;
 
+    use habilis_network::ops::blob::ContentId;
     use habilis_network::protocol::{AppTag, MeshId, Message, MessageBody, MessageKind, Nickname};
+    use tokio::sync::oneshot;
 
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
-    use crate::a2a::TaskId;
+    use crate::a2a::{TaskId, tuning};
 
     fn leg(body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(
@@ -760,8 +753,8 @@ mod tests {
     #[test]
     fn own_legs_enter_the_record_in_send_order_when_a_later_verdict_comes_first() {
         let mut app = super::A2aApp::new();
-        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
-        let (artifact_tx, artifact_rx) = tokio::sync::oneshot::channel();
+        let (status_tx, status_rx) = oneshot::channel();
+        let (artifact_tx, artifact_rx) = oneshot::channel();
         app.queue_own_leg(leg("status"), status_rx);
         app.queue_own_leg(leg("artifact"), artifact_rx);
 
@@ -787,8 +780,8 @@ mod tests {
     #[test]
     fn a_leg_that_was_not_delivered_leaves_no_record_and_does_not_block_the_next() {
         let mut app = super::A2aApp::new();
-        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
-        let (artifact_tx, artifact_rx) = tokio::sync::oneshot::channel();
+        let (status_tx, status_rx) = oneshot::channel();
+        let (artifact_tx, artifact_rx) = oneshot::channel();
         app.queue_own_leg(leg("status"), status_rx);
         app.queue_own_leg(leg("artifact"), artifact_rx);
 
@@ -808,7 +801,7 @@ mod tests {
     #[test]
     fn a_leg_whose_send_task_was_dropped_is_not_delivered() {
         let mut app = super::A2aApp::new();
-        let (status_tx, status_rx) = tokio::sync::oneshot::channel::<bool>();
+        let (status_tx, status_rx) = oneshot::channel::<bool>();
         app.queue_own_leg(leg("status"), status_rx);
         drop(status_tx);
         assert!(
@@ -855,7 +848,7 @@ mod tests {
     #[test]
     fn rpc_responder_delivers_response_and_timeout() {
         // A fulfilled response resolves to the parsed result.
-        let (ok_tx, ok_rx) = tokio::sync::oneshot::channel();
+        let (ok_tx, ok_rx) = oneshot::channel();
         A2aResponder::Rpc(ok_tx).send_response(r#"{"result":{"task":{"id":"x"}}}"#);
         assert_eq!(
             ok_rx.blocking_recv().unwrap().unwrap()["task"]["id"],
@@ -864,7 +857,7 @@ mod tests {
         );
 
         // A deadline timeout resolves to the standard -32000 error.
-        let (timeout_tx, timeout_rx) = tokio::sync::oneshot::channel();
+        let (timeout_tx, timeout_rx) = oneshot::channel();
         A2aResponder::Rpc(timeout_tx).send_timeout();
         assert_eq!(
             timeout_rx.blocking_recv().unwrap().unwrap_err().code,
@@ -880,8 +873,8 @@ mod tests {
     fn peer_left_fails_only_that_peers_waiters() {
         let mut app = super::A2aApp::new();
         let far = tokio::time::Instant::now() + std::time::Duration::from_mins(5);
-        let (bob_tx, bob_rx) = tokio::sync::oneshot::channel();
-        let (carol_tx, carol_rx) = tokio::sync::oneshot::channel();
+        let (bob_tx, bob_rx) = oneshot::channel();
+        let (carol_tx, carol_rx) = oneshot::channel();
         app.a2a_waiters.push(super::A2aWaiter {
             corr: habilis_network::protocol::CorrId::from("corr-bob"),
             peer: Nickname::from("bob"),
@@ -924,13 +917,13 @@ mod tests {
     }
 
     fn waiter_with_blob(corr: &str, group: &str) -> super::A2aWaiter {
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         super::A2aWaiter {
             corr: habilis_network::protocol::CorrId::from(corr),
             peer: Nickname::from("bob"),
             deadline: tokio::time::Instant::now() + std::time::Duration::from_mins(5),
             responder: A2aResponder::Typed(tx),
-            blob_group: Some(habilis_network::ops::blob::ContentId::new(group)),
+            blob_group: Some(ContentId::new(group)),
             opens_task: true,
         }
     }
@@ -959,7 +952,7 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-1")],
+            vec![ContentId::new("group-1")],
             "the task is created in the submitted state"
         );
     }
@@ -969,7 +962,7 @@ mod tests {
     #[test]
     fn a_first_call_blob_without_a_task_is_orphaned() {
         let mut app = super::A2aApp::new();
-        let group = |name: &str| habilis_network::ops::blob::ContentId::new(name);
+        let group = |name: &str| ContentId::new(name);
 
         app.a2a_waiters
             .push(waiter_with_blob("corr-err", "group-err"));
@@ -1019,10 +1012,10 @@ mod tests {
             app.take_call_blobs(&[], Instant::now()).is_empty(),
             "the worker may hold it"
         );
-        let timeout = std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
+        let timeout = std::time::Duration::from_secs(tuning::task_timeout_secs());
         assert_eq!(
             app.take_call_blobs(&[], Instant::now() + timeout),
-            vec![habilis_network::ops::blob::ContentId::new("group-late")],
+            vec![ContentId::new("group-late")],
             "the task moves to working"
         );
     }
@@ -1054,7 +1047,7 @@ mod tests {
             &created,
         );
 
-        let group = |name: &str| habilis_network::ops::blob::ContentId::new(name);
+        let group = |name: &str| ContentId::new(name);
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
             vec![group("group-bob")],
@@ -1093,7 +1086,7 @@ mod tests {
             app.tasks.contains_key(&task_id),
             "the late reply adopts the task"
         );
-        let timeout = std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
+        let timeout = std::time::Duration::from_secs(tuning::task_timeout_secs());
         assert!(
             app.take_call_blobs(&[], Instant::now() + timeout)
                 .is_empty(),
@@ -1101,7 +1094,7 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[task_id], Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-slow")],
+            vec![ContentId::new("group-slow")],
             "the cancel is recorded"
         );
     }
@@ -1171,7 +1164,7 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new(task_id.as_str())],
+            vec![ContentId::new(task_id.as_str())],
             "the task reply is working"
         );
     }
@@ -1200,17 +1193,17 @@ mod tests {
             &accepted.to_string(),
         );
 
-        let timeout = std::time::Duration::from_secs(crate::a2a::tuning::task_timeout_secs());
+        let timeout = std::time::Duration::from_secs(tuning::task_timeout_secs());
         let evicted = app.take_call_blobs(&[], Instant::now() + timeout);
 
         assert_eq!(
             evicted,
-            vec![habilis_network::ops::blob::ContentId::new("group-first")],
+            vec![ContentId::new("group-first")],
             "the reply is the expected status"
         );
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new("group-retry")],
+            vec![ContentId::new("group-retry")],
             "the reply is the expected status update"
         );
     }
@@ -1238,9 +1231,7 @@ mod tests {
         );
         assert_eq!(
             app.take_call_blobs(&[], Instant::now()),
-            vec![habilis_network::ops::blob::ContentId::new(
-                "group-late-error"
-            )],
+            vec![ContentId::new("group-late-error")],
             "the reply carries no error"
         );
     }
@@ -1280,8 +1271,8 @@ mod tests {
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![
-                habilis_network::ops::blob::ContentId::new("group-held"),
-                habilis_network::ops::blob::ContentId::new("group-late-held"),
+                ContentId::new("group-held"),
+                ContentId::new("group-late-held"),
             ],
             "the call blobs are taken once"
         );
@@ -1334,8 +1325,8 @@ mod tests {
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![
-                habilis_network::ops::blob::ContentId::new("group-second"),
-                habilis_network::ops::blob::ContentId::new("group-first"),
+                ContentId::new("group-second"),
+                ContentId::new("group-first"),
             ],
             "the blob set is empty after the take"
         );
@@ -1352,8 +1343,8 @@ mod tests {
         assert_eq!(
             app.take_call_blobs(std::slice::from_ref(&task_id), Instant::now()),
             vec![
-                habilis_network::ops::blob::ContentId::new("group-first"),
-                habilis_network::ops::blob::ContentId::new("group-second"),
+                ContentId::new("group-first"),
+                ContentId::new("group-second"),
             ],
             "the sweep reports the expected blob"
         );

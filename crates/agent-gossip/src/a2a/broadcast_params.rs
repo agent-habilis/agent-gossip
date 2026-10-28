@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
-use habilis_network::ops::{Delivered, MeshSender, PendingSend};
+use habilis_network::ops::blob::{ContentId, OffloadRequest};
+use habilis_network::ops::{Delivered, MeshSender, PendingSend, blob, doc};
 use habilis_network::protocol::message::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
     AppFrameParams, AppTag, Channel, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
@@ -17,10 +18,17 @@ use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
+use habilis_network::util::logging;
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::Sender;
+use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
-use crate::a2a::a2a_app::{A2aApp, DeliveredLeg, UnsentLeg};
+use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
 use crate::a2a::session_request::SessionRequest;
-use crate::a2a::wire;
+use crate::a2a::surfaced_event::PollOrRegisterParams;
+use crate::a2a::surfaced_event::PollResponder::Typed;
+use crate::a2a::task_record::TaskRecord;
+use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
 use crate::output;
 
 /// Retain a just-built outbound message in the local log (pruning the
@@ -35,7 +43,7 @@ fn retain_outbound(state: &mut EventLoopState, message: &Verified) {
             state.forget_msg_seq(&evicted.key(), seq, &evicted_hash);
         }
     }
-    habilis_network::util::logging::log_out(message);
+    logging::log_out(message);
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
@@ -218,7 +226,7 @@ fn log_unless_done(delivered: Delivered) {
 /// Answer a session request once its sends have an outcome. Returns whether a send started.
 fn answer_when_sent(
     outcome: anyhow::Result<(Authored, Vec<PendingSend>)>,
-    response: tokio::sync::oneshot::Sender<anyhow::Result<Authored>>,
+    response: Sender<anyhow::Result<Authored>>,
 ) -> bool {
     match outcome {
         Ok((message, pending)) => {
@@ -328,16 +336,16 @@ pub(crate) async fn send_broadcast(
         ));
     }
     let signer = Arc::clone(state.identity());
-    let payload = crate::a2a::status_update_params::compose_broadcast(mesh, text.as_str());
+    let payload = status_update_params::compose_broadcast(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
-    let body = crate::a2a::status_update_params::payload_body(&payload)?;
+    let body = status_update_params::payload_body(&payload)?;
     // On a passworded mesh, seal the chat body so a relay or a captured frame
     // can't read it. Everything downstream (dedup, the per-author chain, the
     // message log, anti-entropy) operates on the sealed frame; only the local
     // echo + the returned Message carry plaintext.
     let wire_body = match state.broadcast_key() {
-        Some(key) => habilis_network::ops::doc::encrypt_body(&body, key)?,
+        Some(key) => doc::encrypt_body(&body, key)?,
         None => body.clone(),
     };
     let encrypted = state.broadcast_key().is_some();
@@ -885,7 +893,7 @@ pub(crate) fn seal_directed(
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
     let doc = state.doc(Channel::Meta).to_json();
-    let key = crate::a2a::card::peer_seal_key(&doc, to).ok_or_else(|| {
+    let key = card::peer_seal_key(&doc, to).ok_or_else(|| {
         // A peer whose card did not publish says why in its own entry. Without that, the sender
         // waits for cards that never come.
         match doc
@@ -927,15 +935,15 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
         note,
         waiting,
     } = leg;
-    crate::a2a::status_update_params::status_update(
+    status_update_params::status_update(
         mesh,
-        crate::a2a::status_update_params::StatusUpdateParams {
+        status_update_params::StatusUpdateParams {
             task_id,
             state,
             note,
-            metadata: Some(crate::a2a::status_update_params::status_metadata(
+            metadata: Some(status_update_params::status_metadata(
                 waiting,
-                crate::a2a::status_update_params::leg_order_ms(),
+                status_update_params::leg_order_ms(),
             )),
         },
     )
@@ -979,7 +987,7 @@ pub(crate) async fn broadcast_task_status(
         note,
         waiting: leg.waiting(),
     });
-    let plain = crate::a2a::status_update_params::payload_body(&update)?;
+    let plain = status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::STATUS),
@@ -1061,10 +1069,10 @@ pub(crate) async fn send_msg(
             text.as_str().len()
         ));
     }
-    let payload = crate::a2a::status_update_params::compose_msg(mesh, text.as_str());
+    let payload = status_update_params::compose_msg(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
-    let plain = crate::a2a::status_update_params::payload_body(&payload)?;
+    let plain = status_update_params::payload_body(&payload)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::MSG),
@@ -1137,8 +1145,8 @@ pub(crate) async fn broadcast_task_artifact(
         app,
     )
     .await?;
-    let update = crate::a2a::status_update_params::artifact_update_parts(mesh, task_id, parts);
-    let plain = crate::a2a::status_update_params::payload_body(&update)?;
+    let update = status_update_params::artifact_update_parts(mesh, task_id, parts);
+    let plain = status_update_params::payload_body(&update)?;
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::ARTIFACT),
@@ -1221,14 +1229,14 @@ async fn build_offload_parts(
     // Every offloaded blob inherits the mesh password (if any), so a scraped
     // ticket can't be redeemed without it.
     let password = state.mesh_password();
-    let ticket = habilis_network::ops::blob::offload(
+    let ticket = blob::offload(
         &mut app.blob_server,
         &lookups,
         relay_transport,
-        habilis_network::ops::blob::OffloadRequest {
+        OffloadRequest {
             path: file.path,
             spool_dir: spool,
-            content_id: habilis_network::ops::blob::ContentId::new(task_id.as_str()),
+            content_id: ContentId::new(task_id.as_str()),
             password: password.cloned(),
         },
     )
@@ -1263,7 +1271,7 @@ pub(crate) struct CallFile<'source> {
 /// timed-out call that it replaces.
 fn call_blob_group(
     task_id: Option<crate::a2a::TaskId>,
-    tasks: &HashMap<crate::a2a::TaskId, crate::a2a::task_record::TaskRecord>,
+    tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
 ) -> (crate::a2a::TaskId, bool) {
     match task_id {
         Some(task_id) if tasks.contains_key(&task_id) => (task_id, false),
@@ -1273,7 +1281,7 @@ fn call_blob_group(
 
 /// The blob group a call owns until a task adopts it.
 pub(crate) struct CallBlob {
-    pub(crate) group: habilis_network::ops::blob::ContentId,
+    pub(crate) group: ContentId,
     /// Whether the call creates the task, rather than follows up on one.
     pub(crate) opens_task: bool,
 }
@@ -1323,7 +1331,7 @@ pub(crate) async fn attach_call_file(
     message.parts = parts;
     *slot = serde_json::to_value(message)?;
     Ok(fresh_group.then(|| CallBlob {
-        group: habilis_network::ops::blob::ContentId::new(group_id.as_str()),
+        group: ContentId::new(group_id.as_str()),
         opens_task,
     }))
 }
@@ -1409,8 +1417,8 @@ fn retain_leg(state: &mut EventLoopState, message: &Verified, content: bool) {
 /// Queue `msg` for the message log, behind the verdict of its send. The handle is replaced by
 /// one that gives the same verdict.
 fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -> PendingSend {
-    let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
-    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    let (sent_tx, sent_rx) = oneshot::channel();
+    let (verdict_tx, verdict_rx) = oneshot::channel();
     app.unsent_legs.push(UnsentLeg {
         frames: vec![message],
         cache: None,
@@ -1436,7 +1444,7 @@ fn queue_sharded_leg(
     pending: Vec<Option<PendingSend>>,
 ) -> Vec<PendingSend> {
     let pending: Vec<PendingSend> = pending.into_iter().flatten().collect();
-    let (sent_tx, sent) = tokio::sync::oneshot::channel();
+    let (sent_tx, sent) = oneshot::channel();
     app.unsent_legs.push(UnsentLeg {
         frames,
         cache,
@@ -1446,7 +1454,7 @@ fn queue_sharded_leg(
         let _ = sent_tx.send(true);
         return pending;
     }
-    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    let (verdict_tx, verdict_rx) = oneshot::channel();
     tokio::spawn(async move {
         let verdict = settle(pending).await;
         let _ = sent_tx.send(verdict.is_ok());
@@ -1463,12 +1471,12 @@ fn take_sent_legs(app: &mut A2aApp) -> Vec<UnsentLeg> {
             sent.push(UnsentLeg {
                 frames: std::mem::take(&mut leg.frames),
                 cache: leg.cache.take(),
-                sent: tokio::sync::oneshot::channel().1,
+                sent: oneshot::channel().1,
             });
             false
         }
-        Ok(false) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+        Ok(false) | Err(Closed) => false,
+        Err(Empty) => true,
     });
     sent
 }
@@ -1501,7 +1509,7 @@ fn echo_when_sent(
         return pending;
     }
     let out = out.clone();
-    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    let (verdict_tx, verdict_rx) = oneshot::channel();
     tokio::spawn(async move {
         let verdict = settle(pending).await;
         if verdict.is_ok() {
@@ -1518,9 +1526,9 @@ fn echo_when_sent(
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
 pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Message, task_id: &crate::a2a::TaskId) {
-    crate::a2a::task_record::ingest(
+    task_record::ingest(
         &mut app.tasks,
-        crate::a2a::task_record::IngestLegParams {
+        task_record::IngestLegParams {
             frame: message,
             task_id,
             mine: true,
@@ -1554,14 +1562,14 @@ fn ingest_own_leg_when_sent(
         task_id: task_id.clone(),
     };
     if pending.is_empty() {
-        let (queue_tx, queue_rx) = tokio::sync::oneshot::channel();
+        let (queue_tx, queue_rx) = oneshot::channel();
         let _ = queue_tx.send(true);
         app.queue_own_leg(delivered, queue_rx);
         app.drain_delivered_legs();
         return pending;
     }
-    let (queue_tx, queue_rx) = tokio::sync::oneshot::channel();
-    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    let (queue_tx, queue_rx) = oneshot::channel();
+    let (verdict_tx, verdict_rx) = oneshot::channel();
     app.queue_own_leg(delivered, queue_rx);
     tokio::spawn(async move {
         let verdict = settle(pending).await;
@@ -1617,7 +1625,7 @@ pub(crate) async fn send_shard_repair_requests(
             },
         )
         .sign(state.identity());
-        habilis_network::util::logging::log_out(&frame);
+        logging::log_out(&frame);
         match frame.serialize() {
             // In the background: this runs from `on_tick`, inline on the event
             // loop, where a cold `deliver` would stop the node for the dial.
@@ -1643,7 +1651,7 @@ pub(crate) struct BroadcastA2aCallParams<'caller> {
     pub(crate) method: &'caller str,
     pub(crate) params: serde_json::Value,
     pub(crate) timeout: std::time::Duration,
-    pub(crate) responder: crate::a2a::a2a_app::A2aResponder,
+    pub(crate) responder: A2aResponder,
     /// `a2a call --file`: attached only once the peer check passes, so a call
     /// that cannot go out spools nothing.
     pub(crate) file: Option<FileRef>,
@@ -1744,7 +1752,7 @@ pub(crate) async fn broadcast_a2a_call(
         );
     }
     let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
-    if let Some(unregistered) = app.register_a2a_waiter(crate::a2a::a2a_app::A2aWaiter {
+    if let Some(unregistered) = app.register_a2a_waiter(A2aWaiter {
         corr,
         peer,
         deadline,
@@ -1769,7 +1777,7 @@ pub(crate) async fn broadcast_a2a_call(
     )
     .await
     {
-        if method == crate::a2a::served::READER_GET {
+        if method == served::READER_GET {
             tracing::debug!(target: "agent_gossip::a2a", %error, "reader query send failed");
         } else {
             tracing::warn!(target: "agent_gossip::a2a", %error, "a2a request send failed");
@@ -1812,7 +1820,7 @@ pub(crate) async fn send_directed_rpc(
     let signer = Arc::clone(state.identity());
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).sign(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        habilis_network::util::logging::log_out(&single);
+        logging::log_out(&single);
         let bytes = single.serialize()?;
         log_unless_done(habilis_network::ops::deliver(&single, bytes, state, sender).await?);
         return Ok(());
@@ -1860,7 +1868,7 @@ pub(crate) async fn send_directed_rpc(
                 total,
             }))
             .sign(&signer);
-        habilis_network::util::logging::log_out(&message);
+        logging::log_out(&message);
         let bytes = message.serialize()?;
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
@@ -1878,7 +1886,7 @@ pub(crate) async fn send_directed_rpc(
 /// `Ping` handler, which passes no responder and emits the `ping_report`
 /// event instead.
 async fn session_ping(
-    response: tokio::sync::oneshot::Sender<Vec<(Nickname, u64)>>,
+    response: Sender<Vec<(Nickname, u64)>>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
 ) -> bool {
@@ -1977,15 +1985,14 @@ pub(crate) async fn handle_session_request(
             // buffered, else (with `long`) park a typed waiter the loop
             // fulfills/expires. A parked waiter broadcasts nothing → `false`.
             if !long {
-                crate::a2a::receipt::send_read_receipts(app, state, context, after).await;
+                receipt::send_read_receipts(app, state, context, after).await;
             }
-            app.surfaced
-                .poll_or_register(crate::a2a::surfaced_event::PollOrRegisterParams {
-                    after,
-                    long,
-                    now: tokio::time::Instant::now(),
-                    responder: crate::a2a::surfaced_event::PollResponder::Typed(response),
-                });
+            app.surfaced.poll_or_register(PollOrRegisterParams {
+                after,
+                long,
+                now: tokio::time::Instant::now(),
+                responder: Typed(response),
+            });
             false
         }
         SessionRequest::TaskStatus {
@@ -2098,7 +2105,7 @@ pub(crate) async fn handle_session_request(
                     method: &method,
                     params: rpc_params,
                     timeout,
-                    responder: crate::a2a::a2a_app::A2aResponder::Typed(response),
+                    responder: A2aResponder::Typed(response),
                     file: None,
                 },
                 state,
@@ -2282,14 +2289,17 @@ mod call_blob_group_tests {
 
 #[cfg(test)]
 mod echo_when_sent_tests {
+    use habilis_network::protocol::message::Authored;
     use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::oneshot;
 
     use super::{EchoAs, PendingSend, echo_when_sent};
+    use crate::a2a::wire;
     use crate::output;
     use crate::output_event::OutputEvent;
 
-    fn echo() -> habilis_network::protocol::message::Authored {
+    fn echo() -> Authored {
         echo_raw()
             .sign(&habilis_network::protocol::Identity::generate())
             .authored()
@@ -2299,12 +2309,12 @@ mod echo_when_sent_tests {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
-            MessageKind::app_to(crate::a2a::wire::MSG, Nickname::from("bob"), None),
+            MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
             MessageBody::new("hi").expect("valid body"),
         )
     }
 
-    fn echoes(events: &mut tokio::sync::mpsc::UnboundedReceiver<OutputEvent>) -> usize {
+    fn echoes(events: &mut UnboundedReceiver<OutputEvent>) -> usize {
         std::iter::from_fn(|| events.try_recv().ok())
             .filter(|event| matches!(event, OutputEvent::Message { is_self: true, .. }))
             .count()
@@ -2351,13 +2361,15 @@ mod echo_when_sent_tests {
 
 #[cfg(test)]
 mod sharded_leg_tests {
+    use habilis_network::protocol::message::Verified;
     use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
     use tokio::sync::oneshot;
 
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
-    use crate::a2a::a2a_app::A2aApp;
+    use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
+    use crate::a2a::wire;
 
-    fn shard(text: &str) -> habilis_network::protocol::message::Verified {
+    fn shard(text: &str) -> Verified {
         shard_raw(text).sign(&habilis_network::protocol::Identity::generate())
     }
 
@@ -2365,7 +2377,7 @@ mod sharded_leg_tests {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
-            MessageKind::app_to(crate::a2a::wire::MSG, Nickname::from("bob"), None),
+            MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
             MessageBody::new(text).expect("valid body"),
         )
     }
@@ -2399,7 +2411,7 @@ mod sharded_leg_tests {
         let mut app = A2aApp::new();
         let (sent_tx, sent) = oneshot::channel::<bool>();
         drop(sent_tx);
-        app.unsent_legs.push(crate::a2a::a2a_app::UnsentLeg {
+        app.unsent_legs.push(UnsentLeg {
             frames: vec![shard("a")],
             cache: None,
             sent,

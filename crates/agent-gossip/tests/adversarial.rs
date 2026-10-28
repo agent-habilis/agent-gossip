@@ -21,10 +21,11 @@
 use std::time::{Duration, Instant};
 
 use agent_gossip::OutputEvent;
-use agent_gossip::a2a::{TaskId, TaskState};
+use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
 use agent_gossip::harness::test_key::{self, CraftedMsg};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
+use habilis_network::util::tuning;
 use serde_json::{Value, json};
 
 // Delivery-barrier budget. These tests assert a message *is* delivered (so
@@ -279,7 +280,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         "the original never arrived"
     );
 
-    let fillers = habilis_network::util::tuning::SEEN_IDS_CAP + 1;
+    let fillers = tuning::SEEN_IDS_CAP + 1;
     for index in 0..fillers {
         let filler = CraftedMsg::new(mesh, "replayer", &format!("filler {index}"))
             .wrap_a2a()
@@ -677,7 +678,7 @@ async fn a_bystanders_task_status_is_dropped() {
         matches!(
             event,
             OutputEvent::Task { message, .. }
-                if agent_gossip::a2a::status_update_params::frame_task_state(message)
+                if status_update_params::frame_task_state(message)
                     == Some(TaskState::Completed)
         )
     });
@@ -866,7 +867,7 @@ fn is_flood_message(event: &OutputEvent, body: &str) -> bool {
     matches!(
         event,
         OutputEvent::Message { message, is_self: false }
-            if agent_gossip::a2a::status_update_params::chat_text(message).as_deref() == Some(body)
+            if status_update_params::chat_text(message).as_deref() == Some(body)
     )
 }
 

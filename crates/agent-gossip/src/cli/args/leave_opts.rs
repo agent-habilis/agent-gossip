@@ -34,6 +34,7 @@ pub(crate) struct LeaveOpts {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use habilis_network::util::tuning;
 
     use crate::cli::args::{Cli, Commands};
 
@@ -59,7 +60,7 @@ mod tests {
         // rendezvous and drop its state file; confirming sooner reports a
         // live daemon as gone, and a relaunch then races it.
         assert!(
-            options.confirm_timeout_secs > habilis_network::util::tuning::NODE_LEAVE.as_secs(),
+            options.confirm_timeout_secs > tuning::NODE_LEAVE.as_secs(),
             "leave gives up before the daemon's own leave budget: {}",
             options.confirm_timeout_secs
         );

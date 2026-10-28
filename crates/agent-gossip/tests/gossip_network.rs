@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
@@ -20,6 +21,7 @@ use common::{
     cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
     wait_until,
 };
+use habilis_network::util::process;
 use serde_json::json;
 
 /// Heal cadence for the reliability tests, injected through the hidden
@@ -3708,7 +3710,7 @@ fn detached_daemon_releases_a_captured_pipe() {
         .expect("failed to spawn the launcher");
     let mut stdout = launcher.stdout.take().unwrap();
     let mut stderr = launcher.stderr.take().unwrap();
-    let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+    let (eof_tx, eof_rx) = mpsc::channel();
     let stderr_eof = eof_tx.clone();
     std::thread::spawn(move || {
         let _ = std::io::Read::read_to_end(&mut stdout, &mut Vec::new());
@@ -3759,7 +3761,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
     let mut zombie = Command::new("true").spawn().unwrap();
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
-    while habilis_network::util::process::live_start_time(zombie.id()).is_some() {
+    while process::live_start_time(zombie.id()).is_some() {
         assert!(Instant::now() < exited, "the zombie owner never exited");
         std::thread::sleep(POLL);
     }

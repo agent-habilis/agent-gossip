@@ -1,3 +1,4 @@
+use habilis_network::util::logging;
 use habilis_network::util::logging::LogSink;
 
 /// Build the deferred log sink and register it process-globally.
@@ -6,5 +7,5 @@ use habilis_network::util::logging::LogSink;
 /// until `cli` resolves the mesh id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
-    habilis_network::util::logging::install()
+    logging::install()
 }

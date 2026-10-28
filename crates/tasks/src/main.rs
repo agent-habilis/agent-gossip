@@ -1,5 +1,6 @@
 use std::process::ExitCode;
 
+use cargo_zigbuild::macos::install_name_tool;
 use clap::{Parser, Subcommand};
 use xshell::Shell;
 
@@ -232,7 +233,7 @@ fn run_as_zig_multicall() -> Option<ExitCode> {
         }
         .execute()
     } else if name.eq_ignore_ascii_case("install_name_tool") {
-        cargo_zigbuild::macos::install_name_tool::execute(args)
+        install_name_tool::execute(args)
     } else {
         return None;
     };

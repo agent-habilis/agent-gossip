@@ -1,4 +1,6 @@
 use anyhow::Result;
+use habilis_network::runtime::state_file::SessionIdentity;
+use habilis_network::runtime::{state_file, tuning};
 
 use super::args::ReadyOpts;
 use super::print_ready_identity::print_ready_identity;
@@ -11,8 +13,8 @@ pub(super) struct ReadyStateFile {
 }
 
 impl ReadyStateFile {
-    pub(super) fn identity(&self) -> habilis_network::runtime::state_file::SessionIdentity {
-        habilis_network::runtime::state_file::read_identity(&self.path)
+    pub(super) fn identity(&self) -> SessionIdentity {
+        state_file::read_identity(&self.path)
     }
 }
 
@@ -28,7 +30,7 @@ pub(super) async fn wait_for_ready(
     let now = tokio::time::Instant::now();
     let deadline = now
         .checked_add(std::time::Duration::from_secs(timeout_secs))
-        .unwrap_or_else(|| now + habilis_network::runtime::tuning::READY_MAX);
+        .unwrap_or_else(|| now + tuning::READY_MAX);
     loop {
         // Read off the runtime's blocking pool: a `--state-file` on a hung
         // mount must not block a worker thread. A read error (malformed/torn/
@@ -37,10 +39,7 @@ pub(super) async fn wait_for_ready(
         // can't self-heal and just spins to the deadline, so log it so the
         // cause is recoverable.
         let path = state_file.to_path_buf();
-        let read = tokio::task::spawn_blocking(move || {
-            habilis_network::runtime::state_file::read_snapshot(&path)
-        })
-        .await?;
+        let read = tokio::task::spawn_blocking(move || state_file::read_snapshot(&path)).await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
                 return Ok(ReadyStateFile {
@@ -58,7 +57,7 @@ pub(super) async fn wait_for_ready(
                 state_file.display()
             );
         }
-        tokio::time::sleep(habilis_network::runtime::tuning::READY_POLL_INTERVAL).await;
+        tokio::time::sleep(tuning::READY_POLL_INTERVAL).await;
     }
 }
 
@@ -75,8 +74,7 @@ pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
     let now = habilis_network::protocol::UnixSecs::now().as_secs();
     let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
     let skew = now - last_updated; // >0: file is in the past; <0: in the future
-    let window =
-        i64::try_from(habilis_network::runtime::tuning::READY_FRESH.as_secs()).unwrap_or(i64::MAX);
+    let window = i64::try_from(tuning::READY_FRESH.as_secs()).unwrap_or(i64::MAX);
     skew.abs() <= window
 }
 

@@ -1,9 +1,11 @@
 use anyhow::Result;
 use habilis_network::protocol::{MeshId, Nickname};
+use habilis_network::runtime::tuning;
 
 use super::args::{PollIdentity, PollOpts};
 use super::ready_state_file;
 use crate::a2a::ipc_command::IpcCommand;
+use crate::a2a::surfaced_event;
 
 /// Query the running daemon's live peer roster. Always emits the
 /// raw IPC JSON (`{ok, peers, peer_count}`), like `poll`.
@@ -23,11 +25,8 @@ pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
     // before the daemon has minted its identity.
     let (mesh, nickname) = match identity {
         PollIdentity::StateFile(path) => {
-            let ready = ready_state_file::wait_for_ready(
-                &path,
-                habilis_network::runtime::tuning::READY_MAX.as_secs(),
-            )
-            .await?;
+            let ready =
+                ready_state_file::wait_for_ready(&path, tuning::READY_MAX.as_secs()).await?;
             let carried = ready.identity();
             let missing = |field: &'static str| {
                 anyhow::anyhow!("state file {} carries no {field}", path.display())
@@ -82,7 +81,7 @@ pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
         // and exit 0 — re-issuing would hit a socket that is about to vanish.
         // The sentinel is a control response and never reaches stdout. A
         // daemon that dies WITHOUT sending it (crash, SIGKILL) still errors.
-        if response == crate::a2a::surfaced_event::SHUTDOWN_SENTINEL {
+        if response == surfaced_event::SHUTDOWN_SENTINEL {
             println!("[]");
             return Ok(());
         }
@@ -95,7 +94,7 @@ pub(super) async fn poll(mut options: PollOpts) -> Result<()> {
         // degrading long reads to immediate empties (waiter registry full)
         // can't spin this loop hot — the unchanged cursor re-reads anything
         // that lands during the sleep.
-        let min_cycle = habilis_network::runtime::tuning::POLL_LONG_MIN_CYCLE;
+        let min_cycle = tuning::POLL_LONG_MIN_CYCLE;
         if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
             tokio::time::sleep(remaining).await;
         }

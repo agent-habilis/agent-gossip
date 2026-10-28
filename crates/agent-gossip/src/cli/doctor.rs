@@ -1,3 +1,4 @@
+use std::env::consts;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -6,6 +7,7 @@ use anyhow::Result;
 use habilis_network::net::{self, NetworkCapability};
 use habilis_network::protocol::{LockedMesh, Mesh, MeshId, RelayChoice};
 use habilis_network::runtime::ipc;
+use habilis_network::util::logs;
 use serde::Serialize;
 
 use super::agent::{self, AgentState};
@@ -141,13 +143,9 @@ fn environment_section() -> Section {
         Check::new(
             "platform",
             Verdict::Ok,
-            &format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+            &format!("{}/{}", consts::OS, consts::ARCH),
         ),
-        Check::new(
-            "log dir",
-            Verdict::Ok,
-            &output::home_path(&habilis_network::util::logs::log_dir()),
-        ),
+        Check::new("log dir", Verdict::Ok, &output::home_path(&logs::log_dir())),
         Check::new(
             "runtime dir",
             Verdict::Ok,

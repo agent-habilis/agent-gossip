@@ -305,6 +305,7 @@ mod tests {
     use std::collections::HashSet;
 
     use habilis_network::protocol::{AuthorKey, Nickname};
+    use habilis_network::util::consts;
 
     use super::{own_card, publish_merges};
 
@@ -487,7 +488,7 @@ mod tests {
         let whole = serde_json::json!({ "peers": { nickname.as_str(): { "card": card } } });
         let whole_len = passworded_frame_len(&whole).unwrap();
         assert!(
-            whole_len > habilis_network::util::consts::MAX_MESSAGE_SIZE,
+            whole_len > consts::MAX_MESSAGE_SIZE,
             "the premise of issue 41: the card as one merge is {whole_len} bytes on the wire"
         );
 
@@ -498,7 +499,7 @@ mod tests {
         for merge in &merges {
             let len = passworded_frame_len(merge).unwrap();
             assert!(
-                len + super::FRAME_MARGIN <= habilis_network::util::consts::MAX_MESSAGE_SIZE,
+                len + super::FRAME_MARGIN <= consts::MAX_MESSAGE_SIZE,
                 "a frame of {len} bytes leaves no margin"
             );
         }

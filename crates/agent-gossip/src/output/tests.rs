@@ -2,10 +2,12 @@
 //! snapshots + proptests). The wire serializers under test live in
 //! [`super::simple_event`].
 
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::message::{Authored, Verified};
 use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
+use crate::a2a::{node, status_update_params, wire};
+use crate::output::simple_event;
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -24,7 +26,7 @@ fn sid() -> habilis_network::protocol::MeshId {
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn view(message: Message) -> Authored {
-    habilis_network::protocol::message::Verified::fixture_unchecked(
+    Verified::fixture_unchecked(
         message,
         habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
     )
@@ -32,16 +34,15 @@ fn view(message: Message) -> Authored {
 }
 
 fn chat_frame_raw(author: &str, text: &str) -> Message {
-    let payload = crate::a2a::status_update_params::compose_broadcast(&sid(), text);
+    let payload = status_update_params::compose_broadcast(&sid(), text);
     let frame_id = habilis_network::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
-    let body =
-        crate::a2a::status_update_params::payload_body(&payload).expect("payload serializes");
+    let body = status_update_params::payload_body(&payload).expect("payload serializes");
     Message::new_app(
         &sid(),
         &nick(author),
         habilis_network::protocol::AppFrameParams {
-            tag: habilis_network::protocol::AppTag::from(crate::a2a::wire::BROADCAST),
+            tag: habilis_network::protocol::AppTag::from(wire::BROADCAST),
             to: None,
             corr: None,
             body,
@@ -97,7 +98,7 @@ fn json_signed_message_exposes_full_pubkey() {
 fn ready_event_drift_is_present_only_when_stale() {
     use super::OutputEvent;
     let make = |drift: Option<&str>| {
-        super::simple_event::event_json(&OutputEvent::Ready {
+        simple_event::event_json(&OutputEvent::Ready {
             mesh: sid(),
             name: habilis_network::protocol::MeshName::new("team").unwrap(),
             nickname: nick("alice"),
@@ -124,7 +125,7 @@ fn ready_event_drift_is_present_only_when_stale() {
 fn fork_event_json_shape() {
     use super::OutputEvent;
     let pubkey = "deadbeef".repeat(8); // 64 hex
-    let json = super::simple_event::event_json(&OutputEvent::Fork {
+    let json = simple_event::event_json(&OutputEvent::Fork {
         nickname: nick("alice"),
         pubkey: pubkey.clone(),
         seq: 7,
@@ -202,17 +203,17 @@ fn status_frame_raw(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Messag
         metadata,
     } = args;
     let tid = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
-    let update = crate::a2a::status_update_params::status_update(
+    let update = status_update_params::status_update(
         &sid(),
-        crate::a2a::status_update_params::StatusUpdateParams {
+        status_update_params::StatusUpdateParams {
             task_id: &tid,
             state,
             note,
             metadata,
         },
     );
-    let body = crate::a2a::status_update_params::payload_body(&update).expect("payload serializes");
-    let kind = MessageKind::app_to(crate::a2a::wire::STATUS, nick(to), None);
+    let body = status_update_params::payload_body(&update).expect("payload serializes");
+    let kind = MessageKind::app_to(wire::STATUS, nick(to), None);
     Message::new_frame(&sid(), &nick(author), kind, body)
 }
 
@@ -235,7 +236,7 @@ fn task_event_json_shape() {
     );
     // Routed through `event_json` so the captured-event form is
     // byte-identical to the stdout `--output json` line.
-    let json = super::simple_event::event_json(&OutputEvent::Task {
+    let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
     })
@@ -271,7 +272,7 @@ fn task_self_echo_flag() {
             metadata: None,
         },
     );
-    let json = super::simple_event::event_json(&OutputEvent::Task {
+    let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: true,
     })
@@ -297,14 +298,14 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
                 metadata,
             },
         );
-        let json = super::simple_event::event_json(&OutputEvent::Task {
+        let json = simple_event::event_json(&OutputEvent::Task {
             message: Box::new(message),
             is_self: false,
         })
         .expect("task event produces a JSON line");
         parse(&json)
     };
-    let waiting = line(crate::a2a::status_update_params::waiting_metadata(Some(
+    let waiting = line(status_update_params::waiting_metadata(Some(
         "asks its user",
     )));
     assert_eq!(waiting["event"], "task");
@@ -326,10 +327,10 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::InputRequired,
             note: None,
-            metadata: crate::a2a::status_update_params::waiting_metadata(Some("asks its user")),
+            metadata: status_update_params::waiting_metadata(Some("asks its user")),
         },
     );
-    let json = super::simple_event::event_json(&OutputEvent::Task {
+    let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
     })
@@ -349,12 +350,10 @@ fn task_progress_event_json_shape() {
             task_id: "550e8400-e29b-41d4-a716-446655440000",
             state: crate::a2a::TaskState::Working,
             note: None,
-            metadata: Some(crate::a2a::status_update_params::beat_metadata(Some((
-                35, 100,
-            )))),
+            metadata: Some(status_update_params::beat_metadata(Some((35, 100)))),
         },
     );
-    let json = super::simple_event::event_json(&OutputEvent::Task {
+    let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
     })
@@ -377,7 +376,7 @@ fn task_progress_event_json_shape() {
 fn task_timeout_event_json_shape() {
     use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
-    let json = super::simple_event::event_json(&OutputEvent::TaskTimeout {
+    let json = simple_event::event_json(&OutputEvent::TaskTimeout {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         reason: TaskGoneReason::Timeout,
     })
@@ -392,7 +391,7 @@ fn task_timeout_event_json_shape() {
 fn task_peer_left_event_json_shape() {
     use super::{OutputEvent, TaskGoneReason};
     use crate::a2a::TaskId;
-    let json = super::simple_event::event_json(&OutputEvent::TaskTimeout {
+    let json = simple_event::event_json(&OutputEvent::TaskTimeout {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         reason: TaskGoneReason::PeerLeft,
     })
@@ -412,8 +411,7 @@ fn task_stalled_event_json_shape() {
         last_poll_secs_ago: 2_400,
         check_secs: 1_800,
     };
-    let json =
-        super::simple_event::event_json(&event).expect("task_stalled event produces a JSON line");
+    let json = simple_event::event_json(&event).expect("task_stalled event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "task_stalled");
     assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
@@ -424,12 +422,9 @@ fn task_stalled_event_json_shape() {
         parsed["display"],
         "💬️ task stalled · `<calm-otter>` has not polled for 40 min"
     );
-    assert!(
-        super::simple_event::is_visible(&event),
-        "the user must see it"
-    );
-    assert!(crate::a2a::node::wakes(&event), "it must ring the bell");
-    assert!(crate::a2a::node::is_pollable(&event), "poll must serve it");
+    assert!(simple_event::is_visible(&event), "the user must see it");
+    assert!(node::wakes(&event), "it must ring the bell");
+    assert!(node::is_pollable(&event), "poll must serve it");
 }
 
 // ── peer_timeout / peer_return shape ───────────────────────
@@ -485,7 +480,7 @@ fn receipt_event_is_invisible_and_stamped_so() {
         state: "read".to_owned(),
         ts: 1,
     };
-    assert!(!crate::output::simple_event::is_visible(&event));
+    assert!(!simple_event::is_visible(&event));
     let line = crate::output::event_json(&event).unwrap();
     assert_eq!(parse(&line)["is_visible"], false);
     assert_eq!(parse(&line)["state"], "read");
@@ -517,6 +512,7 @@ mod snapshots {
     use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
     use super::{format_msg_json, format_presence_json, view};
+    use crate::a2a::{status_update_params, wire};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
     /// timestamps from the fixture.
@@ -536,9 +532,9 @@ mod snapshots {
         metadata: Option<serde_json::Value>,
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
-        let mut update = crate::a2a::status_update_params::status_update(
+        let mut update = status_update_params::status_update(
             &habilis_network::protocol::MeshId::from("test"),
-            crate::a2a::status_update_params::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &tid,
                 state,
                 note,
@@ -550,11 +546,10 @@ mod snapshots {
             message.message_id =
                 crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000002");
         }
-        let body =
-            crate::a2a::status_update_params::payload_body(&update).expect("payload serializes");
+        let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
             MessageKind::app_to(
-                crate::a2a::wire::STATUS,
+                wire::STATUS,
                 habilis_network::protocol::Nickname::from("calm-otter"),
                 None,
             ),
@@ -577,26 +572,23 @@ mod snapshots {
         insta::assert_snapshot!(snap_status(
             crate::a2a::TaskState::Working,
             None,
-            Some(crate::a2a::status_update_params::beat_metadata(Some((
-                35, 100
-            )))),
+            Some(status_update_params::beat_metadata(Some((35, 100)))),
         ));
     }
 
     #[test]
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
-        let mut update = crate::a2a::status_update_params::artifact_update(
+        let mut update = status_update_params::artifact_update(
             &habilis_network::protocol::MeshId::from("test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
-        let body =
-            crate::a2a::status_update_params::payload_body(&update).expect("payload serializes");
+        let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
             MessageKind::app_to(
-                crate::a2a::wire::ARTIFACT,
+                wire::ARTIFACT,
                 habilis_network::protocol::Nickname::from("calm-otter"),
                 None,
             ),
@@ -609,17 +601,13 @@ mod snapshots {
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame_raw(text: &str) -> Message {
-        let mut payload = crate::a2a::status_update_params::compose_broadcast(
+        let mut payload = status_update_params::compose_broadcast(
             &habilis_network::protocol::MeshId::from("test"),
             text,
         );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
-        let body =
-            crate::a2a::status_update_params::payload_body(&payload).expect("payload serializes");
-        Message::fixture(
-            MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
-            body.as_str(),
-        )
+        let body = status_update_params::payload_body(&payload).expect("payload serializes");
+        Message::fixture(MessageKind::app_broadcast(wire::BROADCAST), body.as_str())
     }
 
     fn snap_chat_frame(text: &str) -> Authored {
@@ -628,16 +616,15 @@ mod snapshots {
 
     /// The directed twin of [`snap_chat_frame`].
     fn snap_msg_frame_raw(text: &str) -> Message {
-        let mut payload = crate::a2a::status_update_params::compose_msg(
+        let mut payload = status_update_params::compose_msg(
             &habilis_network::protocol::MeshId::from("test"),
             text,
         );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
-        let body =
-            crate::a2a::status_update_params::payload_body(&payload).expect("payload serializes");
+        let body = status_update_params::payload_body(&payload).expect("payload serializes");
         Message::fixture(
             MessageKind::app_to(
-                crate::a2a::wire::MSG,
+                wire::MSG,
                 habilis_network::protocol::Nickname::from("addressed-nick"),
                 None,
             ),

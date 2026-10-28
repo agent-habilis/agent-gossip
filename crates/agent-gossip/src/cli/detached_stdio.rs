@@ -4,7 +4,8 @@
 /// end would block the caller for its whole life and fill the pipe with message
 /// bodies. A file, `/dev/null` or a tty is inherited, so the skill's `.stderr`
 /// file still gets startup errors.
-pub(super) fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
+use std::os::fd::AsFd;
+pub(super) fn detached_stdio(stream: &impl AsFd) -> std::process::Stdio {
     use std::os::unix::fs::FileTypeExt as _;
     let captured: bool = stream
         .as_fd()

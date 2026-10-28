@@ -11,6 +11,8 @@
     reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
 )]
 
+use habilis_network::ops::doc;
+use habilis_network::ops::doc::MeshDoc;
 use habilis_network::protocol::{
     AppFrameParams, AppTag, ContentHash, CorrId, Identity, MeshId, Message, MessageBody,
     MessageKind, Nickname, PresenceSubtype, UnixSecs, encode_pubkey,
@@ -22,7 +24,9 @@ pub use habilis_network::util::consts::{
 };
 use habilis_network::x25519_dalek::PublicKey;
 
-use crate::a2a::wire;
+use crate::a2a::receipt::Receipt;
+use crate::a2a::receipt::ReceiptState::Read;
+use crate::a2a::{card, status_update_params, wire};
 
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
 /// so a test can hold one and pass it to the builder/helpers without the
@@ -147,7 +151,7 @@ impl<'caller> SealedMsgParams<'caller> {
 #[must_use]
 pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicKey> {
     let peer = Nickname::new(peer.to_owned()).ok()?;
-    crate::a2a::card::peer_seal_key(meta_doc, &peer)
+    card::peer_seal_key(meta_doc, &peer)
 }
 
 /// Builder for a crafted `Msg`. Choose every field, then `sign` (or not) and
@@ -230,14 +234,12 @@ impl CraftedMsg {
             self.message.kind.is_app(wire::MSG),
             "wrap_msg applies to msg frames only"
         );
-        let mut payload = crate::a2a::status_update_params::compose_msg(
-            &self.message.mesh,
-            self.message.body.as_str(),
-        );
+        let mut payload =
+            status_update_params::compose_msg(&self.message.mesh, self.message.body.as_str());
         payload.message_id = crate::a2a::MessageId::from_uuid_str(self.message.id.as_str())
             .expect("frame id is a valid uuid");
-        self.message.body = crate::a2a::status_update_params::payload_body(&payload)
-            .expect("crafted payload serializes");
+        self.message.body =
+            status_update_params::payload_body(&payload).expect("crafted payload serializes");
         self
     }
 
@@ -248,8 +250,8 @@ impl CraftedMsg {
     /// Unsigned until [`sign`](CraftedMsg::sign).
     pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
-        let body = habilis_network::ops::doc::merge_body(merge)
-            .expect("state merge envelope composes from any merge value");
+        let body =
+            doc::merge_body(merge).expect("state merge envelope composes from any merge value");
         Self {
             message: Message::new_state(mesh, &author, body),
         }
@@ -277,13 +279,11 @@ impl CraftedMsg {
         // genesis — hence the same `peers` object id. Built on an *ungated* doc it
         // would be a different map, and whether the victim's gate even fires
         // would come down to which of two conflicting maps automerge keeps.
-        let change: Vec<u8> =
-            habilis_network::ops::doc::MeshDoc::new_gated(crate::a2a::card_gate())
-                .build_change(&merge, author.as_str().as_bytes())
-                .expect("forge change builds")
-                .expect("forge merge is not a no-op");
-        let body =
-            habilis_network::ops::doc::change_body(&change, None).expect("change body composes");
+        let change: Vec<u8> = MeshDoc::new_gated(crate::a2a::card_gate())
+            .build_change(&merge, author.as_str().as_bytes())
+            .expect("forge change builds")
+            .expect("forge merge is not a no-op");
+        let body = doc::change_body(&change, None).expect("change body composes");
         Self {
             message: Message::new_channel_event(
                 mesh,
@@ -311,17 +311,16 @@ impl CraftedMsg {
             crate::a2a::TaskId::from_uuid_str(frame_task_id).expect("valid frame task id");
         let payload_tid =
             crate::a2a::TaskId::from_uuid_str(payload_task_id).expect("valid payload task id");
-        let update = crate::a2a::status_update_params::status_update(
+        let update = status_update_params::status_update(
             mesh,
-            crate::a2a::status_update_params::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &payload_tid,
                 state: crate::a2a::TaskState::Working,
                 note: None,
                 metadata: None,
             },
         );
-        let body = crate::a2a::status_update_params::payload_body(&update)
-            .expect("crafted payload serializes");
+        let body = status_update_params::payload_body(&update).expect("crafted payload serializes");
         Self {
             message: Message::new_app(
                 mesh,
@@ -354,17 +353,16 @@ impl CraftedMsg {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let to = Nickname::new(to.to_owned()).expect("valid target");
         let task_id = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
-        let update = crate::a2a::status_update_params::status_update(
+        let update = status_update_params::status_update(
             mesh,
-            crate::a2a::status_update_params::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &task_id,
                 state,
                 note: None,
                 metadata: beat.then(|| serde_json::json!({ crate::a2a::META_BEAT: true })),
             },
         );
-        let body = crate::a2a::status_update_params::payload_body(&update)
-            .expect("crafted payload serializes");
+        let body = status_update_params::payload_body(&update).expect("crafted payload serializes");
         let body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
         Self {
@@ -401,11 +399,11 @@ impl CraftedMsg {
                 body: MessageBody::new(String::new()).expect("empty body is valid"),
             },
         );
-        let mut payload = crate::a2a::status_update_params::compose_msg(mesh, text);
+        let mut payload = status_update_params::compose_msg(mesh, text);
         payload.message_id =
             crate::a2a::MessageId::from_uuid_str(frame.id.as_str()).expect("frame id is a uuid");
-        let body = crate::a2a::status_update_params::payload_body(&payload)
-            .expect("crafted payload serializes");
+        let body =
+            status_update_params::payload_body(&payload).expect("crafted payload serializes");
         frame.body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())
             .expect("sealing to a published key succeeds");
         Self { message: frame }
@@ -422,9 +420,9 @@ impl CraftedMsg {
         } = params;
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let to = Nickname::new(to.to_owned()).expect("valid target");
-        let receipt = crate::a2a::receipt::Receipt {
+        let receipt = Receipt {
             ref_id: ref_id.to_owned(),
-            state: crate::a2a::receipt::ReceiptState::Read,
+            state: Read,
         };
         let plain = serde_json::to_string(&receipt).expect("a receipt serializes");
         let body = habilis_network::protocol::seal_to_body(&seal_key, &plain)
@@ -473,14 +471,12 @@ impl CraftedMsg {
             self.message.kind.is_app(wire::BROADCAST),
             "wrap_a2a applies to chat frames only"
         );
-        let mut payload = crate::a2a::status_update_params::compose_broadcast(
-            &self.message.mesh,
-            self.message.body.as_str(),
-        );
+        let mut payload =
+            status_update_params::compose_broadcast(&self.message.mesh, self.message.body.as_str());
         payload.message_id = crate::a2a::MessageId::from_uuid_str(self.message.id.as_str())
             .expect("frame id is a valid uuid");
-        self.message.body = crate::a2a::status_update_params::payload_body(&payload)
-            .expect("crafted payload serializes");
+        self.message.body =
+            status_update_params::payload_body(&payload).expect("crafted payload serializes");
         self
     }
 

@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use habilis_network::protocol::{DedupKey, Message, MessageKind, Nickname};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
+use tokio::sync::oneshot::Sender;
 use tokio::time::Instant as TokioInstant;
 
-use crate::a2a::wire;
+use crate::a2a::{tuning, wire};
 use crate::output::OutputEvent;
 
 /// One surfaced event tagged with its daemon-local sequence number. The `seq`
@@ -158,8 +159,8 @@ pub(crate) const SHUTDOWN_SENTINEL: &str = r#"{"shutdown":true}"#;
 /// Both carry the gap — a loss the JSON reader learns about must not be hidden
 /// from the typed one.
 pub(crate) enum PollResponder {
-    Json(tokio::sync::oneshot::Sender<String>),
-    Typed(tokio::sync::oneshot::Sender<PollBatch>),
+    Json(Sender<String>),
+    Typed(Sender<PollBatch>),
 }
 
 impl PollResponder {
@@ -384,12 +385,12 @@ impl Default for SurfacedState {
 impl SurfacedState {
     pub(crate) fn new() -> Self {
         Self {
-            surfaced_events: SurfacedEvents::new(crate::a2a::tuning::SURFACED_EVENTS_CAP),
+            surfaced_events: SurfacedEvents::new(tuning::SURFACED_EVENTS_CAP),
             poll_waiters: Vec::new(),
             last_served: 0,
             receipted: BTreeSet::new(),
             last_foreground_poll: None,
-            served_frames: BoundedFifoSet::new(crate::a2a::tuning::SERVED_FRAMES_CAP),
+            served_frames: BoundedFifoSet::new(tuning::SERVED_FRAMES_CAP),
         }
     }
 
@@ -423,8 +424,8 @@ impl SurfacedState {
         // Cap the response to the fixed IPC window. The ring is sized to match
         // the window (see `SURFACED_EVENTS_CAP`), so in the steady state this is
         // a no-op; it only trims if a future ring grows past the window.
-        if events.len() > crate::a2a::tuning::POLL_RESPONSE_MAX_MSGS {
-            let drop_count = events.len() - crate::a2a::tuning::POLL_RESPONSE_MAX_MSGS;
+        if events.len() > tuning::POLL_RESPONSE_MAX_MSGS {
+            let drop_count = events.len() - tuning::POLL_RESPONSE_MAX_MSGS;
             events.drain(0..drop_count);
             tracing::debug!(dropped = drop_count, "poll: response capped to the window");
             // Trimming drops events the caller had not seen — the same loss as
@@ -451,7 +452,7 @@ impl SurfacedState {
         deadline: TokioInstant,
         responder: PollResponder,
     ) -> Option<PollResponder> {
-        if self.poll_waiters.len() >= crate::a2a::tuning::POLL_WAITERS_CAP {
+        if self.poll_waiters.len() >= tuning::POLL_WAITERS_CAP {
             return Some(responder);
         }
         self.poll_waiters.push(PollWaiter {
@@ -561,7 +562,7 @@ impl SurfacedState {
             responder.send_batch(batch);
             return;
         }
-        let deadline = now + Duration::from_millis(crate::a2a::tuning::longpoll_max_ms());
+        let deadline = now + Duration::from_millis(tuning::longpoll_max_ms());
         if let Some(unregistered) = self.register_poll_waiter(baseline, deadline, responder) {
             unregistered.send_empty(); // registry full → degrade to immediate
         }
@@ -646,16 +647,18 @@ impl SurfacedState {
 mod tests {
     use std::time::Duration;
 
+    use habilis_network::protocol::message::Authored;
     use habilis_network::protocol::{
         AppFrameParams, AppTag, Channel, MeshId, Message, MessageKind, Nickname,
     };
+    use tokio::sync::oneshot;
     use tokio::time::Instant as TokioInstant;
 
     use super::{
         PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
         render_poll_array,
     };
-    use crate::a2a::{TaskState, status_update_params, wire};
+    use crate::a2a::{TaskState, status_update_params, tuning, wire};
     use crate::output::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
@@ -698,11 +701,7 @@ mod tests {
         }
     }
 
-    fn directed_frame(
-        tag: &str,
-        author: &str,
-        to: &str,
-    ) -> habilis_network::protocol::message::Authored {
+    fn directed_frame(tag: &str, author: &str, to: &str) -> Authored {
         directed_frame_raw(tag, author, to)
             .sign(&habilis_network::protocol::Identity::generate())
             .authored()
@@ -963,7 +962,7 @@ mod tests {
     #[tokio::test]
     async fn waiter_fulfilled_by_a_new_event() {
         let mut surfaced = SurfacedState::new();
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, rx) = oneshot::channel::<String>();
         // Empty ring → register a bell (nothing served yet).
         assert!(
             surfaced
@@ -990,7 +989,7 @@ mod tests {
     #[tokio::test]
     async fn waiter_expires_empty_at_deadline() {
         let mut surfaced = SurfacedState::new();
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, rx) = oneshot::channel::<String>();
         let past = TokioInstant::now();
         surfaced.register_poll_waiter(PollBaseline::Served, past, PollResponder::Json(tx));
         // No event; the deadline (now) has passed.
@@ -1007,8 +1006,8 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         let deadline = TokioInstant::now() + Duration::from_secs(30);
         // Fill the registry to the cap with throwaway waiters.
-        for _ in 0..crate::a2a::tuning::POLL_WAITERS_CAP {
-            let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
+        for _ in 0..tuning::POLL_WAITERS_CAP {
+            let (tx, _rx) = oneshot::channel::<String>();
             assert!(
                 surfaced
                     .register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(tx))
@@ -1017,7 +1016,7 @@ mod tests {
             );
         }
         // One more must be handed back (degrade), not parked.
-        let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, _rx) = oneshot::channel::<String>();
         assert!(
             surfaced
                 .register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(tx))
@@ -1026,7 +1025,7 @@ mod tests {
         );
         assert_eq!(
             surfaced.poll_waiters.len(),
-            crate::a2a::tuning::POLL_WAITERS_CAP,
+            tuning::POLL_WAITERS_CAP,
             "the response carries the events"
         );
     }
@@ -1037,7 +1036,7 @@ mod tests {
         let start = TokioInstant::now();
         assert_eq!(surfaced.last_poll_secs_ago(start), None, "no poll yet");
 
-        let (bell_tx, _bell_rx) = tokio::sync::oneshot::channel::<String>();
+        let (bell_tx, _bell_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: true,
@@ -1050,7 +1049,7 @@ mod tests {
             "a bell is no poll"
         );
 
-        let (read_tx, _read_rx) = tokio::sync::oneshot::channel::<String>();
+        let (read_tx, _read_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: false,
@@ -1072,7 +1071,7 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         let start = TokioInstant::now();
 
-        let (mcp_tx, _mcp_rx) = tokio::sync::oneshot::channel::<String>();
+        let (mcp_tx, _mcp_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: Some(0),
             long: true,
@@ -1094,7 +1093,7 @@ mod tests {
         surfaced.push(peer_return("a"));
         surfaced.push(peer_return("b"));
 
-        let (first_tx, first_rx) = tokio::sync::oneshot::channel::<String>();
+        let (first_tx, first_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: false,
@@ -1109,7 +1108,7 @@ mod tests {
         assert_eq!(surfaced.last_served, 2, "cursor advanced past the batch");
 
         // Nothing new → empty, cursor unchanged.
-        let (empty_tx, empty_rx) = tokio::sync::oneshot::channel::<String>();
+        let (empty_tx, empty_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: false,
@@ -1125,7 +1124,7 @@ mod tests {
 
         // One more event → only it is served.
         surfaced.push(peer_return("c"));
-        let (third_tx, third_rx) = tokio::sync::oneshot::channel::<String>();
+        let (third_tx, third_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: false,
@@ -1148,7 +1147,7 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         surfaced.push(peer_return("a"));
         surfaced.push(peer_return("b"));
-        let (read_tx, read_rx) = tokio::sync::oneshot::channel::<String>();
+        let (read_tx, read_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: Some(1),
             long: false,
@@ -1158,7 +1157,7 @@ mod tests {
         read_rx.await.expect("immediate");
         assert_eq!(surfaced.last_served, 2, "explicit read advanced");
 
-        let (replay_tx, replay_rx) = tokio::sync::oneshot::channel::<String>();
+        let (replay_tx, replay_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: Some(0),
             long: false,
@@ -1177,7 +1176,7 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         surfaced.push(meta_changed()); // seq 1, non-waking
 
-        let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, mut rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: true,
@@ -1203,7 +1202,7 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         surfaced.push(self_task_echo()); // seq 1, non-waking
 
-        let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, mut rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: true,
@@ -1229,7 +1228,7 @@ mod tests {
     async fn bell_armed_into_unserved_backlog_fires_immediately() {
         let mut surfaced = SurfacedState::new();
         surfaced.push(peer_return("a"));
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: true,
@@ -1248,7 +1247,7 @@ mod tests {
     async fn bell_is_not_woken_by_a_foreground_poll_serving_the_backlog() {
         let mut surfaced = SurfacedState::new();
         // Bell first (empty ring → parks).
-        let (bell_tx, mut bell_rx) = tokio::sync::oneshot::channel::<String>();
+        let (bell_tx, mut bell_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: true,
@@ -1258,7 +1257,7 @@ mod tests {
         // An event lands; the foreground poll (same message, other call)
         // serves it and advances the cursor BEFORE the fulfill pass runs.
         surfaced.push(peer_return("a"));
-        let (fg_tx, fg_rx) = tokio::sync::oneshot::channel::<String>();
+        let (fg_tx, fg_rx) = oneshot::channel::<String>();
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
             long: false,
@@ -1285,8 +1284,8 @@ mod tests {
     async fn shutdown_drain_sends_the_sentinel_to_json_waiters_only() {
         let mut surfaced = SurfacedState::new();
         let deadline = TokioInstant::now() + Duration::from_secs(30);
-        let (json_tx, json_rx) = tokio::sync::oneshot::channel::<String>();
-        let (typed_tx, typed_rx) = tokio::sync::oneshot::channel::<super::PollBatch>();
+        let (json_tx, json_rx) = oneshot::channel::<String>();
+        let (typed_tx, typed_rx) = oneshot::channel::<super::PollBatch>();
         surfaced.register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(json_tx));
         surfaced.register_poll_waiter(
             PollBaseline::Served,
@@ -1325,7 +1324,7 @@ mod tests {
     async fn poll_or_register_responds_immediately_when_buffered() {
         let mut surfaced = SurfacedState::new();
         surfaced.push(peer_return("a"));
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, rx) = oneshot::channel::<String>();
         // Buffer has events → respond now even though long is set; no waiter.
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
@@ -1341,7 +1340,7 @@ mod tests {
     #[tokio::test]
     async fn poll_or_register_immediate_empty_when_not_long() {
         let mut surfaced = SurfacedState::new();
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, rx) = oneshot::channel::<String>();
         // Empty buffer, not long → immediate empty, no waiter.
         surfaced.poll_or_register(PollOrRegisterParams {
             after: None,
@@ -1360,7 +1359,7 @@ mod tests {
     #[tokio::test]
     async fn poll_or_register_long_parks_then_expires_at_cap() {
         let mut surfaced = SurfacedState::new();
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let (tx, rx) = oneshot::channel::<String>();
         let now = TokioInstant::now();
         // Empty buffer, long → parked with deadline now + longpoll_max_ms().
         surfaced.poll_or_register(PollOrRegisterParams {
@@ -1370,7 +1369,7 @@ mod tests {
             responder: PollResponder::Json(tx),
         });
         assert_eq!(surfaced.poll_waiters.len(), 1, "parked");
-        let cap = Duration::from_millis(crate::a2a::tuning::longpoll_max_ms());
+        let cap = Duration::from_millis(tuning::longpoll_max_ms());
         surfaced.expire_poll_waiters(now + cap - Duration::from_millis(1));
         assert_eq!(
             surfaced.poll_waiters.len(),

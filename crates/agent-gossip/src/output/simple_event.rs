@@ -11,7 +11,7 @@ use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
-use crate::a2a::TaskId;
+use crate::a2a::{TaskId, status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
@@ -442,8 +442,8 @@ pub(super) fn format_presence_json(message: &Authored, subtype: PresenceSubtype)
 /// `display`).
 pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
     let to = match &message.kind {
-        MessageKind::App { tag, to, .. } if tag.as_str() == crate::a2a::wire::MSG => to.as_ref(),
-        MessageKind::App { tag, .. } if tag.as_str() == crate::a2a::wire::BROADCAST => None,
+        MessageKind::App { tag, to, .. } if tag.as_str() == wire::MSG => to.as_ref(),
+        MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => None,
         MessageKind::App { .. }
         | MessageKind::Presence { .. }
         | MessageKind::PeerInfo
@@ -465,7 +465,7 @@ pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
     let payload = serde_json::from_str::<crate::a2a::Message>(message.body.as_str()).ok();
     let body = payload.as_ref().map_or_else(
         || message.body.as_str().to_owned(),
-        crate::a2a::status_update_params::display_text,
+        status_update_params::display_text,
     );
     let to = to.map(Nickname::as_str);
     stamp_visibility(
@@ -493,10 +493,7 @@ pub(super) fn print_message_json(message: &Authored, is_self: bool) {
 pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
     let to = match &message.kind {
         MessageKind::App { tag, to, .. }
-            if matches!(
-                tag.as_str(),
-                crate::a2a::wire::STATUS | crate::a2a::wire::ARTIFACT
-            ) =>
+            if matches!(tag.as_str(), wire::STATUS | wire::ARTIFACT) =>
         {
             match to {
                 Some(to) => to,
@@ -517,15 +514,15 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
             unreachable!("format_task_json only handles status/artifact frames")
         }
     };
-    let task_id = crate::a2a::status_update_params::frame_task_id(message)
+    let task_id = status_update_params::frame_task_id(message)
         .expect("a task frame carries its task id")
         .as_str()
         .to_owned();
     // A liveness beat (a status marked `mesh:beat`) → task_progress widget.
-    if let Ok(payload) = crate::a2a::status_update_params::status_payload(message)
-        && crate::a2a::status_update_params::is_beat(&payload)
+    if let Ok(payload) = status_update_params::status_payload(message)
+        && status_update_params::is_beat(&payload)
     {
-        let (done, total) = crate::a2a::status_update_params::beat_fraction(&payload)
+        let (done, total) = status_update_params::beat_fraction(&payload)
             .map_or((None, None), |(done, total)| (Some(done), Some(total)));
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
@@ -545,10 +542,9 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
             false,
         );
     }
-    let kind =
-        crate::a2a::status_update_params::task_event_kind(message).unwrap_or("status-update");
-    let state = crate::a2a::status_update_params::frame_task_state(message);
-    let body = crate::a2a::status_update_params::task_text(message);
+    let kind = status_update_params::task_event_kind(message).unwrap_or("status-update");
+    let state = status_update_params::frame_task_state(message);
+    let body = status_update_params::task_text(message);
     stamp_visibility(
         serde_json::to_string(&TaskLine {
             event: "task",
@@ -565,10 +561,10 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
             // binding (`format_task_message_json`), never as a frame.
             label: None,
             // Only a `working` leg carries the reason, as in the record.
-            waiting: crate::a2a::status_update_params::status_payload(message)
+            waiting: status_update_params::status_payload(message)
                 .ok()
                 .filter(|payload| payload.status.state == crate::a2a::TaskState::Working)
-                .and_then(|payload| crate::a2a::status_update_params::status_waiting(&payload)),
+                .and_then(|payload| status_update_params::status_waiting(&payload)),
             display: task_display(TaskDisplayParams {
                 author: message.author.as_str(),
                 to: to.as_str(),

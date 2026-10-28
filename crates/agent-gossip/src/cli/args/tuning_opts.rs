@@ -14,8 +14,11 @@
 use std::time::Duration;
 
 use clap::Parser;
+use habilis_network::runtime::tuning::Tuning;
 use habilis_network::util::clock::millis_saturating;
 use habilis_network::util::tuning as defaults;
+
+use crate::a2a::tuning::Tuning as A2aTuning;
 
 #[derive(Parser, Debug)]
 pub(crate) struct TuningOpts {
@@ -118,8 +121,8 @@ pub(crate) struct TuningOpts {
 
 impl TuningOpts {
     /// The process tuning carried by these flags, for [`habilis_network::runtime::tuning::init`].
-    pub(crate) fn tuning(&self) -> habilis_network::runtime::tuning::Tuning {
-        habilis_network::runtime::tuning::Tuning {
+    pub(crate) fn tuning(&self) -> Tuning {
+        Tuning {
             alive_timeout: Duration::from_secs(self.alive_timeout_secs),
             sweep_interval: Duration::from_secs(self.sweep_interval_secs),
             heal_interval: Duration::from_secs(self.heal_interval_secs),
@@ -146,8 +149,8 @@ impl TuningOpts {
     /// [`crate::a2a::tuning::init`]. Separate from [`Self::tuning`] because the
     /// task state machine and the long-poll park are implemented here, not in
     /// the engine — one flag set, two homes.
-    pub(crate) fn a2a_tuning(&self) -> crate::a2a::tuning::Tuning {
-        crate::a2a::tuning::Tuning {
+    pub(crate) fn a2a_tuning(&self) -> A2aTuning {
+        A2aTuning {
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
             task_skill_silence_max_secs: self.task_skill_silence_max_secs,

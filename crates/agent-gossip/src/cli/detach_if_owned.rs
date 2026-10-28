@@ -1,3 +1,5 @@
+use std::os::unix::process::CommandExt;
+
 use anyhow::Result;
 
 use super::args::SharedServerOpts;
@@ -29,7 +31,7 @@ pub(super) fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
     // SAFETY: `setsid` is async-signal-safe and touches no memory of this
     // process, so it is sound between fork and exec.
     unsafe {
-        std::os::unix::process::CommandExt::pre_exec(&mut child, || {
+        CommandExt::pre_exec(&mut child, || {
             if libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }

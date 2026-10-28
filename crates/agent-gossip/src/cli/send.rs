@@ -1,5 +1,6 @@
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
+use habilis_network::runtime::ipc;
 use habilis_network::runtime::ipc::{Addressed, NoDaemon};
 use serde::Serialize;
 
@@ -14,7 +15,7 @@ pub(crate) async fn send<Payload>(command: &Payload, nickname: &Nickname) -> Res
 where
     Payload: Serialize + Addressed,
 {
-    habilis_network::runtime::ipc::send(&crate::runtime_base(), command, nickname)
+    ipc::send(&crate::runtime_base(), command, nickname)
         .await
         .map_err(|error| match error.downcast::<NoDaemon>() {
             Ok(no_daemon) => anyhow::anyhow!(

@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicU64;
+
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
 use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
@@ -442,11 +444,11 @@ pub fn leg_order_ms() -> u64 {
 /// The last order value this process handed out. The wall clock can step back,
 /// so the next value is kept above it; a restart resets it, and the clock then
 /// carries the order on.
-static LAST_ORDER_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LAST_ORDER_MS: AtomicU64 = AtomicU64::new(0);
 
 /// The order value for a leg sent at `now_ms`: the clock, unless that is not
 /// above the last value handed out, then one more than the last.
-fn next_order_ms(now_ms: u64, last: &std::sync::atomic::AtomicU64) -> u64 {
+fn next_order_ms(now_ms: u64, last: &AtomicU64) -> u64 {
     use std::sync::atomic::Ordering::Relaxed;
     let previous = last
         .fetch_update(Relaxed, Relaxed, |last| {
@@ -578,6 +580,8 @@ pub(crate) fn test_status_frame(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicU64;
+
     use habilis_network::protocol::{MeshId, MessageId, MessageKind};
 
     use super::{
@@ -585,6 +589,7 @@ mod tests {
         msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
         status_waiting, waiting_metadata,
     };
+    use crate::a2a::wire;
 
     fn mesh() -> MeshId {
         MeshId::from("test")
@@ -594,10 +599,7 @@ mod tests {
     /// payload's messageId, the invariant `broadcast_message` establishes.
     fn frame_for(payload: &super::Message) -> Frame {
         let body = payload_body(payload).expect("payload serializes");
-        let mut frame = Frame::fixture(
-            MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
-            body.as_str(),
-        );
+        let mut frame = Frame::fixture(MessageKind::app_broadcast(wire::BROADCAST), body.as_str());
         frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
         frame
     }
@@ -606,7 +608,7 @@ mod tests {
     fn msg_frame_for(payload: &super::Message) -> Frame {
         let body = payload_body(payload).expect("payload serializes");
         let mut frame = Frame::fixture(
-            MessageKind::app_to(crate::a2a::wire::MSG, "addressed-nick".into(), None),
+            MessageKind::app_to(wire::MSG, "addressed-nick".into(), None),
             body.as_str(),
         );
         frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
@@ -703,10 +705,7 @@ mod tests {
 
     #[test]
     fn non_json_body_is_rejected() {
-        let frame = Frame::fixture(
-            MessageKind::app_broadcast(crate::a2a::wire::BROADCAST),
-            "plain text",
-        );
+        let frame = Frame::fixture(MessageKind::app_broadcast(wire::BROADCAST), "plain text");
         assert!(
             broadcast_payload(&frame).is_err(),
             "a broadcast frame with no body is refused"
@@ -780,7 +779,7 @@ mod tests {
     /// rising order values: the later leg keeps the higher one.
     #[test]
     fn a_clock_step_back_keeps_the_order_value_rising() {
-        let last = std::sync::atomic::AtomicU64::new(0);
+        let last = AtomicU64::new(0);
         let first = next_order_ms(2_000, &last);
         let stepped_back = next_order_ms(1_500, &last);
         assert!(

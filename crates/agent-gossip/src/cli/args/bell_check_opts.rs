@@ -18,6 +18,7 @@ pub(crate) struct BellCheckOpts {
 mod tests {
     use clap::Parser;
 
+    use crate::a2a::tuning;
     use crate::cli::args::{Cli, Commands};
 
     #[test]
@@ -33,7 +34,7 @@ mod tests {
         );
         assert_eq!(
             options.grace_ms,
-            crate::a2a::tuning::BELL_CHECK_GRACE_MS,
+            tuning::BELL_CHECK_GRACE_MS,
             "the grace period defaults to the shared tuning constant"
         );
     }
