@@ -140,10 +140,8 @@ async fn receive_chunks(
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let target_mb: u64 = std::env::var("BENCH_TRANSFER_MB")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(100);
+    let raw_mb: Option<String> = std::env::var("BENCH_TRANSFER_MB").ok();
+    let target_mb: u64 = raw_mb.and_then(|raw| raw.parse().ok()).unwrap_or(100);
     let target_bytes = target_mb * 1024 * 1024;
     let chunk_count: u32 =
         u32::try_from((target_bytes / CHUNK_BODY_LEN as u64).max(1)).expect("chunk count fits u32");

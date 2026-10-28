@@ -314,10 +314,8 @@ impl NodeDriver for GossipDriver {
 fn broadcast_text(body: &str) -> Option<String> {
     let payload: serde_json::Value = serde_json::from_str(body).ok()?;
     let parts = payload.get("parts")?.as_array()?;
-    let pieces: Vec<&str> = parts
-        .iter()
-        .filter_map(|part| part.get("text")?.as_str())
-        .collect();
+    let texts = parts.iter().filter_map(|part| part.get("text")?.as_str());
+    let pieces: Vec<&str> = texts.collect();
     let text = pieces.join("");
     if text.is_empty() { None } else { Some(text) }
 }

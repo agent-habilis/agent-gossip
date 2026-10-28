@@ -73,15 +73,13 @@ impl<'de> Deserialize<'de> for Part {
             metadata: Option<serde_json::Value>,
         }
         let raw = Wire::deserialize(deserializer)?;
-        let content: usize = [
+        let present: [bool; 4] = [
             raw.text.is_some(),
             raw.raw.is_some(),
             raw.url.is_some(),
             raw.data.is_some(),
-        ]
-        .into_iter()
-        .filter(|set| *set)
-        .count();
+        ];
+        let content: usize = present.into_iter().filter(|set| *set).count();
         if content != 1 {
             return Err(serde::de::Error::custom(
                 "a part must carry exactly one of text, raw, url, or data",
