@@ -216,9 +216,9 @@ mod tests {
             BlobDigest::from_bytes([7u8; blob::HASH_LEN]),
             1_234_567,
             LookupOpts::public_preset(),
-            false,
             false.into(),
-        );
+        )
+        .with_password(false);
         let a2a = A2aTicket {
             address: sample_addr(4),
             secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),

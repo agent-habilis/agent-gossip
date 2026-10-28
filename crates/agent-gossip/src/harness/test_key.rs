@@ -526,11 +526,9 @@ impl CraftedMsg {
     pub fn shard(mut self, group: &str, index: u32, total: u32) -> Self {
         let group = habilis_network::protocol::ShardGroup::from_uuid_str(group)
             .expect("valid shard group uuid");
-        self.message = self
-            .message
-            .with_shard(Some(habilis_network::protocol::Shard::new(
-                group, index, total,
-            )));
+        self.message = self.message.with_shard(Some(
+            habilis_network::protocol::Shard::new(group, total).with_index(index),
+        ));
         self
     }
 
