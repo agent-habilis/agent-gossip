@@ -229,20 +229,45 @@ mod tests {
 
     #[test]
     fn labels_each_kind_of_active_address() {
-        assert_eq!(path_label(&[ip()]), "ip");
-        assert_eq!(path_label(&[relay()]), "relay");
-        assert_eq!(path_label(&[custom(WEBRTC_TRANSPORT_ID)]), "webrtc");
-        assert_eq!(path_label(&[custom(MULTIHOP_TRANSPORT_ID)]), "multihop");
-        assert_eq!(path_label(&[custom(GOSSIP_TRANSPORT_ID)]), "gossip");
-        assert_eq!(path_label(&[custom(7)]), "custom");
+        assert_eq!(path_label(&[ip()]), "ip", "an ip path is labelled ip");
+        assert_eq!(
+            path_label(&[relay()]),
+            "relay",
+            "a relay path is labelled relay"
+        );
+        assert_eq!(
+            path_label(&[custom(WEBRTC_TRANSPORT_ID)]),
+            "webrtc",
+            "the webrtc transport is labelled webrtc"
+        );
+        assert_eq!(
+            path_label(&[custom(MULTIHOP_TRANSPORT_ID)]),
+            "multihop",
+            "the multihop transport is labelled multihop"
+        );
+        assert_eq!(
+            path_label(&[custom(GOSSIP_TRANSPORT_ID)]),
+            "gossip",
+            "the gossip transport is labelled gossip"
+        );
+        assert_eq!(
+            path_label(&[custom(7)]),
+            "custom",
+            "an unknown transport is labelled custom"
+        );
     }
 
     #[test]
     fn joins_several_kinds_in_a_fixed_order_without_repeats() {
-        assert_eq!(path_label(&[relay(), ip(), ip()]), "ip+relay");
+        assert_eq!(
+            path_label(&[relay(), ip(), ip()]),
+            "ip+relay",
+            "the labels of several hops are joined in order"
+        );
         assert_eq!(
             path_label(&[relay(), custom(WEBRTC_TRANSPORT_ID)]),
-            "webrtc+relay"
+            "webrtc+relay",
+            "a webrtc hop after a relay hop is labelled in order"
         );
     }
 
@@ -251,13 +276,15 @@ mod tests {
         let reply = serde_json::json!({ "result": { "bell": true, "last_poll_secs_ago": 7 } });
         assert_eq!(
             reader_from_reply(&reply),
-            Some(serde_json::json!({ "bell": true, "last_poll_secs_ago": 7 }))
+            Some(serde_json::json!({ "bell": true, "last_poll_secs_ago": 7 })),
+            "a reply with a result gives its reader"
         );
         let before_any_poll =
             serde_json::json!({ "result": { "bell": false, "last_poll_secs_ago": null } });
         assert_eq!(
             reader_from_reply(&before_any_poll),
-            Some(serde_json::json!({ "bell": false, "last_poll_secs_ago": null }))
+            Some(serde_json::json!({ "bell": false, "last_poll_secs_ago": null })),
+            "a reader before any poll has a null age"
         );
     }
 
@@ -276,6 +303,10 @@ mod tests {
 
     #[test]
     fn no_active_address_is_unknown() {
-        assert_eq!(path_label(&[]), "unknown");
+        assert_eq!(
+            path_label(&[]),
+            "unknown",
+            "no path gives the unknown label"
+        );
     }
 }
