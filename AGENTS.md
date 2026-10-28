@@ -412,6 +412,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined I9: the fixture helpers take `&[(&str, &str)]`, so array literals pass at the call site without `.iter()`; a slice is the simpler type when the helper only iterates.
 - Declined I11: the `impl Into<String>` constructors (`Part::text`, `invalid_params`, `internal`, `open`, the doctor `new` and `bare`) keep 7 call sites short, because callers pass both `&str` and `String`.
 - Declined I12: the same 7 sites are application code, where the call-site ergonomics above outweigh the rule's preference for plain types.
+- Declined U13: `with_startup`, `with_io` and `with_tap` are builders that take and return `self`, the Rust builder convention, not closure accessors.
 
 ## Agent Restrictions
 
