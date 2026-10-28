@@ -185,14 +185,14 @@ impl NodeDriver for A2aApp {
 
     async fn handle_session(
         &mut self,
-        req: SessionRequest,
+        request: SessionRequest,
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
         crate::a2a::broadcast_params::handle_session_request(
             crate::a2a::broadcast_params::SessionRequestParams {
-                req,
+                request,
                 mesh: context.mesh,
                 author: context.author,
                 app: self,
@@ -206,11 +206,11 @@ impl NodeDriver for A2aApp {
 
     async fn handle_http(
         &mut self,
-        req: A2aRequest,
+        request: A2aRequest,
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) {
-        let A2aRequest { op, response } = req;
+        let A2aRequest { op, response } = request;
         // A directed `message/send` (task creation) needs the synchronous gossip
         // request/response round-trip — the peer mints the task id and returns the
         // Task. Route it through the waiter so the HTTP handler's oneshot resolves
@@ -259,17 +259,17 @@ impl NodeDriver for A2aApp {
 
     async fn handle_ipc(
         &mut self,
-        req: IpcRequest<'_, IpcCommand>,
+        request: IpcRequest<'_, IpcCommand>,
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
         crate::a2a::ipc_command::handle_ipc_command(
             crate::a2a::ipc_command::IpcDispatchParams {
-                command: req.cmd,
-                resp_tx: req.resp,
+                command: request.cmd,
+                resp_tx: request.resp,
                 mesh: context.mesh,
-                name: req.name,
+                name: request.name,
                 author: context.author,
                 endpoint: context.endpoint,
                 app: self,
@@ -998,13 +998,13 @@ struct A2aReqParams<'a> {
 /// against the safe method set (`gossip_rpc::classify`), run the resulting
 /// action, and broadcast an `a2a_resp` back to the requester echoing `corr`.
 async fn handle_a2a_req(
-    req: A2aReqParams<'_>,
+    request: A2aReqParams<'_>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
     use crate::a2a::served::Served;
-    let A2aReqParams { message, corr } = req;
+    let A2aReqParams { message, corr } = request;
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
     let outcome: Result<serde_json::Value, crate::a2a::rpc_error::RpcError> =
@@ -1642,9 +1642,9 @@ mod classify_tests {
             message.chained,
             "broadcast chat carries the per-author chain"
         );
-        let req = classify(&app_frame(wire::REQ));
-        assert!(!req.loggable, "an RPC request is plumbing, not logged");
-        assert!(!req.chained, "only broadcast chat is chained");
+        let request = classify(&app_frame(wire::REQ));
+        assert!(!request.loggable, "an RPC request is plumbing, not logged");
+        assert!(!request.chained, "only broadcast chat is chained");
     }
 
     // A msg is retained like broadcast chat but must stay out of the hash chain:

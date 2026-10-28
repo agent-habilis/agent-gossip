@@ -1893,7 +1893,7 @@ async fn session_ping(
 /// against — grouped so `handle_session_request` stays within the argument
 /// budget alongside its state/sender/output handles.
 pub(crate) struct SessionRequestParams<'a> {
-    pub(crate) req: SessionRequest,
+    pub(crate) request: SessionRequest,
     pub(crate) mesh: &'a MeshId,
     pub(crate) author: &'a Nickname,
     pub(crate) app: &'a mut A2aApp,
@@ -1927,14 +1927,14 @@ pub(crate) async fn handle_session_request(
 ) -> bool {
     let sender = context.sender;
     let SessionRequestParams {
-        req,
+        request,
         mesh,
         author,
         app,
     } = params;
     app.drain_delivered_legs();
     retain_sent_legs(app, state);
-    match req {
+    match request {
         SessionRequest::Broadcast { body, response } => {
             let outcome = send_broadcast(
                 BroadcastParams {

@@ -120,13 +120,13 @@ impl McpClient {
         reason = "ergonomic test helper; the 50-odd call sites pass json! literals by value, and taking &Value would spray a reference sigil across every one for no gain in test code"
     )]
     fn tool_call(&mut self, id: u64, name: &str, args: serde_json::Value) -> serde_json::Value {
-        let req = serde_json::json!({
+        let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
             "params": { "name": name, "arguments": args }
         });
-        self.send(&req.to_string());
+        self.send(&request.to_string());
         self.recv_until_response(id)
     }
 

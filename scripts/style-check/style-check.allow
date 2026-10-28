@@ -1,11 +1,9 @@
 abbrev_name|crates/agent-gossip-test-fixtures/src/lib.rs|1|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip-test-fixtures/src/node.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip-wasm-client/src/gossip_driver.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip-wasm-client/src/gossip_peer.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|14|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|11|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/card.rs|4|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/ipc_command.rs|3|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
-abbrev_name|crates/agent-gossip/src/a2a/node.rs|12|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
+abbrev_name|crates/agent-gossip/src/a2a/node.rs|2|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|9|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/a2a_ticket.rs|7|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on
 abbrev_name|crates/agent-gossip/src/bridge/bridge.rs|6|open: An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on

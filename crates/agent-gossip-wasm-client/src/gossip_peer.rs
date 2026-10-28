@@ -133,7 +133,7 @@ impl GossipPeer {
         self.request(Request::Broadcast(text)).await
     }
 
-    async fn request(&self, req: Request) -> Result<(), JsValue> {
+    async fn request(&self, request: Request) -> Result<(), JsValue> {
         // The sender is taken and the borrow dropped *before* the await. Holding
         // a `RefCell` borrow across one would panic on any re-entrant call from
         // JS, which is ordinary here: two clicks, or a send while polling.
@@ -145,7 +145,7 @@ impl GossipPeer {
             node.sender()
         };
         sender
-            .send(req)
+            .send(request)
             .await
             .map_err(|_| JsValue::from_str("the gossip event loop has stopped"))
     }

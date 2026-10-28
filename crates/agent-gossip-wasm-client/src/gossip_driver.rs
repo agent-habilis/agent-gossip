@@ -233,11 +233,11 @@ impl NodeDriver for GossipDriver {
 
     async fn handle_session(
         &mut self,
-        req: Self::Session,
+        request: Self::Session,
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) -> bool {
-        let Request::Broadcast(text) = req;
+        let Request::Broadcast(text) = request;
 
         let id = MessageId::random();
         let payload = A2aMessage {
