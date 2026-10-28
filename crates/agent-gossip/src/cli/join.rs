@@ -23,9 +23,11 @@ pub(super) async fn join(
     // either before erroring.
     if password.is_none() {
         let requires: Option<&str> = match &target {
-            JoinTarget::Mesh(id) => LockedMesh::from_str(id.as_str())
-                .is_ok_and(|mesh| mesh.requires_password())
-                .then_some("gossip"),
+            JoinTarget::Mesh(id) => {
+                let mesh = LockedMesh::from_str(id.as_str());
+                mesh.is_ok_and(|mesh| mesh.requires_password())
+                    .then_some("gossip")
+            }
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
         };
         if let Some(what) = requires {
