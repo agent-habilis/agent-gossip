@@ -400,6 +400,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
 - Declined P2: the turbofish sites are over 30 and a blanket change to `let` types is not clearer at each one, so a turbofish stays where it reads better.
 - Declined N3: lifetimes such as `'a` on a struct with one borrowed field are clear, and renaming the about 260 uses in tests and fixtures touches over 30 sites.
+- Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
 - Declined O1: this is one application crate, and splitting it would touch every import and the shared test harness, which depends on it.
 - Declined O3: the APIs share one crate for trait-impl coherence and shared types, so no submodule split is planned.
