@@ -303,8 +303,9 @@ impl CraftedMsg {
         // genesis — hence the same `peers` object id. Built on an *ungated* doc it
         // would be a different map, and whether the victim's gate even fires
         // would come down to which of two conflicting maps automerge keeps.
+        let author_bytes: &[u8] = author.as_str().as_bytes();
         let change: Vec<u8> = MeshDoc::new_gated(crate::a2a::card_gate())
-            .build_change(&merge, author.as_str().as_bytes())
+            .build_change(&merge, author_bytes)
             .expect("forge change builds")
             .expect("forge merge is not a no-op");
         let body = doc::change_body(&change, None).expect("change body composes");
