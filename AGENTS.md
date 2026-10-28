@@ -404,6 +404,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined O1: this is one application crate, and splitting it would touch every import and the shared test harness, which depends on it.
 - Declined O3: the APIs share one crate for trait-impl coherence and shared types, so no submodule split is planned.
 - Declined O9: a rough grep finds about 28 leaf files whose name does not match their primary item; renaming them touches their imports, so the names stay.
+- Declined O10: a leaf module without one primary item keeps its name, because renaming it touches every import of it.
 
 ## Agent Restrictions
 
