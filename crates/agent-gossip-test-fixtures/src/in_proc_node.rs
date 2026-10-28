@@ -35,11 +35,12 @@ pub struct InProcNode {
 // much has been captured is all a failing assertion needs anyway.
 impl std::fmt::Debug for InProcNode {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("InProcNode")
+        let mut debug: std::fmt::DebugStruct<'_, '_> = formatter.debug_struct("InProcNode");
+        let drained: usize = self.drained.len();
+        debug
             .field("mesh", &self.mesh)
             .field("nickname", &self.nickname)
-            .field("drained", &self.drained.len())
+            .field("drained", &drained)
             .finish_non_exhaustive()
     }
 }
@@ -582,9 +583,8 @@ impl InProcNode {
     /// emitted.
     pub fn json_events(&mut self) -> Vec<serde_json::Value> {
         self.pump();
-        self.drained
-            .iter()
-            .filter_map(agent_gossip::event_json)
+        let lines = self.drained.iter().filter_map(agent_gossip::event_json);
+        lines
             .filter_map(|line| serde_json::from_str(&line).ok())
             .collect()
     }
