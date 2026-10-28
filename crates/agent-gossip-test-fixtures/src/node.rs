@@ -48,11 +48,12 @@ impl Node {
         let mut command = test_cmd();
         command.args(&args);
         apply_flags(&mut command, flags);
+        let stdout: Stdio = Stdio::from(
+            file.try_clone()
+                .expect("clone the daemon log file handle for stdout"),
+        );
         let child: Child = command
-            .stdout(Stdio::from(
-                file.try_clone()
-                    .expect("clone the daemon log file handle for stdout"),
-            ))
+            .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn create");
@@ -101,11 +102,12 @@ impl Node {
         command.args(["join", mesh, "--nickname", nickname]);
         command.args(extra);
         apply_flags(&mut command, flags);
+        let stdout: Stdio = Stdio::from(
+            file.try_clone()
+                .expect("clone the daemon log file handle for stdout"),
+        );
         let child: Child = command
-            .stdout(Stdio::from(
-                file.try_clone()
-                    .expect("clone the daemon log file handle for stdout"),
-            ))
+            .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn join");
@@ -165,10 +167,13 @@ impl Node {
     /// `prefix` — the convergence metric for the anti-entropy gap-recovery
     /// tests (each sends `prefix-{i}` and waits for the full distinct set).
     pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
-        let distinct: HashSet<String> = self
-            .messages()
+        let messages: Vec<Msg> = self.messages();
+        let matching: Vec<&Msg> = messages
             .iter()
             .filter(|message| message.author == author && message.body.starts_with(prefix))
+            .collect();
+        let distinct: HashSet<String> = matching
+            .iter()
             .map(|message| message.body.clone())
             .collect();
         distinct.len()
@@ -236,9 +241,11 @@ impl Node {
         let started = Instant::now();
         let mut last_state = String::new();
         while started.elapsed() < DEADLINE {
-            last_state = Command::new("ps")
-                .args(["-o", "stat=", "-p", &pid.to_string()])
-                .output()
+            let pid_arg: String = pid.to_string();
+            let stat: std::io::Result<std::process::Output> = Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid_arg])
+                .output();
+            last_state = stat
                 .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
                 .unwrap_or_default();
             if !last_state.is_empty() && last_state.starts_with('T') == want_stopped {
