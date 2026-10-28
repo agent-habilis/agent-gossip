@@ -27,7 +27,6 @@ fn_import|crates/agent-gossip/src/api/tests.rs|1|open: Call a top-level function
 long_chain|crates/agent-gossip/src/a2a/broadcast_params.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/a2a/card.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/a2a/ipc_command.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/agent-gossip/src/a2a/model/tests.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/a2a/node.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/a2a/reader_asks.rs|3|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/src/a2a/status_update_params.rs|5|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
