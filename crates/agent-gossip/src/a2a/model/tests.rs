@@ -1,3 +1,5 @@
+use serde_json::json;
+
 use super::{
     Artifact, Message, MessageId, Part, Role, Task, TaskArtifactUpdate, TaskId, TaskState,
     TaskStatus, TaskStatusUpdate,
@@ -18,29 +20,63 @@ fn fixture_message() -> Message {
 
 #[test]
 fn message_id_rejects_non_uuid() {
-    assert!(serde_json::from_str::<MessageId>("\"not-a-uuid\"").is_err());
-    assert!(serde_json::from_str::<TaskId>("\"not-a-uuid\"").is_err());
+    let not_a_uuid = json!("not-a-uuid");
+    assert!(
+        serde_json::from_value::<MessageId>(not_a_uuid.clone()).is_err(),
+        "a message id must be a uuid"
+    );
+    assert!(
+        serde_json::from_value::<TaskId>(not_a_uuid).is_err(),
+        "a task id must be a uuid"
+    );
 }
 
 #[test]
 fn part_requires_exactly_one_content_field() {
-    assert!(serde_json::from_str::<Part>(r#"{"text":"hi","url":"x"}"#).is_err());
-    assert!(serde_json::from_str::<Part>(r#"{"filename":"a.txt"}"#).is_err());
-    assert!(serde_json::from_str::<Part>(r#"{"text":"hi"}"#).is_ok());
+    let text_and_url = json!({"text": "hi", "url": "x"});
+    let filename_only = json!({"filename": "a.txt"});
+    let text_only = json!({"text": "hi"});
+    let url_with_media_type = json!({"url": "https://x", "mediaType": "text/plain"});
+    let raw_only = json!({"raw": "aGk="});
     assert!(
-        serde_json::from_str::<Part>(r#"{"url":"https://x","mediaType":"text/plain"}"#).is_ok()
+        serde_json::from_value::<Part>(text_and_url).is_err(),
+        "a part with text and url is rejected"
     );
-    assert!(serde_json::from_str::<Part>(r#"{"raw":"aGk="}"#).is_ok());
+    assert!(
+        serde_json::from_value::<Part>(filename_only).is_err(),
+        "a part with only a filename is rejected"
+    );
+    assert!(
+        serde_json::from_value::<Part>(text_only).is_ok(),
+        "a text part is accepted"
+    );
+    assert!(
+        serde_json::from_value::<Part>(url_with_media_type).is_ok(),
+        "a url part with a media type is accepted"
+    );
+    assert!(
+        serde_json::from_value::<Part>(raw_only).is_ok(),
+        "a raw part is accepted"
+    );
 }
 
 #[test]
 fn task_state_is_screaming_snake_on_the_wire() {
     assert_eq!(
-        serde_json::to_string(&TaskState::InputRequired).unwrap(),
-        "\"TASK_STATE_INPUT_REQUIRED\""
+        serde_json::to_value(TaskState::InputRequired).unwrap(),
+        json!("TASK_STATE_INPUT_REQUIRED"),
+        "the input-required state is screaming snake on the wire"
     );
-    assert_eq!(TaskState::InputRequired.as_str(), "input-required");
-    assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"ROLE_USER\"");
+    assert_eq!(
+        TaskState::InputRequired.as_str(),
+        "input-required",
+        "the friendly name keeps its kebab case"
+    );
+    assert_eq!(
+        serde_json::to_value(Role::User).unwrap(),
+        json!("ROLE_USER"),
+        "a user role is ROLE_USER on the wire"
+    );
 }
 
 #[test]
@@ -51,7 +87,7 @@ fn terminal_states_are_the_four_closed_ones() {
         TaskState::Failed,
         TaskState::Rejected,
     ] {
-        assert!(state.is_terminal());
+        assert!(state.is_terminal(), "a closed state is terminal");
     }
     for state in [
         TaskState::Submitted,
@@ -60,7 +96,7 @@ fn terminal_states_are_the_four_closed_ones() {
         TaskState::AuthRequired,
         TaskState::Unspecified,
     ] {
-        assert!(!state.is_terminal());
+        assert!(!state.is_terminal(), "an open state is not terminal");
     }
 }
 
@@ -69,7 +105,7 @@ fn message_round_trips() {
     let message = fixture_message();
     let json = serde_json::to_string(&message).unwrap();
     let parsed: Message = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed, message);
+    assert_eq!(parsed, message, "a message survives a json round trip");
 }
 
 mod snapshots {
