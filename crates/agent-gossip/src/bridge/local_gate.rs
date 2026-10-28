@@ -73,11 +73,12 @@ impl LocalGate {
             .next()
             .filter(|line| !line.is_empty())
             .ok_or(Refusal("malformed request"))?;
-        let headers: Result<Vec<(String, &str, &str)>, Refusal> = lines
-            .filter(|line| !line.is_empty())
+        let fields = lines.filter(|line| !line.is_empty());
+        let headers: Result<Vec<(String, &str, &str)>, Refusal> = fields
             .map(|line| {
-                line.split_once(':')
-                    .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim(), line))
+                let split = line.split_once(':');
+                split
+                    .map(|(name, value)| (str::to_ascii_lowercase(name.trim()), value.trim(), line))
                     .ok_or(Refusal("malformed header"))
             })
             .collect();
