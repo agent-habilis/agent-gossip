@@ -192,13 +192,22 @@ mod tests {
                 "{TOKEN_HEADER}: {token}\r\nContent-Length: 0"
             )))
             .expect("a tokened request passes");
-        assert!(forwarded.starts_with("POST /message HTTP/1.1\r\n"));
-        assert!(forwarded.contains("Content-Length: 0\r\n"));
+        assert!(
+            forwarded.starts_with("POST /message HTTP/1.1\r\n"),
+            "a forwarded request starts with its request line"
+        );
+        assert!(
+            forwarded.contains("Content-Length: 0\r\n"),
+            "a forwarded request declares a zero length body"
+        );
         assert!(
             !forwarded.to_ascii_lowercase().contains(TOKEN_HEADER),
             "the bridge's own token must not reach the origin: {forwarded}"
         );
-        assert!(forwarded.ends_with("\r\n\r\n"));
+        assert!(
+            forwarded.ends_with("\r\n\r\n"),
+            "a forwarded request ends after its headers"
+        );
     }
 
     #[test]
@@ -206,7 +215,8 @@ mod tests {
         let (gate, _) = gated();
         assert_eq!(
             gate.screen(&head("Content-Length: 0")),
-            Err(Refusal("missing bridge token"))
+            Err(Refusal("missing bridge token")),
+            "a request without the token is refused as missing"
         );
     }
 
@@ -216,11 +226,13 @@ mod tests {
         let wrong = "00".repeat(32);
         assert_eq!(
             gate.screen(&head(&format!("{TOKEN_HEADER}: {wrong}"))),
-            Err(Refusal("invalid bridge token"))
+            Err(Refusal("invalid bridge token")),
+            "a wrong token is refused as invalid"
         );
         assert_eq!(
             gate.screen(&head(&format!("{TOKEN_HEADER}: nothex"))),
-            Err(Refusal("malformed bridge token"))
+            Err(Refusal("malformed bridge token")),
+            "a malformed token is refused as malformed"
         );
     }
 
@@ -234,7 +246,8 @@ mod tests {
             gate.screen(&head(&format!(
                 "Origin: https://evil.example\r\n{TOKEN_HEADER}: {token}"
             ))),
-            Err(Refusal("cross-origin requests are refused"))
+            Err(Refusal("cross-origin requests are refused")),
+            "an origin header is refused even with a valid token"
         );
 
         let (anon, minted) = LocalGate::new("127.0.0.1:7777".to_owned(), true);
@@ -245,7 +258,8 @@ mod tests {
         );
         assert_eq!(
             anon.screen(&head("Origin: https://evil.example")),
-            Err(Refusal("cross-origin requests are refused"))
+            Err(Refusal("cross-origin requests are refused")),
+            "an origin header is refused in anonymous mode"
         );
     }
 
@@ -259,13 +273,17 @@ mod tests {
             format!("POST /message HTTP/1.1\r\nHost: evil.example:7777\r\n{TOKEN_HEADER}: {token}");
         assert_eq!(
             gate.screen(&rebound),
-            Err(Refusal("host does not match the bridge address"))
+            Err(Refusal("host does not match the bridge address")),
+            "a rebound host is refused"
         );
 
         // `localhost` on the bridge's own port is the same machine.
         let localhost =
             format!("POST /message HTTP/1.1\r\nHost: localhost:7777\r\n{TOKEN_HEADER}: {token}");
-        assert!(gate.screen(&localhost).is_ok());
+        assert!(
+            gate.screen(&localhost).is_ok(),
+            "localhost on the bridge port is accepted"
+        );
     }
 
     #[test]
@@ -274,14 +292,16 @@ mod tests {
         let none = format!("GET / HTTP/1.1\r\n{TOKEN_HEADER}: {token}");
         assert_eq!(
             gate.screen(&none),
-            Err(Refusal("exactly one host header is required"))
+            Err(Refusal("exactly one host header is required")),
+            "a head with no host is refused"
         );
         let two = format!(
             "GET / HTTP/1.1\r\nHost: 127.0.0.1:7777\r\nHost: 127.0.0.1:7777\r\n{TOKEN_HEADER}: {token}"
         );
         assert_eq!(
             gate.screen(&two),
-            Err(Refusal("exactly one host header is required"))
+            Err(Refusal("exactly one host header is required")),
+            "a head with two hosts is refused"
         );
     }
 }
