@@ -24,10 +24,8 @@ abbrev_name|crates/tasks/src/uninstall.rs|2|open: external: the cmd! macro is xs
 abbrev_name|crates/tasks/src/util/ensure_installed.rs|3|open: external: the cmd! macro is xshell's name
 abbrev_name|crates/tasks/src/util/sweep_stale_artifacts.rs|2|open: external: the cmd! macro is xshell's name
 fn_import|crates/agent-gossip/src/api/tests.rs|1|open: Call a top-level function through its module (mem::swap, not a bare swap), so the reader sees where it comes from (O23)
-long_chain|crates/agent-gossip-test-fixtures/src/cli_task_create_attempt.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-test-fixtures/src/node.rs|4|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/agent-gossip-test-fixtures/src/park_bell.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip-wasm-client/src/gossip_driver.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/benches/transfer.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/agent-gossip/build.rs|2|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
