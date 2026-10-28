@@ -399,6 +399,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Declined D1: AGENTS drops derivable doc comments, so a public item gets a doc comment only when it states a why that the signature cannot.
 - Declined P12: `assert_eq!` and `assert_ne!` already print both values, and a context string that repeats the condition breaks P14.
 - Declined P2: the turbofish sites are over 30 and a blanket change to `let` types is not clearer at each one, so a turbofish stays where it reads better.
+- Declined P1: there are 108 turbofish sites and many inferred types; the compiler and review catch the unclear inference, so the code keeps the inference where it reads well.
 - Declined N3: lifetimes such as `'a` on a struct with one borrowed field are clear, and renaming the about 260 uses in tests and fixtures touches over 30 sites.
 - Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
 - Declined O27: the `absolute_paths` lint flags 1210 qualified paths in the crate, over 30 sites, so no lint is set and the paths stay as they read.
