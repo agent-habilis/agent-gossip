@@ -38,7 +38,6 @@ long_chain|crates/slot-template/src/expand_at.rs|2|open: A statement with a chai
 long_chain|crates/slot-template/src/tests.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/build.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/install.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
-long_chain|crates/tasks/src/plan.rs|10|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 long_chain|crates/tasks/src/util/ensure_installed.rs|1|open: A statement with a chain of five or more calls is hard to read in one pass: name the middle step (P15)
 pub_impl_into|crates/agent-gossip/src/harness/session.rs|1|open: A public function takes impl Into<T> only where call-site ergonomics matter most in a library. Each such function has a counted row with its reason.
 pub_vec_return|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|8|An owned snapshot: a borrowed iterator would hold &mut self, so the test could not use the node while it reads the list (I7)

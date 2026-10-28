@@ -406,24 +406,26 @@ fn spawn(
     } = *site;
     let log_dir = base.join(format!("logs-{variant}-{index}"));
     let state_file = base.join(format!("{variant}-{index}.state.json"));
-    let child: Child = Command::new(binary)
+    let mut daemon = Command::new(binary);
+    daemon
         .arg(command)
         .args(extra)
-        .args(["--nickname", &format!("idle-{variant}-{index}")])
+        .args(["--nickname", &format!("idle-{variant}-{index}")]);
+    daemon
         .arg("--log-dir")
         .arg(&log_dir)
         .arg("--state-file")
-        .arg(&state_file)
-        // Every counter here is read by grepping the log, and the sink rotates
-        // to `<file>.1` at `LOG_FILE_MAX_BYTES` (10 MiB) — which `find_log`
-        // does not follow. A rotation mid-run would silently drop the rotated
-        // half of the enumerations and censuses, i.e. read as an improvement.
-        // `0` disables rotation for the run.
+        .arg(&state_file);
+    // Every counter here is read by grepping the log, and the sink rotates
+    // to `<file>.1` at `LOG_FILE_MAX_BYTES` (10 MiB) — which `find_log`
+    // does not follow. A rotation mid-run would silently drop the rotated
+    // half of the enumerations and censuses, i.e. read as an improvement.
+    // `0` disables rotation for the run.
+    daemon
         .args(["--log-max-bytes", "0"])
         .env("RUST_LOG", RUST_LOG)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stdout(Stdio::null());
+    let child: Child = daemon.stderr(Stdio::null()).spawn()?;
     Ok(Node {
         variant,
         index,
@@ -441,18 +443,19 @@ fn spawn(
 /// identity — parsing the state file separately would be a second source of
 /// truth for the same fact.
 fn ready(binary: &Path, state_file: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let out: Output = Command::new(binary)
-        .arg("ready")
-        .arg("--state-file")
-        .arg(state_file)
+    let mut gate = Command::new(binary);
+    gate.arg("ready").arg("--state-file").arg(state_file);
+    let out: Output = gate
         .args(["--output", "json", "--timeout-secs", "120"])
         .output()?;
     if !out.status.success() {
         return Err(format!("daemon never became ready: {}", state_file.display()).into());
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    text.split_once("\"gossip\":\"")
-        .and_then(|(_, rest)| rest.split_once('"'))
+    let gossip_field = text
+        .split_once("\"gossip\":\"")
+        .and_then(|(_, rest)| rest.split_once('"'));
+    gossip_field
         .map(|(id, _)| id.to_owned())
         .ok_or_else(|| format!("no gossip id in ready output: {text}").into())
 }
@@ -620,11 +623,8 @@ fn ambient_monitor(log: &Path) -> Option<Child> {
         command.args(["-n", "monitor"]);
         command
     };
-    command
-        .stdout(Stdio::from(file))
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()
+    command.stdout(Stdio::from(file)).stderr(Stdio::null());
+    command.spawn().ok()
 }
 
 fn report_host(ambient_log: &Path, monitored: bool, elapsed: f64) {
@@ -636,7 +636,8 @@ fn report_host(ambient_log: &Path, monitored: bool, elapsed: f64) {
     }
     let text = fs::read_to_string(ambient_log).unwrap_or_default();
     if cfg!(target_os = "linux") {
-        let total: usize = text.lines().filter(|line| !line.trim().is_empty()).count();
+        let nonblank = text.lines().filter(|line| !line.trim().is_empty());
+        let total: usize = nonblank.count();
         let rate = f64::from(u32::try_from(total).unwrap_or(u32::MAX)) / elapsed;
         println!("netlink: {total} msgs ({rate:.2}/s)");
         return;
@@ -712,15 +713,13 @@ fn interface_count() -> usize {
 /// macOS `ps` reports centiseconds and splits user from system directly.
 fn cpu_of_all(running: &[Node]) -> Vec<Cpu> {
     if cfg!(target_os = "linux") {
-        return running
+        let cpus = running
             .iter()
-            .map(|node| proc_stat_cpu(node.child.id()).unwrap_or_default())
-            .collect();
+            .map(|node| proc_stat_cpu(node.child.id()).unwrap_or_default());
+        return cpus.collect();
     }
-    let pids: Vec<String> = running
-        .iter()
-        .map(|node| node.child.id().to_string())
-        .collect();
+    let ids = running.iter().map(|node| node.child.id().to_string());
+    let pids: Vec<String> = ids.collect();
     let Ok(out) = Command::new("ps")
         .args(["-o", "pid=,utime=,stime=", "-p", &pids.join(",")])
         .output()
@@ -734,23 +733,16 @@ fn cpu_of_all(running: &[Node]) -> Vec<Cpu> {
         .filter_map(|line| {
             let mut fields = line.split_whitespace();
             let pid = fields.next()?.parse().ok()?;
-            Some((
-                pid,
-                Cpu {
-                    user: fields.next().map(parse_ps_time).unwrap_or_default(),
-                    system: fields.next().map(parse_ps_time).unwrap_or_default(),
-                },
-            ))
+            let user = fields.next().map(parse_ps_time).unwrap_or_default();
+            let system = fields.next().map(parse_ps_time).unwrap_or_default();
+            Some((pid, Cpu { user, system }))
         })
         .collect();
     running
         .iter()
         .map(|node| {
-            by_pid
-                .iter()
-                .find(|(pid, _)| *pid == node.child.id())
-                .map(|(_, cpu)| *cpu)
-                .unwrap_or_default()
+            let found = by_pid.iter().find(|(pid, _)| *pid == node.child.id());
+            found.map(|(_, cpu)| *cpu).unwrap_or_default()
         })
         .collect()
 }
@@ -758,10 +750,8 @@ fn cpu_of_all(running: &[Node]) -> Vec<Cpu> {
 /// `[[HH:]MM:]SS.ss` — `ps` grows a leading field as the value passes a minute
 /// and again past an hour, so scale from the right.
 fn parse_ps_time(field: &str) -> f64 {
-    field
-        .trim()
-        .rsplit(':')
-        .zip([1.0, 60.0, 3600.0])
+    let parts = field.trim().rsplit(':').zip([1.0, 60.0, 3600.0]);
+    parts
         .map(|(part, scale)| part.parse().unwrap_or(0.0) * scale)
         .sum()
 }
@@ -786,11 +776,12 @@ fn proc_stat_cpu(pid: u32) -> Option<Cpu> {
 /// port we run on regardless of the kernel's own tick rate, but asked rather
 /// than assumed.
 fn clock_ticks() -> f64 {
-    Command::new("getconf")
-        .arg("CLK_TCK")
-        .output()
-        .ok()
-        .and_then(|out| String::from_utf8_lossy(&out.stdout).trim().parse().ok())
+    let mut getconf = Command::new("getconf");
+    getconf.arg("CLK_TCK");
+    let output = getconf.output().ok();
+    let ticks_text = output.map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+    ticks_text
+        .and_then(|text| text.parse().ok())
         .unwrap_or(100.0)
 }
 
