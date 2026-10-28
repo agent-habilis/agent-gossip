@@ -1,5 +1,8 @@
 use anyhow::Result;
 
+use super::args::ReadyOpts;
+use super::print_ready_identity::print_ready_identity;
+
 /// A state file that `wait_for_ready` saw report a fresh `ready: true`. Only
 /// `wait_for_ready` builds one, so an identity read through it follows a passed
 /// readiness check.
@@ -75,4 +78,25 @@ pub(super) fn ready_is_fresh(last_updated: u64) -> bool {
     let window =
         i64::try_from(habilis_network::runtime::tuning::READY_FRESH.as_secs()).unwrap_or(i64::MAX);
     skew.abs() <= window
+}
+
+/// Block until the daemon's `--state-file` reports it is *freshly* serving
+/// (the `ready` flag is `true` and `last_updated` is recent), then exit 0.
+/// Prints `{mesh,name,nickname}` on success, so the gate doubles as the
+/// identity read instead of the caller parsing the file. Times out non-zero.
+///
+/// Robustness: a missing, unreadable, malformed, or stale-but-not-yet-ready
+/// file is "not ready yet, keep polling" — only the deadline fails the gate.
+/// This tolerates a half-written or old-schema file the daemon is about to
+/// atomically overwrite, and the freshness check rejects a `ready: true`
+/// left behind by a prior daemon that was killed with SIGKILL.
+pub(super) async fn ready(opts: ReadyOpts) -> Result<()> {
+    let ReadyOpts {
+        state_file,
+        timeout_secs,
+        legacy_output: _,
+    } = opts;
+    let ready = wait_for_ready(&state_file, timeout_secs).await?;
+    print_ready_identity(&ready);
+    Ok(())
 }
