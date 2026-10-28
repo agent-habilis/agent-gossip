@@ -15,7 +15,10 @@ fn substitutes_slots_including_repeats() {
             &[("cmd", "ls"), ("who", "me")],
         )
         .expect("render");
-    assert_eq!(out, "run ls then ls as me");
+    assert_eq!(
+        out, "run ls then ls as me",
+        "every slot, repeated or not, must be replaced by its value"
+    );
 }
 
 #[test]
@@ -27,15 +30,19 @@ fn substitutes_inside_code_fences_and_prose() {
     )
     .expect("render");
     assert_eq!(
-        out,
-        "```bash\nagent-gossip create --state-file X &\n```\n\nPrint the output block.\n"
+        out, "```bash\nagent-gossip create --state-file X &\n```\n\nPrint the output block.\n",
+        "slots inside a code fence and in prose must both be filled"
     );
 }
 
 #[test]
 fn no_args_no_slots_is_identity() {
     let text = "plain text, no directives";
-    assert_eq!(render(text, &[]).expect("render"), text);
+    assert_eq!(
+        render(text, &[]).expect("render"),
+        text,
+        "text without directives must come back unchanged"
+    );
 }
 
 // ---- render: strictness ----
@@ -46,7 +53,8 @@ fn unknown_slot_errors() {
         render("hello <!-- slot name=\"name\" -->", &[]),
         Err(Error::UnknownSlot {
             name: "name".to_owned()
-        })
+        }),
+        "a slot with no matching arg must fail with UnknownSlot"
     );
 }
 
@@ -56,7 +64,8 @@ fn unused_arg_errors() {
         render("hello", &[("name", "world")]),
         Err(Error::UnusedArg {
             name: "name".to_owned()
-        })
+        }),
+        "an arg with no matching slot must fail with UnusedArg"
     );
 }
 
@@ -84,10 +93,13 @@ fn malformed_slots_error_instead_of_passing_through() {
 
 #[test]
 fn include_outside_its_own_line_errors_in_render() {
-    assert!(matches!(
-        render("text <!-- include path=\"x.md\" --> tail", &[]),
-        Err(Error::MalformedInclude { .. })
-    ));
+    assert!(
+        matches!(
+            render("text <!-- include path=\"x.md\" --> tail", &[]),
+            Err(Error::MalformedInclude { .. })
+        ),
+        "an include that shares its line with text must fail in render"
+    );
 }
 
 // ---- render: passthrough ----
@@ -95,20 +107,32 @@ fn include_outside_its_own_line_errors_in_render() {
 #[test]
 fn ordinary_comments_and_literal_text_pass_through_byte_exact() {
     let corpus = "<!-- just a note --> single {brace}, {{name}}, JSON {\"peers\":{\"a\":1}}, shell ${VAR} and $(id -u)\n<!-- TODO: keep -->";
-    assert_eq!(render(corpus, &[]).expect("render"), corpus);
+    assert_eq!(
+        render(corpus, &[]).expect("render"),
+        corpus,
+        "ordinary comments and literal braces must pass through byte for byte"
+    );
 }
 
 #[test]
 fn unterminated_ordinary_comment_is_literal() {
     let corpus = "prose <!-- dangling note";
-    assert_eq!(render(corpus, &[]).expect("render"), corpus);
+    assert_eq!(
+        render(corpus, &[]).expect("render"),
+        corpus,
+        "an unterminated comment must stay literal text"
+    );
 }
 
 #[test]
 fn deterministic() {
     let template = "a <!-- slot name=\"x\" --> b";
     let args = [("x", "1")];
-    assert_eq!(render(template, &args), render(template, &args));
+    assert_eq!(
+        render(template, &args),
+        render(template, &args),
+        "two renders of one template must give one result"
+    );
 }
 
 // ---- expand: include splicing ----
@@ -150,7 +174,10 @@ fn include_resolves_relative_to_the_importing_file() {
             "skills/gossip-join/SKILL.md",
         )
         .expect("expand");
-    assert_eq!(out, "# join\n\n## Workflow\n\n## Loop\n\n");
+    assert_eq!(
+        out, "# join\n\n## Workflow\n\n## Loop\n\n",
+        "each include must resolve from the folder of the file that holds it"
+    );
 }
 
 #[test]
@@ -170,8 +197,8 @@ fn include_args_fill_the_included_files_slots() {
         )
         .expect("expand");
     assert_eq!(
-        out,
-        "run: agent-gossip join \"{TARGET}\" &\nprint the line\n"
+        out, "run: agent-gossip join \"{TARGET}\" &\nprint the line\n",
+        "include args must fill the slots of the included file, with escapes decoded"
     );
 }
 
@@ -185,7 +212,10 @@ fn escaped_backslash_in_arg_value() {
         "a.md",
     )
     .expect("expand");
-    assert_eq!(out, "back\\slash");
+    assert_eq!(
+        out, "back\\slash",
+        "an escaped backslash in an arg value must decode to one backslash"
+    );
 }
 
 #[test]
@@ -199,7 +229,10 @@ fn nested_includes_resolve_from_each_file() {
         "top/a.md",
     );
     // `b.md`'s include is not alone on its line — that is an error, not a splice.
-    assert!(matches!(out, Err(Error::MalformedInclude { .. })));
+    assert!(
+        matches!(out, Err(Error::MalformedInclude { .. })),
+        "an include inside a line of text must fail, got {out:?}"
+    );
 
     let nested = expand_files(
         &[
@@ -213,7 +246,10 @@ fn nested_includes_resolve_from_each_file() {
         "top/a.md",
     )
     .expect("expand");
-    assert_eq!(nested, "before\nc\nafter\n");
+    assert_eq!(
+        nested, "before\nc\nafter\n",
+        "a nested include must splice from the folder of its own file"
+    );
 }
 
 #[test]
@@ -233,7 +269,8 @@ fn args_are_not_inherited_by_nested_includes() {
         out,
         Err(Error::UnknownSlot {
             name: "v".to_owned()
-        })
+        }),
+        "a nested include must not see the args of its parent"
     );
 }
 
@@ -251,7 +288,8 @@ fn include_args_are_strict_per_call_site() {
         out,
         Err(Error::UnusedArg {
             name: "ghost".to_owned()
-        })
+        }),
+        "an include arg with no slot in the included file must fail"
     );
 }
 
@@ -290,7 +328,8 @@ fn include_cycles_are_detected() {
         out,
         Err(Error::IncludeCycle {
             path: PathBuf::from("a.md")
-        })
+        }),
+        "a file that includes itself through a detour must be a cycle"
     );
 }
 
@@ -308,10 +347,13 @@ fn include_depth_is_capped() {
         .iter()
         .map(|(path, body)| (path.as_str(), body.as_str()))
         .collect();
-    assert!(matches!(
-        expand_files(&files, "f0.md"),
-        Err(Error::DepthExceeded { .. })
-    ));
+    assert!(
+        matches!(
+            expand_files(&files, "f0.md"),
+            Err(Error::DepthExceeded { .. })
+        ),
+        "a chain of ten includes must exceed the depth cap"
+    );
 }
 
 #[test]
@@ -325,7 +367,8 @@ fn load_failure_carries_the_normalized_path() {
         Err(Error::Load {
             path: PathBuf::from("missing.md"),
             reason: "not found".to_owned()
-        })
+        }),
+        "a missing file must be reported by its normalized path"
     );
 }
 
@@ -336,12 +379,25 @@ fn load_failure_carries_the_normalized_path() {
 fn leading_parent_dirs_accumulate() {
     assert_eq!(
         normalize(Path::new("../../x/y.md")),
-        PathBuf::from("../../x/y.md")
+        PathBuf::from("../../x/y.md"),
+        "two leading parent dirs must both survive"
     );
-    assert_eq!(normalize(Path::new("../a/../b")), PathBuf::from("../b"));
-    assert_eq!(normalize(Path::new("a/../../b")), PathBuf::from("../b"));
+    assert_eq!(
+        normalize(Path::new("../a/../b")),
+        PathBuf::from("../b"),
+        "a parent dir after a name must cancel it"
+    );
+    assert_eq!(
+        normalize(Path::new("a/../../b")),
+        PathBuf::from("../b"),
+        "a parent dir that has nothing left to cancel must stay"
+    );
     // Root has no parent to climb to.
-    assert_eq!(normalize(Path::new("/../a")), PathBuf::from("/a"));
+    assert_eq!(
+        normalize(Path::new("/../a")),
+        PathBuf::from("/a"),
+        "the root has no parent, so a parent dir under it must vanish"
+    );
 }
 
 #[test]
@@ -354,5 +410,8 @@ fn indented_include_lines_work_and_comments_survive() {
         "a.md",
     )
     .expect("expand");
-    assert_eq!(out, "<!-- keep me -->\nspliced\n");
+    assert_eq!(
+        out, "<!-- keep me -->\nspliced\n",
+        "an ordinary comment must survive an include on an indented line"
+    );
 }
