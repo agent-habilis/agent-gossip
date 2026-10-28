@@ -1,10 +1,10 @@
+use std::os::fd::AsFd;
 /// The detached daemon's copy of one of the launcher's output streams. A pipe or
 /// a socket is how a caller captures output (libuv, and so Node, uses a
 /// socketpair), and the caller reads it to EOF: a daemon that held the write
 /// end would block the caller for its whole life and fill the pipe with message
 /// bodies. A file, `/dev/null` or a tty is inherited, so the skill's `.stderr`
 /// file still gets startup errors.
-use std::os::fd::AsFd;
 pub(super) fn detached_stdio(stream: &impl AsFd) -> std::process::Stdio {
     use std::os::unix::fs::FileTypeExt as _;
     let captured: bool = stream
