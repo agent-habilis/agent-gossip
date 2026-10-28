@@ -120,11 +120,13 @@ async fn status_leg_returns_a_delivered_receipt() {
             .await,
         "the status leg never reached the initiator"
     );
-    let leg_id: String = alice
-        .tasks()
+    let tasks = alice.tasks();
+    let leg_message = tasks
         .into_iter()
         .find(|(message, is_self)| !is_self && message.author.as_str() == "rc-leg-bob")
-        .map(|(message, _)| message.id.as_str().to_owned())
+        .map(|(message, _)| message);
+    let leg_id: String = leg_message
+        .map(|message| message.id.as_str().to_owned())
         .expect("the leg is in the capture");
 
     assert!(
@@ -155,12 +157,14 @@ async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
         wait_receipt(&mut alice, "rc-big-bob", control.as_str()).await,
         "the control message gets its delivered receipt"
     );
+    let delivered_receipt = |msg_id: &str| (msg_id.to_owned(), "delivered".to_owned());
+    let expected: Vec<(String, String)> = vec![
+        delivered_receipt(id.as_str()),
+        delivered_receipt(control.as_str()),
+    ];
     assert_eq!(
         receipts_from(&mut alice, "rc-big-bob"),
-        vec![
-            (id.as_str().to_owned(), "delivered".to_owned()),
-            (control.as_str().to_owned(), "delivered".to_owned()),
-        ],
+        expected,
         "both messages get a delivered receipt"
     );
 
