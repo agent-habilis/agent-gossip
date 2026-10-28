@@ -29,15 +29,11 @@ fn msg_id(mesh: &str, from: &str, to: &str, body: &str) -> String {
 fn receipts(mesh: &str, nickname: &str, after: Option<&str>) -> Vec<(String, String)> {
     let events: Vec<serde_json::Value> =
         serde_json::from_str(&cli_poll(mesh, nickname, after)).expect("poll prints a JSON array");
-    events
-        .iter()
-        .filter(|event| event["event"] == "receipt")
-        .map(|event| {
-            (
-                event["ref"].as_str().unwrap_or_default().to_owned(),
-                event["state"].as_str().unwrap_or_default().to_owned(),
-            )
-        })
+    let text_of =
+        |event: &serde_json::Value, key: &str| event[key].as_str().unwrap_or_default().to_owned();
+    let receipt_events = events.iter().filter(|event| event["event"] == "receipt");
+    receipt_events
+        .map(|event| (text_of(event, "ref"), text_of(event, "state")))
         .collect()
 }
 
@@ -81,12 +77,9 @@ fn reads_of(mesh: &str, nickname: &str, id: &str) -> usize {
 fn reader_of(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
     let out: serde_json::Value =
         serde_json::from_str(&cli_peers(mesh, asker)).expect("peers prints JSON");
-    out["peers"]
-        .as_array()?
-        .iter()
-        .find(|row| row["nickname"] == target)?
-        .get("reader")
-        .cloned()
+    let rows = out["peers"].as_array()?;
+    let row = rows.iter().find(|row| row["nickname"] == target)?;
+    row.get("reader").cloned()
 }
 
 #[test]
@@ -112,9 +105,8 @@ fn a_long_poll_alone_sends_no_read_receipt() {
     // The directed msg rings the bell. A bell is not a reader.
     let rang: Vec<serde_json::Value> =
         serde_json::from_str(&common::wait_bell_output(&mut bell)).expect("bell prints JSON");
-    let ping_seq: String = rang
-        .iter()
-        .find(|event| event["id"] == id.as_str())
+    let ping_event = rang.iter().find(|event| event["id"] == id.as_str());
+    let ping_seq: String = ping_event
         .and_then(|event| event["seq"].as_u64())
         .expect("the bell served the ping")
         .to_string();
