@@ -21,8 +21,6 @@
     reason = "throughput report math; f64 precision is irrelevant for a human summary"
 )]
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agent_gossip::api::{CreateConfig, JoinConfig, MeshSession};
@@ -30,6 +28,7 @@ use agent_gossip::{JoinTarget, MeshName, MessageBody};
 use habilis_network::protocol::message::Authored;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self};
+use tokio::sync::watch;
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
 /// source for the format width and the receiver's parse.
@@ -95,12 +94,13 @@ fn verify_chunk(body: &str, expected_count: u32) -> Option<u32> {
     Some(index)
 }
 
-/// Shared tallies the receiver's spawned task reports progress through.
-#[derive(Clone)]
+/// What the receiver's spawned task has seen so far. The task owns the counts
+/// and publishes them; the main task only reads the latest value.
+#[derive(Default)]
 struct DeliveryTally {
-    delivered: Arc<AtomicUsize>,
-    delivered_bytes: Arc<AtomicU64>,
-    lagged: Arc<AtomicU64>,
+    delivered: usize,
+    delivered_bytes: u64,
+    lagged: u64,
 }
 
 /// Drain `rx` until `chunk_count` distinct chunk indices have arrived (or the
@@ -109,14 +109,14 @@ struct DeliveryTally {
 async fn receive_chunks(
     mut rx: broadcast::Receiver<Authored>,
     chunk_count: u32,
-    tally: DeliveryTally,
+    tally: watch::Sender<DeliveryTally>,
 ) {
     let mut seen = vec![false; chunk_count as usize];
     loop {
         let message = match rx.recv().await {
             Ok(message) => message,
             Err(RecvError::Lagged(skipped)) => {
-                tally.lagged.fetch_add(skipped, Ordering::Relaxed);
+                tally.send_modify(|tally| tally.lagged += skipped);
                 continue;
             }
             Err(RecvError::Closed) => break,
@@ -129,10 +129,13 @@ async fn receive_chunks(
             continue;
         }
         *slot = true;
-        tally
-            .delivered_bytes
-            .fetch_add(message.body.as_str().len() as u64, Ordering::Relaxed);
-        if tally.delivered.fetch_add(1, Ordering::Relaxed) + 1 == chunk_count as usize {
+        let mut done = false;
+        tally.send_modify(|tally| {
+            tally.delivered_bytes += message.body.as_str().len() as u64;
+            tally.delivered += 1;
+            done = tally.delivered == chunk_count as usize;
+        });
+        if done {
             break;
         }
     }
@@ -164,18 +167,11 @@ async fn main() {
     // Subscribe before sending so we see everything sent after this point.
     let rx = node_b.messages();
 
-    let delivered = Arc::new(AtomicUsize::new(0));
-    let delivered_bytes = Arc::new(AtomicU64::new(0));
-    let lagged = Arc::new(AtomicU64::new(0));
+    let (tally_tx, tally_rx) = watch::channel(DeliveryTally::default());
 
     // Receiver: verify + tally distinct chunk indices. Owns its `seen`
     // bitset; reports progress through the shared atomics.
-    let tally = DeliveryTally {
-        delivered: Arc::clone(&delivered),
-        delivered_bytes: Arc::clone(&delivered_bytes),
-        lagged: Arc::clone(&lagged),
-    };
-    let receiver = tokio::spawn(receive_chunks(rx, chunk_count, tally));
+    let receiver = tokio::spawn(receive_chunks(rx, chunk_count, tally_tx));
 
     // Pre-build every chunk body *before* the clock starts: payload
     // generation + `MessageBody` validation are not transfer work and must
@@ -189,7 +185,7 @@ async fn main() {
     // by index), so the timed window measures steady-state transfer, not
     // rendezvous/bootstrap latency.
     let warmup_deadline = Instant::now() + Duration::from_secs(20);
-    while delivered.load(Ordering::Relaxed) == 0 {
+    while tally_rx.borrow().delivered == 0 {
         assert!(
             Instant::now() < warmup_deadline,
             "mesh never formed: node B received no chunk within 20s"
@@ -208,10 +204,10 @@ async fn main() {
     // Wait for drain: done at N, or give up after a no-progress stall /
     // overall cap (a soft delivery miss, reported as ratio < 100%).
     let overall_deadline = started + Duration::from_secs(60 + target_mb * 3);
-    let mut last_seen = delivered.load(Ordering::Relaxed);
+    let mut last_seen = tally_rx.borrow().delivered;
     let mut last_progress = Instant::now();
     loop {
-        let now_delivered = delivered.load(Ordering::Relaxed);
+        let now_delivered = tally_rx.borrow().delivered;
         if now_delivered >= chunk_count as usize || Instant::now() > overall_deadline {
             break;
         }
@@ -226,9 +222,10 @@ async fn main() {
     let elapsed = started.elapsed();
     receiver.abort();
 
-    let got = delivered.load(Ordering::Relaxed);
-    let bytes = delivered_bytes.load(Ordering::Relaxed);
-    let lag = lagged.load(Ordering::Relaxed);
+    let (got, bytes, lag) = {
+        let tally = tally_rx.borrow();
+        (tally.delivered, tally.delivered_bytes, tally.lagged)
+    };
     let ratio = got as f64 / f64::from(chunk_count);
     let mb = bytes as f64 / (1024.0 * 1024.0);
     let secs = elapsed.as_secs_f64();
