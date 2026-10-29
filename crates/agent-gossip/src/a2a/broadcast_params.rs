@@ -293,6 +293,332 @@ pub(crate) struct BroadcastParams<'caller> {
     pub(crate) text: MessageBody,
 }
 
+/// The body of one broadcast in both forms: the plaintext the operator sees and
+/// the body the wire carries, which is sealed on a passworded mesh.
+struct BroadcastBody {
+    plain: MessageBody,
+    wire: MessageBody,
+    encrypted: bool,
+}
+
+impl BroadcastBody {
+    /// On a passworded mesh, seal the chat body so a relay or a captured frame
+    /// can't read it. Everything downstream (dedup, the per-author chain, the
+    /// message log, anti-entropy) operates on the sealed frame; only the local
+    /// echo + the returned Message carry plaintext.
+    fn seal(state: &EventLoopState, plain: MessageBody) -> anyhow::Result<Self> {
+        let key = state.broadcast_key();
+        let wire = match key {
+            Some(key) => doc::encrypt_body(&plain, key)?,
+            None => plain.clone(),
+        };
+        Ok(Self {
+            plain,
+            wire,
+            encrypted: key.is_some(),
+        })
+    }
+}
+
+/// The frames of one broadcast. The chain position is read once, because every
+/// frame this call emits — the single frame, the probe, and each shard — stamps
+/// the *same* position, and only the commit of a frame advances it afterwards.
+struct BroadcastFrames<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    signer: Arc<Identity>,
+    chain_seq: u64,
+    chain_prev: Option<ContentHash>,
+}
+
+impl<'caller> BroadcastFrames<'caller> {
+    fn new(mesh: &'caller MeshId, author: &'caller Nickname, state: &EventLoopState) -> Self {
+        let (chain_seq, chain_prev) = state.chain_head();
+        Self {
+            mesh,
+            author,
+            // An `Arc`, not a borrow: the shard loop signs after it borrows the state mutably.
+            signer: Arc::clone(state.identity()),
+            chain_seq,
+            chain_prev,
+        }
+    }
+
+    fn frame(&self, body: MessageBody, id: Option<MessageId>) -> ChatFrameParams<'caller> {
+        ChatFrameParams {
+            mesh: self.mesh,
+            author: self.author,
+            body,
+            id,
+        }
+    }
+
+    fn stamp(&self, state: &EventLoopState) -> ChainStamp {
+        ChainStamp {
+            seq: self.chain_seq,
+            prev: self.chain_prev,
+            parents: state.dag_parents().collect(),
+        }
+    }
+
+    /// The whole payload in one frame, its id the A2A messageId.
+    fn single(&self, state: &EventLoopState, body: MessageBody, id: MessageId) -> Verified {
+        build_msg(
+            self.frame(body, Some(id)),
+            self.stamp(state),
+            None,
+            &self.signer,
+        )
+    }
+
+    /// One shard: an ordinary chained frame with its own minted id.
+    fn shard(&self, state: &EventLoopState, chunk: MessageBody, shard: Shard) -> Verified {
+        build_msg(
+            self.frame(chunk, None),
+            self.stamp(state),
+            Some(shard),
+            &self.signer,
+        )
+    }
+
+    /// An empty-body frame sized against the *largest* shard's envelope, not the
+    /// first's. Each later shard chains off the prior, so even from genesis
+    /// (empty `prev`/`parents`) every shard after the first carries a 64-char
+    /// `prev` and one parent hash. Worst-case both: a full-length `prev` and as
+    /// many parent hashes as the first shard could hold (its current tips, never
+    /// fewer than the one-hash link later shards carry). The all-zero hash
+    /// stands in for any content hash.
+    fn probe(&self, state: &EventLoopState, group: &ShardGroup) -> Verified {
+        let hash_stub = ContentHash::from_bytes([0; 32]);
+        build_msg(
+            self.frame(
+                MessageBody::try_new(String::new()).expect("empty body is valid"),
+                None,
+            ),
+            ChainStamp {
+                seq: self.chain_seq,
+                prev: Some(hash_stub),
+                parents: vec![hash_stub; state.dag_parents().count().max(1)],
+            },
+            Some(probe_shard(group)),
+            &self.signer,
+        )
+    }
+}
+
+/// The shard whose envelope is the largest of a group.
+fn probe_shard(group: &ShardGroup) -> Shard {
+    Shard::new(group.clone(), MAX_SHARD_TOTAL).with_index(MAX_SHARD_TOTAL - 1)
+}
+
+/// The group of a split body and the count of its shards.
+struct ShardSeries {
+    group: ShardGroup,
+    total: u32,
+}
+
+impl ShardSeries {
+    fn new(group: ShardGroup, chunk_count: usize) -> Self {
+        Self {
+            group,
+            total: u32::try_from(chunk_count).expect("chunk count is bounded by MAX_SHARD_TOTAL"),
+        }
+    }
+
+    fn shard(&self, index: usize) -> Shard {
+        Shard::new(self.group.clone(), self.total)
+            .with_index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"))
+    }
+
+    /// A big group's shards skip the message log, so peers can only heal a lost
+    /// shard via the `shard/repair` RPC, served from the sender-side frame
+    /// cache. Small groups heal through anti-entropy instead.
+    fn is_cached(&self) -> bool {
+        self.total > LOGGED_SHARD_GROUP_MAX_TOTAL
+    }
+}
+
+/// Atomic admission while unmeshed: all shards or none, so a half-buffered body
+/// (which could never reassemble) never reaches peers.
+fn ensure_buffer_room(
+    state: &mut EventLoopState,
+    shard_count: usize,
+    what: &str,
+) -> anyhow::Result<()> {
+    if !state.is_meshed() && state.pending_outbound_mut().remaining() < shard_count {
+        return Err(anyhow::anyhow!(
+            "pending outbound buffer full; multipart {what} dropped"
+        ));
+    }
+    Ok(())
+}
+
+/// The shard frames of one directed leg or RPC: same addressee and kind, each
+/// signed on its own.
+struct DirectedShardFrames<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    kind: &'caller MessageKind,
+    signer: &'caller Identity,
+}
+
+impl DirectedShardFrames<'_> {
+    fn shard(&self, body: MessageBody, shard: Shard) -> Verified {
+        Message::new_frame(self.mesh, self.author, self.kind.clone(), body)
+            .with_shard(Some(shard))
+            .sign(self.signer)
+    }
+
+    /// The body budget of a shard, sized from an empty-body frame in the
+    /// largest shard's envelope.
+    fn body_budget(&self, group: &ShardGroup) -> usize {
+        let empty = MessageBody::try_new(String::new()).expect("empty body is valid");
+        shard_body_budget(&self.shard(empty, probe_shard(group)))
+    }
+}
+
+/// A split broadcast body, ready to send shard by shard.
+struct BroadcastShards<'run> {
+    frames: &'run BroadcastFrames<'run>,
+    series: ShardSeries,
+    chunks: Vec<&'run str>,
+}
+
+impl<'run> BroadcastShards<'run> {
+    /// # Errors
+    /// The body needs more than [`MAX_SHARD_TOTAL`] shards, or the unmeshed
+    /// buffer cannot hold all of them.
+    fn plan(
+        frames: &'run BroadcastFrames<'run>,
+        state: &mut EventLoopState,
+        body: &'run BroadcastBody,
+        group: ShardGroup,
+    ) -> anyhow::Result<Self> {
+        let budget = shard_body_budget(&frames.probe(state, &group));
+        // Split the *wire* (sealed, when encrypted) body — shards carry chunks of
+        // the ciphertext envelope that reassemble into it; the receiver decrypts the
+        // reassembled body. The echoed/returned logical still carries plaintext.
+        let chunks = split_body(body.wire.as_str(), budget).ok_or_else(|| {
+            // Report the wire length that is actually being split: when encrypted
+            // it is the ~1.4x-inflated sealed body, which is why a chat that fits
+            // passwordless can exceed the shard cap here.
+            let note = if body.encrypted {
+                " (sealing inflates the body ~1.4x)"
+            } else {
+                ""
+            };
+            anyhow::anyhow!(
+                "message too large: a {}-byte wire body needs more than {MAX_SHARD_TOTAL} shards{note}",
+                body.wire.as_str().len()
+            )
+        })?;
+        ensure_buffer_room(state, chunks.len(), "message")?;
+        Ok(Self {
+            frames,
+            series: ShardSeries::new(group, chunks.len()),
+            chunks,
+        })
+    }
+
+    /// Send every shard silently. Return the first, which the logical frame
+    /// copies its author and chain from, and the group.
+    async fn send(
+        self,
+        state: &mut EventLoopState,
+        sender: &MeshSender,
+        out: &output::Output,
+    ) -> anyhow::Result<(Verified, ShardGroup)> {
+        let mut cache_frames = Vec::new();
+        let mut header = None;
+        for (index, chunk) in self.chunks.iter().enumerate() {
+            let chunk_body =
+                MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
+            let message = self
+                .frames
+                .shard(state, chunk_body, self.series.shard(index));
+            if index == 0 {
+                header = Some(message.clone());
+            }
+            let bytes = message.serialize()?;
+            if self.series.is_cached() {
+                cache_frames.push(bytes.clone());
+            }
+            send_msg_part(
+                state,
+                sender,
+                out,
+                OutboundPart {
+                    message: &message,
+                    bytes,
+                    echo: false,
+                },
+            )
+            .await?;
+        }
+        if !cache_frames.is_empty() {
+            state
+                .shard_cache_mut()
+                .insert(self.series.group.clone(), cache_frames);
+        }
+        Ok((
+            header.expect("a split body has a first shard"),
+            self.series.group,
+        ))
+    }
+}
+
+/// The one frame of a broadcast that fits the wire cap, with the body it carries.
+struct SingleBroadcast<'source> {
+    frame: Verified,
+    body: &'source BroadcastBody,
+}
+
+/// Commit and send the one frame of a broadcast.
+async fn send_single_broadcast(
+    single: SingleBroadcast<'_>,
+    state: &mut EventLoopState,
+    sender: &MeshSender,
+    out: &output::Output,
+) -> anyhow::Result<(MessageId, Authored)> {
+    let SingleBroadcast { frame, body } = single;
+    let bytes = frame.serialize()?;
+    let id = frame.id.clone();
+    if body.encrypted {
+        // Commit + gossip the sealed frame silently, then echo/return a
+        // plaintext-bodied view so the operator/agent sees the text.
+        send_msg_part(
+            state,
+            sender,
+            out,
+            OutboundPart {
+                message: &frame,
+                bytes,
+                echo: false,
+            },
+        )
+        .await?;
+        let plain = frame
+            .open_with(|_| Some(body.plain.clone()))
+            .ok_or_else(|| {
+                anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
+            })?;
+        out.print_message_ex(&plain, true);
+        return Ok((id, plain));
+    }
+    send_msg_part(
+        state,
+        sender,
+        out,
+        OutboundPart {
+            message: &frame,
+            bytes,
+            echo: true,
+        },
+    )
+    .await?;
+    Ok((id, frame.authored()))
+}
+
 /// Build, sign, log and gossip-broadcast one outbound chat message. The
 /// single source of truth for the send path: the CLI socket's IPC `Msg`
 /// command and the typed in-process `SessionRequest::Broadcast` both funnel
@@ -309,10 +635,6 @@ pub(crate) struct BroadcastParams<'caller> {
 /// a [`Message::serialize`] failure and a gossip broadcast error, errors if the
 /// unmeshed pending-outbound buffer is full, and refuses a body that would need
 /// more than [`MAX_SHARD_TOTAL`] shards.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one straight-line compose/sign/split/broadcast pipeline shared by every caller; splitting would scatter a single sequential path across helpers"
-)]
 pub(crate) async fn send_broadcast(
     params: BroadcastParams<'_>,
     state: &mut EventLoopState,
@@ -333,182 +655,37 @@ pub(crate) async fn send_broadcast(
             text.as_str().len()
         ));
     }
-    let signer = Arc::clone(state.identity());
     let payload = status_update_params::compose_broadcast(mesh, text.as_str());
     let payload_id = MessageId::try_new(payload.message_id.as_str())
         .expect("an a2a message id is a valid frame id");
-    let body = status_update_params::payload_body(&payload)?;
-    // On a passworded mesh, seal the chat body so a relay or a captured frame
-    // can't read it. Everything downstream (dedup, the per-author chain, the
-    // message log, anti-entropy) operates on the sealed frame; only the local
-    // echo + the returned Message carry plaintext.
-    let wire_body = match state.broadcast_key() {
-        Some(key) => doc::encrypt_body(&body, key)?,
-        None => body.clone(),
-    };
-    let encrypted = state.broadcast_key().is_some();
-    // Read the chain position once: every frame this call emits — the single
-    // frame, the probe, and each shard — stamps the *same* position, and only
-    // `note_own` advances it afterwards.
-    let (chain_seq, chain_prev) = state.chain_head();
-    // Fast path: the whole payload in one frame, its id the A2A messageId.
-    let single = build_msg(
-        ChatFrameParams {
-            mesh,
-            author,
-            body: wire_body.clone(),
-            id: Some(payload_id.clone()),
-        },
-        ChainStamp {
-            seq: chain_seq,
-            prev: chain_prev,
-            parents: state.dag_parents().collect(),
-        },
-        None,
-        &signer,
-    );
+    let body = BroadcastBody::seal(state, status_update_params::payload_body(&payload)?)?;
+    let frames = BroadcastFrames::new(mesh, author, state);
+    let single = frames.single(state, body.wire.clone(), payload_id);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        let bytes = single.serialize()?;
-        let id = single.id.clone();
-        if encrypted {
-            // Commit + gossip the sealed frame silently, then echo/return a
-            // plaintext-bodied view so the operator/agent sees the text.
-            send_msg_part(
-                state,
-                sender,
-                out,
-                OutboundPart {
-                    message: &single,
-                    bytes,
-                    echo: false,
-                },
-            )
-            .await?;
-            let plain = single.open_with(|_| Some(body.clone())).ok_or_else(|| {
-                anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
-            })?;
-            out.print_message_ex(&plain, true);
-            return Ok((id, plain));
-        }
-        send_msg_part(
+        return send_single_broadcast(
+            SingleBroadcast {
+                frame: single,
+                body: &body,
+            },
             state,
             sender,
             out,
-            OutboundPart {
-                message: &single,
-                bytes,
-                echo: true,
-            },
         )
-        .await?;
-        return Ok((id, single.authored()));
+        .await;
     }
     // Too big: split the payload across shard-tagged frames. Each shard is an
     // ordinary chained frame with its own minted id, retained for
     // anti-entropy; the *group* carries the A2A messageId, so the reassembled
     // logical frame — the only thing echoed and returned — is named by it.
-    let group = ShardGroup::from_uuid_str(payload.message_id.as_str())
-        .expect("an a2a message id is a valid shard group");
-    let max_parts = MAX_SHARD_TOTAL;
-    // Size the probe against the *largest* shard's envelope, not the first's. Each
-    // later shard chains off the prior, so even from genesis (empty `prev`/`parents`)
-    // every shard after the first carries a 64-char `prev` and one parent hash.
-    // Worst-case both: a full-length `prev` and as many parent hashes as the first
-    // shard could hold (its current tips, never fewer than the one-hash link later
-    // shards carry). The all-zero hash stands in for any content hash.
-    let hash_stub = ContentHash::from_bytes([0; 32]);
-    let probe_parents = vec![hash_stub; state.dag_parents().count().max(1)];
-    let probe = build_msg(
-        ChatFrameParams {
-            mesh,
-            author,
-            body: MessageBody::try_new(String::new()).expect("empty body is valid"),
-            id: None,
-        },
-        ChainStamp {
-            seq: chain_seq,
-            prev: Some(hash_stub),
-            parents: probe_parents,
-        },
-        Some(Shard::new(group.clone(), max_parts).with_index(max_parts - 1)),
-        &signer,
-    );
-    let budget = shard_body_budget(&probe);
-    // Split the *wire* (sealed, when encrypted) body — shards carry chunks of
-    // the ciphertext envelope that reassemble into it; the receiver decrypts the
-    // reassembled body. The echoed/returned logical still carries plaintext.
-    let chunks = split_body(wire_body.as_str(), budget).ok_or_else(|| {
-        // Report the wire length that is actually being split: when encrypted
-        // it is the ~1.4x-inflated sealed body, which is why a chat that fits
-        // passwordless can exceed the shard cap here.
-        let note = if encrypted {
-            " (sealing inflates the body ~1.4x)"
-        } else {
-            ""
-        };
-        anyhow::anyhow!(
-            "message too large: a {}-byte wire body needs more than {MAX_SHARD_TOTAL} shards{note}",
-            wire_body.as_str().len()
-        )
-    })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
-    // Atomic admission while unmeshed: all shards or none, so a half-buffered body
-    // (which could never reassemble) never reaches peers.
-    if !state.is_meshed() && state.pending_outbound_mut().remaining() < chunks.len() {
-        return Err(anyhow::anyhow!(
-            "pending outbound buffer full; multipart message dropped"
-        ));
-    }
-    // A big group's shards skip the message log (`shard_fits_log`), so peers
-    // can only heal a lost shard via the `shard/repair` RPC — served from this
-    // sender-side frame cache. Small groups heal through anti-entropy instead,
-    // which re-sends a directed shard point-to-point to its addressee.
-    let mut cache_frames = Vec::new();
-    let mut header = None;
-    for (index, chunk) in chunks.iter().enumerate() {
-        let shard = Shard::new(group.clone(), total)
-            .with_index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"));
-        let chunk_body =
-            MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
-        let message = build_msg(
-            ChatFrameParams {
-                mesh,
-                author,
-                body: chunk_body,
-                id: None,
-            },
-            ChainStamp {
-                seq: chain_seq,
-                prev: chain_prev,
-                parents: state.dag_parents().collect(),
-            },
-            Some(shard),
-            &signer,
-        );
-        if index == 0 {
-            header = Some(message.clone());
-        }
-        let bytes = message.serialize()?;
-        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
-            cache_frames.push(bytes.clone());
-        }
-        send_msg_part(
-            state,
-            sender,
-            out,
-            OutboundPart {
-                message: &message,
-                bytes,
-                echo: false,
-            },
-        )
-        .await?;
-    }
-    if !cache_frames.is_empty() {
-        state.shard_cache_mut().insert(group.clone(), cache_frames);
-    }
-    let header = header.expect("a split body has a first shard");
-    let logical = reassembly::synthesize_from(&header, body, &group);
+    let shards = BroadcastShards::plan(
+        &frames,
+        state,
+        &body,
+        ShardGroup::from_uuid_str(payload.message_id.as_str())
+            .expect("an a2a message id is a valid shard group"),
+    )?;
+    let (header, group) = shards.send(state, sender, out).await?;
+    let logical = reassembly::synthesize_from(&header, body.plain, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
 }
@@ -626,44 +803,30 @@ async fn broadcast_directed_frame(
     // named identically on both ends.
     let group =
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
-    let max_parts = MAX_SHARD_TOTAL;
-    let probe_shard = Shard::new(group.clone(), max_parts).with_index(max_parts - 1);
-    let probe: Verified = Message::new_frame(
+    let shard_frames = DirectedShardFrames {
         mesh,
         author,
-        kind.clone(),
-        MessageBody::try_new(String::new()).expect("empty body is valid"),
-    )
-    .with_shard(Some(probe_shard))
-    .sign(&signer);
-    let budget = shard_body_budget(&probe);
+        kind: &kind,
+        signer: &signer,
+    };
+    let budget = shard_frames.body_budget(&group);
     let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!(
             "task leg too large: a {}-byte body needs more than {MAX_SHARD_TOTAL} shards",
             payload_body.as_str().len()
         )
     })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
-    if !state.is_meshed() && state.pending_outbound_mut().remaining() < chunks.len() {
-        return Err(anyhow::anyhow!(
-            "pending outbound buffer full; multipart task leg dropped"
-        ));
-    }
-    // A big group's shards skip the message log, so peers heal a lost shard via
-    // the `shard/repair` RPC — served from this sender-side frame cache.
+    ensure_buffer_room(state, chunks.len(), "task leg")?;
+    let series = ShardSeries::new(group, chunks.len());
     let mut cache_frames = Vec::new();
     let mut frames = Vec::new();
     let mut shard_pending = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
-        let shard = Shard::new(group.clone(), total)
-            .with_index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"));
         let chunk_body =
             MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
-        let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
-            .with_shard(Some(shard))
-            .sign(&signer);
+        let message = shard_frames.shard(chunk_body, series.shard(index));
         let bytes = message.serialize()?;
-        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+        if series.is_cached() {
             cache_frames.push(bytes.clone());
         }
         // The shards enter the log as one group below, not one by one.
@@ -685,9 +848,9 @@ async fn broadcast_directed_frame(
         );
         frames.push(message);
     }
-    let cache = (!cache_frames.is_empty()).then(|| (group.clone(), cache_frames));
-    let logical = reassembly::synthesize_from(&frames[0], payload_body, &group);
-    let echo = reassembly::synthesize_from(&frames[0], echo_body, &group);
+    let cache = (!cache_frames.is_empty()).then(|| (series.group.clone(), cache_frames));
+    let logical = reassembly::synthesize_from(&frames[0], payload_body, &series.group);
+    let echo = reassembly::synthesize_from(&frames[0], echo_body, &series.group);
     let pending = queue_sharded_leg(app, frames, cache, shard_pending);
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
@@ -1816,43 +1979,31 @@ pub(crate) async fn send_directed_rpc(
     }
     let group = ShardGroup::from_uuid_str(crate::a2a::A2aRpcId::random().as_str())
         .expect("a freshly minted uuid is a valid shard group");
-    let probe_shard = Shard::new(group.clone(), MAX_SHARD_TOTAL).with_index(MAX_SHARD_TOTAL - 1);
-    let probe: Verified = Message::new_frame(
+    let shard_frames = DirectedShardFrames {
         mesh,
         author,
-        kind.clone(),
-        MessageBody::try_new(String::new()).expect("empty body is valid"),
-    )
-    .with_shard(Some(probe_shard))
-    .sign(&signer);
-    let budget = shard_body_budget(&probe);
-    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
+        kind: &kind,
+        signer: &signer,
+    };
+    let chunks = split_body(body.as_str(), shard_frames.body_budget(&group)).ok_or_else(|| {
         anyhow::anyhow!("rpc body too large: needs more than {MAX_SHARD_TOTAL} shards")
     })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
-    if !state.is_meshed() && state.pending_outbound_mut().remaining() < chunks.len() {
-        return Err(anyhow::anyhow!(
-            "pending outbound buffer full; multipart rpc dropped"
-        ));
-    }
+    ensure_buffer_room(state, chunks.len(), "rpc")?;
+    let series = ShardSeries::new(group, chunks.len());
     let mut cache_frames = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
         let chunk_body =
             MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
-        let shard = Shard::new(group.clone(), total)
-            .with_index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"));
-        let message: Verified = Message::new_frame(mesh, author, kind.clone(), chunk_body)
-            .with_shard(Some(shard))
-            .sign(&signer);
+        let message = shard_frames.shard(chunk_body, series.shard(index));
         logging::log_out(&message);
         let bytes = message.serialize()?;
-        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+        if series.is_cached() {
             cache_frames.push(bytes.clone());
         }
         log_unless_done(habilis_network::ops::deliver(&message, bytes, state, sender).await?);
     }
     if !cache_frames.is_empty() {
-        state.shard_cache_mut().insert(group, cache_frames);
+        state.shard_cache_mut().insert(series.group, cache_frames);
     }
     Ok(())
 }
