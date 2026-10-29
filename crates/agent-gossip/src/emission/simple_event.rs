@@ -441,17 +441,14 @@ pub(super) fn format_presence_json(message: &Authored, subtype: PresenceSubtype)
 /// consumer tells a private line from a public one: `type` (`"broadcast"` vs
 /// `"msg"`) and `to` (`null` vs the addressee, which also turns on the `→` in
 /// `display`).
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the other frames are not chat frames"
-)]
 pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
-    let to = match &message.kind {
-        MessageKind::App { tag, to, .. } if tag.as_str() == wire::MSG => to.as_ref(),
-        MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => None,
-        _ => {
-            unreachable!("format_msg_json only handles chat frames")
-        }
+    let MessageKind::App { tag, to, .. } = &message.kind else {
+        unreachable!("format_msg_json only handles chat frames")
+    };
+    let to = match tag.as_str() {
+        wire::MSG => to.as_ref(),
+        wire::BROADCAST => None,
+        _ => unreachable!("format_msg_json only handles chat frames"),
     };
     // Inbound frames were validated at the receive boundary and our own echoes
     // are built by `send_broadcast`/`send_msg`, so the parse succeeds in
