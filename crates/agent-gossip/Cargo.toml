@@ -70,7 +70,7 @@ include_dir = "0.7"
 # that is, and a second declaration here would resolve the published crate
 # beside it. See the root manifest.
 anyhow.workspace = true
-libc.workspace = true
+rustix = { version = "1", default-features = false, features = ["process"] }
 uuid.workspace = true
 sha2.workspace = true
 bytes.workspace = true
