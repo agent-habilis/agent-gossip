@@ -27,6 +27,20 @@ pub(crate) fn run() -> TaskOutcome {
     .quiet()
     .run()?;
 
+    // The `bench` feature builds the bench shim and the benches, which no other
+    // step compiles.
+    output::status("Checking", "benches");
+    Invocation::cargo([
+        "check",
+        "-p",
+        "agent-gossip",
+        "--features",
+        "bench",
+        "--benches",
+    ])
+    .quiet()
+    .run()?;
+
     // One implementation, not a second copy: `test` owns the profile choice, the
     // per-leg thread counts, and the concurrent split. Forking those here is
     // exactly how the two drifted before.

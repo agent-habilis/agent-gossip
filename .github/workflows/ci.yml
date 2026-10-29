@@ -76,6 +76,10 @@ jobs:
       # skips that file.
       - run: cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings
 
+      # The `bench` feature compiles the bench shim and the divan benches, which
+      # no other job builds. A change to the engine API broke it unseen once.
+      - run: cargo check -p agent-gossip --features bench --benches
+
   test:
     runs-on: ubuntu-latest
     # Sharded: the suite's cost is dominated by one binary
