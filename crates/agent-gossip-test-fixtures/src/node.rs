@@ -151,14 +151,13 @@ impl Node {
     }
 
     /// Every chat message in the log, in arrival order.
-    pub fn messages(&self) -> Vec<ChatMessage> {
-        parse_messages(&self.log_contents())
+    pub fn messages(&self) -> impl Iterator<Item = ChatMessage> {
+        parse_messages(&self.log_contents()).into_iter()
     }
 
     /// How many received messages match `(author, body)` exactly.
     pub fn count_from(&self, author: &str, body: &str) -> usize {
         self.messages()
-            .iter()
             .filter(|message| message.author == author && message.body == body)
             .count()
     }
@@ -167,7 +166,7 @@ impl Node {
     /// `prefix` — the convergence metric for the anti-entropy gap-recovery
     /// tests (each sends `prefix-{i}` and waits for the full distinct set).
     pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
-        let messages: Vec<ChatMessage> = self.messages();
+        let messages: Vec<ChatMessage> = self.messages().collect();
         let matching: Vec<&ChatMessage> = messages
             .iter()
             .filter(|message| message.author == author && message.body.starts_with(prefix))

@@ -461,10 +461,10 @@ fn test_stdout_format_parseable() {
 
     cli_message(&mesh, &creator.nickname, "format check message");
 
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
 
-    let mut msgs: Vec<ChatMessage> = creator.messages();
+    let mut msgs: Vec<ChatMessage> = creator.messages().collect();
     msgs.extend(joiner.messages());
     for message in &msgs {
         assert_eq!(
@@ -507,12 +507,12 @@ fn test_oversize_body_splits_and_reassembles() {
     // body on each stream: the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
     cli_message(&mesh, &creator.nickname, &body);
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(
         total, 2,
         "the multipart body surfaces exactly once per node"
     );
-    let mut got: Vec<ChatMessage> = creator.messages();
+    let mut got: Vec<ChatMessage> = creator.messages().collect();
     got.extend(joiner.messages());
     for message in &got {
         assert_eq!(
@@ -534,9 +534,9 @@ fn test_utf8_body_round_trip() {
     cli_message(&mesh, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
-    let mut msgs: Vec<ChatMessage> = creator.messages();
+    let mut msgs: Vec<ChatMessage> = creator.messages().collect();
     msgs.extend(joiner.messages());
     for message in &msgs {
         assert_eq!(message.body, body, "the message body is kept as sent");
@@ -1608,7 +1608,6 @@ fn test_ping_reports_peer_rtt() {
     assert!(
         !joiner
             .messages()
-            .iter()
             .any(|message| message.body == "ping" || message.body == "pong"),
         "ping/pong leaked as chat messages to the joiner"
     );
@@ -1650,12 +1649,12 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     // And messages flow across the re-seeded mesh.
     let id = cli_message(&mesh, &first.nickname, "re-seeded hello");
     assert!(!id.is_empty(), "msg returned empty id");
-    let total = wait_total(|| first.messages().len() + second.messages().len(), 1);
+    let total = wait_total(|| first.messages().count() + second.messages().count(), 1);
     assert!(
         total >= 1,
-        "no message crossed the re-seeded mesh\nfirst: {:?}\nsecond: {:?}",
-        first.messages(),
-        second.messages(),
+        "no message crossed the re-seeded mesh\nfirst: {}\nsecond: {}",
+        chat_debug(&first),
+        chat_debug(&second),
     );
 }
 
@@ -1756,7 +1755,10 @@ fn test_join_after_creator_departed_with_surviving_member() {
     // Confirm the mesh is actually live before we kill the creator.
     let pre_id = cli_message(&mesh, &creator.nickname, "pre-death ping");
     assert!(!pre_id.is_empty(), "msg returned empty id");
-    let delivered = wait_total(|| creator.messages().len() + bystander.messages().len(), 1);
+    let delivered = wait_total(
+        || creator.messages().count() + bystander.messages().count(),
+        1,
+    );
     assert!(delivered >= 1, "creator/bystander never meshed pre-death");
 
     // 2. Retire the creator and wait for its process to fully exit —
@@ -1790,13 +1792,13 @@ fn test_join_after_creator_departed_with_surviving_member() {
     let post_id = cli_message(&mesh, &latecomer.nickname, "post-death hello");
     assert!(!post_id.is_empty(), "latecomer msg returned empty id");
     let total = wait_total(
-        || bystander.messages().len() + latecomer.messages().len(),
+        || bystander.messages().count() + latecomer.messages().count(),
         1,
     );
     assert!(
         total >= 1,
-        "latecomer joined but no message crossed the post-failover mesh\nbystander msgs: {:?}",
-        bystander.messages(),
+        "latecomer joined but no message crossed the post-failover mesh\nbystander msgs: {}",
+        chat_debug(&bystander),
     );
 }
 
@@ -1824,7 +1826,10 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // Confirm the mesh is live before killing the creator.
     let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
-        wait_total(|| creator.messages().len() + bystander.messages().len(), 1) >= 1,
+        wait_total(
+            || creator.messages().count() + bystander.messages().count(),
+            1
+        ) >= 1,
         "creator/bystander never meshed pre-death"
     );
 
@@ -1863,8 +1868,8 @@ fn test_first_message_after_post_departure_join_is_delivered() {
             1,
             RECOVERY_TIMEOUT
         ) >= 1,
-        "joiner's first message was NOT received by the existing peer\nbystander msgs: {:?}",
-        bystander.messages(),
+        "joiner's first message was NOT received by the existing peer\nbystander msgs: {}",
+        chat_debug(&bystander),
     );
 
     // Reverse direction: existing peer -> joiner. Fails if the joiner
@@ -1878,8 +1883,8 @@ fn test_first_message_after_post_departure_join_is_delivered() {
             1,
             RECOVERY_TIMEOUT
         ) >= 1,
-        "existing peer's message was NOT received by the joiner\njoiner msgs: {:?}",
-        joiner.messages(),
+        "existing peer's message was NOT received by the joiner\njoiner msgs: {}",
+        chat_debug(&joiner),
     );
 }
 
@@ -3942,6 +3947,15 @@ fn owner_pid_launcher_reports_flag_errors() {
 
 /// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
 /// subtype, the author and the frame id.
+/// The chat messages a node has received, one per line, for an assertion message.
+fn chat_debug(node: &Node) -> String {
+    let lines: Vec<String> = node
+        .messages()
+        .map(|message| format!("{message:?}"))
+        .collect();
+    lines.join("\n")
+}
+
 fn presence_lines(node: &Node) -> Vec<(String, String, String)> {
     let log = node.log_contents();
     let events = log
