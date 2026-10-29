@@ -16,10 +16,10 @@ use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, PresenceSubtype, RECOVERY_TIMEOUT,
-    bin, chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
-    cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
-    wait_until,
+    CONNECT_TIMEOUT, ChatMessage, InProcNode, MSG_TIMEOUT, Node, POLL, PresenceSubtype,
+    RECOVERY_TIMEOUT, bin, chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll,
+    cli_poll_long, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
+    wait_total, wait_until,
 };
 use habilis_network::util::process;
 use serde_json::json;
@@ -463,7 +463,7 @@ fn test_stdout_format_parseable() {
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
 
-    let mut msgs: Vec<Msg> = creator.messages();
+    let mut msgs: Vec<ChatMessage> = creator.messages();
     msgs.extend(joiner.messages());
     for message in &msgs {
         assert_eq!(
@@ -511,7 +511,7 @@ fn test_oversize_body_splits_and_reassembles() {
         total, 2,
         "the multipart body surfaces exactly once per node"
     );
-    let mut got: Vec<Msg> = creator.messages();
+    let mut got: Vec<ChatMessage> = creator.messages();
     got.extend(joiner.messages());
     for message in &got {
         assert_eq!(
@@ -535,7 +535,7 @@ fn test_utf8_body_round_trip() {
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
-    let mut msgs: Vec<Msg> = creator.messages();
+    let mut msgs: Vec<ChatMessage> = creator.messages();
     msgs.extend(joiner.messages());
     for message in &msgs {
         assert_eq!(message.body, body, "the message body is kept as sent");

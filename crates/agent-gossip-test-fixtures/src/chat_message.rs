@@ -1,7 +1,7 @@
 /// One chat message parsed from a daemon's JSON `message` event.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct Msg {
+pub struct ChatMessage {
     /// The nickname of the sender.
     pub author: String,
     /// The message text. Never empty: the parser skips events with an empty body.

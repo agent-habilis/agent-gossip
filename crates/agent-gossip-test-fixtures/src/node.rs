@@ -5,7 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::{
-    CONNECT_TIMEOUT, Msg, POLL, apply_flags, parse_messages, scan_create_log, socket_path,
+    CONNECT_TIMEOUT, ChatMessage, POLL, apply_flags, parse_messages, scan_create_log, socket_path,
     test_cmd, tmp_log,
 };
 
@@ -151,7 +151,7 @@ impl Node {
     }
 
     /// Every chat message in the log, in arrival order.
-    pub fn messages(&self) -> Vec<Msg> {
+    pub fn messages(&self) -> Vec<ChatMessage> {
         parse_messages(&self.log_contents())
     }
 
@@ -167,8 +167,8 @@ impl Node {
     /// `prefix` — the convergence metric for the anti-entropy gap-recovery
     /// tests (each sends `prefix-{i}` and waits for the full distinct set).
     pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
-        let messages: Vec<Msg> = self.messages();
-        let matching: Vec<&Msg> = messages
+        let messages: Vec<ChatMessage> = self.messages();
+        let matching: Vec<&ChatMessage> = messages
             .iter()
             .filter(|message| message.author == author && message.body.starts_with(prefix))
             .collect();
