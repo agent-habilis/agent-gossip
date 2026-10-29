@@ -115,14 +115,18 @@ fn wait_a2a(state_file: &std::path::Path) -> (u16, String) {
     );
 }
 
+/// One live A2A binding and the two nodes behind it.
+struct BindingPair {
+    port: u16,
+    token: String,
+    host: Node,
+    joiner: Node,
+}
+
 /// The whole binding contract against one live pair (amortizes the daemon
 /// startup): discovery → card → auth → chat send (cross-binding delivery to
 /// a plain gossip peer) → peer card → task creation → tasks/get + tasks/list →
 /// the mesh-state extension.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end binding-contract test; spawning a daemon pair is expensive, so every localhost-binding assertion shares the one live pair"
-)]
 #[test]
 fn a2a_binding_serves_card_rpc_and_tasks() {
     let state_file = std::env::temp_dir().join(format!(
@@ -136,14 +140,33 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     assert!(host.wait_ready(&mesh), "host socket never appeared");
     assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
     let (port, token) = wait_a2a(&state_file);
+    let pair = BindingPair {
+        port,
+        token,
+        host,
+        joiner,
+    };
 
-    // The card is served unauthenticated and self-describes the binding.
-    let (status, card) = get(port, "/.well-known/agent-card.json");
+    let card = serves_card(&pair);
+    refuses_wrong_token(&pair);
+    echoes_and_delivers(&pair);
+    advertises_peer_relay(&pair);
+    creates_and_lists_task(&pair);
+    mirrors_mesh_state(&pair);
+    serves_extended_card(&pair);
+    refuses_push_config(&pair, &card);
+
+    let _ = std::fs::remove_file(&state_file);
+}
+
+/// The card is served unauthenticated and self-describes the binding.
+fn serves_card(pair: &BindingPair) -> Value {
+    let (status, card) = get(pair.port, "/.well-known/agent-card.json");
     assert_eq!(status, 200, "well-known card must not require auth");
     let card: Value = serde_json::from_str(&card).expect("card is JSON");
     assert_eq!(
         card["name"].as_str(),
-        Some(host.nickname.as_str()),
+        Some(pair.host.nickname.as_str()),
         "the card names the host's nickname"
     );
     assert_eq!(
@@ -156,7 +179,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     let interfaces = card["supportedInterfaces"]
         .as_array()
         .expect("supportedInterfaces array");
-    let port_text = port.to_string();
+    let port_text = pair.port.to_string();
     let is_bound_jsonrpc_interface = |iface: &Value| {
         iface["protocolBinding"] == "JSONRPC"
             && iface["url"]
@@ -168,22 +191,27 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         interfaces.iter().any(is_bound_jsonrpc_interface),
         "the card advertises the bound JSONRPC endpoint: {card}"
     );
+    card
+}
 
-    // Every RPC requires the bearer token.
+/// Every RPC requires the bearer token.
+fn refuses_wrong_token(pair: &BindingPair) {
     let (unauth_status, _) = post(
-        port,
+        pair.port,
         "/mesh",
         "not-the-token",
         &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "ListTasks", "params": {} }),
     );
     assert_eq!(unauth_status, 401, "a wrong bearer token must be rejected");
+}
 
-    // message/send on the mesh endpoint broadcasts; the echo is the
-    // daemon-authored A2A Message.
+/// message/send on the mesh endpoint broadcasts; the echo is the daemon-authored
+/// A2A Message, and the gossip peer surfaces the text.
+fn echoes_and_delivers(pair: &BindingPair) {
     let echo = rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/mesh",
-        token: &token,
+        token: &pair.token,
         method: "SendMessage",
         params: &serde_json::json!({ "message": {
             "messageId": "650e8400-e29b-41d4-a716-446655440111",
@@ -198,7 +226,10 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     );
     // Cross-binding: the plain gossip peer surfaces the text.
     let delivered = wait_until(
-        || joiner.count_from(&host.nickname, "hello from a2a"),
+        || {
+            pair.joiner
+                .count_from(&pair.host.nickname, "hello from a2a")
+        },
         1,
         MSG_TIMEOUT,
     );
@@ -206,10 +237,13 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         delivered >= 1,
         "a JSON-RPC send never reached the gossip peer"
     );
+}
 
-    // A peer's card, served over this binding, is A2A-conformant and points at
-    // our relaying endpoint (we relay JSON-RPC to that gossip-only peer).
-    let (peer_card_status, peer_card) = get(port, "/peers/a2a-peer/.well-known/agent-card.json");
+/// A peer's card, served over this binding, is A2A-conformant and points at our
+/// relaying endpoint (we relay JSON-RPC to that gossip-only peer).
+fn advertises_peer_relay(pair: &BindingPair) {
+    let (peer_card_status, peer_card) =
+        get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
     assert_eq!(peer_card_status, 200, "peer card must be served");
     let peer_card: Value = serde_json::from_str(&peer_card).expect("peer card is JSON");
     let is_relay_interface = |iface: &Value| {
@@ -225,15 +259,17 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         advertises_relay,
         "peer card advertises the relaying JSONRPC interface: {peer_card}"
     );
+}
 
-    // Native task creation: a directed `message/send` to the peer is routed
-    // through the gossip request/response waiter — the peer mints the task id
-    // and returns the Task synchronously (an off-the-shelf A2A client can
-    // delegate a task over the compliant transport).
+/// Native task creation: a directed `message/send` to the peer is routed through
+/// the gossip request/response waiter, and the initiator tracks the task it made.
+fn creates_and_lists_task(pair: &BindingPair) {
+    // The peer mints the task id and returns the Task synchronously (an
+    // off-the-shelf A2A client can delegate a task over the compliant transport).
     let task = rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/peers/a2a-peer",
-        token: &token,
+        token: &pair.token,
         method: "SendMessage",
         params: &serde_json::json!({ "message": {
             "messageId": "550e8400-e29b-41d4-a716-446655440000",
@@ -253,9 +289,9 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
 
     // The initiator (this host) adopted the task; tasks/get + tasks/list see it.
     let fetched = rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/mesh",
-        token: &token,
+        token: &pair.token,
         method: "GetTask",
         params: &serde_json::json!({ "id": task_id }),
     });
@@ -265,9 +301,9 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         "the fetched task is the one that was created"
     );
     let listed = rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/mesh",
-        token: &token,
+        token: &pair.token,
         method: "ListTasks",
         params: &serde_json::json!({}),
     });
@@ -277,29 +313,33 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         listed["tasks"].as_array().is_some_and(has_created_task),
         "tasks/list must include the created task: {listed}"
     );
+}
 
-    // The mesh-state extension methods mirror `agent-gossip state merge/get`.
+/// The mesh-state extension methods mirror `agent-gossip state merge/get`.
+fn mirrors_mesh_state(pair: &BindingPair) {
     rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/mesh",
-        token: &token,
+        token: &pair.token,
         method: "mesh/state.merge",
         params: &serde_json::json!({ "merge": { "turn": "a2a" } }),
     });
     let doc = rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/mesh",
-        token: &token,
+        token: &pair.token,
         method: "mesh/state.get",
         params: &serde_json::json!({}),
     });
     assert_eq!(doc["turn"], "a2a", "the document keeps the a2a turn");
+}
 
-    // GetExtendedAgentCard (authenticated) returns the full v1.0 card.
+/// `GetExtendedAgentCard` (authenticated) returns the full v1.0 card.
+fn serves_extended_card(pair: &BindingPair) {
     let extended = rpc(RpcCall {
-        port,
+        port: pair.port,
         path: "/mesh",
-        token: &token,
+        token: &pair.token,
         method: "GetExtendedAgentCard",
         params: &Value::Null,
     });
@@ -311,18 +351,20 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         extended["capabilities"]["extendedAgentCard"], true,
         "the extended card is advertised"
     );
+}
 
-    // Push-notification config methods are intentionally unsupported: the
-    // JSON-RPC method-not-found error, and `capabilities.pushNotifications`
-    // is declared false on the card.
+/// Push-notification config methods are intentionally unsupported: the JSON-RPC
+/// method-not-found error, and `capabilities.pushNotifications` is declared false
+/// on the card.
+fn refuses_push_config(pair: &BindingPair, card: &Value) {
     assert_eq!(
         card["capabilities"]["pushNotifications"], false,
         "push notifications are not advertised"
     );
     let (push_status, push_response) = post(
-        port,
+        pair.port,
         "/mesh",
-        &token,
+        &pair.token,
         &serde_json::json!({ "jsonrpc": "2.0", "id": 9, "method": "CreateTaskPushNotificationConfig", "params": {} }),
     );
     assert_eq!(push_status, 200, "the unsupported push request is answered");
@@ -330,8 +372,6 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         push_response["error"]["code"], -32601,
         "the push request fails with method not found"
     );
-
-    let _ = std::fs::remove_file(&state_file);
 }
 
 /// Without `--a2a-serve` the binding is off: the state file reports no
