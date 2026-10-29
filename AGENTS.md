@@ -396,7 +396,10 @@ This file wins over the guide. If the two conflict, follow this file.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
 - R22: a config struct with a required field, such as the mesh name or join target, has no `Default`, because a default would build an invalid value. It takes the required field in `new`, and a `with_*` method sets each optional field (`JoinConfig`, `TopicConfig`, `CreateConfig`, `StatusUpdateParams`). A config struct with no required field derives `Default`.
 - Declined B5: no tool measures the cost of a clone against a borrow. `redundant_clone` and `clone_on_ref_ptr` in `[workspace.lints.clippy]` refuse a clone that a borrow replaces, and a clone that remains is judged per site on the network path, where a send costs more than the copy.
-- Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.
+- Adopted B1: borrow, or own the value in one place. `Arc` stays only where a `'static` task and a second owner must share one value, in three groups (11 sites):
+  - The engine takes or hands out an `Arc`: `Arc<dyn NodeSink>` in `SetupParams::new` (`a2a_app.rs`, `spawn_peer.rs`), `live_count: Option<Arc<AtomicUsize>>` in `SetupParams` (`run_session.rs`, `spawn_env.rs`, `advertiser.rs`), and `EventLoopState::identity() -> &Arc<Identity>` (`broadcast_params.rs`). The fix is an engine change.
+  - The wasm `Inbox` (`gossip_driver.rs`): the engine event loop writes it and JS polls it on demand, and the driver the engine owns must be `'static`.
+  - Accept loops borrow instead: `bridge/` runs each connection as a `FuturesUnordered` future, and the directory tasks own their listings.
 
 ## Agent Restrictions
 
