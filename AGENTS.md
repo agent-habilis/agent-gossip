@@ -5,7 +5,7 @@ messages without a central server. Peers communicate exclusively through the
 A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
-`src/cli/mod.rs`). `src/bridge/` is a different thing — the `a2a expose` /
+`src/cli/mod.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
 `connect` QUIC tunnel. This file is guidance for working **on**
 the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
 (source: `docs/manual.txt`).
@@ -370,10 +370,10 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 - A state owns its data: put the data of each state inside its `enum` variant,
   take the state by value, and return the next one. Do not use `unreachable!`
   on a state mismatch, and do not keep side flags next to the state `enum`
-  (`State` in `bridge/card_rewrite.rs`).
+  (`State` in `tunnel/card_rewrite.rs`).
 - When a struct holds values that must agree, keep its fields private and give
   it one constructor that derives them. A `#[cfg(test)]` constructor is the only
-  other way in (`Bridge::new` in `bridge/connect.rs`).
+  other way in (`Bridge::new` in `tunnel/connect.rs`).
 - When a step must pass before a later read or action, make the step return a
   value that only it can build: a private field, in its own module. Make the
   later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
@@ -399,7 +399,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Adopted B1: borrow, or own the value in one place. `Arc` stays only where a `'static` task and a second owner must share one value, in three groups (11 sites):
   - The engine takes or hands out an `Arc`: `Arc<dyn NodeSink>` in `SetupParams::new` (`a2a_app.rs`, `spawn_peer.rs`), `live_count: Option<Arc<AtomicUsize>>` in `SetupParams` (`run_session.rs`, `spawn_env.rs`, `advertiser.rs`), and `EventLoopState::identity() -> &Arc<Identity>` (`broadcast_params.rs`). The fix is an engine change.
   - The wasm `Inbox` (`gossip_driver.rs`): the engine event loop writes it and JS polls it on demand, and the driver the engine owns must be `'static`.
-  - Accept loops borrow instead: `bridge/` runs each connection as a `FuturesUnordered` future, and the directory tasks own their listings.
+  - Accept loops borrow instead: `tunnel/` runs each connection as a `FuturesUnordered` future, and the directory tasks own their listings.
 
 ## Agent Restrictions
 

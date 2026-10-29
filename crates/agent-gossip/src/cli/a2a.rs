@@ -12,7 +12,7 @@ use super::finish_send::finish_send;
 use super::password_flag::PasswordFlag;
 use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::{TaskId, TaskState};
-use crate::bridge::bridge;
+use crate::tunnel::bridge;
 
 /// Post a message to a mesh via the running server's IPC socket.
 pub(super) async fn a2a(action: A2aAction) -> Result<()> {

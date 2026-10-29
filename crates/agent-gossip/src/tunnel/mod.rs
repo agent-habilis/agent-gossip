@@ -9,10 +9,6 @@ mod a2a_alpn;
 mod a2a_ticket;
 mod a2a_ticket_label;
 mod announce;
-#[expect(
-    clippy::module_inception,
-    reason = "the primary type Bridge is named after this directory, per O9"
-)]
 pub(crate) mod bridge;
 mod card_rewriter;
 mod expose_params;

@@ -2,6 +2,6 @@ abbrev_name|crates/agent-gossip/src/a2a/broadcast_params.rs|4|open: external: Ch
 abbrev_name|crates/agent-gossip/src/a2a/card.rs|1|open: external: the addr() method is a habilis-network API name
 abbrev_name|crates/agent-gossip/src/a2a/ipc_command.rs|3|open: external: Authored.prev is a habilis-network field name
 abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|1|open: external: the addr() method is a habilis-network API name
-abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|1|open: external: the addr() method is a habilis-network API name
+abbrev_name|crates/agent-gossip/src/tunnel/expose_params.rs|1|open: external: the addr() method is a habilis-network API name
 abbrev_name|crates/agent-gossip/src/harness/test_key.rs|2|open: external: ChainStamp.prev is a habilis-network field name
 abbrev_name|crates/agent-gossip/src/emission/node_sink.rs|2|open: external: NodeEvent::Presence.msg is a habilis-network field name

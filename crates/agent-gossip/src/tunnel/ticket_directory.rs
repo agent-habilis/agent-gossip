@@ -334,7 +334,7 @@ mod tests {
     use habilis_network::protocol::LookupOpts;
 
     use super::{TicketAd, TicketChange, TicketListings};
-    use crate::bridge::a2a_ticket::A2aTicket;
+    use crate::tunnel::a2a_ticket::A2aTicket;
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
         let address = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())

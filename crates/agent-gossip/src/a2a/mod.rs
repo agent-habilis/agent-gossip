@@ -9,7 +9,7 @@ pub use self::model::{
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, friendly_state,
 };
 // Compatibility facade: the HTTP tunnel is a bridge subsystem, not A2A core.
-pub(crate) use crate::bridge::{
+pub(crate) use crate::tunnel::{
     ExposeParams, TicketDirectory, TicketDirectoryEvent, expose, ticket_requires_password,
 };
 

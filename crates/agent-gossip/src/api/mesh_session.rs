@@ -100,7 +100,7 @@ impl MeshSession {
             },
             // The mesh mints its own endpoint and serves no extra ALPNs on its
             // Router: the A2A binding stands up a separate endpoint of its own
-            // (see `bridge::expose`), so there is no accept() loop to share.
+            // (see `tunnel::expose`), so there is no accept() loop to share.
             SetupParams::new(author, sink)
                 .with_max_peers(GOSSIP_ACTIVE_VIEW_CAPACITY)
                 .with_runtime_base(crate::runtime_base())

@@ -66,7 +66,7 @@ pub(super) async fn create_setup(
         .map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
     // The mesh mints its own endpoint and serves no extra ALPNs on its
     // Router: the A2A binding stands up a separate endpoint of its own
-    // (see `bridge::expose`), so there is no accept() loop to share.
+    // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
         .with_max_peers(max_peers)
         .with_runtime_base(crate::runtime_base())
@@ -132,7 +132,7 @@ async fn resolved_setup(
     let sink = io.sink();
     // The mesh mints its own endpoint and serves no extra ALPNs on its
     // Router: the A2A binding stands up a separate endpoint of its own
-    // (see `bridge::expose`), so there is no accept() loop to share.
+    // (see `tunnel::expose`), so there is no accept() loop to share.
     let setup_params = SetupParams::new(author, sink)
         .with_max_peers(max_peers)
         .with_runtime_base(crate::runtime_base())

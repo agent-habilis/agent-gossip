@@ -61,7 +61,6 @@ pub use self::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 // local JSON-RPC) share, and embedders speak it directly.
 /// The A2A data model and the gossip binding that carries it.
 pub mod a2a;
-pub(crate) mod bridge;
 pub(crate) mod cli;
 pub(crate) mod emission;
 pub(crate) mod mcp;
@@ -69,6 +68,7 @@ pub(crate) mod mcp;
 pub mod output_event;
 pub(crate) mod policy;
 pub(crate) mod topic;
+pub(crate) mod tunnel;
 
 pub mod api;
 /// Roster and health values that `status` and `doctor` report.

@@ -85,7 +85,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     let live_count = advertising.map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
     // The mesh mints its own endpoint and serves no extra ALPNs on its
     // Router: the A2A binding stands up a separate endpoint of its own
-    // (see `bridge::expose`), so there is no accept() loop to share.
+    // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
         .with_max_peers(shared.max_peers)
         .with_runtime_base(crate::runtime_base())
