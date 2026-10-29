@@ -1,6 +1,5 @@
 ---
 source: crates/agent-gossip/src/cli/agent.rs
-assertion_line: 671
 expression: shared
 ---
 ## Daemon session
