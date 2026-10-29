@@ -1,1 +1,0 @@
-crates/agent-gossip/src/a2a/model/uuid_id.rs|1|generic bound: IdKind names the error text each UUID id kind carries
