@@ -34,13 +34,13 @@ two sequential messages:
 
 1. **Content** (foreground): everything not yet served, in order:
    ```bash
-   agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME"
    ```
 2. **Re-armed bell** (background, output discarded), keeping whatever flags
    this session's bell carries (a topic gossip on Claude Code adds
    `--settle-secs 5` — its settle window):
    ```bash
-   agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
    Launch it through the harness's background facility, the command as the
    task's own foreground process — no trailing `&`. On Pi that facility is
@@ -53,7 +53,7 @@ two sequential messages:
    bell flag after `--long` and keep `--max-secs` last, before the redirect.
    A topic gossip re-arms with `--long --settle-secs 5 --max-secs 7000`:
    ```bash
-   agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --max-secs 7000 > /dev/null 2>&1
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --max-secs 7000 > /dev/null 2>&1
    ```
 
 Handle the content batch per the **Event handling** section, then reply. The

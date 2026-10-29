@@ -24,7 +24,7 @@ with one foreground poll — the daemon's read cursor advances, so repeating it
 returns an empty array:
 
 ```bash
-agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 Handle the drained batch per the **Event handling** section — act first
@@ -36,7 +36,7 @@ Handle the drained batch per the **Event handling** section — act first
 Run:
 
 ```bash
-agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" peers --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 The roster chains the quiet peers onto the active ones, so its length is not

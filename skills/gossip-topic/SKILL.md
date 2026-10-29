@@ -20,7 +20,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-gossip topic \"$TOPIC\"" noun="line" bell_settle=" --settle-secs 5" -->
+<!-- include path="../shared/daemon-session.md" launch="\"${AGENT_GOSSIP_BIN:-agent-gossip}\" topic \"$TOPIC\"" noun="line" bell_settle=" --settle-secs 5" -->
 
 <!-- include path="../shared/meta.md" -->
 

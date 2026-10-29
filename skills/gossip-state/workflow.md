@@ -5,7 +5,7 @@
 Run:
 
 ```bash
-agent-gossip state get --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" state get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 If the command fails or returns `ok:false`, print `💬 could not read shared

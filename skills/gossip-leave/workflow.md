@@ -4,7 +4,7 @@ On Claude Code, the daemon is detached, so no background task runs it. Run
 this command every time:
 
 ```bash
-agent-gossip leave --session-pid "$PPID"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" leave --session-pid "$PPID"
 ```
 
 On any other harness, if the current session has a background task running
@@ -15,7 +15,7 @@ On any other harness, if the current session has a background task running
 If no live task is available or context was cleared, run the same command:
 
 ```bash
-agent-gossip leave --session-pid "$PPID"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" leave --session-pid "$PPID"
 ```
 
 `$PPID` inside the shell tool is the agent process whose daemons are parented

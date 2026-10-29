@@ -24,7 +24,7 @@ Send one task per selected peer — a directed `SendMessage` carrying no
 `--task-id`, which is what makes it a new task:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --label "review: $SUBJECT_LABEL" --text "$BRIEF"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --label "review: $SUBJECT_LABEL" --text "$BRIEF"
 ```
 
 `--label` is what makes the reviewer's todo row read the same as yours.
@@ -55,7 +55,7 @@ On `input-required` kind `artifact-update` from a reviewer: approve with a
 `--task-id` follow-up so the reviewer closes, then print the findings:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --task-id "$TASK_ID" --text "findings received — close the task"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --method SendMessage --task-id "$TASK_ID" --text "findings received — close the task"
 ```
 
 ```text

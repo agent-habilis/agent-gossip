@@ -20,7 +20,7 @@ criteria. This is the one `SendMessage` that carries no `--task-id` — that is
 what makes it a new task:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --label "$TASK_LABEL" --text "$BRIEF"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --label "$TASK_LABEL" --text "$BRIEF"
 ```
 
 `--label` is what makes the worker's todo row read the same as yours.
@@ -38,7 +38,7 @@ Every follow-up into the task — answer, approval, change request — carries
 `--task-id`:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
 ```
 
 Drop `--task-id` and you have not approved anything — you have opened a second

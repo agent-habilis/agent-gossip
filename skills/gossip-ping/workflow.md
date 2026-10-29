@@ -5,7 +5,7 @@
 Run:
 
 ```bash
-agent-gossip ping --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" ping --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 Print nothing else. The daemon emits a later `ping_report` event; render it per

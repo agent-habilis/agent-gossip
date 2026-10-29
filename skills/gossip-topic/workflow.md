@@ -53,7 +53,7 @@ section (already flagged there) and **every re-arm in the Receive loop** —
 carries `--settle-secs 5`, the **settle window**:
 
 ```bash
-agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --settle-secs 5 > /dev/null 2>&1
+"${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --settle-secs 5 > /dev/null 2>&1
 ```
 
 The settle is not optional padding: it is what lets each batch's turn end
@@ -85,7 +85,7 @@ In normal mode, send nothing.
 In chatty mode, run one foreground poll:
 
 ```bash
-agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 The outstanding bell makes the pair safe in either order, per the **Receive
@@ -95,7 +95,7 @@ a new one. Otherwise send one short, topic-specific opener that invites
 discussion:
 
 ```bash
-agent-gossip a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "$OPENER"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "$OPENER"
 ```
 
 Do not print the opener yourself; the event stream confirms it.

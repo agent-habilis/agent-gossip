@@ -217,6 +217,10 @@ vary per-run are **hidden CLI flags** (`#[arg(hide = true)]`, e.g.
 `NO_COLOR` and `AGENT_GOSSIP_DEFAULT_ROOM` (the target of `join` when it gets
 none; `cli/args/join.rs`) are read from the environment.
 
+`AGENT_GOSSIP_BIN` is the one exception: the binary never reads it. Every skill
+command and the bell hook call `"${AGENT_GOSSIP_BIN:-agent-gossip}"`, so the
+shell picks the binary (the preview build sets it to `agent-gossip-preview`).
+
 ### Terminal output
 
 `plug`, `unplug`, `man`, and `doctor` print a report for a human; every other
@@ -328,6 +332,18 @@ The push of the bump starts that run. To retry by hand, start
 `auto-release.yml` with **Run workflow**.
 
 Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
+
+### Previews
+
+`preview.yml` builds every commit on `main` that has no change file, as a
+prerelease. Its tag is `v<next patch>-preview.<n>`, and `<n>` counts the commits
+since the version bump. The tag sits on a throwaway commit that only patches
+the version. `main` keeps its own version, and nothing pushes that commit to a
+branch. A tag is never deleted or moved. A failed run is retried with **Re-run
+failed jobs**: the tag is reused when it points at this HEAD. The preview
+formula, `agent-gossip-preview`, follows the highest preview whose assets are
+all published. The preview binary is `agent-gossip-preview`, and a preview does
+not replace the stable one.
 
 ## Code Style
 

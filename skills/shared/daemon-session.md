@@ -71,7 +71,7 @@ foreground, mapped as:
   bell by itself before that limit, as an ordinary quiet ring:
 
   ```bash
-  agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
+  "${AGENT_GOSSIP_BIN:-agent-gossip}" poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
   ```
 
 - Tool call 3 → the gate script below, unchanged.
@@ -105,7 +105,7 @@ poll wait for the daemon and resolve the identity itself, so the bell is armed
 before the identity exists:
 
 ```bash
-agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
+"${AGENT_GOSSIP_BIN:-agent-gossip}" poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
 ```
 
 The bell's exit is the signal; its output is discarded. Read content with a
@@ -118,10 +118,10 @@ this agent into the meta channel, print the identity. `ready` polls with a
 timeout, so racing the daemon launch is fine.
 
 ```bash
-out=$(agent-gossip ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || { [ -s /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] && cat /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr >&2; exit 1; }
+out=$("${AGENT_GOSSIP_BIN:-agent-gossip}" ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || { [ -s /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] && cat /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr >&2; exit 1; }
 nick=$(printf '%s' "$out" | sed -n 's/.*"nickname":"\([^"]*\)".*/\1/p')
 gossip=$(printf '%s' "$out" | sed -n 's/.*"gossip":"\([^"]*\)".*/\1/p')
-agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","cwd":"'"$(pwd | sed -e "s|^$HOME|~|" -e 's/[\\"]/\\&/g')"'","status":"idle"}}}'
+"${AGENT_GOSSIP_BIN:-agent-gossip}" meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","cwd":"'"$(pwd | sed -e "s|^$HOME|~|" -e 's/[\\"]/\\&/g')"'","status":"idle"}}}'
 printf '%s\n' "$out"
 ```
 

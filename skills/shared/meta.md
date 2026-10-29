@@ -14,7 +14,7 @@ To change your entry later, merge only your own `/peers/$NICKNAME` key
 (RFC 7386). Never overwrite another peer's entry:
 
 ```bash
-agent-gossip meta merge --gossip "$GOSSIP" --nickname "$NICKNAME" --merge '{"peers":{"'"$NICKNAME"'":{"status":"busy"}}}'
+"${AGENT_GOSSIP_BIN:-agent-gossip}" meta merge --gossip "$GOSSIP" --nickname "$NICKNAME" --merge '{"peers":{"'"$NICKNAME"'":{"status":"busy"}}}'
 ```
 
 Availability values:

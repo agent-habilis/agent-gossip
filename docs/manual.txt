@@ -1672,6 +1672,11 @@ ENVIRONMENT
               argument. An argument always wins. Unset or empty means no
               default.
 
+       AGENT_GOSSIP_BIN
+              Name or path of the agent-gossip binary that the skills and the
+              bell hook call. Unset means agent-gossip. The binary itself does
+              not read it; the shell expands it in each command.
+
        RUST_LOG
               Tracing filter for developer logs (e.g. info, debug, or a
               per-module filter). Logs are additive and never touch the
