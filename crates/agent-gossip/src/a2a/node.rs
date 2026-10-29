@@ -922,18 +922,19 @@ async fn handle_a2a_rpc(
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) {
-    #[expect(
-        clippy::wildcard_enum_match_arm,
-        reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; a frame that is not a directed, correlated request or response is not ours"
-    )]
-    let (tag, corr) = match &message.kind {
-        MessageKind::App {
-            tag,
-            to: Some(to),
-            corr: Some(corr),
-        } if to == context.author => (tag.as_str(), corr),
-        _ => return,
+    // A frame that is not a directed, correlated request or response is not ours.
+    let MessageKind::App {
+        tag,
+        to: Some(to),
+        corr: Some(corr),
+    } = &message.kind
+    else {
+        return;
     };
+    if to != context.author {
+        return;
+    }
+    let tag = tag.as_str();
     // The engine keeps `corr` generic (a length-bounded string); the a2a layer
     // restores the UUID contract. A non-UUID corr never came from a correct
     // client — drop the frame rather than key the waiter registry on it.
