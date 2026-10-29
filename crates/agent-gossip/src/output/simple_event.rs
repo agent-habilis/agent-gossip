@@ -772,12 +772,84 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// wire format the `/mesh` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode.
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per OutputEvent variant; splitting the match would scatter the single event-to-JSON table"
-)]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
-    let json = match event {
+    match formatted_json(event) {
+        Formatted::Line(line) => Some(line),
+        Formatted::Silent => None,
+        Formatted::Serialized => {
+            serialized_json(event).map(|line| stamp_visibility(line, is_visible(event)))
+        }
+    }
+}
+
+/// What [`formatted_json`] decides for an event.
+enum Formatted {
+    /// The formatter's line.
+    Line(String),
+    /// A formatter that prints nothing.
+    Silent,
+    /// Not a formatted event: [`serialized_json`] serializes it.
+    Serialized,
+}
+
+/// The events whose line a formatter builds.
+fn formatted_json(event: &OutputEvent) -> Formatted {
+    let line = match event {
+        OutputEvent::Message { message, is_self } => format_msg_json(message, *is_self),
+        OutputEvent::Task { message, is_self } => format_task_json(message, *is_self),
+        OutputEvent::TaskMessage {
+            id,
+            mesh,
+            author,
+            peer,
+            task_id,
+            state,
+            text,
+            label,
+            message,
+            is_self,
+        } => format_task_message_json(&TaskMessageLeg {
+            id,
+            mesh,
+            author,
+            peer,
+            task_id,
+            state: *state,
+            text,
+            label: label.as_deref(),
+            message: message.as_deref(),
+            is_self: *is_self,
+        }),
+        OutputEvent::Presence { message } => {
+            let MessageKind::Presence { subtype } = &message.kind else {
+                return Formatted::Silent;
+            };
+            format_presence_json(message, *subtype)
+        }
+        OutputEvent::StateChanged {
+            channel,
+            event,
+            document,
+            is_self,
+        } => format_state_json(*channel, event, document, *is_self),
+        OutputEvent::Ready { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::Receipt { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::PingReport { .. } => return Formatted::Serialized,
+    };
+    Formatted::Line(line)
+}
+
+/// The events serialized straight from [`SimpleEvent`]. `None` for the formatted ones.
+fn serialized_json(event: &OutputEvent) -> Option<String> {
+    match event {
         OutputEvent::Ready {
             mesh,
             name,
@@ -791,43 +863,14 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             nickname: nickname.as_str(),
             drift: drift.as_deref(),
             a2a_port: *a2a_port,
-        }),
-        OutputEvent::Message { message, is_self } => {
-            return Some(format_msg_json(message, *is_self));
-        }
-        OutputEvent::Task { message, is_self } => {
-            return Some(format_task_json(message, *is_self));
-        }
-        OutputEvent::TaskMessage {
-            id,
-            mesh,
-            author,
-            peer,
-            task_id,
-            state,
-            text,
-            label,
-            message,
-            is_self,
-        } => {
-            return Some(format_task_message_json(&TaskMessageLeg {
-                id,
-                mesh,
-                author,
-                peer,
-                task_id,
-                state: *state,
-                text,
-                label: label.as_deref(),
-                message: message.as_deref(),
-                is_self: *is_self,
-            }));
-        }
+        })
+        .ok(),
         OutputEvent::TaskTimeout { task_id, reason } => {
             serde_json::to_string(&SimpleEvent::TaskTimeout {
                 task_id: task_id.as_str(),
                 reason: *reason,
             })
+            .ok()
         }
         OutputEvent::TaskStalled {
             task_id,
@@ -839,7 +882,8 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             peer,
             *last_poll_secs_ago,
             *check_secs,
-        )),
+        ))
+        .ok(),
         OutputEvent::Receipt {
             from,
             ref_id,
@@ -850,13 +894,8 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             ref_id,
             state,
             ts: *ts,
-        }),
-        OutputEvent::Presence { message } => {
-            let MessageKind::Presence { subtype } = &message.kind else {
-                return None;
-            };
-            return Some(format_presence_json(message, *subtype));
-        }
+        })
+        .ok(),
         OutputEvent::PeerTimeout {
             nickname,
             last_seen_secs_ago,
@@ -864,11 +903,13 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             nickname: nickname.as_str(),
             last_seen_secs_ago: *last_seen_secs_ago,
             display: peer_timeout_display(nickname.as_str()),
-        }),
+        })
+        .ok(),
         OutputEvent::PeerReturn { nickname } => serde_json::to_string(&SimpleEvent::PeerReturn {
             nickname: nickname.as_str(),
             display: peer_return_display(nickname.as_str()),
-        }),
+        })
+        .ok(),
         OutputEvent::Fork {
             nickname,
             pubkey,
@@ -877,12 +918,15 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             nickname: nickname.as_str(),
             pubkey,
             seq: *seq,
-        }),
+        })
+        .ok(),
         OutputEvent::MsgPosted { id } => {
-            serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() })
+            serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() }).ok()
         }
-        OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }),
-        OutputEvent::Error { message } => serde_json::to_string(&SimpleEvent::Error { message }),
+        OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }).ok(),
+        OutputEvent::Error { message } => {
+            serde_json::to_string(&SimpleEvent::Error { message }).ok()
+        }
         OutputEvent::PingReport { peers, known } => {
             serde_json::to_string(&SimpleEvent::PingReport {
                 responded: peers.len(),
@@ -890,14 +934,12 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 peers: peers.clone(),
                 known: *known,
             })
+            .ok()
         }
-        OutputEvent::StateChanged {
-            channel,
-            event,
-            document,
-            is_self,
-        } => return Some(format_state_json(*channel, event, document, *is_self)),
-    };
-    json.ok()
-        .map(|line| stamp_visibility(line, is_visible(event)))
+        OutputEvent::Message { .. }
+        | OutputEvent::Task { .. }
+        | OutputEvent::TaskMessage { .. }
+        | OutputEvent::Presence { .. }
+        | OutputEvent::StateChanged { .. } => None,
+    }
 }
