@@ -151,6 +151,14 @@ exhaustive_structs = "warn"
 # Google Rust Style Guide, O27: import the type or the parent module; a path names at most three segments (clippy.toml).
 absolute_paths = "warn"
 redundant_clone = "warn"
+# Google Rust Style Guide, B5: do not clone out of habit; borrow, move, or restructure.
+implicit_clone = "warn"
+map_clone = "warn"
+cloned_instead_of_copied = "warn"
+assigning_clones = "warn"
+unnecessary_to_owned = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error
 # instead of silently lingering.
