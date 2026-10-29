@@ -8,14 +8,14 @@ use habilis_network::protocol::{
     Mesh, MeshConfig, MeshName, MessageBody, Nickname, TransportPolicy,
 };
 use habilis_network::runtime::CoHostPolicy;
-use tokio::sync::broadcast;
+use tokio::sync::broadcast::Receiver;
 
 use super::{CreateConfig, JoinError, MeshSession, TopicConfig};
 use crate::a2a::status_update_params;
 
 /// Wait for alice's topic message on `bob_rx`, ignoring anything else
 /// (e.g. earlier retries' echoes) until the channel closes.
-async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Authored>) -> bool {
+async fn recv_hello_topic(bob_rx: &mut Receiver<Authored>) -> bool {
     loop {
         match bob_rx.recv().await {
             Ok(message)
