@@ -86,7 +86,7 @@ mod tests {
     use habilis_network::protocol::{DirectorySelection, MeshName, Nickname};
 
     use crate::cli::args::{Cli, Commands};
-    use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
+    use crate::cli::password_flag::PasswordFlag;
 
     #[test]
     fn create_opts_with_nickname() {
