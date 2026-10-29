@@ -394,7 +394,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
-- Declined R22: the API config structs have a required field, such as the mesh name or join target, with no default value, so they take it in `new` instead of implementing `Default`.
+- R22: a config struct with a required field, such as the mesh name or join target, has no `Default`, because a default would build an invalid value. It takes the required field in `new`, and a `with_*` method sets each optional field (`JoinConfig`, `TopicConfig`, `CreateConfig`, `StatusUpdateParams`). A config struct with no required field derives `Default`.
 - Declined B5: no tool measures the cost of a clone against a borrow. `redundant_clone` and `clone_on_ref_ptr` in `[workspace.lints.clippy]` refuse a clone that a borrow replaces, and a clone that remains is judged per site on the network path, where a send costs more than the copy.
 - Declined B1: `Arc` (none of `Rc`) holds state moved into spawned tasks and `dyn` objects the engine takes, such as `NodeSink`; a borrow cannot cross those, so this is the B2 exception at about 37 sites.
 
