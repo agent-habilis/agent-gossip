@@ -5,11 +5,6 @@
 //! backdated — to prove receivers reject or flag them. Pairs with
 //! [`crate::api::MeshSession::inject_raw`]. Never compiled into a
 //! normal/release build, so the curated public surface is unchanged.
-#![allow(missing_docs, reason = "internal test shim, doc-hidden")]
-#![allow(
-    missing_debug_implementations,
-    reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
-)]
 
 use habilis_network::ops::doc;
 use habilis_network::ops::doc::MeshDoc;
@@ -52,9 +47,13 @@ pub fn pubkey_hex(key: &TestKey) -> String {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct StatusFrameParams<'caller> {
+    /// Nickname of the message author.
     pub author: &'caller str,
+    /// Nickname of the addressee.
     pub to: &'caller str,
+    /// Task id in the frame header.
     pub frame_task_id: &'caller str,
+    /// Task id inside the signed payload.
     pub payload_task_id: &'caller str,
 }
 
@@ -64,9 +63,13 @@ pub struct StatusFrameParams<'caller> {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct SealedTaskStatusParams<'caller> {
+    /// Nickname of the message author.
     pub author: &'caller str,
+    /// Nickname of the addressee.
     pub to: &'caller str,
+    /// Id of the task that the leg updates.
     pub task_id: &'caller str,
+    /// Task state that the leg reports.
     pub state: crate::a2a::TaskState,
     /// Marks the leg as a liveness beat rather than a transition.
     pub beat: bool,
@@ -79,13 +82,18 @@ pub struct SealedTaskStatusParams<'caller> {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct SealedMsgParams<'caller> {
+    /// Nickname of the message author.
     pub author: &'caller str,
+    /// Nickname of the addressee.
     pub to: &'caller str,
+    /// Message text before sealing.
     pub text: &'caller str,
+    /// The addressee's public mesh-seal key.
     pub seal_key: PublicKey,
 }
 
 impl<'caller> StatusFrameParams<'caller> {
+    /// Params with every field set.
     #[must_use]
     pub fn new(
         author: &'caller str,
@@ -121,6 +129,7 @@ impl<'caller> SealedTaskStatusParams<'caller> {
         }
     }
 
+    /// Replaces the reported task state.
     #[must_use]
     pub fn with_state(mut self, state: crate::a2a::TaskState) -> Self {
         self.state = state;
@@ -129,6 +138,7 @@ impl<'caller> SealedTaskStatusParams<'caller> {
 }
 
 impl<'caller> SealedMsgParams<'caller> {
+    /// Params with every field set.
     #[must_use]
     pub fn new(
         author: &'caller str,
