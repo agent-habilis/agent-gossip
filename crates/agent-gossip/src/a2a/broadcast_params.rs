@@ -32,7 +32,7 @@ use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
 use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
-use crate::output;
+use crate::emission;
 
 /// Retain a just-built outbound message in the local log (pruning the
 /// fork/DAG indexes on any eviction) and write the dev log. The operator
@@ -57,7 +57,7 @@ fn retain_outbound(state: &mut EventLoopState, message: &Verified) {
 fn commit_outbound_part(
     state: &mut EventLoopState,
     message: &Verified,
-    out: &output::Output,
+    out: &emission::Output,
     echo: bool,
 ) {
     let hash = message.content_hash();
@@ -255,7 +255,7 @@ struct OutboundPart<'source> {
 async fn send_msg_part(
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
     part: OutboundPart<'_>,
 ) -> anyhow::Result<()> {
     let OutboundPart {
@@ -526,7 +526,7 @@ impl<'run> BroadcastShards<'run> {
         self,
         state: &mut EventLoopState,
         sender: &MeshSender,
-        out: &output::Output,
+        out: &emission::Output,
     ) -> anyhow::Result<(Verified, ShardGroup)> {
         let mut cache_frames = Vec::new();
         let mut header = None;
@@ -578,7 +578,7 @@ async fn send_single_broadcast(
     single: SingleBroadcast<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(MessageId, Authored)> {
     let SingleBroadcast { frame, body } = single;
     let bytes = frame.serialize()?;
@@ -639,7 +639,7 @@ pub(crate) async fn send_broadcast(
     params: BroadcastParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(MessageId, Authored)> {
     let BroadcastParams { mesh, author, text } = params;
     // Gate the caller's *logical* body up front. Downstream only ever sees the
@@ -740,7 +740,7 @@ async fn broadcast_directed_frame(
     frame: DirectedFrameParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let DirectedFrameParams {
         mesh,
@@ -860,7 +860,7 @@ async fn broadcast_directed_frame(
 }
 
 /// Print a directed leg's self-echo down the surface its kind belongs to.
-fn print_echo(out: &output::Output, echo: &Authored, echo_as: EchoAs) {
+fn print_echo(out: &emission::Output, echo: &Authored, echo_as: EchoAs) {
     match echo_as {
         EchoAs::Task => out.print_task(echo, true),
         EchoAs::Chat => out.print_message_ex(echo, true),
@@ -903,7 +903,7 @@ pub(crate) async fn emit_task_status(
     params: TaskStatusParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(Authored, Vec<PendingSend>)> {
     let TaskStatusParams {
         mesh,
@@ -994,7 +994,7 @@ pub(crate) async fn emit_task_artifact(
     params: TaskArtifactEmitParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(Authored, Vec<PendingSend>)> {
     let TaskArtifactEmitParams {
         mesh,
@@ -1112,7 +1112,7 @@ pub(crate) async fn broadcast_task_status(
     params: BroadcastTaskStatusParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let BroadcastTaskStatusParams {
         mesh,
@@ -1194,7 +1194,7 @@ pub(crate) async fn send_msg(
     params: MsgParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let MsgParams {
         mesh,
@@ -1265,7 +1265,7 @@ pub(crate) async fn broadcast_task_artifact(
     params: BroadcastTaskArtifactParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
 ) -> anyhow::Result<(MessageId, Authored, Vec<PendingSend>)> {
     let BroadcastTaskArtifactParams {
         mesh,
@@ -1494,7 +1494,7 @@ struct DirectedLegPart<'source> {
 async fn send_directed_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,
-    out: &output::Output,
+    out: &emission::Output,
     part: DirectedLegPart<'_>,
 ) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
@@ -1639,7 +1639,7 @@ pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
 /// message that never arrived as sent. With nothing pending the verdict is known
 /// now, and the echo prints at once.
 fn echo_when_sent(
-    out: &output::Output,
+    out: &emission::Output,
     echo: Authored,
     echo_as: EchoAs,
     pending: Vec<PendingSend>,
@@ -2027,7 +2027,7 @@ struct SessionScope<'caller> {
     mesh: &'caller MeshId,
     author: &'caller Nickname,
     sender: &'caller MeshSender,
-    output: &'caller output::Output,
+    output: &'caller emission::Output,
 }
 
 /// Broadcast one chat body and give the outcome to the requester. Returns
@@ -2253,7 +2253,7 @@ pub(crate) async fn handle_session_request(
     params: SessionRequestParams<'_>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-    output: &output::Output,
+    output: &emission::Output,
 ) -> bool {
     let SessionRequestParams {
         request,
@@ -2514,7 +2514,7 @@ mod echo_when_sent_tests {
 
     use super::{EchoAs, PendingSend, echo_when_sent};
     use crate::a2a::wire;
-    use crate::output;
+    use crate::emission;
     use crate::output_event::OutputEvent;
 
     fn echo() -> Authored {
@@ -2540,7 +2540,7 @@ mod echo_when_sent_tests {
 
     #[tokio::test]
     async fn a_delivered_send_prints_the_echo() {
-        let (out, mut events) = output::capture_events::capture_events();
+        let (out, mut events) = emission::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
@@ -2553,7 +2553,7 @@ mod echo_when_sent_tests {
 
     #[tokio::test]
     async fn a_failed_send_prints_no_echo_and_passes_the_error_on() {
-        let (out, mut events) = output::capture_events::capture_events();
+        let (out, mut events) = emission::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);

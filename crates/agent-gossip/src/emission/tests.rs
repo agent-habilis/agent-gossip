@@ -7,7 +7,7 @@ use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
 use crate::a2a::{node, status_update_params, wire};
-use crate::output::simple_event;
+use crate::emission::simple_event;
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -577,7 +577,7 @@ fn receipt_json_shape() {
 
 #[test]
 fn receipt_event_is_invisible_and_stamped_so() {
-    let event = crate::output::OutputEvent::Receipt {
+    let event = crate::emission::OutputEvent::Receipt {
         from: nick("ball-blue"),
         ref_id: "7a1c".to_owned(),
         state: "read".to_owned(),
@@ -587,7 +587,7 @@ fn receipt_event_is_invisible_and_stamped_so() {
         !simple_event::is_visible(&event),
         "the event is not visible"
     );
-    let line = crate::output::event_json(&event).unwrap();
+    let line = crate::emission::event_json(&event).unwrap();
     assert_eq!(
         parse(&line)["is_visible"],
         false,

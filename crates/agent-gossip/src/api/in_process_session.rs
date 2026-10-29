@@ -15,7 +15,7 @@ use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollBatch;
-use crate::output::Output;
+use crate::emission::Output;
 
 /// The in-process session core shared by the public [`MeshSession`] and the MCP
 /// server. Wraps the engine's [`Node`] with this app's request/reply vocabulary
@@ -177,7 +177,7 @@ impl InProcessSession {
     /// Poll the surfaced-event history after the `after` seq cursor
     /// (join-horizon filtered). Returns the seq-tagged surfaced events — the
     /// same events the live stream shows, ready to render via
-    /// [`crate::output::surfaced_event_json`].
+    /// [`crate::emission::surfaced_event_json`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -276,7 +276,7 @@ impl InProcessSession {
     /// Run an RTT round and return the per-peer round-trip rows. Blocks for
     /// the ping window (the round finalizes on its deadline), so a quiet mesh
     /// returns an empty list after that delay.
-    pub(crate) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>, SessionError> {
+    pub(crate) async fn ping(&self) -> Result<Vec<crate::emission::PingPeer>, SessionError> {
         let rows = self
             .call(|response| SessionRequest::Ping { response })
             .await?;
@@ -284,7 +284,7 @@ impl InProcessSession {
         // datum — same fields, distinct layers.
         Ok(rows
             .into_iter()
-            .map(|(nickname, rtt_ms)| crate::output::PingPeer { nickname, rtt_ms })
+            .map(|(nickname, rtt_ms)| crate::emission::PingPeer { nickname, rtt_ms })
             .collect())
     }
 

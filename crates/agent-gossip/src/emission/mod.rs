@@ -14,10 +14,6 @@ pub(crate) use crate::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 
 pub(crate) mod capture_events;
 mod node_sink;
-#[expect(
-    clippy::module_inception,
-    reason = "the primary type Output is named after this directory, per O9"
-)]
 mod output;
 mod output_mode;
 mod ready_params;

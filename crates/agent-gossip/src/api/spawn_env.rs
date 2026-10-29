@@ -9,7 +9,7 @@ use super::advertiser::{Advertiser, spawn_advertiser};
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use crate::a2a::a2a_app::SurfacedIo;
-use crate::output::Output;
+use crate::emission::Output;
 use crate::topic;
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned

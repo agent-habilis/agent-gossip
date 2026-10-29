@@ -165,7 +165,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>, SessionError> {
+    pub(super) async fn ping(&self) -> Result<Vec<crate::emission::PingPeer>, SessionError> {
         self.inner.ping().await
     }
 
@@ -287,8 +287,8 @@ mod tests {
 
     /// The `Message` inside a surfaced `msg`/`presence`/`task` event, if
     /// any — the test view into the now-structured `fetch_messages` result.
-    fn as_message(event: &crate::output::OutputEvent) -> Option<&Message> {
-        use crate::output::OutputEvent;
+    fn as_message(event: &crate::emission::OutputEvent) -> Option<&Message> {
+        use crate::emission::OutputEvent;
         match event {
             OutputEvent::Message { message, .. }
             | OutputEvent::Presence { message }
@@ -311,10 +311,10 @@ mod tests {
 
     /// Whether `event` is the self-echo of `sent` — a `Message` event
     /// tagged `is_self:true` whose id matches.
-    fn is_self_echo(event: &crate::output::OutputEvent, sent: &MessageId) -> bool {
+    fn is_self_echo(event: &crate::emission::OutputEvent, sent: &MessageId) -> bool {
         matches!(
             event,
-            crate::output::OutputEvent::Message { message, is_self }
+            crate::emission::OutputEvent::Message { message, is_self }
                 if *is_self && message.id == *sent
         )
     }
@@ -352,8 +352,8 @@ mod tests {
     }
 
     /// The author and the document after a meta change, if `event` is one.
-    fn meta_change(event: &crate::output::OutputEvent) -> Option<(&str, &serde_json::Value)> {
-        let crate::output::OutputEvent::StateChanged {
+    fn meta_change(event: &crate::emission::OutputEvent) -> Option<(&str, &serde_json::Value)> {
+        let crate::emission::OutputEvent::StateChanged {
             channel: Channel::Meta,
             event: change,
             document,
@@ -379,7 +379,7 @@ mod tests {
     /// Whether `event` is bob-cursor's join presence — the marker
     /// `implicit_cursor_returns_delta_on_subsequent_fetches` waits on to know
     /// its cursor baseline includes the join.
-    fn is_bob_join(event: &crate::output::OutputEvent) -> bool {
+    fn is_bob_join(event: &crate::emission::OutputEvent) -> bool {
         as_message(event).is_some_and(|message| {
             matches!(
                 message.kind,

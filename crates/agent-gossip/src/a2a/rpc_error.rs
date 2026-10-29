@@ -11,7 +11,7 @@ use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
     BroadcastParams, emit_task_status, log_pending, send_broadcast,
 };
-use crate::output;
+use crate::emission;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
 #[derive(Debug)]
@@ -262,7 +262,7 @@ pub(crate) async fn handle_op(
     params: HandleOpParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    output: &output::Output,
+    output: &emission::Output,
 ) -> Result<Value, RpcError> {
     let HandleOpParams {
         op,
@@ -392,7 +392,7 @@ async fn send_message(
     params: SendMessageParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    output: &output::Output,
+    output: &emission::Output,
 ) -> Result<Value, RpcError> {
     let SendMessageParams {
         to,

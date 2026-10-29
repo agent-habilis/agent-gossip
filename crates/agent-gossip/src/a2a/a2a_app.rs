@@ -23,7 +23,7 @@ use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
 use crate::a2a::{TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
-use crate::output::{Output, OutputEvent};
+use crate::emission::{Output, OutputEvent};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
@@ -64,7 +64,7 @@ impl habilis_network::embed::NodeSink for StartupSink {
             nickname,
         } = &event
         {
-            self.output.ready(crate::output::ReadyParams {
+            self.output.ready(crate::emission::ReadyParams {
                 mesh,
                 name,
                 nickname,

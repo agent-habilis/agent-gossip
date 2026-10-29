@@ -12,7 +12,7 @@ use super::drift_warning::drift_warning;
 use crate::a2a::a2a_app::{A2aApp, Startup, SurfacedIo};
 use crate::a2a::a2a_binding;
 use crate::api;
-use crate::output::{Output, OutputMode};
+use crate::emission::{Output, OutputMode};
 
 /// Build the output sink, set up the mesh, and run the event loop. The
 /// shared spine of `create` and `join` — `resolved` carries the

@@ -1,5 +1,5 @@
 ---
-source: crates/agent-gossip/src/output/tests.rs
+source: crates/agent-gossip/src/emission/tests.rs
 expression: "format_presence_json(&msg, PresenceSubtype::Joined)"
 ---
 {"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","gossip":"H5G8iUJfx5UprXFmpSGLTLpjKU5AGhjQd4pAacY3NSZ6wy72P9wvAdsu7kgwG6","author":"alice-bot","pubkey":"0000000000000000000000000000000000000000000000000000000000000000","ts":1700000000,"subtype":"joined","display":"💬️ `<alice-bot>` has joined","is_visible":true}

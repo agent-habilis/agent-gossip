@@ -7,11 +7,11 @@ use tokio::sync::oneshot::Sender;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::{tuning, wire};
-use crate::output::OutputEvent;
+use crate::emission::OutputEvent;
 
 /// One surfaced event tagged with its daemon-local sequence number. The `seq`
 /// is the `poll` / `fetch` cursor value; `event` renders to the live-stream
-/// JSON line via [`crate::output::surfaced_event_json`].
+/// JSON line via [`crate::emission::surfaced_event_json`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SurfacedEvent {
@@ -256,7 +256,7 @@ pub(crate) fn render_poll_array(batch: &PollBatch) -> String {
         batch
             .events
             .iter()
-            .filter_map(|item| crate::output::surfaced_event_json(item.seq, &item.event)),
+            .filter_map(|item| crate::emission::surfaced_event_json(item.seq, &item.event)),
     );
     format!("[{}]", lines.join(","))
 }
@@ -661,7 +661,7 @@ mod tests {
         render_poll_array,
     };
     use crate::a2a::{TaskState, status_update_params, tuning, wire};
-    use crate::output::OutputEvent;
+    use crate::emission::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
         Nickname::try_new(name.to_owned()).expect("valid test nickname")

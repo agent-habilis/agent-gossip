@@ -312,7 +312,7 @@ impl AgentGossipServer {
             Vec::with_capacity(batch.events.len());
         let mut current_seq: Option<u64> = None;
         for item in &batch.events {
-            if let Some(value) = crate::output::surfaced_event_json(item.seq, &item.event)
+            if let Some(value) = crate::emission::surfaced_event_json(item.seq, &item.event)
                 .and_then(|line| serde_json::value::RawValue::from_string(line).ok())
             {
                 messages.push(value);

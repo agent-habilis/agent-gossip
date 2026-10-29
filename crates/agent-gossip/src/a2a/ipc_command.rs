@@ -22,7 +22,7 @@ use crate::a2a::broadcast_params::{
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
-use crate::output;
+use crate::emission;
 
 /// Command sent from CLI to the running server over IPC. App-side because its
 /// arms carry a2a-typed payloads (task id/state, gossip A2A calls); the engine's
@@ -196,7 +196,7 @@ struct IpcRequest<'caller> {
     author: &'caller Nickname,
     endpoint: &'caller Endpoint,
     sender: &'caller MeshSender,
-    output: &'caller output::Output,
+    output: &'caller emission::Output,
     state: &'caller mut EventLoopState,
     app: &'caller mut A2aApp,
     context: &'caller HandlerCtx<'caller>,
@@ -547,7 +547,7 @@ pub(crate) async fn handle_ipc_command(
     params: IpcDispatchParams<'_>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-    output: &output::Output,
+    output: &emission::Output,
 ) -> bool {
     let sender = context.sender;
     let IpcDispatchParams {

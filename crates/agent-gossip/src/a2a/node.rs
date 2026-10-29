@@ -23,7 +23,7 @@ use crate::a2a::{
     tuning, wire,
 };
 use crate::cli::bell;
-use crate::output;
+use crate::emission;
 
 /// The longest wait, in ticks, between two tries to publish a card that did not publish.
 const CARD_RETRY_MAX_TICKS: u32 = 64;
@@ -458,12 +458,12 @@ pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, 
 /// The agent's own task echoes are quiet for the same reason: it already holds
 /// the id of every leg it sent, and an echo landing right after a re-arm rang
 /// the bell for nothing and made the Stop hook refuse the turn.
-pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
-    use output::OutputEvent;
+pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
+    use emission::OutputEvent;
     if is_self_task_echo(event) {
         return false;
     }
-    output::simple_event::is_visible(event)
+    emission::simple_event::is_visible(event)
         || matches!(
             event,
             OutputEvent::Task { .. }
@@ -473,11 +473,11 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
         )
 }
 
-fn is_self_task_echo(event: &output::OutputEvent) -> bool {
+fn is_self_task_echo(event: &emission::OutputEvent) -> bool {
     matches!(
         event,
-        output::OutputEvent::Task { is_self: true, .. }
-            | output::OutputEvent::TaskMessage { is_self: true, .. }
+        emission::OutputEvent::Task { is_self: true, .. }
+            | emission::OutputEvent::TaskMessage { is_self: true, .. }
     )
 }
 
@@ -489,8 +489,8 @@ fn is_self_task_echo(event: &output::OutputEvent) -> bool {
 /// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
 /// liveness widget update, never a retained record).
-pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
-    use output::OutputEvent;
+pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
+    use emission::OutputEvent;
     match event {
         OutputEvent::Message { .. }
         | OutputEvent::Presence { .. }
@@ -689,7 +689,7 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
         ReceiptState::Delivered => "delivered",
         ReceiptState::Read => "read",
     };
-    out.receipt(output::ReceiptParams {
+    out.receipt(emission::ReceiptParams {
         from: &message.author,
         ref_id: &receipt.ref_id,
         state,
@@ -796,7 +796,7 @@ fn surface_chat(
     message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
-    handler: impl FnOnce(&output::Output, bool) -> bool,
+    handler: impl FnOnce(&emission::Output, bool) -> bool,
 ) -> bool {
     let replay = is_replayed_chat(&app.surfaced_chat, message);
     if replay && surfaceable {
@@ -823,7 +823,7 @@ fn is_replayed_chat(surfaced: &BoundedFifoSet<DedupKey>, message: &Authored) -> 
 /// `a2a_broadcast` is mesh broadcast chat — always loggable. `surfaceable`
 /// gates only the *display*: a pre-join message is still logged/relayed but not
 /// printed.
-fn handle_broadcast(out: &output::Output, message: &Authored, surfaceable: bool) -> bool {
+fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: bool) -> bool {
     if message.kind.is_app(wire::BROADCAST) {
         if surfaceable {
             out.print_message(message);
@@ -862,7 +862,7 @@ struct MsgParams<'caller> {
 /// An `author == self_author` escape hatch here therefore admitted nothing
 /// honest and exactly one thing hostile — a relayed msg between two other
 /// peers, surfaced to us as though we had sent it.
-fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
+fn handle_msg(out: &emission::Output, params: MsgParams<'_>) -> bool {
     let MsgParams {
         message,
         to,
@@ -893,7 +893,7 @@ struct TaskDisplayParams<'caller> {
 /// status is liveness plumbing, surfaced as a `task_progress` widget event but
 /// never retained). `surfaceable` gates only the *display* (join-horizon),
 /// never the relay/log.
-fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
+fn handle_task(out: &emission::Output, params: TaskDisplayParams<'_>) -> bool {
     let TaskDisplayParams {
         message,
         to,
@@ -1202,7 +1202,7 @@ fn ingest_remote_message(
     let label = status_update_params::task_label(payload);
     let mesh_name: &str = context.mesh.as_str();
     let peer_name: &str = context.author.as_str();
-    app.output.task_message(&output::TaskMessageLeg {
+    app.output.task_message(&emission::TaskMessageLeg {
         id: payload.message_id.as_str(),
         mesh: mesh_name,
         author: requester.as_str(),
@@ -1253,7 +1253,7 @@ mod classify_tests {
     use super::{classify, is_empty_working_repeat, is_replayed_chat, surface_chat, wakes};
     use crate::a2a::a2a_app::A2aApp;
     use crate::a2a::{TaskState, status_update_params, wire};
-    use crate::output::OutputEvent;
+    use crate::emission::OutputEvent;
 
     fn mesh() -> MeshId {
         MeshId::from("test")
@@ -1561,7 +1561,7 @@ mod classify_tests {
     // log is one every peer's digest re-offers.
     #[test]
     fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
-        let mut app = A2aApp::detached(crate::output::Output::silent());
+        let mut app = A2aApp::detached(crate::emission::Output::silent());
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
 
         // A msg addressed to someone else: the handler declines, nothing recorded.

@@ -149,7 +149,7 @@ adding to the engine:
 
 - Name the **mechanism**, not the consumer: an engine field carrying a served
   port is `http_port`, never `a2a_port`. The app renames at its own boundary
-  (`output/mod.rs`, which owns the `a2a_port` JSON key) rather than pushing the
+  (`emission/mod.rs`, which owns the `a2a_port` JSON key) rather than pushing the
   product's word down. `NodeEvent::Ready` carries only `mesh`/`name`/`nickname`
   today — the port reaches the app through `Startup`, not the event.
 - Push app vocabulary into config. The `meta` channel's per-peer write gate is a

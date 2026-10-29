@@ -34,7 +34,7 @@ use crate::a2a::tuning::{
     task_stall_check_secs, task_timeout_secs,
 };
 use crate::a2a::{broadcast_params, tuning};
-use crate::output;
+use crate::emission;
 
 /// My part in a task: did I open it (client side), or receive the offer
 /// (the worker — the task's A2A server)?
@@ -720,14 +720,14 @@ pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
-    out: &output::Output,
+    out: &emission::Output,
 ) {
     let now = Instant::now();
     let timeout = Duration::from_secs(task_timeout_secs());
     let (expired, reaped) = sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
 
     for (task_id, peer) in &expired {
-        out.task_timeout(task_id, output::TaskGoneReason::Timeout);
+        out.task_timeout(task_id, emission::TaskGoneReason::Timeout);
         tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
     }
     // A task a late reply opened is unknown to the caller's agent, so it gets
@@ -845,7 +845,7 @@ fn sweep_registry(
 pub(crate) fn fail_tasks_for_departed_peer(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     peer: &Nickname,
-    out: &output::Output,
+    out: &emission::Output,
 ) {
     let now = Instant::now();
     for (task_id, rec) in tasks.iter_mut() {
@@ -857,7 +857,7 @@ pub(crate) fn fail_tasks_for_departed_peer(
             // which a late leg is recognized as a duplicate rather than an
             // unknown task.
             rec.last_activity = now;
-            out.task_timeout(task_id, output::TaskGoneReason::PeerLeft);
+            out.task_timeout(task_id, emission::TaskGoneReason::PeerLeft);
             tracing::debug!(%task_id, %peer, "task canceled (peer left)");
         }
     }
@@ -2236,7 +2236,7 @@ mod tests {
         apply(&mut tasks, &offer(done_id, "calm-otter"), now);
         tasks.get_mut(&TaskId::from(done_id)).unwrap().state = TaskState::Completed;
 
-        let out = crate::output::Output::silent();
+        let out = crate::emission::Output::silent();
         super::fail_tasks_for_departed_peer(&mut tasks, &departed, &out);
 
         assert_eq!(
@@ -2338,7 +2338,7 @@ mod tests {
                     .expect("valid body"),
             ),
         );
-        let line = crate::output::event_json(&crate::output::OutputEvent::Task {
+        let line = crate::emission::event_json(&crate::emission::OutputEvent::Task {
             message: Box::new(
                 plaintext
                     .sign(&habilis_network::protocol::Identity::generate())

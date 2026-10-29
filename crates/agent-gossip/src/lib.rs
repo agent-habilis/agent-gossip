@@ -48,7 +48,7 @@ pub use habilis_network::util::mesh_prefix;
 
 pub use self::a2a::surfaced_event::SurfacedEvent;
 pub use self::a2a::{TaskId, TaskState};
-pub use self::output::{event_json, surfaced_event_json};
+pub use self::emission::{event_json, surfaced_event_json};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting
 // them keeps the roster readable without widening the surface.
@@ -63,8 +63,8 @@ pub use self::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 pub mod a2a;
 pub(crate) mod bridge;
 pub(crate) mod cli;
+pub(crate) mod emission;
 pub(crate) mod mcp;
-pub(crate) mod output;
 /// The typed events a daemon writes to its `--output json` stream.
 pub mod output_event;
 pub(crate) mod policy;

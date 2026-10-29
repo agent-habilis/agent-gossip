@@ -18,7 +18,7 @@ use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::a2a_app::SurfacedIo;
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::surfaced_event::PollBatch;
-use crate::output::{OutputEvent, PingPeer, capture_events};
+use crate::emission::{OutputEvent, PingPeer, capture_events};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
