@@ -256,6 +256,9 @@ mod tests {
 
     use super::{Agent, OWNED_SKILL_DIRS, SKILLS};
 
+    /// The shell form every skill calls the binary through.
+    const GOSSIP_BIN: &str = r#""${AGENT_GOSSIP_BIN:-agent-gossip}""#;
+
     /// The embedded tree is the *generated* one: exactly one `SKILL.md` per
     /// skill dir, no `shared/`, no partials, and no leftover runtime reads or
     /// unrendered slots — the whole point of the build-time renderer is that
@@ -373,6 +376,31 @@ mod tests {
         "gossip-reattach",
     ];
 
+    /// A command that calls `agent-gossip` bare ignores `AGENT_GOSSIP_BIN`, so
+    /// the preview binary would drive the stable daemon's session. Prose that
+    /// names the command in backticks does not run it, and is not flagged.
+    fn calls_bare_agent_gossip(line: &str) -> bool {
+        line.match_indices("agent-gossip ").any(|(at, _)| {
+            let before = line[..at].trim_end();
+            before.is_empty()
+                || ["&&", "exec", "$(", "\"", "'", ";", "|", "{"]
+                    .iter()
+                    .any(|lead| before.ends_with(lead))
+        })
+    }
+
+    #[test]
+    fn skill_commands_run_through_agent_gossip_bin() {
+        for skill in OWNED_SKILL_DIRS {
+            for line in rendered(skill).lines() {
+                assert!(
+                    !calls_bare_agent_gossip(line),
+                    "{skill}: a command calls agent-gossip bare, not via AGENT_GOSSIP_BIN: {line}"
+                );
+            }
+        }
+    }
+
     /// Only the model enforced the one-bell contract, and a model that forgot
     /// left the gossip deaf. Every skill that starts or recovers a session
     /// registers the Stop hook that refuses a turn ending with no bell. The
@@ -383,7 +411,9 @@ mod tests {
             let front = frontmatter(rendered(skill));
             let has_hook = front.contains("hooks:")
                 && front.contains("Stop:")
-                && front.contains(r#"agent-gossip bell-check --session-pid "$PPID" || true"#);
+                && front.contains(
+                    r#""${AGENT_GOSSIP_BIN:-agent-gossip}" bell-check --session-pid "$PPID" || true"#,
+                );
             assert_eq!(
                 has_hook,
                 BELL_HOOK_SKILLS.contains(skill),
@@ -458,7 +488,10 @@ mod tests {
     fn skills_use_the_bell_flag_and_settle_flag() {
         for skill in OWNED_SKILL_DIRS {
             for (banned, instead) in [
-                ("sleep 5; agent-gossip poll", "--settle-secs"),
+                (
+                    "sleep 5; \"${AGENT_GOSSIP_BIN:-agent-gossip}\" poll",
+                    "--settle-secs",
+                ),
                 ("pgrep", "the session's bell flag"),
             ] {
                 assert!(
@@ -498,8 +531,8 @@ mod tests {
             );
         } else {
             assert!(
-                line.contains("exec agent-gossip"),
-                "{path}: the generic launch must stay `exec agent-gossip`: {line}"
+                line.contains(&format!("exec {GOSSIP_BIN}")),
+                "{path}: the generic launch must stay `exec` through the binary: {line}"
             );
         }
     }
@@ -521,11 +554,11 @@ mod tests {
     fn long_running_gossip_commands_discard_stdout_and_stderr() {
         fn is_daemon_launch(line: &str) -> bool {
             ["create", "join", "topic"].iter().any(|sub| {
-                line.contains(&format!("agent-gossip {sub} ")) && line.contains("--state-file")
+                line.contains(&format!("{GOSSIP_BIN} {sub} ")) && line.contains("--state-file")
             })
         }
         fn is_bell(line: &str) -> bool {
-            line.starts_with("agent-gossip poll ") && line.contains("--long")
+            line.starts_with(&format!("{GOSSIP_BIN} poll ")) && line.contains("--long")
         }
 
         let mut daemon_starters_checked = 0;
@@ -650,7 +683,9 @@ mod tests {
             rendered(skill)
                 .lines()
                 .map(str::trim)
-                .filter(|line| line.starts_with("agent-gossip poll ") && line.contains("--long"))
+                .filter(|line| {
+                    line.starts_with(&format!("{GOSSIP_BIN} poll ")) && line.contains("--long")
+                })
                 .collect()
         };
         for skill in OWNED_SKILL_DIRS {
@@ -700,7 +735,8 @@ mod tests {
             let merge = body(skill)
                 .lines()
                 .find(|line| {
-                    line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"")
+                    line.starts_with(&format!("{GOSSIP_BIN} meta merge "))
+                        && line.contains("\"host\"")
                 })
                 .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"));
             assert!(
@@ -712,8 +748,9 @@ mod tests {
     }
 
     fn ready_gate_merge(skill: &str) -> &'static str {
-        let is_merge =
-            |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");
+        let is_merge = |line: &&str| {
+            line.starts_with(&format!("{GOSSIP_BIN} meta merge ")) && line.contains("\"host\"")
+        };
         SKILLS
             .get_file(format!("{skill}/SKILL.md"))
             .and_then(include_dir::File::contents_utf8)

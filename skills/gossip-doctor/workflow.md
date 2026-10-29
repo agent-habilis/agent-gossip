@@ -8,13 +8,13 @@ machine-health report.
 Machine health:
 
 ```bash
-agent-gossip doctor
+"${AGENT_GOSSIP_BIN:-agent-gossip}" doctor
 ```
 
 Specific gossip:
 
 ```bash
-agent-gossip doctor --gossip "$GOSSIP"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" doctor --gossip "$GOSSIP"
 ```
 
 ## Output

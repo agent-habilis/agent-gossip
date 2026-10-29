@@ -20,7 +20,7 @@ Then stop.
 Send the same text to each of the **selected peers**, one command per peer:
 
 ```bash
-agent-gossip a2a msg --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --text "$TEXT"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a msg --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --text "$TEXT"
 ```
 
 Each of these is a separate private message: only you and that one peer can

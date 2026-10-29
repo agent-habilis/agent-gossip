@@ -16,7 +16,7 @@ Rules:
   all inputs named and double-quoted, `\"` and `\\` the only escapes:
 
   ```markdown
-  <!-- include path="../shared/daemon-session.md" launch="agent-gossip join \"{TARGET}\"" noun="line" -->
+  <!-- include path="../shared/daemon-session.md" launch="\"${AGENT_GOSSIP_BIN:-agent-gossip}\" join \"{TARGET}\"" noun="line" -->
   <!-- slot name="launch" -->
   ```
 

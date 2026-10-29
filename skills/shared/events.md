@@ -82,10 +82,10 @@ Choose the channel by **audience**, not by how the message reached you:
 
 ```bash
 # useful to the whole gossip
-agent-gossip a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "<answer>"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "<answer>"
 
 # for one peer only
-agent-gossip a2a msg --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --text "<answer>"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a msg --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$PEER" --text "<answer>"
 ```
 
 Answering a `type: "msg"` with a broadcast republishes to everyone something
@@ -309,7 +309,7 @@ Worker flow:
    brief into one line yourself.
 3. If accepted, open the todo at badge `working` and run:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
    ```
    Then do the work. Do not re-emit `working` to keep the task alive: both
    daemons beat every live task for as long as they run, so a long build, a
@@ -319,7 +319,7 @@ Worker flow:
    for the user. Give the reason in `--waiting`. This is only valid with
    `--state working`:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --waiting "$REASON"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working --waiting "$REASON"
    ```
    Move the badge to `waiting-user`. The daemon of the initiator does not flag
    a task with this key as stalled. Any other status leg clears the key. When
@@ -328,7 +328,7 @@ Worker flow:
    this in every wait of 30 minutes or more.
 4. If the work blocks on something only the initiator can decide, ask:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
    ```
    Move the badge to `asked`. The answer comes back as a `message` leg on the
    same task, which resumes it to `working` — move the badge back and carry on
@@ -336,7 +336,7 @@ Worker flow:
    initiator a turn.
 5. For a report-back task, return the result with:
    ```bash
-   agent-gossip a2a artifact --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --text "$RESULT"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a artifact --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --text "$RESULT"
    ```
    This parks the task in `input-required` for the initiator's approval; move
    the badge to `sent`. It is not the end of the task — you still owe it a
@@ -344,14 +344,14 @@ Worker flow:
 6. When the initiator's approval arrives, close the task yourself with badge
    `done`:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state completed
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state completed
    ```
    You are the task's server: only you can author `completed`. The initiator's
    approval is a message, not a state change — the task stays open until you
    close it.
 7. If declined, run:
    ```bash
-   agent-gossip a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a status --gossip "$GOSSIP" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
    ```
 
 A task times out only when the other party's daemon stops beating it for
@@ -382,7 +382,7 @@ Initiator flow:
 2. Every follow-up into that task — an answer, an approval, a change request —
    carries `--task-id`:
    ```bash
-   agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
    ```
    **A `SendMessage` without `--task-id` is not a follow-up — it opens a brand
    new task.** That is the protocol's rule, not a quirk: an absent task id means
@@ -413,7 +413,7 @@ Initiator flow:
 5. To check a task's current state on demand — before re-briefing, or when a
    worker seems quiet — probe it:
    ```bash
-   agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method GetTask --task-id "$TASK_ID"
+   "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method GetTask --task-id "$TASK_ID"
    ```
    `TASK_STATE_SUBMITTED` on a task dispatched minutes ago is a stalled
    pickup, not a slow worker.

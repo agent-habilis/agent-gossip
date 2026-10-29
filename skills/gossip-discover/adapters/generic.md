@@ -3,7 +3,7 @@
 Directory discovery has no poll API because it does not join a gossip. Run:
 
 ```bash
-agent-gossip discover [--directory DIR] --window-secs 25
+"${AGENT_GOSSIP_BIN:-agent-gossip}" discover [--directory DIR] --window-secs 25
 ```
 
 The command exits on its own when the window closes — no harness timeout or

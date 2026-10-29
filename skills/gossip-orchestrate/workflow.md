@@ -45,7 +45,7 @@ Dispatching a subtask to a worker is one directed `SendMessage` carrying no
 `--task-id` — that is what makes it a new task:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --label "orch: $SUBTASK_LABEL" --text "$BRIEF"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --label "orch: $SUBTASK_LABEL" --text "$BRIEF"
 ```
 
 `--label` is what makes the worker's todo row read the same as yours.
@@ -89,7 +89,7 @@ criteria, not against a general sense of done.
   closes, then print one line:
 
   ```bash
-  agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "verified — close the task"
+  "${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "verified — close the task"
   ```
 
   ```text
@@ -151,7 +151,7 @@ minutes after dispatch is stalled — cancel it rather than waiting out the
 daemon's eviction:
 
 ```bash
-agent-gossip a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method CancelTask --task-id "$TASK_ID"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a call --gossip "$GOSSIP" --nickname "$NICKNAME" --to "$WORKER" --method CancelTask --task-id "$TASK_ID"
 ```
 
 Then print
