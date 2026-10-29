@@ -267,14 +267,19 @@ impl InProcNode {
         channel: Channel,
     ) -> impl Iterator<Item = (serde_json::Value, bool)> + '_ {
         self.pump();
-        self.drained.iter().filter_map(move |event| match event {
-            OutputEvent::StateChanged {
+        self.drained.iter().filter_map(move |event| {
+            if let OutputEvent::StateChanged {
                 channel: chan,
                 document,
                 is_self,
                 ..
-            } if *chan == channel => Some((document.clone(), *is_self)),
-            _ => None,
+            } = event
+                && *chan == channel
+            {
+                Some((document.clone(), *is_self))
+            } else {
+                None
+            }
         })
     }
 
@@ -506,9 +511,12 @@ impl InProcNode {
     /// echoes — filter on `is_self`/author as needed).
     pub fn tasks(&mut self) -> impl Iterator<Item = (&Authored, bool)> + '_ {
         self.pump();
-        self.drained.iter().filter_map(|event| match event {
-            OutputEvent::Task { message, is_self } => Some((&**message, *is_self)),
-            _ => None,
+        self.drained.iter().filter_map(|event| {
+            if let OutputEvent::Task { message, is_self } = event {
+                Some((&**message, *is_self))
+            } else {
+                None
+            }
         })
     }
 
@@ -552,9 +560,12 @@ impl InProcNode {
     /// been surfaced at all.
     pub fn task_message_label(&mut self) -> Option<Option<String>> {
         self.pump();
-        self.drained.iter().find_map(|event| match event {
-            OutputEvent::TaskMessage { label, .. } => Some(label.clone()),
-            _ => None,
+        self.drained.iter().find_map(|event| {
+            if let OutputEvent::TaskMessage { label, .. } = event {
+                Some(label.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -614,9 +625,12 @@ impl InProcNode {
     /// echoes — filter on `is_self` if needed).
     pub fn messages(&mut self) -> impl Iterator<Item = &Authored> + '_ {
         self.pump();
-        self.drained.iter().filter_map(|event| match event {
-            OutputEvent::Message { message, .. } => Some(&**message),
-            _ => None,
+        self.drained.iter().filter_map(|event| {
+            if let OutputEvent::Message { message, .. } = event {
+                Some(&**message)
+            } else {
+                None
+            }
         })
     }
 
@@ -625,12 +639,16 @@ impl InProcNode {
     /// counted "deliveries" use this.
     pub fn inbound(&mut self) -> impl Iterator<Item = &Authored> + '_ {
         self.pump();
-        self.drained.iter().filter_map(|event| match event {
-            OutputEvent::Message {
+        self.drained.iter().filter_map(|event| {
+            if let OutputEvent::Message {
                 message,
                 is_self: false,
-            } => Some(&**message),
-            _ => None,
+            } = event
+            {
+                Some(&**message)
+            } else {
+                None
+            }
         })
     }
 
@@ -682,11 +700,12 @@ impl InProcNode {
         self.pump();
         self.drained
             .iter()
-            .filter(|event| match event {
-                OutputEvent::Presence { message } => {
-                    matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
-                }
-                _ => false,
+            .filter(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Presence { message }
+                        if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
+                )
             })
             .count()
     }
@@ -699,12 +718,13 @@ impl InProcNode {
         timeout: Duration,
     ) -> bool {
         self.wait_for(timeout, |events| {
-            events.iter().any(|event| match event {
-                OutputEvent::Presence { message } => {
-                    message.author.to_string() == nick
-                        && matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
-                }
-                _ => false,
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Presence { message }
+                        if message.author.to_string() == nick
+                            && matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
+                )
             })
         })
         .await
@@ -721,11 +741,12 @@ impl InProcNode {
         self.wait_for(timeout, |events| {
             events
                 .iter()
-                .filter(|event| match event {
-                    OutputEvent::Presence { message } => {
-                        matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
-                    }
-                    _ => false,
+                .filter(|event| {
+                    matches!(
+                        event,
+                        OutputEvent::Presence { message }
+                            if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
+                    )
                 })
                 .count()
                 >= min_count

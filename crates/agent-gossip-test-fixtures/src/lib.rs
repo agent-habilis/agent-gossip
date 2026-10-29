@@ -1,8 +1,4 @@
 #![expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "OutputEvent is #[non_exhaustive]; matching it from outside agent-gossip mandates a wildcard arm, so exhaustive enumeration is impossible"
-)]
-#![expect(
     clippy::missing_panics_doc,
     clippy::missing_errors_doc,
     clippy::must_use_candidate,
