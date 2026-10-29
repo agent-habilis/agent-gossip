@@ -12,7 +12,7 @@ pub(crate) use self::create::CreateOpts;
 pub(crate) use self::discover::DiscoverOpts;
 pub(crate) use self::doctor::{DoctorOpts, OutputFormat};
 pub(crate) use self::invite::InviteOpts;
-pub(crate) use self::join::JoinOpts;
+pub(crate) use self::join::{DEFAULT_ROOM_ENV, GossipArg, JoinOpts, resolve_target};
 pub(crate) use self::leave::LeaveOpts;
 pub(crate) use self::meta::{MetaAction, MetaOpts};
 pub(crate) use self::peers::PeersOpts;

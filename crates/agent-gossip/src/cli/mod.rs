@@ -101,7 +101,13 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             stderr_to_session_file(&opts.shared)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             install_tuning(&opts.shared.tuning);
-            Box::pin(join(opts.gossip, opts.nickname, opts.password, opts.shared)).await
+            let env_room = std::env::var(args::DEFAULT_ROOM_ENV).ok();
+            let target = args::resolve_target(
+                opts.gossip.and_then(args::GossipArg::into_target),
+                env_room.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            Box::pin(join(target, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
             #[cfg(windows)]

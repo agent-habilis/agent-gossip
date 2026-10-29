@@ -55,7 +55,7 @@ tool calls), mapped as:
 owned by this agent session. It must remain alive for the whole gossip session.
 
 ```bash
-exec agent-gossip join "$TARGET"$PASSWORD --state-file auto --stderr-file auto > /dev/null
+exec agent-gossip join $TARGET$PASSWORD --state-file auto --stderr-file auto > /dev/null
 ```
 
 The `> /dev/null` is not cosmetic and must never be dropped. A harness
