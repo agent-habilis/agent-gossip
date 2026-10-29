@@ -64,18 +64,18 @@ export function rewriteFormula(formula: string, version: string, sums: Record<st
 }
 
 if (import.meta.main) {
-  const [formulaPath, releasesPath, sumsDir] = process.argv.slice(2);
-  const release = pickReadyPreview(JSON.parse(await Bun.file(releasesPath).text()));
-  if (!release) {
-    console.log("no ready preview");
-    process.exit(0);
+  const [command, ...args] = process.argv.slice(2);
+  if (command === "pick") {
+    const release = pickReadyPreview(JSON.parse(await Bun.file(args[0]).text()));
+    console.log(release?.tag ?? "");
+  } else if (command === "write") {
+    const [formulaPath, tag, sumsDir] = args;
+    const sums: Record<string, string> = {};
+    for (const target of TARGETS) {
+      const line = await Bun.file(`${sumsDir}/agent-gossip-${tag}-${target}.sha256`).text();
+      sums[target] = line.trim().split(/\s+/)[0];
+    }
+    const formula = await Bun.file(formulaPath).text();
+    await Bun.write(formulaPath, rewriteFormula(formula, tag.slice(1), sums));
   }
-  const sums: Record<string, string> = {};
-  for (const target of TARGETS) {
-    const line = await Bun.file(`${sumsDir}/agent-gossip-${release.tag}-${target}.sha256`).text();
-    sums[target] = line.trim().split(/\s+/)[0];
-  }
-  const formula = await Bun.file(formulaPath).text();
-  await Bun.write(formulaPath, rewriteFormula(formula, release.tag.slice(1), sums));
-  console.log(release.tag);
 }
