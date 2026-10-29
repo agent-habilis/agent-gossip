@@ -99,11 +99,11 @@ impl SurfacedIo {
     /// renderer, wrapped as a [`NodeSink`] so the engine emits `NodeEvent`s
     /// through the *same* tap the app's own `Output` writes to. Both feed the
     /// surfaced-events ring in surfacing order.
-    pub(crate) fn sink(&self) -> std::sync::Arc<dyn habilis_network::embed::NodeSink> {
-        std::sync::Arc::new(StartupSink {
+    pub(crate) fn sink(&self) -> impl habilis_network::embed::NodeSink + 'static {
+        StartupSink {
             output: self.output.clone(),
             startup: self.startup.clone(),
-        })
+        }
     }
 }
 

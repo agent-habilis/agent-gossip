@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::sync::Arc;
 
 use habilis_network::embed::SilentSink;
 use habilis_network::net::TransportOpts;
@@ -19,7 +18,7 @@ pub(crate) async fn spawn_peer(
     let inbox = Inbox::new(author.as_str().to_owned());
     // A tab writes no files and binds no socket. Both are already optional on
     // the engine, so the defaults of `SetupParams::new` are the configuration.
-    let setup_params = SetupParams::new(author.clone(), Arc::new(SilentSink::default()))
+    let setup_params = SetupParams::new(author.clone(), SilentSink::default())
         .with_max_peers(MAX_DIRECT_PEERS)
         .with_max_direct(MAX_DIRECT_PEERS)
         .with_transports(transports);
