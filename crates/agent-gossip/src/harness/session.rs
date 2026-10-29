@@ -18,9 +18,9 @@ impl MeshSession {
     /// Fails if the event loop has stopped.
     pub async fn inject_raw(
         &self,
-        bytes: impl Into<bytes::Bytes>,
+        bytes: bytes::Bytes,
     ) -> Result<(), crate::api::SessionError> {
-        self.core.inject_raw(bytes.into()).await
+        self.core.inject_raw(bytes).await
     }
 
     /// Simulate the gossip stream terminally ending (the daemon must
