@@ -16,10 +16,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub async fn inject_raw(
-        &self,
-        bytes: bytes::Bytes,
-    ) -> Result<(), crate::api::SessionError> {
+    pub async fn inject_raw(&self, bytes: bytes::Bytes) -> Result<(), crate::api::SessionError> {
         self.core.inject_raw(bytes).await
     }
 
