@@ -109,3 +109,31 @@ fn create_config_default_transport_is_udp_webrtc_gossip() {
         "the default transport is udp and webrtc with gossip on"
     );
 }
+
+#[test]
+fn create_config_builder_sets_only_the_named_fields() {
+    let name = MeshName::try_new("builder").expect("valid name");
+    let untouched = CreateConfig::new(name.clone());
+    let config = CreateConfig::new(name)
+        .with_max_peers(3)
+        .with_password("secret".to_owned())
+        .with_advertise(true);
+    assert_eq!(config.max_peers, 3, "with_max_peers sets the cap");
+    assert_eq!(
+        config.password.as_deref(),
+        Some("secret"),
+        "with_password sets the password"
+    );
+    assert!(
+        config.advertise,
+        "with_advertise(true) turns advertising on"
+    );
+    assert_eq!(
+        config.transport, untouched.transport,
+        "a field that no with_ call names keeps its default"
+    );
+    assert!(
+        config.nickname.is_none(),
+        "the nickname stays random when unset"
+    );
+}

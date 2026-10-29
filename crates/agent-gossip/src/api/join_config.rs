@@ -35,6 +35,27 @@ impl JoinConfig {
             password: None,
         }
     }
+
+    /// Use `nickname` instead of a random one.
+    #[must_use]
+    pub fn with_nickname(mut self, nickname: Nickname) -> Self {
+        self.nickname = Some(nickname);
+        self
+    }
+
+    /// Cap the direct peer connections at `max_peers`.
+    #[must_use]
+    pub fn with_max_peers(mut self, max_peers: usize) -> Self {
+        self.max_peers = max_peers;
+        self
+    }
+
+    /// Present `password` for a password-protected id.
+    #[must_use]
+    pub fn with_password(mut self, password: String) -> Self {
+        self.password = Some(password);
+        self
+    }
 }
 
 /// How to join a **topic**: a public mesh derived deterministically from a
@@ -62,6 +83,20 @@ impl TopicConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
         }
+    }
+
+    /// Use `nickname` instead of a random one.
+    #[must_use]
+    pub fn with_nickname(mut self, nickname: Nickname) -> Self {
+        self.nickname = Some(nickname);
+        self
+    }
+
+    /// Cap the direct peer connections at `max_peers`.
+    #[must_use]
+    pub fn with_max_peers(mut self, max_peers: usize) -> Self {
+        self.max_peers = max_peers;
+        self
     }
 }
 
@@ -118,5 +153,58 @@ impl CreateConfig {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
         }
+    }
+
+    /// Use `nickname` instead of a random one.
+    #[must_use]
+    pub fn with_nickname(mut self, nickname: Nickname) -> Self {
+        self.nickname = Some(nickname);
+        self
+    }
+
+    /// Cap the direct peer connections at `max_peers`.
+    #[must_use]
+    pub fn with_max_peers(mut self, max_peers: usize) -> Self {
+        self.max_peers = max_peers;
+        self
+    }
+
+    /// Protect the mesh with `password`.
+    #[must_use]
+    pub fn with_password(mut self, password: String) -> Self {
+        self.password = Some(password);
+        self
+    }
+
+    /// Use `lookups` as the lookup allowlist.
+    #[must_use]
+    pub fn with_lookups(mut self, lookups: LookupSet) -> Self {
+        self.lookups = lookups;
+        self
+    }
+
+    /// Use `transport` as the transport policy.
+    #[must_use]
+    pub fn with_transport(mut self, transport: TransportPolicy) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// List the mesh in a directory so discoverers find it without its id.
+    #[must_use]
+    pub fn with_advertise(
+        mut self,
+        // true lists the mesh in the directory; false keeps it unlisted
+        advertise: bool,
+    ) -> Self {
+        self.advertise = advertise;
+        self
+    }
+
+    /// Advertise into `directory`; `None` means the `global` directory.
+    #[must_use]
+    pub fn with_directory(mut self, directory: Option<MeshName>) -> Self {
+        self.directory = directory;
+        self
     }
 }

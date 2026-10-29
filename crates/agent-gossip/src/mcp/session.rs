@@ -277,16 +277,12 @@ mod tests {
 
     /// A loopback create config with an explicit nickname, no advertising.
     fn create_cfg(name: &str, nick: &str) -> CreateConfig {
-        let mut config = CreateConfig::new(MeshName::try_new(name).unwrap());
-        config.nickname = Some(Nickname::from(nick));
-        config
+        CreateConfig::new(MeshName::try_new(name).unwrap()).with_nickname(Nickname::from(nick))
     }
 
     /// A join config for an existing mesh id with an explicit nickname.
     fn join_cfg(mesh: &MeshId, nick: &str) -> JoinConfig {
-        let mut config = JoinConfig::new(JoinTarget::Mesh(mesh.clone()));
-        config.nickname = Some(Nickname::from(nick));
-        config
+        JoinConfig::new(JoinTarget::Mesh(mesh.clone())).with_nickname(Nickname::from(nick))
     }
 
     /// The `Message` inside a surfaced `msg`/`presence`/`task` event, if

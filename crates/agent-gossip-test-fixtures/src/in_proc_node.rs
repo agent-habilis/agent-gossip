@@ -59,8 +59,8 @@ impl InProcNode {
     /// Create a new private mesh with an explicit nickname.
     pub async fn create_with_nick(name: &str, nick: &str) -> Self {
         init_test_tracing();
-        let mut config = CreateConfig::new(test_mesh_name(name));
-        config.nickname = Some(Nickname::try_new(nick).expect("valid test nickname"));
+        let config = CreateConfig::new(test_mesh_name(name))
+            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"));
         Self::with_session(
             MeshSession::create(config)
                 .await
@@ -71,8 +71,7 @@ impl InProcNode {
     /// Create a new private, password-protected mesh.
     pub async fn create_with_password(name: &str, password: &str) -> Self {
         init_test_tracing();
-        let mut config = CreateConfig::new(test_mesh_name(name));
-        config.password = Some(password.to_owned());
+        let config = CreateConfig::new(test_mesh_name(name)).with_password(password.to_owned());
         Self::with_session(
             MeshSession::create(config)
                 .await
@@ -84,9 +83,9 @@ impl InProcNode {
     /// partial mesh, so directed traffic must reach non-neighbours).
     pub async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
         init_test_tracing();
-        let mut config = CreateConfig::new(test_mesh_name(name));
-        config.nickname = Some(Nickname::try_new(nick).expect("valid test nickname"));
-        config.max_peers = max_peers;
+        let config = CreateConfig::new(test_mesh_name(name))
+            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
+            .with_max_peers(max_peers);
         Self::with_session(
             MeshSession::create(config)
                 .await
@@ -98,9 +97,9 @@ impl InProcNode {
     pub async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
-        let mut config = JoinConfig::new(target);
-        config.nickname = Some(Nickname::try_new(nick).expect("valid test nickname"));
-        config.max_peers = max_peers;
+        let config = JoinConfig::new(target)
+            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
+            .with_max_peers(max_peers);
         Self::with_session(
             MeshSession::join(config)
                 .await
@@ -125,8 +124,8 @@ impl InProcNode {
     pub async fn join(mesh: &str, nickname: &str) -> Self {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
-        let mut config = JoinConfig::new(target);
-        config.nickname = Some(Nickname::try_new(nickname).expect("valid test nickname"));
+        let config = JoinConfig::new(target)
+            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
         Self::with_session(
             MeshSession::join(config)
                 .await
@@ -138,8 +137,8 @@ impl InProcNode {
     /// nickname.
     pub async fn topic(string: &str, nickname: &str) -> Self {
         init_test_tracing();
-        let mut config = agent_gossip::api::TopicConfig::new(string.to_owned());
-        config.nickname = Some(Nickname::try_new(nickname).expect("valid test nickname"));
+        let config = agent_gossip::api::TopicConfig::new(string.to_owned())
+            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
         Self::with_session(
             MeshSession::topic(config)
                 .await
@@ -155,9 +154,9 @@ impl InProcNode {
         password: &str,
     ) -> Result<Self, agent_gossip::api::JoinError> {
         let target: JoinTarget = mesh.parse().expect("valid test join target");
-        let mut config = JoinConfig::new(target);
-        config.nickname = Some(Nickname::try_new(nickname).expect("valid test nickname"));
-        config.password = Some(password.to_owned());
+        let config = JoinConfig::new(target)
+            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"))
+            .with_password(password.to_owned());
         Ok(Self::with_session(MeshSession::join(config).await?))
     }
 

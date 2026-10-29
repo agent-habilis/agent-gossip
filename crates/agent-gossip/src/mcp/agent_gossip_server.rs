@@ -7,7 +7,6 @@ use anyhow::Result;
 use habilis_network::protocol::{
     JoinTarget, LookupSet, MeshName, MessageBody, Nickname, RelayLadder,
 };
-use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, ErrorData as McpError, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -94,16 +93,17 @@ impl AgentGossipServer {
             .map_err(|error| {
                 McpError::invalid_params(format!("invalid directory name: {error}"), None)
             })?;
-        let config = CreateConfig {
-            name,
-            nickname,
-            lookups: resolved.set,
-            transport: resolved.transport,
-            advertise: args.advertise,
-            directory,
-            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
-            password: args.password,
-        };
+        let mut config = CreateConfig::new(name)
+            .with_lookups(resolved.set)
+            .with_transport(resolved.transport)
+            .with_advertise(args.advertise)
+            .with_directory(directory);
+        if let Some(nickname) = nickname {
+            config = config.with_nickname(nickname);
+        }
+        if let Some(password) = args.password {
+            config = config.with_password(password);
+        }
         let session = Session::create(config).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable(_) => {
                 McpError::invalid_params(error.to_string(), None)
@@ -136,14 +136,14 @@ impl AgentGossipServer {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?),
         };
-        let session = Session::join(JoinConfig {
-            target,
-            nickname,
-            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
-            password: args.password,
-        })
-        .await
-        .map_err(join_error_to_mcp)?;
+        let mut config = JoinConfig::new(target);
+        if let Some(nickname) = nickname {
+            config = config.with_nickname(nickname);
+        }
+        if let Some(password) = args.password {
+            config = config.with_password(password);
+        }
+        let session = Session::join(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
         ok_json(result)
@@ -170,7 +170,9 @@ impl AgentGossipServer {
             })?),
         };
         let mut config = TopicConfig::new(args.string);
-        config.nickname = nickname;
+        if let Some(nickname) = nickname {
+            config = config.with_nickname(nickname);
+        }
         let session = Session::topic(config).await.map_err(join_error_to_mcp)?;
         let result = MeshRef::from(&session);
         *guard = Some(session);
