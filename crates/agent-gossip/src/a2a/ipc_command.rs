@@ -321,7 +321,7 @@ impl IpcRequest<'_> {
         .await
         {
             Ok((message, pending)) => {
-                let ok = json_ok_record(&message.id.clone(), &message);
+                let ok = json_ok_record(&message.id, &message);
                 respond_when_sent(resp_tx, ok, pending);
                 true
             }
@@ -359,7 +359,7 @@ impl IpcRequest<'_> {
         .await
         {
             Ok((message, pending)) => {
-                let ok = json_ok_record(&message.id.clone(), &message);
+                let ok = json_ok_record(&message.id, &message);
                 respond_when_sent(resp_tx, ok, pending);
                 true
             }
