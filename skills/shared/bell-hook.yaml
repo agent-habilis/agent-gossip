@@ -2,5 +2,5 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: 'agent-gossip bell-check --session-pid "$PPID" || true'
+          command: '"${AGENT_GOSSIP_BIN:-agent-gossip}" bell-check --session-pid "$PPID" || true'
           timeout: 15

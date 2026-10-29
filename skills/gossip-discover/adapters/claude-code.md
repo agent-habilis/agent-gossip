@@ -4,7 +4,7 @@ Use the Monitor tool. Launch discovery under a distinct description so
 `/gossip-leave` never stops it:
 
 ```text
-command: "agent-gossip discover [--directory DIR] --window-secs 25"
+command: "\"${AGENT_GOSSIP_BIN:-agent-gossip}\" discover [--directory DIR] --window-secs 25"
 description: "gossip-discover"
 persistent: true
 timeout_ms: 45000

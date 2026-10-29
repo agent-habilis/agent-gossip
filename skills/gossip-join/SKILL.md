@@ -20,7 +20,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-gossip join $TARGET$PASSWORD" noun="line" bell_settle="" -->
+<!-- include path="../shared/daemon-session.md" launch="\"${AGENT_GOSSIP_BIN:-agent-gossip}\" join $TARGET$PASSWORD" noun="line" bell_settle="" -->
 
 <!-- include path="../shared/meta.md" -->
 

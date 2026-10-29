@@ -5,8 +5,8 @@
 Run:
 
 ```bash
-agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
-agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" peers --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 Use `peers` from `peers` and `document.peers` from `meta`. The roster never

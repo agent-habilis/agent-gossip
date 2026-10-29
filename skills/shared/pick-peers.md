@@ -3,8 +3,8 @@
 Read the roster and metadata:
 
 ```bash
-agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
-agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" peers --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 The candidates are exactly the roster's `peers` — never yourself, and

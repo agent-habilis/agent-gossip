@@ -217,6 +217,10 @@ vary per-run are **hidden CLI flags** (`#[arg(hide = true)]`, e.g.
 `NO_COLOR` and `AGENT_GOSSIP_DEFAULT_ROOM` (the target of `join` when it gets
 none; `cli/args/join.rs`) are read from the environment.
 
+`AGENT_GOSSIP_BIN` is the one exception: the binary never reads it. Every skill
+command and the bell hook call `"${AGENT_GOSSIP_BIN:-agent-gossip}"`, so the
+shell picks the binary (the preview build sets it to `agent-gossip-preview`).
+
 ### Terminal output
 
 `plug`, `unplug`, `man`, and `doctor` print a report for a human; every other

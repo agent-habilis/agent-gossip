@@ -5,7 +5,7 @@
 Run:
 
 ```bash
-agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 If the command fails or returns `ok:false`, print `💬 could not read the meta

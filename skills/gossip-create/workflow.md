@@ -42,7 +42,7 @@ left, first verify that the remembered gossip is still live by running one
 non-long, foreground poll:
 
 ```bash
-agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" poll --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 If the check succeeds, handle any returned events per the **Event handling**

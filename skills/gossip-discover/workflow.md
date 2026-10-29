@@ -8,7 +8,7 @@ default `global` directory and omit `--directory`.
 Use the selected adapter (see **Adapters** below) to run:
 
 ```bash
-agent-gossip discover [--directory DIR] --window-secs 25
+"${AGENT_GOSSIP_BIN:-agent-gossip}" discover [--directory DIR] --window-secs 25
 ```
 
 The command exits on its own when the window closes. Discovery does not join a

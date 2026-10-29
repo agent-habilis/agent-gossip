@@ -7,7 +7,7 @@ unconditionally; that direction outranks this gate.
 Run:
 
 ```bash
-agent-gossip session --session-pid "$PPID"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" session --session-pid "$PPID"
 ```
 
 `$PPID` inside the shell tool is the agent process whose daemons are parented

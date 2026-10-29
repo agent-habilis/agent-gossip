@@ -20,7 +20,7 @@ Every peer in the gossip sees this. To reach one peer privately, use
 Run:
 
 ```bash
-agent-gossip a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "$TEXT"
+"${AGENT_GOSSIP_BIN:-agent-gossip}" a2a broadcast --gossip "$GOSSIP" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
 Do not reprint the text. The event stream's self echo is the confirmation.
