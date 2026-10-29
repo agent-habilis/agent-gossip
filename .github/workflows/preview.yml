@@ -67,7 +67,7 @@ jobs:
         run: |
           VER="${TAG#v}" perl -0pi -e 's/^version = "[^"]*"/version = "$ENV{VER}"/m' crates/agent-gossip/Cargo.toml
           VER="${TAG#v}" perl -0pi -e 's/(name = "agent-gossip"\nversion = ")[^"]*"/$1$ENV{VER}"/' Cargo.lock
-      - run: cargo build -p agent-gossip --release
+      - run: cargo build -p agent-gossip --release --locked
 
   # The throwaway commit exists only to carry the preview version. It is
   # tagged and never pushed to a branch, so `main` keeps its own version.

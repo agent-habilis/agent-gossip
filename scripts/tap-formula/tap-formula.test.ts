@@ -57,22 +57,22 @@ const FORMULA = `class AgentGossipPreview < Formula
 
   on_macos do
     on_arm do
-      url "https://example.test/agent-gossip-v0.12.11-preview.9-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/agent-habilis/agent-gossip/releases/download/v0.12.11-preview.9/agent-gossip-v0.12.11-preview.9-aarch64-apple-darwin.tar.gz"
       sha256 "${"a".repeat(64)}"
     end
     on_intel do
-      url "https://example.test/agent-gossip-v0.12.11-preview.9-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/agent-habilis/agent-gossip/releases/download/v0.12.11-preview.9/agent-gossip-v0.12.11-preview.9-x86_64-apple-darwin.tar.gz"
       sha256 "${"a".repeat(64)}"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://example.test/agent-gossip-v0.12.11-preview.9-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/agent-habilis/agent-gossip/releases/download/v0.12.11-preview.9/agent-gossip-v0.12.11-preview.9-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "${"b".repeat(64)}"
     end
     on_arm do
-      url "https://example.test/agent-gossip-v0.12.11-preview.9-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/agent-habilis/agent-gossip/releases/download/v0.12.11-preview.9/agent-gossip-v0.12.11-preview.9-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "${"b".repeat(64)}"
     end
   end
@@ -87,11 +87,15 @@ test("the formula takes the new version and the checksum of each target", () => 
   expect(out).not.toContain("a".repeat(64));
 });
 
-test("the url of each target takes the new version too", () => {
+test("the url of each target takes the new version in its directory and file name", () => {
   const sums = Object.fromEntries(TARGETS.map((target) => [target, "c".repeat(64)]));
   const out = rewriteFormula(FORMULA, "0.12.11-preview.10", sums);
-  expect(out).toContain("agent-gossip-v0.12.11-preview.10-aarch64-apple-darwin.tar.gz");
-  expect(out).toContain("agent-gossip-v0.12.11-preview.10-x86_64-unknown-linux-gnu.tar.gz");
+  expect(out).toContain(
+    "https://github.com/agent-habilis/agent-gossip/releases/download/v0.12.11-preview.10/agent-gossip-v0.12.11-preview.10-aarch64-apple-darwin.tar.gz",
+  );
+  expect(out).toContain(
+    "https://github.com/agent-habilis/agent-gossip/releases/download/v0.12.11-preview.10/agent-gossip-v0.12.11-preview.10-x86_64-unknown-linux-gnu.tar.gz",
+  );
   expect(out).not.toContain("preview.9");
 });
 

@@ -57,7 +57,10 @@ export function rewriteFormula(formula: string, version: string, sums: Record<st
   for (const target of TARGETS) {
     const asset = `agent-gossip-v${version}-${target}.tar.gz`;
     if (!out.includes(`-${target}.tar.gz"`)) throw new Error(`formula has no url for ${target}`);
-    out = out.replace(new RegExp(`agent-gossip-v[^"/]*-${target}\\.tar\\.gz`, "g"), asset);
+    out = out.replace(
+      new RegExp(`releases/download/v[^"/]*/agent-gossip-v[^"/]*-${target}\\.tar\\.gz`, "g"),
+      `releases/download/v${version}/${asset}`,
+    );
     out = out.replace(new RegExp(`(${target}\\.tar\\.gz"\\s*\\n\\s*sha256 ")[0-9a-f]{64}`), `$1${sums[target]}`);
   }
   return out;
