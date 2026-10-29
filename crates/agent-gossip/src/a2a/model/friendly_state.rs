@@ -5,7 +5,7 @@ use super::TaskState;
 /// # Errors
 /// Never — serialization of a small enum cannot fail.
 pub fn serialize<S: Serializer>(state: &TaskState, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(state.as_str())
+    serializer.serialize_str(state.friendly_name())
 }
 
 /// # Errors

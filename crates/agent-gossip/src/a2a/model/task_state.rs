@@ -3,7 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// A2A v1.0 `TaskState`, `ProtoJSON` `SCREAMING_SNAKE` with the `TASK_STATE_`
-/// prefix on the wire; [`TaskState::as_str`] keeps the friendly kebab name for
+/// prefix on the wire; [`TaskState::friendly_name`] keeps the friendly kebab name for
 /// our own `--output json` stream and CLI, which are the agent API, not A2A.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -52,7 +52,7 @@ impl TaskState {
     /// and the `agent-gossip a2a status --state` flag — the agent-facing surface, kept
     /// readable while the A2A wire carries the `ProtoJSON` `TASK_STATE_*` form.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub fn friendly_name(self) -> &'static str {
         match self {
             TaskState::Unspecified => "unspecified",
             TaskState::Submitted => "submitted",
@@ -85,6 +85,6 @@ impl TaskState {
 
 impl fmt::Display for TaskState {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
+        formatter.write_str(self.friendly_name())
     }
 }

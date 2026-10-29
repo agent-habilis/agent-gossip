@@ -68,7 +68,7 @@ fn task_state_is_screaming_snake_on_the_wire() {
         "the input-required state is screaming snake on the wire"
     );
     assert_eq!(
-        TaskState::InputRequired.as_str(),
+        TaskState::InputRequired.friendly_name(),
         "input-required",
         "the friendly name keeps its kebab case"
     );

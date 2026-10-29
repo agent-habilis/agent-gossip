@@ -564,7 +564,7 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
             to: to_name,
             task_id,
             kind,
-            state: state.map(crate::a2a::TaskState::as_str),
+            state: state.map(crate::a2a::TaskState::friendly_name),
             // The label rides the opening brief, which arrives over the RPC
             // binding (`format_task_message_json`), never as a frame.
             label: None,
@@ -602,7 +602,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             to: leg.peer,
             task_id: leg.task_id.to_owned(),
             kind: "message",
-            state: leg.state.map(crate::a2a::TaskState::as_str),
+            state: leg.state.map(crate::a2a::TaskState::friendly_name),
             label: leg.label,
             waiting: None,
             display: task_display(TaskDisplayParams {
