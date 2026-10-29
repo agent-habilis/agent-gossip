@@ -482,23 +482,15 @@ pub(super) fn print_message_json(message: &Authored, is_self: bool) {
 /// its JSON line. A beat renders as a `task_progress` event; every other leg
 /// as a `task` event carrying the native A2A `kind` + `state`, the text
 /// projection as `body`, and the whole A2A payload.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; the other frames are not task frames"
-)]
 pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
-    let to = match &message.kind {
-        MessageKind::App { tag, to, .. }
-            if matches!(tag.as_str(), wire::STATUS | wire::ARTIFACT) =>
-        {
-            match to {
-                Some(to) => to,
-                None => unreachable!("a status/artifact frame is always directed"),
-            }
-        }
-        _ => {
-            unreachable!("format_task_json only handles status/artifact frames")
-        }
+    let MessageKind::App { tag, to, .. } = &message.kind else {
+        unreachable!("format_task_json only handles status/artifact frames")
+    };
+    if !matches!(tag.as_str(), wire::STATUS | wire::ARTIFACT) {
+        unreachable!("format_task_json only handles status/artifact frames");
+    }
+    let Some(to) = to else {
+        unreachable!("a status/artifact frame is always directed")
     };
     let task_id = status_update_params::frame_task_id(message)
         .expect("a task frame carries its task id")
