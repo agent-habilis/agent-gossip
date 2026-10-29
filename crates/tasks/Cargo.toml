@@ -7,10 +7,8 @@ publish = false
 
 [dependencies]
 # Mirrors the root crate's clap (Cargo.toml) — already in Cargo.lock, so
-# no new toolchain install. xshell is a library cargo compiles
-# automatically, not a binary anyone installs.
+# no new toolchain install.
 clap = { version = "4", features = ["derive"] }
-xshell = "0.2"
 # Names the `anyhow::Result` that cargo-zigbuild's `Zig::execute` returns (P5).
 anyhow = "1"
 # Cross-compile driver, used as a *library* (not a global `cargo install`): the

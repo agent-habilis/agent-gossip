@@ -1,11 +1,11 @@
+use std::env::consts;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use std::{fs, thread};
 
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
+use crate::util::Invocation;
 
 /// The log configuration the subjects run under.
 ///
@@ -166,11 +166,11 @@ struct Node {
 /// moment is a real delta, one measured an hour apart is not. Pass the same
 /// variant twice to get a control pair, and treat its spread as the noise
 /// floor any claimed effect has to clear.
-pub(crate) fn run(sh: &Shell, plan: Plan, variants: &[String], binaries: &[String]) -> TaskOutcome {
+pub(crate) fn run(plan: Plan, variants: &[String], binaries: &[String]) -> TaskOutcome {
     // `ci`, not `release`: same optimization level, but it keeps symbols, so a
     // `sample`/`perf` taken against this build attributes frames instead of `???`.
-    cmd!(sh, "cargo build --profile ci -p agent-gossip").run()?;
-    let binary = sh.current_dir().join("target/ci/agent-gossip");
+    Invocation::cargo(["build", "--profile", "ci", "-p", "agent-gossip"]).run()?;
+    let binary = std::env::current_dir()?.join("target/ci/agent-gossip");
 
     let mut variants = parse_variants(variants)?;
     reject_duplicate_labels(&variants)?;
@@ -614,7 +614,7 @@ fn warn_census_coverage(spec: &Variant, node: &Node, seen: Census, elapsed: f64)
 /// interface enumeration.
 fn ambient_monitor(log: &Path) -> Option<Child> {
     let file = fs::File::create(log).ok()?;
-    let mut command = if cfg!(target_os = "linux") {
+    let mut command = if consts::OS == "linux" {
         let mut command = Command::new("ip");
         command.args(["monitor", "all"]);
         command
@@ -635,7 +635,7 @@ fn report_host(ambient_log: &Path, monitored: bool, elapsed: f64) {
         return;
     }
     let text = fs::read_to_string(ambient_log).unwrap_or_default();
-    if cfg!(target_os = "linux") {
+    if consts::OS == "linux" {
         let nonblank = text.lines().filter(|line| !line.trim().is_empty());
         let total: usize = nonblank.count();
         let rate = f64::from(u32::try_from(total).unwrap_or(u32::MAX)) / elapsed;
@@ -684,7 +684,7 @@ fn report_host(ambient_log: &Path, monitored: bool, elapsed: f64) {
 }
 
 fn interface_count() -> usize {
-    if cfg!(target_os = "linux") {
+    if consts::OS == "linux" {
         return fs::read_dir("/sys/class/net")
             .map(|entries| entries.flatten().count())
             .unwrap_or_default();
@@ -712,7 +712,7 @@ fn interface_count() -> usize {
 /// `/proc/<pid>/stat` counts in `USER_HZ` ticks — 10ms, a hundred times finer.
 /// macOS `ps` reports centiseconds and splits user from system directly.
 fn cpu_of_all(running: &[Node]) -> Vec<Cpu> {
-    if cfg!(target_os = "linux") {
+    if consts::OS == "linux" {
         let cpus = running
             .iter()
             .map(|node| proc_stat_cpu(node.child.id()).unwrap_or_default());

@@ -4,7 +4,6 @@ use std::process::ExitCode;
 
 use cargo_zigbuild::macos::install_name_tool;
 use clap::{Parser, Subcommand};
-use xshell::Shell;
 
 mod bench;
 mod build;
@@ -147,34 +146,26 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
-    let sh = match Shell::new() {
-        Ok(sh) => sh,
-        Err(error) => {
-            util::output::error(&error.to_string());
-            return ExitCode::FAILURE;
-        }
-    };
-
     let outcome: TaskOutcome = match cli.task {
-        Task::Test => test::run(&sh),
+        Task::Test => test::run(),
         Task::Build {
             target,
             arch,
             release,
-        } => build::run(&sh, target.as_deref(), arch.as_deref(), release),
-        Task::Bench { args } => bench::run(&sh, &args),
-        Task::Release => release::run(&sh),
-        Task::Run { args } => run::run(&sh, &args),
-        Task::Install => install::run(&sh),
-        Task::Uninstall => uninstall::run(&sh),
-        Task::Coverage => coverage::run(&sh),
-        Task::Ci => ci::run(&sh),
-        Task::Fmt => fmt::run(&sh),
-        Task::Lint => lint::run(&sh),
-        Task::Clean => clean::run(&sh),
+        } => build::run(target.as_deref(), arch.as_deref(), release),
+        Task::Bench { args } => bench::run(&args),
+        Task::Release => release::run(),
+        Task::Run { args } => run::run(&args),
+        Task::Install => install::run(),
+        Task::Uninstall => uninstall::run(),
+        Task::Coverage => coverage::run(),
+        Task::Ci => ci::run(),
+        Task::Fmt => fmt::run(),
+        Task::Lint => lint::run(),
+        Task::Clean => clean::run(),
         Task::Logs => logs::run(),
         Task::Man => man::run(),
-        Task::Proptest => proptest::run(&sh),
+        Task::Proptest => proptest::run(),
         Task::IdleCpu {
             settle,
             window,
@@ -182,7 +173,6 @@ fn main() -> ExitCode {
             variants,
             binaries,
         } => plan::run(
-            &sh,
             plan::Plan {
                 settle,
                 window,

@@ -1,6 +1,5 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
+use crate::util::Invocation;
 
 /// Run the benchmark suite. No `.quiet()` — the point is to show the
 /// divan table / transfer report.
@@ -13,15 +12,23 @@ use crate::TaskOutcome;
 ///
 /// The `bench` feature exposes the in-crate `harness::bench` shim the
 /// microbenchmarks need; the transfer bench uses only the public API.
-pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
-    match args.first().map(String::as_str) {
-        None => cmd!(sh, "cargo bench -p agent-gossip --features bench").run()?,
-        Some("transfer") => cmd!(sh, "cargo bench -p agent-gossip --bench transfer").run()?,
-        _ => cmd!(
-            sh,
-            "cargo bench -p agent-gossip --features bench --bench hot_paths -- {args...}"
-        )
-        .run()?,
-    }
-    Ok(())
+pub(crate) fn run(args: &[String]) -> TaskOutcome {
+    let invocation = match args.first().map(String::as_str) {
+        None => Invocation::cargo(["bench", "-p", "agent-gossip", "--features", "bench"]),
+        Some("transfer") => {
+            Invocation::cargo(["bench", "-p", "agent-gossip", "--bench", "transfer"])
+        }
+        _ => Invocation::cargo([
+            "bench",
+            "-p",
+            "agent-gossip",
+            "--features",
+            "bench",
+            "--bench",
+            "hot_paths",
+            "--",
+        ])
+        .args(args),
+    };
+    invocation.run()
 }

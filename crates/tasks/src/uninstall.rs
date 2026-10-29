@@ -1,10 +1,10 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::output;
+use crate::util::{Invocation, output};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     output::status("Uninstalling", "agent-gossip");
-    cmd!(sh, "cargo uninstall agent-gossip").quiet().run()?;
+    Invocation::cargo(["uninstall", "agent-gossip"])
+        .quiet()
+        .run()?;
     Ok(())
 }

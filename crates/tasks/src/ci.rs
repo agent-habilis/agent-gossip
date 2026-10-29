@@ -1,11 +1,9 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::output;
+use crate::util::{Invocation, output};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     output::status("Checking", "formatting");
-    crate::fmt::check(sh)?;
+    crate::fmt::check()?;
 
     // No layering gate any more: it checked that the engine crate named neither
     // A2A nor the app, and the engine now lives in its own repo (`habilis-network`), so
@@ -16,10 +14,16 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // too (they are `required-features`-gated, else clippy would skip them).
     // See `lint.rs` for why the feature is qualified and why this is
     // `--workspace`.
-    cmd!(
-        sh,
-        "cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings"
-    )
+    Invocation::cargo([
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--features",
+        "agent-gossip/adversarial",
+        "--",
+        "-D",
+        "warnings",
+    ])
     .quiet()
     .run()?;
 
@@ -30,5 +34,5 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // The reliability invariants (ungraceful SIGKILL death, sleep/wake heal
     // recovery, anti-entropy backfill) run every time — they live in
     // `tests/gossip_network.rs` with shortened eviction timers.
-    crate::test::run(sh)
+    crate::test::run()
 }

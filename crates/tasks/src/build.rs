@@ -8,13 +8,13 @@
 //! deploy to the Raspberry Pi fleet.
 
 use std::env::consts;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use clap::Parser;
-use xshell::{Shell, cmd};
 
 use crate::TaskOutcome;
-use crate::util::{output, repo_root};
+use crate::util::{Invocation, output, repo_root};
 
 /// Pinned zig version — the one `cargo-zigbuild` is validated against here.
 /// Bump deliberately (and re-test a cross build) for a new toolchain.
@@ -25,12 +25,7 @@ const ZIG_VERSION: &str = "0.16.0";
 /// binary — zig carries every stub set, so reaching back costs nothing.
 const GLIBC_FLOOR: &str = "2.31";
 
-pub(crate) fn run(
-    sh: &Shell,
-    target: Option<&str>,
-    arch: Option<&str>,
-    release: bool,
-) -> TaskOutcome {
+pub(crate) fn run(target: Option<&str>, arch: Option<&str>, release: bool) -> TaskOutcome {
     let triple = match (target, arch) {
         (Some(_), Some(_)) => return Err("pass only one of --target / --arch".into()),
         (Some(triple), None) => Some(triple.to_owned()),
@@ -42,7 +37,10 @@ pub(crate) fn run(
     let Some(triple) = triple else {
         // Plain host build — no cross toolchain needed.
         let profile: &[&str] = if release { &["--release"] } else { &[] };
-        cmd!(sh, "cargo build {profile...} --bin agent-gossip").run()?;
+        Invocation::cargo(["build"])
+            .args(profile)
+            .args(["--bin", "agent-gossip"])
+            .run()?;
         return Ok(());
     };
 
@@ -50,13 +48,15 @@ pub(crate) fn run(
     // dependency, not a global install). cargo-zigbuild locates zig via the
     // `CARGO_ZIGBUILD_ZIG_PATH` env var; setting env in-process is `unsafe`
     // (edition 2024) and forbidden workspace-wide, so re-exec ourselves once
-    // with the var injected into the *child* environment (xshell `.env` is
-    // safe). The child re-enters here with the var set and runs the real build.
+    // with the var injected into the *child* environment (`Command::env`
+    // is safe). The child re-enters here with the var set and runs the real build.
     if std::env::var_os("CARGO_ZIGBUILD_ZIG_PATH").is_none() {
-        let zig = ensure_zig(sh)?.join("zig");
+        let zig = ensure_zig()?.join("zig");
         let exe = std::env::current_exe()?;
         let rel: &[&str] = if release { &["--release"] } else { &[] };
-        cmd!(sh, "{exe} build --target {triple} {rel...}")
+        let rebuild = Invocation::new(exe).args(["build", "--target", triple.as_str()]);
+        rebuild
+            .args(rel)
             .env("CARGO_ZIGBUILD_ZIG_PATH", &zig)
             .run()?;
         return Ok(());
@@ -70,7 +70,10 @@ pub(crate) fn run(
         .split_once('.')
         .map_or(triple.as_str(), |(bare, _)| bare);
 
-    let _ = cmd!(sh, "rustup target add {rust_triple}").quiet().run();
+    let _ = Invocation::new("rustup")
+        .args(["target", "add", rust_triple])
+        .quiet()
+        .run();
 
     output::status(
         "Cross",
@@ -109,7 +112,7 @@ pub(crate) fn run(
 
 /// Download + cache the pinned zig under `target/tooling/` and return the dir
 /// holding the `zig` executable. Downloads once; reused on later builds.
-fn ensure_zig(sh: &Shell) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn ensure_zig() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let host = host_zig_infix()?; // e.g. "aarch64-macos"
     let stem = format!("zig-{host}-{ZIG_VERSION}");
     let tooling = repo_root().join("target").join("tooling");
@@ -125,8 +128,22 @@ fn ensure_zig(sh: &Shell) -> Result<PathBuf, Box<dyn std::error::Error>> {
         &format!("zig {ZIG_VERSION} ({host}) → target/tooling/"),
     );
     let tarball = tooling.join(format!("{stem}.tar.xz"));
-    cmd!(sh, "curl -fsSL {url} -o {tarball}").run()?;
-    cmd!(sh, "tar -xJf {tarball} -C {tooling}").run()?;
+    Invocation::new("curl")
+        .args([
+            OsStr::new("-fsSL"),
+            url.as_ref(),
+            OsStr::new("-o"),
+            tarball.as_os_str(),
+        ])
+        .run()?;
+    Invocation::new("tar")
+        .args([
+            OsStr::new("-xJf"),
+            tarball.as_os_str(),
+            OsStr::new("-C"),
+            tooling.as_os_str(),
+        ])
+        .run()?;
     let _ = std::fs::remove_file(&tarball);
     if !zig.exists() {
         return Err(format!("pinned zig missing at {} after extract", zig.display()).into());

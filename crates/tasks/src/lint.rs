@@ -1,8 +1,7 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
+use crate::util::Invocation;
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     // `--features adversarial` so the adversarial suite + shim are linted too
     // (they are `required-features`-gated, else clippy skips them) — and so this
     // task matches `ci`'s clippy invocation. Without it, code reachable only
@@ -14,10 +13,16 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // `--workspace`: clippy lints only the packages it is given. Naming the app
     // left the engine, the transport and the template crates compiled as
     // dependencies but never linted.
-    cmd!(
-        sh,
-        "cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings"
-    )
+    Invocation::cargo([
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--features",
+        "agent-gossip/adversarial",
+        "--",
+        "-D",
+        "warnings",
+    ])
     .quiet()
     .run()?;
     Ok(())

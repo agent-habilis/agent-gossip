@@ -1,9 +1,7 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::{output, repo_root};
+use crate::util::{Invocation, output, repo_root};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     output::status("Installing", "agent-gossip");
     // Absolute, not `--path .`: no task changes directory, so a relative path
     // would only resolve when invoked from the workspace root.
@@ -21,7 +19,9 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // release after the lock was cut can change the build — a 2026-06-12
     // fleet install failed outright on a `time` upgrade whose trait impls
     // collided with iroh-gossip's blanket `From`.
-    cmd!(sh, "cargo install --path {pkg} --force --locked")
+    Invocation::cargo(["install", "--path"])
+        .args([&pkg])
+        .args(["--force", "--locked"])
         .quiet()
         .run()?;
     // Report what the installed binary *says it is*, not just that the install
@@ -36,8 +36,8 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
         || "agent-gossip".into(),
         |cargo| cargo.join("bin/agent-gossip"),
     );
-    let version = cmd!(sh, "{installed} --version")
-        .quiet()
+    let probe = Invocation::new(&installed).args(["--version"]).quiet();
+    let version: String = probe
         .read()
         .unwrap_or_else(|_| "unknown (version probe failed)".to_owned());
     output::status("Installed", version.trim());

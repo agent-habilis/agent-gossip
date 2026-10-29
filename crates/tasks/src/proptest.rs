@@ -1,10 +1,10 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::output;
+use crate::util::{Invocation, output};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     output::status("Running", "property-based tests (prop_)");
-    cmd!(sh, "cargo test -p agent-gossip prop_").quiet().run()?;
+    Invocation::cargo(["test", "-p", "agent-gossip", "prop_"])
+        .quiet()
+        .run()?;
     Ok(())
 }
