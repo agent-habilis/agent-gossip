@@ -8,7 +8,7 @@ use habilis_network::ops::{
     start_ping_round,
 };
 use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{Channel, MeshId, MeshName, MessageBody, MessageId, Nickname};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -478,6 +478,58 @@ impl IpcRequest<'_> {
         .await;
         true
     }
+
+    async fn merge(self, channel: Channel, merge: serde_json::Value) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            sender,
+            output,
+            state,
+            ..
+        } = self;
+        let outcome = broadcast_state_merge(
+            state,
+            StateMergeParams::new(MergeCtx::new(mesh, author, sender, output), channel, merge),
+        )
+        .await;
+        let (response, broadcast) =
+            state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
+        let _ = resp_tx.send(response);
+        broadcast
+    }
+
+    fn state_get(self) -> bool {
+        let _ = self
+            .resp_tx
+            .send(state_get_response(self.state, Channel::State));
+        false
+    }
+
+    fn meta_get(self) -> bool {
+        let _ = self
+            .resp_tx
+            .send(meta_get_response(self.state, self.author));
+        false
+    }
+
+    fn topology(self) -> bool {
+        let _ = self.resp_tx.send(topology_response(self.state));
+        false
+    }
+
+    fn info(self) -> bool {
+        let _ = self
+            .resp_tx
+            .send(info_response(self.mesh, self.name, self.author, self.state));
+        false
+    }
+
+    fn invite(self, ttl: u64) -> bool {
+        let _ = self.resp_tx.send(invite_response(self.state, ttl));
+        false
+    }
 }
 
 fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<PendingSend>) {
@@ -491,10 +543,6 @@ fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
-#[expect(
-    clippy::too_many_lines,
-    reason = "a dispatch match with one arm per IpcCommand (the state/meta channel pair doubles the patch/get arms)"
-)]
 pub(crate) async fn handle_ipc_command(
     params: IpcDispatchParams<'_>,
     state: &mut EventLoopState,
@@ -585,53 +633,11 @@ pub(crate) async fn handle_ipc_command(
             request.task_artifact(task_id, text, file).await
         }
         IpcCommand::Peers { mesh: _ } => request.peers().await,
-        IpcCommand::StateMerge { mesh: _, merge } => {
-            let outcome = broadcast_state_merge(
-                request.state,
-                StateMergeParams::new(
-                    MergeCtx::new(request.mesh, request.author, request.sender, request.output),
-                    habilis_network::protocol::Channel::State,
-                    merge,
-                ),
-            )
-            .await;
-            let (response, broadcast) =
-                state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
-            let _ = request.resp_tx.send(response);
-            broadcast
-        }
-        IpcCommand::StateGet { mesh: _ } => {
-            let _ = request.resp_tx.send(state_get_response(
-                request.state,
-                habilis_network::protocol::Channel::State,
-            ));
-            false
-        }
-        IpcCommand::MetaMerge { mesh: _, merge } => {
-            let outcome = broadcast_state_merge(
-                request.state,
-                StateMergeParams::new(
-                    MergeCtx::new(request.mesh, request.author, request.sender, request.output),
-                    habilis_network::protocol::Channel::Meta,
-                    merge,
-                ),
-            )
-            .await;
-            let (response, broadcast) =
-                state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
-            let _ = request.resp_tx.send(response);
-            broadcast
-        }
-        IpcCommand::MetaGet { mesh: _ } => {
-            let _ = request
-                .resp_tx
-                .send(meta_get_response(request.state, request.author));
-            false
-        }
-        IpcCommand::Topology { mesh: _ } => {
-            let _ = request.resp_tx.send(topology_response(request.state));
-            false
-        }
+        IpcCommand::StateMerge { mesh: _, merge } => request.merge(Channel::State, merge).await,
+        IpcCommand::StateGet { mesh: _ } => request.state_get(),
+        IpcCommand::MetaMerge { mesh: _, merge } => request.merge(Channel::Meta, merge).await,
+        IpcCommand::MetaGet { mesh: _ } => request.meta_get(),
+        IpcCommand::Topology { mesh: _ } => request.topology(),
         IpcCommand::A2aCall {
             mesh: _,
             to,
@@ -656,19 +662,8 @@ pub(crate) async fn handle_ipc_command(
                 })
                 .await
         }
-        IpcCommand::Info => {
-            let _ = request.resp_tx.send(info_response(
-                request.mesh,
-                request.name,
-                request.author,
-                request.state,
-            ));
-            false
-        }
-        IpcCommand::Invite { mesh: _, ttl } => {
-            let _ = request.resp_tx.send(invite_response(request.state, ttl));
-            false
-        }
+        IpcCommand::Info => request.info(),
+        IpcCommand::Invite { mesh: _, ttl } => request.invite(ttl),
     }
 }
 
@@ -737,10 +732,7 @@ fn topology_response(state: &EventLoopState) -> String {
 }
 
 /// The `agent-gossip state get` response: the derived document.
-fn state_get_response(
-    state: &EventLoopState,
-    channel: habilis_network::protocol::Channel,
-) -> String {
+fn state_get_response(state: &EventLoopState, channel: Channel) -> String {
     let document = state.doc(channel).to_json();
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
@@ -761,9 +753,7 @@ fn state_get_response(
 /// trimmed view back as if it were truth. `absent` is derived, so it cannot
 /// travel that path.
 fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
-    let document = state
-        .doc(habilis_network::protocol::Channel::Meta)
-        .to_json();
+    let document = state.doc(Channel::Meta).to_json();
     let snapshot = state.roster_snapshot();
     // Active members only. The roster snapshot chains the *quiet* peers onto
     // the live ones, and a peer that died ungracefully lands exactly there —
