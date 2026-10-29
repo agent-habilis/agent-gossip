@@ -773,7 +773,7 @@ async fn broadcast_directed_frame(
         // cannot decrypt; surface *and ingest* the self-echo from a plaintext
         // twin instead (same id, never signed or sent).
         let echo = single
-            .open_with(|_| Some(echo_body.clone()))
+            .open_with(|_| Some(echo_body))
             .expect("a frame opens to the twin it was signed for");
         let pending = send_directed_leg(
             state,
@@ -798,11 +798,10 @@ async fn broadcast_directed_frame(
     if !content {
         return Err(anyhow::anyhow!("task beat leg too large to send"));
     }
-    let logical_id = single.id.clone();
     // The shard group carries the logical id, so the reassembled view is
     // named identically on both ends.
     let group =
-        ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
+        ShardGroup::from_uuid_str(single.id.as_str()).expect("a frame id is a valid shard group");
     let shard_frames = DirectedShardFrames {
         mesh,
         author,
