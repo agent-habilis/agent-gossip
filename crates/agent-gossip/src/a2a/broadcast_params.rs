@@ -28,8 +28,8 @@ use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
 use crate::a2a::session_request::SessionRequest;
-use crate::a2a::surfaced_event::PollOrRegisterParams;
 use crate::a2a::surfaced_event::PollResponder::Typed;
+use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
 use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
 use crate::output;
@@ -2021,6 +2021,208 @@ async fn session_ping(
     true
 }
 
+/// The identity and handles a session request is served through.
+#[derive(Clone, Copy)]
+struct SessionScope<'caller> {
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    sender: &'caller MeshSender,
+    output: &'caller output::Output,
+}
+
+/// Broadcast one chat body and give the outcome to the requester. Returns
+/// whether the broadcast went out.
+async fn session_broadcast(
+    body: MessageBody,
+    response: Sender<anyhow::Result<Authored>>,
+    scope: SessionScope<'_>,
+    state: &mut EventLoopState,
+) -> bool {
+    let params = BroadcastParams {
+        mesh: scope.mesh,
+        author: scope.author,
+        text: body,
+    };
+    let outcome = send_broadcast(params, state, scope.sender, scope.output)
+        .await
+        .map(|(_id, message)| message);
+    let sent_ok = outcome.is_ok();
+    let _ = response.send(outcome);
+    sent_ok
+}
+
+/// The fields of a [`SessionRequest::Msg`].
+struct SessionMsg(Nickname, MessageBody, Sender<anyhow::Result<Authored>>);
+
+async fn session_msg(
+    request: SessionMsg,
+    scope: SessionScope<'_>,
+    app: &mut A2aApp,
+    state: &mut EventLoopState,
+) -> bool {
+    let SessionMsg(to, body, response) = request;
+    let outcome = send_msg(
+        MsgParams {
+            mesh: scope.mesh,
+            author: scope.author,
+            peer: &to,
+            text: body,
+            app,
+        },
+        state,
+        scope.sender,
+        scope.output,
+    )
+    .await;
+    answer_when_sent(
+        outcome.map(|(_id, message, pending)| (message, pending)),
+        response,
+    )
+}
+
+/// The fields of a [`SessionRequest::TaskStatus`].
+struct SessionTaskStatus(
+    crate::a2a::TaskId,
+    crate::a2a::TaskState,
+    Option<String>,
+    Option<String>,
+    Sender<anyhow::Result<Authored>>,
+);
+
+async fn session_task_status(
+    request: SessionTaskStatus,
+    scope: SessionScope<'_>,
+    app: &mut A2aApp,
+    state: &mut EventLoopState,
+) -> bool {
+    let SessionTaskStatus(task_id, task_state, note, waiting, response) = request;
+    let outcome = emit_task_status(
+        TaskStatusParams {
+            mesh: scope.mesh,
+            author: scope.author,
+            task_id: &task_id,
+            task_state,
+            note: note.as_deref(),
+            waiting: waiting.as_deref(),
+            app,
+        },
+        state,
+        scope.sender,
+        scope.output,
+    )
+    .await;
+    answer_when_sent(outcome, response)
+}
+
+/// The fields of a [`SessionRequest::TaskArtifact`].
+struct SessionTaskArtifact(
+    crate::a2a::TaskId,
+    String,
+    Option<FileRef>,
+    Sender<anyhow::Result<Authored>>,
+);
+
+async fn session_task_artifact(
+    request: SessionTaskArtifact,
+    scope: SessionScope<'_>,
+    app: &mut A2aApp,
+    state: &mut EventLoopState,
+) -> bool {
+    let SessionTaskArtifact(task_id, text, file, response) = request;
+    let outcome = emit_task_artifact(
+        TaskArtifactEmitParams {
+            mesh: scope.mesh,
+            author: scope.author,
+            task_id: &task_id,
+            text: &text,
+            file,
+            app,
+        },
+        state,
+        scope.sender,
+        scope.output,
+    )
+    .await;
+    answer_when_sent(outcome, response)
+}
+
+/// The fields of a [`SessionRequest::Poll`].
+struct SessionPoll(Option<u64>, bool, Sender<PollBatch>);
+
+/// Same policy as the CLI/IPC `Poll` arm: respond now if events are buffered,
+/// else (with `long`) park a typed waiter the loop fulfills/expires. A parked
+/// waiter broadcasts nothing, so this never reports a send.
+async fn session_poll(
+    request: SessionPoll,
+    context: &HandlerCtx<'_>,
+    app: &mut A2aApp,
+    state: &mut EventLoopState,
+) {
+    let SessionPoll(after, long, response) = request;
+    if !long {
+        receipt::send_read_receipts(app, state, context, after).await;
+    }
+    app.surfaced.poll_or_register(PollOrRegisterParams {
+        after,
+        long,
+        now: tokio::time::Instant::now(),
+        responder: Typed(response),
+    });
+}
+
+/// The fields of a [`SessionRequest::A2aCall`].
+struct SessionA2aCall(
+    Nickname,
+    String,
+    serde_json::Value,
+    std::time::Duration,
+    Sender<serde_json::Value>,
+);
+
+async fn session_a2a_call(
+    request: SessionA2aCall,
+    scope: SessionScope<'_>,
+    app: &mut A2aApp,
+    state: &mut EventLoopState,
+) {
+    let SessionA2aCall(peer, method, params, timeout, response) = request;
+    broadcast_a2a_call(
+        BroadcastA2aCallParams {
+            mesh: scope.mesh,
+            author: scope.author,
+            peer,
+            method: &method,
+            params,
+            timeout,
+            responder: A2aResponder::Typed(response),
+            file: None,
+        },
+        state,
+        app,
+        scope.sender,
+    )
+    .await;
+}
+
+/// A merge into one channel document and the requester's answer.
+struct SessionMerge(Channel, serde_json::Value, Sender<anyhow::Result<()>>);
+
+/// Merge into a channel document and broadcast it. Returns whether the merge
+/// went out.
+async fn session_merge(
+    request: SessionMerge,
+    scope: SessionScope<'_>,
+    state: &mut EventLoopState,
+) -> bool {
+    let SessionMerge(channel, merge, response) = request;
+    let merge_ctx = MergeCtx::new(scope.mesh, scope.author, scope.sender, scope.output);
+    let outcome =
+        broadcast_state_merge(state, StateMergeParams::new(merge_ctx, channel, merge)).await;
+    let sent = outcome.is_ok();
+    let _ = response.send(outcome.map(|_| ()).map_err(anyhow::Error::from));
+    sent
+}
+
 /// One typed in-process request plus the identity + app state it's served
 /// against — grouped so `handle_session_request` stays within the argument
 /// budget alongside its state/sender/output handles.
@@ -2047,79 +2249,39 @@ async fn inject_raw_frame(bytes: bytes::Bytes, sender: &MeshSender) -> anyhow::R
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
 /// `last_sent_at` (mirrors `handle_ipc_command`).
-#[expect(
-    clippy::too_many_lines,
-    reason = "a dispatch match with one arm per SessionRequest variant (mirrors handle_ipc_command)"
-)]
 pub(crate) async fn handle_session_request(
     params: SessionRequestParams<'_>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
     output: &output::Output,
 ) -> bool {
-    let sender = context.sender;
     let SessionRequestParams {
         request,
         mesh,
         author,
         app,
     } = params;
+    let scope = SessionScope {
+        mesh,
+        author,
+        sender: context.sender,
+        output,
+    };
     app.drain_delivered_legs();
     retain_sent_legs(app, state);
     match request {
         SessionRequest::Broadcast { body, response } => {
-            let outcome = send_broadcast(
-                BroadcastParams {
-                    mesh,
-                    author,
-                    text: body,
-                },
-                state,
-                sender,
-                output,
-            )
-            .await
-            .map(|(_id, message)| message);
-            let sent_ok = outcome.is_ok();
-            let _ = response.send(outcome);
-            sent_ok
+            session_broadcast(body, response, scope, state).await
         }
         SessionRequest::Msg { to, body, response } => {
-            let outcome = send_msg(
-                MsgParams {
-                    mesh,
-                    author,
-                    peer: &to,
-                    text: body,
-                    app,
-                },
-                state,
-                sender,
-                output,
-            )
-            .await;
-            answer_when_sent(
-                outcome.map(|(_id, message, pending)| (message, pending)),
-                response,
-            )
+            session_msg(SessionMsg(to, body, response), scope, app, state).await
         }
         SessionRequest::Poll {
             after,
             long,
             response,
         } => {
-            // Same policy as the CLI/IPC `Poll` arm: respond now if events are
-            // buffered, else (with `long`) park a typed waiter the loop
-            // fulfills/expires. A parked waiter broadcasts nothing → `false`.
-            if !long {
-                receipt::send_read_receipts(app, state, context, after).await;
-            }
-            app.surfaced.poll_or_register(PollOrRegisterParams {
-                after,
-                long,
-                now: tokio::time::Instant::now(),
-                responder: Typed(response),
-            });
+            session_poll(SessionPoll(after, long, response), context, app, state).await;
             false
         }
         SessionRequest::TaskStatus {
@@ -2129,22 +2291,8 @@ pub(crate) async fn handle_session_request(
             waiting,
             response,
         } => {
-            let outcome = emit_task_status(
-                TaskStatusParams {
-                    mesh,
-                    author,
-                    task_id: &task_id,
-                    task_state,
-                    note: note.as_deref(),
-                    waiting: waiting.as_deref(),
-                    app,
-                },
-                state,
-                sender,
-                output,
-            )
-            .await;
-            answer_when_sent(outcome, response)
+            let fields = SessionTaskStatus(task_id, task_state, note, waiting, response);
+            session_task_status(fields, scope, app, state).await
         }
         SessionRequest::TaskArtifact {
             task_id,
@@ -2152,57 +2300,22 @@ pub(crate) async fn handle_session_request(
             file,
             response,
         } => {
-            let outcome = emit_task_artifact(
-                TaskArtifactEmitParams {
-                    mesh,
-                    author,
-                    task_id: &task_id,
-                    text: &text,
-                    file,
-                    app,
-                },
-                state,
-                sender,
-                output,
-            )
-            .await;
-            answer_when_sent(outcome, response)
+            let fields = SessionTaskArtifact(task_id, text, file, response);
+            session_task_artifact(fields, scope, app, state).await
         }
         SessionRequest::Peers { response } => {
             let _ = response.send(state.roster_snapshot());
             false
         }
         SessionRequest::StateMerge { merge, response } => {
-            let outcome = broadcast_state_merge(
-                state,
-                StateMergeParams::new(
-                    MergeCtx::new(mesh, author, sender, output),
-                    Channel::State,
-                    merge,
-                ),
-            )
-            .await;
-            let sent = outcome.is_ok();
-            let _ = response.send(outcome.map(|_| ()).map_err(anyhow::Error::from));
-            sent
+            session_merge(SessionMerge(Channel::State, merge, response), scope, state).await
         }
         SessionRequest::StateGet { response } => {
             let _ = response.send(state.doc(Channel::State).to_json());
             false
         }
         SessionRequest::MetaMerge { merge, response } => {
-            let outcome = broadcast_state_merge(
-                state,
-                StateMergeParams::new(
-                    MergeCtx::new(mesh, author, sender, output),
-                    Channel::Meta,
-                    merge,
-                ),
-            )
-            .await;
-            let sent = outcome.is_ok();
-            let _ = response.send(outcome.map(|_| ()).map_err(anyhow::Error::from));
-            sent
+            session_merge(SessionMerge(Channel::Meta, merge, response), scope, state).await
         }
         SessionRequest::MetaGet { response } => {
             let _ = response.send(state.doc(Channel::Meta).to_json());
@@ -2216,22 +2329,8 @@ pub(crate) async fn handle_session_request(
             timeout,
             response,
         } => {
-            broadcast_a2a_call(
-                BroadcastA2aCallParams {
-                    mesh,
-                    author,
-                    peer,
-                    method: &method,
-                    params: rpc_params,
-                    timeout,
-                    responder: A2aResponder::Typed(response),
-                    file: None,
-                },
-                state,
-                app,
-                sender,
-            )
-            .await;
+            let fields = SessionA2aCall(peer, method, rpc_params, timeout, response);
+            session_a2a_call(fields, scope, app, state).await;
             true
         }
         // Raw injection (adversarial only): broadcast the bytes verbatim, no
@@ -2239,7 +2338,7 @@ pub(crate) async fn handle_session_request(
         #[cfg(feature = "adversarial")]
         SessionRequest::InjectRaw { bytes, response } => {
             // The bytes go on the wire as given; see `inject_raw_frame`.
-            let outcome = inject_raw_frame(bytes, sender).await;
+            let outcome = inject_raw_frame(bytes, scope.sender).await;
             let _ = response.send(outcome);
             false
         }
