@@ -1,3 +1,1 @@
 
-from_name|crates/agent-gossip/src/cli/password_flag.rs|1|open: from_str is the FromStr trait method, and std fixes its name
-from_name|crates/agent-gossip/src/cli/args/join_opts.rs|1|from_str is the FromStr trait method, and std fixes its name

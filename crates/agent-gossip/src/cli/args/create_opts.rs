@@ -6,7 +6,7 @@ use habilis_network::protocol::{DirectorySelection, MeshName, Nickname};
 use super::lookup::LookupArgs;
 use super::shared_server_opts::SharedServerOpts;
 use super::transport::Transport;
-use crate::cli::password_flag::PasswordFlag;
+use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
 #[derive(Parser, Debug)]
 pub(crate) struct CreateOpts {
@@ -60,7 +60,7 @@ pub(crate) struct CreateOpts {
     /// `--advertise`). The id carries only a one-way verifier, never the
     /// password. Pass it inline as `--password=<pw>` (a bare `--password` is
     /// an error: there is no terminal prompt).
-    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0", value_parser = password_flag_parser())]
     pub password: Option<PasswordFlag>,
 
     /// Make the gossip invite-only: the bare id can no longer join —
@@ -86,7 +86,7 @@ mod tests {
     use habilis_network::protocol::{DirectorySelection, MeshName, Nickname};
 
     use crate::cli::args::{Cli, Commands};
-    use crate::cli::password_flag::PasswordFlag;
+    use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
     #[test]
     fn create_opts_with_nickname() {

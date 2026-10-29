@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use clap::builder::{StringValueParser, TypedValueParser};
 use habilis_network::protocol::Password;
 
 /// The `default_missing_value` a bare `--password` (no `=value`) resolves to.
@@ -21,16 +22,16 @@ pub(crate) enum PasswordFlag {
     Inline(String),
 }
 
-impl std::str::FromStr for PasswordFlag {
-    type Err = std::convert::Infallible;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Ok(if text == BARE {
-            PasswordFlag::Bare
-        } else {
-            PasswordFlag::Inline(text.to_owned())
-        })
+fn parse_password_flag(text: String) -> PasswordFlag {
+    if text == BARE {
+        PasswordFlag::Bare
+    } else {
+        PasswordFlag::Inline(text)
     }
+}
+
+pub(crate) fn password_flag_parser() -> impl TypedValueParser<Value = PasswordFlag> {
+    StringValueParser::new().map(parse_password_flag)
 }
 
 /// Resolve a clap optional-value `--password` flag (absent / bare / valued)
@@ -63,9 +64,7 @@ fn validated(value: String) -> Result<Password> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use super::{PasswordFlag, resolve_password};
+    use super::{PasswordFlag, parse_password_flag, resolve_password};
 
     #[test]
     fn absent_flag_is_no_password() {
@@ -111,14 +110,11 @@ mod tests {
     #[test]
     fn bare_sentinel_parses_to_bare() {
         assert!(
-            matches!(PasswordFlag::from_str(super::BARE), Ok(PasswordFlag::Bare)),
+            parse_password_flag(super::BARE.to_owned()) == PasswordFlag::Bare,
             "the bare sentinel parses to the bare flag"
         );
         assert!(
-            matches!(
-                PasswordFlag::from_str("hunter2"),
-                Ok(PasswordFlag::Inline(value)) if value == "hunter2"
-            ),
+            parse_password_flag("hunter2".to_owned()) == PasswordFlag::Inline("hunter2".to_owned()),
             "a plain value parses to an inline password"
         );
     }

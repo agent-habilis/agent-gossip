@@ -3,7 +3,7 @@ use habilis_network::protocol::{MeshId, MeshName, Nickname};
 
 use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
-use crate::cli::password_flag::PasswordFlag;
+use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum A2aAction {
@@ -37,7 +37,7 @@ pub(crate) enum A2aAction {
         /// Protect the bridge with a password: the ticket alone no longer
         /// redeems — consumers must present the password (so a passworded ticket
         /// is safe to share). Pass it inline as `--password=<pw>`.
-        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0", value_parser = password_flag_parser())]
         password: Option<PasswordFlag>,
 
         /// Force loopback-only lookups so two agents on one machine bridge
@@ -67,7 +67,7 @@ pub(crate) enum A2aAction {
 
         /// Password for a password-protected ticket — required exactly when the
         /// ticket carries the password flag. Pass it inline via `--password=<pw>`.
-        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0", value_parser = password_flag_parser())]
         password: Option<PasswordFlag>,
 
         /// Serve any local client, without the per-bridge token printed on

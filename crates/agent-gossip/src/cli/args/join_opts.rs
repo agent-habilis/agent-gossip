@@ -6,7 +6,7 @@ use clap::Parser;
 use habilis_network::protocol::{JoinTarget, JoinTargetError, Nickname};
 
 use super::shared_server_opts::SharedServerOpts;
-use crate::cli::password_flag::PasswordFlag;
+use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
 /// Classify a join token, pointing an unrecognized one at `topic` — which is
 /// what a plain shared string is for.
@@ -44,15 +44,11 @@ impl GossipArg {
     }
 }
 
-impl FromStr for GossipArg {
-    type Err = String;
-
-    fn from_str(input: &str) -> Result<Self, String> {
-        if input.is_empty() {
-            return Ok(Self(None));
-        }
-        parse_join_target(input).map(|target| Self(Some(target)))
+fn parse_gossip_arg(input: &str) -> Result<GossipArg, String> {
+    if input.is_empty() {
+        return Ok(GossipArg(None));
     }
+    parse_join_target(input).map(|target| GossipArg(Some(target)))
 }
 
 pub(crate) const DEFAULT_ROOM_ENV: &str = "AGENT_GOSSIP_DEFAULT_ROOM";
@@ -78,8 +74,9 @@ pub(crate) fn resolve_target(
 pub(crate) struct JoinOpts {
     /// Gossip identifier; optional. When omitted or empty, the
     /// `AGENT_GOSSIP_DEFAULT_ROOM` environment variable fills it in. Validated at
-    /// parse (clap `FromStr`). For a public gossip derived from a shared string,
+    /// parse (clap `value_parser`). For a public gossip derived from a shared string,
     /// use `agent-gossip topic <string>`.
+    #[arg(value_parser = parse_gossip_arg)]
     pub gossip: Option<GossipArg>,
 
     /// Optional nickname (random word-word if not provided). A custom
@@ -98,7 +95,7 @@ pub(crate) struct JoinOpts {
     /// network; a wrong password fails immediately). Pass it inline as
     /// `--password=<pw>`; a bare `--password`, or omitting the flag on a
     /// protected id, is an error (there is no terminal prompt).
-    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0", value_parser = password_flag_parser())]
     pub password: Option<PasswordFlag>,
 
     #[command(flatten)]
