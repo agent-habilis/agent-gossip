@@ -1,9 +1,9 @@
+import type { NextConfig } from 'next'
 import nextra from 'nextra'
 
 const withNextra = nextra({})
 
-/** @type {import('next').NextConfig} */
-const config = {
+const config: NextConfig = {
   // Built into out/ and served by server.ts, which has no Node to run
   // Next with. trailingSlash writes docs/x/index.html rather than docs/x.html,
   // the shape server.ts already maps `/x/` onto.
