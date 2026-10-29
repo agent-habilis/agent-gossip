@@ -315,17 +315,13 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     Ok(())
 }
 
-#[expect(
-    clippy::unused_async,
-    reason = "keeps the dispatch arm uniform with every other subcommand"
-)]
-pub(crate) async fn session(options: SessionOpts) -> Result<()> {
+pub(crate) fn session(options: &SessionOpts) {
     let SessionOpts {
         session_pid,
         legacy_output: _,
     } = options;
     let Discovery { live, cleaned } = discover();
-    let (owned, other_sessions) = owned_sessions(live, session_pid);
+    let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
     let sessions: Vec<_> = owned
         .iter()
@@ -346,7 +342,6 @@ pub(crate) async fn session(options: SessionOpts) -> Result<()> {
         "cleaned": cleaned,
     });
     println!("{report}");
-    Ok(())
 }
 
 fn owned_sessions(live: Vec<Target>, session_pid: Option<u32>) -> (Vec<Target>, usize) {

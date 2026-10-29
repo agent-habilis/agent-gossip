@@ -73,7 +73,10 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             Box::pin(topic(options)).await
         }
         Commands::Leave { options } => super::session::leave(options).await,
-        Commands::Session { options } => super::session::session(options).await,
+        Commands::Session { options } => {
+            super::session::session(&options);
+            Ok(())
+        }
         Commands::BellCheck { options } => {
             if super::session::bell_check(&options) {
                 // 3, not 1 or 2: clap's usage error is 2, and 1 is any error.
