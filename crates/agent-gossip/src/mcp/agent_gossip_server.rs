@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -6,9 +7,14 @@ use anyhow::Result;
 use habilis_network::protocol::{
     JoinTarget, LookupSet, MeshName, MessageBody, Nickname, RelayLadder,
 };
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, ErrorData as McpError, ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResult, Content, ErrorData as McpError, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+};
+use rmcp::service::{MaybeSendFuture, RequestContext};
+use rmcp::{RoleServer, ServerHandler, tool, tool_router};
 use tokio::sync::Mutex;
 
 use super::session::Session;
@@ -536,12 +542,32 @@ impl AgentGossipServer {
     }
 }
 
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "rmcp's ServerHandler methods return futures, and tool_handler generates async fns that return ready values"
-)]
-#[tool_handler]
 impl ServerHandler for AgentGossipServer {
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let tcc = ToolCallContext::new(self, request, context);
+        Self::tool_router().call(tcc).await
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, McpError>> + MaybeSendFuture + '_ {
+        std::future::ready(Ok(ListToolsResult {
+            tools: Self::tool_router().list_all(),
+            meta: None,
+            next_cursor: None,
+        }))
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        Self::tool_router().get(name).cloned()
+    }
+
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
         info.instructions = Some(MCP_INSTRUCTIONS.to_string());
