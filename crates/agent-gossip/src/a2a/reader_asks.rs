@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use habilis_network::embed::EventLoopState;
-use habilis_network::iroh::endpoint::TransportAddrUsage;
 use habilis_network::iroh::{Endpoint, TransportAddr};
-use habilis_network::net::{GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID};
+use habilis_network::net::{
+    GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID, active_transport_addrs,
+};
 use habilis_network::ops::MeshSender;
 use habilis_network::protocol::{MeshId, Nickname};
 use tokio::sync::oneshot;
@@ -193,13 +194,7 @@ fn reader_from_reply(reply: &serde_json::Value) -> Option<serde_json::Value> {
 }
 
 async fn active_path(endpoint: &Endpoint, peer: habilis_network::iroh::EndpointId) -> String {
-    let Some(info) = endpoint.remote_info(peer).await else {
-        return "unknown".to_owned();
-    };
-    let addrs = info
-        .addrs()
-        .filter(|address| matches!(address.usage(), TransportAddrUsage::Active));
-    let active: Vec<TransportAddr> = addrs.map(|address| address.addr().clone()).collect();
+    let active: Vec<TransportAddr> = active_transport_addrs(endpoint, peer).await.collect();
     path_label(&active)
 }
 
