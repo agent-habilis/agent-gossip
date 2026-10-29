@@ -6,17 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Compute the version and tag only: push nothing, build nothing"
+        description: "Compute the tag and build the patched tree: push nothing"
         type: boolean
         default: true
 
 permissions:
   contents: write
-
-# Never cancel a tag run. A cancelled run can leave a tag with no assets.
-concurrency:
-  group: preview-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   plan:
@@ -34,6 +29,10 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
+          if [ "$DRY_RUN" != "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "A real preview run only runs on main, not on $GITHUB_REF" >&2
+            exit 1
+          fi
           # auto-release.yml owns every commit that carries a change file,
           # and the release bump commit is not a preview.
           author=$(git log -1 --format=%an)
@@ -43,8 +42,7 @@ jobs:
             exit 0
           fi
           stable=$(git tag --list 'v*' --merged HEAD --sort=-v:refname | awk '!/-/' | head -n 1)
-          cargo_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/agent-gossip/Cargo.toml | head -n 1)
-          tag=$(bun scripts/preview-version/preview-version.ts "$cargo_version" "$stable")
+          tag=$(bun scripts/preview-version/preview-version.ts tag)
           {
             echo "skip=false"
             echo "tag=$tag"
@@ -52,13 +50,32 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Preview tag: $tag (stable base $stable, dry run $DRY_RUN)"
 
+  # Dry run: build the tree the tag would carry, so a broken build is found
+  # before the first permanent tag. Nothing is committed, tagged or pushed.
+  dry-build:
+    needs: plan
+    if: needs.plan.outputs.skip == 'false' && inputs.dry_run == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Patch the version the way the tag does
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          VER="${TAG#v}" perl -0pi -e 's/^version = "[^"]*"/version = "$ENV{VER}"/m' crates/agent-gossip/Cargo.toml
+          VER="${TAG#v}" perl -0pi -e 's/(name = "agent-gossip"\nversion = ")[^"]*"/$1$ENV{VER}"/' Cargo.lock
+      - run: cargo build -p agent-gossip --release
+
   # The throwaway commit exists only to carry the preview version. It is
   # tagged and never pushed to a branch, so `main` keeps its own version.
   # The tag comes from GITHUB_TOKEN on purpose: it does not fire
   # `release.yml`'s `push: tags`, so the `build` job below is the only build.
   tag:
     needs: plan
-    if: needs.plan.outputs.skip == 'false' && inputs.dry_run != true
+    if: needs.plan.outputs.skip == 'false' && inputs.dry_run != true && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -66,17 +83,17 @@ jobs:
           fetch-depth: 0
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: oven-sh/setup-bun@v2
-      - name: Create the tag on a throwaway commit (reuse it if it exists)
+      - name: Create the tag, or reuse the one this HEAD made
         env:
           TAG: ${{ needs.plan.outputs.tag }}
         run: |
-          if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
-            echo "Tag $TAG exists, reusing it"
+          action=$(bun scripts/preview-version/preview-version.ts action "$TAG" "$(git rev-parse HEAD)")
+          if [ "$action" = "reuse" ]; then
+            echo "Tag $TAG already points at this HEAD, reusing it"
             exit 0
           fi
-          # verify-version in release.yml compares the whole tag with Cargo.toml.
-          perl -0pi -e "s/^version = \"[^\"]*\"/version = \"${TAG#v}\"/m" crates/agent-gossip/Cargo.toml
-          cargo update --workspace --offline
+          VER="${TAG#v}" perl -0pi -e 's/^version = "[^"]*"/version = "$ENV{VER}"/m' crates/agent-gossip/Cargo.toml
+          VER="${TAG#v}" perl -0pi -e 's/(name = "agent-gossip"\nversion = ")[^"]*"/$1$ENV{VER}"/' Cargo.lock
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -q -m "chore: preview $TAG" -- crates/agent-gossip/Cargo.toml Cargo.lock
@@ -85,7 +102,7 @@ jobs:
 
   build:
     needs: [plan, tag]
-    if: needs.plan.outputs.skip == 'false' && inputs.dry_run != true
+    if: needs.plan.outputs.skip == 'false' && inputs.dry_run != true && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.plan.outputs.tag }}
@@ -97,6 +114,7 @@ jobs:
   # same formula. The App token is scoped to the tap, as in release.yml.
   formula:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
       group: tap-preview

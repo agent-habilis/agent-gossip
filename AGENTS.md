@@ -329,6 +329,18 @@ The push of the bump starts that run. To retry by hand, start
 
 Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 
+### Previews
+
+`preview.yml` builds every commit on `main` that has no change file, as a
+prerelease. Its tag is `v<next patch>-preview.<n>`, and `<n>` counts the commits
+since the version bump. The tag sits on a throwaway commit that only patches
+the version. `main` keeps its own version, and nothing pushes that commit to a
+branch. A tag is never deleted or moved. A failed run is retried with **Re-run
+failed jobs**: the tag is reused when it points at this HEAD. The preview
+formula, `agent-gossip-preview`, follows the highest preview whose assets are
+all published. The preview binary is `agent-gossip-preview`, and a preview does
+not replace the stable one.
+
 ## Code Style
 
 - Prefer descriptive names over single-letter ones, but idiomatic Rust wins.
