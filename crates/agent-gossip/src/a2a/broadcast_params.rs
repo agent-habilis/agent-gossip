@@ -133,7 +133,7 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
 /// [`build_msg`] stays within the argument budget.
 struct ChainStamp {
     seq: u64,
-    prev: Option<ContentHash>,
+    previous: Option<ContentHash>,
     parents: Vec<ContentHash>,
 }
 
@@ -173,7 +173,7 @@ fn build_msg(
         message = message.with_id(id);
     }
     message
-        .with_chain(stamp.seq, stamp.prev)
+        .with_chain(stamp.seq, stamp.previous)
         .with_parents(stamp.parents)
         .with_shard(shard)
         .sign(signer)
@@ -336,7 +336,7 @@ impl<'caller> BroadcastFrames<'caller> {
         Self {
             mesh,
             author,
-            // An `Arc`, not a borrow: the shard loop signs after it borrows the state mutably.
+            // A clone, not a borrow: the shard loop signs after it borrows the state mutably.
             signer: state.identity().clone(),
             chain_seq,
             chain_prev,
@@ -355,7 +355,7 @@ impl<'caller> BroadcastFrames<'caller> {
     fn stamp(&self, state: &EventLoopState) -> ChainStamp {
         ChainStamp {
             seq: self.chain_seq,
-            prev: self.chain_prev,
+            previous: self.chain_prev,
             parents: state.dag_parents().collect(),
         }
     }
@@ -393,7 +393,7 @@ impl<'caller> BroadcastFrames<'caller> {
             self.frame(MessageBody::try_new("").expect("empty body is valid"), None),
             ChainStamp {
                 seq: self.chain_seq,
-                prev: Some(hash_stub),
+                previous: Some(hash_stub),
                 parents: vec![hash_stub; state.dag_parents().count().max(1)],
             },
             Some(probe_shard(group)),

@@ -799,10 +799,10 @@ pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
     if let Some(seq) = message.seq {
         record.insert("seq".into(), seq.into());
     }
-    if let Some(prev) = &message.previous {
+    if let Some(previous) = &message.previous {
         record.insert(
             "prev".into(),
-            serde_json::to_value(prev).expect("a hash serializes"),
+            serde_json::to_value(previous).expect("a hash serializes"),
         );
     }
     if !message.parents.is_empty() {

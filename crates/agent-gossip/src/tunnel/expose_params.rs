@@ -130,7 +130,7 @@ pub(super) async fn bind(
     let secret = TicketSecret::from(rand::random::<[u8; 32]>());
     let auth = TicketAuth::derive(&secret, password, A2A_TICKET_LABEL);
     let ticket = A2aTicket {
-        address: endpoint.addr(),
+        address: net::endpoint_address(&endpoint),
         secret,
         lookups,
         password: auth.password_protected,

@@ -480,8 +480,8 @@ impl CraftedMsg {
     }
 
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
-    pub fn chain(mut self, seq: u64, prev: Option<ContentHash>) -> Self {
-        self.message = self.message.with_chain(seq, prev);
+    pub fn chain(mut self, seq: u64, previous: Option<ContentHash>) -> Self {
+        self.message = self.message.with_chain(seq, previous);
         self
     }
 

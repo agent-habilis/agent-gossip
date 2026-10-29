@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
+use habilis_network::net::endpoint_address;
 use habilis_network::protocol::{AuthorKey, Nickname};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
 use habilis_network::x25519_dalek::PublicKey;
@@ -155,7 +156,7 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
 /// dial without waiting for a `PeerInfo` to arrive.
 #[must_use]
 pub(crate) fn endpoint_hint(endpoint: &Endpoint) -> serde_json::Value {
-    let address = endpoint.addr();
+    let address = endpoint_address(endpoint);
     serde_json::json!({
         "id": address.id.to_string(),
         "relay": address.relay_urls().next().map(ToString::to_string),
