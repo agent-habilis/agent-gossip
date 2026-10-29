@@ -16,20 +16,16 @@ use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 /// hint is meant to be copy-pasted, so the string is single-quoted with embedded
 /// `'` escaped POSIX-style — unquoted, whitespace would split into extra args
 /// and metacharacters could expand.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only `Unrecognized` needs its own text"
-)]
 fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
-    JoinTarget::from_str(input).map_err(|error| match &error {
-        JoinTargetError::Unrecognized(token) => {
-            let quoted = format!("'{}'", token.replace('\'', "'\\''"));
-            format!(
-                "{error}. To join a public gossip derived from a shared string, \
-                 use `agent-gossip topic {quoted}`."
-            )
-        }
-        _ => error.to_string(),
+    JoinTarget::from_str(input).map_err(|error| {
+        let JoinTargetError::Unrecognized(token) = &error else {
+            return error.to_string();
+        };
+        let quoted = format!("'{}'", token.replace('\'', "'\\''"));
+        format!(
+            "{error}. To join a public gossip derived from a shared string, \
+             use `agent-gossip topic {quoted}`."
+        )
     })
 }
 
