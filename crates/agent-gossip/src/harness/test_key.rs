@@ -603,17 +603,18 @@ impl CraftedMsg {
     ///
     /// Panics unless the crafted message serializes.
     #[must_use]
-    pub fn bytes(&self) -> Vec<u8> {
+    pub fn bytes(&self) -> bytes::Bytes {
         use habilis_network::protocol::message::Verified;
         // A signed frame keeps its signature as built, or as stale after a tamper: the fixture keeps
         // the signer, and the engine's own serializer writes the bytes.
         if self.message.signer.is_some() {
             let frame = Verified::fixture_with_signature(self.message.clone());
-            return frame
-                .serialize()
-                .expect("crafted message serializes")
-                .as_bytes()
-                .to_vec();
+            return bytes::Bytes::copy_from_slice(
+                frame
+                    .serialize()
+                    .expect("crafted message serializes")
+                    .as_bytes(),
+            );
         }
         // An unsigned frame carries no key and no signature on the wire. The engine has no public
         // unsigned encoding, so the serialized frame has its two key fields removed here.
@@ -629,6 +630,6 @@ impl CraftedMsg {
         let object = wire.as_object_mut().expect("a wire frame is a JSON object");
         object.remove("pubkey");
         object.remove("sig");
-        serde_json::to_vec(&wire).expect("an unsigned frame serializes")
+        bytes::Bytes::from(serde_json::to_vec(&wire).expect("an unsigned frame serializes"))
     }
 }

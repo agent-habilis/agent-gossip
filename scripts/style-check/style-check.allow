@@ -10,6 +10,4 @@ pub_vec_return|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|8|An owned 
 pub_vec_return|crates/agent-gossip-test-fixtures/src/node.rs|1|An owned list parsed from the log text, which is a temporary inside the function (I7)
 pub_vec_return|crates/agent-gossip/src/api/directory.rs|1|An owned snapshot: a borrowed iterator would hold the collector mutex guard across the caller work (I7)
 pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|An owned list of pings collected from the replies, returned through the async call (I7)
-pub_vec_return|crates/agent-gossip/src/harness/bench_config.rs|1|A public function that builds a byte buffer returns a Vec (I7)
-pub_vec_return|crates/agent-gossip/src/harness/test_key.rs|1|A public function that builds a byte buffer returns a Vec (I7)
 self_convention|crates/agent-gossip/src/a2a/model/task_state.rs|1|open: TaskState is Copy, so a by-value as_str is the clippy-accepted form for a Copy type; kept as a counted row

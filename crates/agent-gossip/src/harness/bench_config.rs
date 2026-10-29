@@ -119,10 +119,12 @@ impl BenchMessage {
     }
 
     #[must_use]
-    pub fn serialize(&self) -> Vec<u8> {
-        self.0
-            .serialize()
-            .expect("message under size cap serializes")
+    pub fn serialize(&self) -> bytes::Bytes {
+        bytes::Bytes::from(
+            self.0
+                .serialize()
+                .expect("message under size cap serializes"),
+        )
     }
 }
 

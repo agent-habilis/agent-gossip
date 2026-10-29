@@ -63,14 +63,10 @@ async fn unsigned_message_is_dropped() {
     // reject it.
     // `wrap_a2a` makes the body a valid chat payload, so the only thing that can drop it is the
     // signature gate. Without it the app layer drops the frame and the test proves nothing.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
+    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
         .wrap_a2a()
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed message from the same sender, sent *after* the
     // injection. When it arrives, the unsigned one (sent first) had its turn.
     attacker.broadcast("barrier-unsigned").await;
@@ -95,12 +91,8 @@ async fn tampered_message_is_dropped() {
     let signed: CraftedMsg = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "honest")
         .wrap_a2a()
         .sign(&key);
-    let evil: Vec<u8> = signed.tamper_body("tampered-after-sign").bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    let evil: bytes::Bytes = signed.tamper_body("tampered-after-sign").bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-tampered").await;
     assert!(
         victim.wait_body("barrier-tampered", T).await,
@@ -149,11 +141,7 @@ async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
         .wrap_a2a()
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(honest.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(honest).await.expect("inject");
     assert!(
         victim.wait_body("honest", T).await,
         "a correctly signed frame must surface: the control of the tamper test"
@@ -170,15 +158,11 @@ async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
 async fn kind_flipped_after_signing_is_dropped() {
     let (mut victim, attacker) = meshed_pair("kindflip").await;
     let key = test_key::new_key();
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "flip-me")
+    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "flip-me")
         .sign(&key)
         .flip_chat_kind()
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-kindflip").await;
     assert!(
         victim.wait_body("barrier-kindflip", T).await,
@@ -209,16 +193,8 @@ async fn equivocation_surfaces_a_fork() {
         .chain(7, None)
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(first.into())
-        .await
-        .expect("inject a");
-    attacker
-        .session
-        .inject_raw(second.into())
-        .await
-        .expect("inject b");
+    attacker.session.inject_raw(first).await.expect("inject a");
+    attacker.session.inject_raw(second).await.expect("inject b");
     let forked = victim
         .wait_for(T, |events| {
             events
@@ -251,7 +227,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
         .bytes();
     attacker
         .session
-        .inject_raw(forged.into())
+        .inject_raw(forged)
         .await
         .expect("inject forged");
     // Barrier (same link, in order) so the victim has processed the forged copy
@@ -267,7 +243,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
         .bytes();
     attacker
         .session
-        .inject_raw(genuine.into())
+        .inject_raw(genuine)
         .await
         .expect("inject genuine");
     assert!(
@@ -299,7 +275,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         .bytes();
     injector
         .session
-        .inject_raw(original.clone().into())
+        .inject_raw(original.clone())
         .await
         .expect("inject original");
     assert!(
@@ -315,7 +291,7 @@ async fn a_replayed_chat_message_surfaces_once() {
             .bytes();
         injector
             .session
-            .inject_raw(filler.into())
+            .inject_raw(filler)
             .await
             .expect("inject filler");
     }
@@ -325,7 +301,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         "the fillers never all arrived"
     );
 
-    let mut replay = original;
+    let mut replay = original.to_vec();
     replay.push(b' ');
     injector
         .session
@@ -364,7 +340,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         .bytes();
     injector
         .session
-        .inject_raw(forged.into())
+        .inject_raw(forged)
         .await
         .expect("inject signed forgery");
     injector.broadcast("after-forged").await;
@@ -379,7 +355,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         .bytes();
     injector
         .session
-        .inject_raw(genuine.into())
+        .inject_raw(genuine)
         .await
         .expect("inject genuine");
     assert!(
@@ -395,14 +371,10 @@ async fn junk_payload_chat_is_dropped() {
     let (mut victim, attacker) = meshed_pair("junk-payload").await;
     let key = test_key::new_key();
     // Validly signed, but the body is raw text, not a serialized A2A Message.
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
+    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-junk").await;
     assert!(victim.wait_body("barrier-junk", T).await, "barrier lost");
     assert!(
@@ -422,15 +394,11 @@ async fn payload_frame_id_mismatch_is_dropped() {
     // produces.
     let wrapped: CraftedMsg =
         CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body").wrap_a2a();
-    let evil: Vec<u8> = wrapped
+    let evil: bytes::Bytes = wrapped
         .id("00000000-0000-0000-0000-00000000beef")
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-mismatch").await;
     assert!(
         victim.wait_body("barrier-mismatch", T).await,
@@ -463,11 +431,7 @@ async fn status_task_id_mismatch_is_dropped() {
     )
     .sign(&key)
     .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-status").await;
     assert!(victim.wait_body("barrier-status", T).await, "barrier lost");
     let surfaced_status = victim
@@ -502,15 +466,11 @@ async fn directed_broadcast_is_dropped() {
         "evil-directed-broadcast",
     )
     .wrap_a2a();
-    let evil: Vec<u8> = wrapped
+    let evil: bytes::Bytes = wrapped
         .address_to(Some(victim.nickname.as_str()))
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-dirbcast").await;
     assert!(
         victim.wait_body("barrier-dirbcast", T).await,
@@ -534,12 +494,8 @@ async fn broadcast_shaped_msg_is_dropped() {
         CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
             .into_msg()
             .wrap_msg();
-    let evil: Vec<u8> = msg.address_to(None).sign(&key).bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    let evil: bytes::Bytes = msg.address_to(None).sign(&key).bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-bcastmsg").await;
     assert!(
         victim.wait_body("barrier-bcastmsg", T).await,
@@ -564,15 +520,11 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
     let retagged: CraftedMsg = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
         .wrap_a2a()
         .into_msg();
-    let evil: Vec<u8> = retagged
+    let evil: bytes::Bytes = retagged
         .address_to(Some(victim.nickname.as_str()))
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgext").await;
     assert!(victim.wait_body("barrier-msgext", T).await, "barrier lost");
     assert!(
@@ -595,12 +547,8 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
         CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
             .into_msg()
             .wrap_msg();
-    let evil: Vec<u8> = msg.address_to(Some("someone-else")).sign(&key).bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    let evil: bytes::Bytes = msg.address_to(Some("someone-else")).sign(&key).bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgrelay").await;
     assert!(
         victim.wait_body("barrier-msgrelay", T).await,
@@ -639,12 +587,8 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
     )
     .into_msg()
     .wrap_msg();
-    let evil: Vec<u8> = msg.address_to(Some("someone-else")).sign(&key).bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    let evil: bytes::Bytes = msg.address_to(Some("someone-else")).sign(&key).bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgself").await;
     assert!(victim.wait_body("barrier-msgself", T).await, "barrier lost");
     assert!(
@@ -720,11 +664,7 @@ async fn a_bystanders_task_status_is_dropped() {
     )
     .sign(&key)
     .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
 
     // Barrier: a real leg on the very path the injection took — the worker's
     // artifact, a directed sealed frame sent after it. Once that lands, the
@@ -786,7 +726,7 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
     let old_id = old.frame_id();
     attacker
         .session
-        .inject_raw(old.bytes().into())
+        .inject_raw(old.bytes())
         .await
         .expect("inject");
 
@@ -846,11 +786,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
     )
     .sign(&test_key::new_key())
     .bytes();
-    attacker
-        .session
-        .inject_raw(forged.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(forged).await.expect("inject");
     attacker.broadcast("after the forgery").await;
     assert!(
         sender.wait_body("after the forgery", T).await,
@@ -887,17 +823,13 @@ async fn gap_future_timestamp_is_accepted() {
     let key = test_key::new_key();
     let wrapped: CraftedMsg =
         CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future").wrap_a2a();
-    let evil: Vec<u8> = wrapped
+    let evil: bytes::Bytes = wrapped
         .timestamp(habilis_network::protocol::UnixSecs::from_secs(
             4_102_444_800,
         )) // 2100-01-01
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     let seen = victim.wait_body("from-the-future", T).await;
     assert!(
         !seen,
@@ -917,15 +849,11 @@ async fn gap_nickname_impersonation_is_accepted() {
     let (mut victim, attacker) = meshed_pair("imposter").await;
     let victim_nick = victim.nickname.clone();
     let key = test_key::new_key(); // NOT the victim's key
-    let evil: Vec<u8> = CraftedMsg::new(attacker.session.mesh_id(), &victim_nick, "i-am-you")
+    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), &victim_nick, "i-am-you")
         .wrap_a2a()
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     let seen = victim.wait_body("i-am-you", T).await;
     assert!(
         !seen,
@@ -960,11 +888,7 @@ async fn gap_sybil_identities_are_accepted() {
             .wrap_a2a()
             .sign(&key)
             .bytes();
-        attacker
-            .session
-            .inject_raw(bytes.into())
-            .await
-            .expect("inject");
+        attacker.session.inject_raw(bytes).await.expect("inject");
     }
     let all_accepted = victim
         .wait_for(T, |events| {
@@ -1057,11 +981,7 @@ async fn unsigned_state_merge_is_never_folded() {
     // touch the state log (same authenticity gate as chat).
     let evil =
         CraftedMsg::state_merge(attacker.session.mesh_id(), "ghost", json!({"evil": true})).bytes();
-    attacker
-        .session
-        .inject_raw(evil.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed merge from the attacker's own identity.
     attacker.state_merge(json!({"ok": 1})).await;
     assert!(
@@ -1098,7 +1018,7 @@ async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
     .bytes();
     injector
         .session
-        .inject_raw(forged.into())
+        .inject_raw(forged)
         .await
         .expect("inject forged card");
 
@@ -1143,7 +1063,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .bytes();
     attacker
         .session
-        .inject_raw(idx_outside.into())
+        .inject_raw(idx_outside)
         .await
         .expect("inject");
     // total past the header tripwire.
@@ -1153,7 +1073,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .bytes();
     attacker
         .session
-        .inject_raw(absurd_total.into())
+        .inject_raw(absurd_total)
         .await
         .expect("inject");
 
@@ -1191,7 +1111,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
         // idx 0..4 of a claimed 1000: the group can never complete, so every
         // accepted slice sits in the store until the TTL sweep.
         for index in 0..4u32 {
-            let evil: Vec<u8> = CraftedMsg::new(
+            let evil: bytes::Bytes = CraftedMsg::new(
                 attacker.session.mesh_id(),
                 &format!("sybil-{author}"),
                 &slice,
@@ -1199,11 +1119,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
             .shard(&group, index, 1000)
             .sign(&key)
             .bytes();
-            attacker
-                .session
-                .inject_raw(evil.into())
-                .await
-                .expect("inject");
+            attacker.session.inject_raw(evil).await.expect("inject");
         }
     }
 
@@ -1245,11 +1161,7 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
         .shard("00000000-0000-4000-8000-00000000beef", 1, 2)
         .sign(&key)
         .bytes();
-    attacker
-        .session
-        .inject_raw(poisoned.into())
-        .await
-        .expect("inject");
+    attacker.session.inject_raw(poisoned).await.expect("inject");
 
     // A genuine multipart body from the attacker's real session (its own
     // group id — the A2A messageId — differs, but even a collision would be
