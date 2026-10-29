@@ -194,3 +194,13 @@ jobs:
       - run: >-
           cargo check --manifest-path crates/agent-gossip-wasm-client/Cargo.toml
           --target wasm32-unknown-unknown
+
+  # The release scripts under `scripts/` are plain Bun, outside the workspace.
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test scripts/

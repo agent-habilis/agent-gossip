@@ -88,6 +88,9 @@ machine.
 # Homebrew for macOS and Linux
 brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 
+# Preview build of every commit on main, installed beside the stable one
+brew install agent-habilis/tap/agent-gossip-preview
+
 # From source everywhere else
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
