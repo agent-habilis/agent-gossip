@@ -192,11 +192,14 @@ pub(crate) struct IpcDispatchParams<'caller> {
 struct IpcRequest<'caller> {
     resp_tx: oneshot::Sender<String>,
     mesh: &'caller MeshId,
+    name: &'caller MeshName,
     author: &'caller Nickname,
+    endpoint: &'caller Endpoint,
     sender: &'caller MeshSender,
     output: &'caller output::Output,
     state: &'caller mut EventLoopState,
     app: &'caller mut A2aApp,
+    context: &'caller HandlerCtx<'caller>,
 }
 
 struct StatusRequest {
@@ -204,6 +207,14 @@ struct StatusRequest {
     task_state: TaskState,
     note: Option<String>,
     waiting: Option<String>,
+}
+
+struct A2aCallRequest {
+    to: Nickname,
+    method: String,
+    params: serde_json::Value,
+    timeout_secs: u64,
+    file: Option<FileRef>,
 }
 
 impl IpcRequest<'_> {
@@ -249,6 +260,7 @@ impl IpcRequest<'_> {
             output,
             state,
             app,
+            ..
         } = self;
         match send_msg(
             MsgParams {
@@ -284,6 +296,7 @@ impl IpcRequest<'_> {
             output,
             state,
             app,
+            ..
         } = self;
         let StatusRequest {
             task_id,
@@ -328,6 +341,7 @@ impl IpcRequest<'_> {
             output,
             state,
             app,
+            ..
         } = self;
         match emit_task_artifact(
             TaskArtifactEmitParams {
@@ -354,6 +368,115 @@ impl IpcRequest<'_> {
                 false
             }
         }
+    }
+
+    async fn poll(self, after: Option<u64>, long: bool) -> bool {
+        let Self {
+            resp_tx,
+            state,
+            app,
+            context,
+            ..
+        } = self;
+        // Surfaced-events ring, seq-cursored. Each event renders to the
+        // *same* JSON line the live `--output json` stream emits (via
+        // `surfaced_event_json`), with its `seq` flattened in so the client
+        // advances `--after`. `poll_or_register` responds now if events are
+        // buffered, else (with `long`) parks a waiter the loop fulfills
+        // on the next surfaced event or expires at the park cap. A parked
+        // waiter broadcasts nothing → `false`.
+        if !long {
+            receipt::send_read_receipts(app, state, context, after).await;
+        }
+        app.surfaced.poll_or_register(PollOrRegisterParams {
+            after,
+            long,
+            now: tokio::time::Instant::now(),
+            responder: PollResponder::Json(resp_tx),
+        });
+        false
+    }
+
+    async fn ping(self) -> bool {
+        let Self {
+            resp_tx,
+            state,
+            context,
+            ..
+        } = self;
+        // Start a fresh round (replacing any in flight): the engine arms
+        // it and broadcasts the first probe, and its event loop sends the
+        // second. Pongs are collected by the gossip receive path; the
+        // round's deadline drives the `ping_report` emission. CLI/IPC
+        // consumes that event, not a channel, so there is no responder.
+        start_ping_round(state, context, None).await;
+        tracing::debug!("IPC ping command received; round armed");
+        let _ = resp_tx.send(json_ack());
+        true
+    }
+
+    async fn peers(self) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            endpoint,
+            sender,
+            state,
+            app,
+            ..
+        } = self;
+        let readers = ask_readers(
+            ReaderAskParams {
+                mesh,
+                author,
+                sender,
+            },
+            state,
+            app,
+        )
+        .await;
+        respond_with_paths(state, endpoint, readers, resp_tx);
+        false
+    }
+
+    async fn a2a_call(self, call: A2aCallRequest) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            sender,
+            state,
+            app,
+            ..
+        } = self;
+        let A2aCallRequest {
+            to,
+            method,
+            params,
+            timeout_secs,
+            file,
+        } = call;
+        // The response arrives later (the peer's `A2aResp`, or a timeout),
+        // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
+        // and answer nothing now.
+        broadcast_params::broadcast_a2a_call(
+            broadcast_params::BroadcastA2aCallParams {
+                mesh,
+                author,
+                peer: to,
+                method: &method,
+                params,
+                timeout: Duration::from_secs(timeout_secs),
+                responder: Ipc(resp_tx),
+                file,
+            },
+            state,
+            app,
+            sender,
+        )
+        .await;
+        true
     }
 }
 
@@ -401,69 +524,33 @@ pub(crate) async fn handle_ipc_command(
         let _ = resp_tx.send(json_error("command gossip id does not match this daemon"));
         return false;
     }
+    let request = IpcRequest {
+        resp_tx,
+        mesh,
+        name,
+        author,
+        endpoint,
+        sender,
+        output,
+        state,
+        app,
+        context,
+    };
     match command {
         IpcCommand::Broadcast { mesh: _, body } => {
             tracing::debug!("IPC broadcast command received");
-            IpcRequest {
-                resp_tx,
-                mesh,
-                author,
-                sender,
-                output,
-                state,
-                app,
-            }
-            .broadcast(body)
-            .await
+            request.broadcast(body).await
         }
         IpcCommand::Msg { mesh: _, to, body } => {
             tracing::debug!("IPC msg command received");
-            IpcRequest {
-                resp_tx,
-                mesh,
-                author,
-                sender,
-                output,
-                state,
-                app,
-            }
-            .direct_message(to, body)
-            .await
+            request.direct_message(to, body).await
         }
         IpcCommand::Poll {
             mesh: _,
             after,
             long,
-        } => {
-            // Surfaced-events ring, seq-cursored. Each event renders to the
-            // *same* JSON line the live `--output json` stream emits (via
-            // `surfaced_event_json`), with its `seq` flattened in so the client
-            // advances `--after`. `poll_or_register` responds now if events are
-            // buffered, else (with `long`) parks a waiter the loop fulfills
-            // on the next surfaced event or expires at the park cap. A parked
-            // waiter broadcasts nothing → `false`.
-            if !long {
-                receipt::send_read_receipts(app, state, context, after).await;
-            }
-            app.surfaced.poll_or_register(PollOrRegisterParams {
-                after,
-                long,
-                now: tokio::time::Instant::now(),
-                responder: PollResponder::Json(resp_tx),
-            });
-            false
-        }
-        IpcCommand::Ping { mesh: _ } => {
-            // Start a fresh round (replacing any in flight): the engine arms
-            // it and broadcasts the first probe, and its event loop sends the
-            // second. Pongs are collected by the gossip receive path; the
-            // round's deadline drives the `ping_report` emission. CLI/IPC
-            // consumes that event, not a channel, so there is no responder.
-            start_ping_round(state, context, None).await;
-            tracing::debug!("IPC ping command received; round armed");
-            let _ = resp_tx.send(json_ack());
-            true
-        }
+        } => request.poll(after, long).await,
+        IpcCommand::Ping { mesh: _ } => request.ping().await,
         IpcCommand::A2aStatus {
             mesh: _,
             task_id,
@@ -472,22 +559,14 @@ pub(crate) async fn handle_ipc_command(
             waiting,
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
-            IpcRequest {
-                resp_tx,
-                mesh,
-                author,
-                sender,
-                output,
-                state,
-                app,
-            }
-            .task_status(StatusRequest {
-                task_id,
-                task_state,
-                note,
-                waiting,
-            })
-            .await
+            request
+                .task_status(StatusRequest {
+                    task_id,
+                    task_state,
+                    note,
+                    waiting,
+                })
+                .await
         }
         IpcCommand::A2aArtifact {
             mesh: _,
@@ -503,37 +582,14 @@ pub(crate) async fn handle_ipc_command(
                 name: file_name,
                 mime: file_mime,
             });
-            IpcRequest {
-                resp_tx,
-                mesh,
-                author,
-                sender,
-                output,
-                state,
-                app,
-            }
-            .task_artifact(task_id, text, file)
-            .await
+            request.task_artifact(task_id, text, file).await
         }
-        IpcCommand::Peers { mesh: _ } => {
-            let readers = ask_readers(
-                ReaderAskParams {
-                    mesh,
-                    author,
-                    sender,
-                },
-                state,
-                app,
-            )
-            .await;
-            respond_with_paths(state, endpoint, readers, resp_tx);
-            false
-        }
+        IpcCommand::Peers { mesh: _ } => request.peers().await,
         IpcCommand::StateMerge { mesh: _, merge } => {
             let outcome = broadcast_state_merge(
-                state,
+                request.state,
                 StateMergeParams::new(
-                    MergeCtx::new(mesh, author, sender, output),
+                    MergeCtx::new(request.mesh, request.author, request.sender, request.output),
                     habilis_network::protocol::Channel::State,
                     merge,
                 ),
@@ -541,21 +597,21 @@ pub(crate) async fn handle_ipc_command(
             .await;
             let (response, broadcast) =
                 state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
-            let _ = resp_tx.send(response);
+            let _ = request.resp_tx.send(response);
             broadcast
         }
         IpcCommand::StateGet { mesh: _ } => {
-            let _ = resp_tx.send(state_get_response(
-                state,
+            let _ = request.resp_tx.send(state_get_response(
+                request.state,
                 habilis_network::protocol::Channel::State,
             ));
             false
         }
         IpcCommand::MetaMerge { mesh: _, merge } => {
             let outcome = broadcast_state_merge(
-                state,
+                request.state,
                 StateMergeParams::new(
-                    MergeCtx::new(mesh, author, sender, output),
+                    MergeCtx::new(request.mesh, request.author, request.sender, request.output),
                     habilis_network::protocol::Channel::Meta,
                     merge,
                 ),
@@ -563,15 +619,17 @@ pub(crate) async fn handle_ipc_command(
             .await;
             let (response, broadcast) =
                 state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
-            let _ = resp_tx.send(response);
+            let _ = request.resp_tx.send(response);
             broadcast
         }
         IpcCommand::MetaGet { mesh: _ } => {
-            let _ = resp_tx.send(meta_get_response(state, author));
+            let _ = request
+                .resp_tx
+                .send(meta_get_response(request.state, request.author));
             false
         }
         IpcCommand::Topology { mesh: _ } => {
-            let _ = resp_tx.send(topology_response(state));
+            let _ = request.resp_tx.send(topology_response(request.state));
             false
         }
         IpcCommand::A2aCall {
@@ -584,37 +642,31 @@ pub(crate) async fn handle_ipc_command(
             file_name,
             file_mime,
         } => {
-            // The response arrives later (the peer's `A2aResp`, or a timeout),
-            // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
-            // and answer nothing now.
-            broadcast_params::broadcast_a2a_call(
-                broadcast_params::BroadcastA2aCallParams {
-                    mesh,
-                    author,
-                    peer: to,
-                    method: &method,
+            request
+                .a2a_call(A2aCallRequest {
+                    to,
+                    method,
                     params: rpc_params,
-                    timeout: Duration::from_secs(timeout_secs),
-                    responder: Ipc(resp_tx),
+                    timeout_secs,
                     file: file.map(|path| FileRef {
                         path,
                         name: file_name,
                         mime: file_mime,
                     }),
-                },
-                state,
-                app,
-                sender,
-            )
-            .await;
-            true
+                })
+                .await
         }
         IpcCommand::Info => {
-            let _ = resp_tx.send(info_response(mesh, name, author, state));
+            let _ = request.resp_tx.send(info_response(
+                request.mesh,
+                request.name,
+                request.author,
+                request.state,
+            ));
             false
         }
         IpcCommand::Invite { mesh: _, ttl } => {
-            let _ = resp_tx.send(invite_response(state, ttl));
+            let _ = request.resp_tx.send(invite_response(request.state, ttl));
             false
         }
     }
