@@ -57,11 +57,8 @@ fn sid() -> habilis_network::protocol::MeshId {
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn view(message: Message) -> Authored {
-    Verified::fixture_unchecked(
-        message,
-        habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
-    )
-    .authored()
+    Verified::fixture_unchecked(message, habilis_network::protocol::AuthorKey::from([0; 32]))
+        .authored()
 }
 
 fn chat_frame_raw(author: &str, text: &str) -> Message {

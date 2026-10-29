@@ -622,7 +622,7 @@ impl CraftedMsg {
         }
         // An unsigned frame carries no key and no signature on the wire. The engine has no public
         // unsigned encoding, so the serialized frame has its two key fields removed here.
-        let zero_key = habilis_network::protocol::AuthorKey::from_bytes([0; 32]);
+        let zero_key = habilis_network::protocol::AuthorKey::from([0; 32]);
         let frame = Verified::fixture_unchecked(self.message.clone(), zero_key);
         let mut wire: serde_json::Value = serde_json::from_slice(
             frame

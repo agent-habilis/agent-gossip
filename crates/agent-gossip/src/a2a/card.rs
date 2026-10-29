@@ -307,7 +307,7 @@ mod tests {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(
             &Nickname::from("calm-otter"),
-            AuthorKey::from_bytes([0xab; 32]),
+            AuthorKey::from([0xab; 32]),
             &seal_b58,
         );
         assert_eq!(
@@ -367,7 +367,7 @@ mod tests {
     fn publish_merge_targets_the_peer_card_path() {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let card = own_card(&nickname, AuthorKey::from_bytes([0xab; 32]), &seal_b58);
+        let card = own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58);
         let card = serde_json::to_value(card).unwrap();
         // A frame that is never full: the card is one merge.
         let merges = publish_merges(&nickname, &card, |_| Ok(0)).unwrap();
@@ -455,12 +455,9 @@ mod tests {
     /// The card of the longest nickname and a relay URL of the real kind.
     fn worst_case_card(nickname: &Nickname) -> serde_json::Value {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let mut card = serde_json::to_value(own_card(
-            nickname,
-            AuthorKey::from_bytes([0xab; 32]),
-            &seal_b58,
-        ))
-        .unwrap();
+        let mut card =
+            serde_json::to_value(own_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
+                .unwrap();
         card["endpoint"] = serde_json::json!({
             "id": "ab".repeat(32),
             "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
@@ -559,12 +556,9 @@ mod tests {
     fn complete_card_serves_a_card_only_when_the_schema_is_whole() {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let whole_card = serde_json::to_value(own_card(
-            &nickname,
-            AuthorKey::from_bytes([0xab; 32]),
-            &seal_b58,
-        ))
-        .unwrap();
+        let whole_card =
+            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58))
+                .unwrap();
         let whole = serde_json::json!({ "peers": { "calm-otter": { "card": whole_card } } });
         assert!(
             super::complete_card(&whole, &nickname).is_some(),

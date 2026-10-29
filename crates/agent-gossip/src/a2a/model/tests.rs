@@ -141,7 +141,7 @@ mod snapshots {
                 ),
                 r#"{"method":"tasks/list","params":{}}"#,
             ),
-            habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+            habilis_network::protocol::AuthorKey::from([0; 32]),
         );
         let bytes: Vec<u8> = message.serialize().unwrap().as_bytes().to_vec();
         insta::assert_snapshot!(String::from_utf8(bytes).unwrap());
@@ -159,7 +159,7 @@ mod snapshots {
                 ),
                 r#"{"result":{"tasks":[]}}"#,
             ),
-            habilis_network::protocol::AuthorKey::from_bytes([0; 32]),
+            habilis_network::protocol::AuthorKey::from([0; 32]),
         );
         let bytes: Vec<u8> = message.serialize().unwrap().as_bytes().to_vec();
         insta::assert_snapshot!(String::from_utf8(bytes).unwrap());

@@ -388,7 +388,7 @@ impl<'caller> BroadcastFrames<'caller> {
     /// fewer than the one-hash link later shards carry). The all-zero hash
     /// stands in for any content hash.
     fn probe(&self, state: &EventLoopState, group: &ShardGroup) -> Verified {
-        let hash_stub = ContentHash::from_bytes([0; 32]);
+        let hash_stub = ContentHash::from([0; 32]);
         build_msg(
             self.frame(MessageBody::try_new("").expect("empty body is valid"), None),
             ChainStamp {
