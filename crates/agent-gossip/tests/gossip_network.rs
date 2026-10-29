@@ -3037,11 +3037,31 @@ fn test_flap_storm_all_rosters_recover() {
 /// event appears on stdout, returning the child plus its minted identity.
 /// The default state-file location (under the per-user runtime base) is what `leave` /
 /// `session` discover, so no `--state-file` override here.
-#[expect(
-    clippy::zombie_processes,
-    reason = "the child is returned; every caller kills and waits it"
-)]
-fn spawn_discoverable_daemon(name: &str) -> (Child, PathBuf, String, String) {
+/// A daemon a test spawned. It is killed and reaped when the test ends, even on a panic.
+struct DiscoverableDaemon(Child);
+
+impl Drop for DiscoverableDaemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+impl std::ops::Deref for DiscoverableDaemon {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for DiscoverableDaemon {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+fn spawn_discoverable_daemon(name: &str) -> (DiscoverableDaemon, PathBuf, String, String) {
     let log = tmp_log(&format!("leave-{name}"));
     let file = File::create(&log).expect("the test temp dir is writable");
     let stdout = Stdio::from(
@@ -3050,19 +3070,21 @@ fn spawn_discoverable_daemon(name: &str) -> (Child, PathBuf, String, String) {
     );
     let mut command = common::test_cmd();
     command.args(["create", "--name", name]);
-    let mut child: Child = command
-        .stdout(stdout)
-        .stderr(Stdio::from(file))
-        .spawn()
-        .expect("failed to spawn create");
+    let mut daemon = DiscoverableDaemon(
+        command
+            .stdout(stdout)
+            .stderr(Stdio::from(file))
+            .spawn()
+            .expect("failed to spawn create"),
+    );
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
         if let Some((mesh, nickname)) = ready_identity(&log) {
-            return (child, log, mesh, nickname);
+            return (daemon, log, mesh, nickname);
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = daemon.kill();
+            let _ = daemon.wait();
             panic!(
                 "daemon never emitted ready\nlog:\n{}",
                 fs::read_to_string(&log).unwrap_or_default()
