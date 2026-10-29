@@ -116,11 +116,7 @@ impl McpClient {
 
     /// Simple tool call: send and return the matching response,
     /// skipping any notifications that arrive in the meantime.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "ergonomic test helper; the 50-odd call sites pass json! literals by value, and taking &Value would spray a reference sigil across every one for no gain in test code"
-    )]
-    fn tool_call(&mut self, id: u64, name: &str, args: serde_json::Value) -> serde_json::Value {
+    fn tool_call(&mut self, id: u64, name: &str, args: &serde_json::Value) -> serde_json::Value {
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -138,7 +134,7 @@ impl McpClient {
         let created = tool_result_json(&self.tool_call(
             id,
             "create_gossip",
-            serde_json::json!({ "name": "mcptest" }),
+            &serde_json::json!({ "name": "mcptest" }),
         ))
         .expect("create_gossip must succeed");
         let mesh = created["gossip"]
@@ -242,7 +238,7 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     tool_result_json(&joiner.tool_call(
         base_id + 1,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh }),
+        &serde_json::json!({ "gossip": mesh }),
     ))
     .expect("join_gossip must succeed");
 
@@ -262,7 +258,7 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
         let fetched = tool_result_json(&joiner.tool_call(
             probe_id,
             "fetch_messages",
-            serde_json::json!({ "after": FROM_START }),
+            &serde_json::json!({ "after": FROM_START }),
         ))
         .expect("linkage-probe fetch_messages must succeed");
         let linked: bool = fetched["messages"]
@@ -315,14 +311,14 @@ fn join_mesh_requires_the_password() {
     let created = tool_result_json(&creator.tool_call(
         7000,
         "create_gossip",
-        serde_json::json!({ "name": "mcp-pw", "password": "hunter2" }),
+        &serde_json::json!({ "name": "mcp-pw", "password": "hunter2" }),
     ))
     .expect("passworded create_gossip must succeed");
     let mesh = created["gossip"].as_str().expect("mesh id").to_string();
 
     let mut joiner = McpClient::spawn();
     let missing =
-        tool_error(&joiner.tool_call(7001, "join_gossip", serde_json::json!({ "gossip": mesh })))
+        tool_error(&joiner.tool_call(7001, "join_gossip", &serde_json::json!({ "gossip": mesh })))
             .expect("join without password must error");
     assert!(
         missing.contains("password-protected"),
@@ -332,7 +328,7 @@ fn join_mesh_requires_the_password() {
     let wrong = tool_error(&joiner.tool_call(
         7002,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh, "password": "hunter3" }),
+        &serde_json::json!({ "gossip": mesh, "password": "hunter3" }),
     ))
     .expect("join with a wrong password must error");
     assert!(
@@ -343,7 +339,7 @@ fn join_mesh_requires_the_password() {
     tool_result_json(&joiner.tool_call(
         7003,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh, "password": "hunter2" }),
+        &serde_json::json!({ "gossip": mesh, "password": "hunter2" }),
     ))
     .expect("join with the right password must succeed");
 }
@@ -415,7 +411,7 @@ fn tools_require_session_and_error_when_absent() {
         } else {
             serde_json::json!({})
         };
-        let response = client.tool_call(id, tool, args);
+        let response = client.tool_call(id, tool, &args);
         let err = tool_error(&response)
             .unwrap_or_else(|| panic!("{tool} without session should error, got: {response}"));
         assert!(
@@ -429,7 +425,7 @@ fn tools_require_session_and_error_when_absent() {
 fn mesh_version_works_without_a_session() {
     let mut client = McpClient::spawn();
     // Unlike the messaging tools, version is a local check — no mesh needed.
-    let response = client.tool_call(30, "gossip_version", serde_json::json!({}));
+    let response = client.tool_call(30, "gossip_version", &serde_json::json!({}));
     let json = tool_result_json(&response).expect("gossip_version should return a JSON result");
     assert!(
         json["version"]
@@ -448,7 +444,7 @@ fn mesh_version_works_without_a_session() {
 #[test]
 fn mesh_manual_returns_the_manual_without_a_session() {
     let mut client = McpClient::spawn();
-    let response = client.tool_call(31, "gossip_manual", serde_json::json!({}));
+    let response = client.tool_call(31, "gossip_manual", &serde_json::json!({}));
     let text = tool_result_text(&response).expect("gossip_manual should return text content");
     assert!(
         text.contains("COMMANDS") && text.contains("JSON EVENTS"),
@@ -478,7 +474,11 @@ fn initialize_carries_behavioral_instructions() {
 #[test]
 fn create_mesh_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
-    let first = client.tool_call(20, "create_gossip", serde_json::json!({ "name": "twice1" }));
+    let first = client.tool_call(
+        20,
+        "create_gossip",
+        &serde_json::json!({ "name": "twice1" }),
+    );
     let first_json = tool_result_json(&first).expect("first create_gossip should succeed");
     assert!(
         agent_gossip::MeshId::try_new(first_json["gossip"].as_str().unwrap()).is_ok(),
@@ -490,7 +490,11 @@ fn create_mesh_twice_errors_cleanly() {
         "create_gossip must echo the requested name"
     );
 
-    let second = client.tool_call(21, "create_gossip", serde_json::json!({ "name": "twice2" }));
+    let second = client.tool_call(
+        21,
+        "create_gossip",
+        &serde_json::json!({ "name": "twice2" }),
+    );
     let err = tool_error(&second).expect("second create_gossip should error, but got success");
     assert!(
         err.contains("already in gossip"),
@@ -508,7 +512,7 @@ fn join_mesh_idempotent_for_same_mesh() {
     let rejoin = client.tool_call(
         31,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh, "nickname": nickname }),
+        &serde_json::json!({ "gossip": mesh, "nickname": nickname }),
     );
     let rejoin_json = tool_result_json(&rejoin).unwrap_or_else(|| {
         panic!("idempotent join_gossip should succeed, but got error response: {rejoin}")
@@ -528,7 +532,7 @@ fn join_mesh_idempotent_for_same_mesh() {
     let conflict = client.tool_call(
         32,
         "join_gossip",
-        serde_json::json!({ "gossip": mesh, "nickname": "someone-else" }),
+        &serde_json::json!({ "gossip": mesh, "nickname": "someone-else" }),
     );
     let err = tool_error(&conflict).expect("different-nick join should error");
     assert!(
@@ -543,7 +547,7 @@ fn join_with_invalid_input_errors_gracefully() {
     let response = client.tool_call(
         40,
         "join_gossip",
-        serde_json::json!({ "gossip": "not-a-mesh-id" }),
+        &serde_json::json!({ "gossip": "not-a-mesh-id" }),
     );
     let err = tool_error(&response).expect("invalid join should error");
     // Exact wording can vary; just confirm we got an error and no
@@ -551,7 +555,7 @@ fn join_with_invalid_input_errors_gracefully() {
     assert!(!err.is_empty(), "error message must not be empty");
 
     // Prove the server is still alive: call a benign tool.
-    let info = client.tool_call(41, "gossip_info", serde_json::json!({}));
+    let info = client.tool_call(41, "gossip_info", &serde_json::json!({}));
     let err2 = tool_error(&info).expect("gossip_info with no session should error");
     assert!(
         err2.contains("not in a gossip"),
@@ -562,7 +566,7 @@ fn join_with_invalid_input_errors_gracefully() {
 #[test]
 fn leave_without_session_is_noop() {
     let mut client = McpClient::spawn();
-    let response = client.tool_call(50, "leave_gossip", serde_json::json!({}));
+    let response = client.tool_call(50, "leave_gossip", &serde_json::json!({}));
     // Docs say: "no-op if not in one." Must succeed.
     let json = tool_result_json(&response).expect("leave with no session should succeed");
     assert_eq!(
@@ -578,17 +582,17 @@ fn leave_then_create_cycle_works_within_one_server() {
     let first = tool_result_json(&client.tool_call(
         60,
         "create_gossip",
-        serde_json::json!({ "name": "cycle1" }),
+        &serde_json::json!({ "name": "cycle1" }),
     ))
     .expect("create");
     let first_mesh = first["gossip"].as_str().unwrap().to_string();
 
-    let _ = client.tool_call(61, "leave_gossip", serde_json::json!({}));
+    let _ = client.tool_call(61, "leave_gossip", &serde_json::json!({}));
 
     let second = tool_result_json(&client.tool_call(
         62,
         "create_gossip",
-        serde_json::json!({ "name": "cycle2" }),
+        &serde_json::json!({ "name": "cycle2" }),
     ))
     .expect("create after leave");
     assert_ne!(
@@ -604,7 +608,7 @@ fn send_broadcast_without_session_errors() {
     let response = client.tool_call(
         70,
         "send_broadcast",
-        serde_json::json!({ "text": "orphan" }),
+        &serde_json::json!({ "text": "orphan" }),
     );
     let err = tool_error(&response).expect("send_broadcast without session should error");
     assert!(
@@ -621,7 +625,7 @@ fn create_mesh_with_granular_relay_succeeds() {
     let response = client.tool_call(
         80,
         "create_gossip",
-        serde_json::json!({ "name": "relayp", "lookup": ["relay"], "relay_urls": ["https://relay.example/"] }),
+        &serde_json::json!({ "name": "relayp", "lookup": ["relay"], "relay_urls": ["https://relay.example/"] }),
     );
     let result = tool_result_json(&response).expect("granular relay create should succeed");
     assert!(
@@ -635,7 +639,7 @@ fn create_mesh_without_name_mints_random() {
     // `name` is optional, mirroring the CLI and the plugin/pi front-ends:
     // omit it and the server mints a random `word-word` name (and nickname).
     let mut client = McpClient::spawn();
-    let response = client.tool_call(100, "create_gossip", serde_json::json!({}));
+    let response = client.tool_call(100, "create_gossip", &serde_json::json!({}));
     let result = tool_result_json(&response).expect("nameless create should succeed");
     assert!(
         agent_gossip::MeshId::try_new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
@@ -657,7 +661,7 @@ fn create_mesh_with_unknown_lookup_errors() {
     let response = client.tool_call(
         90,
         "create_gossip",
-        serde_json::json!({ "name": "bogus1", "lookup": ["bogus"] }),
+        &serde_json::json!({ "name": "bogus1", "lookup": ["bogus"] }),
     );
     let err = tool_error(&response).expect("bogus lookup should error");
     // `lookup` is a typed enum array, so an unknown value is rejected at
@@ -677,15 +681,15 @@ fn create_mesh_relay_transport_is_in_the_id() {
     let p2p = tool_result_json(&client.tool_call(
         110,
         "create_gossip",
-        serde_json::json!({ "name": "transp2p", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip"] }),
+        &serde_json::json!({ "name": "transp2p", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip"] }),
     ))
     .expect("create without relay should succeed");
-    let _ = client.tool_call(111, "leave_gossip", serde_json::json!({}));
+    let _ = client.tool_call(111, "leave_gossip", &serde_json::json!({}));
 
     let relayed = tool_result_json(&client.tool_call(
         112,
         "create_gossip",
-        serde_json::json!({ "name": "transrelay", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip", "relay"] }),
+        &serde_json::json!({ "name": "transrelay", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip", "relay"] }),
     ))
     .expect("create with relay should succeed");
 
@@ -709,7 +713,7 @@ fn create_mesh_relay_transport_is_in_the_id() {
 fn created_mesh(
     client: &mut McpClient,
     request_id: u64,
-    args: serde_json::Value,
+    args: &serde_json::Value,
 ) -> habilis_network::protocol::LockedMesh {
     let created = tool_result_json(&client.tool_call(request_id, "create_gossip", args))
         .expect("create_gossip should succeed");
@@ -718,7 +722,7 @@ fn created_mesh(
         .expect("the result names the gossip id")
         .parse()
         .expect("valid mesh id");
-    let _ = client.tool_call(request_id + 1, "leave_gossip", serde_json::json!({}));
+    let _ = client.tool_call(request_id + 1, "leave_gossip", &serde_json::json!({}));
     mesh
 }
 
@@ -734,7 +738,7 @@ fn create_mesh_default_transport_is_udp_webrtc_gossip() {
     let mesh = created_mesh(
         &mut client,
         150,
-        serde_json::json!({ "name": "defaulttransport" }),
+        &serde_json::json!({ "name": "defaulttransport" }),
     );
     assert_eq!(
         mesh.config().lookups,
@@ -754,7 +758,7 @@ fn create_mesh_relay_lookup_adds_relay_transport() {
     let mesh = created_mesh(
         &mut client,
         160,
-        serde_json::json!({ "name": "relaylookup", "lookup": ["relay"] }),
+        &serde_json::json!({ "name": "relaylookup", "lookup": ["relay"] }),
     );
     assert_eq!(
         mesh.config().transport,
@@ -769,7 +773,7 @@ fn create_mesh_explicit_transport_list_is_literal() {
     let mesh = created_mesh(
         &mut client,
         170,
-        serde_json::json!({
+        &serde_json::json!({
             "name": "literaltransport",
             "lookup": ["relay"],
             "transport": ["udp", "webrtc", "gossip"],
@@ -788,7 +792,7 @@ fn create_mesh_transport_multihop_turns_multihop_on() {
     let mesh = created_mesh(
         &mut client,
         180,
-        serde_json::json!({ "name": "multihoptransport", "transport": ["udp", "webrtc", "multihop"] }),
+        &serde_json::json!({ "name": "multihoptransport", "transport": ["udp", "webrtc", "multihop"] }),
     );
     assert!(
         mesh.config().transport.multihop,
@@ -806,7 +810,7 @@ fn create_mesh_transport_p2p_is_rejected() {
     let response = client.tool_call(
         190,
         "create_gossip",
-        serde_json::json!({ "name": "p2pword", "transport": ["p2p"] }),
+        &serde_json::json!({ "name": "p2pword", "transport": ["p2p"] }),
     );
     let err = tool_error(&response).expect("the removed `p2p` word should error");
     assert!(
@@ -821,7 +825,7 @@ fn create_mesh_transport_relay_alone_errors() {
     let response = client.tool_call(
         120,
         "create_gossip",
-        serde_json::json!({ "name": "relayonly", "lookup": ["relay"], "transport": ["relay"] }),
+        &serde_json::json!({ "name": "relayonly", "lookup": ["relay"], "transport": ["relay"] }),
     );
     let err = tool_error(&response).expect("a transport list with no direct path should error");
     assert!(
@@ -836,7 +840,7 @@ fn create_mesh_relay_transport_needs_relay_lookup() {
     let response = client.tool_call(
         130,
         "create_gossip",
-        serde_json::json!({ "name": "norelaylookup", "transport": ["udp", "webrtc", "relay"] }),
+        &serde_json::json!({ "name": "norelaylookup", "transport": ["udp", "webrtc", "relay"] }),
     );
     let err = tool_error(&response).expect("relay transport without a relay lookup should error");
     assert!(
@@ -851,7 +855,7 @@ fn create_mesh_rejects_removed_network_param() {
     let response = client.tool_call(
         140,
         "create_gossip",
-        serde_json::json!({ "name": "oldparam", "network": "public" }),
+        &serde_json::json!({ "name": "oldparam", "network": "public" }),
     );
     let err = tool_error(&response).expect("the removed `network` param should be rejected");
     assert!(
@@ -867,7 +871,7 @@ fn send_empty_body_works() {
     let mut client = McpClient::spawn();
     let (_mesh, _) = client.create_and_get_mesh(100);
 
-    let sent = client.tool_call(101, "send_broadcast", serde_json::json!({ "text": "" }));
+    let sent = client.tool_call(101, "send_broadcast", &serde_json::json!({ "text": "" }));
     let sent_json = tool_result_json(&sent).expect("empty-body send should succeed");
     let id = sent_json["id"].as_str().unwrap().to_string();
     assert!(!id.is_empty(), "send_broadcast must return a message id");
@@ -906,7 +910,7 @@ fn send_empty_body_works() {
     let fetched = tool_result_json(&client.tool_call(
         102,
         "fetch_messages",
-        serde_json::json!({ "after": FROM_START }),
+        &serde_json::json!({ "after": FROM_START }),
     ))
     .expect("fetch");
     let msgs = fetched["messages"].as_array().unwrap();
@@ -924,12 +928,12 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
     // well-formed arrays.
     let mut client = McpClient::spawn();
     client.create_and_get_mesh(110);
-    let _ = client.tool_call(111, "send_broadcast", serde_json::json!({ "text": "a" }));
+    let _ = client.tool_call(111, "send_broadcast", &serde_json::json!({ "text": "a" }));
 
     let far_future = tool_result_json(&client.tool_call(
         112,
         "fetch_messages",
-        serde_json::json!({ "after": 1_000_000_u64 }),
+        &serde_json::json!({ "after": 1_000_000_u64 }),
     ))
     .expect("fetch with far-future cursor");
     assert!(
@@ -940,7 +944,7 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
     let from_start = tool_result_json(&client.tool_call(
         113,
         "fetch_messages",
-        serde_json::json!({ "after": FROM_START }),
+        &serde_json::json!({ "after": FROM_START }),
     ))
     .expect("fetch from start");
     assert!(
@@ -975,7 +979,7 @@ fn fetch_messages_long_parks_then_times_out_empty() {
         let response = tool_result_json(&client.tool_call(
             request_id,
             "fetch_messages",
-            serde_json::json!({ "long": true }),
+            &serde_json::json!({ "long": true }),
         ))
         .expect("long-poll fetch returns a JSON result");
         if response["messages"].as_array().is_some_and(Vec::is_empty) {
@@ -999,7 +1003,7 @@ fn send_broadcast_reaches_the_mesh() {
     let response = client.tool_call(
         121,
         "send_broadcast",
-        serde_json::json!({ "text": "hello mesh" }),
+        &serde_json::json!({ "text": "hello mesh" }),
     );
     let json = tool_result_json(&response).expect("broadcast send should succeed");
     assert!(
@@ -1024,7 +1028,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     let baseline = tool_result_json(&client.tool_call(
         205,
         "fetch_messages",
-        serde_json::json!({ "after": FROM_START }),
+        &serde_json::json!({ "after": FROM_START }),
     ))
     .expect("baseline fetch");
     let before_seq = baseline["current_seq"].as_u64().unwrap_or(0);
@@ -1033,7 +1037,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
         client.tool_call(
             201 + i as u64,
             "send_broadcast",
-            serde_json::json!({ "text": body }),
+            &serde_json::json!({ "text": body }),
         );
     }
 
@@ -1042,7 +1046,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     let replay = tool_result_json(&client.tool_call(
         211,
         "fetch_messages",
-        serde_json::json!({ "after": before_seq }),
+        &serde_json::json!({ "after": before_seq }),
     ))
     .expect("explicit replay");
     let replayed = replay["messages"].as_array().unwrap();
@@ -1067,14 +1071,18 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     );
 
     // Send one more, then fetch with the cursor → only the new message.
-    let _ = client.tool_call(220, "send_broadcast", serde_json::json!({ "text": "four" }));
+    let _ = client.tool_call(
+        220,
+        "send_broadcast",
+        &serde_json::json!({ "text": "four" }),
+    );
     let cursor2 = {
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         loop {
             let second = tool_result_json(&client.tool_call(
                 221,
                 "fetch_messages",
-                serde_json::json!({ "after": cursor }),
+                &serde_json::json!({ "after": cursor }),
             ))
             .expect("delta fetch");
             let surfaced = second["messages"].as_array().unwrap();
@@ -1101,7 +1109,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     let third = tool_result_json(&client.tool_call(
         222,
         "fetch_messages",
-        serde_json::json!({ "after": cursor2 }),
+        &serde_json::json!({ "after": cursor2 }),
     ))
     .expect("idle fetch");
     let msgs3 = third["messages"].as_array().unwrap();
@@ -1135,7 +1143,7 @@ fn task_creation_surfaces_to_worker_via_fetch() {
         let raw = joiner.tool_call(
             attempt_id,
             "a2a_call",
-            serde_json::json!({
+            &serde_json::json!({
                 "to": creator_nick,
                 "method": "SendMessage",
                 "params": { "message": {
@@ -1170,7 +1178,7 @@ fn task_creation_surfaces_to_worker_via_fetch() {
         let fetched = tool_result_json(&creator.tool_call(
             probe,
             "fetch_messages",
-            serde_json::json!({ "after": FROM_START }),
+            &serde_json::json!({ "after": FROM_START }),
         ))
         .expect("fetch_messages must succeed");
         let mut events = fetched["messages"].as_array().into_iter().flatten();
@@ -1213,7 +1221,7 @@ fn task_creation_to_unknown_peer_errors() {
     let response = client.tool_call(
         731,
         "a2a_call",
-        serde_json::json!({
+        &serde_json::json!({
             "to": "ghost-peer",
             "method": "SendMessage",
             "params": { "message": {
@@ -1237,7 +1245,7 @@ fn task_creation_to_unknown_peer_errors() {
 fn mesh_info_reports_peer_roster() {
     let (mut creator, mut joiner, _mesh, _creator_nick) = create_pair(740);
     let joiner_nick: String =
-        tool_result_json(&joiner.tool_call(741, "gossip_info", serde_json::json!({})))
+        tool_result_json(&joiner.tool_call(741, "gossip_info", &serde_json::json!({})))
             .expect("joiner gossip_info")["nickname"]
             .as_str()
             .expect("nickname")
@@ -1248,7 +1256,7 @@ fn mesh_info_reports_peer_roster() {
     let mut probe = 742;
     let info = loop {
         let info =
-            tool_result_json(&creator.tool_call(probe, "gossip_info", serde_json::json!({})))
+            tool_result_json(&creator.tool_call(probe, "gossip_info", &serde_json::json!({})))
                 .expect("creator gossip_info");
         if info["peer_count"].as_u64() == Some(2) {
             break info;
@@ -1346,7 +1354,7 @@ fn discover_meshes_finds_an_advertised_mesh() {
         let response = client.tool_call(
             id,
             "discover_gossips",
-            serde_json::json!({ "directory": "mcdir" }),
+            &serde_json::json!({ "directory": "mcdir" }),
         );
         let json = tool_result_json(&response).expect("discover_gossips returns a result");
         let mut gossips = json["gossips"].as_array().into_iter().flatten();
@@ -1373,7 +1381,7 @@ fn ping_reports_rtt_to_a_peer() {
     let (mut creator, mut joiner, _mesh, _creator_nick) =
         create_pair_with(900, &["--ping-window-secs", "2"]);
     let joiner_nick: String =
-        tool_result_json(&joiner.tool_call(901, "gossip_info", serde_json::json!({})))
+        tool_result_json(&joiner.tool_call(901, "gossip_info", &serde_json::json!({})))
             .expect("joiner gossip_info")["nickname"]
             .as_str()
             .expect("nickname")
@@ -1383,7 +1391,7 @@ fn ping_reports_rtt_to_a_peer() {
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut id = 902;
     let rtt = loop {
-        let response = creator.tool_call(id, "ping", serde_json::json!({}));
+        let response = creator.tool_call(id, "ping", &serde_json::json!({}));
         let json = tool_result_json(&response).expect("ping returns a result");
         let mut peers = json["peers"].as_array().into_iter().flatten();
         let joiner_entry =
@@ -1411,7 +1419,7 @@ fn poll_doc(
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut id = base_id;
     loop {
-        let response = tool_result_json(&client.tool_call(id, tool, serde_json::json!({})))
+        let response = tool_result_json(&client.tool_call(id, tool, &serde_json::json!({})))
             .unwrap_or_else(|| panic!("{tool} must succeed"));
         if pred(&response["document"]) {
             return true;
@@ -1436,7 +1444,7 @@ fn state_and_meta_round_trip_over_mcp() {
     let merged = tool_result_json(&creator.tool_call(
         910,
         "apply_state_merge",
-        serde_json::json!({ "merge": {"turn": "a"} }),
+        &serde_json::json!({ "merge": {"turn": "a"} }),
     ))
     .expect("apply_state_merge must succeed");
     assert_eq!(merged["ok"], true, "apply_state_merge reports ok");
@@ -1449,7 +1457,7 @@ fn state_and_meta_round_trip_over_mcp() {
     let meta_merged = tool_result_json(&creator.tool_call(
         920,
         "apply_meta_merge",
-        serde_json::json!({ "merge": {"peers": {"creator": {"model": "Opus 4.8"}}} }),
+        &serde_json::json!({ "merge": {"peers": {"creator": {"model": "Opus 4.8"}}} }),
     ))
     .expect("apply_meta_merge must succeed");
     assert_eq!(meta_merged["ok"], true, "apply_meta_merge reports ok");
@@ -1462,14 +1470,14 @@ fn state_and_meta_round_trip_over_mcp() {
 
     // Channel isolation: the state key isn't in meta, and the meta key isn't in
     // state.
-    let meta_doc = tool_result_json(&joiner.tool_call(930, "get_meta", serde_json::json!({})))
+    let meta_doc = tool_result_json(&joiner.tool_call(930, "get_meta", &serde_json::json!({})))
         .expect("get_meta must succeed");
     assert!(
         meta_doc["document"].get("turn").is_none(),
         "a state key leaked into the meta document: {}",
         meta_doc["document"]
     );
-    let state_doc = tool_result_json(&joiner.tool_call(931, "get_state", serde_json::json!({})))
+    let state_doc = tool_result_json(&joiner.tool_call(931, "get_state", &serde_json::json!({})))
         .expect("get_state must succeed");
     assert!(
         state_doc["document"].get("peers").is_none(),
