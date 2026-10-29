@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -29,15 +28,14 @@ use crate::api::{
 use crate::cli::args::{lookup, resolved};
 use crate::topic;
 
-#[derive(Clone)]
 pub(crate) struct AgentGossipServer {
-    pub(crate) session: Arc<Mutex<Option<Session>>>,
+    pub(crate) session: Mutex<Option<Session>>,
 }
 
 impl AgentGossipServer {
     pub(crate) fn new() -> Self {
         Self {
-            session: Arc::new(Mutex::new(None)),
+            session: Mutex::new(None),
         }
     }
 }
