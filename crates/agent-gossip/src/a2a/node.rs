@@ -586,29 +586,26 @@ fn classify(message: &Authored) -> AppClass {
 /// task leg that reached us for the first time, inside our join horizon: the
 /// only frames that earn a delivery receipt. A frame from before the horizon is
 /// never surfaced, so a receipt for it would claim a delivery nobody sees.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; every frame that no arm above names is a no-op"
-)]
 fn route_content(
     message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) -> Routed {
-    match &message.kind {
-        // Each chat tag is pinned to its addressing here as well as in
-        // `classify`: a directed BROADCAST or a broadcast MSG falls through to
-        // the no-op arm rather than being surfaced/logged by a relay.
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => Routed {
+    let MessageKind::App { tag, to, .. } = &message.kind else {
+        return Routed::default();
+    };
+    // Each chat tag is pinned to its addressing here as well as in
+    // `classify`: a directed BROADCAST or a broadcast MSG falls through to
+    // the no-op arm rather than being surfaced/logged by a relay.
+    match (tag.as_str(), to) {
+        (wire::BROADCAST, None) => Routed {
             loggable: surface_chat(message, surfaceable, app, |out, surface| {
                 handle_broadcast(out, message, surface)
             }),
             fresh_for_us: false,
         },
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::MSG => {
+        (wire::MSG, Some(to)) => {
             let fresh_for_us = surfaceable
                 && to == context.author
                 && !is_replayed_chat(&app.surfaced_chat, message);
@@ -628,9 +625,7 @@ fn route_content(
                 fresh_for_us,
             }
         }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => {
+        (wire::STATUS | wire::ARTIFACT, Some(to)) => {
             let leg = handle_task_leg(
                 TaskLegParams {
                     message,
@@ -645,9 +640,7 @@ fn route_content(
                 fresh_for_us: leg.fresh_for_us,
             }
         }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::RECEIPT => {
+        (wire::RECEIPT, Some(to)) => {
             if to == context.author {
                 surface_receipt(message, app);
             }
