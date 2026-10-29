@@ -611,7 +611,7 @@ mod tests {
         // the bare hash, so deriving the loopback ladder used to panic in
         // `effective_seed`. `doctor` must report the reason instead of crashing.
         let mut mesh = Mesh::try_new(
-            Seed::from_bytes([1u8; 32]),
+            Seed::new([1u8; 32]),
             MeshName::try_new("t").unwrap(),
             MeshConfig::loopback(),
         )

@@ -102,10 +102,10 @@ impl MeshSession {
             // Router: the A2A binding stands up a separate endpoint of its own
             // (see `tunnel::expose`), so there is no accept() loop to share.
             SetupParams::new(author, sink)
-                .with_max_peers(GOSSIP_ACTIVE_VIEW_CAPACITY)
-                .with_runtime_base(crate::runtime_base())
-                .with_per_peer_gate(crate::a2a::card_gate())
-                .with_cohost(cohost),
+                .max_peers(GOSSIP_ACTIVE_VIEW_CAPACITY)
+                .runtime_base(crate::runtime_base())
+                .per_peer_gate(crate::a2a::card_gate())
+                .cohost(cohost),
         )
         .await?;
         Ok(Self::with_events_and_signals(

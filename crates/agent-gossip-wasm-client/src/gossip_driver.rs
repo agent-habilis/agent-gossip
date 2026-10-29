@@ -177,9 +177,9 @@ impl NodeApp for GossipDriver {
         // the DAG. Broadcast chat is public by definition: directed tags are
         // sealed, and this client does not send them yet — see `Request`.
         AppClass::NONE
-            .with_if(AppClass::LOGGABLE, is_broadcast)
-            .with_if(AppClass::VALID, is_broadcast || tag.is_none())
-            .with_if(AppClass::CHAINED, is_broadcast)
+            .plus_if(AppClass::LOGGABLE, is_broadcast)
+            .plus_if(AppClass::VALID, is_broadcast || tag.is_none())
+            .plus_if(AppClass::CHAINED, is_broadcast)
     }
 
     async fn on_app_frame(
@@ -259,7 +259,7 @@ impl NodeDriver for GossipDriver {
             context.author,
             AppFrameParams::new(tag, None, None, body),
         )
-        .with_id(id)
+        .id(id)
         .sign(context.identity);
 
         let Ok(bytes) = frame.serialize() else {

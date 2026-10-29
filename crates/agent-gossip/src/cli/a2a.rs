@@ -152,7 +152,7 @@ async fn expose(args: ExposeArgs) -> Result<()> {
         loopback,
     } = args;
     let password = super::password_flag::resolve_password(password)?;
-    let advertise = habilis_network::protocol::DirectorySelection::from_flag(advertise);
+    let advertise = habilis_network::protocol::DirectorySelection::from(advertise);
     Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
         to: &to,
         flags: lookups.to_set()?,

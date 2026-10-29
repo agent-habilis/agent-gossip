@@ -70,8 +70,8 @@ mod tests {
 
     fn policy(multihop: bool, relay_transport: bool) -> TransportPolicy {
         TransportPolicy::default()
-            .with_multihop(multihop)
-            .with_relay_transport(relay_transport)
+            .multihop(multihop)
+            .relay_transport(relay_transport)
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod tests {
             .expect("multihop with direct paths resolves");
         assert_eq!(
             resolved.transport,
-            TransportPolicy::default().with_gossip(false),
+            TransportPolicy::default().gossip(false),
             "multihop with direct paths gives the multihop policy"
         );
     }

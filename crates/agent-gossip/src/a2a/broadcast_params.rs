@@ -170,12 +170,12 @@ fn build_msg(
         AppFrameParams::new(wire::app_tag(wire::BROADCAST), None, None, body),
     );
     if let Some(id) = id {
-        message = message.with_id(id);
+        message = message.id(id);
     }
     message
-        .with_chain(stamp.seq, stamp.previous)
-        .with_parents(stamp.parents)
-        .with_shard(shard)
+        .chain(stamp.seq, stamp.previous)
+        .parents(stamp.parents)
+        .shard(shard)
         .sign(signer)
 }
 
@@ -404,7 +404,7 @@ impl<'caller> BroadcastFrames<'caller> {
 
 /// The shard whose envelope is the largest of a group.
 fn probe_shard(group: &ShardGroup) -> Shard {
-    Shard::new(group.clone(), MAX_SHARD_TOTAL).with_index(MAX_SHARD_TOTAL - 1)
+    Shard::new(group.clone(), MAX_SHARD_TOTAL).index(MAX_SHARD_TOTAL - 1)
 }
 
 /// The group of a split body and the count of its shards.
@@ -423,7 +423,7 @@ impl ShardSeries {
 
     fn shard(&self, index: usize) -> Shard {
         Shard::new(self.group.clone(), self.total)
-            .with_index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"))
+            .index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"))
     }
 
     /// A big group's shards skip the message log, so peers can only heal a lost
@@ -461,7 +461,7 @@ struct DirectedShardFrames<'caller> {
 impl DirectedShardFrames<'_> {
     fn shard(&self, body: MessageBody, shard: Shard) -> Verified {
         Message::new_frame(self.mesh, self.author, self.kind.clone(), body)
-            .with_shard(Some(shard))
+            .shard(Some(shard))
             .sign(self.signer)
     }
 
@@ -677,7 +677,7 @@ pub(crate) async fn send_broadcast(
         &frames,
         state,
         &body,
-        ShardGroup::from_uuid_str(payload.message_id.as_str())
+        ShardGroup::parse_uuid(payload.message_id.as_str())
             .expect("an a2a message id is a valid shard group"),
     )?;
     let (header, group) = shards.send(state, sender, out).await?;
@@ -755,7 +755,7 @@ async fn broadcast_directed_frame(
     // the signature covers it.
     let mut single = Message::new_frame(mesh, author, kind.clone(), payload_body.clone());
     if let Some(pinned_id) = pinned_id {
-        single = single.with_id(pinned_id);
+        single = single.id(pinned_id);
     }
     let single = single.sign(&signer);
     // The logical id: a sharded leg's group carries it, so its receipt names it too.
@@ -797,7 +797,7 @@ async fn broadcast_directed_frame(
     // The shard group carries the logical id, so the reassembled view is
     // named identically on both ends.
     let group =
-        ShardGroup::from_uuid_str(single.id.as_str()).expect("a frame id is a valid shard group");
+        ShardGroup::parse_uuid(single.id.as_str()).expect("a frame id is a valid shard group");
     let shard_frames = DirectedShardFrames {
         mesh,
         author,
@@ -1371,7 +1371,7 @@ async fn build_offload_parts(
         &lookups,
         relay_transport.into(),
         OffloadRequest::new(file.path, ContentId::new(task_id.as_str()), spool)
-            .with_password(password.cloned()),
+            .password(password.cloned()),
     )
     .await?;
     // The engine hands back a ticket; turning it into a `Part.url` is A2A's shape.
@@ -1971,7 +1971,7 @@ pub(crate) async fn send_directed_rpc(
             body.as_str().len()
         ));
     }
-    let group = ShardGroup::from_uuid_str(crate::a2a::A2aRpcId::random().as_str())
+    let group = ShardGroup::parse_uuid(crate::a2a::A2aRpcId::random().as_str())
         .expect("a freshly minted uuid is a valid shard group");
     let shard_frames = DirectedShardFrames {
         mesh,

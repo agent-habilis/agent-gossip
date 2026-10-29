@@ -12,8 +12,8 @@ pub(crate) fn app_transport_policy(lookups: &LookupSet) -> TransportPolicy {
 /// is a lookup.
 pub(crate) fn app_policy(relay_lookup: bool) -> TransportPolicy {
     TransportPolicy::default()
-        .with_multihop(false)
-        .with_relay_transport(relay_lookup)
+        .multihop(false)
+        .relay_transport(relay_lookup)
 }
 
 #[cfg(test)]

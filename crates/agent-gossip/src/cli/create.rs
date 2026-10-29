@@ -35,8 +35,8 @@ pub(super) async fn create(options: CreateOpts) -> Result<()> {
         config,
         advertise,
     )
-    .with_password(password)
-    .with_invite_only(options.invite_only)
+    .password(password)
+    .invite_only(options.invite_only)
     .resolve()?;
     // Boxed: the session future carries the full `EventLoopConfig` and sits
     // just over clippy's `large_futures` budget (same reason the event loop

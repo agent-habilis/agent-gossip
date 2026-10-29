@@ -82,14 +82,14 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
-        .with_max_peers(shared.max_peers)
-        .with_runtime_base(crate::runtime_base())
-        .with_per_peer_gate(crate::a2a::card_gate());
+        .max_peers(shared.max_peers)
+        .runtime_base(crate::runtime_base())
+        .per_peer_gate(crate::a2a::card_gate());
     setup_params.state_file = shared.state_file;
     setup_params.live_count = live_count.clone();
     let config = setup_mesh(kind, setup_params).await?;
     let config = match shared.owner_pid {
-        Some(owner) => config.with_owner_pid(owner)?,
+        Some(owner) => config.set_owner_pid(owner)?,
         None => config,
     };
     // Advertising (`create --advertise`): start the re-broadcast task. It

@@ -50,7 +50,7 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
     anyhow::ensure!(!transports.is_empty(), "the transport list is empty");
     let named: Vec<habilis_network::protocol::Transport> =
         transports.iter().copied().map(Into::into).collect();
-    TransportPolicy::from_transports(&named).map_err(anyhow::Error::from)
+    TransportPolicy::try_from(named.as_slice()).map_err(anyhow::Error::from)
 }
 
 #[cfg(test)]
@@ -65,9 +65,7 @@ mod tests {
     fn transport_list_is_literal() {
         assert_eq!(
             transport_policy(&[Transport::Udp, Transport::WebRtc]).unwrap(),
-            TransportPolicy::default()
-                .with_multihop(false)
-                .with_gossip(false),
+            TransportPolicy::default().multihop(false).gossip(false),
             "udp and webrtc alone enable no multihop, gossip or relay"
         );
     }

@@ -191,7 +191,7 @@ mod tests {
         // A bare mesh id shares the base58 shape but frames a different
         // payload, so it fails ticket decode on the checksum/kind check.
         let mesh = habilis_network::protocol::Mesh::try_new(
-            habilis_network::protocol::Seed::from_bytes([1u8; 32]),
+            habilis_network::protocol::Seed::new([1u8; 32]),
             habilis_network::protocol::MeshName::try_new("t").unwrap(),
             habilis_network::protocol::MeshConfig::loopback(),
         )
@@ -215,7 +215,7 @@ mod tests {
             LookupOpts::public_preset(),
             false.into(),
         )
-        .with_password(false);
+        .password(false);
         let a2a = A2aTicket {
             address: sample_addr(4),
             secret: TicketSecret::from([9u8; SECRET_LEN]),

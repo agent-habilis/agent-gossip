@@ -21,12 +21,12 @@ async fn mdns_only_topic_lane_uses_the_app_policy_without_relay() {
     let expected = derive_topic_mesh_config(
         &topic,
         MeshConfig::new(
-            LookupOpts::new(RelayChoice::Disabled).with_mdns(true),
+            LookupOpts::new(RelayChoice::Disabled).mdns(true),
             None,
             None,
             TransportPolicy::default()
-                .with_multihop(false)
-                .with_relay_transport(false),
+                .multihop(false)
+                .relay_transport(false),
         ),
     )
     .expect("a non-empty string derives");

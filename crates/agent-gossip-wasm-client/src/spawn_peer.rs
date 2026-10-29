@@ -19,9 +19,9 @@ pub(crate) async fn spawn_peer(
     // A tab writes no files and binds no socket. Both are already optional on
     // the engine, so the defaults of `SetupParams::new` are the configuration.
     let setup_params = SetupParams::new(author.clone(), SilentSink::default())
-        .with_max_peers(MAX_DIRECT_PEERS)
-        .with_max_direct(MAX_DIRECT_PEERS)
-        .with_transports(transports);
+        .max_peers(MAX_DIRECT_PEERS)
+        .max_direct(MAX_DIRECT_PEERS)
+        .transports(transports);
     let config = setup_mesh(kind, setup_params)
         .await
         .map_err(|error| err("set up gossip", &error))?;

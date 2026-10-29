@@ -481,7 +481,7 @@ impl CraftedMsg {
 
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
     pub fn chain(mut self, seq: u64, previous: Option<ContentHash>) -> Self {
-        self.message = self.message.with_chain(seq, previous);
+        self.message = self.message.chain(seq, previous);
         self
     }
 
@@ -530,17 +530,17 @@ impl CraftedMsg {
     ///
     /// Panics unless the shard group id is a valid UUID.
     pub fn shard(mut self, group: &str, index: u32, total: u32) -> Self {
-        let group = habilis_network::protocol::ShardGroup::from_uuid_str(group)
+        let group = habilis_network::protocol::ShardGroup::parse_uuid(group)
             .expect("valid shard group uuid");
-        self.message = self.message.with_shard(Some(
-            habilis_network::protocol::Shard::new(group, total).with_index(index),
+        self.message = self.message.shard(Some(
+            habilis_network::protocol::Shard::new(group, total).index(index),
         ));
         self
     }
 
     /// Stamp the cross-author DAG `parents` (Phase 3).
     pub fn parents(mut self, parents: impl IntoIterator<Item = ContentHash>) -> Self {
-        self.message = self.message.with_parents(parents);
+        self.message = self.message.parents(parents);
         self
     }
 

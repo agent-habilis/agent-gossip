@@ -68,8 +68,8 @@ mod tests {
         assert_eq!(
             mesh.config().transport,
             TransportPolicy::default()
-                .with_multihop(false)
-                .with_relay_transport(true),
+                .multihop(false)
+                .relay_transport(true),
             "a topic mesh is udp, webrtc and gossip with relay, not multihop"
         );
     }

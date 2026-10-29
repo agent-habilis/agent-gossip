@@ -145,7 +145,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
         "shard/repair" => {
             let group = params["group"]
                 .as_str()
-                .and_then(habilis_network::protocol::ShardGroup::from_uuid_str);
+                .and_then(habilis_network::protocol::ShardGroup::parse_uuid);
             let missing: Vec<u32> = params["missing"]
                 .as_array()
                 .map(|idxs| {

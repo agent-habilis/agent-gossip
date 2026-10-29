@@ -48,7 +48,7 @@ pub(super) async fn create_setup(
     } = CreateParams::new(config.name, config.nickname, mesh_config, advertise)
         // Invite-only is a CLI-driven feature; the library api does not expose
         // it yet (a documented follow-up).
-        .with_password(
+        .password(
             config
                 .password
                 .map(habilis_network::protocol::Password::new),
@@ -64,9 +64,9 @@ pub(super) async fn create_setup(
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
-        .with_max_peers(max_peers)
-        .with_runtime_base(crate::runtime_base())
-        .with_per_peer_gate(crate::a2a::card_gate());
+        .max_peers(max_peers)
+        .runtime_base(crate::runtime_base())
+        .per_peer_gate(crate::a2a::card_gate());
     setup_params.live_count = live_count.clone();
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         CreateError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
@@ -130,9 +130,9 @@ async fn resolved_setup(
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let setup_params = SetupParams::new(author, sink)
-        .with_max_peers(max_peers)
-        .with_runtime_base(crate::runtime_base())
-        .with_per_peer_gate(crate::a2a::card_gate());
+        .max_peers(max_peers)
+        .runtime_base(crate::runtime_base())
+        .per_peer_gate(crate::a2a::card_gate());
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         JoinError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
     })?;

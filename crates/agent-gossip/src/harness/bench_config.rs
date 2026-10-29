@@ -44,7 +44,7 @@ impl BenchConfig {
     pub fn custom_relay() -> Self {
         let relay_a: RelayUrl = "https://a.example".parse().expect("valid relay url");
         let relay_b: RelayUrl = "https://b.example".parse().expect("valid relay url");
-        let lookups = LookupOpts::new(RelayChoice::Custom(vec![relay_a, relay_b])).with_mdns(true);
+        let lookups = LookupOpts::new(RelayChoice::Custom(vec![relay_a, relay_b])).mdns(true);
         Self(config(lookups))
     }
 }
@@ -59,7 +59,7 @@ fn config(lookups: LookupOpts) -> MeshConfig {
 /// Derives a 32-byte secret from `seed` and `label`.
 #[must_use]
 pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
-    *Seed::from_bytes(*seed).derive(label).as_bytes()
+    *Seed::new(*seed).derive(label).as_bytes()
 }
 
 // ── mesh id (token) round-trip — config is part of the id ──────────
@@ -71,7 +71,7 @@ pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
 /// Panics if the engine rejects a bench config, which is always valid.
 #[must_use]
 pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
-    Mesh::try_new(Seed::from_bytes([7u8; 32]), name.clone(), config.0.clone())
+    Mesh::try_new(Seed::new([7u8; 32]), name.clone(), config.0.clone())
         .expect("a bench config is valid")
         .to_string()
 }
@@ -84,7 +84,7 @@ pub fn mesh_decode(token: &str) {
 /// Encode then decode the config region — exercises the lookup-flags +
 /// relay-URL byte codec in isolation.
 pub fn config_round_trip(config: &BenchConfig) {
-    let _ = MeshConfig::from_bytes(&config.0.to_bytes());
+    let _ = MeshConfig::try_from(config.0.to_bytes().as_slice());
 }
 
 // ── parsing / validation ────────────────────────────────────────────

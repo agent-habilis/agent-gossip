@@ -728,8 +728,8 @@ fn created_mesh(
 
 fn app_policy(relay_transport: bool) -> habilis_network::protocol::TransportPolicy {
     habilis_network::protocol::TransportPolicy::default()
-        .with_multihop(false)
-        .with_relay_transport(relay_transport)
+        .multihop(false)
+        .relay_transport(relay_transport)
 }
 
 #[test]

@@ -76,7 +76,7 @@ fn chat_frame_raw(author: &str, text: &str) -> Message {
             body,
         ),
     )
-    .with_id(frame_id)
+    .id(frame_id)
 }
 
 fn chat_frame(author: &str, text: &str) -> Authored {

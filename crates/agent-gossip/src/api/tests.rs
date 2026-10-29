@@ -53,8 +53,8 @@ async fn topic_rejects_empty_string() {
 #[tokio::test]
 async fn topic_peers_from_same_string_converge_and_exchange() {
     let topic = "agent-habilis";
-    let first = Mesh::from_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
-    let second = Mesh::from_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
+    let first = Mesh::for_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
+    let second = Mesh::for_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
     assert_eq!(
         first.to_string(),
         second.to_string(),
@@ -105,7 +105,7 @@ fn create_config_default_transport_is_udp_webrtc_gossip() {
     let config = CreateConfig::new(MeshName::try_new("defaults").expect("valid name"));
     assert_eq!(
         config.transport,
-        TransportPolicy::default().with_multihop(false),
+        TransportPolicy::default().multihop(false),
         "the default transport is udp and webrtc with gossip on"
     );
 }

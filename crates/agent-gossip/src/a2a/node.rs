@@ -400,7 +400,7 @@ async fn merge_own_meta_entry(
         state,
         // Daemon plumbing: the agent didn't write this, so don't surface it
         // as a "you changed shared state" event (nor race a fetch long-poll).
-        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge).with_surface(false),
+        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge).surface(false),
     )
     .await
     {
@@ -572,12 +572,12 @@ fn classify(message: &Authored) -> AppClass {
         Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
     );
     let content = AppClass::NONE
-        .with_if(AppClass::LOGGABLE, loggable)
-        .with_if(AppClass::BEAT, beat)
-        .with_if(AppClass::VALID, valid);
+        .plus_if(AppClass::LOGGABLE, loggable)
+        .plus_if(AppClass::BEAT, beat)
+        .plus_if(AppClass::VALID, valid);
     content
-        .with_if(AppClass::CHAINED, chained)
-        .with_if(AppClass::SEALED, sealed)
+        .plus_if(AppClass::CHAINED, chained)
+        .plus_if(AppClass::SEALED, sealed)
 }
 
 /// Route a content frame — chat, or one of the three task shapes — to its
@@ -1285,7 +1285,7 @@ mod classify_tests {
             &Nickname::from("author"),
             AppFrameParams::new(wire::app_tag(wire::BROADCAST), to, None, body),
         )
-        .with_id(id)
+        .id(id)
     }
 
     fn chat_frame(to: Option<Nickname>) -> Authored {
@@ -1303,7 +1303,7 @@ mod classify_tests {
             &Nickname::from("author"),
             AppFrameParams::new(wire::app_tag(wire::MSG), to, None, body),
         )
-        .with_id(id)
+        .id(id)
     }
 
     fn msg_frame(to: Option<Nickname>) -> Authored {
@@ -1703,7 +1703,7 @@ mod classify_tests {
                 body,
             ),
         )
-        .with_id(id);
+        .id(id);
         assert!(
             !classify(&view(frame)).valid(),
             "a frame that is not a valid view is classified invalid"
