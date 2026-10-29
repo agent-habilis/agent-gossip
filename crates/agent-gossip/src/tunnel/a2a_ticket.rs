@@ -72,12 +72,9 @@ impl A2aTicket {
             bail!("not an a2a ticket: wrong ticket kind");
         }
         let payload = &framed[2..];
-        let secret = TicketSecret::from_bytes(
-            payload
-                .get(..SECRET_LEN)
-                .context("ticket too short")?
-                .try_into()?,
-        );
+        let secret = TicketSecret::from(<[u8; 32]>::try_from(
+            payload.get(..SECRET_LEN).context("ticket too short")?,
+        )?);
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let password = flags & PASSWORD_BIT != 0;
         let mut position = SECRET_LEN + 1;
@@ -142,7 +139,7 @@ mod tests {
         let address = sample_addr(3);
         let ticket = A2aTicket {
             address: address.clone(),
-            secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
+            secret: TicketSecret::from([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
         };
@@ -178,7 +175,7 @@ mod tests {
     fn password_flag_round_trips() {
         let ticket = A2aTicket {
             address: sample_addr(11),
-            secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
+            secret: TicketSecret::from([9u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: true,
         };
@@ -212,8 +209,8 @@ mod tests {
         // kind byte, so it must not decode as an a2a ticket — and vice versa.
         let blob = BlobTicket::new(
             sample_addr(3),
-            TicketSecret::from_bytes([9u8; blob::SECRET_LEN]),
-            BlobDigest::from_bytes([7u8; blob::HASH_LEN]),
+            TicketSecret::from([9u8; blob::SECRET_LEN]),
+            BlobDigest::from([7u8; blob::HASH_LEN]),
             1_234_567,
             LookupOpts::public_preset(),
             false.into(),
@@ -221,7 +218,7 @@ mod tests {
         .with_password(false);
         let a2a = A2aTicket {
             address: sample_addr(4),
-            secret: TicketSecret::from_bytes([9u8; SECRET_LEN]),
+            secret: TicketSecret::from([9u8; SECRET_LEN]),
             lookups: LookupOpts::public_preset(),
             password: false,
         };
@@ -239,7 +236,7 @@ mod tests {
     fn rejects_bad_checksum() {
         let ticket = A2aTicket {
             address: sample_addr(5),
-            secret: TicketSecret::from_bytes([1u8; SECRET_LEN]),
+            secret: TicketSecret::from([1u8; SECRET_LEN]),
             lookups: LookupOpts::loopback(),
             password: false,
         };

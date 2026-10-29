@@ -440,10 +440,7 @@ mod tests {
         let Some(change) = doc.build_change(merge, &[9u8; 32])? else {
             return Ok(0);
         };
-        let sealed = encrypt_body(
-            &change_body(&change, None)?,
-            &SymmetricKey::from_bytes([3u8; 32]),
-        )?;
+        let sealed = encrypt_body(&change_body(&change, None)?, &SymmetricKey::from([3u8; 32]))?;
         let frame = Message::new_channel_event(
             &MeshId::from("test"),
             &Nickname::from("calm-otter"),

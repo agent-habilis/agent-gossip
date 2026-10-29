@@ -160,7 +160,7 @@ impl<'caller> SealedMsgParams<'caller> {
 /// document, which is the point: sealing to a peer needs no secret.
 #[must_use]
 pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicKey> {
-    let peer = Nickname::try_new(peer.to_owned()).ok()?;
+    let peer = Nickname::try_new(peer).ok()?;
     card::peer_seal_key(meta_doc, &peer)
 }
 
@@ -184,8 +184,8 @@ impl CraftedMsg {
     ///
     /// Panics unless the author is a valid nickname.
     pub fn new(mesh: &MeshId, author: &str, body: &str) -> Self {
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
-        let body = MessageBody::try_new(body.to_owned()).expect("test body is valid");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
+        let body = MessageBody::try_new(body).expect("test body is valid");
         Self {
             message: Message::new_app(
                 mesh,
@@ -216,9 +216,7 @@ impl CraftedMsg {
         };
         self.message.kind = MessageKind::App {
             tag,
-            to: to.map(|nick| {
-                Nickname::try_new(nick.to_owned()).expect("test addressee is a valid nickname")
-            }),
+            to: to.map(|nick| Nickname::try_new(nick).expect("test addressee is a valid nickname")),
             corr,
         };
         self
@@ -274,7 +272,7 @@ impl CraftedMsg {
     ///
     /// Panics unless the author is a valid nickname.
     pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
         let body =
             doc::merge_body(merge).expect("state merge envelope composes from any merge value");
         Self {
@@ -299,7 +297,7 @@ impl CraftedMsg {
         victim: &str,
         fake_card: &serde_json::Value,
     ) -> Self {
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
         let merge = serde_json::json!({ "peers": { victim: { "card": fake_card } } });
         // `build_change` composes the change without the gate (the gate lives in
         // `ingest`), exactly as a malicious peer bypassing our write path would.
@@ -339,8 +337,8 @@ impl CraftedMsg {
             frame_task_id,
             payload_task_id,
         } = params;
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to.to_owned()).expect("valid target");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
+        let to = Nickname::try_new(to).expect("valid target");
         let frame_tid =
             crate::a2a::TaskId::from_uuid_str(frame_task_id).expect("valid frame task id");
         let payload_tid =
@@ -386,8 +384,8 @@ impl CraftedMsg {
             beat,
             seal_key,
         } = params;
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to.to_owned()).expect("valid target");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
+        let to = Nickname::try_new(to).expect("valid target");
         let task_id = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
         let update = status_update_params::status_update(
             mesh,
@@ -422,8 +420,8 @@ impl CraftedMsg {
             text,
             seal_key,
         } = params;
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to.to_owned()).expect("valid target");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
+        let to = Nickname::try_new(to).expect("valid target");
         let mut frame = Message::new_app(
             mesh,
             &author,
@@ -431,7 +429,7 @@ impl CraftedMsg {
                 wire::app_tag(wire::MSG),
                 Some(to),
                 None,
-                MessageBody::try_new(String::new()).expect("empty body is valid"),
+                MessageBody::try_new("").expect("empty body is valid"),
             ),
         );
         let mut payload = status_update_params::compose_msg(mesh, text);
@@ -457,8 +455,8 @@ impl CraftedMsg {
             text: ref_id,
             seal_key,
         } = params;
-        let author = Nickname::try_new(author.to_owned()).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to.to_owned()).expect("valid target");
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
+        let to = Nickname::try_new(to).expect("valid target");
         let receipt = Receipt {
             ref_id: ref_id.to_owned(),
             state: Read,
@@ -566,7 +564,7 @@ impl CraftedMsg {
     ///
     /// Panics unless the body is a valid message body.
     pub fn tamper_body(mut self, body: &str) -> Self {
-        self.message.body = MessageBody::try_new(body.to_owned()).expect("test body is valid");
+        self.message.body = MessageBody::try_new(body).expect("test body is valid");
         self
     }
 

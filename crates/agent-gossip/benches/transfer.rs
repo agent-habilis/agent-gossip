@@ -180,7 +180,7 @@ async fn main() {
     // not inflate the throughput number. (The receiver still regenerates
     // independently to verify — only the sender is inside the timed window.)
     let bodies: Vec<MessageBody> = (0..chunk_count)
-        .map(|index| MessageBody::try_new(body_for(index)).expect("valid body"))
+        .map(|index| MessageBody::try_new(&body_for(index)).expect("valid body"))
         .collect();
 
     // Warm up the mesh: resend chunk 0 until the receiver sees it (deduped

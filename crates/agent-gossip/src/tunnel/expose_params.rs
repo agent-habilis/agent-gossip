@@ -127,7 +127,7 @@ pub(super) async fn bind(
     if !lookups.is_loopback() {
         super::wait_online::wait_online(&endpoint).await;
     }
-    let secret = TicketSecret::from_bytes(rand::random());
+    let secret = TicketSecret::from(rand::random::<[u8; 32]>());
     let auth = TicketAuth::derive(&secret, password, A2A_TICKET_LABEL);
     let ticket = A2aTicket {
         address: endpoint.addr(),

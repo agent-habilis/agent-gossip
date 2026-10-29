@@ -64,7 +64,7 @@ async fn send_sealed(
     to: &Nickname,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
-    let plain = MessageBody::try_new(serde_json::to_string(receipt)?)?;
+    let plain = MessageBody::try_new(&serde_json::to_string(receipt)?)?;
     let body = seal_directed(state, to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::RECEIPT),

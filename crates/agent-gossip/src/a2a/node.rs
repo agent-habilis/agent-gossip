@@ -1026,7 +1026,7 @@ async fn handle_a2a_req(
             serde_json::json!({ "error": { "code": error.code, "message": error.message } })
         }
     };
-    let Ok(body) = MessageBody::try_new(response.to_string()) else {
+    let Ok(body) = MessageBody::try_new(&response.to_string()) else {
         tracing::warn!("a2a rpc response body invalid");
         return;
     };

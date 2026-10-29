@@ -117,7 +117,7 @@ impl Directory {
     /// reachable, it is a constant.
     pub async fn open(name: Option<&str>, lookups: LookupSet) -> Result<Self, DirectoryError> {
         let directory_name = match name {
-            Some(value) => MeshName::try_new(value.to_owned())
+            Some(value) => MeshName::try_new(value)
                 .map_err(|error| DirectoryError::InvalidName(error.to_string()))?,
             None => MeshName::try_new(DEFAULT_DIRECTORY)
                 .expect("DEFAULT_DIRECTORY is a valid mesh name"),

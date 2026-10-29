@@ -84,7 +84,7 @@ pub(crate) fn payload_body<T: serde::Serialize>(
         what: "failed to serialize a2a payload",
         source,
     })?;
-    MessageBody::try_new(json).map_err(|error| FramePayloadError::Body(error.to_string()))
+    MessageBody::try_new(&json).map_err(|error| FramePayloadError::Body(error.to_string()))
 }
 
 /// The checks both chat tags share, on a **logical** frame (a single wire

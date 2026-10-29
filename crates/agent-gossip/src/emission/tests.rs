@@ -956,7 +956,7 @@ mod prop {
 
     fn arb_nickname() -> impl Strategy<Value = habilis_network::protocol::Nickname> {
         "[a-z]{3,8}-[a-z]{3,8}"
-            .prop_map(|raw| habilis_network::protocol::Nickname::try_new(raw).unwrap())
+            .prop_map(|raw| habilis_network::protocol::Nickname::try_new(&raw).unwrap())
     }
 
     proptest! {

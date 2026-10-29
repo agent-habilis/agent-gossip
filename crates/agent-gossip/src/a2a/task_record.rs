@@ -1142,7 +1142,7 @@ mod tests {
                 wire::app_tag(wire::STATUS),
                 Some(Nickname::from("worker-bot")),
                 None,
-                MessageBody::try_new(serde_json::to_string(&payload).unwrap()).unwrap(),
+                MessageBody::try_new(&serde_json::to_string(&payload).unwrap()).unwrap(),
             ),
         );
         beat.timestamp = beat.timestamp - Duration::from_hours(1);
@@ -1200,7 +1200,7 @@ mod tests {
                 wire::app_tag(wire::STATUS),
                 Some(Nickname::from("worker-bot")),
                 None,
-                MessageBody::try_new(serde_json::to_string(&payload).unwrap()).unwrap(),
+                MessageBody::try_new(&serde_json::to_string(&payload).unwrap()).unwrap(),
             ),
         )
     }
@@ -2334,7 +2334,7 @@ mod tests {
                 wire::app_tag(wire::ARTIFACT),
                 Some(Nickname::from("calm-otter")),
                 None,
-                MessageBody::try_new(serde_json::to_string(&payload).expect("payload serializes"))
+                MessageBody::try_new(&serde_json::to_string(&payload).expect("payload serializes"))
                     .expect("valid body"),
             ),
         );

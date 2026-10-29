@@ -1,13 +1,12 @@
 use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use habilis_network::ops::directory;
 use habilis_network::ops::directory::directory_mesh;
 use habilis_network::protocol::{LookupOpts, MeshId, MeshName};
 pub(crate) use habilis_network::runtime::DIRECTORY_ADVERTISER_COHOST;
-use habilis_network::runtime::EventLoopConfig;
 use habilis_network::runtime::tuning::advertise_interval;
+use habilis_network::runtime::{EventLoopConfig, LiveCount};
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
@@ -37,9 +36,16 @@ impl Drop for Advertiser {
     }
 }
 
+/// The count starts at one: the advertiser itself is a live peer.
+pub(crate) fn initial_live_count() -> LiveCount {
+    let live_count = LiveCount::default();
+    live_count.store(1, Ordering::Relaxed);
+    live_count
+}
+
 pub(crate) fn spawn_advertiser(
     config: &EventLoopConfig,
-    live_count: Arc<AtomicUsize>,
+    live_count: LiveCount,
     directory: MeshName,
     lookups: LookupOpts,
 ) -> Advertiser {

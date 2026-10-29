@@ -112,7 +112,7 @@ impl BenchMessage {
     #[must_use]
     pub fn sample(body: &str) -> Self {
         let name = MeshName::try_new("bench").expect("valid mesh name");
-        let mesh = MeshId::try_new(mesh_token(&name, &BenchConfig::loopback()))
+        let mesh = MeshId::try_new(&mesh_token(&name, &BenchConfig::loopback()))
             .expect("Mesh::to_string is a valid MeshId");
         let author = Nickname::try_new("bench-author").expect("valid nickname");
         let message = Message::new_app(

@@ -79,20 +79,20 @@ impl AgentGossipServer {
         // (`opts.name.unwrap_or_else(MeshName::random)`).
         let name = match args.name {
             None => MeshName::random(),
-            Some(raw) => MeshName::try_new(raw).map_err(|error| {
+            Some(raw) => MeshName::try_new(&raw).map_err(|error| {
                 McpError::invalid_params(format!("invalid gossip name: {error}"), None)
             })?,
         };
         let nickname = args
             .nickname
-            .map(Nickname::try_new)
+            .map(|raw| Nickname::try_new(&raw))
             .transpose()
             .map_err(|error| {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?;
         let directory = args
             .directory
-            .map(MeshName::try_new)
+            .map(|raw| MeshName::try_new(&raw))
             .transpose()
             .map_err(|error| {
                 McpError::invalid_params(format!("invalid directory name: {error}"), None)
@@ -136,7 +136,7 @@ impl AgentGossipServer {
         }
         let nickname = match args.nickname {
             None => None,
-            Some(raw) => Some(Nickname::try_new(raw).map_err(|error| {
+            Some(raw) => Some(Nickname::try_new(&raw).map_err(|error| {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?),
         };
@@ -169,7 +169,7 @@ impl AgentGossipServer {
         }
         let nickname = match args.nickname {
             None => None,
-            Some(raw) => Some(Nickname::try_new(raw).map_err(|error| {
+            Some(raw) => Some(Nickname::try_new(&raw).map_err(|error| {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?),
         };
@@ -259,7 +259,7 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let body = MessageBody::try_new(args.text)
+        let body = MessageBody::try_new(&args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
         let (id, message) = session.send_broadcast(body).await.map_err(to_mcp_error)?;
         ok_json(SendResult { id, message })
@@ -274,7 +274,7 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let body = MessageBody::try_new(args.text)
+        let body = MessageBody::try_new(&args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
         let to = Nickname::try_new(&args.to)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
@@ -449,7 +449,7 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let peer = Nickname::try_new(args.to)
+        let peer = Nickname::try_new(&args.to)
             .map_err(|error| McpError::invalid_params(format!("invalid peer: {error}"), None))?;
         let response = session
             .a2a_call(A2aCallParams {

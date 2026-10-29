@@ -3,7 +3,6 @@
 //! through it so they cannot drift.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
@@ -326,7 +325,7 @@ impl BroadcastBody {
 struct BroadcastFrames<'caller> {
     mesh: &'caller MeshId,
     author: &'caller Nickname,
-    signer: Arc<Identity>,
+    signer: Identity,
     chain_seq: u64,
     chain_prev: Option<ContentHash>,
 }
@@ -338,7 +337,7 @@ impl<'caller> BroadcastFrames<'caller> {
             mesh,
             author,
             // An `Arc`, not a borrow: the shard loop signs after it borrows the state mutably.
-            signer: Arc::clone(state.identity()),
+            signer: state.identity().clone(),
             chain_seq,
             chain_prev,
         }
@@ -391,10 +390,7 @@ impl<'caller> BroadcastFrames<'caller> {
     fn probe(&self, state: &EventLoopState, group: &ShardGroup) -> Verified {
         let hash_stub = ContentHash::from_bytes([0; 32]);
         build_msg(
-            self.frame(
-                MessageBody::try_new(String::new()).expect("empty body is valid"),
-                None,
-            ),
+            self.frame(MessageBody::try_new("").expect("empty body is valid"), None),
             ChainStamp {
                 seq: self.chain_seq,
                 prev: Some(hash_stub),
@@ -472,7 +468,7 @@ impl DirectedShardFrames<'_> {
     /// The body budget of a shard, sized from an empty-body frame in the
     /// largest shard's envelope.
     fn body_budget(&self, group: &ShardGroup) -> usize {
-        let empty = MessageBody::try_new(String::new()).expect("empty body is valid");
+        let empty = MessageBody::try_new("").expect("empty body is valid");
         shard_body_budget(&self.shard(empty, probe_shard(group)))
     }
 }
@@ -532,7 +528,7 @@ impl<'run> BroadcastShards<'run> {
         let mut header = None;
         for (index, chunk) in self.chunks.iter().enumerate() {
             let chunk_body =
-                MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
+                MessageBody::try_new(chunk).expect("a substring of a valid body is valid");
             let message = self
                 .frames
                 .shard(state, chunk_body, self.series.shard(index));
@@ -754,7 +750,7 @@ async fn broadcast_directed_frame(
         id: pinned_id,
         app,
     } = frame;
-    let signer = Arc::clone(state.identity());
+    let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
     // the signature covers it.
     let mut single = Message::new_frame(mesh, author, kind.clone(), payload_body.clone());
@@ -821,8 +817,7 @@ async fn broadcast_directed_frame(
     let mut frames = Vec::new();
     let mut shard_pending = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
-        let chunk_body =
-            MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
+        let chunk_body = MessageBody::try_new(chunk).expect("a substring of a valid body is valid");
         let message = shard_frames.shard(chunk_body, series.shard(index));
         let bytes = message.serialize()?;
         if series.is_cached() {
@@ -1745,7 +1740,7 @@ pub(crate) async fn send_shard_repair_requests(
             "method": "shard/repair",
             "params": { "group": ticket.group.as_str(), "missing": ticket.missing },
         });
-        let Ok(body) = MessageBody::try_new(envelope.to_string()) else {
+        let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
             continue;
         };
         let sealed = match seal_directed(state, &ticket.author, &body) {
@@ -1858,7 +1853,7 @@ pub(crate) async fn broadcast_a2a_call(
         app.note_sent_ref(message_id, &peer);
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
-    let Ok(body) = MessageBody::try_new(envelope.to_string()) else {
+    let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
         app.orphan_blob(blob_group);
         responder.send_response(&rpc_error(
             -32602,
@@ -1959,7 +1954,7 @@ pub(crate) async fn send_directed_rpc(
         kind,
         body,
     } = params;
-    let signer = Arc::clone(state.identity());
+    let signer = state.identity().clone();
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).sign(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         logging::log_out(&single);
@@ -1991,8 +1986,7 @@ pub(crate) async fn send_directed_rpc(
     let series = ShardSeries::new(group, chunks.len());
     let mut cache_frames = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
-        let chunk_body =
-            MessageBody::try_new(*chunk).expect("a substring of a valid body is valid");
+        let chunk_body = MessageBody::try_new(chunk).expect("a substring of a valid body is valid");
         let message = shard_frames.shard(chunk_body, series.shard(index));
         logging::log_out(&message);
         let bytes = message.serialize()?;

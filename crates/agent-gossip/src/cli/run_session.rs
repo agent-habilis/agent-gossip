@@ -1,5 +1,3 @@
-use std::sync::atomic::AtomicUsize;
-
 use anyhow::Result;
 use habilis_network::runtime::{
     Resolved, SetupKind, SetupParams, run as run_event_loop, setup_mesh,
@@ -79,7 +77,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // Built before setup so the config is complete when it is returned, rather
     // than patched afterwards.
     let advertising = advertise_directory.as_ref().zip(directory_lookups.as_ref());
-    let live_count = advertising.map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
+    let live_count = advertising.map(|_| api::initial_live_count());
     // The mesh mints its own endpoint and serves no extra ALPNs on its
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.

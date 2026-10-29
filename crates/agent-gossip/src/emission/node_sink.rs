@@ -36,7 +36,7 @@ impl habilis_network::embed::NodeSink for Output {
                 last_seen_secs_ago,
             } => self.peer_timeout(&nickname, last_seen_secs_ago),
             NodeEvent::PeerReturn { nickname } => self.peer_return(&nickname),
-            NodeEvent::Presence { msg, .. } => self.print_presence(&msg),
+            NodeEvent::Presence { message, .. } => self.print_presence(&message),
             NodeEvent::PingReport { peers, known } => self.ping_report(
                 peers
                     .into_iter()

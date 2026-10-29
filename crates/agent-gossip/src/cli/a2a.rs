@@ -191,7 +191,7 @@ async fn discover(directory: Option<MeshName>, lookups: LookupArgs) -> Result<()
 }
 
 async fn broadcast(mesh: MeshId, nickname: &Nickname, text: String) -> Result<()> {
-    let body = habilis_network::protocol::MessageBody::try_new(text)
+    let body = habilis_network::protocol::MessageBody::try_new(&text)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     let response = super::send::send(&IpcCommand::Broadcast { mesh, body }, nickname).await?;
     let id = finish_send(&response, "message")?;
@@ -200,7 +200,7 @@ async fn broadcast(mesh: MeshId, nickname: &Nickname, text: String) -> Result<()
 }
 
 async fn send_msg(mesh: MeshId, nickname: &Nickname, to: Nickname, text: String) -> Result<()> {
-    let body = habilis_network::protocol::MessageBody::try_new(text)
+    let body = habilis_network::protocol::MessageBody::try_new(&text)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     let response = super::send::send(&IpcCommand::Msg { mesh, to, body }, nickname).await?;
     let id = finish_send(&response, "message")?;

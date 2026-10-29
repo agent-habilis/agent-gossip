@@ -799,7 +799,7 @@ pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
     if let Some(seq) = message.seq {
         record.insert("seq".into(), seq.into());
     }
-    if let Some(prev) = &message.prev {
+    if let Some(prev) = &message.previous {
         record.insert(
             "prev".into(),
             serde_json::to_value(prev).expect("a hash serializes"),
@@ -1133,8 +1133,8 @@ mod tests {
                 body in arb_ascii_body(),
                 author in arb_nickname(),
             ) {
-                let author = Nickname::try_new(author).unwrap();
-                let body = MessageBody::try_new(body).unwrap();
+                let author = Nickname::try_new(&author).unwrap();
+                let body = MessageBody::try_new(&body).unwrap();
                 let expected_body = body.clone();
                 let identity = habilis_network::protocol::Identity::generate();
                 let (bytes, built) = habilis_network::protocol::build_msg_bytes(

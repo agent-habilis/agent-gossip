@@ -50,7 +50,7 @@ impl TicketAd {
     /// # Errors
     /// The label carries a control character or the JSON exceeds the body cap.
     pub(crate) fn to_body(&self) -> Result<MessageBody> {
-        Ok(MessageBody::try_new(serde_json::to_string(self)?)?)
+        Ok(MessageBody::try_new(&serde_json::to_string(self)?)?)
     }
 
     fn parse(body: &str) -> Option<Self> {
@@ -341,7 +341,7 @@ mod tests {
             .with_ip_addr("127.0.0.1:4242".parse().unwrap());
         A2aTicket {
             address,
-            secret: habilis_network::protocol::TicketSecret::from_bytes([secret; 32]),
+            secret: habilis_network::protocol::TicketSecret::from([secret; 32]),
             lookups: LookupOpts::loopback(),
             password,
         }

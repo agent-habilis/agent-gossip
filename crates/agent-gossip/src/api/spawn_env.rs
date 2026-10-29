@@ -1,11 +1,9 @@
-use std::sync::atomic::AtomicUsize;
-
 use habilis_network::protocol::{DirectorySelection, MeshConfig, resolve_lookups};
 use habilis_network::runtime::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, SignalHandling, setup_mesh,
 };
 
-use super::advertiser::{Advertiser, spawn_advertiser};
+use super::advertiser::{Advertiser, initial_live_count, spawn_advertiser};
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use crate::a2a::a2a_app::SurfacedIo;
@@ -61,9 +59,7 @@ pub(super) async fn create_setup(
     let sink = io.sink();
     // See `cli::run_session`: the advertiser's counter predates setup so the
     // returned config needs no patching.
-    let live_count = advertise_directory
-        .as_ref()
-        .map(|_| std::sync::Arc::new(AtomicUsize::new(1)));
+    let live_count = advertise_directory.as_ref().map(|_| initial_live_count());
     // The mesh mints its own endpoint and serves no extra ALPNs on its
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.

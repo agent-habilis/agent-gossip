@@ -247,7 +247,7 @@ impl NodeDriver for GossipDriver {
         let Ok(json) = serde_json::to_string(&payload) else {
             return false;
         };
-        let Ok(body) = MessageBody::try_new(json) else {
+        let Ok(body) = MessageBody::try_new(&json) else {
             return false;
         };
         let Ok(tag) = AppTag::try_new(wire::BROADCAST) else {

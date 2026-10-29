@@ -358,7 +358,7 @@ fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
             author,
             is_self: false,
             ..
-        } => Some((Nickname::try_new(author.clone()).ok()?, id.clone())),
+        } => Some((Nickname::try_new(author).ok()?, id.clone())),
         OutputEvent::Message { .. }
         | OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
@@ -664,7 +664,7 @@ mod tests {
     use crate::emission::OutputEvent;
 
     fn nick(name: &str) -> Nickname {
-        Nickname::try_new(name.to_owned()).expect("valid test nickname")
+        Nickname::try_new(name).expect("valid test nickname")
     }
 
     fn peer_return(name: &str) -> OutputEvent {

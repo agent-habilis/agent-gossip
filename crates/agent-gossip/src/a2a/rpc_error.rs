@@ -406,7 +406,7 @@ async fn send_message(
         ));
     }
     let text = super::status_update_params::display_text(&message);
-    let body = MessageBody::try_new(text)
+    let body = MessageBody::try_new(&text)
         .map_err(|error| RpcError::invalid_params(&format!("message text: {error}")))?;
     let (_id, frame) = send_broadcast(
         BroadcastParams {
