@@ -16,11 +16,6 @@
 //! recent ~200 ids, so across tens of thousands of messages anti-entropy
 //! cannot backfill an early drop. We therefore verify each chunk that
 //! *does* arrive and report the delivery ratio (≈100% on loopback).
-#![allow(
-    clippy::cast_precision_loss,
-    reason = "throughput report math; f64 precision is irrelevant for a human summary"
-)]
-
 use std::time::{Duration, Instant};
 
 use agent_gossip::api::{CreateConfig, JoinConfig, MeshSession};
@@ -92,6 +87,13 @@ fn verify_chunk(body: &str, expected_count: u32) -> Option<u32> {
         "chunk {index} arrived corrupted: payload mismatch"
     );
     Some(index)
+}
+
+/// Lossless `u64` to `f64` for values under 2^53, built from two `u32` halves.
+fn exact_f64(value: u64) -> f64 {
+    let high = u32::try_from(value >> 32).expect("a u64 shifted by 32 fits u32");
+    let low = u32::try_from(value & u64::from(u32::MAX)).expect("masked to 32 bits");
+    f64::from(high) * 4_294_967_296.0 + f64::from(low)
 }
 
 /// What the receiver's spawned task has seen so far. The task owns the counts
@@ -226,8 +228,10 @@ async fn main() {
         let tally = tally_rx.borrow();
         (tally.delivered, tally.delivered_bytes, tally.lagged)
     };
-    let ratio = got as f64 / f64::from(chunk_count);
-    let mb = bytes as f64 / (1024.0 * 1024.0);
+    let got =
+        f64::from(u32::try_from(got).expect("delivered count never exceeds the u32 chunk count"));
+    let ratio = got / f64::from(chunk_count);
+    let mb = exact_f64(bytes) / (1024.0 * 1024.0);
     let secs = elapsed.as_secs_f64();
 
     let _ = node_a.leave().await;
@@ -246,7 +250,7 @@ async fn main() {
     println!(
         "  send rate  : {:.1} MB/s   ({:.0} msgs/s)  [serialized]",
         mb / secs,
-        got as f64 / secs
+        got / secs
     );
     if lag > 0 {
         println!("  broadcast-lagged (dropped before verify): {lag}");
