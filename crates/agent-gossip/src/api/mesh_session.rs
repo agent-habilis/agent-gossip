@@ -336,8 +336,8 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn ping(&self) -> Result<Vec<PingPeer>, SessionError> {
-        self.core.ping().await
+    pub async fn ping(&self) -> Result<impl Iterator<Item = PingPeer>, SessionError> {
+        Ok(self.core.ping().await?.into_iter())
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,

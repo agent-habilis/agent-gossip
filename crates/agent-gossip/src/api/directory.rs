@@ -190,13 +190,13 @@ impl Directory {
     /// # Panics
     /// Panics only if the internal collector mutex was poisoned by a
     /// prior panic in the background task — not reachable in normal use.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<MeshListing> {
+    pub fn snapshot(&self) -> impl Iterator<Item = MeshListing> {
         let listings = self.listings.lock().expect("directory mutex not poisoned");
-        listings
+        let public: Vec<MeshListing> = listings
             .snapshot()
             .map(|listing| public_listing(&listing))
-            .collect()
+            .collect();
+        public.into_iter()
     }
 
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).

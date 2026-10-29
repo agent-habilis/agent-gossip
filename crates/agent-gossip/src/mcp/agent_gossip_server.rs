@@ -231,7 +231,6 @@ impl AgentGossipServer {
         }
         let mut gossips: Vec<DiscoveredMesh> = directory
             .snapshot()
-            .into_iter()
             .map(|listing| DiscoveredMesh {
                 gossip: listing.mesh,
                 name: listing.name.as_str().to_owned(),
