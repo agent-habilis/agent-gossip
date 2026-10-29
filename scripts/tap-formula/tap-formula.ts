@@ -55,10 +55,10 @@ export function pickReadyPreview(releases: Release[]): Release | undefined {
 export function rewriteFormula(formula: string, version: string, sums: Record<string, string>): string {
   let out = formula.replace(/^(\s*version )"[^"]*"/m, `$1"${version}"`);
   for (const target of TARGETS) {
-    out = out.replace(
-      new RegExp(`(${target}\\.tar\\.gz"\\s*\\n\\s*sha256 ")[0-9a-f]{64}`),
-      `$1${sums[target]}`,
-    );
+    const asset = `agent-gossip-v${version}-${target}.tar.gz`;
+    if (!out.includes(`-${target}.tar.gz"`)) throw new Error(`formula has no url for ${target}`);
+    out = out.replace(new RegExp(`agent-gossip-v[^"/]*-${target}\\.tar\\.gz`, "g"), asset);
+    out = out.replace(new RegExp(`(${target}\\.tar\\.gz"\\s*\\n\\s*sha256 ")[0-9a-f]{64}`), `$1${sums[target]}`);
   }
   return out;
 }
