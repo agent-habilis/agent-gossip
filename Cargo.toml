@@ -44,7 +44,7 @@ rust-version = "1.93"
 #
 # Bumping this is what carries an engine fix into the app; keep it in step with
 # agent-share, which pins the same rev.
-habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "086d4aa7a946075509b7405a879b545f3c7f2e82" }
+habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "aad1476734b75cec22dfc03614ce0ca8e1c3153b" }
 tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",
