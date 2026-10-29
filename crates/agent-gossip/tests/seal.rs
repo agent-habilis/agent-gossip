@@ -213,7 +213,6 @@ async fn msgs_do_not_advance_the_chain_or_fork_the_gossip() {
     for (node, who) in [(&mut bob, "bob"), (&mut carol, "carol")] {
         let forks = node
             .json_events()
-            .into_iter()
             .filter(|event| event["event"] == "fork")
             .count();
         assert_eq!(forks, 0, "{who} must not see a fork");

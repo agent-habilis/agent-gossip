@@ -220,7 +220,6 @@ async fn peer_change_wakes_for(channel: Channel) {
     // legitimately wake her with `self:false`, so filter on the flag).
     let self_wakes: Vec<_> = alice
         .changes(channel)
-        .into_iter()
         .filter(|(_, is_self)| *is_self)
         .collect();
     assert!(

@@ -380,7 +380,7 @@ async fn not_surfaced_to_third_party() {
         "gamma meshed"
     );
     assert!(
-        gamma.tasks().is_empty() && !gamma.saw_task_message(),
+        gamma.tasks().collect::<Vec<_>>().is_empty() && !gamma.saw_task_message(),
         "an uninvolved third party must never surface another pair's task"
     );
 

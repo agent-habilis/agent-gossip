@@ -263,20 +263,20 @@ impl InProcNode {
     }
 
     /// Captured changes on `channel` so far, each `(derived document, is_self)`.
-    pub fn changes(&mut self, channel: Channel) -> Vec<(serde_json::Value, bool)> {
+    pub fn changes(
+        &mut self,
+        channel: Channel,
+    ) -> impl Iterator<Item = (serde_json::Value, bool)> + '_ {
         self.pump();
-        self.drained
-            .iter()
-            .filter_map(|event| match event {
-                OutputEvent::StateChanged {
-                    channel: chan,
-                    document,
-                    is_self,
-                    ..
-                } if *chan == channel => Some((document.clone(), *is_self)),
-                _ => None,
-            })
-            .collect()
+        self.drained.iter().filter_map(move |event| match event {
+            OutputEvent::StateChanged {
+                channel: chan,
+                document,
+                is_self,
+                ..
+            } if *chan == channel => Some((document.clone(), *is_self)),
+            _ => None,
+        })
     }
 
     /// Wait until a change on `channel` **from a peer** (`is_self == false`)
@@ -505,15 +505,12 @@ impl InProcNode {
 
     /// Captured worker-pushed task frames (status/artifact; includes self
     /// echoes — filter on `is_self`/author as needed).
-    pub fn tasks(&mut self) -> Vec<(&Authored, bool)> {
+    pub fn tasks(&mut self) -> impl Iterator<Item = (&Authored, bool)> + '_ {
         self.pump();
-        self.drained
-            .iter()
-            .filter_map(|event| match event {
-                OutputEvent::Task { message, is_self } => Some((&**message, *is_self)),
-                _ => None,
-            })
-            .collect()
+        self.drained.iter().filter_map(|event| match event {
+            OutputEvent::Task { message, is_self } => Some((&**message, *is_self)),
+            _ => None,
+        })
     }
 
     /// Whether any `message`-kind task event (an RPC `message/send` leg) has
@@ -583,70 +580,59 @@ impl InProcNode {
     /// Captured events rendered to the documented `--output json`
     /// wire format and parsed — byte-identical to what the subprocess
     /// emitted.
-    pub fn json_events(&mut self) -> Vec<serde_json::Value> {
+    pub fn json_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
         self.pump();
         let lines = self.drained.iter().filter_map(agent_gossip::event_json);
-        lines
-            .filter_map(|line| serde_json::from_str(&line).ok())
-            .collect()
+        lines.filter_map(|line| serde_json::from_str(&line).ok())
     }
 
     /// Only `{"event":"message"}` lines (both `msg` and `presence`
     /// carry `event:"message"`).
-    pub fn message_events(&mut self) -> Vec<serde_json::Value> {
+    pub fn message_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
         self.json_events()
-            .into_iter()
             .filter(|value| value["event"] == "message")
-            .collect()
     }
 
     /// `{"event":"message","type":"broadcast"}` lines only — gossip-wide chat,
     /// excluding presence and msgs.
-    pub fn broadcast_events(&mut self) -> Vec<serde_json::Value> {
-        self.chat_events("broadcast")
+    pub fn broadcast_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
+        self.chat_events("broadcast").into_iter()
     }
 
     /// `{"event":"message","type":"msg"}` lines only — chat addressed to one
     /// peer.
-    pub fn msg_events(&mut self) -> Vec<serde_json::Value> {
-        self.chat_events("msg")
+    pub fn msg_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
+        self.chat_events("msg").into_iter()
     }
 
     fn chat_events(&mut self, ty: &str) -> Vec<serde_json::Value> {
         self.json_events()
-            .into_iter()
             .filter(|value| value["event"] == "message" && value["type"] == ty)
             .collect()
     }
 
     /// Inbound `msg`-kind messages captured so far (includes self
     /// echoes — filter on `is_self` if needed).
-    pub fn messages(&mut self) -> Vec<&Authored> {
+    pub fn messages(&mut self) -> impl Iterator<Item = &Authored> + '_ {
         self.pump();
-        self.drained
-            .iter()
-            .filter_map(|event| match event {
-                OutputEvent::Message { message, .. } => Some(&**message),
-                _ => None,
-            })
-            .collect()
+        self.drained.iter().filter_map(|event| match event {
+            OutputEvent::Message { message, .. } => Some(&**message),
+            _ => None,
+        })
     }
 
     /// `msg` events from *other* peers only (drops our own echoes).
     /// The subprocess [`Node`] parsed only peer lines, so ports that
     /// counted "deliveries" use this.
-    pub fn inbound(&mut self) -> Vec<&Authored> {
+    pub fn inbound(&mut self) -> impl Iterator<Item = &Authored> + '_ {
         self.pump();
-        self.drained
-            .iter()
-            .filter_map(|event| match event {
-                OutputEvent::Message {
-                    message,
-                    is_self: false,
-                } => Some(&**message),
-                _ => None,
-            })
-            .collect()
+        self.drained.iter().filter_map(|event| match event {
+            OutputEvent::Message {
+                message,
+                is_self: false,
+            } => Some(&**message),
+            _ => None,
+        })
     }
 
     /// Wait until a peer (non-self) `msg` with exactly `body` is

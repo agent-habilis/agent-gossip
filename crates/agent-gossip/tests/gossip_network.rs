@@ -227,7 +227,7 @@ async fn test_two_node_message_delivery() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "joiner never received the creator's message"
     );
-    let received = joiner.inbound();
+    let received = joiner.inbound().collect::<Vec<_>>();
     assert_eq!(received.len(), 1, "expected exactly 1 delivery");
     assert_eq!(
         chat_text(received[0]),
@@ -272,7 +272,7 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
         "passworded joiner never received the creator's message"
     );
     assert_eq!(
-        chat_text(joiner.inbound()[0]),
+        chat_text(joiner.inbound().collect::<Vec<_>>()[0]),
         "hello behind the password",
         "the password joiner receives the message"
     );
@@ -416,7 +416,7 @@ async fn test_three_node_full_delivery() {
         beta.wait_inbound(1, MSG_TIMEOUT).await && gamma.wait_inbound(1, MSG_TIMEOUT).await,
         "expected both beta and gamma to receive the broadcast"
     );
-    for message in beta.inbound().into_iter().chain(gamma.inbound()) {
+    for message in beta.inbound().chain(gamma.inbound()) {
         assert_eq!(
             chat_text(message),
             "broadcast to all three nodes",
@@ -2766,7 +2766,7 @@ async fn message_event_carries_full_pubkey() {
         "message never arrived"
     );
 
-    let events = beta.message_events();
+    let events = beta.message_events().collect::<Vec<_>>();
     let event = events
         .iter()
         .find(|event| event["body"] == "hi")

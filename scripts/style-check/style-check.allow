@@ -5,7 +5,6 @@ abbrev_name|crates/agent-gossip/src/a2a/reader_asks.rs|1|open: external: the add
 abbrev_name|crates/agent-gossip/src/bridge/expose_params.rs|1|open: external: the addr() method is a habilis-network API name
 abbrev_name|crates/agent-gossip/src/harness/test_key.rs|2|open: external: ChainStamp.prev is a habilis-network field name
 abbrev_name|crates/agent-gossip/src/output/node_sink.rs|2|open: external: NodeEvent::Presence.msg is a habilis-network field name
-pub_vec_return|crates/agent-gossip-test-fixtures/src/in_proc_node.rs|8|An owned snapshot: a borrowed iterator would hold &mut self, so the test could not use the node while it reads the list (I7)
 pub_vec_return|crates/agent-gossip-test-fixtures/src/node.rs|1|An owned list parsed from the log text, which is a temporary inside the function (I7)
 pub_vec_return|crates/agent-gossip/src/api/directory.rs|1|An owned snapshot: a borrowed iterator would hold the collector mutex guard across the caller work (I7)
 pub_vec_return|crates/agent-gossip/src/api/mesh_session.rs|1|An owned list of pings collected from the replies, returned through the async call (I7)
