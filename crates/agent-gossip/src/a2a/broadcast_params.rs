@@ -918,18 +918,15 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
         note,
         waiting,
     } = leg;
-    status_update_params::status_update(
-        mesh,
-        status_update_params::StatusUpdateParams {
-            task_id,
-            state,
-            note,
-            metadata: Some(status_update_params::status_metadata(
-                waiting,
-                status_update_params::leg_order_ms(),
-            )),
-        },
-    )
+    let metadata =
+        status_update_params::status_metadata(waiting, status_update_params::leg_order_ms());
+    let update =
+        status_update_params::StatusUpdateParams::new(task_id, state).with_metadata(metadata);
+    let update = match note {
+        Some(note) => update.with_note(note),
+        None => update,
+    };
+    status_update_params::status_update(mesh, update)
 }
 
 /// The fields of one worker status leg, grouped so [`worker_status_leg`] stays
