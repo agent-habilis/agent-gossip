@@ -3,9 +3,9 @@
 //! is rewritten, bytes round-trip, a bad token is rejected, and the 1:1
 //! invariant holds.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use futures_util::stream::FuturesUnordered;
 use habilis_network::iroh::endpoint::ConnectionError;
 use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
 use habilis_network::protocol::{LookupOpts, Password};
@@ -59,15 +59,22 @@ async fn spawn_exposer(
         .await
         .expect("bind exposer");
     let accept_endpoint = endpoint.clone();
-    let paired = Arc::new(AtomicBool::new(false));
     tokio::spawn(async move {
-        while let Some(incoming) = accept_endpoint.accept().await {
-            let origin = origin.clone();
-            let auth = auth.clone();
-            let paired = Arc::clone(&paired);
-            tokio::spawn(async move {
-                let _ = serve_connection(incoming, &origin, auth, &paired).await;
-            });
+        use futures_util::StreamExt as _;
+
+        let paired = AtomicBool::new(false);
+        let mut connections = FuturesUnordered::new();
+        loop {
+            tokio::select! {
+                accepted = accept_endpoint.accept() => {
+                    let Some(incoming) = accepted else { break };
+                    let auth = auth.clone();
+                    connections.push(async {
+                        let _ = serve_connection(incoming, &origin, auth, &paired).await;
+                    });
+                }
+                Some(()) = connections.next() => {}
+            }
         }
     });
     (endpoint, ticket)
@@ -78,11 +85,15 @@ async fn spawn_exposer(
 const LOCAL_BASE: &str = "http://127.0.0.1:7777";
 const LOCAL_AUTHORITY: &str = "127.0.0.1:7777";
 
-fn bridge_for(shared: &SharedConnection, ticket: &A2aTicket, gate: LocalGate) -> Bridge {
+fn bridge_for<'shared>(
+    shared: &'shared SharedConnection,
+    ticket: &A2aTicket,
+    gate: LocalGate,
+) -> Bridge<'shared> {
     Bridge::new(
         ticket,
         None,
-        shared.clone(),
+        shared,
         LocalSide {
             base: LOCAL_BASE.to_owned(),
             gate,
@@ -92,7 +103,7 @@ fn bridge_for(shared: &SharedConnection, ticket: &A2aTicket, gate: LocalGate) ->
 
 /// Drive one HTTP request through `forward_one` (a local listener stands in for
 /// the connect side's per-connection listener) and return the response.
-async fn drive_gated(bridge: &Bridge, request: &[u8]) -> Vec<u8> {
+async fn drive_gated(bridge: &Bridge<'_>, request: &[u8]) -> Vec<u8> {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind local");
     let address = listener.local_addr().expect("local addr");
     let request = request.to_vec();

@@ -79,6 +79,9 @@ tracing-subscriber = { version = "0.3", features = [
   "tracing-log",
 ] }
 async-trait = "0.1.89"
+# `FuturesUnordered` runs the per-connection futures of an accept loop on the loop's own
+# task, so they borrow the loop's context instead of holding an `Arc` of it.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 uuid = { version = "1", features = ["v4"] }
 # NOTE: no `iroh` entry, deliberately. This workspace names nothing from the
 # iroh family; `habilis_network::iroh` is the only door, and `habilis-network` owns which fork and

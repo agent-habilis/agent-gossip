@@ -60,6 +60,7 @@ habilis-network = { workspace = true, features = ["blob"] }
 # Optional: only compiled in under the `dhat-heap` feature (heap profiling).
 dhat = { version = "0.3", optional = true }
 tokio.workspace = true
+futures-util.workspace = true
 clap = { version = "4", features = ["derive"] }
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-gossip plug` is self-contained.

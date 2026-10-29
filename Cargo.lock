@@ -81,6 +81,7 @@ dependencies = [
  "clap",
  "dhat",
  "divan",
+ "futures-util",
  "habilis-network",
  "http-body-util",
  "hyper",

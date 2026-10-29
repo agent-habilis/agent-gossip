@@ -3,11 +3,11 @@
 //! bi-stream to the origin. Strictly 1:1 — one consumer connection is served at
 //! a time; a second is refused until the first disconnects.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use futures_util::stream::FuturesUnordered;
 use habilis_network::iroh::Endpoint;
 use habilis_network::iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use habilis_network::net;
@@ -53,6 +53,8 @@ pub(crate) struct ExposeParams<'caller> {
 /// A `--to` that is not a plain `http://` URL, `--advertise` on an unreachable
 /// (loopback) config, or endpoint bind / discovery-config failures.
 pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
+    use futures_util::StreamExt as _;
+
     let ExposeParams {
         to,
         flags,
@@ -85,17 +87,21 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
         &format!("A2A {origin} → gossip"),
         &format!("agent-gossip a2a connect {}", ticket.encode()),
     );
-    let origin = Arc::new(origin);
-    let paired = Arc::new(AtomicBool::new(false));
-    while let Some(incoming) = endpoint.accept().await {
-        let origin = Arc::clone(&origin);
-        let auth = auth.clone();
-        let paired = Arc::clone(&paired);
-        tokio::spawn(async move {
-            if let Err(error) = serve_connection(incoming, &origin, auth, &paired).await {
-                tracing::debug!(%error, "a2a bridge connection ended");
+    let paired = AtomicBool::new(false);
+    let mut connections = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            accepted = endpoint.accept() => {
+                let Some(incoming) = accepted else { break };
+                let auth = auth.clone();
+                connections.push(async {
+                    if let Err(error) = serve_connection(incoming, &origin, auth, &paired).await {
+                        tracing::debug!(%error, "a2a bridge connection ended");
+                    }
+                });
             }
-        });
+            Some(()) = connections.next() => {}
+        }
     }
     endpoint.close().await;
     Ok(())

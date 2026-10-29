@@ -2,10 +2,10 @@
 //! points at, and forward each accepted connection over one shared QUIC
 //! connection to the exposer — rewriting the Agent Card's URLs on the way back.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use futures_util::stream::FuturesUnordered;
 use habilis_network::iroh::endpoint::{Connection, RecvStream, SendStream};
 use habilis_network::iroh::{Endpoint, EndpointAddr};
 use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
@@ -59,10 +59,11 @@ pub(crate) async fn connect(
         Some(token) => println!("token: {token}"),
         None => println!("token: none (--allow-anonymous)"),
     }
+    let shared = SharedConnection::new(endpoint.clone(), ticket.address.clone());
     let bridge = Bridge::new(
         &ticket,
         password.as_ref(),
-        SharedConnection::new(endpoint.clone(), ticket.address.clone()),
+        &shared,
         LocalSide {
             base: local_base,
             gate,
@@ -75,12 +76,11 @@ pub(crate) async fn connect(
 
 /// Everything one accepted local connection needs, fixed for the life of the
 /// `a2a connect` invocation.
-#[derive(Clone)]
-pub(super) struct Bridge {
-    shared: SharedConnection,
-    auth: Arc<TicketAuth>,
-    local_base: Arc<String>,
-    gate: Arc<LocalGate>,
+pub(super) struct Bridge<'shared> {
+    shared: &'shared SharedConnection,
+    auth: TicketAuth,
+    local_base: String,
+    gate: LocalGate,
 }
 
 /// What the bridge serves on its local side: the base URL clients reach it at,
@@ -90,40 +90,40 @@ pub(super) struct LocalSide {
     pub(super) gate: LocalGate,
 }
 
-impl Bridge {
+impl<'shared> Bridge<'shared> {
     /// The only way to build a `Bridge`: the auth is derived here from the
     /// ticket the bridge connects with, so it cannot belong to another ticket.
     pub(super) fn new(
         ticket: &A2aTicket,
         password: Option<&Password>,
-        shared: SharedConnection,
+        shared: &'shared SharedConnection,
         local: LocalSide,
     ) -> Self {
         Self {
             shared,
-            auth: Arc::new(TicketAuth::derive(
-                &ticket.secret,
-                password,
-                A2A_TICKET_LABEL,
-            )),
-            local_base: Arc::new(local.base),
-            gate: Arc::new(local.gate),
+            auth: TicketAuth::derive(&ticket.secret, password, A2A_TICKET_LABEL),
+            local_base: local.base,
+            gate: local.gate,
         }
     }
 }
 
-async fn accept_loop(bridge: &Bridge, listener: &TcpListener) -> Result<()> {
+async fn accept_loop(bridge: &Bridge<'_>, listener: &TcpListener) -> Result<()> {
+    use futures_util::StreamExt as _;
+
+    let mut flows = FuturesUnordered::new();
     loop {
-        let (tcp, peer) = listener
-            .accept()
-            .await
-            .context("accepting a local A2A connection failed")?;
-        let bridge = bridge.clone();
-        tokio::spawn(async move {
-            if let Err(error) = forward_one(&bridge, tcp).await {
-                tracing::debug!(%error, %peer, "a2a bridge connection ended");
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (tcp, peer) = accepted.context("accepting a local A2A connection failed")?;
+                flows.push(async move {
+                    if let Err(error) = forward_one(bridge, tcp).await {
+                        tracing::debug!(%error, %peer, "a2a bridge connection ended");
+                    }
+                });
             }
-        });
+            Some(()) = flows.next() => {}
+        }
     }
 }
 
@@ -133,7 +133,7 @@ async fn accept_loop(bridge: &Bridge, listener: &TcpListener) -> Result<()> {
 ///
 /// Screening only the first request of a connection is enough: a client that
 /// fails it is answered and dropped, so it never reaches a second.
-pub(super) async fn forward_one(bridge: &Bridge, tcp: TcpStream) -> Result<()> {
+pub(super) async fn forward_one(bridge: &Bridge<'_>, tcp: TcpStream) -> Result<()> {
     let mut tcp = tcp;
     let opening = match screen_opening_request(&mut tcp, &bridge.gate).await {
         Ok(opening) => opening,
@@ -240,11 +240,10 @@ async fn rewrite_response<Writer>(
 /// A lazily-dialed, self-healing QUIC connection shared across every local flow
 /// of one `a2a connect` invocation, so all HTTP connections multiplex over a
 /// single QUIC connection (the 1:1 pairing the exposer enforces).
-#[derive(Clone)]
 pub(super) struct SharedConnection {
     endpoint: Endpoint,
     address: EndpointAddr,
-    connection: Arc<Mutex<Option<Connection>>>,
+    connection: Mutex<Option<Connection>>,
 }
 
 impl SharedConnection {
@@ -252,7 +251,7 @@ impl SharedConnection {
         Self {
             endpoint,
             address,
-            connection: Arc::new(Mutex::new(None)),
+            connection: Mutex::new(None),
         }
     }
 
