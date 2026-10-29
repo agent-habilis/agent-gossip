@@ -4,7 +4,8 @@ use std::time::Duration;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
 use habilis_network::ops::{
-    MergeCtx, StateMergeParams, broadcast_state_merge, invite, start_ping_round,
+    MergeCtx, MeshSender, PendingSend, StateMergeParams, broadcast_state_merge, invite,
+    start_ping_round,
 };
 use habilis_network::protocol::message::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
@@ -186,6 +187,185 @@ pub(crate) struct IpcDispatchParams<'caller> {
     pub(crate) app: &'caller mut A2aApp,
 }
 
+/// What one IPC command is served against. Built once per command so each
+/// handler takes `self` plus its own payload.
+struct IpcRequest<'caller> {
+    resp_tx: oneshot::Sender<String>,
+    mesh: &'caller MeshId,
+    author: &'caller Nickname,
+    sender: &'caller MeshSender,
+    output: &'caller output::Output,
+    state: &'caller mut EventLoopState,
+    app: &'caller mut A2aApp,
+}
+
+struct StatusRequest {
+    task_id: TaskId,
+    task_state: TaskState,
+    note: Option<String>,
+    waiting: Option<String>,
+}
+
+impl IpcRequest<'_> {
+    async fn broadcast(self, body: MessageBody) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            sender,
+            output,
+            state,
+            ..
+        } = self;
+        match send_broadcast(
+            BroadcastParams {
+                mesh,
+                author,
+                text: body,
+            },
+            state,
+            sender,
+            output,
+        )
+        .await
+        {
+            Ok((msg_id, message)) => {
+                let _ = resp_tx.send(json_ok_record(&msg_id, &message));
+                true
+            }
+            Err(error) => {
+                let _ = resp_tx.send(json_error(&error.to_string()));
+                false
+            }
+        }
+    }
+
+    async fn direct_message(self, to: Nickname, body: MessageBody) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            sender,
+            output,
+            state,
+            app,
+        } = self;
+        match send_msg(
+            MsgParams {
+                mesh,
+                author,
+                peer: &to,
+                text: body,
+                app,
+            },
+            state,
+            sender,
+            output,
+        )
+        .await
+        {
+            Ok((msg_id, message, pending)) => {
+                respond_when_sent(resp_tx, json_ok_record(&msg_id, &message), pending);
+                true
+            }
+            Err(error) => {
+                let _ = resp_tx.send(json_error(&error.to_string()));
+                false
+            }
+        }
+    }
+
+    async fn task_status(self, request: StatusRequest) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            sender,
+            output,
+            state,
+            app,
+        } = self;
+        let StatusRequest {
+            task_id,
+            task_state,
+            note,
+            waiting,
+        } = request;
+        match emit_task_status(
+            TaskStatusParams {
+                mesh,
+                author,
+                task_id: &task_id,
+                task_state,
+                note: note.as_deref(),
+                waiting: waiting.as_deref(),
+                app,
+            },
+            state,
+            sender,
+            output,
+        )
+        .await
+        {
+            Ok((message, pending)) => {
+                let ok = json_ok_record(&message.id.clone(), &message);
+                respond_when_sent(resp_tx, ok, pending);
+                true
+            }
+            Err(error) => {
+                let _ = resp_tx.send(json_error(&error.to_string()));
+                false
+            }
+        }
+    }
+
+    async fn task_artifact(self, task_id: TaskId, text: String, file: Option<FileRef>) -> bool {
+        let Self {
+            resp_tx,
+            mesh,
+            author,
+            sender,
+            output,
+            state,
+            app,
+        } = self;
+        match emit_task_artifact(
+            TaskArtifactEmitParams {
+                mesh,
+                author,
+                task_id: &task_id,
+                text: &text,
+                file,
+                app,
+            },
+            state,
+            sender,
+            output,
+        )
+        .await
+        {
+            Ok((message, pending)) => {
+                let ok = json_ok_record(&message.id.clone(), &message);
+                respond_when_sent(resp_tx, ok, pending);
+                true
+            }
+            Err(error) => {
+                let _ = resp_tx.send(json_error(&error.to_string()));
+                false
+            }
+        }
+    }
+}
+
+fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<PendingSend>) {
+    when_sent(pending, move |verdict| {
+        let _ = resp_tx.send(match verdict {
+            Ok(()) => ok,
+            Err(error) => json_error(&error.to_string()),
+        });
+    });
+}
+
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
 #[expect(
@@ -224,59 +404,31 @@ pub(crate) async fn handle_ipc_command(
     match command {
         IpcCommand::Broadcast { mesh: _, body } => {
             tracing::debug!("IPC broadcast command received");
-            match send_broadcast(
-                BroadcastParams {
-                    mesh,
-                    author,
-                    text: body,
-                },
-                state,
+            IpcRequest {
+                resp_tx,
+                mesh,
+                author,
                 sender,
                 output,
-            )
-            .await
-            {
-                Ok((msg_id, message)) => {
-                    let _ = resp_tx.send(json_ok_record(&msg_id, &message));
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
+                state,
+                app,
             }
+            .broadcast(body)
+            .await
         }
         IpcCommand::Msg { mesh: _, to, body } => {
             tracing::debug!("IPC msg command received");
-            match send_msg(
-                MsgParams {
-                    mesh,
-                    author,
-                    peer: &to,
-                    text: body,
-                    app,
-                },
-                state,
+            IpcRequest {
+                resp_tx,
+                mesh,
+                author,
                 sender,
                 output,
-            )
-            .await
-            {
-                Ok((msg_id, message, pending)) => {
-                    let ok = json_ok_record(&msg_id, &message);
-                    when_sent(pending, move |verdict| {
-                        let _ = resp_tx.send(match verdict {
-                            Ok(()) => ok,
-                            Err(error) => json_error(&error.to_string()),
-                        });
-                    });
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
+                state,
+                app,
             }
+            .direct_message(to, body)
+            .await
         }
         IpcCommand::Poll {
             mesh: _,
@@ -320,37 +472,22 @@ pub(crate) async fn handle_ipc_command(
             waiting,
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
-            match emit_task_status(
-                TaskStatusParams {
-                    mesh,
-                    author,
-                    task_id: &task_id,
-                    task_state,
-                    note: note.as_deref(),
-                    waiting: waiting.as_deref(),
-                    app,
-                },
-                state,
+            IpcRequest {
+                resp_tx,
+                mesh,
+                author,
                 sender,
                 output,
-            )
-            .await
-            {
-                Ok((message, pending)) => {
-                    let ok = json_ok_record(&message.id.clone(), &message);
-                    when_sent(pending, move |verdict| {
-                        let _ = resp_tx.send(match verdict {
-                            Ok(()) => ok,
-                            Err(error) => json_error(&error.to_string()),
-                        });
-                    });
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
+                state,
+                app,
             }
+            .task_status(StatusRequest {
+                task_id,
+                task_state,
+                note,
+                waiting,
+            })
+            .await
         }
         IpcCommand::A2aArtifact {
             mesh: _,
@@ -366,36 +503,17 @@ pub(crate) async fn handle_ipc_command(
                 name: file_name,
                 mime: file_mime,
             });
-            match emit_task_artifact(
-                TaskArtifactEmitParams {
-                    mesh,
-                    author,
-                    task_id: &task_id,
-                    text: &text,
-                    file,
-                    app,
-                },
-                state,
+            IpcRequest {
+                resp_tx,
+                mesh,
+                author,
                 sender,
                 output,
-            )
-            .await
-            {
-                Ok((message, pending)) => {
-                    let ok = json_ok_record(&message.id.clone(), &message);
-                    when_sent(pending, move |verdict| {
-                        let _ = resp_tx.send(match verdict {
-                            Ok(()) => ok,
-                            Err(error) => json_error(&error.to_string()),
-                        });
-                    });
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
+                state,
+                app,
             }
+            .task_artifact(task_id, text, file)
+            .await
         }
         IpcCommand::Peers { mesh: _ } => {
             let readers = ask_readers(
