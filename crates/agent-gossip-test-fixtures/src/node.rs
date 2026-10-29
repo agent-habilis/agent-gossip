@@ -20,6 +20,7 @@ pub struct Node {
 
 impl Node {
     /// Spawn `agent-gossip create`, wait for the minted id and the assigned nickname.
+    #[must_use]
     pub fn create() -> (Self, String) {
         Self::create_named("itest")
     }
@@ -27,6 +28,7 @@ impl Node {
     /// Spawn `agent-gossip create --name <name>`. Uses a fixed name by default
     /// since tests don't care what the mesh is called — only that creation
     /// and join round-trip.
+    #[must_use]
     pub fn create_named(name: &str) -> (Self, String) {
         Self::create_flags(name, &[])
     }
@@ -34,12 +36,18 @@ impl Node {
     /// Like [`create_named`](Self::create_named) but passes extra hidden
     /// tuning flags to the spawned daemon as `(flag, value)` pairs (e.g. a
     /// shortened heal cadence). Replaces the former env overrides.
+    #[must_use]
     pub fn create_flags(name: &str, flags: &[(&str, &str)]) -> (Self, String) {
         Self::create_args(name, &[], flags)
     }
 
     /// Like [`create_flags`](Self::create_flags) but also passes extra raw
     /// `create` CLI args (e.g. `["--lookup", "mdns,dht,relay"]`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the daemon fails to spawn, or does not print a mesh id before `CONNECT_TIMEOUT`.
+    #[must_use]
     pub fn create_args(name: &str, extra: &[&str], flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("create");
         let file = File::create(&log).expect("create the daemon log file");
@@ -83,18 +91,25 @@ impl Node {
     }
 
     /// Spawn `agent-gossip join <mesh> --nickname <nickname>`.
+    #[must_use]
     pub fn join(mesh: &str, nickname: &str) -> Self {
         Self::join_flags(mesh, nickname, &[])
     }
 
     /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
     /// spawned daemon as `(flag, value)` pairs.
+    #[must_use]
     pub fn join_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         Self::join_args(mesh, nickname, &[], flags)
     }
 
     /// Like [`join_flags`](Self::join_flags) but also passes extra raw
     /// `join` CLI args (e.g. `["--password=pw"]`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the log file cannot be created or the daemon fails to spawn.
+    #[must_use]
     pub fn join_args(mesh: &str, nickname: &str, extra: &[&str], flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(nickname);
         let file = File::create(&log).expect("create the daemon log file");
@@ -119,11 +134,13 @@ impl Node {
     }
 
     /// The whole log so far; empty when the file is missing or unreadable.
+    #[must_use]
     pub fn log_contents(&self) -> String {
         fs::read_to_string(&self.log).unwrap_or_default()
     }
 
     /// Last `count` log lines, oldest-first — for failure diagnostics.
+    #[must_use]
     pub fn log_tail(&self, count: usize) -> String {
         let content = self.log_contents();
         let lines: Vec<&str> = content.lines().collect();
@@ -133,6 +150,7 @@ impl Node {
     /// Block until this node's IPC socket exists.
     /// The socket is bound inside `event_loop` after `subscribe_and_join` completes,
     /// so its presence is the most reliable "node is ready" signal.
+    #[must_use]
     pub fn wait_ready(&self, mesh: &str) -> bool {
         let sock = socket_path(mesh, &self.nickname);
         let deadline = Instant::now() + CONNECT_TIMEOUT;
@@ -156,6 +174,7 @@ impl Node {
     }
 
     /// How many received messages match `(author, body)` exactly.
+    #[must_use]
     pub fn count_from(&self, author: &str, body: &str) -> usize {
         self.messages()
             .filter(|message| message.author == author && message.body == body)
@@ -165,6 +184,7 @@ impl Node {
     /// How many **distinct** messages from `author` have a body starting with
     /// `prefix` — the convergence metric for the anti-entropy gap-recovery
     /// tests (each sends `prefix-{i}` and waits for the full distinct set).
+    #[must_use]
     pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
         let messages: Vec<ChatMessage> = self.messages().collect();
         let matching: Vec<&ChatMessage> = messages

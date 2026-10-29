@@ -12,6 +12,11 @@ use crate::{BELL_GRACE, assert_bell_parked, test_cmd};
 /// Drain the daemon with a foreground [`cli_poll`] first: `--long` fires on any
 /// waking event past `last_served`, which only a foreground poll advances, so
 /// an undrained backlog (a join, a presence line) rings the bell at once.
+///
+/// # Panics
+///
+/// Panics if the bell fails to spawn or fires before `BELL_GRACE` passes.
+#[must_use]
 pub fn park_bell(mesh: &str, nickname: &str) -> Child {
     let mut command: Command = test_cmd();
     command

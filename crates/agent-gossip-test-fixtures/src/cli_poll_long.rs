@@ -5,6 +5,11 @@ use crate::test_cmd;
 /// `agent-gossip poll --long` (long-poll; blocks until events arrive), returning the
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn or exits with an error.
+#[must_use]
 pub fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
     let mut args = vec!["poll", "--gossip", mesh, "--nickname", nickname, "--long"];
     if let Some(id) = after {

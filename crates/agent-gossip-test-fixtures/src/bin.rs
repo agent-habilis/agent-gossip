@@ -9,6 +9,11 @@ use std::path::PathBuf;
 /// library — not even a path dev-dependency of that same package — so the
 /// compile-time form cannot live in this crate. libtest puts the test binary at
 /// `<target>/<profile>/deps/<name>-<hash>`; the app sits one level up.
+///
+/// # Panics
+///
+/// Panics if the OS cannot report the path of the running executable.
+#[must_use]
 pub fn bin() -> PathBuf {
     let mut dir = std::env::current_exe().expect("path of the running test executable");
     dir.pop();

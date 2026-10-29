@@ -4,6 +4,10 @@ use std::time::Instant;
 use crate::{MSG_TIMEOUT, POLL};
 
 /// Wait for a bell to ring within [`MSG_TIMEOUT`] and return its stdout.
+///
+/// # Panics
+///
+/// Panics if the bell does not exit before `MSG_TIMEOUT`, or if its output is unreadable.
 pub fn wait_bell_output(bell: &mut Child) -> String {
     use std::io::Read as _;
 

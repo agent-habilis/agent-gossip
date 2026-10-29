@@ -18,6 +18,11 @@ use crate::{MSG_TIMEOUT, await_peer_card_cli, cli_task_create_attempt, is_rpc_ti
 /// guards the other. Only the transport timeout is retried: a real answer,
 /// including a semantic error like `unknown peer`, means the round trip
 /// completed and is handed to the assertion below untouched.
+///
+/// # Panics
+///
+/// Panics if the call fails, or if its response carries no task id.
+#[must_use]
 pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
     await_peer_card_cli(mesh, nickname, to);
     let deadline = Instant::now() + MSG_TIMEOUT;

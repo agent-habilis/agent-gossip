@@ -10,6 +10,11 @@ use crate::test_cmd;
 /// unicast-retry tests use, and waiting on a card that will never arrive (or
 /// that the test means to race) is exactly what they must not do. Callers
 /// targeting a known peer want [`cli_task_create`].
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn.
+#[must_use]
 pub fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &str) -> Output {
     test_cmd()
         .args([

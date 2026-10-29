@@ -459,7 +459,7 @@ fn test_stdout_format_parseable() {
     assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
-    cli_message(&mesh, &creator.nickname, "format check message");
+    let _ = cli_message(&mesh, &creator.nickname, "format check message");
 
     let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
@@ -506,7 +506,7 @@ fn test_oversize_body_splits_and_reassembles() {
     // the receiver still reassembles it, so it surfaces once as the whole
     // body on each stream: the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
-    cli_message(&mesh, &creator.nickname, &body);
+    let _ = cli_message(&mesh, &creator.nickname, &body);
     let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(
         total, 2,
@@ -531,7 +531,7 @@ fn test_utf8_body_round_trip() {
     assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
     let body = "héllo 💬 日本語";
-    cli_message(&mesh, &creator.nickname, body);
+    let _ = cli_message(&mesh, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
     let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
@@ -1192,9 +1192,9 @@ fn test_poll_returns_messages() {
     std::thread::sleep(Duration::from_secs(2));
 
     // Send two messages via joiner's IPC.
-    cli_message(&mesh, &joiner.nickname, "hello from poll test");
+    let _ = cli_message(&mesh, &joiner.nickname, "hello from poll test");
     std::thread::sleep(Duration::from_millis(500));
-    cli_message(&mesh, &joiner.nickname, "second message");
+    let _ = cli_message(&mesh, &joiner.nickname, "second message");
     std::thread::sleep(Duration::from_millis(500));
 
     // Poll all events from joiner's process.
@@ -1284,10 +1284,10 @@ fn test_cli_broadcast_and_msg_wire_contract() {
     assert!(carol.wait_ready(&mesh), "carol socket never appeared");
     std::thread::sleep(Duration::from_secs(2));
 
-    common::cli_message_checked(&mesh, &creator.nickname, "to-everyone");
+    let _ = common::cli_message_checked(&mesh, &creator.nickname, "to-everyone");
     // A msg is sealed to its recipient, so its card must have replicated.
     common::await_peer_card_cli(&mesh, &creator.nickname, &bob.nickname);
-    common::cli_msg_checked(&mesh, &creator.nickname, &bob.nickname, "to-bob-only");
+    let _ = common::cli_msg_checked(&mesh, &creator.nickname, &bob.nickname, "to-bob-only");
     std::thread::sleep(Duration::from_secs(1));
 
     let events = |nickname: &str| -> Vec<serde_json::Value> {
@@ -1392,7 +1392,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
     drain_until_quiet(&mesh, &carol.nickname);
 
     let mut bell = common::park_bell(&mesh, &carol.nickname);
-    common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "to-bob-only");
+    let _ = common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "to-bob-only");
 
     // Long enough for several anti-entropy rounds on top of the bell grace.
     std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
@@ -1404,7 +1404,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
 
     // The negative only means something if the bell was live: a broadcast must
     // ring the very same parked poll, and carry only the public body.
-    cli_message(&mesh, &alice.nickname, "to-everyone");
+    let _ = cli_message(&mesh, &alice.nickname, "to-everyone");
     let rung = common::wait_bell_output(&mut bell);
     assert!(
         rung.contains("to-everyone"),
@@ -1498,7 +1498,7 @@ fn test_poll_long_resolves_on_traffic() {
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
-        cli_message(&mesh_for_send, &creator_nick, "via long-poll");
+        let _ = cli_message(&mesh_for_send, &creator_nick, "via long-poll");
     });
     let (got, resolve_elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
     sender.join().unwrap();
@@ -1534,7 +1534,7 @@ fn test_poll_long_loops_past_empty_parks() {
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(2500));
-        cli_message(&mesh_for_send, &creator_nick, "past the parks");
+        let _ = cli_message(&mesh_for_send, &creator_nick, "past the parks");
     });
     let (got, elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
     sender.join().unwrap();
@@ -2368,7 +2368,7 @@ fn test_directed_msg_never_reaches_a_bystander() {
 
     // A msg is sealed to its recipient, so its card must have replicated.
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
-    common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "leak-secret");
+    let _ = common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "leak-secret");
     assert_received(&bob, &alice.nickname, "leak-secret", MSG_TIMEOUT);
 
     // Carol never held the frame, so her digest advertises a gap over it every
@@ -3631,7 +3631,7 @@ fn directed_task_delivers_point_to_point() {
     assert!(joiner.wait_ready(&mesh), "joiner never ready");
 
     // Warmup broadcast (always gossip) meshes them + exchanges addresses.
-    cli_message(&mesh, &creator.nickname, "warmup");
+    let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
         wait_until(
             || joiner.count_from(&creator.nickname, "warmup"),

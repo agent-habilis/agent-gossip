@@ -99,7 +99,7 @@ fn polling_a_directed_msg_sends_the_author_a_read_receipt() {
 fn a_long_poll_alone_sends_no_read_receipt() {
     let (alice, bob, mesh) = pair("rl-bell");
     // Serve the join backlog first so the bell parks. No directed msg exists yet.
-    cli_poll(&mesh, &bob.nickname, None);
+    let _ = cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
     // The directed msg rings the bell. A bell is not a reader.
@@ -137,7 +137,7 @@ fn a_re_read_with_after_sends_no_second_read_receipt() {
         "the first message gets its read receipt"
     );
 
-    cli_poll(&mesh, &bob.nickname, Some("0"));
+    let _ = cli_poll(&mesh, &bob.nickname, Some("0"));
     // Barrier: a later msg, read after the re-read. Its read receipt is sent
     // after any second receipt the re-read could have caused.
     let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
@@ -184,7 +184,7 @@ fn wait_for_reader(mesh: &str, asker: &str, target: &str) -> Option<serde_json::
 #[test]
 fn peers_shows_the_bell_and_the_last_poll_of_a_reader() {
     let (alice, bob, mesh) = pair("rl-peers");
-    cli_poll(&mesh, &bob.nickname, None);
+    let _ = cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
 
     let seen = wait_for_reader(&mesh, &alice.nickname, &bob.nickname);
@@ -199,7 +199,7 @@ fn peers_shows_the_bell_and_the_last_poll_of_a_reader() {
 #[test]
 fn the_reader_query_leaves_the_bell_parked_and_the_poll_unchanged() {
     let (alice, bob, mesh) = pair("rl-quiet");
-    cli_poll(&mesh, &bob.nickname, None);
+    let _ = cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
     let before = poll_len(&mesh, &bob.nickname);
 

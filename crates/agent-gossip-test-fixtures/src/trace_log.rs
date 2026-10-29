@@ -6,6 +6,7 @@ use crate::test_log_dir;
 /// in `Node::log`). Mirrors `agent_gossip::logs::log_file_path`:
 /// `<mesh_prefix>/<nick>.tracing.log` under the per-test log dir. Use this to
 /// assert on `tracing` output (warn/info) the operator stream never carries.
+#[must_use]
 pub fn trace_log(mesh: &str, nickname: &str) -> String {
     let path = format!(
         "{}/{}/{nickname}.tracing.log",

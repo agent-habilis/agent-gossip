@@ -7,6 +7,7 @@
 /// VPN that captures the default route, or a runner image without an `IPv6`
 /// route, makes every `send_to` fail with `EHOSTUNREACH` — and an mDNS test
 /// then burns its whole budget proving only that the host has no multicast.
+#[must_use]
 pub fn mdns_multicast_available() -> bool {
     fn can_send(bind: &str, group: &str) -> bool {
         std::net::UdpSocket::bind(bind).is_ok_and(|sock| sock.send_to(&[0_u8], group).is_ok())

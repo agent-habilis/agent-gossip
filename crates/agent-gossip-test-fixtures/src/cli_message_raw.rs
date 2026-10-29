@@ -6,6 +6,11 @@ use crate::test_cmd;
 /// SendMessage --text` with no `--to` (A2A is point-to-point, so a mesh-wide
 /// message declares itself). Returns the raw `Output` with no success assertion,
 /// so a caller testing a failure path can inspect it.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn.
+#[must_use]
 pub fn cli_message_raw(mesh: &str, nickname: &str, body: &str) -> Output {
     test_cmd()
         .args([

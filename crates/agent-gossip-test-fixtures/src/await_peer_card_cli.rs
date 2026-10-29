@@ -15,6 +15,10 @@ use crate::{MSG_TIMEOUT, POLL, cli_channel_get};
 /// schedule — independently of the broadcast path a linkage probe observes. A
 /// call issued on linkage alone therefore races card propagation and fails with
 /// "its encryption key is not known yet (cards still propagating)".
+///
+/// # Panics
+///
+/// Panics if the card does not reach the meta doc before `MSG_TIMEOUT`.
 pub fn await_peer_card_cli(mesh: &str, nickname: &str, target: &str) {
     let pointer = format!("/peers/{target}/card");
     let deadline = Instant::now() + MSG_TIMEOUT;

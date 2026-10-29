@@ -5,6 +5,11 @@ use crate::{channel_subcommand, test_cmd};
 /// Spawn `agent-gossip <channel> get … `, assert success, return trimmed stdout (the
 /// raw `{ok, document}` JSON line). Drives the real CLI → IPC socket → daemon
 /// read path the in-process harness bypasses.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn or exits with an error.
+#[must_use]
 pub fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args([channel_subcommand(channel), "get"])

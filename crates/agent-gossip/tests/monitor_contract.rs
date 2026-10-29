@@ -1604,7 +1604,7 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     assert!(saw_offer >= 1, "worker never surfaced the task message");
     common::cli_task_status(&mesh, worker_nick, &tid, "working");
     common::cli_task_artifact(&mesh, worker_nick, &tid, "three");
-    common::cli_task_followup(
+    let _ = common::cli_task_followup(
         &common::FollowupParams::new(&mesh, &creator.nickname, worker_nick, &tid)
             .with_text("approved"),
     );

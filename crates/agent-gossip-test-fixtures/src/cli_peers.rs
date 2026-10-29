@@ -2,6 +2,11 @@ use crate::test_cmd;
 
 /// Spawn `agent-gossip peers …`, assert success, return trimmed stdout (the
 /// raw `{ok, peers, peer_count}` JSON line).
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn or exits with an error.
+#[must_use]
 pub fn cli_peers(mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args(["peers", "--gossip", mesh, "--nickname", nickname])

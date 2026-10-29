@@ -1,6 +1,11 @@
 use crate::cli_msg_raw;
 
 /// [`cli_msg_raw`] + assert success + trim stdout.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn or exits with an error.
+#[must_use]
 pub fn cli_msg_checked(mesh: &str, nickname: &str, to: &str, body: &str) -> String {
     let out = cli_msg_raw(mesh, nickname, to, body);
     assert!(

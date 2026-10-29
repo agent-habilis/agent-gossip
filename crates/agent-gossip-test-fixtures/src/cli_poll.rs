@@ -2,6 +2,11 @@ use crate::test_cmd;
 
 /// Spawn `agent-gossip poll …`, assert success,
 /// return trimmed stdout.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn or exits with an error.
+#[must_use]
 pub fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
     let mut args = vec!["poll", "--gossip", mesh, "--nickname", nickname];
     if let Some(id) = after {

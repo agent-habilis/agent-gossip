@@ -7,6 +7,11 @@ use crate::socket_path;
 /// `agent-gossip` client entirely (so a test can exercise a single daemon-side
 /// long-poll park, which `poll --long` deliberately hides behind its
 /// re-issue loop).
+///
+/// # Panics
+///
+/// Panics if the socket connect, write, or read fails.
+#[must_use]
 pub fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
     use std::io::{BufRead, BufReader, Write};
     let mut stream =

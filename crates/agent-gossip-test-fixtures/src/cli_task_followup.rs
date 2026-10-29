@@ -5,6 +5,11 @@ use crate::{FollowupParams, test_cmd};
 /// reads an absent `taskId` as "no task yet", so the same call without it opens a
 /// second, unrelated task on the worker. Returns the parsed JSON-RPC response,
 /// whose `result.task.id` must be the id passed in.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails or prints a response that is not JSON.
+#[must_use]
 pub fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Value {
     let &FollowupParams {
         mesh,

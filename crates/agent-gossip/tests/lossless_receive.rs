@@ -207,7 +207,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
     );
 
     // A real message wakes it, and the batch carries the meta echo along.
-    cli_message_checked(&mesh, &nick, "wake up");
+    let _ = cli_message_checked(&mesh, &nick, "wake up");
     let deadline = Instant::now() + MSG_TIMEOUT;
     while bell.try_wait().expect("try_wait").is_none() {
         assert!(Instant::now() < deadline, "bell never woke on a message");
@@ -419,7 +419,7 @@ fn bell_errors_when_the_daemon_crashes() {
 fn poll_returns_a_long_body_byte_for_byte() {
     let (_daemon, mesh, nick) = spawn_create("longbody");
     let body = long_body();
-    cli_message_checked(&mesh, &nick, &body);
+    let _ = cli_message_checked(&mesh, &nick, &body);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {

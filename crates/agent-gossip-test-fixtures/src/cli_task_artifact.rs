@@ -1,6 +1,10 @@
 use crate::test_cmd;
 
 /// Worker-emit a task artifact (the result) via the CLI. Panics on failure.
+///
+/// # Panics
+///
+/// Panics if the CLI process fails to spawn or exits with an error.
 pub fn cli_task_artifact(mesh: &str, nickname: &str, task_id: &str, text: &str) {
     let out = test_cmd()
         .args([

@@ -26,7 +26,7 @@ fn a_worker_that_stops_polling_is_reported_stalled_to_the_initiator() {
     common::cli_task_status(&mesh, &bob.nickname, &task_id, "working");
     // One foreground poll records that bob's agent was reading; with no bell
     // after it, its silence is what the initiator measures.
-    common::cli_poll(&mesh, &bob.nickname, None);
+    let _ = common::cli_poll(&mesh, &bob.nickname, None);
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut seen = String::new();
@@ -66,7 +66,7 @@ fn a_worker_that_keeps_polling_is_not_reported_stalled() {
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut seen = String::new();
     while Instant::now() < deadline {
-        common::cli_poll(&mesh, &bob.nickname, None);
+        let _ = common::cli_poll(&mesh, &bob.nickname, None);
         seen.push_str(&common::cli_poll(&mesh, &alice.nickname, None));
         std::thread::sleep(Duration::from_millis(500));
     }

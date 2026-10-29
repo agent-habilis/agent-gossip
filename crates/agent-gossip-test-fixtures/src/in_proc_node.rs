@@ -47,6 +47,10 @@ impl std::fmt::Debug for InProcNode {
 
 impl InProcNode {
     /// Create a new private mesh. `self.mesh` holds the id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mesh cannot be created.
     pub async fn create(name: &str) -> Self {
         init_test_tracing();
         Self::with_session(
@@ -57,6 +61,10 @@ impl InProcNode {
     }
 
     /// Create a new private mesh with an explicit nickname.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
     pub async fn create_with_nick(name: &str, nick: &str) -> Self {
         init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name))
@@ -69,6 +77,10 @@ impl InProcNode {
     }
 
     /// Create a new private, password-protected mesh.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mesh cannot be created.
     pub async fn create_with_password(name: &str, password: &str) -> Self {
         init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name)).with_password(password.to_owned());
@@ -81,6 +93,10 @@ impl InProcNode {
 
     /// Create a mesh under an explicit active-view cap (a small cap forces a
     /// partial mesh, so directed traffic must reach non-neighbours).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
     pub async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
         init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name))
@@ -94,6 +110,10 @@ impl InProcNode {
     }
 
     /// Join `mesh` under an explicit active-view cap.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mesh` or `nick` is invalid, or if the join fails.
     pub async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
@@ -121,6 +141,10 @@ impl InProcNode {
     }
 
     /// Join `mesh` (a mesh id) with an explicit nickname.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mesh` or `nickname` is invalid, or if the join fails.
     pub async fn join(mesh: &str, nickname: &str) -> Self {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
@@ -135,6 +159,10 @@ impl InProcNode {
 
     /// Join the public topic mesh derived from `string`, with an explicit
     /// nickname.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nickname` is invalid, or if the topic join fails.
     pub async fn topic(string: &str, nickname: &str) -> Self {
         init_test_tracing();
         let config = agent_gossip::api::TopicConfig::new(string.to_owned())
@@ -148,6 +176,14 @@ impl InProcNode {
 
     /// Join a password-protected `mesh`, surfacing the join error (so a
     /// wrong-password test can assert on it).
+    ///
+    /// # Errors
+    ///
+    /// Returns the join error, for example when the password is wrong.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mesh` or `nickname` is invalid.
     pub async fn try_join_with_password(
         mesh: &str,
         nickname: &str,
@@ -161,6 +197,10 @@ impl InProcNode {
     }
 
     /// Broadcast a plain message to everyone; returns the new message id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` is not a valid body, or if the send fails.
     pub async fn broadcast(&self, text: &str) -> MessageId {
         self.session
             .broadcast(MessageBody::try_new(text).expect("valid body"))
@@ -171,6 +211,10 @@ impl InProcNode {
     }
 
     /// Send a msg to one peer; returns the new message id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `to` or `text` is invalid, or if the send fails.
     pub async fn message(&self, to: &str, text: &str) -> MessageId {
         self.try_msg(to, text)
             .await
@@ -186,6 +230,10 @@ impl InProcNode {
     /// # Errors
     /// Propagates the send failure (loop stopped, or the recipient's seal key
     /// is not known yet).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `to` is not a valid nickname or `text` is not a valid body.
     pub async fn try_msg(&self, to: &str, text: &str) -> Result<Authored, SessionError> {
         self.session
             .message(
@@ -197,6 +245,10 @@ impl InProcNode {
 
     /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
     /// rejected (not a JSON object / loop stopped).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the merge is rejected.
     pub async fn state_merge(&self, merge: serde_json::Value) {
         self.try_state_merge(merge)
             .await
@@ -210,6 +262,10 @@ impl InProcNode {
 
     /// The current derived shared-state document (the merge fold over the
     /// state log).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read fails.
     pub async fn state_get(&self) -> serde_json::Value {
         self.session
             .state_get()
@@ -219,6 +275,10 @@ impl InProcNode {
 
     /// Apply an RFC 7386 merge to the `meta` channel. Panics on rejection —
     /// use [`Self::try_meta_merge`] to exercise rejection deliberately.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the merge is rejected.
     pub async fn meta_merge(&self, merge: serde_json::Value) {
         self.try_meta_merge(merge)
             .await
@@ -226,11 +286,19 @@ impl InProcNode {
     }
 
     /// Like [`Self::meta_merge`] but returns the raw result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the session error when the merge is rejected (not a JSON object, or the loop stopped).
     pub async fn try_meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.session.meta_merge(merge).await
     }
 
     /// The current derived `meta`-channel document.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read fails.
     pub async fn meta_get(&self) -> serde_json::Value {
         self.session
             .meta_get()
@@ -244,6 +312,10 @@ impl InProcNode {
     // single test body covers `Channel::State` and `Channel::Meta`.
 
     /// Apply a merge to `channel`. Panics on rejection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the merge is rejected, or if `channel` is neither `State` nor `Meta`.
     pub async fn merge(&self, channel: Channel, merge: serde_json::Value) {
         match channel {
             Channel::State => self.state_merge(merge).await,
@@ -253,6 +325,10 @@ impl InProcNode {
     }
 
     /// The current derived document for `channel`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read fails, or if `channel` is neither `State` nor `Meta`.
     pub async fn get(&self, channel: Channel) -> serde_json::Value {
         match channel {
             Channel::State => self.state_get().await,
@@ -347,6 +423,10 @@ impl InProcNode {
     /// `target` is in it on a lane that carries payload, the send fails as an
     /// unknown peer or is held for a relay that is lookup only — both seen as
     /// CI flakes in `tests/seal.rs`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the card or a direct lane does not appear before `MSG_TIMEOUT`.
     pub async fn await_peer_card(&self, target: &str) {
         let pointer = format!("/peers/{target}/card");
         let deadline = Instant::now() + MSG_TIMEOUT;
@@ -400,6 +480,10 @@ impl InProcNode {
     /// that merely needs the call to *land* wants [`Self::a2a_call_retrying`]:
     /// a directed request dropped by a momentarily linkless overlay is never
     /// retransmitted, so a lone attempt just burns the caller's deadline.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `target` is invalid, or if the call fails at the transport level.
     pub async fn a2a_call(
         &self,
         target: &str,
@@ -443,6 +527,10 @@ impl InProcNode {
     /// Only a transport timeout is retried. Any genuine answer — including a
     /// semantic error such as "not permitted" or "unknown peer" — means
     /// the round trip completed, and is returned untouched.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `target` is invalid, or if a call fails at the transport level.
     pub async fn a2a_call_retrying(
         &self,
         target: &str,
@@ -466,6 +554,10 @@ impl InProcNode {
     }
 
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
     pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
         let status = match note {
             Some(text) => TaskStatusParams::new(task_id.clone(), state).with_note(text.to_owned()),
@@ -478,6 +570,10 @@ impl InProcNode {
     }
 
     /// Worker-emit a `working` status that says the worker waits on its user.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
     pub async fn task_waiting(&self, task_id: &TaskId, reason: &str) {
         let status = TaskStatusParams::new(task_id.clone(), TaskState::Working)
             .with_waiting(reason.to_owned());
@@ -488,6 +584,10 @@ impl InProcNode {
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
     pub async fn task_artifact(&self, task_id: &TaskId, text: &str) {
         self.session
             .task_artifact(TaskArtifactParams::new(task_id.clone(), text.to_owned()))
@@ -498,6 +598,10 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
     /// so a test can read the minted ticket reference.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
     pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Authored {
         let artifact =
             TaskArtifactParams::new(task_id.clone(), String::new()).with_file(path.to_path_buf());

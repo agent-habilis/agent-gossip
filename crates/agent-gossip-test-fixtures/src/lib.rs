@@ -1,9 +1,3 @@
-#![expect(
-    clippy::missing_panics_doc,
-    clippy::missing_errors_doc,
-    clippy::must_use_candidate,
-    reason = "a test harness, not a public API: panicking on a broken invariant IS the assertion, so a `# Panics` section on every helper documents nothing, and no caller benefits from `#[must_use]`"
-)]
 //! Shared harness for the `agent-gossip` integration suites.
 //!
 //! This is a library crate, not a `tests/common/` module, for one reason: each
