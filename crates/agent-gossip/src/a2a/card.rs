@@ -4,6 +4,7 @@ use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
 use habilis_network::protocol::{AuthorKey, Nickname};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
 use habilis_network::x25519_dalek::PublicKey;
+use serde::Deserialize;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -208,12 +209,11 @@ pub(crate) fn publish_merges(
     let mut merges = Vec::new();
     let mut part = serde_json::Map::new();
     for key in keys {
-        let mut with_key = part.clone();
-        with_key.insert(key.clone(), fields[key].clone());
-        if fits(&merge_of(&with_key))? {
-            part = with_key;
+        part.insert(key.clone(), fields[key].clone());
+        if fits(&merge_of(&part))? {
             continue;
         }
+        part.remove(key);
         if part.is_empty() {
             anyhow::bail!("the card field '{key}' does not fit in one frame by itself");
         }
@@ -239,9 +239,7 @@ pub(crate) fn complete_card<'doc>(
     peer: &Nickname,
 ) -> Option<&'doc serde_json::Value> {
     let card = meta_doc.pointer(&format!("/peers/{peer}/card"))?;
-    serde_json::from_value::<AgentCard>(card.clone())
-        .is_ok()
-        .then_some(card)
+    AgentCard::deserialize(card).is_ok().then_some(card)
 }
 
 /// The RFC 7386 merge that tells the other members why our card is not published: a member that

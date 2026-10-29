@@ -171,10 +171,7 @@ impl Node {
             .iter()
             .filter(|message| message.author == author && message.body.starts_with(prefix))
             .collect();
-        let distinct: HashSet<String> = matching
-            .iter()
-            .map(|message| message.body.clone())
-            .collect();
+        let distinct: HashSet<&String> = matching.iter().map(|message| &message.body).collect();
         distinct.len()
     }
 

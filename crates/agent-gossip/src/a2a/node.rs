@@ -941,16 +941,7 @@ async fn handle_a2a_rpc(
         return;
     }
     if tag == wire::REQ {
-        handle_a2a_req(
-            A2aReqParams {
-                message,
-                corr: &corr.clone(),
-            },
-            state,
-            app,
-            context,
-        )
-        .await;
+        handle_a2a_req(A2aReqParams { message, corr }, state, app, context).await;
     } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.author) {
         // Only act on a response to a call WE actually issued (a matching
         // outstanding waiter). An unsolicited response is ignored — otherwise

@@ -201,7 +201,7 @@ impl CraftedMsg {
     ///
     /// Panics unless the addressee is a valid nickname.
     pub fn address_to(mut self, to: Option<&str>) -> Self {
-        let MessageKind::App { tag, corr, .. } = self.message.kind.clone() else {
+        let MessageKind::App { tag, corr, .. } = self.message.kind else {
             panic!("address_to takes an app frame");
         };
         self.message.kind = MessageKind::App {
@@ -222,7 +222,7 @@ impl CraftedMsg {
     ///
     /// Panics unless the message is an app frame.
     pub fn into_msg(mut self) -> Self {
-        let MessageKind::App { to, corr, .. } = self.message.kind.clone() else {
+        let MessageKind::App { to, corr, .. } = self.message.kind else {
             panic!("into_msg takes an app frame");
         };
         self.message.kind = MessageKind::App {
@@ -573,7 +573,7 @@ impl CraftedMsg {
         reason = "foreign non_exhaustive enum: the compiler needs a wildcard arm; only a broadcast chat message or a presence beat flips"
     )]
     pub fn flip_chat_kind(mut self) -> Self {
-        self.message.kind = match self.message.kind.clone() {
+        self.message.kind = match self.message.kind {
             MessageKind::App { tag, .. } if tag.as_str() == wire::BROADCAST => {
                 MessageKind::Presence {
                     subtype: PresenceSubtype::Alive,
