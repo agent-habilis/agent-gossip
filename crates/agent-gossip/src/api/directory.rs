@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use habilis_network::ops::directory::{self, Listing, ListingChange, Listings};
@@ -6,7 +5,7 @@ use habilis_network::protocol::{
     DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
 };
 use habilis_network::runtime::{CoHostPolicy, tuning};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
@@ -59,6 +58,17 @@ fn public_listing(listing: &Listing) -> MeshListing {
     }
 }
 
+/// The collector task owns the listings; the handle reads this published copy,
+/// so no lock is shared between them.
+fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Listings) {
+    snapshot_tx.send_replace(
+        listings
+            .snapshot()
+            .map(|listing| public_listing(&listing))
+            .collect(),
+    );
+}
+
 /// A live view of a directory. Joins the directory's mesh as an
 /// ordinary [`MeshSession`] and collects advertisements into
 /// `Listings`, aging out meshes whose publishers went silent. Drop
@@ -79,7 +89,7 @@ fn public_listing(listing: &Listing) -> MeshListing {
 #[derive(Debug)]
 pub struct Directory {
     session: Option<MeshSession>,
-    listings: Arc<Mutex<Listings>>,
+    snapshot_rx: watch::Receiver<Vec<MeshListing>>,
     events_rx: Option<mpsc::UnboundedReceiver<DirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
@@ -103,8 +113,8 @@ impl Directory {
     /// established (endpoint/gossip setup, bootstrap unreachable).
     ///
     /// # Panics
-    /// Panics only if the internal collector mutex is poisoned by a
-    /// panic in the background task — not reachable in normal use.
+    /// Panics only if `DEFAULT_DIRECTORY` is not a valid mesh name — not
+    /// reachable, it is a constant.
     pub async fn open(name: Option<&str>, lookups: LookupSet) -> Result<Self, DirectoryError> {
         let directory_name = match name {
             Some(value) => MeshName::try_new(value.to_owned())
@@ -123,10 +133,10 @@ impl Directory {
             .await
             .map_err(DirectoryError::Join)?;
         let mut inbound = session.messages();
-        let listings = Arc::new(Mutex::new(Listings::new()));
+        let mut listings = Listings::new();
+        let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-        let collector = Arc::clone(&listings);
         let task = tokio::spawn(async move {
             let ttl = tuning::directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
@@ -136,24 +146,22 @@ impl Directory {
                     received = inbound.recv() => match received {
                         Ok(message) => {
                             let now = Instant::now();
-                            let event = {
-                                let mut dir = collector.lock().expect("directory mutex not poisoned");
-                                // Ads ride broadcast chat frames, so the ad
-                                // text is the payload's text projection, not
-                                // the raw frame body (a serialized A2A object).
-                                let Some(ad_text) = status_update_params::chat_text(&message) else {
-                                    continue;
-                                };
-                                match dir.note(&ad_text, now) {
-                                    Some(ListingChange::Found(id)) => dir
-                                        .get(&id)
-                                        .map(|listing| DirectoryEvent::Found(public_listing(listing))),
-                                    Some(ListingChange::Updated(id)) => dir
-                                        .get(&id)
-                                        .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
-                                    _ => None,
-                                }
+                            // Ads ride broadcast chat frames, so the ad
+                            // text is the payload's text projection, not
+                            // the raw frame body (a serialized A2A object).
+                            let Some(ad_text) = status_update_params::chat_text(&message) else {
+                                continue;
                             };
+                            let event: Option<DirectoryEvent> = match listings.note(&ad_text, now) {
+                                Some(ListingChange::Found(id)) => listings
+                                    .get(&id)
+                                    .map(|listing| DirectoryEvent::Found(public_listing(listing))),
+                                Some(ListingChange::Updated(id)) => listings
+                                    .get(&id)
+                                    .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
+                                _ => None,
+                            };
+                            publish_snapshot(&snapshot_tx, &listings);
                             if let Some(event) = event {
                                 let _ = events_tx.send(event);
                             }
@@ -165,10 +173,8 @@ impl Directory {
                     },
                     _ = expiry.tick() => {
                         let now = Instant::now();
-                        let lost: Vec<_> = {
-                            let mut dir = collector.lock().expect("directory mutex not poisoned");
-                            dir.expire(ttl, now).collect()
-                        };
+                        let lost: Vec<_> = listings.expire(ttl, now).collect();
+                        publish_snapshot(&snapshot_tx, &listings);
                         for id in lost {
                             let _ = events_tx.send(DirectoryEvent::Lost(id));
                         }
@@ -179,24 +185,15 @@ impl Directory {
 
         Ok(Self {
             session: Some(session),
-            listings,
+            snapshot_rx,
             events_rx: Some(events_rx),
             task: Some(task),
         })
     }
 
     /// The current live listings, sorted by name then id.
-    ///
-    /// # Panics
-    /// Panics only if the internal collector mutex was poisoned by a
-    /// prior panic in the background task — not reachable in normal use.
     pub fn snapshot(&self) -> impl Iterator<Item = MeshListing> {
-        let listings = self.listings.lock().expect("directory mutex not poisoned");
-        let public: Vec<MeshListing> = listings
-            .snapshot()
-            .map(|listing| public_listing(&listing))
-            .collect();
-        public.into_iter()
+        self.snapshot_rx.borrow().clone().into_iter()
     }
 
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).

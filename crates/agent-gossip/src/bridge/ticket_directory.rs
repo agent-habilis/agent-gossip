@@ -10,7 +10,6 @@
 //! / [`TicketDirectory`]) wrap it around a directory [`MeshSession`].
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -238,10 +237,9 @@ impl TicketDirectory {
         let mesh = directory::directory_mesh(&name, resolved);
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
-        let listings = Arc::new(Mutex::new(TicketListings::new()));
+        let mut listings = TicketListings::new();
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-        let collector = Arc::clone(&listings);
         let task = tokio::spawn(async move {
             let ttl = directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
@@ -252,9 +250,8 @@ impl TicketDirectory {
                         Ok(message) => {
                             let now = Instant::now();
                             let event = {
-                                let mut dir = collector.lock().expect("ticket directory mutex");
-                                let change = dir.note(message.body.as_str(), now);
-                                let listing_of = |ticket: &str| dir.get(ticket).cloned();
+                                let change = listings.note(message.body.as_str(), now);
+                                let listing_of = |ticket: &str| listings.get(ticket).cloned();
                                 match change {
                                     Some(TicketChange::Found(ticket)) => {
                                         listing_of(&ticket).map(TicketDirectoryEvent::Found)
@@ -276,10 +273,7 @@ impl TicketDirectory {
                     },
                     _ = expiry.tick() => {
                         let now = Instant::now();
-                        let lost = {
-                            let mut dir = collector.lock().expect("ticket directory mutex");
-                            dir.expire(ttl, now)
-                        };
+                        let lost = listings.expire(ttl, now);
                         for ticket in lost {
                             let _ = events_tx.send(TicketDirectoryEvent::Lost(ticket));
                         }
