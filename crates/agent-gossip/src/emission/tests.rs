@@ -13,6 +13,37 @@ fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
 }
 
+#[test]
+fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
+    let mut message = crate::a2a::Message::text(crate::a2a::Role::User, "the brief");
+    message.parts.push(crate::a2a::Part {
+        data: Some(serde_json::json!({"k": 1})),
+        ..crate::a2a::Part::default()
+    });
+    let json = simple_event::format_task_message_json(&super::TaskMessageLeg {
+        id: "frame-id",
+        mesh: "mesh",
+        author: "alice-bot",
+        peer: "calm-otter",
+        task_id: "task-id",
+        state: None,
+        text: "the brief",
+        label: None,
+        message: Some(&message),
+        is_self: false,
+    });
+    let parsed = parse(&json);
+    assert_eq!(
+        parsed["payload"]["parts"],
+        serde_json::json!([{"data": {"k": 1}}]),
+        "only the data part stays in the payload: {json}"
+    );
+    assert_eq!(
+        parsed["payload"]["role"], "ROLE_USER",
+        "the other fields stay in the payload: {json}"
+    );
+}
+
 // ── format_msg_json: msg type ──────────────────────────────
 
 fn nick(name: &str) -> habilis_network::protocol::Nickname {

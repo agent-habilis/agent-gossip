@@ -83,7 +83,7 @@ pub(super) enum SimpleEvent<'source> {
         message: &'source str,
     },
     PingReport {
-        peers: Vec<PingPeer>,
+        peers: &'source [PingPeer],
         responded: usize,
         known: usize,
         /// Pre-formatted, markdown-safe RTT table (see [`ping_report_display`]).
@@ -571,9 +571,11 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
 /// The leg's `Message` without its text parts: the text is already in `body`
 /// and `display`, and a third copy would triple a long brief in every poll.
 fn message_without_text(message: &crate::a2a::Message) -> Option<serde_json::Value> {
-    let mut message = message.clone();
-    message.parts.retain(|part| part.text.is_none());
-    serde_json::to_value(message).ok()
+    let mut value = serde_json::to_value(message).ok()?;
+    if let Some(serde_json::Value::Array(parts)) = value.get_mut("parts") {
+        parts.retain(|part| part.get("text").is_none());
+    }
+    Some(value)
 }
 
 /// Format an RPC `message/send` task leg (the initiator's brief / answer /
@@ -920,7 +922,7 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             serde_json::to_string(&SimpleEvent::PingReport {
                 responded: peers.len(),
                 display: ping_report_display(peers, *known),
-                peers: peers.clone(),
+                peers,
                 known: *known,
             })
             .ok()

@@ -532,7 +532,7 @@ impl Output {
                         &SimpleEvent::PingReport {
                             responded: peers.len(),
                             display: ping_report_display(&peers, known),
-                            peers: peers.clone(),
+                            peers: &peers,
                             known,
                         },
                         true,
