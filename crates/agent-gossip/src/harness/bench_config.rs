@@ -8,12 +8,20 @@
 //! from the public/`pub(crate)` non-test items instead.
 #![allow(missing_docs, reason = "internal bench shim, doc-hidden")]
 #![allow(
+    clippy::missing_panics_doc,
+    reason = "bench shim: a panic is the failure signal and nothing catches it"
+)]
+#![allow(
     missing_debug_implementations,
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice, Seed};
+use habilis_network::iroh::RelayUrl;
+use habilis_network::protocol::{
+    Identity, LockedMesh, LookupOpts, Mesh, MeshConfig, RelayChoice, Seed, Verified,
+};
 
+use crate::a2a::wire::{BROADCAST, app_tag};
 use crate::{MeshId, MeshName, Message, MessageBody, Nickname, policy};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
@@ -37,26 +45,16 @@ impl BenchConfig {
     /// decode path walks the variable-length relay-URL region.
     #[must_use]
     pub fn custom_relay() -> Self {
-        let lookups = LookupOpts {
-            mdns: true,
-            dht: false,
-            relay_lookup: RelayChoice::Custom(vec![
-                "https://a.example".parse().expect("valid relay url"),
-                "https://b.example".parse().expect("valid relay url"),
-            ]),
-        };
+        let relay_a: RelayUrl = "https://a.example".parse().expect("valid relay url");
+        let relay_b: RelayUrl = "https://b.example".parse().expect("valid relay url");
+        let lookups = LookupOpts::new(RelayChoice::Custom(vec![relay_a, relay_b])).with_mdns(true);
         Self(config(lookups))
     }
 }
 
 fn config(lookups: LookupOpts) -> MeshConfig {
     let transport = policy::app_policy(lookups.relay_lookup != RelayChoice::Disabled);
-    MeshConfig {
-        lookups,
-        password: None,
-        issuer_pubkey: None,
-        transport,
-    }
+    MeshConfig::new(lookups, None, None, transport)
 }
 
 // ── crypto / identity ───────────────────────────────────────────────
@@ -76,7 +74,7 @@ pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
 }
 
 pub fn mesh_decode(token: &str) {
-    let _: Result<Mesh, _> = token.parse();
+    let _: Result<LockedMesh, _> = token.parse();
 }
 
 /// Encode then decode the config region — exercises the lookup-flags +
@@ -97,7 +95,7 @@ pub fn mesh_id_validate(value: &str) -> bool {
 // ── message serialize / deserialize ─────────────────────────────────
 
 #[derive(Debug)]
-pub struct BenchMessage(Message);
+pub struct BenchMessage(Verified);
 
 impl BenchMessage {
     #[must_use]
@@ -106,28 +104,28 @@ impl BenchMessage {
         let mesh = MeshId::try_new(mesh_token(&name, &BenchConfig::loopback()))
             .expect("Mesh::to_string is a valid MeshId");
         let author = Nickname::try_new("bench-author").expect("valid nickname");
-        Self(Message::new_app(
+        let message = Message::new_app(
             &mesh,
             &author,
             habilis_network::protocol::AppFrameParams::new(
-                crate::a2a::wire::app_tag(crate::a2a::wire::BROADCAST),
+                app_tag(BROADCAST),
                 None,
                 None,
                 MessageBody::try_new(body).expect("valid body"),
             ),
-        ))
+        );
+        Self(message.sign(&Identity::generate()))
     }
 
     #[must_use]
     pub fn serialize(&self) -> bytes::Bytes {
-        bytes::Bytes::from(
-            self.0
-                .serialize()
-                .expect("message under size cap serializes"),
-        )
+        self.0
+            .serialize()
+            .expect("message under size cap serializes")
+            .into_bytes()
     }
 }
 
 pub fn message_deserialize(bytes: &[u8]) {
-    let _: Message = serde_json::from_slice(bytes).expect("round-trips its own serialize");
+    let _ = Message::parse(bytes).expect("round-trips its own serialize");
 }
