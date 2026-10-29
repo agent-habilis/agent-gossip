@@ -271,7 +271,7 @@ async fn test_ready_event_shape() {
             .await,
         "no ready event surfaced"
     );
-    let events = creator.json_events().collect::<Vec<_>>();
+    let events: Vec<_> = creator.json_events().collect();
     let ready = events
         .iter()
         .find(|value| value["event"] == "ready")
@@ -339,8 +339,8 @@ async fn test_cross_peer_message_delivery() {
         "joiner_b never received joiner_a's message"
     );
 
-    let creator_msgs = creator.broadcast_events().collect::<Vec<_>>();
-    let joiner_b_msgs = joiner_b.broadcast_events().collect::<Vec<_>>();
+    let creator_msgs: Vec<_> = creator.broadcast_events().collect();
+    let joiner_b_msgs: Vec<_> = joiner_b.broadcast_events().collect();
     let mut all_msgs = creator_msgs.iter().chain(joiner_b_msgs.iter());
     let message: &serde_json::Value = all_msgs
         .find(|value| value["body"] == "hello from A")
@@ -376,7 +376,7 @@ async fn test_bidirectional_multi_peer() {
         "creator expected >=2 messages"
     );
 
-    let events = creator.broadcast_events().collect::<Vec<_>>();
+    let events: Vec<_> = creator.broadcast_events().collect();
     let bodies_iter = events
         .iter()
         .filter_map(|value| value["body"].as_str().map(str::to_owned));
@@ -410,14 +410,14 @@ async fn test_self_echo_suppression() {
         "joiner did not see its own IPC echo"
     );
 
-    let creator_msgs = creator.broadcast_events().collect::<Vec<_>>();
+    let creator_msgs: Vec<_> = creator.broadcast_events().collect();
     let message = creator_msgs
         .iter()
         .find(|entry| entry["body"] == "echo test")
         .expect("creator did not receive message");
     assert_eq!(message["self"], false, "the message is not from self");
 
-    let joiner_msgs = joiner.broadcast_events().collect::<Vec<_>>();
+    let joiner_msgs: Vec<_> = joiner.broadcast_events().collect();
     assert!(
         joiner_msgs
             .iter()
@@ -572,7 +572,7 @@ async fn test_message_event_has_all_required_fields() {
         "message never arrived"
     );
 
-    let msgs = creator.broadcast_events().collect::<Vec<_>>();
+    let msgs: Vec<_> = creator.broadcast_events().collect();
     for message in &msgs {
         assert!(
             message["event"].is_string(),

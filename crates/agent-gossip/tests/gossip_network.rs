@@ -227,7 +227,7 @@ async fn test_two_node_message_delivery() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "joiner never received the creator's message"
     );
-    let received = joiner.inbound().collect::<Vec<_>>();
+    let received: Vec<_> = joiner.inbound().collect();
     assert_eq!(received.len(), 1, "expected exactly 1 delivery");
     assert_eq!(
         chat_text(received[0]),
@@ -271,8 +271,9 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "passworded joiner never received the creator's message"
     );
+    let inbound: Vec<_> = joiner.inbound().collect();
     assert_eq!(
-        chat_text(joiner.inbound().collect::<Vec<_>>()[0]),
+        chat_text(inbound[0]),
         "hello behind the password",
         "the password joiner receives the message"
     );
@@ -2766,7 +2767,7 @@ async fn message_event_carries_full_pubkey() {
         "message never arrived"
     );
 
-    let events = beta.message_events().collect::<Vec<_>>();
+    let events: Vec<_> = beta.message_events().collect();
     let event = events
         .iter()
         .find(|event| event["body"] == "hi")
