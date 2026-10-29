@@ -223,6 +223,33 @@ pub struct StatusUpdateParams<'caller> {
     pub metadata: Option<serde_json::Value>,
 }
 
+impl<'caller> StatusUpdateParams<'caller> {
+    /// An update that moves `task_id` to `state`, with no note and no metadata.
+    #[must_use]
+    pub fn new(task_id: &'caller TaskId, state: TaskState) -> Self {
+        Self {
+            task_id,
+            state,
+            note: None,
+            metadata: None,
+        }
+    }
+
+    /// Send `note` as the status message.
+    #[must_use]
+    pub fn with_note(mut self, note: &'caller str) -> Self {
+        self.note = Some(note);
+        self
+    }
+
+    /// Put `metadata` on the update.
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+}
+
 /// Compose a task status update. `note` becomes `status.message` (an
 /// agent-role Message — a worker's acceptance note, a question, a result
 /// summary). v1.0 dropped `TaskStatusUpdateEvent.final`; a terminal `state` is
@@ -556,15 +583,7 @@ pub(crate) fn test_status_frame(
     state: TaskState,
     to: Option<habilis_network::protocol::Nickname>,
 ) -> Frame {
-    let status = status_update(
-        mesh,
-        StatusUpdateParams {
-            task_id: &TaskId::random(),
-            state,
-            note: None,
-            metadata: None,
-        },
-    );
+    let status = status_update(mesh, StatusUpdateParams::new(&TaskId::random(), state));
     Frame::new_app(
         mesh,
         &habilis_network::protocol::Nickname::from("author"),
@@ -748,12 +767,8 @@ mod tests {
         let update = |metadata| {
             status_update(
                 &mesh(),
-                StatusUpdateParams {
-                    task_id: &task_id,
-                    state: crate::a2a::TaskState::Working,
-                    note: None,
-                    metadata: Some(metadata),
-                },
+                StatusUpdateParams::new(&task_id, crate::a2a::TaskState::Working)
+                    .with_metadata(metadata),
             )
         };
         let leg = update(status_metadata(Some("asks its user"), 7));

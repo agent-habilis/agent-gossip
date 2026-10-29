@@ -337,12 +337,10 @@ impl CraftedMsg {
             crate::a2a::TaskId::from_uuid_str(payload_task_id).expect("valid payload task id");
         let update = status_update_params::status_update(
             mesh,
-            status_update_params::StatusUpdateParams {
-                task_id: &payload_tid,
-                state: crate::a2a::TaskState::Working,
-                note: None,
-                metadata: None,
-            },
+            status_update_params::StatusUpdateParams::new(
+                &payload_tid,
+                crate::a2a::TaskState::Working,
+            ),
         );
         let body = status_update_params::payload_body(&update).expect("crafted payload serializes");
         Self {

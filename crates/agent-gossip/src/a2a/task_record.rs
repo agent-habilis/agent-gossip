@@ -745,12 +745,8 @@ pub(crate) async fn tick_task_sweep(
     for (task_id, peer, reason) in cancels {
         let update = status_update_params::status_update(
             context.mesh,
-            status_update_params::StatusUpdateParams {
-                task_id,
-                state: TaskState::Canceled,
-                note: None,
-                metadata: Some(serde_json::json!({ META_REASON: reason })),
-            },
+            status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
+                .with_metadata(serde_json::json!({ META_REASON: reason })),
         );
         broadcast_status(
             state,
@@ -902,14 +898,9 @@ pub(crate) async fn tick_task_keepalive(
     for (task_id, peer, task_state, fraction) in due {
         let update = status_update_params::status_update(
             context.mesh,
-            status_update_params::StatusUpdateParams {
-                task_id: &task_id,
-                state: task_state,
-                note: None,
-                metadata: Some(status_update_params::beat_metadata_with_reader(
-                    fraction, reader,
-                )),
-            },
+            status_update_params::StatusUpdateParams::new(&task_id, task_state).with_metadata(
+                status_update_params::beat_metadata_with_reader(fraction, reader),
+            ),
         );
         let sent = broadcast_status(
             state,
@@ -1141,12 +1132,8 @@ mod tests {
 
         let payload = status_update_params::status_update(
             &mesh,
-            status_update_params::StatusUpdateParams {
-                task_id: &tid(),
-                state: TaskState::Working,
-                note: None,
-                metadata: Some(status_update_params::beat_metadata(None)),
-            },
+            status_update_params::StatusUpdateParams::new(&tid(), TaskState::Working)
+                .with_metadata(status_update_params::beat_metadata(None)),
         );
         let mut beat = Message::new_app(
             &mesh,
@@ -2404,12 +2391,7 @@ mod tests {
             } else {
                 let payload = status_update_params::status_update(
                     &mesh,
-                    status_update_params::StatusUpdateParams {
-                        task_id: &task_id,
-                        state,
-                        note: None,
-                        metadata: None,
-                    },
+                    status_update_params::StatusUpdateParams::new(&task_id, state),
                 );
                 serde_json::to_string(&payload).expect("payload serializes")
             };
