@@ -2,19 +2,29 @@ name: release
 
 on:
   push:
+    # The `!v*-*` filter keeps a hand-pushed preview tag from bumping stable.
     tags:
       - "v*"
+      - "!v*-*"
   workflow_call:
     inputs:
       tag:
         required: true
         type: string
+      prerelease:
+        type: boolean
+        default: false
+      notes_start_tag:
+        type: string
+        default: ""
 
 permissions:
   contents: write
 
 env:
   TAG: ${{ inputs.tag || github.ref_name }}
+  PRERELEASE: ${{ inputs.prerelease || false }}
+  NOTES_START_TAG: ${{ inputs.notes_start_tag }}
 
 jobs:
   verify-version:
@@ -37,7 +47,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create the GitHub Release (idempotent)
-        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease --latest=false --notes-start-tag "$NOTES_START_TAG")
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag "${flags[@]}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -116,6 +131,8 @@ jobs:
 
   update-formula:
     needs: upload
+    # A preview has its own formula, bumped by preview.yml.
+    if: ${{ !inputs.prerelease }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

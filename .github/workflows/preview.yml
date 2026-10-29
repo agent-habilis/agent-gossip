@@ -1,0 +1,150 @@
+name: preview
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute the version and tag only: push nothing, build nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+# Never cancel a tag run. A cancelled run can leave a tag with no assets.
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      tag: ${{ steps.plan.outputs.tag }}
+      stable: ${{ steps.plan.outputs.stable }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - id: plan
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # auto-release.yml owns every commit that carries a change file,
+          # and the release bump commit is not a preview.
+          author=$(git log -1 --format=%an)
+          subject=$(git log -1 --format=%s)
+          if compgen -G '.changeset/*.md' > /dev/null || { [ "$author" = "github-actions[bot]" ] && [[ "$subject" == "chore: release "* ]]; }; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          stable=$(git tag --list 'v*' --exclude 'v*-*' --merged HEAD --sort=-v:refname | head -n 1)
+          cargo_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/agent-gossip/Cargo.toml | head -n 1)
+          tag=$(bun scripts/preview-version/preview-version.ts "$cargo_version" "$stable")
+          {
+            echo "skip=false"
+            echo "tag=$tag"
+            echo "stable=$stable"
+          } >> "$GITHUB_OUTPUT"
+          echo "Preview tag: $tag (stable base $stable, dry run $DRY_RUN)"
+
+  # The throwaway commit exists only to carry the preview version. It is
+  # tagged and never pushed to a branch, so `main` keeps its own version.
+  # The tag comes from GITHUB_TOKEN on purpose: it does not fire
+  # `release.yml`'s `push: tags`, so the `build` job below is the only build.
+  tag:
+    needs: plan
+    if: needs.plan.outputs.skip == 'false' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: oven-sh/setup-bun@v2
+      - name: Create the tag on a throwaway commit (reuse it if it exists)
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+            echo "Tag $TAG exists, reusing it"
+            exit 0
+          fi
+          # verify-version in release.yml compares the whole tag with Cargo.toml.
+          perl -0pi -e "s/^version = \"[^\"]*\"/version = \"${TAG#v}\"/m" crates/agent-gossip/Cargo.toml
+          cargo update --workspace --offline
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "chore: preview $TAG" -- crates/agent-gossip/Cargo.toml Cargo.lock
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
+
+  build:
+    needs: [plan, tag]
+    if: needs.plan.outputs.skip == 'false' && inputs.dry_run != true
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      prerelease: true
+      notes_start_tag: ${{ needs.plan.outputs.stable }}
+    secrets: inherit
+
+  # One job at a time: each run reads the whole release list and writes the
+  # same formula. The App token is scoped to the tap, as in release.yml.
+  formula:
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: tap-preview
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: homebrew-tap
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: agent-habilis/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+      - uses: oven-sh/setup-bun@v2
+      - name: Point the preview formula at the highest ready preview
+        working-directory: tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/preview/sums"
+          gh api --paginate "repos/$REPO/releases" --jq '.[] | {tag: .tag_name, assets: [.assets[].name]}' | jq -s . > "$RUNNER_TEMP/preview/releases.json"
+          tag=$(bun "$GITHUB_WORKSPACE/scripts/tap-formula/tap-formula.ts" pick "$RUNNER_TEMP/preview/releases.json")
+          if [ -z "$tag" ]; then
+            echo "No ready preview yet"
+            exit 0
+          fi
+          gh release download "$tag" --repo "$REPO" --pattern '*.sha256' --dir "$RUNNER_TEMP/preview/sums" --clobber
+          bun "$GITHUB_WORKSPACE/scripts/tap-formula/tap-formula.ts" write Formula/agent-gossip-preview.rb "$tag" "$RUNNER_TEMP/preview/sums"
+          echo "Ready preview: $tag"
+      - name: Push the formula to the org tap
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/agent-gossip-preview.rb
+          git diff --cached --quiet && exit 0
+          git commit -q -m "agent-gossip-preview: update to the highest ready preview"
+          for _ in 1 2 3 4 5; do
+            if git push; then exit 0; fi
+            git pull --rebase
+          done
+          exit 1
