@@ -6,15 +6,6 @@
 //! not `cfg(test)`, so `#[cfg(test)]` helpers (`Nickname::from`,
 //! `MeshConfig::loopback()`) are unavailable — we build the equivalents
 //! from the public/`pub(crate)` non-test items instead.
-#![allow(missing_docs, reason = "internal bench shim, doc-hidden")]
-#![allow(
-    clippy::missing_panics_doc,
-    reason = "bench shim: a panic is the failure signal and nothing catches it"
-)]
-#![allow(
-    missing_debug_implementations,
-    reason = "opaque bench-only newtypes; never surfaced or formatted"
-)]
 
 use habilis_network::iroh::RelayUrl;
 use habilis_network::protocol::{
@@ -31,11 +22,13 @@ use crate::{MeshId, MeshName, Message, MessageBody, Nickname, policy};
 pub struct BenchConfig(MeshConfig);
 
 impl BenchConfig {
+    /// A config with every lookup off, so no bench touches the network.
     #[must_use]
     pub fn loopback() -> Self {
         Self(config(LookupOpts::loopback()))
     }
 
+    /// A config with every lookup on.
     #[must_use]
     pub fn public() -> Self {
         Self(config(LookupOpts::public_preset()))
@@ -43,6 +36,10 @@ impl BenchConfig {
 
     /// Public preset with a 2-rung custom relay ladder, so the encode/
     /// decode path walks the variable-length relay-URL region.
+    ///
+    /// # Panics
+    ///
+    /// Panics if one of the two fixed relay URLs fails to parse.
     #[must_use]
     pub fn custom_relay() -> Self {
         let relay_a: RelayUrl = "https://a.example".parse().expect("valid relay url");
@@ -59,6 +56,7 @@ fn config(lookups: LookupOpts) -> MeshConfig {
 
 // ── crypto / identity ───────────────────────────────────────────────
 
+/// Derives a 32-byte secret from `seed` and `label`.
 #[must_use]
 pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
     *Seed::from_bytes(*seed).derive(label).as_bytes()
@@ -66,6 +64,11 @@ pub fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
 
 // ── mesh id (token) round-trip — config is part of the id ──────────
 
+/// The mesh id string for `name` under `config`.
+///
+/// # Panics
+///
+/// Panics if the engine rejects a bench config, which is always valid.
 #[must_use]
 pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
     Mesh::try_new(Seed::from_bytes([7u8; 32]), name.clone(), config.0.clone())
@@ -73,6 +76,7 @@ pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
         .to_string()
 }
 
+/// Parses `token` as a locked mesh and drops the result.
 pub fn mesh_decode(token: &str) {
     let _: Result<LockedMesh, _> = token.parse();
 }
@@ -87,6 +91,7 @@ pub fn config_round_trip(config: &BenchConfig) {
 // `MeshName::new` / `Nickname::new` / `MessageBody::new` are public and
 // benched directly; only `MeshId::new` is `pub(crate)`.
 
+/// Whether `value` is a valid mesh id.
 #[must_use]
 pub fn mesh_id_validate(value: &str) -> bool {
     MeshId::try_new(value).is_ok()
@@ -94,10 +99,16 @@ pub fn mesh_id_validate(value: &str) -> bool {
 
 // ── message serialize / deserialize ─────────────────────────────────
 
+/// A signed message with a fixed author and mesh, ready to serialize.
 #[derive(Debug)]
 pub struct BenchMessage(Verified);
 
 impl BenchMessage {
+    /// A signed broadcast message that carries `body`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `body` is not a valid message body.
     #[must_use]
     pub fn sample(body: &str) -> Self {
         let name = MeshName::try_new("bench").expect("valid mesh name");
@@ -117,6 +128,11 @@ impl BenchMessage {
         Self(message.sign(&Identity::generate()))
     }
 
+    /// The wire bytes of this message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the message is over the size cap.
     #[must_use]
     pub fn serialize(&self) -> bytes::Bytes {
         self.0
@@ -126,6 +142,11 @@ impl BenchMessage {
     }
 }
 
+/// Parses `bytes` as a message.
+///
+/// # Panics
+///
+/// Panics if `bytes` is not a valid message.
 pub fn message_deserialize(bytes: &[u8]) {
     let _ = Message::parse(bytes).expect("round-trips its own serialize");
 }
