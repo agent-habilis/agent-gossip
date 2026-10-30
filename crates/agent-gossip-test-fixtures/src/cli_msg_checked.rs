@@ -1,6 +1,6 @@
 use crate::cli_msg_raw;
 
-/// [`cli_msg_raw`] + assert success + trim stdout.
+/// [`cli_msg_raw`](fn@cli_msg_raw) + assert success + trim stdout.
 ///
 /// # Panics
 ///

@@ -39,7 +39,7 @@ pub enum Error {
         /// The file the chain revisits.
         path: PathBuf,
     },
-    /// An include chain nests deeper than [`MAX_DEPTH`].
+    /// An include chain nests deeper than `MAX_DEPTH`.
     DepthExceeded {
         /// The file at which the depth limit is hit.
         path: PathBuf,

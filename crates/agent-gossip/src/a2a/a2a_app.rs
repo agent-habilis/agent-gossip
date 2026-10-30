@@ -96,7 +96,7 @@ impl SurfacedIo {
     }
 
     /// The engine sink for this tapped `Output`: a clone shared with the app's
-    /// renderer, wrapped as a [`NodeSink`] so the engine emits `NodeEvent`s
+    /// renderer, wrapped as a [`NodeSink`](habilis_network::embed::NodeSink) so the engine emits `NodeEvent`s
     /// through the *same* tap the app's own `Output` writes to. Both feed the
     /// surfaced-events ring in surfacing order.
     pub(crate) fn sink(&self) -> impl habilis_network::embed::NodeSink + 'static {
@@ -348,7 +348,7 @@ impl A2aApp {
     }
 
     /// Register an outstanding gossip A2A call. Returns the responder back
-    /// (unregistered) when the registry is at [`POLL_WAITERS_CAP`], so the
+    /// (unregistered) when the registry is at `POLL_WAITERS_CAP`, so the
     /// caller can fail it fast instead of parking silently.
     #[must_use]
     pub(crate) fn register_a2a_waiter(&mut self, waiter: A2aWaiter) -> Option<A2aResponder> {

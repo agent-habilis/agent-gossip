@@ -12,7 +12,7 @@ use crate::topic;
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
-/// the `output` sink (captured for [`MeshSession`], silent for the MCP core).
+/// the `output` sink (captured for [`MeshSession`](crate::api::MeshSession), silent for the MCP core).
 ///
 /// # Errors
 /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
@@ -140,7 +140,7 @@ async fn resolved_setup(
 }
 
 /// The advertiser handle / signal-handling flag shared by
-/// [`InProcessSession::spawn`] and [`MeshSession::new_with_events_and_signals`] —
+/// `InProcessSession::spawn` and `MeshSession::new_with_events_and_signals` —
 /// the bits of the spawn call that are about the *process* environment rather
 /// than the mesh itself.
 pub(super) struct SpawnEnv {

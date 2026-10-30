@@ -2,7 +2,7 @@
 //! daemon commands (`create`, `join`, `topic`). Holds only genuinely-local,
 //! per-process settings; lookup selection is a gossip-wide property carried in
 //! the id (see `create`'s `LookupArgs`). The hidden knobs live in
-//! [`TuningOpts`](super::tuning::TuningOpts) so a command that needs the tuning
+//! [`TuningOpts`] so a command that needs the tuning
 //! but not the daemon flags (`discover`) can take just those.
 
 use clap::Parser;
@@ -60,7 +60,7 @@ pub(crate) struct SharedServerOpts {
     /// Deprecated no-op: the daemon is always non-interactive. Accepted (and
     /// hidden) so a stale installed skill degrades to the drift nag rather than
     /// a clap error swallowed by its `> /dev/null 2>&1` launch line — see
-    /// [`super::legacy`].
+    /// `super::legacy`.
     #[arg(long, hide = true, default_value_t = false)]
     pub no_interactive: bool,
 

@@ -9,7 +9,9 @@ use tokio::time::Instant as TokioInstant;
 use crate::a2a::{tuning, wire};
 use crate::emission::OutputEvent;
 
-/// One surfaced event tagged with its daemon-local sequence number. The `seq`
+/// One surfaced event tagged with its daemon-local sequence number.
+///
+/// The `seq`
 /// is the `poll` / `fetch` cursor value; `event` renders to the live-stream
 /// JSON line via [`crate::emission::surfaced_event_json`].
 #[derive(Debug, Clone)]

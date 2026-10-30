@@ -5,7 +5,7 @@ use super::msg_response::MsgResponse;
 use crate::a2a::ipc_command::IpcCommand;
 
 /// Read or change the mesh's `meta` channel via the running daemon — the
-/// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.
+/// independent counterpart of `state`. Same raw-JSON + exit-code contract.
 pub(super) async fn meta(options: MetaOpts) -> Result<()> {
     let (command, nickname) = match options.action {
         MetaAction::Merge {

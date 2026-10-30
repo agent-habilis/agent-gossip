@@ -17,7 +17,7 @@ use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::emission::Output;
 
-/// The in-process session core shared by the public [`MeshSession`] and the MCP
+/// The in-process session core shared by the public [`MeshSession`](crate::api::MeshSession) and the MCP
 /// server. Wraps the engine's [`Node`] with this app's request/reply vocabulary
 /// and the optional directory advertiser. The two frontends differ only in
 /// *presentation*: `MeshSession` adds the inbound broadcast + captured-event
@@ -33,9 +33,9 @@ pub(crate) struct InProcessSession {
 
 impl InProcessSession {
     /// Spawn the event loop and build the core. `push` is `Some` to fan inbound
-    /// traffic out to a broadcast ([`MeshSession::messages`]), `None` for a
+    /// traffic out to a broadcast ([`MeshSession::messages`](crate::api::MeshSession::messages)), `None` for a
     /// poll-only consumer (MCP). `env.handle_signals`: see
-    /// [`DriverMode::InProcess`] — `false` for sessions living inside a
+    /// `DriverMode::InProcess` — `false` for sessions living inside a
     /// foreground command that owns its own lifetime.
     pub(super) fn spawn(
         elc: EventLoopConfig,
@@ -148,7 +148,7 @@ impl InProcessSession {
     }
 
     /// Build, sign and gossip-broadcast a message; returns the canonical
-    /// [`Message`] the loop built, or `None` when the sender-side rate
+    /// [`Message`](crate::Message) the loop built, or `None` when the sender-side rate
     /// limiter dropped it.
     ///
     /// # Errors
@@ -159,7 +159,7 @@ impl InProcessSession {
             .await
     }
 
-    /// Send a chat message to one peer; returns the canonical [`Message`] the
+    /// Send a chat message to one peer; returns the canonical [`Message`](crate::Message) the
     /// loop built.
     ///
     /// # Errors
@@ -195,7 +195,7 @@ impl InProcessSession {
     }
 
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving; returns the
-    /// canonical [`Message`].
+    /// canonical [`Message`](crate::Message).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.

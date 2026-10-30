@@ -132,6 +132,20 @@ unsafe_op_in_unsafe_fn = "deny"
 # Not fixable without per-test `use X as _;` source shims. The genuine
 # dead deps it surfaced (`include_dir`, `schemars`) were removed below.
 
+# Google Rust Style Guide D10 and D11: the rustdoc lints that judge a doc comment. `deny`, because
+# `cargo task ci` and the CI doc job run `cargo doc` with `-D warnings` and a lint level of `warn`
+# would hide behind the flag. `private_intra_doc_links` and `redundant_explicit_links` are `warn` by
+# default; the other four are `allow` by default or only `warn` for a part of their cases.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
+redundant_explicit_links = "deny"
+unescaped_backticks = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_codeblock_attributes = "deny"
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 # Prevents holding a sync `std::sync::Mutex` (or RwLock) guard across an
@@ -171,6 +185,10 @@ allow_attributes = "warn"
 # handled explicitly rather than silently swallowed by a wildcard.
 wildcard_enum_match_arm = "warn"
 undocumented_unsafe_blocks = "warn"
+# Google Rust Style Guide D10 and D11: the first paragraph of a doc comment is a short summary
+# (`doc_markdown`, `doc_link_with_quotes`, `doc_lazy_continuation` and `empty_docs` already run).
+too_long_first_doc_paragraph = "warn"
+doc_include_without_cfg = "warn"
 string_add = "warn"
 unwrap_used = "warn"
 # 38 crates have two or more versions in Cargo.lock (checked with `cargo clippy --workspace

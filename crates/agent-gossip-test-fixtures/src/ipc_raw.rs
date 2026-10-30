@@ -2,8 +2,9 @@ use std::os::unix::net::UnixStream;
 
 use crate::socket_path;
 
-/// Send one raw JSON command line straight to a daemon's Unix socket and
-/// return the (trimmed) response line — the wire-contract path, bypassing the
+/// Send one raw JSON command line straight to a daemon's Unix socket and return the (trimmed) response line.
+///
+/// This is the wire-contract path, bypassing the
 /// `agent-gossip` client entirely (so a test can exercise a single daemon-side
 /// long-poll park, which `poll --long` deliberately hides behind its
 /// re-issue loop).

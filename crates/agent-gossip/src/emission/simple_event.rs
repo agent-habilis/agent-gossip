@@ -740,8 +740,9 @@ pub(super) fn format_state_json(
     )
 }
 
-/// Render a `seq`-tagged surfaced event to the exact stream JSON line, with the
-/// daemon-local `seq` flattened in as a leading field so a `poll` client can
+/// Render a `seq`-tagged surfaced event to the exact stream JSON line.
+///
+/// The daemon-local `seq` is flattened in as a leading field so a `poll` client can
 /// advance its `--after` cursor. The body after `seq` is byte-identical to the
 /// live `--output json` line for the same event (same [`event_json`]
 /// renderer) — the parity guarantee `poll` rests on. `None` for events that
@@ -757,8 +758,9 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
     Some(format!("{{\"seq\":{seq}{sep}{rest}"))
 }
 
-/// Render a captured [`OutputEvent`] to the exact JSON line the
-/// daemon writes in `--output json` mode. Reuses the same serializers
+/// Render a captured [`OutputEvent`] to the exact JSON line the daemon writes in `--output json` mode.
+///
+/// Reuses the same serializers
 /// as the `Stream` sink, so in-process tests assert the byte-identical
 /// wire format the `/mesh` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode.

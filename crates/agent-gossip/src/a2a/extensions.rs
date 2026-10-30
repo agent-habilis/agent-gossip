@@ -1,7 +1,8 @@
 /// URI that names the gossip binding in an agent card; peers match it byte for byte.
 pub const GOSSIP_BINDING: &str = "https://agent-habilis.dev/a2a/binding/gossip/v1";
-/// The extension URI a broadcast payload must carry, from the app crate's
-/// `a2a/extensions.rs`. Here rather than beside its one use in `driver.rs`, so
+/// The extension URI a broadcast payload must carry.
+///
+/// Copied from the app crate's `a2a/extensions.rs`. Here rather than beside its one use in `driver.rs`, so
 /// the whole duplicated set is in one file and the `agent-gossip-core`
 /// extraction cannot miss it.
 pub const EXT_MESH_BROADCAST: &str = "https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1";

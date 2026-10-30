@@ -2,8 +2,9 @@ use std::fmt;
 
 use habilis_network::protocol::AdvertiseRequiresReachable;
 
-/// Why [`MeshSession::create`](super::MeshSession::create) failed, classified so callers can react:
-/// the MCP server maps [`CreateError::AdvertiseRequiresReachable`] to an
+/// Why [`MeshSession::create`](super::MeshSession::create) failed, classified so callers can react.
+///
+/// The MCP server maps [`CreateError::AdvertiseRequiresReachable`] to an
 /// `invalid_params` error and [`CreateError::Setup`] to an internal one.
 #[derive(Debug)]
 #[must_use]
@@ -38,8 +39,9 @@ impl std::error::Error for CreateError {
     }
 }
 
-/// Why [`MeshSession::join`](super::MeshSession::join) failed — the symmetric counterpart to
-/// [`CreateError`]. `Resolve` is a malformed id; `Setup` is an
+/// Why [`MeshSession::join`](super::MeshSession::join) failed.
+///
+/// The symmetric counterpart to [`CreateError`]. `Resolve` is a malformed id; `Setup` is an
 /// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
 #[must_use]

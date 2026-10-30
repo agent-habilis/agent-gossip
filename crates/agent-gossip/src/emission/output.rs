@@ -28,7 +28,7 @@ pub(crate) enum Output {
     /// `poll`/`fetch` history), without each emit site needing `&mut
     /// state`. The tap carries the *same* structured events the `Capture`
     /// sink would, so a tapped event renders byte-identically through
-    /// [`event_json`] later. Self-filtering still applies before the tap
+    /// [`event_json`](fn@crate::event_json) later. Self-filtering still applies before the tap
     /// (a suppressed self-message is neither printed nor tapped).
     Stream {
         mode: OutputMode,

@@ -76,7 +76,7 @@ impl MeshSession {
     /// the internal directory-session path (the advertiser eager-cohosts; the
     /// discover consumer never cohosts). `pub(crate)`: keeps `Mesh` off the
     /// iroh-free surface. Directory sessions never register process signal
-    /// handlers (see [`DriverMode::InProcess`]) — the hosting command owns
+    /// handlers (see `DriverMode::InProcess`) — the hosting command owns
     /// its own lifetime, and hijacking ctrl-c would keep it alive.
     ///
     /// # Errors
@@ -195,7 +195,7 @@ impl MeshSession {
     }
 
     /// Build, sign and gossip-broadcast a mesh chat message. Returns the
-    /// canonical [`Message`] the loop built (read `.id` for the new id).
+    /// canonical [`Message`](crate::Message) the loop built (read `.id` for the new id).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -262,7 +262,7 @@ impl MeshSession {
     /// batch at the deadline just means the window elapsed quietly; call
     /// again. `false` is the immediate read.
     ///
-    /// Check [`PollBatch::missed_before`](crate::a2a::surfaced_event::PollBatch): when
+    /// Check `PollBatch::missed_before`: when
     /// set, the cursor aged out of the ring and every event below that seq was
     /// lost. Re-baseline on the returned window.
     ///
@@ -279,7 +279,7 @@ impl MeshSession {
 
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving (the A2A
     /// streaming plane) — `working` / `input-required` / `completed` /
-    /// `failed`. Returns the canonical [`Message`] the loop built.
+    /// `failed`. Returns the canonical [`Message`](crate::Message) the loop built.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.

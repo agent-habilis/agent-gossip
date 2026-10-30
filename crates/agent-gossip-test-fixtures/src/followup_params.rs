@@ -1,5 +1,5 @@
 /// Who is following up, into which task, on whom — grouped so
-/// [`cli_task_followup`] stays inside the argument budget.
+/// [`cli_task_followup`](fn@crate::cli_task_followup) stays inside the argument budget.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct FollowupParams<'caller> {

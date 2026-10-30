@@ -69,7 +69,9 @@ fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Li
     );
 }
 
-/// A live view of a directory. Joins the directory's mesh as an
+/// A live view of a directory.
+///
+/// Joins the directory's mesh as an
 /// ordinary [`MeshSession`] and collects advertisements into
 /// `Listings`, aging out meshes whose publishers went silent. Drop
 /// (or let it fall out of scope) to leave the directory.

@@ -1,6 +1,6 @@
 use habilis_network::protocol::messages::Authored;
 
-/// The value cluster for [`Output::state_changed`]: the channel, the patch
+/// The value cluster for `Output::state_changed`: the channel, the patch
 /// event, the freshly-derived document, and whether it was our own write.
 #[derive(Clone, Copy)]
 pub(crate) struct StateChangedParams<'caller> {

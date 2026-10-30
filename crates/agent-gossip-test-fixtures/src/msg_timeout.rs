@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-/// Steady-state delivery budget: how long a meshed peer may take to surface a
-/// message/presence/task leg. The suite-wide standard for every positive
+/// Steady-state delivery budget: how long a meshed peer may take to surface a message, presence or task leg.
+///
+/// The suite-wide standard for every positive
 /// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
 /// is normally sub-second; the headroom is for a loaded CI host where two
 /// concurrent in-process meshes can stall a delivery well past a tighter

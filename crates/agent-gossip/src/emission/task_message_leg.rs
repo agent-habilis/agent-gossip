@@ -1,6 +1,6 @@
 /// An RPC `message/send` task leg with no backing frame — the fields
-/// [`Output::task_message`] and [`simple_event::format_task_message_json`] need,
-/// bundled (they mirror the [`OutputEvent::TaskMessage`] variant's fields).
+/// `Output::task_message` and `simple_event::format_task_message_json` need,
+/// bundled (they mirror the `OutputEvent::TaskMessage` variant's fields).
 pub(crate) struct TaskMessageLeg<'source> {
     pub id: &'source str,
     pub mesh: &'source str,

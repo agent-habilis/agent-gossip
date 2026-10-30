@@ -4,9 +4,10 @@ use agent_gossip::Channel;
 
 use crate::{MSG_TIMEOUT, POLL, cli_channel_get};
 
-/// Block until `target`'s card is present in `nickname`'s `meta` doc — the real
-/// precondition for any **directed** A2A call, and the subprocess counterpart of
-/// [`InProcNode::await_peer_card`].
+/// Block until `target`'s card is present in `nickname`'s `meta` doc.
+///
+/// The card is the real precondition for any **directed** A2A call. This is the subprocess counterpart of
+/// [`InProcNode::await_peer_card`](crate::InProcNode::await_peer_card).
 ///
 /// Gossip linkage is *not* this signal. A directed frame is sealed to the
 /// recipient's published X25519 key (`a2a::card::peer_seal_key`) and is never

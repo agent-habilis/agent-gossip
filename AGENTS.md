@@ -35,6 +35,18 @@ This codebase keeps comments sparse. Follow these rules:
   name and signature is noise — remove it. Keep a doc comment only when it
   carries a *why* the signature can't.
 
+- **Doc comments follow the rustdoc rules.** The first paragraph is a short
+  summary (`clippy::too_long_first_doc_paragraph`), followed by a blank line.
+  Every link resolves, and a public doc does not link to a private item.
+  Wrap an identifier in backticks and a URL in `<...>`.
+  The `[workspace.lints.rustdoc]` table, `clippy::doc_markdown`, and
+  `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --features agent-gossip/bench,agent-gossip/adversarial`
+  enforce this. `cargo task ci` and the CI `doc` job run the last one.
+  `--document-private-items` is there because most items are private.
+- **`///` documents an item, `//` holds a note.** A `///` on a statement is an
+  error (`unused_doc_comments = "deny"`). Delete commented-out code: the
+  `commented_out_code` rule of `style-check` fails on it.
+
 ### Load-bearing comments — keep these
 
 Some comments are not commentary; removing them changes behavior or breaks

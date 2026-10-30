@@ -14,7 +14,7 @@ use crate::emission::{Output, OutputMode};
 
 /// Build the output sink, set up the mesh, and run the event loop. The
 /// shared spine of `create` and `join` — `resolved` carries the
-/// already-resolved [`SetupKind`](habilis_network::runtime::SetupKind), author,
+/// already-resolved [`SetupKind`], author,
 /// and advertise directory (see [`habilis_network::runtime::Resolved`]).
 pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     detach_if_owned(&shared)?;

@@ -13,7 +13,7 @@ use super::target::Target;
 use crate::a2a::ipc_command::IpcCommand::Info;
 use crate::runtime_base;
 
-/// Walk every state file under [`runtime_base`] and resolve it to a live
+/// Walk every state file under [`runtime_base`](fn@runtime_base) and resolve it to a live
 /// daemon or clean it up. Covers both per-mesh files
 /// (`<prefix>/<nick>.state.json`) and the CLI-fallback location the skills
 /// use (`sessions/<ppid>.json`) — any first-level `*.json`.

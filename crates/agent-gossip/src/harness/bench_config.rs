@@ -1,5 +1,7 @@
-//! Not public API. Exposed only under the `bench` feature so the divan
-//! microbenchmark suite (`benches/hot_paths.rs`) can measure `pub(crate)`
+//! Not public API: exposed only under the `bench` feature.
+//!
+//! It lets the divan
+//! microbenchmark suite (`benches/hot_paths.rs`) measure `pub(crate)`
 //! hot paths without widening the crate's curated public surface.
 //!
 //! Only **non-test** constructors are used here: the `bench` feature is

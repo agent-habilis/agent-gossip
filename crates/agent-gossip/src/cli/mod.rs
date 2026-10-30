@@ -1,6 +1,6 @@
 //! The `agent-gossip` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the `discover` JSON stream in [`discover`], and the
-//! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
+//! per-subcommand handlers + [`dispatch`](fn@dispatch) here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
 //! parsed args and the daemon / IPC / api layers it drives.
 

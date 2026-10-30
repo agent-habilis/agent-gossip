@@ -26,7 +26,7 @@ pub(crate) const READER_GET: &str = "mesh/reader.get";
 /// execution so the safe-set decision is a pure, unit-testable function; the
 /// receive path (`gossip::recv`) runs the resulting action.
 pub(crate) enum Served {
-    /// A read (or party-checked cancel) to run through [`handle_op`].
+    /// A read (or party-checked cancel) to run through `handle_op`.
     Op(A2aOp),
     /// A `message/send` **to us** — the payload is ingested locally (a task
     /// offer opens a task; chat surfaces) and the resulting task/ack returned.

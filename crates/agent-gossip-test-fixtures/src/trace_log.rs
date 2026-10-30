@@ -2,8 +2,9 @@ use std::fs::{self};
 
 use crate::test_log_dir;
 
-/// A node's tracing-sink log (distinct from its captured stdout/stderr
-/// in `Node::log`). Mirrors `agent_gossip::logs::log_file_path`:
+/// A node's tracing-sink log, distinct from its captured stdout and stderr in `Node::log`.
+///
+/// Mirrors `agent_gossip::logs::log_file_path`:
 /// `<mesh_prefix>/<nick>.tracing.log` under the per-test log dir. Use this to
 /// assert on `tracing` output (warn/info) the operator stream never carries.
 #[must_use]

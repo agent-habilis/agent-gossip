@@ -15,10 +15,11 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
 
-/// One in-process mesh node: a real [`MeshSession`] (real iroh
-/// endpoint + the real `daemon::run` loop on a background task) plus
-/// its captured [`OutputEvent`] stream. Drop-in analogue of the
-/// subprocess [`Node`], but everything runs in the test process — so
+/// One in-process mesh node with its captured [`OutputEvent`] stream.
+///
+/// It is a real [`MeshSession`] (real iroh
+/// endpoint + the real `daemon::run` loop on a background task). Drop-in analogue of the
+/// subprocess [`Node`](crate::Node), but everything runs in the test process — so
 /// coverage is recorded and teardown is deterministic.
 pub struct InProcNode {
     /// The live session, for calls the wrappers of this harness do not cover.
@@ -223,7 +224,7 @@ impl InProcNode {
             .clone()
     }
 
-    /// [`Self::msg`] without the panic — a msg is sealed to the recipient, so
+    /// `Self::msg` without the panic — a msg is sealed to the recipient, so
     /// it legitimately fails until that peer's card has replicated, and a test
     /// that races the card needs to see the error rather than die on it.
     ///
@@ -739,7 +740,7 @@ impl InProcNode {
     }
 
     /// `msg` events from *other* peers only (drops our own echoes).
-    /// The subprocess [`Node`] parsed only peer lines, so ports that
+    /// The subprocess [`Node`](crate::Node) parsed only peer lines, so ports that
     /// counted "deliveries" use this.
     pub fn inbound(&mut self) -> impl Iterator<Item = &Authored> + '_ {
         self.pump();

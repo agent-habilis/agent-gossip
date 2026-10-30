@@ -2,7 +2,7 @@
 //!
 //! This crate ships as **both** a binary (the `agent-gossip`
 //! CLI / MCP server) and a library. The binary is a thin shim over
-//! [`run_cli`]; library consumers embed a mesh in-process via the
+//! [`run_cli`](fn@run_cli); library consumers embed a mesh in-process via the
 //! [`api`] module.
 //!
 //! ## The library API

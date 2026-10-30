@@ -11,14 +11,14 @@ use crate::a2a::surfaced_event::PollBatch;
 /// A typed in-process request from an in-process session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
 /// (which must serialize). `Send` broadcasts a message and echoes back the
-/// canonical [`Message`]; `Poll` reads the buffered history after a cursor.
+/// canonical [`Message`](crate::Message); `Poll` reads the buffered history after a cursor.
 pub(crate) enum SessionRequest {
-    /// Broadcast a mesh chat message; echoes back the canonical [`Message`].
+    /// Broadcast a mesh chat message; echoes back the canonical [`Message`](crate::Message).
     Broadcast {
         body: MessageBody,
         response: oneshot::Sender<Result<Authored>>,
     },
-    /// Send a chat message to one peer; echoes back the canonical [`Message`].
+    /// Send a chat message to one peer; echoes back the canonical [`Message`](crate::Message).
     Msg {
         to: Nickname,
         body: MessageBody,

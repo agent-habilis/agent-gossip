@@ -138,7 +138,7 @@ struct ChainStamp {
 }
 
 /// The identity + payload of one outbound chat frame — the fields `build_msg`
-/// shares with [`synthesize_logical_msg`], grouped so the chain-stamp/shard/
+/// shares with `synthesize_logical_msg`, grouped so the chain-stamp/shard/
 /// signer args stay their own params.
 struct ChatFrameParams<'caller> {
     mesh: &'caller MeshId,

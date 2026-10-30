@@ -2,14 +2,16 @@ use std::process::Output;
 
 use crate::test_cmd;
 
-/// Create a task on `to` via the CLI (`agent-gossip a2a call --to <peer> --method
-/// SendMessage --text`) and return the raw `Output` (no success assertion —
-/// callers that test the unknown-peer failure path inspect it).
+/// Create a task on `to` via the CLI and return the raw `Output`.
+///
+/// The CLI call is `agent-gossip a2a call --to <peer> --method
+/// SendMessage --text`. There is no success assertion, so
+/// callers that test the unknown-peer failure path inspect it.
 ///
 /// Deliberately **unguarded**: it is the helper the unknown-peer and
 /// unicast-retry tests use, and waiting on a card that will never arrive (or
 /// that the test means to race) is exactly what they must not do. Callers
-/// targeting a known peer want [`cli_task_create`].
+/// targeting a known peer want [`cli_task_create`](fn@crate::cli_task_create).
 ///
 /// # Panics
 ///

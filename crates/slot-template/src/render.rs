@@ -7,7 +7,7 @@ use crate::parse_named_args::parse_named_args;
 /// comment — and every non-comment byte — passes through untouched. A comment
 /// that starts as a directive but fails the grammar is an error, so a typo'd
 /// directive cannot slip through unrendered; an `include` directive here (not
-/// alone on its own line — [`expand`] consumes those) is likewise an error.
+/// alone on its own line — [`expand`](fn@crate::expand) consumes those) is likewise an error.
 ///
 /// # Errors
 /// [`Error::UnknownSlot`] for a slot with no matching arg,

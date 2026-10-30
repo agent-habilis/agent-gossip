@@ -1,7 +1,9 @@
 use crate::{FollowupParams, test_cmd};
 
-/// Send a **follow-up into an existing task** via the CLI — an answer, an
-/// approval, a change request. The `--task-id` is what makes it a follow-up: A2A
+/// Send a **follow-up into an existing task** via the CLI.
+///
+/// A follow-up is an answer, an
+/// approval, or a change request. The `--task-id` is what makes it a follow-up: A2A
 /// reads an absent `taskId` as "no task yet", so the same call without it opens a
 /// second, unrelated task on the worker. Returns the parsed JSON-RPC response,
 /// whose `result.task.id` must be the id passed in.

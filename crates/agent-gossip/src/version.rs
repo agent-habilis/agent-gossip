@@ -1,5 +1,6 @@
-/// This build's stamp: **this** crate's version plus the engine's git stamp,
-/// e.g. `"0.7.2 (90103e5 dirty:false)"`. Every version surface reads it —
+/// This build's stamp: **this** crate's version plus the engine's git stamp.
+///
+/// For example `"0.7.2 (90103e5 dirty:false)"`. Every version surface reads it —
 /// `--version`, `doctor`, the `ready` event, MCP `gossip_version`, and the A2A
 /// card peers see — so they can never disagree.
 ///

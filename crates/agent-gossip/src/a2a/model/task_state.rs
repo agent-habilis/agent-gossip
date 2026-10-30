@@ -2,8 +2,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// A2A v1.0 `TaskState`, `ProtoJSON` `SCREAMING_SNAKE` with the `TASK_STATE_`
-/// prefix on the wire; [`TaskState::friendly_name`] keeps the friendly kebab name for
+/// A2A v1.0 `TaskState`, `ProtoJSON` `SCREAMING_SNAKE` with the `TASK_STATE_` prefix on the wire.
+///
+/// [`TaskState::friendly_name`] keeps the friendly kebab name for
 /// our own `--output json` stream and CLI, which are the agent API, not A2A.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

@@ -77,7 +77,7 @@ impl Session {
     }
 
     /// Broadcast a message. Returns `(id, echo)` — the new id and the
-    /// canonical [`Message`]. The full echo is returned here, so a caller
+    /// canonical [`Message`](crate::Message). The full echo is returned here, so a caller
     /// need not re-fetch to see its own send; the self-echo also surfaces
     /// once in a later `fetch_messages` (with `self:true`), matching the
     /// live stream.

@@ -4,9 +4,10 @@ use habilis_network::protocol::Nickname;
 
 use crate::a2a::TaskId;
 
-/// The call describing a directed [`MeshSession::a2a_call`](super::MeshSession::a2a_call) /
-/// `InProcessSession::a2a_call` — which peer, which JSON-RPC method, its
-/// params, and how long to wait for the reply.
+/// The call that a directed [`MeshSession::a2a_call`](super::MeshSession::a2a_call) makes.
+///
+/// It names which peer, which JSON-RPC method, its params, and how long to wait for the reply.
+/// `InProcessSession::a2a_call` takes it too.
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -21,7 +22,9 @@ pub struct A2aCallParams {
     pub timeout: Duration,
 }
 
-/// The result artifact for [`MeshSession::task_artifact`](super::MeshSession::task_artifact): the text plus an
+/// The result artifact for [`MeshSession::task_artifact`](super::MeshSession::task_artifact).
+///
+/// It holds the text plus an
 /// optional file, split into its blob-offload parts (`name`/`mime` describe
 /// `file`, so they only mean anything when it is `Some`).
 
@@ -41,8 +44,9 @@ pub struct TaskArtifactParams {
     pub file_mime: Option<String>,
 }
 
-/// The status leg for [`MeshSession::task_status`](super::MeshSession::task_status):
-/// the new state, plus an optional note and an optional reason that the
+/// The status leg for [`MeshSession::task_status`](super::MeshSession::task_status).
+///
+/// It holds the new state, plus an optional note and an optional reason that the
 /// worker waits on its own user (only meaningful with `working`).
 #[derive(Debug)]
 #[non_exhaustive]

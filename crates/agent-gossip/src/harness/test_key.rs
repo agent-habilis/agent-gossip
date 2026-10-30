@@ -1,5 +1,7 @@
-//! Not public API. Exposed only under the `adversarial` feature so the
-//! adversarial integration suite (`tests/adversarial.rs`) can **craft and
+//! Not public API: exposed only under the `adversarial` feature.
+//!
+//! It lets the
+//! adversarial integration suite (`tests/adversarial.rs`) **craft and
 //! inject** wire messages a correct client would never produce — unsigned /
 //! bad-signature, equivocating (two messages at one `seq`), tampered, or
 //! backdated — to prove receivers reject or flag them. Pairs with
@@ -155,8 +157,9 @@ impl<'caller> SealedMsgParams<'caller> {
     }
 }
 
-/// The addressee's public X25519 mesh-seal key, read out of a meta document
-/// exactly as the daemon's own send path reads it. Any mesh member holds this
+/// The addressee's public X25519 mesh-seal key, read out of a meta document.
+///
+/// It is read exactly as the daemon's own send path reads it. Any mesh member holds this
 /// document, which is the point: sealing to a peer needs no secret.
 #[must_use]
 pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicKey> {
@@ -164,7 +167,9 @@ pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicK
     card::peer_seal_key(meta_doc, &peer)
 }
 
-/// Builder for a crafted `Msg`. Choose every field, then `sign` (or not) and
+/// Builder for a crafted `Msg`.
+///
+/// Choose every field, then `sign` (or not) and
 /// take the wire [`bytes`](CraftedMsg::bytes). Mutating *after* `sign` (e.g.
 /// [`tamper_body`](CraftedMsg::tamper_body)) yields a structurally-valid
 /// message whose signature no longer matches — the tampering case.

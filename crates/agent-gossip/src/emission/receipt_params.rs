@@ -1,6 +1,6 @@
 use habilis_network::protocol::Nickname;
 
-/// The value cluster for [`Output::receipt`].
+/// The value cluster for `Output::receipt`.
 #[derive(Clone, Copy)]
 pub(crate) struct ReceiptParams<'caller> {
     pub(crate) from: &'caller Nickname,

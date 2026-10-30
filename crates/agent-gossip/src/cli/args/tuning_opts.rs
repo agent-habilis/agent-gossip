@@ -1,5 +1,5 @@
 //! `TuningOpts` — the hidden per-process knobs, split out of
-//! [`SharedServerOpts`](super::shared::SharedServerOpts) so a command can take
+//! [`SharedServerOpts`](super::shared_server_opts::SharedServerOpts) so a command can take
 //! the tuning without also advertising the daemon flags it does not honor.
 //! `discover` is the case in point: it needs the knobs (the suite varies its
 //! directory cadence) but writes no state file and runs no gossip session, so

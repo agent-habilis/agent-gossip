@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// A2A v1.0 `AgentInterface`: one reachable endpoint for a binding. A member
+/// A2A v1.0 `AgentInterface`: one reachable endpoint for a binding.
+///
+/// A member
 /// always declares its gossip interface (the pubkey-addressed mesh endpoint);
 /// a `--a2a-serve` daemon additionally declares its localhost JSON-RPC one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

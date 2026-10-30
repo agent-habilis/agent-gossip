@@ -1,6 +1,6 @@
 use habilis_network::protocol::{MeshId, MeshName, Nickname};
 
-/// The value cluster for [`Output::ready`]: the mesh identity fields plus
+/// The value cluster for `Output::ready`: the mesh identity fields plus
 /// optional startup diagnostics (skill drift, `--a2a-serve` port).
 #[derive(Clone, Copy)]
 pub(crate) struct ReadyParams<'caller> {

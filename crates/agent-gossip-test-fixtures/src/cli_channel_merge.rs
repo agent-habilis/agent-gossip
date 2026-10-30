@@ -4,8 +4,9 @@ use agent_gossip::Channel;
 
 use crate::{channel_subcommand, test_cmd};
 
-/// Spawn `agent-gossip <channel> merge …`, returning the raw
-/// [`Output`](std::process::Output). The CLI **exits non-zero** on a rejected
+/// Spawn `agent-gossip <channel> merge …`, returning the raw [`Output`].
+///
+/// The CLI **exits non-zero** on a rejected
 /// `{ok:false}` merge (the scriptable exit-code contract), so this returns the
 /// status + stdout unjudged for the caller to assert on.
 ///

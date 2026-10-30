@@ -9,7 +9,9 @@ use super::{
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
-/// Compose a broadcast chat payload: `role: user` (chat is a client-side
+/// Compose a broadcast chat payload.
+///
+/// It sets `role: user` (chat is a client-side
 /// submission), `contextId` = the mesh (the mesh *is* the conversation
 /// context), and the `mesh-broadcast` extension — A2A messaging is
 /// point-to-point, so a mesh-wide message declares itself.
@@ -21,8 +23,9 @@ pub fn compose_broadcast(mesh: &MeshId, text: &str) -> Message {
     message
 }
 
-/// Compose a direct chat payload — the same shape as [`compose_broadcast`] minus the
-/// broadcast extension. A msg claims no extension because point-to-point *is*
+/// Compose a direct chat payload: the same shape as [`compose_broadcast`] minus the broadcast extension.
+///
+/// A msg claims no extension because point-to-point *is*
 /// plain A2A messaging; it is the broadcast that has something to declare. The
 /// absent extension is also what [`msg_payload`] checks, so a msg cannot be
 /// replayed into the broadcast validator.
@@ -33,8 +36,9 @@ pub fn compose_msg(mesh: &MeshId, text: &str) -> Message {
     message
 }
 
-/// Compose the A2A `Message` a directed `message/send` carries — the
-/// task-creating brief (no `taskId`) or a follow-up into an existing task
+/// Compose the A2A `Message` that a directed `message/send` carries.
+///
+/// It is the task-creating brief (no `taskId`) or a follow-up into an existing task
 /// (`taskId` set). `role: user` (a client submission), `contextId` = the
 /// mesh; **no** broadcast extension (it is point-to-point).
 /// `label` rides `metadata` as [`META_LABEL`] so the worker names the task the
@@ -143,8 +147,9 @@ pub fn broadcast_payload(frame: &Frame) -> Result<Message, FramePayloadError> {
     Ok(payload)
 }
 
-/// Parse + validate the payload of a logical `a2a_msg` frame (a direct
-/// message). Two checks beyond the shared ones, both about keeping the msg
+/// Parse and validate the payload of a logical `a2a_msg` frame (a direct message).
+///
+/// Two checks beyond the shared ones, both about keeping the msg
 /// distinct from its neighbours rather than about the msg itself:
 ///
 /// - it must **not** declare `mesh-broadcast`. A msg carrying it is a broadcast
@@ -177,8 +182,9 @@ pub fn msg_payload(frame: &Frame) -> Result<Message, FramePayloadError> {
     Ok(payload)
 }
 
-/// The text projection of a chat frame's payload — the api-consumer
-/// convenience for reading a received frame without unpacking the A2A object.
+/// The text projection of a chat frame's payload.
+///
+/// An api-consumer convenience for reading a received frame without unpacking the A2A object.
 /// Covers both chat tags. `None` for a non-chat frame or an unparseable
 /// payload.
 #[must_use]
@@ -191,8 +197,9 @@ pub fn chat_text(frame: &Frame) -> Option<String> {
         .map(|payload| display_text(&payload))
 }
 
-/// The plain-text projection of a payload for display surfaces (the operator
-/// line, the `display` string, the `body` convenience field): text parts
+/// The plain-text projection of a payload for display surfaces.
+///
+/// The surfaces are the operator line, the `display` string and the `body` convenience field. Text parts
 /// joined by newline, non-text parts as bracketed placeholders.
 #[must_use]
 pub fn display_text(message: &Message) -> String {
@@ -250,7 +257,9 @@ impl<'caller> StatusUpdateParams<'caller> {
     }
 }
 
-/// Compose a task status update. `note` becomes `status.message` (an
+/// Compose a task status update.
+///
+/// `note` becomes `status.message` (an
 /// agent-role Message — a worker's acceptance note, a question, a result
 /// summary). v1.0 dropped `TaskStatusUpdateEvent.final`; a terminal `state` is
 /// itself the stream-close signal.
@@ -425,8 +434,9 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
     ))
 }
 
-/// The initiator's one-line task label (`mesh:label`), when the brief carries
-/// one. Peer-controlled text bound for a todo subject, so control characters
+/// The initiator's one-line task label (`mesh:label`), when the brief carries one.
+///
+/// Peer-controlled text bound for a todo subject, so control characters
 /// (a `\n` would forge a second row) are stripped and the length capped.
 #[must_use]
 pub fn task_label(message: &Message) -> Option<String> {
@@ -491,8 +501,9 @@ fn wall_clock_ms() -> u64 {
     u64::try_from(since_epoch.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The reason a worker gives for waiting on its own user (`mesh:waiting`), when
-/// the status leg carries one. Peer-controlled text that `GetTask` echoes, so it
+/// The reason a worker gives for waiting on its own user (`mesh:waiting`), when the status leg carries one.
+///
+/// Peer-controlled text that `GetTask` echoes, so it
 /// gets the same control-character strip and length cap as [`task_label`].
 #[must_use]
 pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
@@ -503,7 +514,9 @@ pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// The task a **logical** frame belongs to, if any: a worker-pushed status or
+/// The task a **logical** frame belongs to, if any.
+///
+/// It is a worker-pushed status or
 /// artifact frame (the frame correlation field). Neither chat tag is ever a
 /// task — a payload carrying a `taskId` is refused by [`msg_payload`] — and task
 /// `message/send` legs ride `A2aReq`/`A2aResp` (plumbing), so `None` for

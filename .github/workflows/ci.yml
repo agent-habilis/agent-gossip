@@ -59,6 +59,10 @@ jobs:
         run: |
           bun test scripts/naming/naming.test.ts
           bun scripts/naming/naming.ts
+      # Needs a Rust toolchain: the test runs rustdoc and clippy on a scratch crate.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Doc lints
+        run: bun test scripts/rustdoc-lints/rustdoc-lints.test.ts
 
   clippy:
     runs-on: ubuntu-latest
@@ -79,6 +83,21 @@ jobs:
       # The `bench` feature compiles the bench shim and the divan benches, which
       # no other job builds. A change to the engine API broke it unseen once.
       - run: cargo check -p agent-gossip --features bench --benches
+
+  # Google Rust Style Guide D10 and D11. The rustdoc lint levels live in `[workspace.lints.rustdoc]`;
+  # `-D warnings` makes every other rustdoc warning an error too, as in `cargo task ci`.
+  # `--document-private-items`: most items are private, and rustdoc skips their docs otherwise.
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # The two features bring in the `harness` shims, whose docs rustdoc skips without them.
+      - run: cargo doc --workspace --no-deps --document-private-items --features agent-gossip/bench,agent-gossip/adversarial
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   test:
     runs-on: ubuntu-latest

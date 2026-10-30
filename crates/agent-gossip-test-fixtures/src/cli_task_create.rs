@@ -8,10 +8,10 @@ use crate::{MSG_TIMEOUT, await_peer_card_cli, cli_task_create_attempt, is_rpc_ti
 ///
 /// Waits for `to`'s card first: a directed call is rejected until the seal key
 /// replicates, so issuing one the moment the mesh links is a race. See
-/// [`await_peer_card_cli`].
+/// [`await_peer_card_cli`](fn@await_peer_card_cli).
 ///
 /// Then **re-issues while the peer never answers**, on the same reasoning as
-/// [`InProcNode::a2a_call_retrying`] — the card arriving does not mean the
+/// [`InProcNode::a2a_call_retrying`](crate::InProcNode::a2a_call_retrying) — the card arriving does not mean the
 /// overlay holds a live link, and a directed request sent into that gap is
 /// dropped for good rather than healed, leaving the sender to block until the
 /// heal tick re-bridges the pair. Waiting on the card guards one race; this

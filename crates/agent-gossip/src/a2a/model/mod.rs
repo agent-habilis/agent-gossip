@@ -17,8 +17,9 @@ pub use self::task_status::TaskStatus;
 pub use self::task_status_update::TaskStatusUpdate;
 pub use self::uuid_id::{A2aRpcId, MessageId, TaskId};
 
-/// A serde `with` module that (de)serializes a [`TaskState`] by its **friendly**
-/// kebab name — for our internal surfaces (the IPC socket, MCP tool args),
+/// A serde `with` module that (de)serializes a [`TaskState`] by its friendly kebab name.
+///
+/// It serves our internal surfaces (the IPC socket, MCP tool args),
 /// keeping the `ProtoJSON` `TASK_STATE_*` form confined to the A2A wire objects.
 pub mod friendly_state;
 

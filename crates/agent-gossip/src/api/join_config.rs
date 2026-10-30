@@ -58,7 +58,9 @@ impl JoinConfig {
     }
 }
 
-/// How to join a **topic**: a public mesh derived deterministically from a
+/// How to join a **topic**.
+///
+/// A topic is a public mesh derived deterministically from a
 /// shared string. The name and (always-public) config are derived from the
 /// string, so it is the only input — anyone passing the same string converges
 /// on the same mesh.
@@ -100,7 +102,9 @@ impl TopicConfig {
     }
 }
 
-/// How to create a new mesh. Built from validated domain types
+/// How to create a new mesh.
+///
+/// Built from validated domain types
 /// ([`MeshName`], [`Nickname`], [`LookupSet`]); the iroh `RelayUrl`
 /// stays hidden behind [`RelayLadder`](crate::RelayLadder) inside the
 /// lookups, so the surface is iroh-free.

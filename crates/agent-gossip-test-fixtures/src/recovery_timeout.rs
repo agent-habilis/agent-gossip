@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-/// Budget for a delivery asserted **after a disruption** (beacon death,
-/// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
+/// Budget for a delivery asserted **after a disruption**.
+///
+/// A disruption is a beacon death,
+/// SIGSTOP freeze, rendezvous migration, or creator departure. Re-meshing waits
 /// on the heal cadence (production 15s; the reliability tests inject a short
 /// `--heal-interval-secs`), so a recovery that just missed a tick needs
 /// another cycle — the steady-state `MSG_TIMEOUT` (1 min) sits right on that
