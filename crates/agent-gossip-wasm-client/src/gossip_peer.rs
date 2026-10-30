@@ -4,7 +4,8 @@ use habilis_network::protocol::{
     DirectorySelection, JoinTarget, LookupOpts, MeshConfig, MeshName, TransportPolicy,
 };
 use habilis_network::runtime::{CreateParams, JoinParams, Node};
-use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
+use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::err::err;
 use crate::gossip_driver::{GossipDriver, Inbox, Request};

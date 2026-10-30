@@ -348,6 +348,10 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   `group_imports` and `imports_granularity` options in `rustfmt.toml` need.
   `cargo task ci` and the CI fmt job fail on drift. rustfmt does not move a
   `use` that comes after a `mod`.
+- Import a name from the module that defines it, never from a third-party
+  prelude. One prelude import stays: `use wasm_bindgen::prelude::wasm_bindgen;`,
+  because the `wasm_bindgen` attribute macro has no other public path.
+  `style-check` (`prelude_import`) enforces this and allows only that line.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
 - Use the typestate pattern only when one function or one builder drives a

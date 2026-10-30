@@ -522,6 +522,15 @@ function countStrReplace(raw: string): number {
   return count;
 }
 
+// The `use` statements that name a `prelude` module (O19). The glob rule stops `prelude::*`; this one
+// stops a named import from a prelude, so the reader sees the real home of each name. One import is
+// allowed: the `wasm_bindgen` attribute macro has no other public path (AGENTS.md, Code Style).
+const PRELUDE_ALLOWED = /^use\s+wasm_bindgen::prelude::wasm_bindgen;$/;
+function countPreludeImports(raw: string): number {
+  const imports = [...stripComments(raw).matchAll(/\buse\s[^;]*\bprelude\b[^;]*;/g)];
+  return imports.filter(([statement]) => !PRELUDE_ALLOWED.test(statement.replace(/\s+/g, " "))).length;
+}
+
 const RULES: Rule[] = [
   {
     name: "poison",
@@ -723,6 +732,12 @@ const RULES: Rule[] = [
     scan: countAbbrevNames,
     glob: "crates/**/*.rs",
     why: "An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on. A name that a crate outside our control fixes has a counted row.",
+  },
+  {
+    name: "prelude_import",
+    scan: countPreludeImports,
+    glob: "crates/**/*.rs",
+    why: "Import a name from the module that defines it, not from a prelude (O19). The one exception is `use wasm_bindgen::prelude::wasm_bindgen;`, the only public path of that macro.",
   },
   {
     name: "str_replace",

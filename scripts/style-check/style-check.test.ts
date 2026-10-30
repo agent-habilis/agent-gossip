@@ -551,6 +551,23 @@ test("pub_vec_param: a file under tests counts", () => {
   expectExit("crates/demo/tests/t.rs", "pub fn f(xs: Vec<u8>) -> usize { xs.len() }", 1);
 });
 
+// The prelude_import rule (O19): a named import from a prelude fails, the wasm_bindgen macro is the one exception.
+test("prelude_import: a named import from a prelude fails", () => {
+  expectExit("crates/demo/src/lib.rs", "use proptest::prelude::any;", 1);
+});
+test("prelude_import: a grouped import from a prelude fails", () => {
+  expectExit("crates/demo/src/lib.rs", "use wasm_bindgen::prelude::{JsValue, wasm_bindgen};", 1);
+});
+test("prelude_import: a std prelude import fails", () => {
+  expectExit("crates/demo/src/lib.rs", "use std::prelude::v1::Option;", 1);
+});
+test("prelude_import: the wasm_bindgen macro is allowed", () => {
+  expectExit("crates/demo/src/lib.rs", "use wasm_bindgen::prelude::wasm_bindgen;", 0);
+});
+test("prelude_import: the word in a comment or a path with no prelude is clean", () => {
+  expectExit("crates/demo/src/lib.rs", "// use proptest::prelude::any;\nuse proptest::arbitrary::any;", 0);
+});
+
 // The str_replace rule (P23): str::replace and str::replacen fail, a one-argument replace is another type.
 test("str_replace: a str replace with two arguments fails", () => {
   expectExit("crates/demo/src/lib.rs", 'pub fn f(s: &str) -> String {\n    s.replace("a", "b")\n}', 1);

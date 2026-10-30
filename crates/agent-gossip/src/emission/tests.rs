@@ -949,8 +949,8 @@ mod snapshots {
 
 mod prop {
     use habilis_network::protocol::Message;
+    use proptest::arbitrary::any;
     use proptest::collection::vec as arb_vec;
-    use proptest::prelude::any;
     use proptest::strategy::Strategy;
     use proptest::{prop_assert, prop_assert_eq, proptest};
 
