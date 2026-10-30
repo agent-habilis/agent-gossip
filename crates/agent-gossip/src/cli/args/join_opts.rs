@@ -21,7 +21,8 @@ fn parse_join_target(input: &str) -> Result<JoinTarget, String> {
         let JoinTargetError::Unrecognized(token) = &error else {
             return error.to_string();
         };
-        let quoted = format!("'{}'", token.replace('\'', "'\\''"));
+        let pieces: Vec<&str> = token.split('\'').collect();
+        let quoted = format!("'{}'", pieces.join("'\\''"));
         format!(
             "{error}. To join a public gossip derived from a shared string, \
              use `agent-gossip topic {quoted}`."

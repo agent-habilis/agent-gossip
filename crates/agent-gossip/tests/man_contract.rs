@@ -100,7 +100,7 @@ fn manual_carries_no_pre_rename_vocabulary() {
 
     // The env var name is an identifier the manual must quote, and its `ROOM`
     // segment would otherwise read as the retired word.
-    let prose = stdout.replace("AGENT_GOSSIP_DEFAULT_ROOM", "");
+    let prose: String = stdout.split("AGENT_GOSSIP_DEFAULT_ROOM").collect();
     let banned_lines = prose
         .lines()
         .enumerate()

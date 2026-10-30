@@ -7,6 +7,9 @@ use crate::normalize::normalize;
 use crate::parse_named_args::parse_named_args;
 use crate::render::render;
 
+// Never valid directive text, so the slot pass of the includer leaves it alone.
+const SENTINEL: char = '\u{0}';
+
 pub(crate) fn expand_at(
     path: &Path,
     args: &[(&str, &str)],
@@ -30,7 +33,7 @@ pub(crate) fn expand_at(
     // Pull include lines out first, leaving sentinels (never valid directive
     // text), so the includer's own slot pass cannot touch spliced content.
     let mut text = String::with_capacity(content.len());
-    let mut expansions: Vec<(String, String)> = Vec::new();
+    let mut expansions: Vec<String> = Vec::new();
     for (index, line) in content.split_inclusive('\n').enumerate() {
         let trimmed = line.trim();
         let is_include_line = trimmed
@@ -66,18 +69,21 @@ pub(crate) fn expand_at(
             .map(|(key, value)| (key.as_str(), value.as_str()));
         let child_args: Vec<(&str, &str)> = borrowed_pairs.collect();
         let expanded = expand_at(&base.join(target), &child_args, loader, stack)?;
-        let sentinel = format!("\u{0}INC{}\u{0}", expansions.len());
-        text.push_str(&sentinel);
+        text.push(SENTINEL);
         if line.ends_with('\n') {
             text.push('\n');
         }
-        expansions.push((sentinel, expanded));
+        expansions.push(expanded);
     }
 
-    let mut rendered = render(&text, args)?;
-    for (sentinel, expanded) in expansions {
-        rendered = rendered.replace(&sentinel, &expanded);
+    let rendered = render(&text, args)?;
+    let mut pieces = rendered.split(SENTINEL);
+    let mut spliced = String::with_capacity(rendered.len());
+    spliced.push_str(pieces.next().unwrap_or_default());
+    for (expanded, piece) in expansions.iter().zip(pieces) {
+        spliced.push_str(expanded);
+        spliced.push_str(piece);
     }
     stack.pop();
-    Ok(rendered)
+    Ok(spliced)
 }

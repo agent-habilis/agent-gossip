@@ -3111,7 +3111,8 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
 fn default_state_file(mesh: &str, nickname: &str) -> PathBuf {
     // Mirror `util::mesh_prefix`: strip the `://` scheme separator before
     // taking 16 chars, so the path matches where the daemon writes its state.
-    let prefix: String = mesh.replace("://", "").chars().take(16).collect();
+    let without_scheme: String = mesh.split("://").collect();
+    let prefix: String = without_scheme.chars().take(16).collect();
     common::runtime_base()
         .join(prefix)
         .join(format!("{nickname}.state.json"))

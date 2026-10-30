@@ -755,9 +755,13 @@ mod tests {
         let cwd = home.join("we\"ird\\dir");
         std::fs::create_dir_all(&cwd).expect("create the odd cwd");
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let merge = ready_gate_merge(skill)
-                .replace("{MODEL}", "m")
-                .replace("{HARNESS}", "h");
+            let (before_model, after_model) = ready_gate_merge(skill)
+                .split_once("{MODEL}")
+                .unwrap_or_else(|| panic!("{skill}: the merge has no {{MODEL}} slot"));
+            let (between, after_harness) = after_model
+                .split_once("{HARNESS}")
+                .unwrap_or_else(|| panic!("{skill}: the merge has no {{HARNESS}} slot"));
+            let merge = format!("{before_model}m{between}h{after_harness}");
             let script = format!(
                 "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; {merge}"
             );

@@ -499,6 +499,29 @@ function countDynParams(raw: string): number {
   return count;
 }
 
+/** Text with comments removed, each string literal cut to `""` and each char literal to `''`. */
+function blankLiterals(text: string): string {
+  return text.replace(LEXEME, (lexeme) => {
+    if (lexeme.startsWith("/*")) return " ";
+    if (lexeme.startsWith("//")) return "";
+    if (lexeme.startsWith("'")) return "''";
+    return '""';
+  });
+}
+
+// The `str::replace` and `str::replacen` calls (P23). A call of `replace` with one argument is another
+// type (`Option::replace`, `Cell::replace`), so `replace` counts with two arguments and `replacen` always.
+function countStrReplace(raw: string): number {
+  const text = blankLiterals(raw);
+  let count = 0;
+  for (const m of text.matchAll(/\.\s*(replacen?)\s*\(/g)) {
+    const open = m.index! + m[0].length - 1;
+    const args = callArgs(text.slice(open + 1, closeCall(text, open)));
+    if (m[1] === "replacen" || args.length === 2) count++;
+  }
+  return count;
+}
+
 const RULES: Rule[] = [
   {
     name: "poison",
@@ -700,6 +723,12 @@ const RULES: Rule[] = [
     scan: countAbbrevNames,
     glob: "crates/**/*.rs",
     why: "An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on. A name that a crate outside our control fixes has a counted row.",
+  },
+  {
+    name: "str_replace",
+    scan: countStrReplace,
+    glob: "crates/**/*.rs",
+    why: "Build a string with format! or write!, not with str::replace or str::replacen (P23). To cut a piece out, split on it.",
   },
 ];
 

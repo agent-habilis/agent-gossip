@@ -550,3 +550,23 @@ test("dyn_param: a file under benches counts", () => {
 test("pub_vec_param: a file under tests counts", () => {
   expectExit("crates/demo/tests/t.rs", "pub fn f(xs: Vec<u8>) -> usize { xs.len() }", 1);
 });
+
+// The str_replace rule (P23): str::replace and str::replacen fail, a one-argument replace is another type.
+test("str_replace: a str replace with two arguments fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f(s: &str) -> String {\n    s.replace("a", "b")\n}', 1);
+});
+test("str_replace: a replacen fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f(s: &str) -> String {\n    s.replacen(\'a\', "b", 1)\n}', 1);
+});
+test("str_replace: a chain split across lines fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f(s: &str) -> String {\n    s\n        .replace("a,", "b")\n}', 1);
+});
+test("str_replace: a replace with one argument is clean", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f(slot: &mut Option<u8>) -> Option<u8> {\n    slot.replace(1)\n}", 0);
+});
+test("str_replace: the word in a string or a comment is clean", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() -> &\'static str {\n    // s.replace("a", "b")\n    ".replace(a, b)"\n}', 0);
+});
+test("str_replace: a test file counts too", () => {
+  expectExit("crates/demo/tests/t.rs", '#[test]\nfn t() {\n    let _ = "a".replace(\'a\', "b");\n}', 1);
+});

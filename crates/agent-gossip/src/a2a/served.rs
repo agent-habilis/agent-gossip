@@ -369,7 +369,11 @@ mod tests {
         // so the error cannot be used to enumerate the ids the peer holds.
         let reject =
             |wanted: &str| match classify("GetTask", &json!({"id": wanted}), &outsider, &st) {
-                Served::Reject(error) => (error.code, error.message.replace(wanted, "<id>")),
+                Served::Reject(error) => {
+                    let around_id: Vec<String> =
+                        error.message.split(wanted).map(str::to_owned).collect();
+                    (error.code, around_id)
+                }
                 Served::Op(_)
                 | Served::Ingest(_)
                 | Served::ShardRepair { .. }
