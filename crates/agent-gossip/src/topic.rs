@@ -49,7 +49,7 @@ mod tests {
     /// gossips, one per version.
     #[test]
     fn topic_id_matches_the_released_derivation() {
-        let mesh = super::derive_topic_mesh("standup").unwrap();
+        let mesh = super::derive_topic_mesh("standup").expect("the test topic is valid");
         assert_eq!(
             mesh.to_string(),
             "L4rA2igekqYAiecUqXZpt3yPPEPPUwDF6UuaVXxT4QdHbsiKQHCcvAJbq37HwwmKbD",

@@ -845,7 +845,7 @@ mod tests {
     fn codex_in_sync_only_when_skill_tree_matches_embedded() {
         let home = std::env::temp_dir().join(format!("agent-gossip-insync-{}", std::process::id()));
         let dir = Agent::Codex.install_path(&home);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("the test temp directory is writable");
 
         assert!(
             !Agent::Codex.in_sync(&home),
@@ -859,15 +859,15 @@ mod tests {
         );
 
         let file = dir.join("gossip-create/SKILL.md");
-        let mut contents = std::fs::read_to_string(&file).unwrap();
+        let mut contents = std::fs::read_to_string(&file).expect("the test file is readable");
         contents.push('\n');
-        std::fs::write(&file, contents).unwrap();
+        std::fs::write(&file, contents).expect("the test temp directory is writable");
         assert!(
             !Agent::Codex.in_sync(&home),
             "an edited skill file must count as out of sync"
         );
 
-        std::fs::remove_dir_all(&home).unwrap();
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     #[test]
@@ -875,7 +875,7 @@ mod tests {
         let home =
             std::env::temp_dir().join(format!("agent-gossip-cursor-insync-{}", std::process::id()));
         let dir = Agent::Cursor.install_path(&home);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("the test temp directory is writable");
 
         assert!(
             !Agent::Cursor.in_sync(&home),
@@ -890,26 +890,28 @@ mod tests {
 
         // A stale `shared/` dir from a pre-single-file install is extra
         // content, not drift — the embedded files all still match.
-        std::fs::create_dir_all(dir.join("shared")).unwrap();
-        std::fs::write(dir.join("shared/extra.md"), "extra").unwrap();
+        std::fs::create_dir_all(dir.join("shared")).expect("the test temp directory is writable");
+        std::fs::write(dir.join("shared/extra.md"), "extra")
+            .expect("the test temp directory is writable");
         assert!(
             Agent::Cursor.in_sync(&home),
             "an extra file must not count as drift"
         );
-        std::fs::remove_file(dir.join("gossip-join/SKILL.md")).unwrap();
+        std::fs::remove_file(dir.join("gossip-join/SKILL.md"))
+            .expect("the test temp directory is writable");
         assert!(
             !Agent::Cursor.in_sync(&home),
             "a missing skill file must count as out of sync"
         );
 
-        std::fs::remove_dir_all(&home).unwrap();
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
         let home = std::env::temp_dir().join(format!("agent-gossip-drift-{}", std::process::id()));
         let dir = Agent::Codex.install_path(&home);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("the test temp directory is writable");
 
         write_embedded_dir(&SKILLS, &dir);
         assert!(
@@ -917,7 +919,8 @@ mod tests {
             "a matching install must not warn"
         );
 
-        std::fs::write(dir.join("gossip-join/SKILL.md"), "stale").unwrap();
+        std::fs::write(dir.join("gossip-join/SKILL.md"), "stale")
+            .expect("the test temp directory is writable");
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(
             warning,
@@ -929,14 +932,14 @@ mod tests {
             "the drift warning must name the plug command, got: {warning}"
         );
 
-        std::fs::remove_dir_all(&home).unwrap();
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     fn write_embedded_dir(dir: &Dir<'_>, dest: &Path) {
-        std::fs::create_dir_all(dest).unwrap();
+        std::fs::create_dir_all(dest).expect("the test temp directory is writable");
         for file in dir.files() {
             let target = dest.join(file.path().file_name().expect("embedded file has a name"));
-            std::fs::write(target, file.contents()).unwrap();
+            std::fs::write(target, file.contents()).expect("the test temp directory is writable");
         }
         for subdir in dir.dirs() {
             let name = subdir.path().file_name().expect("embedded dir has a name");

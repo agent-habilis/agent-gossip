@@ -398,7 +398,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - No wildcard imports, including `use super::*` in test modules.
 - Imports in three groups: std, then external crates, then `self`/`super`/`crate`.
 - No single-character identifiers, except the names in `allowed-idents-below-min-chars`.
-- `unwrap_used` is on. `allow-unwrap-in-tests = true` in `clippy.toml` allows it in tests. Use `.expect("reason")` in production code and in test helpers.
+- `unwrap_used` is on, in tests as well: `clippy.toml` has no `allow-unwrap-in-tests`. Use `.expect("reason")` in production code, in test helpers, and in tests. The reason states why the call cannot fail.
 - `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
 - `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.

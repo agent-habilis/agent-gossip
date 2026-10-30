@@ -612,7 +612,7 @@ mod tests {
         // `effective_seed`. `doctor` must report the reason instead of crashing.
         let mut mesh = Mesh::try_new(
             Seed::new([1u8; 32]),
-            MeshName::try_new("t").unwrap(),
+            MeshName::try_new("t").expect("the test literal is a valid mesh name"),
             MeshConfig::loopback(),
         )
         .expect("a mesh without a secret");

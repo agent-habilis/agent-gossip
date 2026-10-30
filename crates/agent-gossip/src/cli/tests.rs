@@ -15,7 +15,7 @@ fn params(
     label: Option<&str>,
 ) -> anyhow::Result<serde_json::Value> {
     let mesh = MeshId::from(MESH);
-    let task_id: Option<TaskId> = task_id.map(|raw| raw.parse().unwrap());
+    let task_id: Option<TaskId> = task_id.map(|raw| raw.parse().expect("the test literal parses"));
     let request = A2aCallRequest::parse(
         method,
         &A2aCallSugar {
@@ -31,7 +31,7 @@ fn params(
 #[test]
 fn a_task_method_with_a_task_id_sends_only_the_id() {
     for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
-        let sent = params(method, None, Some(TASK), None).unwrap();
+        let sent = params(method, None, Some(TASK), None).expect("the test arguments are valid");
         assert_eq!(sent, json!({ "id": TASK }), "{method}");
     }
 }
@@ -39,7 +39,9 @@ fn a_task_method_with_a_task_id_sends_only_the_id() {
 #[test]
 fn a_task_method_without_a_task_id_is_an_error() {
     for method in ["GetTask", "CancelTask", "SubscribeToTask"] {
-        let error = params(method, None, None, None).unwrap_err().to_string();
+        let error = params(method, None, None, None)
+            .expect_err("this method needs a task id")
+            .to_string();
         assert_eq!(
             error,
             format!("--method {method} requires --task-id"),
@@ -50,7 +52,8 @@ fn a_task_method_without_a_task_id_is_an_error() {
 
 #[test]
 fn send_message_carries_text_task_id_and_label() {
-    let sent = params("SendMessage", Some("hi"), Some(TASK), Some("name")).unwrap();
+    let sent = params("SendMessage", Some("hi"), Some(TASK), Some("name"))
+        .expect("the test arguments are valid");
     let message = &sent["message"];
     assert_eq!(
         message["parts"][0]["text"], "hi",
@@ -66,7 +69,9 @@ fn send_message_carries_text_task_id_and_label() {
         "the context id is the mesh id"
     );
     assert_eq!(
-        sent.as_object().unwrap().len(),
+        sent.as_object()
+            .expect("the JSON value is an object in this test")
+            .len(),
         1,
         "only the message is sent"
     );
@@ -74,6 +79,7 @@ fn send_message_carries_text_task_id_and_label() {
 
 #[test]
 fn a_method_without_sugar_sends_an_empty_object() {
-    let sent = params("ListTasks", Some("ignored"), Some(TASK), None).unwrap();
+    let sent = params("ListTasks", Some("ignored"), Some(TASK), None)
+        .expect("the test arguments are valid");
     assert_eq!(sent, json!({}), "an empty request sends an empty object");
 }

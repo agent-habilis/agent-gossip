@@ -783,7 +783,9 @@ mod tests {
             "the waiting reason is the one given"
         );
         assert_eq!(
-            status_order(&update(waiting_metadata(Some("asks its user")).unwrap())),
+            status_order(&update(
+                waiting_metadata(Some("asks its user")).expect("the test metadata is valid")
+            )),
             None,
             "the status payload carries its fields"
         );

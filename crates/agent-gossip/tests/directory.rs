@@ -49,8 +49,10 @@ fn reap(child: &mut Child) {
 fn directory_advertise_then_discover() {
     // Advertiser: a private mesh that lists itself in directory `dtest`.
     let adv_log = tmp_log("dir-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let advertiser_stdout = adv_file.try_clone().unwrap();
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let advertiser_stdout = adv_file
+        .try_clone()
+        .expect("the test log file handle is open");
     let mut advertiser_command = test_cmd();
     advertiser_command
         .args(["create", "--advertise", "dtest", "--nickname", "adv"])
@@ -73,8 +75,10 @@ fn directory_advertise_then_discover() {
 
     // Discoverer: browse `dtest` and stream directory events.
     let disc_log = tmp_log("dir-disc");
-    let disc_file = File::create(&disc_log).unwrap();
-    let discoverer_stdout = disc_file.try_clone().unwrap();
+    let disc_file = File::create(&disc_log).expect("the test log directory is writable");
+    let discoverer_stdout = disc_file
+        .try_clone()
+        .expect("the test log file handle is open");
     let mut discoverer_command = test_cmd();
     discoverer_command
         .args(["discover", "--directory", "dtest"])
@@ -130,8 +134,10 @@ fn discover_stops_on_sigterm() {
     // Advertiser so the discoverer fully comes up (and thus has the api
     // session — and its SIGTERM handler — running) before we signal it.
     let adv_log = tmp_log("term-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let advertiser_stdout = adv_file.try_clone().unwrap();
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let advertiser_stdout = adv_file
+        .try_clone()
+        .expect("the test log file handle is open");
     let mut advertiser_command = test_cmd();
     advertiser_command
         .args([
@@ -154,8 +160,10 @@ fn discover_stops_on_sigterm() {
     }
 
     let disc_log = tmp_log("term-disc");
-    let disc_file = File::create(&disc_log).unwrap();
-    let discoverer_stdout = disc_file.try_clone().unwrap();
+    let disc_file = File::create(&disc_log).expect("the test log directory is writable");
+    let discoverer_stdout = disc_file
+        .try_clone()
+        .expect("the test log file handle is open");
     let mut discoverer_command = test_cmd();
     discoverer_command
         .args(["discover", "--directory", "stoptest"])
@@ -206,8 +214,10 @@ fn discover_stops_on_sigterm() {
 #[test]
 fn discover_window_exits_on_its_own() {
     let adv_log = tmp_log("win-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let advertiser_stdout = adv_file.try_clone().unwrap();
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let advertiser_stdout = adv_file
+        .try_clone()
+        .expect("the test log file handle is open");
     let mut advertiser_command = test_cmd();
     advertiser_command
         .args([
@@ -235,8 +245,10 @@ fn discover_window_exits_on_its_own() {
     // Window wide enough for directory join + one 2s ad cycle even when the
     // sibling directory tests run in parallel (contended loopback ladder).
     let disc_log = tmp_log("win-disc");
-    let disc_file = File::create(&disc_log).unwrap();
-    let discoverer_stdout = disc_file.try_clone().unwrap();
+    let disc_file = File::create(&disc_log).expect("the test log directory is writable");
+    let discoverer_stdout = disc_file
+        .try_clone()
+        .expect("the test log file handle is open");
     let mut discoverer_command = test_cmd();
     discoverer_command
         .args(["discover", "--directory", "wintest", "--window-secs", "30"])

@@ -69,7 +69,9 @@ mod tests {
     #[test]
     fn absent_flag_is_no_password() {
         assert!(
-            resolve_password(None).unwrap().is_none(),
+            resolve_password(None)
+                .expect("no password source is set in this test")
+                .is_none(),
             "no password flag resolves to no password"
         );
     }
@@ -77,8 +79,8 @@ mod tests {
     #[test]
     fn inline_value_resolves() {
         let password = resolve_password(Some(PasswordFlag::Inline("hunter2".to_owned())))
-            .unwrap()
-            .unwrap();
+            .expect("no password source is set in this test")
+            .expect("no password source is set in this test");
         assert_eq!(
             password.as_str(),
             "hunter2",
@@ -100,7 +102,8 @@ mod tests {
 
     #[test]
     fn bare_flag_is_a_hard_error() {
-        let error = resolve_password(Some(PasswordFlag::Bare)).unwrap_err();
+        let error = resolve_password(Some(PasswordFlag::Bare))
+            .expect_err("a bare flag has no value to read");
         assert!(
             error.to_string().contains("--password=<pw>"),
             "got: {error}"
@@ -121,7 +124,8 @@ mod tests {
 
     #[test]
     fn require_password_names_the_artifact() {
-        let error = super::require_password("ticket").unwrap_err();
+        let error =
+            super::require_password("ticket").expect_err("no password source is set in this test");
         assert!(
             error.to_string().contains("ticket is password-protected"),
             "got: {error}"

@@ -851,7 +851,10 @@ mod tests {
         let (ok_tx, ok_rx) = oneshot::channel();
         A2aResponder::Rpc(ok_tx).send_response(r#"{"result":{"task":{"id":"x"}}}"#);
         assert_eq!(
-            ok_rx.blocking_recv().unwrap().unwrap()["task"]["id"],
+            ok_rx
+                .blocking_recv()
+                .expect("the sender replies before it is dropped")
+                .expect("the test sends a fulfilled response")["task"]["id"],
             "x",
             "the call answers with the task id"
         );
@@ -860,7 +863,11 @@ mod tests {
         let (timeout_tx, timeout_rx) = oneshot::channel();
         A2aResponder::Rpc(timeout_tx).send_timeout();
         assert_eq!(
-            timeout_rx.blocking_recv().unwrap().unwrap_err().code,
+            timeout_rx
+                .blocking_recv()
+                .expect("the sender replies before it is dropped")
+                .expect_err("the test sends a timeout")
+                .code,
             -32000,
             "the call is parked until the reply"
         );

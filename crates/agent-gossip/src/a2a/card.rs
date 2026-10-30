@@ -345,7 +345,10 @@ mod tests {
             .find(|ext| ext.uri.contains("mesh-seal"))
             .expect("mesh-seal extension present");
         assert_eq!(
-            seal_ext.params.as_ref().unwrap()["x25519"],
+            seal_ext
+                .params
+                .as_ref()
+                .expect("the extension carries params")["x25519"],
             seal_b58,
             "the seal extension carries the x25519 key"
         );
@@ -368,9 +371,10 @@ mod tests {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58);
-        let card = serde_json::to_value(card).unwrap();
+        let card = serde_json::to_value(card).expect("a test value serializes to JSON");
         // A frame that is never full: the card is one merge.
-        let merges = publish_merges(&nickname, &card, |_| Ok(0)).unwrap();
+        let merges = publish_merges(&nickname, &card, |_| Ok(0))
+            .expect("the test card fits the frame limit");
         assert_eq!(merges.len(), 1, "one merge is recorded");
         let merge = &merges[0];
         assert_eq!(
@@ -457,7 +461,7 @@ mod tests {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let mut card =
             serde_json::to_value(own_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
-                .unwrap();
+                .expect("a test value serializes to JSON");
         card["endpoint"] = serde_json::json!({
             "id": "ab".repeat(32),
             "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
@@ -473,7 +477,7 @@ mod tests {
         let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
         let card = worst_case_card(&nickname);
         let whole = serde_json::json!({ "peers": { nickname.as_str(): { "card": card } } });
-        let whole_len = passworded_frame_len(&whole).unwrap();
+        let whole_len = passworded_frame_len(&whole).expect("the test frame has a length");
         assert!(
             whole_len > consts::MAX_MESSAGE_SIZE,
             "the premise of issue 41: the card as one merge is {whole_len} bytes on the wire"
@@ -484,7 +488,7 @@ mod tests {
 
         assert!(merges.len() > 1, "a card over the frame is in pieces");
         for merge in &merges {
-            let len = passworded_frame_len(merge).unwrap();
+            let len = passworded_frame_len(merge).expect("the test frame has a length");
             assert!(
                 len + super::FRAME_MARGIN <= consts::MAX_MESSAGE_SIZE,
                 "a frame of {len} bytes leaves no margin"
@@ -499,7 +503,7 @@ mod tests {
         for merge in &merges {
             let part = merge["peers"][nickname.as_str()]["card"]
                 .as_object()
-                .unwrap();
+                .expect("the JSON value is an object in this test");
             for (key, value) in part {
                 assert!(
                     rebuilt.insert(key.clone(), value.clone()).is_none(),
@@ -529,7 +533,7 @@ mod tests {
         for (index, merge) in merges.iter().enumerate() {
             let part = merge["peers"][nickname.as_str()]["card"]
                 .as_object()
-                .unwrap();
+                .expect("the JSON value is an object in this test");
             arrived.extend(part.clone());
             let doc = serde_json::json!({ "peers": { nickname.as_str(): { "card": arrived } } });
             assert_eq!(
@@ -558,7 +562,7 @@ mod tests {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let whole_card =
             serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58))
-                .unwrap();
+                .expect("a test value serializes to JSON");
         let whole = serde_json::json!({ "peers": { "calm-otter": { "card": whole_card } } });
         assert!(
             super::complete_card(&whole, &nickname).is_some(),

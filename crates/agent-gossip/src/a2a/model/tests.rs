@@ -63,7 +63,7 @@ fn part_requires_exactly_one_content_field() {
 #[test]
 fn task_state_is_screaming_snake_on_the_wire() {
     assert_eq!(
-        serde_json::to_value(TaskState::InputRequired).unwrap(),
+        serde_json::to_value(TaskState::InputRequired).expect("a test value serializes to JSON"),
         json!("TASK_STATE_INPUT_REQUIRED"),
         "the input-required state is screaming snake on the wire"
     );
@@ -73,7 +73,7 @@ fn task_state_is_screaming_snake_on_the_wire() {
         "the friendly name keeps its kebab case"
     );
     assert_eq!(
-        serde_json::to_value(Role::User).unwrap(),
+        serde_json::to_value(Role::User).expect("a test value serializes to JSON"),
         json!("ROLE_USER"),
         "a user role is ROLE_USER on the wire"
     );
@@ -103,8 +103,9 @@ fn terminal_states_are_the_four_closed_ones() {
 #[test]
 fn message_round_trips() {
     let message = fixture_message();
-    let json = serde_json::to_string(&message).unwrap();
-    let parsed: Message = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&message).expect("a test value serializes to JSON");
+    let parsed: Message =
+        serde_json::from_str(&json).expect("the JSON text comes from the test itself");
     assert_eq!(parsed, message, "a message survives a json round trip");
 }
 
@@ -119,7 +120,9 @@ mod snapshots {
 
     #[test]
     fn snap_a2a_message() {
-        insta::assert_snapshot!(serde_json::to_string(&fixture_message()).unwrap());
+        insta::assert_snapshot!(
+            serde_json::to_string(&fixture_message()).expect("a test value serializes to JSON")
+        );
     }
 
     /// The full **wire bytes** of a gossip frame carrying an A2A JSON-RPC
@@ -143,8 +146,12 @@ mod snapshots {
             ),
             habilis_network::protocol::AuthorKey::from([0; 32]),
         );
-        let bytes: Vec<u8> = message.serialize().unwrap().as_bytes().to_vec();
-        insta::assert_snapshot!(String::from_utf8(bytes).unwrap());
+        let bytes: Vec<u8> = message
+            .serialize()
+            .expect("the test message serializes")
+            .as_bytes()
+            .to_vec();
+        insta::assert_snapshot!(String::from_utf8(bytes).expect("the bytes are printable ASCII"));
     }
 
     /// The response leg of [`snap_a2a_req_frame_wire`], echoing its `corr`.
@@ -161,8 +168,12 @@ mod snapshots {
             ),
             habilis_network::protocol::AuthorKey::from([0; 32]),
         );
-        let bytes: Vec<u8> = message.serialize().unwrap().as_bytes().to_vec();
-        insta::assert_snapshot!(String::from_utf8(bytes).unwrap());
+        let bytes: Vec<u8> = message
+            .serialize()
+            .expect("the test message serializes")
+            .as_bytes()
+            .to_vec();
+        insta::assert_snapshot!(String::from_utf8(bytes).expect("the bytes are printable ASCII"));
     }
 
     #[test]
@@ -179,7 +190,9 @@ mod snapshots {
             history: vec![fixture_message()],
             metadata: None,
         };
-        insta::assert_snapshot!(serde_json::to_string(&task).unwrap());
+        insta::assert_snapshot!(
+            serde_json::to_string(&task).expect("a test value serializes to JSON")
+        );
     }
 
     #[test]
@@ -194,7 +207,9 @@ mod snapshots {
             },
             metadata: Some(serde_json::json!({"mesh:review": true})),
         };
-        insta::assert_snapshot!(serde_json::to_string(&update).unwrap());
+        insta::assert_snapshot!(
+            serde_json::to_string(&update).expect("a test value serializes to JSON")
+        );
     }
 
     #[test]
@@ -214,6 +229,8 @@ mod snapshots {
             last_chunk: Some(true),
             metadata: None,
         };
-        insta::assert_snapshot!(serde_json::to_string(&update).unwrap());
+        insta::assert_snapshot!(
+            serde_json::to_string(&update).expect("a test value serializes to JSON")
+        );
     }
 }

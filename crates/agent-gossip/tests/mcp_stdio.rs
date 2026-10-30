@@ -357,7 +357,10 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     let mut child: Child = command.stderr(Stdio::piped()).spawn().expect("spawn");
-    let stdin = child.stdin.as_mut().unwrap();
+    let stdin = child
+        .stdin
+        .as_mut()
+        .expect("the child was spawned with a piped stdin");
     for line in [
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
@@ -366,7 +369,7 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_broadcast","arguments":{"text":"sanity"}}}"#,
         r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_gossip","arguments":{}}}"#,
     ] {
-        writeln!(stdin, "{line}").unwrap();
+        writeln!(stdin, "{line}").expect("the child stdin is open");
     }
     std::thread::sleep(Duration::from_secs(8));
     drop(child.stdin.take());
@@ -481,7 +484,12 @@ fn create_mesh_twice_errors_cleanly() {
     );
     let first_json = tool_result_json(&first).expect("first create_gossip should succeed");
     assert!(
-        agent_gossip::MeshId::try_new(first_json["gossip"].as_str().unwrap()).is_ok(),
+        agent_gossip::MeshId::try_new(
+            first_json["gossip"]
+                .as_str()
+                .expect("the JSON field is a string in this test")
+        )
+        .is_ok(),
         "create_gossip must return a valid mesh id, got {first_json}"
     );
     assert_eq!(
@@ -585,7 +593,10 @@ fn leave_then_create_cycle_works_within_one_server() {
         &serde_json::json!({ "name": "cycle1" }),
     ))
     .expect("create");
-    let first_mesh = first["gossip"].as_str().unwrap().to_string();
+    let first_mesh = first["gossip"]
+        .as_str()
+        .expect("the JSON field is a string in this test")
+        .to_string();
 
     let _ = client.tool_call(61, "leave_gossip", &serde_json::json!({}));
 
@@ -596,7 +607,9 @@ fn leave_then_create_cycle_works_within_one_server() {
     ))
     .expect("create after leave");
     assert_ne!(
-        second["gossip"].as_str().unwrap(),
+        second["gossip"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
         first_mesh,
         "second create should mint a fresh mesh id"
     );
@@ -695,7 +708,7 @@ fn create_mesh_relay_transport_is_in_the_id() {
 
     let decoded: habilis_network::protocol::LockedMesh = relayed["gossip"]
         .as_str()
-        .unwrap()
+        .expect("the JSON field is a string in this test")
         .parse()
         .expect("valid mesh id");
     assert!(
@@ -706,8 +719,12 @@ fn create_mesh_relay_transport_is_in_the_id() {
         "the decoded id must carry the relay-transport bit"
     );
     assert_ne!(
-        p2p["gossip"].as_str().unwrap(),
-        relayed["gossip"].as_str().unwrap(),
+        p2p["gossip"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
+        relayed["gossip"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
         "letting the relay carry payload must mint a different id"
     );
 }
@@ -881,7 +898,10 @@ fn send_empty_body_works() {
 
     let sent = client.tool_call(101, "send_broadcast", &serde_json::json!({ "text": "" }));
     let sent_json = tool_result_json(&sent).expect("empty-body send should succeed");
-    let id = sent_json["id"].as_str().unwrap().to_string();
+    let id = sent_json["id"]
+        .as_str()
+        .expect("the JSON field is a string in this test")
+        .to_string();
     assert!(!id.is_empty(), "send_broadcast must return a message id");
     // send_broadcast now returns the full echo inline — the agent
     // should never need a follow-up fetch for its own send.
@@ -921,7 +941,9 @@ fn send_empty_body_works() {
         &serde_json::json!({ "after": FROM_START }),
     ))
     .expect("fetch");
-    let msgs = fetched["messages"].as_array().unwrap();
+    let msgs = fetched["messages"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert!(
         msgs.iter()
             .any(|message| message["id"].as_str() == Some(&id)),
@@ -1015,7 +1037,10 @@ fn send_broadcast_reaches_the_mesh() {
     );
     let json = tool_result_json(&response).expect("broadcast send should succeed");
     assert!(
-        !json["id"].as_str().unwrap().is_empty(),
+        !json["id"]
+            .as_str()
+            .expect("the JSON field is a string in this test")
+            .is_empty(),
         "send_broadcast must return a non-empty id, got {json}"
     );
 }
@@ -1057,7 +1082,9 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
         &serde_json::json!({ "after": before_seq }),
     ))
     .expect("explicit replay");
-    let replayed = replay["messages"].as_array().unwrap();
+    let replayed = replay["messages"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     let bodies: Vec<&str> = replayed
         .iter()
         .filter_map(|event| event["body"].as_str())
@@ -1071,9 +1098,14 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     let cursor = replay["current_seq"]
         .as_u64()
         .expect("current_seq should be set when batch non-empty");
-    let all_events = replay["messages"].as_array().unwrap();
+    let all_events = replay["messages"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(
-        all_events.last().unwrap()["seq"].as_u64(),
+        all_events
+            .last()
+            .expect("the list has an element in this test")["seq"]
+            .as_u64(),
         Some(cursor),
         "current_seq must match the last event's seq in the batch"
     );
@@ -1093,12 +1125,16 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
                 &serde_json::json!({ "after": cursor }),
             ))
             .expect("delta fetch");
-            let surfaced = second["messages"].as_array().unwrap();
+            let surfaced = second["messages"]
+                .as_array()
+                .expect("the JSON field is an array in this test");
             let surfaced_four: bool = surfaced
                 .iter()
                 .any(|event| event["body"].as_str() == Some("four"));
             if surfaced_four {
-                break second["current_seq"].as_u64().unwrap();
+                break second["current_seq"]
+                    .as_u64()
+                    .expect("the JSON field is a number in this test");
             }
             assert!(
                 Instant::now() < deadline,
@@ -1120,7 +1156,9 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
         &serde_json::json!({ "after": cursor2 }),
     ))
     .expect("idle fetch");
-    let msgs3 = third["messages"].as_array().unwrap();
+    let msgs3 = third["messages"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert!(
         msgs3.is_empty(),
         "fetch with up-to-date cursor should be empty, got {msgs3:?}"
@@ -1324,8 +1362,12 @@ const DIR_FLAGS: [(&str, &str); 4] = [
 #[test]
 fn discover_meshes_finds_an_advertised_mesh() {
     let adv_log = tmp_log("mcp-disc-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let stdout = Stdio::from(adv_file.try_clone().unwrap());
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let stdout = Stdio::from(
+        adv_file
+            .try_clone()
+            .expect("the test log file handle is open"),
+    );
     let mut command = test_cmd();
     command
         .args([

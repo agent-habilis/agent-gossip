@@ -64,7 +64,8 @@ mod tests {
     #[test]
     fn transport_list_is_literal() {
         assert_eq!(
-            transport_policy(&[Transport::Udp, Transport::WebRtc]).unwrap(),
+            transport_policy(&[Transport::Udp, Transport::WebRtc])
+                .expect("this transport combination is valid"),
             TransportPolicy::default().multihop(false).gossip(false),
             "udp and webrtc alone enable no multihop, gossip or relay"
         );
@@ -79,7 +80,7 @@ mod tests {
             Transport::Gossip,
             Transport::Relay,
         ])
-        .unwrap();
+        .expect("this transport combination is valid");
         assert!(
             policy.allows(habilis_network::protocol::Transport::Multihop)
                 && policy.allows(habilis_network::protocol::Transport::Gossip)

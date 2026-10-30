@@ -145,7 +145,8 @@ fn ready_event_drift_is_present_only_when_stale() {
     let make = |drift: Option<&str>| {
         simple_event::event_json(&OutputEvent::Ready {
             mesh: sid(),
-            name: habilis_network::protocol::MeshName::try_new("team").unwrap(),
+            name: habilis_network::protocol::MeshName::try_new("team")
+                .expect("the test literal is a valid mesh name"),
             nickname: nick("alice"),
             drift: drift.map(str::to_owned),
             a2a_port: None,
@@ -545,7 +546,7 @@ fn peer_timeout_json_shape() {
         last_seen_secs_ago: 94,
         display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
-    .unwrap();
+    .expect("a test value serializes to JSON");
     let parsed = parse(&json);
     assert_eq!(
         parsed["event"], "peer_timeout",
@@ -571,7 +572,7 @@ fn peer_return_json_shape() {
         nickname: "ball-blue",
         display: "💬️ `<ball-blue>` came back".to_owned(),
     })
-    .unwrap();
+    .expect("a test value serializes to JSON");
     let parsed = parse(&json);
     assert_eq!(
         parsed["event"], "peer_return",
@@ -595,7 +596,7 @@ fn receipt_json_shape() {
         state: "delivered",
         ts: 1_792_000_000,
     })
-    .unwrap();
+    .expect("a test value serializes to JSON");
     assert_eq!(
         json,
         r#"{"event":"receipt","from":"ball-blue","ref":"7a1c","state":"delivered","ts":1792000000}"#,
@@ -615,7 +616,7 @@ fn receipt_event_is_invisible_and_stamped_so() {
         !simple_event::is_visible(&event),
         "the event is not visible"
     );
-    let line = crate::emission::event_json(&event).unwrap();
+    let line = crate::emission::event_json(&event).expect("the test event serializes to JSON");
     assert_eq!(
         parse(&line)["is_visible"],
         false,
@@ -868,14 +869,18 @@ mod snapshots {
             &document,
             false,
         );
-        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&line).expect("the JSON text comes from the test itself");
         assert!(
             parsed.get("document").is_none(),
             "meta event carries the document: {line}"
         );
         assert_eq!(parsed["merge"], merge, "the merge field is merge");
         assert!(
-            parsed["display"].as_str().unwrap().contains("/peers/aa"),
+            parsed["display"]
+                .as_str()
+                .expect("the JSON field is a string in this test")
+                .contains("/peers/aa"),
             "the display names the peer path"
         );
     }
@@ -895,7 +900,8 @@ mod snapshots {
             &document,
             false,
         );
-        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&line).expect("the JSON text comes from the test itself");
         assert_eq!(
             parsed["document"], document,
             "the document field is document"
@@ -917,8 +923,11 @@ mod snapshots {
         // span around the nick) and a newline (would forge a second line in the
         // human eprintln feed) must not reach the `display` verbatim.
         let line = snap_state("{\"x`\\n<evil>\": 1}", &serde_json::json!({}), false);
-        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
-        let display = parsed["display"].as_str().unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&line).expect("the JSON text comes from the test itself");
+        let display = parsed["display"]
+            .as_str()
+            .expect("the JSON field is a string in this test");
         assert!(!display.contains('\n'), "no newline injection: {display:?}");
         assert_eq!(
             display.matches('`').count(),
@@ -948,12 +957,14 @@ mod prop {
     use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, view};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
-        arb_vec(0x20u8..0x7eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
+        arb_vec(0x20u8..0x7eu8, 0..200)
+            .prop_map(|bytes| String::from_utf8(bytes).expect("the bytes are printable ASCII"))
     }
 
     fn arb_nickname() -> impl Strategy<Value = habilis_network::protocol::Nickname> {
-        "[a-z]{3,8}-[a-z]{3,8}"
-            .prop_map(|raw| habilis_network::protocol::Nickname::try_new(&raw).unwrap())
+        "[a-z]{3,8}-[a-z]{3,8}".prop_map(|raw| {
+            habilis_network::protocol::Nickname::try_new(&raw).expect("the test nickname is valid")
+        })
     }
 
     proptest! {
@@ -967,10 +978,10 @@ mod prop {
             let expected = body_text.clone();
             let message = super::chat_frame(author.as_str(), &body_text);
             let json = format_msg_json(&message, is_self);
-            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-            prop_assert_eq!(parsed["body"].as_str().unwrap(), expected.as_str());
+            let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
+            prop_assert_eq!(parsed["body"].as_str().expect("the JSON field is a string in this test"), expected.as_str());
             prop_assert_eq!(
-                parsed["message"]["parts"][0]["text"].as_str().unwrap(),
+                parsed["message"]["parts"][0]["text"].as_str().expect("the JSON field is a string in this test"),
                 expected.as_str()
             );
             prop_assert!(!json.contains('\n'));
@@ -985,7 +996,7 @@ mod prop {
                 (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
             };
             let json = format_presence_json(&message, subtype);
-            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(&parsed["type"], "presence");
         }
     }

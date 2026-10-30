@@ -338,7 +338,7 @@ mod tests {
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
         let address = EndpointAddr::new(SecretKey::from_bytes(&[secret; 32]).public())
-            .with_ip_addr("127.0.0.1:4242".parse().unwrap());
+            .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"));
         A2aTicket {
             address,
             secret: habilis_network::protocol::TicketSecret::from([secret; 32]),

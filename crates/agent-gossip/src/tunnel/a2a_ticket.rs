@@ -131,7 +131,8 @@ mod tests {
 
     fn sample_addr(byte: u8) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[byte; 32]).public();
-        EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap())
+        EndpointAddr::new(id)
+            .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"))
     }
 
     #[test]
@@ -192,7 +193,8 @@ mod tests {
         // payload, so it fails ticket decode on the checksum/kind check.
         let mesh = habilis_network::protocol::Mesh::try_new(
             habilis_network::protocol::Seed::new([1u8; 32]),
-            habilis_network::protocol::MeshName::try_new("t").unwrap(),
+            habilis_network::protocol::MeshName::try_new("t")
+                .expect("the test literal is a valid mesh name"),
             habilis_network::protocol::MeshConfig::loopback(),
         )
         .expect("a mesh without a secret")
@@ -241,7 +243,7 @@ mod tests {
             password: false,
         };
         let mut encoded = ticket.encode();
-        let last = encoded.pop().unwrap();
+        let last = encoded.pop().expect("the encoded ticket is not empty");
         encoded.push(if last == '1' { '2' } else { '1' });
         assert!(
             A2aTicket::decode(&encoded).is_err(),

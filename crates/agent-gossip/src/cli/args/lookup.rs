@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn lookup_list_resolves_to_only_named() {
-        let set = lookup_set(&[Lookup::Mdns], None).unwrap();
+        let set = lookup_set(&[Lookup::Mdns], None).expect("this lookup combination is valid");
         assert!(
             set.mdns && !set.dht,
             "a bare --lookup mdns sets mdns and not dht"
@@ -126,15 +126,18 @@ mod tests {
 
     #[test]
     fn lookup_relay_default_and_custom_ladder() {
-        let bare = lookup_set(&[Lookup::Relay], None).unwrap();
+        let bare = lookup_set(&[Lookup::Relay], None).expect("this lookup combination is valid");
         assert_eq!(
             bare.relay_lookup,
             RelaySelection::Default,
             "without a relay flag the relay lookup is the default"
         );
 
-        let ladder: RelayLadder = "https://a.example,https://b.example".parse().unwrap();
-        let custom = lookup_set(&[Lookup::Relay], Some(ladder.clone())).unwrap();
+        let ladder: RelayLadder = "https://a.example,https://b.example"
+            .parse()
+            .expect("the test literal parses");
+        let custom = lookup_set(&[Lookup::Relay], Some(ladder.clone()))
+            .expect("this lookup combination is valid");
         assert_eq!(
             custom.relay_lookup,
             RelaySelection::Named(ladder),
@@ -165,7 +168,9 @@ mod tests {
 
     #[test]
     fn relay_url_without_relay_lookup_errors() {
-        let ladder: RelayLadder = "https://a.example".parse().unwrap();
+        let ladder: RelayLadder = "https://a.example"
+            .parse()
+            .expect("the test literal parses");
         assert!(
             lookup_set(&[Lookup::Mdns], Some(ladder)).is_err(),
             "mdns cannot combine with a custom relay ladder"

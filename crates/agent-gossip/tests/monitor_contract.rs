@@ -285,24 +285,32 @@ async fn test_ready_event_shape() {
         "the nickname field is a string"
     );
     assert_eq!(
-        ready["gossip"].as_str().unwrap(),
+        ready["gossip"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
         mesh,
         "the gossip field is the mesh"
     );
     assert_eq!(
-        ready["name"].as_str().unwrap(),
+        ready["name"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
         "readyshape",
         "the name field is readyshape"
     );
     assert_eq!(
-        ready["nickname"].as_str().unwrap(),
+        ready["nickname"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
         nick,
         "the nickname field is the nickname"
     );
     // The build self-identifies: the ready event carries the exact version
     // string (crate version + git sha + dirty flag).
     assert_eq!(
-        ready["version"].as_str().unwrap(),
+        ready["version"]
+            .as_str()
+            .expect("the JSON field is a string in this test"),
         agent_gossip::version(),
         "the version field is the build version"
     );
@@ -811,9 +819,9 @@ async fn test_alive_presence_is_silent_in_json() {
 fn test_hard_kill_triggers_peer_timeout() {
     let state_file = tmp_log("state-survivor");
     let log = tmp_log("json-survivor");
-    let file = fs::File::create(&log).unwrap();
-    let state = state_file.to_str().unwrap();
-    let stdout = Stdio::from(file.try_clone().unwrap());
+    let file = fs::File::create(&log).expect("the test log directory is writable");
+    let state = state_file.to_str().expect("the test path is valid UTF-8");
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
         .args(["create", "--name", "hardkill", "--state-file", state])

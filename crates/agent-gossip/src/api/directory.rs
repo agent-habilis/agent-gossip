@@ -257,7 +257,8 @@ mod lookup_tests {
     use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
     fn directory_topic(public: bool, lookups: LookupSet) -> String {
-        let name = MeshName::try_new(DEFAULT_DIRECTORY).unwrap();
+        let name =
+            MeshName::try_new(DEFAULT_DIRECTORY).expect("the test literal is a valid mesh name");
         format!(
             "{:?}",
             directory::directory_mesh(&name, super::resolve_lookups_or_public(public, lookups))

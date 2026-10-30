@@ -1003,12 +1003,16 @@ mod tests {
     fn keepalive_covers_every_live_task_past_the_cadence() {
         let cadence = Duration::from_secs(30);
         let now = Instant::now();
-        let quiet = now.checked_sub(2 * cadence).unwrap();
+        let quiet = now
+            .checked_sub(2 * cadence)
+            .expect("the test instant is far from the clock origin");
 
         // I initiated it and the worker holds the ball.
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), quiet);
-        let rec = tasks.get_mut(&tid()).unwrap();
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
         assert_eq!(
             rec.ball,
             TaskRole::Receiver,
@@ -1020,7 +1024,9 @@ mod tests {
         );
 
         // Silent for an hour: still beaten.
-        let hour_ago = now.checked_sub(Duration::from_hours(1)).unwrap();
+        let hour_ago = now
+            .checked_sub(Duration::from_hours(1))
+            .expect("the test instant is far from the clock origin");
         rec.last_sent = hour_ago;
         assert!(
             rec.should_keepalive(now, cadence),
@@ -1054,7 +1060,8 @@ mod tests {
         apply(
             &mut tasks,
             &leg(LegKind::Offer, true),
-            now.checked_sub(2 * cadence).unwrap(),
+            now.checked_sub(2 * cadence)
+                .expect("the test instant is far from the clock origin"),
         );
         apply(&mut tasks, &leg(LegKind::Beat, false), now);
         assert!(
@@ -1071,12 +1078,17 @@ mod tests {
     fn a_forgotten_task_stops_beating_after_the_silence_cap() {
         let cadence = Duration::from_secs(30);
         let now = Instant::now();
-        let day_ago = now.checked_sub(Duration::from_hours(25)).unwrap();
+        let day_ago = now
+            .checked_sub(Duration::from_hours(25))
+            .expect("the test instant is far from the clock origin");
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), day_ago);
         // Only the daemons have spoken since: the peer's beat, and ours.
         apply(&mut tasks, &leg(LegKind::Beat, false), now);
-        tasks.get_mut(&tid()).unwrap().last_sent = day_ago;
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .last_sent = day_ago;
         assert!(
             !tasks[&tid()].should_keepalive(now, cadence),
             "a quiet task past the cadence is not kept alive"
@@ -1091,7 +1103,9 @@ mod tests {
     fn a_peer_that_never_beat_is_not_reaped_for_silence() {
         let timeout = Duration::from_mins(2);
         let now = Instant::now();
-        let accepted = now.checked_sub(timeout * 2).unwrap();
+        let accepted = now
+            .checked_sub(timeout * 2)
+            .expect("the test instant is far from the clock origin");
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), accepted);
         apply(
@@ -1109,7 +1123,9 @@ mod tests {
     fn a_peer_that_never_beat_is_reaped_after_the_silence_cap() {
         let timeout = Duration::from_mins(2);
         let now = Instant::now();
-        let day_ago = now.checked_sub(Duration::from_hours(25)).unwrap();
+        let day_ago = now
+            .checked_sub(Duration::from_hours(25))
+            .expect("the test instant is far from the clock origin");
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
 
@@ -1142,12 +1158,17 @@ mod tests {
                 wire::app_tag(wire::STATUS),
                 Some(Nickname::from("worker-bot")),
                 None,
-                MessageBody::try_new(&serde_json::to_string(&payload).unwrap()).unwrap(),
+                MessageBody::try_new(
+                    &serde_json::to_string(&payload).expect("a test value serializes to JSON"),
+                )
+                .expect("a test value serializes to JSON"),
             ),
         );
         beat.timestamp = beat.timestamp - Duration::from_hours(1);
 
-        let later = now.checked_add(Duration::from_mins(1)).unwrap();
+        let later = now
+            .checked_add(Duration::from_mins(1))
+            .expect("the test instant cannot overflow");
         super::ingest(
             &mut tasks,
             IngestLegParams {
@@ -1200,7 +1221,10 @@ mod tests {
                 wire::app_tag(wire::STATUS),
                 Some(Nickname::from("worker-bot")),
                 None,
-                MessageBody::try_new(&serde_json::to_string(&payload).unwrap()).unwrap(),
+                MessageBody::try_new(
+                    &serde_json::to_string(&payload).expect("a test value serializes to JSON"),
+                )
+                .expect("a test value serializes to JSON"),
             ),
         )
     }
@@ -1278,7 +1302,9 @@ mod tests {
     fn a_reading_or_waiting_worker_is_not_stalled() {
         let now = Instant::now();
         let mut tasks = working_task_we_opened(now);
-        let rec = tasks.get_mut(&tid()).unwrap();
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
 
         let bell = ReaderBeat {
             bell: true,
@@ -1719,7 +1745,10 @@ mod tests {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
-        tasks.get_mut(&tid()).unwrap().state = TaskState::Completed;
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .state = TaskState::Completed;
         let late = status_leg(false);
         assert!(
             super::is_replay(&tasks, &closed(), &tid(), &late.id),
@@ -1735,9 +1764,13 @@ mod tests {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), now);
-        let rec = tasks.get_mut(&tid()).unwrap();
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
         rec.state = TaskState::Completed;
-        rec.last_activity = now.checked_sub(timeout * 2).unwrap();
+        rec.last_activity = now
+            .checked_sub(timeout * 2)
+            .expect("the test instant is far from the clock origin");
 
         let mut reaped_ids = closed();
         let (_, reaped) = super::sweep_registry(&mut tasks, &mut reaped_ids, now, timeout);
@@ -1767,9 +1800,14 @@ mod tests {
         let now = Instant::now();
         let mut app = A2aApp::new();
         apply(&mut app.tasks, &leg(LegKind::Offer, true), now);
-        let rec = app.tasks.get_mut(&tid()).unwrap();
+        let rec = app
+            .tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
         rec.state = TaskState::Completed;
-        rec.last_activity = now.checked_sub(timeout * 2).unwrap();
+        rec.last_activity = now
+            .checked_sub(timeout * 2)
+            .expect("the test instant is far from the clock origin");
         super::sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
         assert!(app.tasks.is_empty(), "the app has no tasks after the reap");
 
@@ -1789,7 +1827,8 @@ mod tests {
             "another peer must still get task not found"
         );
 
-        let task = rpc_error::get_task(&app, &tid(), &MeshId::from("test")).unwrap();
+        let task = rpc_error::get_task(&app, &tid(), &MeshId::from("test"))
+            .expect("the test inserted this task earlier");
         assert_eq!(
             task["id"],
             tid().as_str(),
@@ -1969,7 +2008,9 @@ mod tests {
             "the review flag is clear before the review"
         );
 
-        let later = now.checked_add(Duration::from_mins(30)).unwrap();
+        let later = now
+            .checked_add(Duration::from_mins(30))
+            .expect("the test instant cannot overflow");
         apply(&mut tasks, &from_outsider(LegKind::Beat), later);
         assert_eq!(
             tasks[&tid()].last_peer_activity,
@@ -2047,7 +2088,10 @@ mod tests {
         // The quota counts live tasks, so finished ones free it again — an
         // orchestrator running many short tasks with one worker is not a
         // flooder, and must not be treated as one.
-        tasks.get_mut(&minted[0]).unwrap().state = TaskState::Completed;
+        tasks
+            .get_mut(&minted[0])
+            .expect("the test inserted this task earlier")
+            .state = TaskState::Completed;
         assert_eq!(
             admit_new_task(&tasks, &flooder),
             Admission::Ok,
@@ -2071,7 +2115,9 @@ mod tests {
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
         // A peer that beats, idle well past the debounce.
-        let rec = tasks.get_mut(&tid()).unwrap();
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
         rec.peer_beats = true;
         rec.last_peer_activity = now.checked_sub(timeout * 2).expect("test clock");
 
@@ -2110,7 +2156,9 @@ mod tests {
         apply(&mut tasks, &leg(LegKind::Offer, true), long_ago);
         // Our daemon beat a moment ago; the worker, which beats, has said
         // nothing since.
-        let rec = tasks.get_mut(&tid()).unwrap();
+        let rec = tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier");
         rec.last_activity = now;
         rec.peer_beats = true;
 
@@ -2161,7 +2209,9 @@ mod tests {
             );
         };
 
-        let later = now.checked_add(Duration::from_mins(5)).unwrap();
+        let later = now
+            .checked_add(Duration::from_mins(5))
+            .expect("the test instant cannot overflow");
         adopt(&mut tasks, "wire-thistle", TaskState::Failed, later);
         assert_eq!(
             tasks[&tid()].state,
@@ -2234,7 +2284,10 @@ mod tests {
         apply(&mut tasks, &offer(live_id, "calm-otter"), now);
         apply(&mut tasks, &offer(staying_id, "drift-oak"), now);
         apply(&mut tasks, &offer(done_id, "calm-otter"), now);
-        tasks.get_mut(&TaskId::from(done_id)).unwrap().state = TaskState::Completed;
+        tasks
+            .get_mut(&TaskId::from(done_id))
+            .expect("the test inserted this task earlier")
+            .state = TaskState::Completed;
 
         let out = crate::emission::Output::silent();
         super::fail_tasks_for_departed_peer(&mut tasks, &departed, &out);

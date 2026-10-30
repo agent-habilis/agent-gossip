@@ -1278,8 +1278,10 @@ mod classify_tests {
     fn chat_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let payload = status_update_params::compose_broadcast(&sw, "hi");
-        let id = MessageId::try_new(payload.message_id.as_str()).unwrap();
-        let body = status_update_params::payload_body(&payload).unwrap();
+        let id = MessageId::try_new(payload.message_id.as_str())
+            .expect("the payload carries a valid message id");
+        let body =
+            status_update_params::payload_body(&payload).expect("the test payload has a body");
         Message::new_app(
             &sw,
             &Nickname::from("author"),
@@ -1296,8 +1298,10 @@ mod classify_tests {
     fn msg_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let payload = status_update_params::compose_msg(&sw, "hi");
-        let id = MessageId::try_new(payload.message_id.as_str()).unwrap();
-        let body = status_update_params::payload_body(&payload).unwrap();
+        let id = MessageId::try_new(payload.message_id.as_str())
+            .expect("the payload carries a valid message id");
+        let body =
+            status_update_params::payload_body(&payload).expect("the test payload has a body");
         Message::new_app(
             &sw,
             &Nickname::from("author"),
@@ -1448,7 +1452,7 @@ mod classify_tests {
                 wire::app_tag(wire::STATUS),
                 Some(Nickname::from("initiator")),
                 None,
-                status_update_params::payload_body(&status).unwrap(),
+                status_update_params::payload_body(&status).expect("the test payload has a body"),
             ),
         )
     }
@@ -1691,8 +1695,10 @@ mod classify_tests {
     fn dm_declaring_the_broadcast_extension_is_invalid() {
         let sw = mesh();
         let payload = status_update_params::compose_broadcast(&sw, "hi");
-        let id = MessageId::try_new(payload.message_id.as_str()).unwrap();
-        let body = status_update_params::payload_body(&payload).unwrap();
+        let id = MessageId::try_new(payload.message_id.as_str())
+            .expect("the payload carries a valid message id");
+        let body =
+            status_update_params::payload_body(&payload).expect("the test payload has a body");
         let frame = Message::new_app(
             &sw,
             &Nickname::from("author"),

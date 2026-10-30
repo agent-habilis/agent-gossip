@@ -273,7 +273,9 @@ mod tests {
                 "mdns,dht,relay",
                 "--advertise"
             ]),
-            DirectorySelection::Named(MeshName::try_new("global").unwrap()),
+            DirectorySelection::Named(
+                MeshName::try_new("global").expect("the test literal is a valid mesh name")
+            ),
             "bare ⇒ the global directory (default_missing_value)"
         );
         assert_eq!(
@@ -285,7 +287,9 @@ mod tests {
                 "--advertise",
                 "gamedev"
             ]),
-            DirectorySelection::Named(MeshName::try_new("gamedev").unwrap()),
+            DirectorySelection::Named(
+                MeshName::try_new("gamedev").expect("the test literal is a valid mesh name")
+            ),
             "valued ⇒ Named directory"
         );
     }

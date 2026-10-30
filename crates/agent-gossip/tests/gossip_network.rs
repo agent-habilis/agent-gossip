@@ -763,8 +763,8 @@ async fn test_interleaved_join_leave_order() {
 #[test]
 fn test_lookup_list_accepted() {
     let log = tmp_log("public");
-    let file = File::create(&log).unwrap();
-    let stdout = Stdio::from(file.try_clone().unwrap());
+    let file = File::create(&log).expect("the test log directory is writable");
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command.args(["create", "--name", "pub-test", "--lookup", "mdns,dht,relay"]);
     let mut child: Child = command
@@ -807,14 +807,14 @@ fn test_lookup_list_accepted() {
 fn test_state_file_removed_on_signal() {
     for signal in ["-TERM", "-HUP", "-INT"] {
         let log = tmp_log(&format!("statefile{signal}"));
-        let file = File::create(&log).unwrap();
+        let file = File::create(&log).expect("the test log directory is writable");
         let state_file = std::env::temp_dir().join(format!(
             "agent-gossip-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
 
-        let stdout = Stdio::from(file.try_clone().unwrap());
+        let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
         let mut command = common::test_cmd();
         command
             .args(["create", "--name", "statefile-test"])
@@ -866,14 +866,14 @@ fn test_state_file_removed_on_signal() {
 #[test]
 fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test log directory is writable");
     let state_file = std::env::temp_dir().join(format!(
         "agent-gossip-ready-before-{}.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
 
-    let stdout = Stdio::from(file.try_clone().unwrap());
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
         .args(["create", "--name", "ready-test"])
@@ -903,7 +903,8 @@ fn test_ready_gate_succeeds_when_serving() {
     // The gate returning means the file is complete and serving — the caller
     // reads identity + ready:true from it.
     let parsed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&state_file).expect("the test file is readable"))
+            .expect("the state file holds JSON written by the daemon");
     assert_eq!(parsed["ready"], true, "gate returned but ready is not true");
     assert_eq!(
         parsed["name"], "ready-test",
@@ -940,12 +941,12 @@ fn test_ready_gate_succeeds_when_serving() {
 #[test]
 fn second_daemon_refuses_a_state_file_already_in_use() {
     let log = tmp_log("statefile-collide");
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test log directory is writable");
     let state_file =
         std::env::temp_dir().join(format!("agent-gossip-collide-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
-    let stdout = Stdio::from(file.try_clone().unwrap());
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
         .args(["create", "--name", "collide-first"])
@@ -1010,7 +1011,8 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
 
     // The first daemon still owns the file and is unharmed.
     let parsed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&state_file).expect("the test file is readable"))
+            .expect("the state file holds JSON written by the daemon");
     assert_eq!(
         parsed["name"], "collide-first",
         "the collision keeps the first name"
@@ -1030,7 +1032,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
 #[test]
 fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test log directory is writable");
     let state_file = std::env::temp_dir().join(format!(
         "agent-gossip-ready-after-{}.json",
         std::process::id()
@@ -1048,7 +1050,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
-    let stdout = Stdio::from(file.try_clone().unwrap());
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     command = common::test_cmd();
     command
         .args(["create", "--name", "ready-race"])
@@ -1115,7 +1117,7 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         &state_file,
         r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","peer_count":1,"ready":true,"gossip":"deadbeef"}"#,
     )
-    .unwrap();
+    .expect("the temp directory is writable");
 
     let mut command = common::test_cmd();
     command
@@ -1144,7 +1146,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     ));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("the system clock is after the Unix epoch")
         .as_secs();
     fs::write(
         &state_file,
@@ -1152,7 +1154,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
             r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"ready":true,"gossip":"deadbeef"}}"#
         ),
     )
-    .unwrap();
+    .expect("the temp directory is writable");
 
     let mut command = common::test_cmd();
     command
@@ -1501,7 +1503,7 @@ fn test_poll_long_resolves_on_traffic() {
         let _ = cli_message(&mesh_for_send, &creator_nick, "via long-poll");
     });
     let (got, resolve_elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
-    sender.join().unwrap();
+    sender.join().expect("the sender thread did not panic");
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
     assert!(
@@ -1537,7 +1539,7 @@ fn test_poll_long_loops_past_empty_parks() {
         let _ = cli_message(&mesh_for_send, &creator_nick, "past the parks");
     });
     let (got, elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
-    sender.join().unwrap();
+    sender.join().expect("the sender thread did not panic");
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
     assert!(
@@ -3123,7 +3125,8 @@ fn state_file_carries_daemon_pid() {
     let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("leave-pid");
     let state_file = default_state_file(&mesh, &nickname);
     let parsed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&state_file).expect("the test file is readable"))
+            .expect("the state file holds JSON written by the daemon");
     assert_eq!(
         parsed["pid"],
         child.id(),
@@ -3153,8 +3156,11 @@ fn leave_explicit_target_stops_only_that_mesh() {
         .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    let left = report["left"].as_array().unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
     assert_eq!(
         left[0]["gossip"],
@@ -3196,17 +3202,18 @@ fn ready_carries_the_stale_skill_warning() {
     let _ = fs::remove_dir_all(&home);
     // `plug` installs only into agents it detects, and detection is the
     // agent's own dotdir existing.
-    fs::create_dir_all(home.join(".codex")).unwrap();
+    fs::create_dir_all(home.join(".codex")).expect("the test temp directory is writable");
 
     let ready: Box<dyn Fn(&std::path::Path) -> serde_json::Value + '_> =
         Box::new(|fake_home| -> serde_json::Value {
-            let state = state_file.to_str().unwrap();
+            let state = state_file.to_str().expect("the test path is valid UTF-8");
             let out: std::process::Output = common::test_cmd()
                 .args(["ready", "--state-file", state])
                 .env("HOME", fake_home)
                 .output()
                 .expect("failed to run agent-gossip ready");
-            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+                .expect("the JSON text comes from the test itself")
         });
 
     // A fresh install of this very binary is not drift.
@@ -3228,7 +3235,8 @@ fn ready_carries_the_stale_skill_warning() {
     );
 
     // Diverge one installed skill and the warning must reach the agent.
-    fs::write(home.join(".codex/skills/gossip-join/SKILL.md"), "stale").unwrap();
+    fs::write(home.join(".codex/skills/gossip-join/SKILL.md"), "stale")
+        .expect("the test temp directory is writable");
     let stale = ready(&home);
 
     let _ = Command::new("kill")
@@ -3265,7 +3273,8 @@ fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
         .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
     assert_eq!(report["left"][0]["confirmed"], true, "report: {report}");
 
     // The daemon's own socket is the black-box probe: `peers` reaches it from
@@ -3301,8 +3310,8 @@ fn leave_report_carries_the_full_topic_string() {
         std::process::id()
     );
     let log = tmp_log("leave-topic");
-    let file = File::create(&log).unwrap();
-    let stdout = Stdio::from(file.try_clone().unwrap());
+    let file = File::create(&log).expect("the test log directory is writable");
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command.args(["topic", &topic]);
     let mut child: Child = command
@@ -3326,9 +3335,11 @@ fn leave_report_carries_the_full_topic_string() {
         std::thread::sleep(POLL);
     };
 
-    let state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(default_state_file(&mesh, &nickname)).unwrap())
-            .unwrap();
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(default_state_file(&mesh, &nickname))
+            .expect("the test file is readable"),
+    )
+    .expect("the state file holds JSON written by the daemon");
     assert_eq!(
         state["topic"],
         topic.as_str(),
@@ -3341,8 +3352,11 @@ fn leave_report_carries_the_full_topic_string() {
         .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    let left = report["left"].as_array().unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(left.len(), 1, "expected exactly the topic daemon: {report}");
     assert_eq!(
         left[0]["topic"],
@@ -3416,7 +3430,9 @@ fn leave_session_scope_via_decoy_parent() {
 
     // Read-only probe: reports the decoy's daemon, does not stop it.
     let report = session_report(&decoy_pid);
-    let sessions = report["sessions"].as_array().unwrap();
+    let sessions = report["sessions"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
     assert_eq!(
         sessions[0]["gossip"],
@@ -3439,8 +3455,11 @@ fn leave_session_scope_via_decoy_parent() {
         .expect("failed to run agent-gossip leave");
     assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
     let leave_report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
-    let left = leave_report["left"].as_array().unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    let left = leave_report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
     assert_eq!(
         left[0]["gossip"],
@@ -3473,10 +3492,14 @@ fn leave_nothing_owned_is_a_clean_noop() {
         .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
     assert_eq!(report["ok"], true, "the no-op leave reports ok");
     assert_eq!(
-        report["left"].as_array().unwrap().len(),
+        report["left"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
         0,
         "a no-op leave leaves nothing"
     );
@@ -3756,14 +3779,16 @@ fn detached_daemon_follows_its_owner() {
     let ready: std::process::Output = command.output().expect("failed to run ready");
     assert!(ready.status.success(), "ready failed: {ready:?}");
 
-    let state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&daemon.state_file).unwrap()).unwrap();
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&daemon.state_file).expect("the test file is readable"),
+    )
+    .expect("the state file holds JSON written by the daemon");
     let daemon_pid = state["pid"].as_u64().expect("state file carries the pid");
     let ps_field = |field: &str| {
         let out = Command::new("ps")
             .args(["-o", field, "-p", &daemon_pid.to_string()])
             .output()
-            .unwrap();
+            .expect("the ps command can start");
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     };
     assert_eq!(
@@ -3781,7 +3806,10 @@ fn detached_daemon_follows_its_owner() {
     let owner_pid = daemon.owner.0.id().to_string();
     let sessions = session_report(&owner_pid);
     assert_eq!(
-        sessions["sessions"].as_array().unwrap().len(),
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
         1,
         "session does not see the daemon through its owner: {sessions}"
     );
@@ -3819,9 +3847,13 @@ fn detached_daemon_leaves_by_owner() {
         .expect("failed to run leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
     assert_eq!(
-        report["left"].as_array().unwrap().len(),
+        report["left"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
         1,
         "leave missed the detached daemon: {report}"
     );
@@ -3844,7 +3876,7 @@ fn detached_daemon_releases_a_captured_pipe() {
             .expect("failed to spawn the owner"),
     );
     let sessions_dir = common::runtime_base().join("sessions");
-    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::create_dir_all(&sessions_dir).expect("the test temp directory is writable");
     let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
 
     let owner_pid = owner.0.id().to_string();
@@ -3860,8 +3892,14 @@ fn detached_daemon_releases_a_captured_pipe() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn the launcher");
-    let mut stdout = launcher.stdout.take().unwrap();
-    let mut stderr = launcher.stderr.take().unwrap();
+    let mut stdout = launcher
+        .stdout
+        .take()
+        .expect("the child was spawned with a piped stdout");
+    let mut stderr = launcher
+        .stderr
+        .take()
+        .expect("the child was spawned with a piped stderr");
     let (eof_tx, eof_rx) = mpsc::channel();
     let stderr_eof = eof_tx.clone();
     std::thread::spawn(move || {
@@ -3873,7 +3911,7 @@ fn detached_daemon_releases_a_captured_pipe() {
         let _ = stderr_eof.send(());
     });
     let both_closed = (0..2).all(|_| eof_rx.recv_timeout(Duration::from_secs(10)).is_ok());
-    let launcher_status = launcher.wait().unwrap();
+    let launcher_status = launcher.wait().expect("the child can be waited for");
 
     // A failed launch starts no daemon and closes both pipes at once, so the
     // pipe check alone passes without proving anything.
@@ -3903,11 +3941,15 @@ fn detached_daemon_releases_a_captured_pipe() {
 /// never, so the start refuses all with one line on stderr.
 #[test]
 fn owner_pid_rejects_init_and_dead_owner() {
-    let mut dead = Command::new("true").spawn().unwrap();
+    let mut dead = Command::new("true")
+        .spawn()
+        .expect("the test binary can start");
     let dead_pid = dead.id().to_string();
     let _ = dead.wait();
     // Exited but never reaped: a zombie still answers `kill -0`.
-    let mut zombie = Command::new("true").spawn().unwrap();
+    let mut zombie = Command::new("true")
+        .spawn()
+        .expect("the test binary can start");
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
     while process::live_start_time(zombie.id()).is_some() {

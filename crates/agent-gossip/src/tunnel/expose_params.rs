@@ -267,7 +267,8 @@ mod tests {
     #[test]
     fn parses_a_plain_http_origin() {
         assert_eq!(
-            super::parse_origin(&format!("{HTTP}127.0.0.1:9999")).unwrap(),
+            super::parse_origin(&format!("{HTTP}127.0.0.1:9999"))
+                .expect("the test origin is well formed"),
             "127.0.0.1:9999",
             "a plain http origin keeps its host and port"
         );
@@ -276,7 +277,8 @@ mod tests {
     #[test]
     fn drops_the_path_from_the_origin() {
         assert_eq!(
-            super::parse_origin(&format!("{HTTP}127.0.0.1:9999/a2a/v1")).unwrap(),
+            super::parse_origin(&format!("{HTTP}127.0.0.1:9999/a2a/v1"))
+                .expect("the test origin is well formed"),
             "127.0.0.1:9999",
             "the origin drops the path"
         );
@@ -285,7 +287,8 @@ mod tests {
     #[test]
     fn defaults_the_port_when_omitted() {
         assert_eq!(
-            super::parse_origin(&format!("{HTTP}example.test")).unwrap(),
+            super::parse_origin(&format!("{HTTP}example.test"))
+                .expect("the test origin is well formed"),
             "example.test:80",
             "an omitted port defaults to 80"
         );
@@ -294,7 +297,7 @@ mod tests {
     #[test]
     fn rejects_https_with_a_clear_message() {
         let error = super::parse_origin("https://127.0.0.1:9999")
-            .unwrap_err()
+            .expect_err("the test origin is refused")
             .to_string();
         assert!(
             error.contains("https origins are out of scope"),

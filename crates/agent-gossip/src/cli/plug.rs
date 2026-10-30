@@ -248,20 +248,21 @@ mod tests {
     fn path_target_install_and_owned_only_removal() {
         let root = std::env::temp_dir().join(format!("agent-gossip-path-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&root).expect("the test temp directory is writable");
 
         // A file the user keeps in the same folder — must survive unplug.
         let sentinel = root.join("keep.txt");
-        std::fs::write(&sentinel, "mine").unwrap();
+        std::fs::write(&sentinel, "mine").expect("the test temp directory is writable");
 
         // A *directory* the user keeps beside the skills. `--path` can point at
         // any folder, so anything that is not an owned `gossip-*` dir belongs to
         // the user — including one named `shared/`, which the renderer never
         // emits (partials are inlined at build time).
-        std::fs::create_dir_all(root.join("shared")).unwrap();
-        std::fs::write(root.join("shared/old.md"), "mine too").unwrap();
+        std::fs::create_dir_all(root.join("shared")).expect("the test temp directory is writable");
+        std::fs::write(root.join("shared/old.md"), "mine too")
+            .expect("the test temp directory is writable");
 
-        install_root(&root).unwrap();
+        install_root(&root).expect("the test root is writable");
         assert!(
             root.join("gossip-create/SKILL.md").is_file(),
             "install writes the per-command skills under the path"
@@ -271,7 +272,7 @@ mod tests {
             "install never renders shared/ as a skill"
         );
 
-        let removed = remove_root(&root).unwrap();
+        let removed = remove_root(&root).expect("the test root is writable");
         assert!(removed, "unplug reports it removed something");
         assert!(
             !root.join("gossip-create").exists(),
@@ -286,10 +287,10 @@ mod tests {
 
         // A second unplug is a no-op (nothing owned remains).
         assert!(
-            !remove_root(&root).unwrap(),
+            !remove_root(&root).expect("the test root is writable"),
             "a second unplug finds nothing to remove"
         );
 
-        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&root).expect("the test temp directory is writable");
     }
 }

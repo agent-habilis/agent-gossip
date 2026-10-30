@@ -277,7 +277,8 @@ mod tests {
 
     /// A loopback create config with an explicit nickname, no advertising.
     fn create_cfg(name: &str, nick: &str) -> CreateConfig {
-        CreateConfig::new(MeshName::try_new(name).unwrap()).with_nickname(Nickname::from(nick))
+        CreateConfig::new(MeshName::try_new(name).expect("the test literal is a valid mesh name"))
+            .with_nickname(Nickname::from(nick))
     }
 
     /// A join config for an existing mesh id with an explicit nickname.

@@ -111,7 +111,10 @@ mod tests {
     }
 
     fn parsed_target(args: &[&str]) -> Option<JoinTarget> {
-        let Commands::Join { options } = Cli::try_parse_from(args).unwrap().command else {
+        let Commands::Join { options } = Cli::try_parse_from(args)
+            .expect("the test arguments are valid")
+            .command
+        else {
             panic!("not a join command");
         };
         options.gossip.and_then(GossipArg::into_target)
@@ -137,7 +140,7 @@ mod tests {
     fn join_help_names_the_default_room_variable() {
         let help = Cli::command()
             .find_subcommand_mut("join")
-            .unwrap()
+            .expect("the join command exists")
             .render_long_help()
             .to_string();
         assert!(help.contains(DEFAULT_ROOM_ENV), "got: {help}");
@@ -145,8 +148,9 @@ mod tests {
 
     #[test]
     fn the_argument_wins_over_the_environment() {
-        let arg = parse_join_target(&hash("arg")).unwrap();
-        let resolved = resolve_target(Some(arg), Some(&hash("env"))).unwrap();
+        let arg = parse_join_target(&hash("arg")).expect("the test target is valid");
+        let resolved =
+            resolve_target(Some(arg), Some(&hash("env"))).expect("the test target is valid");
         assert!(
             matches!(resolved, JoinTarget::Mesh(id) if id.to_string() == hash("arg")),
             "the argument target must win over the environment"
@@ -155,7 +159,7 @@ mod tests {
 
     #[test]
     fn the_environment_fills_in_a_missing_argument() {
-        let resolved = resolve_target(None, Some(&hash("env"))).unwrap();
+        let resolved = resolve_target(None, Some(&hash("env"))).expect("the test target is valid");
         assert!(
             matches!(resolved, JoinTarget::Mesh(id) if id.to_string() == hash("env")),
             "the environment target must fill in the missing argument"
@@ -164,25 +168,27 @@ mod tests {
 
     #[test]
     fn a_missing_argument_and_environment_names_the_variable() {
-        let error = resolve_target(None, None).unwrap_err();
+        let error = resolve_target(None, None).expect_err("no target is given");
         assert!(error.contains("AGENT_GOSSIP_DEFAULT_ROOM"), "got: {error}");
     }
 
     #[test]
     fn an_empty_environment_counts_as_unset() {
-        let error = resolve_target(None, Some("")).unwrap_err();
+        let error = resolve_target(None, Some("")).expect_err("an empty variable is no target");
         assert!(error.contains("AGENT_GOSSIP_DEFAULT_ROOM"), "got: {error}");
     }
 
     #[test]
     fn a_bad_environment_value_gets_the_join_error() {
-        let error = resolve_target(None, Some("github.com/alice/proj")).unwrap_err();
+        let error = resolve_target(None, Some("github.com/alice/proj"))
+            .expect_err("a URL is not a gossip hash");
         assert!(error.contains("agent-gossip topic"), "got: {error}");
     }
 
     #[test]
     fn a_non_token_string_points_at_topic() {
-        let error = parse_join_target("github.com/alice/proj").unwrap_err();
+        let error =
+            parse_join_target("github.com/alice/proj").expect_err("a URL is not a gossip hash");
         assert!(
             error.contains("agent-gossip topic 'github.com/alice/proj'"),
             "got: {error}"
@@ -191,12 +197,14 @@ mod tests {
 
     #[test]
     fn the_topic_hint_is_shell_safe() {
-        let whitespace = parse_join_target("my secret gossip").unwrap_err();
+        let whitespace = parse_join_target("my secret gossip")
+            .expect_err("whitespace is not valid in a gossip hash");
         assert!(
             whitespace.contains("agent-gossip topic 'my secret gossip'"),
             "got: {whitespace}"
         );
-        let quote = parse_join_target("it's here").unwrap_err();
+        let quote =
+            parse_join_target("it's here").expect_err("a quote is not valid in a gossip hash");
         assert!(
             quote.contains(r"agent-gossip topic 'it'\''s here'"),
             "got: {quote}"
@@ -209,7 +217,8 @@ mod tests {
         let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
         mistyped.replace_range(mistyped.len() - 1.., replacement);
 
-        let error = Cli::try_parse_from(["agent-gossip", "join", &mistyped]).unwrap_err();
+        let error = Cli::try_parse_from(["agent-gossip", "join", &mistyped])
+            .expect_err("a mistyped target is refused");
         assert!(
             error.to_string().contains("invalid gossip hash"),
             "a non-hash id is rejected with the hash error"

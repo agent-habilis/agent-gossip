@@ -845,8 +845,9 @@ mod tests {
             mesh: expected.clone(),
             body: MessageBody::from("hello"),
         };
-        let json = serde_json::to_string(&command).unwrap();
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         assert_eq!(
             parsed.mesh_id().expect("Msg is mesh-addressed").as_str(),
             expected.as_str(),
@@ -856,12 +857,14 @@ mod tests {
 
     #[test]
     fn ipc_command_info_round_trip() {
-        let json = serde_json::to_string(&IpcCommand::Info).unwrap();
+        let json =
+            serde_json::to_string(&IpcCommand::Info).expect("a test value serializes to JSON");
         assert_eq!(
             json, r#"{"command":"info"}"#,
             "a bare info command serializes its tag"
         );
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         assert!(parsed.mesh_id().is_none(), "Info carries no mesh");
     }
 
@@ -872,10 +875,11 @@ mod tests {
             mesh: expected.clone(),
             merge: serde_json::json!({"turn": "b"}),
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(json.contains(r#""command":"state_merge""#), "tag: {json}");
         assert!(json.contains(r#""merge""#), "{json}");
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         match parsed {
             IpcCommand::StateMerge { mesh, merge } => {
                 assert_eq!(mesh, expected, "the state merge keeps the mesh");
@@ -909,11 +913,12 @@ mod tests {
             after: Some(42),
             long: false,
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         // `long: false` is skipped on the wire, keeping the format byte-stable
         // for callers that never long-poll.
         assert!(!json.contains("long"), "false long must not serialize");
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         match parsed {
             IpcCommand::Poll { after, long, .. } => {
                 assert_eq!(after, Some(42), "the after cursor is kept");
@@ -942,12 +947,13 @@ mod tests {
         let command = IpcCommand::Ping {
             mesh: expected.clone(),
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
             json.contains("\"command\":\"ping\""),
             "a ping serializes its tag"
         );
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         match parsed {
             IpcCommand::Ping { mesh } => assert_eq!(mesh, expected, "the ping keeps the mesh"),
             IpcCommand::Broadcast { .. }
@@ -976,7 +982,7 @@ mod tests {
             note: Some("on it".to_string()),
             waiting: Some("asks its user".to_string()),
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
             json.contains("\"command\":\"a2a_status\""),
             "an a2a status serializes its tag"
@@ -985,7 +991,8 @@ mod tests {
             json.contains("\"state\":\"working\""),
             "the a2a status carries its state"
         );
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         match parsed {
             IpcCommand::A2aStatus {
                 state,
@@ -1032,9 +1039,10 @@ mod tests {
             note: None,
             waiting: None,
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(!json.contains("waiting"), "the key must be absent: {json}");
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         assert!(
             matches!(parsed, IpcCommand::A2aStatus { waiting: None, .. }),
             "a status with a waiting reason matches the status arm"
@@ -1047,12 +1055,13 @@ mod tests {
         let command = IpcCommand::Peers {
             mesh: expected.clone(),
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
             json.contains("\"command\":\"peers\""),
             "a peers command serializes its tag"
         );
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        let parsed: IpcCommand =
+            serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         match parsed {
             IpcCommand::Peers { mesh } => {
                 assert_eq!(mesh, expected, "the peers command keeps the mesh");
@@ -1081,7 +1090,7 @@ mod tests {
             after: None,
             long: false,
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
             !json.contains("after"),
             "an absent after cursor is not serialized"
@@ -1099,7 +1108,7 @@ mod tests {
             after: None,
             long: true,
         };
-        let json = serde_json::to_string(&command).unwrap();
+        let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(json.contains("\"long\":true"), "wire: {json}");
     }
 
@@ -1112,7 +1121,8 @@ mod tests {
         use crate::a2a::wire;
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
-            arb_vec(0x20u8..0x7eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
+            arb_vec(0x20u8..0x7eu8, 0..200)
+                .prop_map(|bytes| String::from_utf8(bytes).expect("the bytes are printable ASCII"))
         }
 
         fn arb_nickname() -> impl Strategy<Value = String> {
@@ -1133,8 +1143,8 @@ mod tests {
                 body in arb_ascii_body(),
                 author in arb_nickname(),
             ) {
-                let author = Nickname::try_new(&author).unwrap();
-                let body = MessageBody::try_new(&body).unwrap();
+                let author = Nickname::try_new(&author).expect("the test nickname is valid");
+                let body = MessageBody::try_new(&body).expect("the test body is a valid message body");
                 let expected_body = body.clone();
                 let identity = habilis_network::protocol::Identity::generate();
                 let (bytes, built) = habilis_network::protocol::build_msg_bytes(
@@ -1147,9 +1157,9 @@ mod tests {
                     ),
                     &identity,
                 )
-                .unwrap();
+                .expect("the test author signs a valid message");
                 prop_assert!(!built.id.as_str().is_empty());
-                let parsed = habilis_network::protocol::Message::parse(bytes.as_bytes()).unwrap();
+                let parsed = habilis_network::protocol::Message::parse(bytes.as_bytes()).expect("the frame was built by the test");
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.mesh, &mesh);

@@ -95,11 +95,12 @@ mod tests {
             state: ReceiptState::Delivered,
         };
         assert_eq!(
-            serde_json::to_string(&receipt).unwrap(),
+            serde_json::to_string(&receipt).expect("a test value serializes to JSON"),
             r#"{"ref":"abc","state":"delivered"}"#,
             "a delivered receipt serializes its ref and state"
         );
-        let read: Receipt = serde_json::from_str(r#"{"ref":"abc","state":"read"}"#).unwrap();
+        let read: Receipt = serde_json::from_str(r#"{"ref":"abc","state":"read"}"#)
+            .expect("the JSON text comes from the test itself");
         assert_eq!(
             read.state,
             ReceiptState::Read,

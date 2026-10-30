@@ -80,12 +80,15 @@ mod tests {
             panic!("expected Leave command");
         };
         assert_eq!(
-            options.gossip.unwrap(),
+            options.gossip.expect("the test arguments set the gossip"),
             expected,
             "--gossip parses to the id given"
         );
         assert_eq!(
-            options.nickname.unwrap().as_str(),
+            options
+                .nickname
+                .expect("the test arguments set the nickname")
+                .as_str(),
             "my-nick",
             "--nickname sets the local nickname"
         );
