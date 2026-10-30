@@ -44,13 +44,22 @@ pub(crate) struct SharedServerOpts {
     /// `<runtime-base>/<mesh-prefix>/<nick>.state.json` (beside the socket +
     /// log); pass this to write elsewhere instead.
     #[arg(long)]
+    #[cfg_attr(windows, arg(value_parser = crate::cli::auto::state_file))]
     pub state_file: Option<std::path::PathBuf>,
 
     /// Run the daemon detached from the launching process, owned by this pid.
     /// The launcher exits at once; the daemon stops within seconds after the
     /// owner process exits. Use the pid of the agent that owns the session.
     #[arg(long, value_name = "PID")]
+    #[cfg_attr(windows, arg(value_parser = crate::cli::auto::pid))]
     pub owner_pid: Option<u32>,
+
+    /// Windows only: the file that the daemon writes its stderr to, or `auto`
+    /// for `<runtime-base>/sessions/<agent>.stderr`. An older file moves to
+    /// `.stderr.prev` first. On Unix the shell redirects stderr instead.
+    #[cfg(windows)]
+    #[arg(long, value_name = "PATH", value_parser = crate::cli::auto::stderr_file)]
+    pub stderr_file: Option<std::path::PathBuf>,
 
     /// Internal marker: this process is the detached child that
     /// `--owner-pid` re-spawned.

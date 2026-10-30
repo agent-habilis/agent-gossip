@@ -210,10 +210,54 @@ pub fn tmp_log(tag: &str) -> PathBuf {
     ))
 }
 
+/// A process that does nothing for `secs` seconds, to stand in as an owner or
+/// a parent: `sleep` on Unix, and on Windows `ping` of the loopback, one
+/// second a ping.
+pub fn idle_command(secs: u32) -> Command {
+    #[cfg(unix)]
+    {
+        let mut command = Command::new("sleep");
+        command.arg(secs.to_string());
+        command
+    }
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("ping");
+        command
+            .args(["-n", &(secs + 1).to_string(), "127.0.0.1"])
+            .stdout(Stdio::null());
+        command
+    }
+}
+
+/// End a daemon that a test started, to clean up after the test: SIGTERM on
+/// Unix, so it shuts down as on a stop, and on Windows `Child::kill`, which
+/// ends it at once. A test that checks the shutdown itself sends its own
+/// signal.
+pub fn terminate_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = child.kill();
+    }
+}
+
+/// The file that marks a node's IPC endpoint: the socket on Unix, and on
+/// Windows the marker that holds the pipe name. It exists once the node is
+/// bound, so a test waits on it.
 pub fn socket_path(mesh: &str, nickname: &str) -> String {
+    #[cfg(unix)]
+    let file = format!("{nickname}.ipc.sock");
+    #[cfg(windows)]
+    let file = format!("{nickname}.ipc");
     runtime_base()
         .join(agent_gossip::mesh_prefix(mesh))
-        .join(format!("{nickname}.ipc.sock"))
+        .join(file)
         .display()
         .to_string()
 }
@@ -415,8 +459,19 @@ pub fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String
 /// re-issue loop).
 pub fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
     use std::io::{BufRead, BufReader, Write};
+    #[cfg(unix)]
     let mut stream = std::os::unix::net::UnixStream::connect(socket_path(mesh, nickname))
         .expect("connect to daemon socket");
+    // On Windows the marker holds the pipe name, and a pipe opens as a file.
+    #[cfg(windows)]
+    let mut stream = {
+        let marker = fs::read_to_string(socket_path(mesh, nickname)).expect("read IPC marker");
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(marker.trim_end())
+            .expect("connect to daemon pipe")
+    };
     stream
         .write_all(format!("{line}\n").as_bytes())
         .expect("write IPC command");
@@ -514,20 +569,22 @@ fn cli_task_create_attempt(mesh: &str, nickname: &str, to: &str, text: &str) -> 
 /// (parsed from the JSON-RPC response the call prints on stdout). Panics on
 /// failure.
 ///
-/// Waits for `to`'s card first: a directed call is rejected until the seal key
-/// replicates, so issuing one the moment the mesh links is a race. See
-/// [`await_peer_card_cli`].
+/// Waits for the cards both ways first: a directed call is rejected until the
+/// seal key replicates, so issuing one the moment the mesh links is a race. The
+/// worker seals its reply to the caller, so a worker without the caller's card
+/// drops the reply. See [`await_peer_card_cli`].
 ///
 /// Then **re-issues while the peer never answers**, on the same reasoning as
 /// [`InProcNode::a2a_call_retrying`] — the card arriving does not mean the
 /// overlay holds a live link, and a directed request sent into that gap is
 /// dropped for good rather than healed, leaving the sender to block until the
-/// heal tick re-bridges the pair. Waiting on the card guards one race; this
+/// heal tick re-bridges the pair. Waiting on the cards guards one race; this
 /// guards the other. Only the transport timeout is retried: a real answer,
 /// including a semantic error like `unknown peer`, means the round trip
 /// completed and is handed to the assertion below untouched.
 pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
     await_peer_card_cli(mesh, nickname, to);
+    await_peer_card_cli(mesh, to, nickname);
     let deadline = Instant::now() + MSG_TIMEOUT;
     let out = loop {
         let attempt = cli_task_create_attempt(mesh, nickname, to, text);
@@ -1808,6 +1865,7 @@ impl Node {
     // expects a frozen one (or the reverse), which fails much later with a
     // timing symptom. INT and KILL stay lenient: a test may signal a child
     // that has already exited.
+    #[cfg(unix)]
     fn signal(&self, sig: &str) {
         let pid = self.child.id();
         let status = Command::new("kill").args([sig, &pid.to_string()]).status();
@@ -1817,6 +1875,24 @@ impl Node {
                 "kill {sig} {pid} failed: {status:?}"
             );
         }
+    }
+
+    // Windows has no POSIX signals. KILL is `taskkill /F`, which ends the
+    // process at once, as SIGKILL does. INT, STOP and CONT have no Windows form
+    // that reaches a child here, so a test that sends one is ignored on Windows
+    // (`#[cfg_attr(windows, ignore = ...)]`) and fails here if it runs anyway.
+    #[cfg(windows)]
+    fn signal(&self, sig: &str) {
+        let pid = self.child.id();
+        assert_eq!(
+            sig, "-KILL",
+            "signal {sig} has no Windows form in the fixtures"
+        );
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     fn await_stopped(&self, want_stopped: bool) {

@@ -28,6 +28,8 @@ use crate::topic::resolve_topic;
 mod a2a_discover;
 pub(crate) mod agent;
 pub(crate) mod args;
+#[cfg(windows)]
+mod auto;
 pub(crate) mod bell;
 mod discover;
 mod doctor;
@@ -89,10 +91,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
         Commands::Create { opts } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&opts.shared)?;
             install_tuning(&opts.shared.tuning);
             Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&opts.shared)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             install_tuning(&opts.shared.tuning);
             let env_room = std::env::var(args::DEFAULT_ROOM_ENV).ok();
@@ -104,6 +110,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             Box::pin(join(target, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&opts.shared)?;
             install_tuning(&opts.shared.tuning);
             Box::pin(topic(opts)).await
         }
@@ -176,12 +184,38 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
     }
     habilis_network::runtime::validate_owner_pid(owner)?;
     let mut child = std::process::Command::new(std::env::current_exe()?);
+    // On Windows `auto` was resolved from this launcher's parents, which the
+    // daemon does not share, so the daemon gets the resolved values.
+    #[cfg(unix)]
+    child.args(std::env::args_os().skip(1));
+    #[cfg(windows)]
+    child.args(auto::concrete_args(
+        std::env::args_os().skip(1),
+        owner,
+        shared.state_file.as_deref(),
+    ));
     child
-        .args(std::env::args_os().skip(1))
         .arg("--detached-child")
         .stdin(std::process::Stdio::null())
-        .stdout(detached_stdio(&std::io::stdout()))
-        .stderr(detached_stdio(&std::io::stderr()));
+        .stdout(detached_stdio(&std::io::stdout()));
+    #[cfg(unix)]
+    child.stderr(detached_stdio(&std::io::stderr()));
+    #[cfg(windows)]
+    if shared.stderr_file.is_some() {
+        // `stderr_to_session_file` already made the session file the
+        // launcher's stderr, so the daemon inherits it.
+        child.stderr(std::process::Stdio::inherit());
+    } else {
+        child.stderr(detached_stdio(&std::io::stderr()));
+    }
+    spawn_detached(&mut child)
+        .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
+    std::process::exit(0)
+}
+
+/// Start `child` in its own session.
+#[cfg(unix)]
+fn spawn_detached(child: &mut std::process::Command) -> std::io::Result<()> {
     // SAFETY: `setsid` is async-signal-safe and touches no memory of this
     // process, so it is sound between fork and exec.
     #[expect(
@@ -189,17 +223,59 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
         reason = "setsid has no safe std wrapper; process_group(0) is not enough because Claude Code also walks processes by session id"
     )]
     unsafe {
-        std::os::unix::process::CommandExt::pre_exec(&mut child, || {
+        std::os::unix::process::CommandExt::pre_exec(child, || {
             if libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
         });
     }
-    child
-        .spawn()
-        .map_err(|error| anyhow::anyhow!("failed to start the detached daemon: {error}"))?;
-    std::process::exit(0)
+    child.spawn().map(drop)
+}
+
+/// Start `child` with no console, in its own process group, and outside the
+/// job of the launcher, so that closing the console or the job of the agent
+/// does not end the daemon.
+///
+/// `CREATE_NO_WINDOW` is not set: Windows ignores it with `DETACHED_PROCESS`.
+/// A process with no console that starts a console program gives it a new,
+/// visible console, so a child of the daemon needs `CREATE_NO_WINDOW`. The
+/// daemon starts no child today.
+///
+/// A job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` refuses
+/// `CREATE_BREAKAWAY_FROM_JOB` with `ERROR_ACCESS_DENIED`. The launcher then
+/// starts the daemon once more inside the job, and says so: the daemon ends
+/// when the job ends.
+///
+/// std passes every inheritable handle of the launcher to the child, not only
+/// the three it names. The stdin of the launcher, like a captured stream in
+/// [`detached_stdio`], is made non-inheritable here, so the daemon holds no end
+/// of a pipe of the caller. The launcher exits right after the spawn.
+#[cfg(windows)]
+fn spawn_detached(child: &mut std::process::Command) -> std::io::Result<()> {
+    use std::os::windows::io::AsHandle as _;
+    use std::os::windows::process::CommandExt as _;
+
+    use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+    };
+
+    keep_from_child(std::io::stdin().as_handle());
+    let detached = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    child.creation_flags(detached | CREATE_BREAKAWAY_FROM_JOB);
+    match child.spawn() {
+        Ok(_) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed()) => {
+            child.creation_flags(detached);
+            child.spawn()?;
+            crate::status::warn(
+                "the daemon could not leave the job of its parent, so it ends when the job ends",
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The detached daemon's copy of one of the launcher's output streams. A pipe or
@@ -208,6 +284,7 @@ fn detach_if_owned(shared: &SharedServerOpts) -> Result<()> {
 /// end would block the caller for its whole life and fill the pipe with message
 /// bodies. A file, `/dev/null` or a tty is inherited, so the skill's `.stderr`
 /// file still gets startup errors.
+#[cfg(unix)]
 fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
     use std::os::unix::fs::FileTypeExt as _;
     let captured = stream
@@ -222,6 +299,114 @@ fn detached_stdio(stream: &impl std::os::fd::AsFd) -> std::process::Stdio {
     } else {
         std::process::Stdio::inherit()
     }
+}
+
+/// The detached daemon's copy of one of the launcher's output streams, on
+/// Windows. Only a file on disk is inherited, so the skill's `.stderr` file
+/// still gets startup errors. A pipe is how a caller captures output, as on
+/// Unix. A console handle means nothing to a process with no console. Each
+/// of them, and a handle whose type cannot be read, gives null, and the
+/// handle is kept from the daemon ([`keep_from_child`]).
+#[cfg(windows)]
+fn detached_stdio(stream: &impl std::os::windows::io::AsHandle) -> std::process::Stdio {
+    use std::os::windows::io::AsRawHandle as _;
+
+    use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_DISK, GetFileType};
+
+    let handle = stream.as_handle();
+    // SAFETY: `GetFileType` only reads the type of a handle that `handle`
+    // borrows, so the handle stays open for the call.
+    #[expect(
+        unsafe_code,
+        reason = "GetFileType has no safe std wrapper, and std::fs::File::metadata does not tell a pipe from a console"
+    )]
+    let kind = unsafe { GetFileType(handle.as_raw_handle()) };
+    if kind == FILE_TYPE_DISK {
+        std::process::Stdio::inherit()
+    } else {
+        keep_from_child(handle);
+        std::process::Stdio::null()
+    }
+}
+
+/// Clear the inherit flag of a handle of the launcher. std starts a child with
+/// `bInheritHandles`, so an inheritable handle of the launcher reaches the
+/// daemon even when the daemon gets null in its place, and a pipe of the caller
+/// would then never reach its end. A null or invalid handle makes the call
+/// fail, and the failure is ignored: there is then nothing to inherit.
+#[cfg(windows)]
+fn keep_from_child(handle: std::os::windows::io::BorrowedHandle<'_>) {
+    use std::os::windows::io::AsRawHandle as _;
+
+    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+
+    // SAFETY: `SetHandleInformation` only changes the inherit flag of a handle
+    // that `handle` borrows, so the handle stays open for the call.
+    #[expect(
+        unsafe_code,
+        reason = "std has no safe way to stop a handle from being inherited"
+    )]
+    unsafe {
+        SetHandleInformation(handle.as_raw_handle(), HANDLE_FLAG_INHERIT, 0);
+    }
+}
+
+/// With `--stderr-file` on Windows, make the session file the stderr of this
+/// process before anything else runs, as the `2>` of the shell does on Unix:
+/// an error found while the mesh and the password are resolved lands there,
+/// and an old file is never shown as the reason. A detached daemon inherits
+/// it from its launcher, which leaves the flag out of the daemon's arguments.
+#[cfg(windows)]
+fn stderr_to_session_file(shared: &SharedServerOpts) -> Result<()> {
+    match shared.stderr_file.as_deref() {
+        Some(path) => redirect_stderr(session_stderr(path)?),
+        None => Ok(()),
+    }
+}
+
+/// The `.stderr` file of a session on Windows. An older
+/// file moves to `<file>.prev` first, so a relaunch keeps the errors of the
+/// last daemon; if that move fails, the launch stops and the old file stays.
+/// The folder of the file is made private before the file is created.
+#[cfg(windows)]
+fn session_stderr(path: &std::path::Path) -> Result<std::fs::File> {
+    let base = crate::runtime_base();
+    habilis_network::util::ensure_parent_private(Some(&base), path)
+        .map_err(|error| anyhow::anyhow!("prepare {}: {error}", path.display()))?;
+    let mut prev = path.as_os_str().to_owned();
+    prev.push(".prev");
+    match std::fs::rename(path, &prev) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => anyhow::bail!("move {} to .prev: {error}", path.display()),
+    }
+    std::fs::File::create(path)
+        .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))
+}
+
+/// Make `file` the stderr of this process, for the rest of its life. std reads
+/// the handle of stderr from the process on each write, so `eprintln!` and the
+/// log sink follow it.
+#[cfg(windows)]
+fn redirect_stderr(file: std::fs::File) -> Result<()> {
+    use std::os::windows::io::IntoRawHandle as _;
+
+    use windows_sys::Win32::System::Console::{STD_ERROR_HANDLE, SetStdHandle};
+
+    // The stderr until now can be a pipe of the caller. A child of this
+    // process, the detached daemon, must not inherit it.
+    keep_from_child(std::os::windows::io::AsHandle::as_handle(&std::io::stderr()));
+    let handle = file.into_raw_handle();
+    // SAFETY: `handle` is an open file handle that this process now owns and
+    // never closes, so it stays valid as the stderr of the process.
+    #[expect(unsafe_code, reason = "SetStdHandle has no safe std wrapper")]
+    let set = unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) };
+    anyhow::ensure!(
+        set != 0,
+        "redirect stderr: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(())
 }
 
 /// Build the output sink, set up the mesh, and run the event loop. The
@@ -1030,7 +1215,22 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         timeout_secs,
         legacy_output: _,
     } = opts;
+    #[cfg(unix)]
     let ready = wait_for_ready(&state_file, timeout_secs).await?;
+    // On Windows the skill cannot build the path of the `.stderr` file, so a
+    // failed `ready` prints it: the errors of a launch that did not serve.
+    #[cfg(windows)]
+    let ready = match wait_for_ready(&state_file, timeout_secs).await {
+        Ok(ready) => ready,
+        Err(error) => {
+            let stderr =
+                std::fs::read_to_string(auto::stderr_beside(&state_file)).unwrap_or_default();
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
+            return Err(error);
+        }
+    };
     print_ready_identity(&ready);
     Ok(())
 }

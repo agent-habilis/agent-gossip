@@ -81,6 +81,7 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
 /// A send that reported an error must not reach the peer later through
 /// anti-entropy: the user was told it failed, and may send it again.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn a_msg_whose_send_failed_never_arrives_later() {
     let _serial = common::serial_guard();
     let flags = [

@@ -165,13 +165,35 @@ pub async fn run_cli() -> Result<()> {
     register_build_version();
     // Parse through `cli_command()` (not `Cli::parse()`) so the `help`
     // subcommand blurb override in that builder applies at runtime too.
+    #[cfg(unix)]
     let matches = cli_command().get_matches();
+    #[cfg(windows)]
+    let matches = cli_command()
+        .try_get_matches()
+        .unwrap_or_else(|error| exit_on_parse_error(&error));
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
         .unwrap_or_else(|error| error.exit());
     // Box the single large await so it lives on the heap, not this frame —
     // the same lever the event loop uses (see `daemon::event_loop`); the
     // setup → run future is near clippy's `large_futures` budget.
     Box::pin(cli::dispatch(cli)).await
+}
+
+/// Exit on a parse error, as `clap::Error::exit` does, but with 1 for
+/// `bell-check`. On Windows the Stop hook runs `bell-check` in exec form, with
+/// no `|| true`, and a Stop hook that exits 2 blocks the turn. A usage error,
+/// such as an `auto` with no agent above it or a binary too old for `auto`,
+/// must not hold the agent in its turn.
+#[cfg(windows)]
+fn exit_on_parse_error(error: &clap::Error) -> ! {
+    let bell_check = std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "bell-check");
+    if bell_check && error.use_stderr() {
+        let _ = error.print();
+        std::process::exit(1);
+    }
+    error.exit()
 }
 
 /// The fully-built `agent-gossip` clap command tree, for offline man-page

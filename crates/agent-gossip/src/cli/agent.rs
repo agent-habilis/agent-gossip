@@ -217,8 +217,20 @@ fn dir_in_sync(dir: &Dir<'_>, dest: &Path) -> bool {
 ///
 /// # Errors
 /// `$HOME` is unset.
+#[cfg(unix)]
 pub(crate) fn home_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("`$HOME` is not set")?;
+    Ok(PathBuf::from(home))
+}
+
+/// The home of the user on Windows: `USERPROFILE`, which the agents read, and
+/// else `HOME`.
+///
+/// # Errors
+/// Neither is set.
+#[cfg(windows)]
+pub(crate) fn home_dir() -> Result<PathBuf> {
+    let home = crate::status::windows_home().context("neither `USERPROFILE` nor `HOME` is set")?;
     Ok(PathBuf::from(home))
 }
 
@@ -381,9 +393,18 @@ mod tests {
     fn session_starting_skills_carry_the_bell_stop_hook() {
         for skill in OWNED_SKILL_DIRS {
             let front = frontmatter(rendered(skill));
+            #[cfg(unix)]
             let has_hook = front.contains("hooks:")
                 && front.contains("Stop:")
                 && front.contains(r#"agent-gossip bell-check --session-pid "$PPID" || true"#);
+            // Windows runs the hook in exec form, with no shell: `$PPID` is 1
+            // under Git Bash, and PowerShell, the fallback, has neither it
+            // nor `|| true`.
+            #[cfg(windows)]
+            let has_hook = front.contains("hooks:")
+                && front.contains("Stop:")
+                && front.contains("command: agent-gossip")
+                && front.contains(r#"args: ["bell-check", "--session-pid", "auto"]"#);
             assert_eq!(
                 has_hook,
                 BELL_HOOK_SKILLS.contains(skill),
@@ -545,10 +566,16 @@ mod tests {
                 .collect();
 
             for line in &long_running {
+                #[cfg(unix)]
                 let discards = line.ends_with("> /dev/null 2>&1")
                     || (is_daemon_launch(line)
                         && line.contains("> /dev/null 2> ")
                         && line.ends_with(".stderr"));
+                // On Windows the daemon writes stderr to the session file
+                // itself (`--stderr-file auto`).
+                #[cfg(windows)]
+                let discards = line.ends_with("> /dev/null 2>&1")
+                    || (is_daemon_launch(line) && line.ends_with("--stderr-file auto > /dev/null"));
                 assert!(
                     discards,
                     "{path}: a long-running command must discard stdout and keep \
@@ -570,14 +597,17 @@ mod tests {
                 );
                 // Only the Claude Code launch detaches. The generic one stays a
                 // harness task, so Pi, Codex and Cursor keep the old behaviour.
+                #[cfg(unix)]
+                let owner_flag = r#"--owner-pid "$PPID""#;
+                #[cfg(windows)]
+                let owner_flag = "--owner-pid auto";
                 assert_eq!(
                     long_running
                         .iter()
-                        .filter(|line| is_daemon_launch(line)
-                            && line.contains(r#"--owner-pid "$PPID""#))
+                        .filter(|line| is_daemon_launch(line) && line.contains(owner_flag))
                         .count(),
                     1,
-                    "{path}: exactly one launch carries --owner-pid \"$PPID\": {long_running:?}"
+                    "{path}: exactly one launch carries {owner_flag}: {long_running:?}"
                 );
                 long_running
                     .iter()
@@ -589,7 +619,9 @@ mod tests {
                 );
                 // A relaunch truncates the stderr file, which erased the only
                 // trace of a daemon that died. The launch keeps the previous
-                // file as `.stderr.prev`.
+                // file as `.stderr.prev`. On Windows the binary does that
+                // move for `--stderr-file auto`, which the line above checks.
+                #[cfg(unix)]
                 assert!(
                     long_running
                         .iter()
@@ -635,7 +667,12 @@ mod tests {
                 }
                 None => section.to_owned(),
             };
-            insta::assert_snapshot!(skill, shared);
+            // Windows renders the `windows/` variants, with `auto`.
+            #[cfg(unix)]
+            let name = skill.to_owned();
+            #[cfg(windows)]
+            let name = format!("{skill}-windows");
+            insta::assert_snapshot!(name, shared);
         }
     }
 
@@ -711,6 +748,7 @@ mod tests {
         assert!(body("gossip-status").contains("| host | cwd |"));
     }
 
+    #[cfg(unix)]
     fn ready_gate_merge(skill: &str) -> &'static str {
         let is_merge =
             |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");

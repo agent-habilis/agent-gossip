@@ -114,6 +114,32 @@ jobs:
           # can read the checksums without re-downloading the tarballs.
           checksum: sha256
 
+  # Windows: a job of its own, so update-formula does not wait on it. The
+  # action packs a `.zip` here (a `.tar.gz` elsewhere). The formula does not
+  # list it; Homebrew is not on Windows.
+  upload-windows:
+    needs: [create-release, man-pages]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - name: Download man pages
+        uses: actions/download-artifact@v4
+        with:
+          name: man-pages
+          path: man
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: agent-gossip
+          manifest-path: crates/agent-gossip/Cargo.toml
+          target: x86_64-pc-windows-msvc
+          ref: refs/tags/${{ env.TAG }}
+          archive: $bin-$tag-$target
+          token: ${{ secrets.GITHUB_TOKEN }}
+          include: man
+          checksum: sha256
+
   update-formula:
     needs: upload
     runs-on: ubuntu-latest

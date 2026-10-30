@@ -214,6 +214,7 @@ fn the_reader_query_leaves_the_bell_parked_and_the_poll_unchanged() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn a_peer_that_does_not_answer_gets_no_reader_and_peers_stays_fast() {
     let (alice, bob, mesh) = pair("rl-mute");
     bob.stop();
