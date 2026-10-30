@@ -4,7 +4,7 @@ use habilis_network::embed::{
     AppClass, EventLoopState, HandlerCtx, InboundApp, IpcRequest, NodeApp, NodeDriver,
 };
 use habilis_network::net::add_peer_addr;
-use habilis_network::ops::{MergeCtx, StateMergeParams, broadcast_state_merge};
+use habilis_network::ops::{Farewell, MergeCtx, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
     AppTag, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
@@ -396,24 +396,22 @@ async fn merge_own_meta_entry(
     merge: serde_json::Value,
     farewell: bool,
 ) -> anyhow::Result<()> {
-    match broadcast_state_merge(
+    let mirror = if farewell {
+        Farewell::UnicastMirror
+    } else {
+        Farewell::GossipOnly
+    };
+    broadcast_state_merge(
         state,
         // Daemon plumbing: the agent didn't write this, so don't surface it
         // as a "you changed shared state" event (nor race a fetch long-poll).
-        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge).surface(false),
+        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge)
+            .surface(false)
+            .farewell(mirror),
     )
     .await
-    {
-        Ok(Some(bytes)) if farewell => {
-            habilis_network::ops::unicast_farewell(state, &bytes);
-            Ok(())
-        }
-        Ok(_) => Ok(()),
-        Err(error) => {
-            tracing::warn!(%error, "own /peers entry merge failed");
-            Err(anyhow::Error::from(error))
-        }
-    }
+    .inspect_err(|error| tracing::warn!(%error, "own /peers entry merge failed"))
+    .map_err(anyhow::Error::from)
 }
 
 /// A peer's `working` with no text on a task already `working` changes nothing

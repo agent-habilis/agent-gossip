@@ -494,8 +494,7 @@ impl IpcRequest<'_> {
             StateMergeParams::new(MergeCtx::new(mesh, author, sender, output), channel, merge),
         )
         .await;
-        let (response, broadcast) =
-            state_merge_response(outcome.map(|_| ()).map_err(anyhow::Error::from));
+        let (response, broadcast) = state_merge_response(outcome.map_err(anyhow::Error::from));
         let _ = resp_tx.send(response);
         broadcast
     }

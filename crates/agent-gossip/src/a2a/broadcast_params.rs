@@ -2215,7 +2215,7 @@ async fn session_merge(
     let outcome =
         broadcast_state_merge(state, StateMergeParams::new(merge_ctx, channel, merge)).await;
     let sent = outcome.is_ok();
-    let _ = response.send(outcome.map(|_| ()).map_err(anyhow::Error::from));
+    let _ = response.send(outcome.map_err(anyhow::Error::from));
     sent
 }
 

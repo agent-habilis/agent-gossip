@@ -536,7 +536,7 @@ async fn agent_cards_publish_to_meta_on_join() {
 /// rendezvous beacon with it for ~36s, which is the handoff's own test.
 ///
 /// The retraction is broadcast AND mirrored over the unicast plane
-/// (`gossip::unicast_farewell`), so it outlives a silently-linkless overlay;
+/// (`Farewell::UnicastMirror`), so it outlives a silently-linkless overlay;
 /// the test still proves the leaver→host path live right before the leave so
 /// a failure indicts the retraction, not the warmup.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
