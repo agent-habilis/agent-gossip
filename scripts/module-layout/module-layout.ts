@@ -13,18 +13,17 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const allowFile = process.env.MODULE_LAYOUT_ALLOW || "scripts/module-layout/module-layout.allow";
 
 const SCOPE = /\.rs$/;
-const SKIP = /\/(tests|benches|examples)\/|\/build\.rs$/;
 const ROOT_FILE = /(^|\/)(mod|lib|main)\.rs$/;
 const CHILD_MOD = /^\s*(pub(\([a-z]+\))? )?mod \w+;/m;
 const PUB_TYPE = /^pub(?:\([a-z]+\))? (?:struct|enum|trait|union|type) (\w+)/gm;
 
-// The Rust files git knows, minus the tests, benches, examples and build scripts.
+// Every Rust file git knows, tests, benches, examples and build scripts included.
 function listFiles(): string[] {
   const proc = spawnSync("git", ["ls-files", "-z", "-co", "--exclude-standard"], {
     cwd: ROOT,
     encoding: "utf8",
   });
-  return (proc.stdout ?? "").split("\0").filter((file) => SCOPE.test(file) && !SKIP.test(file));
+  return (proc.stdout ?? "").split("\0").filter((file) => SCOPE.test(file));
 }
 
 // `frame_cache` for `FrameCache`: the snake_case of a type name, so `HTTPClient` names `http_client`.

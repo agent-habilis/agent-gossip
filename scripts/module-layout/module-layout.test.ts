@@ -101,6 +101,17 @@ test("a row for a file that is fine now is stale", () => {
   expectExit({ [leaf]: "pub struct FrameCache;" }, 1, `${leaf}|1|renaming pending`);
 });
 
-test("tests are not scanned", () => {
-  expectExit({ "crates/x/tests/frame_cache.rs": "pub struct Other;" }, 0);
+for (const file of [
+  "crates/x/tests/frame_cache.rs",
+  "crates/x/benches/frame_cache.rs",
+  "crates/x/examples/frame_cache.rs",
+  "crates/x/build.rs",
+]) {
+  test(`${file} is scanned`, () => {
+    expectExit({ [file]: "pub struct Other;" }, 1);
+  });
+}
+
+test("a test file named for its public type passes", () => {
+  expectExit({ "crates/x/tests/frame_cache.rs": "pub struct FrameCache;" }, 0);
 });
