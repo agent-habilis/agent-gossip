@@ -44,7 +44,7 @@ rust-version = "1.93"
 #
 # Bumping this is what carries an engine fix into the app; keep it in step with
 # agent-share, which pins the same rev.
-habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "f66a24335657a315e0427649c5b8d7e804b135ab" }
+habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "bb8fc1fcf36b8f65ba241faa4f22dafc185423aa" }
 tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",
@@ -94,7 +94,7 @@ bs58 = "0.5"
 # merge without a bespoke ordered-log fold. `default-features` stays on (the
 # `storage-v2` on-disk format is unused — we carry changes on the wire).
 automerge = "0.10"
-sha2 = "0.10"
+sha2 = "0.11"
 rand = "0.9"
 libc = "0.2"
 # Shared dev-deps (unit + integration tests, benches).
@@ -191,26 +191,6 @@ too_long_first_doc_paragraph = "warn"
 doc_include_without_cfg = "warn"
 string_add = "warn"
 unwrap_used = "warn"
-# 38 crates have two or more versions in Cargo.lock (checked with `cargo clippy --workspace
-# --all-targets`), and the app cannot remove any of them: each one is forced by an upstream
-# dependency, so `-D warnings` would fail on a lint with no fix here. The app already moved its
-# own `anstream` to 1, which removed `anstream` and `anstyle-parse`. The rest, by cause:
-# - RustCrypto 0.10 against 0.11 (`habilis-network` and `dimpl` use 0.10, `iroh-base` and
-#   `automerge` use 0.11): base16ct, block-buffer, chacha20, const-oid, cpufeatures,
-#   crypto-common, curve25519-dalek, der, digest, fiat-crypto, pem-rfc7468, pkcs8, sha2,
-#   signature, spki.
-# - rand 0.9 (`habilis-network`, `dimpl`, `sctp-proto`) against 0.10 (`iroh`, `automerge`,
-#   `hickory`): rand, rand_core, getrandom, r-efi.
-# - `netdev` (through `jni` 0.21, `thiserror` 1 and `windows-sys` 0.45) against
-#   `rustls-platform-verifier` and `hickory`: jni, jni-sys, thiserror, thiserror-impl,
-#   windows-sys, windows-targets and the windows_* target crates, core-foundation (against
-#   `security-framework`).
-# - `heapless` 0.7 (embedded-io 0.4, spin 0.9) against `postcard` and `futures-buffered`
-#   (embedded-io 0.6, spin 0.10): embedded-io, spin.
-# - nom 7 against 8 (`dimpl`), smol_str 0.1 (`acto`) against 0.3 (`automerge`), untrusted 0.7
-#   against 0.9 (`ring`, `rustls-webpki`): nom, smol_str, untrusted.
-# Remove this row when the engine and the iroh fork move to one generation.
-multiple_crate_versions = "allow"
 
 # Dependencies get light optimization in dev/test builds; workspace members
 # stay at opt-level 0 (`package."*"` never applies to them) so incremental

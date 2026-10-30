@@ -53,7 +53,7 @@ slot-template = { path = "../slot-template" }
 # Stamps this repo's commit into `VERGEN_GIT_SHA`/`VERGEN_GIT_DIRTY`. Ours, not
 # the engine's: `habilis-network` lives in a separate repo now, so its stamp names a
 # commit that does not exist in this history.
-vergen-gitcl = { version = "1", features = ["build"] }
+vergen-gitcl = { version = "9", features = ["build"] }
 
 [dependencies]
 habilis-network = { workspace = true, features = ["blob"] }
