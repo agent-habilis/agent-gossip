@@ -1868,7 +1868,7 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1908,7 +1908,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1924,7 +1924,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1942,7 +1942,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-multihop-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1962,7 +1962,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "iroh",
 ]
@@ -1970,7 +1970,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1997,7 +1997,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -2010,7 +2010,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2035,7 +2035,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66a6c6462b864e481b87ef55f5dd12807e9ec3a9#66a6c6462b864e481b87ef55f5dd12807e9ec3a9"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=f66a24335657a315e0427649c5b8d7e804b135ab#f66a24335657a315e0427649c5b8d7e804b135ab"
 dependencies = [
  "libc",
  "rustix",
