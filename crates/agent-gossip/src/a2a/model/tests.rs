@@ -109,7 +109,7 @@ fn message_round_trips() {
 }
 
 mod snapshots {
-    use habilis_network::protocol::message::Verified;
+    use habilis_network::protocol::messages::Verified;
 
     use super::{
         Artifact, Part, Task, TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate,

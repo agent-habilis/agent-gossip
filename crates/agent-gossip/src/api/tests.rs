@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
     Mesh, MeshConfig, MeshName, MessageBody, Nickname, TransportPolicy,
 };

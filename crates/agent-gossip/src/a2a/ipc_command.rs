@@ -7,7 +7,7 @@ use habilis_network::ops::{
     MergeCtx, MeshSender, PendingSend, StateMergeParams, broadcast_state_merge, invite,
     start_ping_round,
 };
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{Channel, MeshId, MeshName, MessageBody, MessageId, Nickname};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};

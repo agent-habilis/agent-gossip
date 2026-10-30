@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 
 use crate::a2a::broadcast_params::FileRef;

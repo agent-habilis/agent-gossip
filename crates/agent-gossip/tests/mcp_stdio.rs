@@ -699,7 +699,10 @@ fn create_mesh_relay_transport_is_in_the_id() {
         .parse()
         .expect("valid mesh id");
     assert!(
-        decoded.config().transport.relay_transport,
+        decoded
+            .config()
+            .transport
+            .allows(habilis_network::protocol::Transport::Relay),
         "the decoded id must carry the relay-transport bit"
     );
     assert_ne!(
@@ -795,11 +798,16 @@ fn create_mesh_transport_multihop_turns_multihop_on() {
         &serde_json::json!({ "name": "multihoptransport", "transport": ["udp", "webrtc", "multihop"] }),
     );
     assert!(
-        mesh.config().transport.multihop,
+        mesh.config()
+            .transport
+            .allows(habilis_network::protocol::Transport::Multihop),
         "the multihop entry must turn multihop on"
     );
     assert!(
-        !mesh.config().transport.gossip,
+        !mesh
+            .config()
+            .transport
+            .allows(habilis_network::protocol::Transport::Gossip),
         "leaving gossip out of the list must turn gossip off"
     );
 }

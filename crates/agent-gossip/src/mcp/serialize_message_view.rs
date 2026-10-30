@@ -1,5 +1,5 @@
 use anyhow::Result;
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use serde::Serialize;
 
 use crate::a2a::ipc_command;

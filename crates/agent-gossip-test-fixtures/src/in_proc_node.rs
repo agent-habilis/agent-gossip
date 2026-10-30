@@ -10,7 +10,7 @@ use agent_gossip::{
     Channel, JoinTarget, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
     PresenceSubtype, TaskId, TaskState,
 };
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};

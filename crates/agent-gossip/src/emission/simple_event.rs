@@ -6,7 +6,7 @@
 //! parent module renders through these so the captured-event and
 //! stdout forms stay byte-identical.
 
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
 

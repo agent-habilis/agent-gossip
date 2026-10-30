@@ -1,6 +1,6 @@
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MessageBody, Nickname};
 use tokio::sync::oneshot;
 

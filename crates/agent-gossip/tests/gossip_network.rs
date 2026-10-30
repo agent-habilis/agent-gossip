@@ -448,7 +448,7 @@ async fn test_bidirectional_messaging() {
 }
 
 /// Verify that unit-level JSON wire format tests pass.
-/// The ext field and version checks are covered in `protocol::message::tests`.
+/// The ext field and version checks are covered in `protocol::messages::tests`.
 /// This integration test confirms the CLI sends parseable MESH 1.0 blocks.
 /// One send surfaces twice: the sender's own stream echoes it (stream
 /// self-parity) and the peer receives it.

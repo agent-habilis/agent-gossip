@@ -81,7 +81,9 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            policy.multihop && policy.gossip && policy.relay_transport,
+            policy.allows(habilis_network::protocol::Transport::Multihop)
+                && policy.allows(habilis_network::protocol::Transport::Gossip)
+                && policy.allows(habilis_network::protocol::Transport::Relay),
             "udp and webrtc together enable multihop, gossip and relay transport"
         );
     }

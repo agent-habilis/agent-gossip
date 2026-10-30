@@ -1,4 +1,4 @@
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MessageKind, Nickname};
 use tokio::sync::mpsc::UnboundedSender;
 

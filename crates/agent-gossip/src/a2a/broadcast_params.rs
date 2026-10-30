@@ -11,7 +11,7 @@ use habilis_network::ops::{
     Delivered, MergeCtx, MeshSender, PendingSend, StateMergeParams, blob, broadcast_state_merge,
     doc,
 };
-use habilis_network::protocol::message::{Authored, Verified, WireFrame};
+use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
     AppFrameParams, Channel, ContentHash, Identity, MeshId, Message, MessageBody, MessageId,
     MessageKind, Nickname, Shard, ShardGroup, reassembly,
@@ -1356,7 +1356,10 @@ async fn build_offload_parts(
         anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}")
     })?;
     let lookups = parsed.config().lookups.clone();
-    let relay_transport = parsed.config().transport.relay_transport;
+    let relay_transport = parsed
+        .config()
+        .transport
+        .allows(habilis_network::protocol::Transport::Relay);
     // Route through the choke point so the base is validated (0700, ours) before
     // this attachment payload spool is created — bypassing it could birth the
     // shared base at a world-traversable 0755.
@@ -2500,7 +2503,7 @@ mod call_blob_group_tests {
 
 #[cfg(test)]
 mod echo_when_sent_tests {
-    use habilis_network::protocol::message::Authored;
+    use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::oneshot;
@@ -2567,7 +2570,7 @@ mod echo_when_sent_tests {
 
 #[cfg(test)]
 mod sharded_leg_tests {
-    use habilis_network::protocol::message::Verified;
+    use habilis_network::protocol::messages::Verified;
     use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
     use tokio::sync::oneshot;
 

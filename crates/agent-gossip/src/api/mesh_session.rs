@@ -1,5 +1,5 @@
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{Mesh, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
 use habilis_network::runtime::{

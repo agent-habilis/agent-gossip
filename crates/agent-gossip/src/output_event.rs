@@ -1,4 +1,4 @@
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageId, Nickname};
 
 use crate::a2a::{TaskId, TaskState};

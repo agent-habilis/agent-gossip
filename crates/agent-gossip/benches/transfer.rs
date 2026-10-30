@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use agent_gossip::api::{CreateConfig, JoinConfig, MeshSession};
 use agent_gossip::{JoinTarget, MeshName, MessageBody};
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self};
 use tokio::sync::watch;

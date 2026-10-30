@@ -168,7 +168,7 @@ impl GossipDriver {
 
 #[async_trait::async_trait]
 impl NodeApp for GossipDriver {
-    fn classify(&self, message: &habilis_network::protocol::message::Authored) -> AppClass {
+    fn classify(&self, message: &habilis_network::protocol::messages::Authored) -> AppClass {
         let tag = message.kind.app_tag().map(AppTag::as_str);
         let is_broadcast = tag == Some(wire::BROADCAST);
         // Anything outside the taxonomy this client speaks is dropped whole

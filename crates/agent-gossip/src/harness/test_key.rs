@@ -608,7 +608,7 @@ impl CraftedMsg {
     /// Panics unless the crafted message serializes.
     #[must_use]
     pub fn bytes(&self) -> bytes::Bytes {
-        use habilis_network::protocol::message::Verified;
+        use habilis_network::protocol::messages::Verified;
         // A signed frame keeps its signature as built, or as stale after a tamper: the fixture keeps
         // the signer, and the engine's own serializer writes the bytes.
         if self.message.signer.is_some() {

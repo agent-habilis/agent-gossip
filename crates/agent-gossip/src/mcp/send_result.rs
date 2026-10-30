@@ -1,5 +1,5 @@
 use habilis_network::protocol::MessageId;
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use serde::Serialize;
 
 use super::serialize_message_view;

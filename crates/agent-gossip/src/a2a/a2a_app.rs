@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use habilis_network::ops::blob::{BlobServer, ContentId};
-use habilis_network::protocol::message::{Authored, Verified, WireFrame};
+use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{DedupKey, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc;

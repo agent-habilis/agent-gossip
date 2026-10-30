@@ -649,7 +649,7 @@ impl SurfacedState {
 mod tests {
     use std::time::Duration;
 
-    use habilis_network::protocol::message::Authored;
+    use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
         AppFrameParams, Channel, MeshId, Message, MessageKind, Nickname,
     };

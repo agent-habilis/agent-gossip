@@ -39,7 +39,9 @@ pub(crate) fn resolve(
     } else {
         transport_policy(transports)?
     };
-    if transport.relay_transport && resolved.relay_lookup == RelayChoice::Disabled {
+    if transport.allows(habilis_network::protocol::Transport::Relay)
+        && resolved.relay_lookup == RelayChoice::Disabled
+    {
         anyhow::bail!("--transport relay needs a relay lookup: add `relay` to --lookup");
     }
     Ok(Resolved {
@@ -238,7 +240,9 @@ mod tests {
             panic!("relay lookup + relay transport must resolve");
         };
         assert!(
-            resolved.transport.relay_transport,
+            resolved
+                .transport
+                .allows(habilis_network::protocol::Transport::Relay),
             "a relay transport flag enables the relay transport"
         );
         assert_eq!(

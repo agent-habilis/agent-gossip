@@ -5,7 +5,7 @@ use habilis_network::embed::{
 };
 use habilis_network::net::add_peer_addr;
 use habilis_network::ops::{MergeCtx, StateMergeParams, broadcast_state_merge};
-use habilis_network::protocol::message::Authored;
+use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
     AppTag, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
 };
@@ -1238,7 +1238,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &
 
 #[cfg(test)]
 mod classify_tests {
-    use habilis_network::protocol::message::Authored;
+    use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
         AppFrameParams, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };

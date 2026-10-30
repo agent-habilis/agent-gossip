@@ -18,7 +18,7 @@ pub(crate) fn app_policy(relay_lookup: bool) -> TransportPolicy {
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::{LookupSet, RelaySelection};
+    use habilis_network::protocol::{LookupSet, RelaySelection, Transport};
 
     use super::{app_policy, app_transport_policy};
 
@@ -31,11 +31,13 @@ mod tests {
             "the app policy is the default one"
         );
         assert!(
-            policy.udp && policy.webrtc && policy.gossip,
+            policy.allows(Transport::Udp)
+                && policy.allows(Transport::WebRtc)
+                && policy.allows(Transport::Gossip),
             "the default policy keeps udp, webrtc and gossip"
         );
         assert!(
-            !policy.multihop && !policy.relay_transport,
+            !policy.allows(Transport::Multihop) && !policy.allows(Transport::Relay),
             "the default policy has no multihop or relay transport"
         );
     }
@@ -57,7 +59,7 @@ mod tests {
         lookups.mdns = true;
         lookups.dht = true;
         assert!(
-            !app_transport_policy(&lookups).relay_transport,
+            !app_transport_policy(&lookups).allows(Transport::Relay),
             "without a relay lookup the relay transport stays off"
         );
     }

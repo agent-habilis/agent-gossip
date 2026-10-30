@@ -2,7 +2,7 @@
 //! snapshots + proptests). The wire serializers under test live in
 //! [`super::simple_event`].
 
-use habilis_network::protocol::message::{Authored, Verified};
+use habilis_network::protocol::messages::{Authored, Verified};
 use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
@@ -646,7 +646,7 @@ fn json_output_is_single_line() {
 }
 
 mod snapshots {
-    use habilis_network::protocol::message::Authored;
+    use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
     use super::{format_msg_json, format_presence_json, view};
