@@ -1,10 +1,10 @@
-//! The a2a bridge ticket — a bare Base58Check token carrying everything a
+//! The a2a bridge ticket — a bare `Base58Check` token carrying everything a
 //! consumer needs to dial the exposer: the bearer secret, the mesh's discovery
 //! config, and the exposer's address. Payload layout: `secret(32) ‖ flags(1) ‖
 //! lookups ‖ address-json` (lookups is self-delimiting, so the address occupies
 //! the remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
-//! Wire: bare Base58Check(`version ‖ kind ‖ payload`) with a `SHA256d`
+//! Wire: bare `Base58Check`(`version ‖ kind ‖ payload`) with a `SHA256d`
 //! checksum. The `kind` byte marks this as an *a2a bridge* ticket so a
 //! wrong-kind token (blob / invite) fails cleanly on decode.
 

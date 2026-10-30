@@ -15,7 +15,7 @@ use crate::a2a::{TaskId, status_update_params, wire};
 
 /// The sigil that opens every human-readable `display` line. An
 /// application-layer output convention, not an identifier prefix — mesh ids and
-/// tickets are bare Base58Check. Carries the `\u{FE0F}` selector so terminals
+/// tickets are bare `Base58Check`. Carries the `\u{FE0F}` selector so terminals
 /// render the colorful emoji rather than the monochrome text form.
 const DISPLAY_GLYPH: &str = "💬\u{FE0F}";
 

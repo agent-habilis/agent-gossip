@@ -374,19 +374,19 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let mut responses = 0;
-    for (i, line) in stdout.lines().enumerate() {
+    for (index, line) in stdout.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
         let parsed: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|err| {
             panic!(
-                "line {i} not JSON — stdout pollution.\n  error: {err}\n  line: {line}\n  full stdout:\n{stdout}"
+                "line {index} not JSON — stdout pollution.\n  error: {err}\n  line: {line}\n  full stdout:\n{stdout}"
             )
         });
         assert_eq!(
             parsed.get("jsonrpc").and_then(|value| value.as_str()),
             Some("2.0"),
-            "line {i} is not a JSON-RPC 2.0 response"
+            "line {index} is not a JSON-RPC 2.0 response"
         );
         responses += 1;
     }
@@ -1041,9 +1041,9 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     .expect("baseline fetch");
     let before_seq = baseline["current_seq"].as_u64().unwrap_or(0);
 
-    for (i, body) in ["one", "two", "three"].iter().enumerate() {
+    for (index, body) in ["one", "two", "three"].iter().enumerate() {
         client.tool_call(
-            201 + i as u64,
+            201 + index as u64,
             "send_broadcast",
             &serde_json::json!({ "text": body }),
         );

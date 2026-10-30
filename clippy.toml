@@ -8,9 +8,9 @@ allow-unwrap-in-tests = true
 # and prelude globs (clippy's wildcard_imports exempts those by default).
 warn-on-all-wildcard-imports = true
 
-# Flag single-character identifiers; keep idiomatic generics and loop vars.
+# Flag single-character identifiers; keep the idiomatic generics T, E, K and V (AGENTS.md).
 min-ident-chars-threshold = 1
-allowed-idents-below-min-chars = ["_", "T", "E", "K", "V", "R", "S", "i", "j"]
+allowed-idents-below-min-chars = ["_", "T", "E", "K", "V"]
 
 # Complexity ceilings (favor small, readable functions).
 cognitive-complexity-threshold = 20
@@ -18,19 +18,6 @@ too-many-lines-threshold = 120
 too-many-arguments-threshold = 4
 excessive-nesting-threshold = 4
 
-# Domain terms that must not trip clippy::doc_markdown (extends the default
-# allow-list rather than replacing it).
-doc-valid-idents = [
-    "iroh",
-    "QUIC",
-    "HyParView",
-    "Plumtree",
-    "Base58Check",
-    "Ed25519",
-    "TopicId",
-    "EndpointId",
-    "JSON-RPC",
-]
 
 # Google Rust Style Guide, O27: a path names at most three segments; a longer one imports its parent
 # module or its type (absolute_paths, Cargo.toml).

@@ -337,6 +337,9 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   `cargo clippy --all-targets -- -D warnings`, so any warning fails CI.
 - `min_ident_chars` rejects single-char identifiers — rename closure params
   (`|e|` → `|error|`, `|m|` → `|msg|`).
+  `clippy.toml` allows `_` and the generic parameters `T`, `E`, `K` and `V`, because these names are
+  idiomatic Rust for a type, an error, a key and a value. No loop variable, such as `i` or `j`, is allowed:
+  write `index`, `row` or `column`. `doc-valid-idents` is not set: write a name such as `Base58Check` in backticks.
 - Imports form one block at the top of the file, before any `mod`, in three
   groups: std, then external crates (`habilis_network` and the workspace crates
   included), then `self`/`super`/`crate`. Write a child-module import as

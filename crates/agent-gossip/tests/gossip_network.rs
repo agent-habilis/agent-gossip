@@ -402,7 +402,7 @@ async fn test_state_log_backfills_a_late_joiner() {
 
 /// Three-node full-mesh: a broadcast should reach at least 2 of the 3 nodes
 /// (the sender never receives its own broadcast). This test also documents
-/// the known HyParView relay bug where the second joiner may not receive messages.
+/// the known `HyParView` relay bug where the second joiner may not receive messages.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_node_full_delivery() {
     let alpha = InProcNode::create("net3node").await;
