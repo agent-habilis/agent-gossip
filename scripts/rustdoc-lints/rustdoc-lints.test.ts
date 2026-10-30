@@ -8,7 +8,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
+
+// The first cargo call on a fresh CI runner resolves the toolchain and the registry index, and it took more
+// than the 5 s default of bun test.
+setDefaultTimeout(120_000);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const work = mkdtempSync(path.join(tmpdir(), "rustdoc-lints-"));
