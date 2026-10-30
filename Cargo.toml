@@ -69,7 +69,7 @@ bytes = "1"
 # time — a pipe, a file or `NO_COLOR` gets plain bytes — so an agent capturing
 # stdout sees no ANSI without us branching on a flag or a TTY check.
 anstyle = "1"
-anstream = "0.6"
+anstream = "1"
 # `tracing` is already in the lockfile transitively (iroh depends on
 # it); declaring it directly only lets us emit our own spans/events and
 # adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).
@@ -169,9 +169,25 @@ wildcard_enum_match_arm = "warn"
 undocumented_unsafe_blocks = "warn"
 string_add = "warn"
 unwrap_used = "warn"
-# Transitive duplicate crate versions are not controllable from a leaf
-# binary (verified: ~16 dup crates, all pulled by iroh/reqwest/etc.);
-# the lint is noise here, not an actionable signal.
+# 38 crates have two or more versions in Cargo.lock (checked with `cargo clippy --workspace
+# --all-targets`), and the app cannot remove any of them: each one is forced by an upstream
+# dependency, so `-D warnings` would fail on a lint with no fix here. The app already moved its
+# own `anstream` to 1, which removed `anstream` and `anstyle-parse`. The rest, by cause:
+# - RustCrypto 0.10 against 0.11 (`habilis-network` and `dimpl` use 0.10, `iroh-base` and
+#   `automerge` use 0.11): base16ct, block-buffer, chacha20, const-oid, cpufeatures,
+#   crypto-common, curve25519-dalek, der, digest, fiat-crypto, pem-rfc7468, pkcs8, sha2,
+#   signature, spki.
+# - rand 0.9 (`habilis-network`, `dimpl`, `sctp-proto`) against 0.10 (`iroh`, `automerge`,
+#   `hickory`): rand, rand_core, getrandom, r-efi.
+# - `netdev` (through `jni` 0.21, `thiserror` 1 and `windows-sys` 0.45) against
+#   `rustls-platform-verifier` and `hickory`: jni, jni-sys, thiserror, thiserror-impl,
+#   windows-sys, windows-targets and the windows_* target crates, core-foundation (against
+#   `security-framework`).
+# - `heapless` 0.7 (embedded-io 0.4, spin 0.9) against `postcard` and `futures-buffered`
+#   (embedded-io 0.6, spin 0.10): embedded-io, spin.
+# - nom 7 against 8 (`dimpl`), smol_str 0.1 (`acto`) against 0.3 (`automerge`), untrusted 0.7
+#   against 0.9 (`ring`, `rustls-webpki`): nom, smol_str, untrusted.
+# Remove this row when the engine and the iroh fork move to one generation.
 multiple_crate_versions = "allow"
 
 # Dependencies get light optimization in dev/test builds; workspace members
