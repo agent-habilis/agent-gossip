@@ -53,8 +53,10 @@ async fn topic_rejects_empty_string() {
 #[tokio::test]
 async fn topic_peers_from_same_string_converge_and_exchange() {
     let topic = "agent-habilis";
-    let first = Mesh::for_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
-    let second = Mesh::for_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
+    let first = Mesh::for_topic(topic, MeshConfig::loopback())
+        .expect("the same topic string always derives a valid mesh id");
+    let second = Mesh::for_topic(topic, MeshConfig::loopback())
+        .expect("the same topic string always derives a valid mesh id");
     assert_eq!(
         first.to_string(),
         second.to_string(),
@@ -67,14 +69,14 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
         CoHostPolicy::EagerProbed,
     )
     .await
-    .expect("alice topic session");
+    .expect("the first loopback joiner becomes the host and needs no other peer");
     let bob = MeshSession::join_decoded(
         second,
         Some(Nickname::try_new("bob-topic").expect("the test nickname is valid")),
         CoHostPolicy::EagerProbed,
     )
     .await
-    .expect("bob topic session");
+    .expect("the second loopback joiner finds the first one through its beacon");
     assert_eq!(alice.mesh_id(), bob.mesh_id(), "both derived the same id");
 
     let mut bob_rx = bob.messages();
@@ -106,7 +108,7 @@ fn create_config_default_transport_is_udp_webrtc_gossip() {
     assert_eq!(
         config.transport,
         TransportPolicy::default().multihop(false),
-        "the default transport is udp and webrtc with gossip on"
+        "existing meshes only connect if the app default keeps udp and webrtc with gossip on"
     );
 }
 
@@ -122,7 +124,7 @@ fn create_config_builder_sets_only_the_named_fields() {
     assert_eq!(
         config.password.as_deref(),
         Some("secret"),
-        "with_password sets the password"
+        "the builder must store the given secret unchanged, or the mesh gate would reject every joiner"
     );
     assert!(
         config.advertise,

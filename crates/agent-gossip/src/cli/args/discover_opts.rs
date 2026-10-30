@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(
             discover_opts(&["agent-gossip", "discover", "--window-secs", "25"]).window_secs,
             Some(25),
-            "--window-secs 25 parses to 25"
+            "the number after the flag is the listen window, so a lost value would stream forever"
         );
     }
 }

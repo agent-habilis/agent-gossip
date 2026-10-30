@@ -19,8 +19,14 @@ fn a_worker_that_stops_polling_is_reported_stalled_to_the_initiator() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_flags("itest-stall", &FAST_STALL);
     let bob = Node::join_flags(&mesh, "stall-bob", &FAST_STALL);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "a stall report needs a ready initiator to receive it"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "a stall report needs a ready worker to stop polling"
+    );
 
     let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
     common::cli_task_status(&mesh, &bob.nickname, &task_id, "working");
@@ -56,8 +62,14 @@ fn a_worker_that_keeps_polling_is_not_reported_stalled() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_flags("itest-reading", &FAST_STALL);
     let bob = Node::join_flags(&mesh, "reading-bob", &FAST_STALL);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "the no-stall check is void unless the initiator is ready to receive reports"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the no-stall check is void unless the worker is ready to poll"
+    );
 
     let task_id = common::cli_task_create(&mesh, &alice.nickname, &bob.nickname, "build it");
     common::cli_task_status(&mesh, &bob.nickname, &task_id, "working");

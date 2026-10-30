@@ -30,7 +30,10 @@ fn waiting_with_a_state_other_than_working_fails_on_the_cli_side() {
     for state in ["input-required", "completed", "failed", "canceled"] {
         let out = status(state, &["--waiting", "asks its user"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "{state} with --waiting must fail");
+        assert!(
+            !out.status.success(),
+            "--waiting only makes sense while a task still runs, so {state} must be refused"
+        );
         assert!(
             stderr.contains("--waiting requires --state working"),
             "{state}: the error must explain the flag, got: {stderr}"

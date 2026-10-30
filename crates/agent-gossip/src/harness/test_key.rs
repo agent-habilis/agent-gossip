@@ -438,8 +438,8 @@ impl CraftedMsg {
             ),
         );
         let mut payload = status_update_params::compose_msg(mesh, text);
-        payload.message_id =
-            crate::a2a::MessageId::from_uuid_str(frame.id.as_str()).expect("frame id is a uuid");
+        payload.message_id = crate::a2a::MessageId::from_uuid_str(frame.id.as_str())
+            .expect("the frame id is minted from a uuid, so the payload can reuse it");
         let body =
             status_update_params::payload_body(&payload).expect("crafted payload serializes");
         frame.body = habilis_network::protocol::seal_to_body(&seal_key, body.as_str())

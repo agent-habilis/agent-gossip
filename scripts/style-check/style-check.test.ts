@@ -271,7 +271,7 @@ test("assert_no_message: an assert_eq! with a message passes, across lines", () 
   expectExit("crates/demo/src/lib.rs", "pub fn f(a: u8) {\n    assert_eq!(\n        a,\n        1,\n        \"a is {a}\"\n    );\n}", 0, "");
 });
 test("assert_no_message: a // inside a string literal is not a comment", () => {
-  expectExit("crates/demo/src/lib.rs", "fn f(url: &str) {\n    assert_eq!(url, \"http://host\", \"the url\");\n}", 0, "");
+  expectExit("crates/demo/src/lib.rs", "fn f(url: &str) {\n    assert_eq!(url, \"http://host\", \"the client dials the configured host\");\n}", 0, "");
 });
 test("assert_no_message: a quote inside a raw string does not end the string", () => {
   expectExit("crates/demo/src/lib.rs", "fn f(a: &str) {\n    assert_eq!(a, r#\"x\"y\"#, \"the text\");\n}", 0, "");
@@ -549,6 +549,46 @@ test("dyn_param: a file under benches counts", () => {
 });
 test("pub_vec_param: a file under tests counts", () => {
   expectExit("crates/demo/tests/t.rs", "pub fn f(xs: Vec<u8>) -> usize { xs.len() }", 1);
+});
+
+// The restating_message rule (P14): an expect or assert message that only repeats the code fails.
+test("restating_message: an expect that repeats the call fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    let node = Session::create(config).await.expect("create");\n}', 1);
+});
+test("restating_message: an expect that repeats the fn name fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn parse_ticket(text: &str) {\n    let ticket = decode(text).expect("parse ticket");\n}', 1);
+});
+test("restating_message: an expect_err that repeats the call fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    let error = decode(text).expect_err("decode");\n}', 1);
+});
+test("restating_message: a filler message fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    let node = start().expect("should not fail");\n}', 1);
+});
+test("restating_message: an assert that repeats the condition in words fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    assert!(task.is_terminal(), "the task is terminal");\n}', 1);
+});
+test("restating_message: an assert_eq that repeats the fn name fails", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn a_closed_task_is_frozen() {\n    assert_eq!(task.state, Closed, "the task is frozen");\n}', 1);
+});
+test("restating_message: an expect that gives the invariant passes", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    let node = Session::create(config).await.expect("a loopback create needs no network");\n}', 0);
+});
+test("restating_message: an assert that gives the reason passes", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    assert!(task.is_terminal(), "a late leg must not reopen a finished task");\n}', 0);
+});
+test("restating_message: a message made of a placeholder passes", () => {
+  expectExit("crates/demo/src/lib.rs", 'pub fn f() {\n    assert!(task.is_terminal(), "got: {error}");\n}', 0);
+});
+
+// The restating_comment rule (D6): a comment that only says again what the next line does fails.
+test("restating_comment: a comment that repeats the next line fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f(items: &[u8]) {\n    // loop over the items\n    for item in items {}\n}", 1);
+});
+test("restating_comment: a comment that repeats a call fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // create the session\n    let session = create_session();\n}", 1);
+});
+test("restating_comment: a comment that gives a reason passes", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // the session must exist before the first poll or the cursor is lost\n    let session = create_session();\n}", 0);
 });
 
 // The commented_out_code rule (D12): a `//` line that holds a Rust statement fails, a prose note passes.

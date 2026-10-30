@@ -182,7 +182,7 @@ mod tests {
         for flag in ["--public", "--mdns", "--dht", "--relay"] {
             assert!(
                 Cli::try_parse_from(["agent-gossip", "create", flag]).is_err(),
-                "{flag} must be rejected"
+                "the removed {flag} must fail loudly so old scripts do not run with a silent default"
             );
         }
     }

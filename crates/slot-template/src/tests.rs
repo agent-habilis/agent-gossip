@@ -14,7 +14,7 @@ fn substitutes_slots_including_repeats() {
             "run <!-- slot name=\"cmd\" --> then <!-- slot name=\"cmd\" --> as <!-- slot name=\"who\" -->",
             &[("cmd", "ls"), ("who", "me")],
         )
-        .expect("render");
+        .expect("slot-template renders a well-formed template without error");
     assert_eq!(
         out, "run ls then ls as me",
         "every slot, repeated or not, must be replaced by its value"
@@ -28,7 +28,7 @@ fn substitutes_inside_code_fences_and_prose() {
         template,
         &[("launch", "agent-gossip create"), ("noun", "block")],
     )
-    .expect("render");
+    .expect("slot-template renders a well-formed template without error");
     assert_eq!(
         out, "```bash\nagent-gossip create --state-file X &\n```\n\nPrint the output block.\n",
         "slots inside a code fence and in prose must both be filled"
@@ -39,7 +39,7 @@ fn substitutes_inside_code_fences_and_prose() {
 fn no_args_no_slots_is_identity() {
     let text = "plain text, no directives";
     assert_eq!(
-        render(text, &[]).expect("render"),
+        render(text, &[]).expect("slot-template renders a well-formed template without error"),
         text,
         "text without directives must come back unchanged"
     );
@@ -86,7 +86,7 @@ fn malformed_slots_error_instead_of_passing_through() {
                 render(template, &[("a", "x")]),
                 Err(Error::MalformedSlot { .. })
             ),
-            "{template} must be a MalformedSlot error"
+            "a slot tag with a broken attribute must be refused, since a silent pass would emit a half-substituted skill: {template}"
         );
     }
 }
@@ -108,7 +108,7 @@ fn include_outside_its_own_line_errors_in_render() {
 fn ordinary_comments_and_literal_text_pass_through_byte_exact() {
     let corpus = "<!-- just a note --> single {brace}, {{name}}, JSON {\"peers\":{\"a\":1}}, shell ${VAR} and $(id -u)\n<!-- TODO: keep -->";
     assert_eq!(
-        render(corpus, &[]).expect("render"),
+        render(corpus, &[]).expect("slot-template renders a well-formed template without error"),
         corpus,
         "ordinary comments and literal braces must pass through byte for byte"
     );
@@ -118,7 +118,7 @@ fn ordinary_comments_and_literal_text_pass_through_byte_exact() {
 fn unterminated_ordinary_comment_is_literal() {
     let corpus = "prose <!-- dangling note";
     assert_eq!(
-        render(corpus, &[]).expect("render"),
+        render(corpus, &[]).expect("slot-template renders a well-formed template without error"),
         corpus,
         "an unterminated comment must stay literal text"
     );
@@ -173,7 +173,7 @@ fn include_resolves_relative_to_the_importing_file() {
             ],
             "skills/gossip-join/SKILL.md",
         )
-        .expect("expand");
+        .expect("every include in this fixture exists and is well-formed");
     assert_eq!(
         out, "# join\n\n## Workflow\n\n## Loop\n\n",
         "each include must resolve from the folder of the file that holds it"
@@ -211,7 +211,7 @@ fn escaped_backslash_in_arg_value() {
         ],
         "a.md",
     )
-    .expect("expand");
+    .expect("every include in this fixture exists and is well-formed");
     assert_eq!(
         out, "back\\slash",
         "an escaped backslash in an arg value must decode to one backslash"
@@ -245,7 +245,7 @@ fn nested_includes_resolve_from_each_file() {
         ],
         "top/a.md",
     )
-    .expect("expand");
+    .expect("every include in this fixture exists and is well-formed");
     assert_eq!(
         nested, "before\nc\nafter\n",
         "a nested include must splice from the folder of its own file"
@@ -310,7 +310,7 @@ fn malformed_includes_error() {
                 expand_files(&files, "t.md"),
                 Err(Error::MalformedInclude { .. })
             ),
-            "{line} must be a MalformedInclude error"
+            "an include tag with a broken attribute must be refused, since a silent pass would drop a file: {line}"
         );
     }
 }
@@ -409,7 +409,7 @@ fn indented_include_lines_work_and_comments_survive() {
         ],
         "a.md",
     )
-    .expect("expand");
+    .expect("every include in this fixture exists and is well-formed");
     assert_eq!(
         out, "<!-- keep me -->\nspliced\n",
         "an ordinary comment must survive an include on an indented line"

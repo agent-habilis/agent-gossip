@@ -490,7 +490,7 @@ mod tests {
     async fn create_session_yields_valid_mesh_and_nickname() {
         let session = Session::create(create_cfg("test1", "alice-test"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         assert!(
             MeshId::try_new(session.mesh().as_str()).is_ok(),
             "the mesh name is a valid mesh id"
@@ -512,12 +512,12 @@ mod tests {
     async fn two_sessions_same_mesh_task_messages() {
         let creator = Session::create(create_cfg("two", "alice-two"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         let mesh = creator.mesh().clone();
 
         let joiner = Session::join(join_cfg(&mesh, "bob-two"))
             .await
-            .expect("join");
+            .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
         assert_eq!(
             joiner.name().as_str(),
             "two",
@@ -531,7 +531,7 @@ mod tests {
         let (sent_id, _) = creator
             .send_broadcast(MessageBody::from("hi bob"))
             .await
-            .expect("send_broadcast");
+            .expect("a live session accepts a broadcast while the mesh is up");
 
         let observed = wait_for_gossip(&joiner, "alice-two", "hi bob").await;
         assert_eq!(
@@ -544,7 +544,7 @@ mod tests {
         let (reply_id, _) = joiner
             .send_broadcast(MessageBody::from("hi alice"))
             .await
-            .expect("send_broadcast");
+            .expect("a live session accepts a broadcast while the mesh is up");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
         assert_eq!(
             observed2,
@@ -560,11 +560,11 @@ mod tests {
     async fn long_poll_blocks_then_returns_on_peer_traffic() {
         let creator = Session::create(create_cfg("lp", "alice-lp"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         let mesh = creator.mesh().clone();
         let joiner = Session::join(join_cfg(&mesh, "bob-lp"))
             .await
-            .expect("join");
+            .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
 
         // Mesh first (a delivered message proves the link) so the long-poll
         // below is waiting on a *fresh* event, not racing initial bootstrap.
@@ -588,7 +588,7 @@ mod tests {
             creator
                 .send_broadcast(MessageBody::from("after warmup"))
                 .await
-                .expect("send");
+                .expect("the sender is still joined, so the broadcast that wakes the poller must go out");
         };
         // The blocking fetch should resolve as soon as the gossiped "after
         // warmup" lands — well under the park cap — not spin to the timeout. A
@@ -632,12 +632,12 @@ mod tests {
         // tagged `self:true` — the same as the live `--output json` stream.
         let alice = Session::create(create_cfg("replay", "alice-replay"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
 
         let (sent, echo) = alice
             .send_broadcast(MessageBody::from("self-echo"))
             .await
-            .expect("send_broadcast");
+            .expect("a live session accepts a broadcast while the mesh is up");
         assert_eq!(echo.id, sent, "the echo carries the sent message id");
         assert_eq!(
             echo.author.as_str(),
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(
             chat_text(&echo).as_deref(),
             Some("self-echo"),
-            "the echo text is the self echo"
+            "the echo must carry the body that was sent, or the caller cannot match it to its own message"
         );
         assert!(
             echo.timestamp > habilis_network::protocol::UnixSecs::ZERO,
@@ -660,7 +660,7 @@ mod tests {
             let events = alice
                 .fetch_messages(None, false)
                 .await
-                .expect("fetch")
+                .expect("a live session returns its buffered messages without error")
                 .events;
             events
                 .iter()
@@ -704,11 +704,11 @@ mod tests {
         // `after` is a non-mutating replay that does NOT touch the cursor.
         let alice = Session::create(create_cfg("cursor", "alice-cursor"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         let mesh = alice.mesh().clone();
         let bob = Session::join(join_cfg(&mesh, "bob-cursor"))
             .await
-            .expect("join");
+            .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
 
         // Drive alice's first cursor-less fetches until bob's join presence AND
         // the merge of bob's card into the meta document have both landed. They
@@ -735,7 +735,7 @@ mod tests {
         let empty_delta = alice
             .fetch_messages(None, false)
             .await
-            .expect("delta fetch")
+            .expect("the cursor from the first fetch is valid, so the second fetch returns only newer messages")
             .events;
         assert!(
             empty_delta.is_empty(),
@@ -746,7 +746,7 @@ mod tests {
         // message, nothing older.
         bob.send_broadcast(MessageBody::from("hi via cursor"))
             .await
-            .expect("send");
+            .expect("a live session accepts a broadcast while the mesh is up");
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let saw_body = poll_until(delta_deadline, Duration::from_millis(150), || async {
             let events = alice
@@ -802,7 +802,7 @@ mod tests {
         // First cycle.
         let first = Session::create(create_cfg("cy-a", "cycler-a"))
             .await
-            .expect("first create");
+            .expect("a fresh process has no session yet, so the first create is not blocked");
         let first_mesh = first.mesh().clone();
         first.leave().await;
 
@@ -830,14 +830,18 @@ mod tests {
     async fn apply_state_merge_applies_and_reads_back() {
         let session = Session::create(create_cfg("merge", "alice"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
 
         session
             .apply_state_merge(json!({"turn": "a"}))
             .await
             .expect("an object merge applies");
         assert_eq!(
-            session.state_get().await.expect("state_get")["turn"],
+            session
+                .state_get()
+                .await
+                .expect("a created session owns its shared state document, so reading it succeeds")
+                ["turn"],
             json!("a"),
             "the object merge sets turn to a"
         );
@@ -849,7 +853,10 @@ mod tests {
             "a non-object top-level merge must be rejected"
         );
         assert_eq!(
-            session.state_get().await.expect("state_get"),
+            session
+                .state_get()
+                .await
+                .expect("a created session owns its shared state document, so reading it succeeds"),
             json!({"turn": "a"}),
             "a refused merge leaves the prior document"
         );

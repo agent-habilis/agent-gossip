@@ -151,7 +151,8 @@ mod tests {
             !encoded.contains(scheme_separator),
             "the ticket carries no url scheme"
         );
-        let decoded = A2aTicket::decode(&encoded).expect("decode");
+        let decoded =
+            A2aTicket::decode(&encoded).expect("encode output is always text that decode accepts");
         assert_eq!(
             decoded.address.id, address.id,
             "the decoded address keeps the id"
@@ -164,7 +165,7 @@ mod tests {
         assert_eq!(
             decoded.lookups,
             LookupOpts::public_preset(),
-            "the decoded lookups are the public preset"
+            "the lookups travel in the ticket, or the consumer would search the wrong places"
         );
         assert!(
             !decoded.password,
@@ -180,7 +181,8 @@ mod tests {
             lookups: LookupOpts::loopback(),
             password: true,
         };
-        let decoded = A2aTicket::decode(&ticket.encode()).expect("decode");
+        let decoded = A2aTicket::decode(&ticket.encode())
+            .expect("encode output is always text that decode accepts");
         assert!(
             decoded.password,
             "a ticket with a password decodes with the password flag"
@@ -226,11 +228,11 @@ mod tests {
         };
         assert!(
             A2aTicket::decode(&blob.encode()).is_err(),
-            "a blob ticket is not an a2a ticket"
+            "the kinds use distinct byte domains, so a blob ticket cannot be replayed as another kind"
         );
         assert!(
             BlobTicket::decode(&a2a.encode()).is_err(),
-            "an a2a ticket is not a blob ticket"
+            "the kinds use distinct byte domains, so an a2a ticket cannot be replayed as another kind"
         );
     }
 

@@ -614,7 +614,7 @@ fn receipt_event_is_invisible_and_stamped_so() {
     };
     assert!(
         !simple_event::is_visible(&event),
-        "the event is not visible"
+        "a receipt is bookkeeping, so showing it would wake the agent for nothing"
     );
     let line = crate::emission::event_json(&event).expect("the test event serializes to JSON");
     assert_eq!(
@@ -641,7 +641,10 @@ fn json_output_is_single_line() {
         ),
     ];
     for json in msgs {
-        assert!(!json.contains('\n'), "JSON should be single line: {json}");
+        assert!(
+            !json.contains('\n'),
+            "agents read the stream line by line, so a newline would split one event in two: {json}"
+        );
         assert!(parse(&json).is_object(), "the line parses to a json object");
     }
 }
@@ -873,7 +876,7 @@ mod snapshots {
             serde_json::from_str(&line).expect("the JSON text comes from the test itself");
         assert!(
             parsed.get("document").is_none(),
-            "meta event carries the document: {line}"
+            "the large meta document stays in the state file, not in the event line: {line}"
         );
         assert_eq!(parsed["merge"], merge, "the merge field is merge");
         assert!(

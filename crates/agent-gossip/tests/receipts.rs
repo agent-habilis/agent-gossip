@@ -55,7 +55,7 @@ async fn directed_msg_returns_a_delivered_receipt_whose_ref_is_the_msg_id() {
 
     assert!(
         wait_receipt(&mut alice, "rc-msg-bob", id.as_str()).await,
-        "no receipt for the msg"
+        "the receiver acknowledges every directed msg so the author knows it arrived"
     );
     assert_eq!(
         receipts_from(&mut alice, "rc-msg-bob"),
@@ -131,7 +131,7 @@ async fn status_leg_returns_a_delivered_receipt() {
 
     assert!(
         wait_receipt(&mut bob, "rc-leg-alice", &leg_id).await,
-        "no receipt for the status leg"
+        "the receiver acknowledges every status leg so the worker knows it arrived"
     );
 
     alice.leave().await;
@@ -148,7 +148,7 @@ async fn sharded_msg_returns_exactly_one_delivered_receipt_for_the_msg_id() {
 
     assert!(
         wait_receipt(&mut alice, "rc-big-bob", id.as_str()).await,
-        "no receipt for the sharded msg"
+        "every shard set is acknowledged once, after reassembly"
     );
     // The control msg follows the big one on the same path: once its receipt
     // is in, a second receipt for the big msg would have arrived as well.
@@ -182,9 +182,13 @@ async fn an_in_process_fetch_sends_the_read_receipt() {
     let id = alice.message("rc-fetch-bob", "read me in process").await;
     assert!(
         bob.wait_body("read me in process", MSG_TIMEOUT).await,
-        "bob never got the msg"
+        "the read receipt exists only if the body reached bob first"
     );
-    let batch = bob.session.fetch(None, false).await.expect("fetch");
+    let batch = bob
+        .session
+        .fetch(None, false)
+        .await
+        .expect("a loopback session has a live mesh, so a read cannot fail");
     assert!(!batch.events.is_empty(), "the fetch served nothing to read");
 
     let read = alice
@@ -214,7 +218,10 @@ async fn reading_a_task_brief_sends_a_read_receipt() {
     alice.create_task("rc-brief-bob", "read this brief").await;
     assert!(bob.wait_task_message(MSG_TIMEOUT).await, "brief surfaced");
 
-    bob.session.fetch(None, false).await.expect("fetch");
+    bob.session
+        .fetch(None, false)
+        .await
+        .expect("a loopback session has a live mesh, so a read cannot fail");
 
     let read = alice
         .wait_for(MSG_TIMEOUT, |events| {

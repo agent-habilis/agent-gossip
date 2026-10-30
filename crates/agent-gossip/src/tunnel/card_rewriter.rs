@@ -427,7 +427,7 @@ mod tests {
             .find_map(|line| line.strip_prefix("Content-Length: "));
         let declared: usize = header
             .and_then(|value| value.parse().ok())
-            .expect("a Content-Length header");
+            .expect("the rewritten response is framed by length, so the header is always emitted");
         assert_eq!(
             declared,
             body_of(&out).len(),

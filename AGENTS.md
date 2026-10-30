@@ -43,6 +43,12 @@ This codebase keeps comments sparse. Follow these rules:
   `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --features agent-gossip/bench,agent-gossip/adversarial`
   enforce this. `cargo task ci` and the CI `doc` job run the last one.
   `--document-private-items` is there because most items are private.
+- **A message or a comment says why, not what.** `style-check` fails an
+  `.expect("...")`, `.expect_err("...")` or `assert*!` message when every word of it is a word of the
+  expression, of the enclosing fn name, or a filler word (`restating_message`, P14). It fails a `//`
+  comment when every word of it is a word of the next line (`restating_comment`, D6). Together with
+  `restating_doc` and `doc_basics` this covers the cases a tool can see. A human still judges a message
+  that adds a word but no reason, and a comment that explains the language in new words.
 - **`///` documents an item, `//` holds a note.** A `///` on a statement is an
   error (`unused_doc_comments = "deny"`). Delete commented-out code: the
   `commented_out_code` rule of `style-check` fails on it.

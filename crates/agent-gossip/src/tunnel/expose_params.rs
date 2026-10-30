@@ -280,7 +280,7 @@ mod tests {
             super::parse_origin(&format!("{HTTP}127.0.0.1:9999/a2a/v1"))
                 .expect("the test origin is well formed"),
             "127.0.0.1:9999",
-            "the origin drops the path"
+            "the origin is host and port only, so a leftover path would break the dial"
         );
     }
 

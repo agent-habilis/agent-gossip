@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn create_with_public_lookups_adds_relay_transport() {
         let resolved = resolve(&[Lookup::Mdns, Lookup::Dht, Lookup::Relay], None, &[])
-            .expect("public lookups resolve");
+            .expect("the public mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
             policy(false, true),
@@ -114,8 +114,8 @@ mod tests {
 
     #[test]
     fn create_with_lan_lookups_has_no_relay_transport() {
-        let resolved =
-            resolve(&[Lookup::Mdns, Lookup::Dht], None, &[]).expect("lan lookups resolve");
+        let resolved = resolve(&[Lookup::Mdns, Lookup::Dht], None, &[])
+            .expect("the lan mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
             policy(false, false),
@@ -126,7 +126,8 @@ mod tests {
     fn resolve_flags(flags: &[&str]) -> anyhow::Result<Resolved> {
         let mut command_line = vec!["agent-gossip", "create"];
         command_line.extend_from_slice(flags);
-        let cli = Cli::try_parse_from(command_line).expect("the flags parse");
+        let cli = Cli::try_parse_from(command_line)
+            .expect("every caller passes well-formed flags, so a parse error is a bug in the test");
         let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };

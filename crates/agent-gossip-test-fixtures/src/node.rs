@@ -64,7 +64,7 @@ impl Node {
             .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
-            .expect("failed to spawn create");
+            .expect("the test build produced the agent-gossip binary that the command names");
 
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         let mut mesh_id = None;
@@ -125,7 +125,7 @@ impl Node {
             .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
-            .expect("failed to spawn join");
+            .expect("the test build produced the agent-gossip binary that the command names");
         Node {
             child,
             log,

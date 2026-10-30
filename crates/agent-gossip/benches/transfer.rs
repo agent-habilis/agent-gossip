@@ -155,7 +155,9 @@ async fn main() {
 
     // Node A creates a loopback mesh.
     let create_cfg = CreateConfig::new(MeshName::try_new("bench").expect("valid name"));
-    let node_a = MeshSession::create(create_cfg).await.expect("create");
+    let node_a = MeshSession::create(create_cfg)
+        .await
+        .expect("a loopback create needs no network and cannot fail");
 
     let target: JoinTarget = node_a
         .mesh_id()
@@ -164,7 +166,7 @@ async fn main() {
         .expect("a freshly minted id parses");
     let node_b = MeshSession::join(JoinConfig::new(target))
         .await
-        .expect("join");
+        .expect("the joiner dials the loopback creator, which is already up");
 
     // Subscribe before sending so we see everything sent after this point.
     let rx = node_b.messages();

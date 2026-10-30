@@ -819,7 +819,7 @@ mod tests {
     fn rpc_result_from_body_maps_result_error_and_garbage() {
         // A result comes back as Ok(the result value).
         let ok = rpc_result_from_body(r#"{"result":{"task":{"id":"t1"}}}"#)
-            .expect("a result body is Ok");
+            .expect("the body holds a result key and no error key, so the parse yields a value");
         assert_eq!(ok["task"]["id"], "t1", "an ok call returns the task id");
 
         // A JSON-RPC error carries the peer's code + message verbatim.
@@ -1087,7 +1087,7 @@ mod tests {
 
         assert!(
             app.tasks.contains_key(&task_id),
-            "the late reply adopts the task"
+            "the worker still holds the task, so its late reply must not lose the record"
         );
         let timeout = std::time::Duration::from_secs(tuning::task_timeout_secs());
         assert!(
@@ -1125,7 +1125,7 @@ mod tests {
         assert_eq!(
             app.tasks[&task_id].state,
             crate::a2a::TaskState::Canceled,
-            "the task is canceled"
+            "the caller already saw the call fail, so the opened task must not keep running unseen"
         );
         assert_eq!(
             app.take_late_cancels(),

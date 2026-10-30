@@ -92,7 +92,7 @@ mod tests {
     fn empty_and_whitespace_values_are_rejected() {
         assert!(
             resolve_password(Some(PasswordFlag::Inline(String::new()))).is_err(),
-            "an empty inline password is rejected"
+            "a blank secret would gate the mesh with a value anyone can guess"
         );
         assert!(
             resolve_password(Some(PasswordFlag::Inline("   ".to_owned()))).is_err(),
@@ -114,7 +114,7 @@ mod tests {
     fn bare_sentinel_parses_to_bare() {
         assert!(
             parse_password_flag(super::BARE.to_owned()) == PasswordFlag::Bare,
-            "the bare sentinel parses to the bare flag"
+            "the sentinel marks a flag given without a value, which later fails with a hint"
         );
         assert!(
             parse_password_flag("hunter2".to_owned()) == PasswordFlag::Inline("hunter2".to_owned()),

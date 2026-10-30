@@ -604,7 +604,9 @@ pub(crate) fn test_status_frame(
             wire::app_tag(wire::STATUS),
             to,
             None,
-            payload_body(&status).expect("status body"),
+            payload_body(&status).expect(
+                "a status update with a fresh random id serializes to a body under the size cap",
+            ),
         ),
     )
 }
@@ -651,7 +653,10 @@ mod tests {
         let payload = compose_broadcast(&mesh(), "What is Rust?");
         let frame = frame_for(&payload);
         let parsed = broadcast_payload(&frame).expect("valid broadcast payload");
-        assert_eq!(parsed, payload, "a payload round-trips");
+        assert_eq!(
+            parsed, payload,
+            "a receiver rebuilds exactly what the sender composed, or the two would disagree on content"
+        );
         assert_eq!(
             display_text(&parsed),
             "What is Rust?",

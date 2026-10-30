@@ -69,7 +69,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     let url = part["url"].as_str().expect("the file part carries a url");
     assert!(
         BlobTicket::decode(url).is_ok(),
-        "the result must be a blob ticket, got: {url}"
+        "a large file travels by ticket so the receiver can fetch it out of band, got: {url}"
     );
     assert!(
         part["raw"].is_null(),

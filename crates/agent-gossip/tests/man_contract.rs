@@ -16,7 +16,8 @@ fn man_prints_manual_to_stdout() {
         output.status
     );
 
-    let stdout = String::from_utf8(output.stdout).expect("manual is UTF-8");
+    let stdout =
+        String::from_utf8(output.stdout).expect("the manual is embedded text from a source file");
 
     // Renders the man page: the canonical sections + key agent material.
     for marker in [
@@ -92,7 +93,8 @@ fn manual_carries_no_pre_rename_vocabulary() {
         "`agent-gossip man` should exit 0, got {:?}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout).expect("manual is UTF-8");
+    let stdout =
+        String::from_utf8(output.stdout).expect("the manual is embedded text from a source file");
     assert!(
         !stdout.trim().is_empty(),
         "`agent-gossip man` produced no output"

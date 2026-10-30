@@ -34,7 +34,7 @@ fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("current-thread runtime")
+        .expect("a runtime with default settings builds unless the process is out of threads")
 }
 
 /// The whole cost of one debounced `AF_ROUTE` wakeup: what

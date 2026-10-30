@@ -24,6 +24,6 @@ pub fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
     let mut response = String::new();
     BufReader::new(stream)
         .read_line(&mut response)
-        .expect("read IPC response");
+        .expect("the daemon writes one reply line before it closes the socket");
     response.trim().to_string()
 }

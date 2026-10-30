@@ -43,8 +43,14 @@ impl McpClient {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn agent-gossip mcp");
-        let stdin = child.stdin.take().expect("child stdin");
-        let stdout = child.stdout.take().expect("child stdout");
+        let stdin = child
+            .stdin
+            .take()
+            .expect("the child was spawned with a piped stdin, so the handle is present");
+        let stdout = child
+            .stdout
+            .take()
+            .expect("the child was spawned with a piped stdout, so the handle is present");
         let reader = BufReader::new(stdout);
         McpClient {
             child,
@@ -63,8 +69,14 @@ impl McpClient {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn agent-gossip mcp");
-        let stdin = child.stdin.take().expect("child stdin");
-        let stdout = child.stdout.take().expect("child stdout");
+        let stdin = child
+            .stdin
+            .take()
+            .expect("the child was spawned with a piped stdin, so the handle is present");
+        let stdout = child
+            .stdout
+            .take()
+            .expect("the child was spawned with a piped stdout, so the handle is present");
         let reader = BufReader::new(stdout);
         let mut client = McpClient {
             child,
@@ -373,7 +385,9 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     }
     std::thread::sleep(Duration::from_secs(8));
     drop(child.stdin.take());
-    let output = child.wait_with_output().expect("wait");
+    let output = child
+        .wait_with_output()
+        .expect("the child exits after stdin closes, so collecting its output cannot hang or fail");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let mut responses = 0;
@@ -557,7 +571,7 @@ fn join_with_invalid_input_errors_gracefully() {
         "join_gossip",
         &serde_json::json!({ "gossip": "not-a-mesh-id" }),
     );
-    let err = tool_error(&response).expect("invalid join should error");
+    let err = tool_error(&response).expect("a malformed gossip id is rejected by the server, and the rejection arrives as a tool error");
     // Exact wording can vary; just confirm we got an error and no
     // crash. Server must still accept the next request.
     assert!(!err.is_empty(), "error message must not be empty");
@@ -576,7 +590,8 @@ fn leave_without_session_is_noop() {
     let mut client = McpClient::spawn();
     let response = client.tool_call(50, "leave_gossip", &serde_json::json!({}));
     // Docs say: "no-op if not in one." Must succeed.
-    let json = tool_result_json(&response).expect("leave with no session should succeed");
+    let json = tool_result_json(&response)
+        .expect("leaving is idempotent, so it reports success even when nothing was joined");
     assert_eq!(
         json["ok"],
         serde_json::json!(true),
@@ -623,7 +638,8 @@ fn send_broadcast_without_session_errors() {
         "send_broadcast",
         &serde_json::json!({ "text": "orphan" }),
     );
-    let err = tool_error(&response).expect("send_broadcast without session should error");
+    let err = tool_error(&response)
+        .expect("a broadcast needs a joined mesh, so the server refuses it with a tool error");
     assert!(
         err.contains("not in a gossip"),
         "send_broadcast without a session must say so, got: {err}"
@@ -640,10 +656,11 @@ fn create_mesh_with_granular_relay_succeeds() {
         "create_gossip",
         &serde_json::json!({ "name": "relayp", "lookup": ["relay"], "relay_urls": ["https://relay.example/"] }),
     );
-    let result = tool_result_json(&response).expect("granular relay create should succeed");
+    let result = tool_result_json(&response)
+        .expect("a relay lookup with an explicit relay URL is a valid combination");
     assert!(
         agent_gossip::MeshId::try_new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
-        "expected a mesh id, got: {result}"
+        "the server must return a mesh id that parses, or no peer could join it, got: {result}"
     );
 }
 
@@ -656,7 +673,7 @@ fn create_mesh_without_name_mints_random() {
     let result = tool_result_json(&response).expect("nameless create should succeed");
     assert!(
         agent_gossip::MeshId::try_new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
-        "expected a mesh id, got: {result}"
+        "the server must return a mesh id that parses, or no peer could join it, got: {result}"
     );
     assert!(
         !result["name"].as_str().unwrap_or_default().is_empty(),
@@ -704,7 +721,7 @@ fn create_mesh_relay_transport_is_in_the_id() {
         "create_gossip",
         &serde_json::json!({ "name": "transrelay", "lookup": ["relay"], "transport": ["udp", "webrtc", "gossip", "relay"] }),
     ))
-    .expect("create with relay should succeed");
+    .expect("a relay lookup is accepted at create time without contacting the relay");
 
     let decoded: habilis_network::protocol::LockedMesh = relayed["gossip"]
         .as_str()
@@ -763,7 +780,7 @@ fn create_mesh_default_transport_is_udp_webrtc_gossip() {
     assert_eq!(
         mesh.config().lookups,
         habilis_network::protocol::LookupOpts::loopback(),
-        "the default lookup must be loopback"
+        "tests must not reach the public network, so a create without a lookup stays on loopback"
     );
     assert_eq!(
         mesh.config().transport,
@@ -1035,7 +1052,8 @@ fn send_broadcast_reaches_the_mesh() {
         "send_broadcast",
         &serde_json::json!({ "text": "hello mesh" }),
     );
-    let json = tool_result_json(&response).expect("broadcast send should succeed");
+    let json =
+        tool_result_json(&response).expect("the session is joined, so the broadcast is accepted");
     assert!(
         !json["id"]
             .as_str()
@@ -1278,10 +1296,11 @@ fn task_creation_to_unknown_peer_errors() {
             }},
         }),
     );
-    let err = tool_error(&response).expect("task creation to unknown peer should error");
+    let err = tool_error(&response)
+        .expect("a peer that is not in the roster cannot receive a task, so the server refuses it");
     assert!(
         err.contains("unknown peer"),
-        "expected unknown-peer error, got: {err}"
+        "the refusal must name the missing peer so the caller can fix the address, got: {err}"
     );
 }
 
@@ -1318,7 +1337,9 @@ fn mesh_info_reports_peer_roster() {
         info["peer_count"], 2,
         "the converged roster must count both members"
     );
-    let peers = info["peers"].as_array().expect("peers array");
+    let peers = info["peers"]
+        .as_array()
+        .expect("the mesh info reply lists its roster as a JSON array");
     assert!(
         peers
             .iter()
@@ -1384,7 +1405,7 @@ fn discover_meshes_finds_an_advertised_mesh() {
         .stdout(stdout)
         .stderr(Stdio::from(adv_file))
         .spawn()
-        .expect("spawn advertiser");
+        .expect("the built binary exists next to the test executable, so the advertiser starts");
 
     // Wait until the advertiser has started (its `ready` JSON carries `mesh`)
     // so the discoverer's first window isn't spent waiting for it to come up.

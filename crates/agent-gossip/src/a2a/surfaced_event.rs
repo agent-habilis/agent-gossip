@@ -936,7 +936,11 @@ mod tests {
         let mut buffer = SurfacedEvents::new(2);
         assert_eq!(buffer.latest_seq(), 0, "fresh ring has no surfaced events");
         buffer.push(peer_return("a"));
-        assert_eq!(buffer.latest_seq(), 1, "the latest seq is 1");
+        assert_eq!(
+            buffer.latest_seq(),
+            1,
+            "the first push takes seq 1, as seq 0 means none"
+        );
         buffer.push(peer_return("b"));
         buffer.push(peer_return("c")); // evicts seq 1; ring {2,3}
         assert_eq!(
@@ -1119,7 +1123,10 @@ mod tests {
             "[]",
             "an immediate poll with no events returns an empty batch"
         );
-        assert_eq!(surfaced.last_served, 2, "the last served cursor is 2");
+        assert_eq!(
+            surfaced.last_served, 2,
+            "an empty poll must not move the cursor, or the next event could be skipped"
+        );
 
         // One more event → only it is served.
         surfaced.push(peer_return("c"));
@@ -1135,7 +1142,10 @@ mod tests {
             third.contains("\"seq\":3") && !third.contains("\"seq\":2"),
             "the third batch carries seq 3 only"
         );
-        assert_eq!(surfaced.last_served, 3, "the last served cursor is 3");
+        assert_eq!(
+            surfaced.last_served, 3,
+            "serving the new event moves the cursor to it, so no later poll repeats it"
+        );
     }
 
     /// An explicit-`after` replay (hidden debug flag) advances via `max`, so
@@ -1313,10 +1323,18 @@ mod tests {
     fn waking_seq_ignores_document_echoes() {
         let mut buffer = SurfacedEvents::new(10);
         buffer.push(meta_changed());
-        assert_eq!(buffer.latest_seq(), 1, "the latest seq is 1");
+        assert_eq!(
+            buffer.latest_seq(),
+            1,
+            "a document echo still takes a seq, so readers can see the gap"
+        );
         assert_eq!(buffer.latest_waking_seq(), 0, "no waking seq yet");
         buffer.push(peer_return("a"));
-        assert_eq!(buffer.latest_waking_seq(), 2, "the waking seq is 2");
+        assert_eq!(
+            buffer.latest_waking_seq(),
+            2,
+            "a peer event is the one that wakes the agent, and it took the second seq"
+        );
     }
 
     #[tokio::test]
@@ -1348,7 +1366,8 @@ mod tests {
             responder: PollResponder::Json(tx),
         });
         assert_eq!(
-            rx.await.expect("immediate"),
+            rx.await
+                .expect("a non-long poll answers inside the call, before the sender drops"),
             "[]",
             "an immediate poll returns an empty batch"
         );

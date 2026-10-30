@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(
             gate.screen(&rebound),
             Err(Refusal("host does not match the bridge address")),
-            "a rebound host is refused"
+            "a page on an attacker name could read responses through DNS rebinding"
         );
 
         // `localhost` on the bridge's own port is the same machine.
@@ -295,7 +295,7 @@ mod tests {
         assert_eq!(
             gate.screen(&none),
             Err(Refusal("exactly one host header is required")),
-            "a head with no host is refused"
+            "a missing or duplicate Host header can hide a smuggled request"
         );
         let two = format!(
             "GET / HTTP/1.1\r\nHost: 127.0.0.1:7777\r\nHost: 127.0.0.1:7777\r\n{TOKEN_HEADER}: {token}"

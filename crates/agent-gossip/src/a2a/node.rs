@@ -1398,7 +1398,7 @@ mod classify_tests {
     fn a_receipt_is_pollable_but_never_wakes_the_bell() {
         assert!(
             super::is_pollable(&receipt_event()),
-            "a receipt is not pollable"
+            "a poll must still report delivery state to the sender, even though it never wakes the agent"
         );
         assert!(!wakes(&receipt_event()), "a receipt does not wake the bell");
     }
@@ -1640,8 +1640,14 @@ mod classify_tests {
         let cls = classify(&app_frame("admin"));
         assert!(!cls.valid(), "an unknown tag fails the boundary gate");
         assert!(!cls.loggable(), "an unknown tag is not logged");
-        assert!(!cls.beat(), "an unknown tag is not a beat");
-        assert!(!cls.chained(), "an unknown tag is not chained");
+        assert!(
+            !cls.beat(),
+            "a frame that fails the gate must not count as proof that its author is alive"
+        );
+        assert!(
+            !cls.chained(),
+            "a dropped frame must leave no gap in the author's hash chain"
+        );
     }
 
     #[test]
@@ -1651,7 +1657,10 @@ mod classify_tests {
             &Nickname::from("author"),
             MessageBody::from("{}"),
         )));
-        assert!(!peer_info.loggable(), "a peer info is not loggable");
+        assert!(
+            !peer_info.loggable(),
+            "the engine owns peer info, so the app must not retain it in its log"
+        );
         let _ = MessageKind::PeerInfo;
     }
 

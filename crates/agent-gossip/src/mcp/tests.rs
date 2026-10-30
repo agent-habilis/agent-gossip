@@ -74,7 +74,7 @@ fn the_module_doc_lists_every_tool() {
     for tool in &tools {
         assert!(
             doc.contains(&format!("`{tool}`")),
-            "the module doc never lists the `{tool}` tool"
+            "an undocumented tool is invisible to anyone reading the module header, so each declared tool needs an entry"
         );
     }
     let spelled = ["eighteen", "nineteen", "twenty"]

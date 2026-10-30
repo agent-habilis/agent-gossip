@@ -1181,7 +1181,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].last_peer_activity,
             peer_clock,
-            "the last peer activity is the peer clock"
+            "a stale beat is a replayed frame, so it must not make the peer look alive again"
         );
     }
 
@@ -1292,7 +1292,7 @@ mod tests {
         let tasks = working_task_we_opened(now);
         assert!(
             super::stalled(silent_reader(), &tasks[&tid()], STALL_CHECK, now),
-            "the reader is stalled"
+            "a wedged agent behind a live daemon must not look alive for a day"
         );
     }
 
@@ -1752,7 +1752,7 @@ mod tests {
         let late = status_leg(false);
         assert!(
             super::is_replay(&tasks, &closed(), &tid(), &late.id),
-            "a late leg is a replay"
+            "anti-entropy serves old frames, and a closed task must not surface them twice"
         );
     }
 
@@ -1779,7 +1779,7 @@ mod tests {
         let late = status_leg(false);
         assert!(
             super::is_replay(&tasks, &reaped_ids, &tid(), &late.id),
-            "a late leg for a reaped task is a replay"
+            "the reap forgets the record but the id list must still catch old frames"
         );
     }
 
@@ -1919,12 +1919,12 @@ mod tests {
         let fresh = status_leg(false);
         assert!(
             !super::is_replay(&tasks, &closed(), &tid(), &fresh.id),
-            "a fresh leg is not a replay"
+            "a live task must keep surfacing its new legs"
         );
         let unknown = TaskId::from("660e8400-e29b-41d4-a716-446655440000");
         assert!(
             !super::is_replay(&tasks, &closed(), &unknown, &fresh.id),
-            "a leg for an unknown task is not a replay"
+            "the worker's first leg can beat the RPC response, so it must still surface"
         );
     }
 
@@ -2124,7 +2124,10 @@ mod tests {
         let (expired, reaped) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
 
         assert_eq!(expired.len(), 1, "the idle task is cancelled");
-        assert!(reaped.is_empty(), "and is not reaped in the same pass");
+        assert!(
+            reaped.is_empty(),
+            "the cancel needs one more pass to be seen before the record disappears"
+        );
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Canceled,
@@ -2231,7 +2234,11 @@ mod tests {
 
         // The real worker's snapshot is still adopted.
         adopt(&mut tasks, "calm-otter", TaskState::Failed, later);
-        assert_eq!(tasks[&tid()].state, TaskState::Failed, "the task is failed");
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Failed,
+            "the real worker holds the task, so its snapshot is the one that may close it"
+        );
     }
 
     /// A second `Offer` on a live task id from a different peer must not
@@ -2495,7 +2502,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Completed,
-            "the task is completed"
+            "the plaintext twin carries the state that the sealed body hides"
         );
         assert!(
             tasks[&tid()].state.is_terminal(),
@@ -2531,7 +2538,7 @@ mod tests {
         assert_eq!(
             rec.ball,
             TaskRole::Receiver,
-            "the ball is with the receiver"
+            "a fresh offer waits on the worker to accept it"
         );
 
         apply(
@@ -2542,12 +2549,12 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Working,
-            "the task is working"
+            "the worker's accept moves the task out of submitted"
         );
         assert_eq!(
             tasks[&tid()].ball,
             TaskRole::Receiver,
-            "the ball is with the receiver"
+            "the worker is busy, so the initiator has nothing to do yet"
         );
 
         // Worker asks a question → input-required, ball flips to me.
@@ -2564,7 +2571,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].ball,
             TaskRole::Initiator,
-            "the ball is with the initiator"
+            "the worker asked a question, so only the initiator can move the task on"
         );
         assert!(!tasks[&tid()].review, "the review flag is clear");
 
@@ -2578,7 +2585,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].ball,
             TaskRole::Receiver,
-            "the ball is with the receiver"
+            "the initiator answered, so the worker acts again"
         );
 
         // The result parks the task for my review.
@@ -2592,7 +2599,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].ball,
             TaskRole::Initiator,
-            "the ball is with the initiator"
+            "a returned result waits for the initiator to review it"
         );
 
         // My approval message resumes the worker...
@@ -2605,7 +2612,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].ball,
             TaskRole::Receiver,
-            "the ball is with the receiver"
+            "the confirm sends the worker back to work"
         );
 
         // ...and the *worker* authors the terminal `completed` (native A2A).
@@ -2617,7 +2624,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Completed,
-            "the task is completed"
+            "the worker's final status closes the task"
         );
     }
 
@@ -2640,7 +2647,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Submitted,
-            "the task is submitted"
+            "a completed leg before any accept must not close the task"
         );
 
         apply(
@@ -2668,7 +2675,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Completed,
-            "the task is completed"
+            "after its own accept, the worker may close the task"
         );
 
         // Declining an offer outright is a different leg, and still lands.
@@ -2682,7 +2689,7 @@ mod tests {
         assert_eq!(
             declined[&tid()].state,
             TaskState::Failed,
-            "the declined task failed"
+            "a decline is a different leg from a close, so it must still land"
         );
     }
 
@@ -2700,7 +2707,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Rejected,
-            "the task is rejected"
+            "a stray confirm from the initiator must not resurrect a closed task"
         );
         // A stray confirm after decline must not resurrect it.
         apply(
@@ -2738,7 +2745,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Submitted,
-            "the task is submitted"
+            "a confirm with no review park has nothing to close"
         );
     }
 
@@ -2760,7 +2767,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Submitted,
-            "the task is submitted"
+            "only the worker can accept an offer, so the initiator's working leg is dropped"
         );
         // Worker accepts, returns a result → review park.
         apply(
@@ -2789,7 +2796,7 @@ mod tests {
         assert_eq!(
             tasks[&tid()].state,
             TaskState::Completed,
-            "the task is completed"
+            "only the worker's own completed leg closes the task"
         );
     }
 

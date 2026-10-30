@@ -23,11 +23,11 @@ fn message_id_rejects_non_uuid() {
     let not_a_uuid = json!("not-a-uuid");
     assert!(
         serde_json::from_value::<MessageId>(not_a_uuid.clone()).is_err(),
-        "a message id must be a uuid"
+        "correlation relies on ids being unique, which free-form strings do not guarantee"
     );
     assert!(
         serde_json::from_value::<TaskId>(not_a_uuid).is_err(),
-        "a task id must be a uuid"
+        "a forged task id from a peer must fail at the parse, before it keys any record"
     );
 }
 
@@ -65,7 +65,7 @@ fn task_state_is_screaming_snake_on_the_wire() {
     assert_eq!(
         serde_json::to_value(TaskState::InputRequired).expect("a test value serializes to JSON"),
         json!("TASK_STATE_INPUT_REQUIRED"),
-        "the input-required state is screaming snake on the wire"
+        "the A2A v1.0 spec fixes this spelling, and other implementations match on it"
     );
     assert_eq!(
         TaskState::InputRequired.friendly_name(),
@@ -75,7 +75,7 @@ fn task_state_is_screaming_snake_on_the_wire() {
     assert_eq!(
         serde_json::to_value(Role::User).expect("a test value serializes to JSON"),
         json!("ROLE_USER"),
-        "a user role is ROLE_USER on the wire"
+        "the A2A v1.0 spec fixes this spelling, so a renamed variant would break every peer"
     );
 }
 
@@ -87,7 +87,10 @@ fn terminal_states_are_the_four_closed_ones() {
         TaskState::Failed,
         TaskState::Rejected,
     ] {
-        assert!(state.is_terminal(), "a closed state is terminal");
+        assert!(
+            state.is_terminal(),
+            "no leg may reopen a task after one of these four, so the sweep can reap it"
+        );
     }
     for state in [
         TaskState::Submitted,

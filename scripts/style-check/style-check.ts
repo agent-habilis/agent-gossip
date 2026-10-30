@@ -522,6 +522,68 @@ function countStrReplace(raw: string): number {
   return count;
 }
 
+// The messages that only repeat the code (P14): the message of `.expect("...")`, `.expect_err("...")` and of
+// an assert. Every word of the message is a word of the expression that the message belongs to, a word of
+// the fn name, or a filler word. A message that adds a word about the value, the reason or the invariant
+// is not counted. Format placeholders such as `{name}` are not words. A human still judges a message that
+// adds a word but no reason.
+const MESSAGE_FILLER = new Set(["the", "a", "an", "to", "of", "is", "are", "be", "in", "on", "for", "and", "or", "as", "at", "by", "it", "its", "with", "no", "not", "never", "always", "should", "must", "can", "cannot", "could", "failed", "fail", "fails", "failure", "error", "errors", "unable", "ok", "succeeds", "succeed", "works", "expected", "got"]);
+function wordsOf(text: string): string[] {
+  return identWords(text.replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")).flatMap((word) => word.match(/[a-z]+|[0-9]+/g) ?? []);
+}
+function restatesCode(message: string, code: string): boolean {
+  const words = wordsOf(message.replace(/\{[^}]*\}/g, " ")).filter((word) => !MESSAGE_FILLER.has(word));
+  // A message made only of placeholders and filler, such as `{reason}` or `got: {error}`, carries a computed value.
+  if (words.length === 0 && /\{[^}]*\}/.test(message)) return false;
+  const known = new Set(wordsOf(code));
+  return words.every((word) => known.has(word));
+}
+function enclosingFnName(text: string, index: number): string {
+  const found = [...text.slice(0, index).matchAll(/\bfn\s+(\w+)/g)];
+  return found.at(-1)?.[1] ?? "";
+}
+function countRestatingMessages(raw: string): number {
+  const text = stripComments(raw);
+  let count = 0;
+  for (const m of text.matchAll(/\.\s*expect(?:_err)?\s*\(\s*"((?:[^"\\]|\\.)*)"\s*\)/g)) {
+    const at = m.index!;
+    const start = Math.max(text.lastIndexOf(";", at), text.lastIndexOf("{", at), text.lastIndexOf("}", at)) + 1;
+    const code = `${blankStrings(text.slice(start, at))} ${enclosingFnName(text, at)}`;
+    if (restatesCode(m[1] ?? "", code)) count++;
+  }
+  for (const m of text.matchAll(/\bassert(?:_eq|_ne)?!\s*\(/g)) {
+    const open = m.index! + m[0].length - 1;
+    const args = callArgs(text.slice(open + 1, closeCall(text, open)));
+    const need = m[0].startsWith("assert!") ? 1 : 2;
+    const message = args[need]?.match(/^"((?:[^"\\]|\\.)*)"$/s)?.[1];
+    if (args.length !== need + 1 || message === undefined) continue;
+    const code = `${blankStrings(args.slice(0, need).join(" "))} ${enclosingFnName(text, m.index!)}`;
+    if (restatesCode(message, code)) count++;
+  }
+  return count;
+}
+
+// The `//` comments that only say again what the next line of code does (D6): every word of the comment is a
+// word of that line, a filler word, or a verb that names a basic step (`set`, `loop`, `return`). A comment that
+// adds a word about the reason is not counted.
+const COMMENT_STEP_WORDS = new Set(["set", "sets", "get", "gets", "call", "calls", "return", "returns", "create", "creates", "loop", "loops", "check", "checks", "increment", "increments", "decrement", "start", "starts", "run", "runs", "add", "adds", "define", "defines", "declare", "declares", "initialize", "initializes", "this", "we", "now", "then", "here", "if", "else", "each", "every", "over", "all", "into", "from", "new", "variable", "function", "value", "result", "list", "item", "items"]);
+function countRestatingComments(raw: string): number {
+  const lines = raw.split("\n");
+  let count = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*\/\/(?![\/!])/.test(lines[i] ?? "") || /^\s*\/\/(?![\/!])/.test(lines[i - 1] ?? "")) continue;
+    let end = i;
+    while (/^\s*\/\/(?![\/!])/.test(lines[end + 1] ?? "")) end++;
+    const code = (lines[end + 1] ?? "").trim();
+    if (code === "" || code.startsWith("//") || code.startsWith("#[")) continue;
+    const note = lines.slice(i, end + 1).map((line) => line.replace(/^\s*\/\/\s?/, "")).join(" ");
+    const noteWords = wordsOf(note);
+    const known = new Set([...wordsOf(code), ...MESSAGE_FILLER, ...COMMENT_STEP_WORDS]);
+    if (noteWords.length > 0 && noteWords.every((word) => known.has(word))) count++;
+  }
+  return count;
+}
+
 // The `//` lines that hold Rust code (D12). Code is deleted, not commented out; a note says why in prose.
 // A line counts when its text is one of these shapes: a statement that starts with a keyword and ends
 // with `;` or `{`, a call or an assignment that ends with `;`, or a bare closing bracket. The compiler
@@ -750,6 +812,18 @@ const RULES: Rule[] = [
     scan: countAbbrevNames,
     glob: "crates/**/*.rs",
     why: "An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on. A name that a crate outside our control fixes has a counted row.",
+  },
+  {
+    name: "restating_message",
+    scan: countRestatingMessages,
+    glob: "crates/**/*.rs",
+    why: "A message of expect or assert says why, not what: it adds the invariant or the reason, and not only the words of the call or the fn name (P14).",
+  },
+  {
+    name: "restating_comment",
+    scan: countRestatingComments,
+    glob: "crates/**/*.rs",
+    why: "A `//` comment says why, not what: it adds a word about the reason, and not only the words of the next line (D6). Delete a comment that repeats the code.",
   },
   {
     name: "commented_out_code",

@@ -2497,7 +2497,10 @@ mod call_blob_group_tests {
     fn a_first_call_owns_a_fresh_group() {
         let (_, fresh_group) = super::call_blob_group(None, &HashMap::new());
 
-        assert!(fresh_group, "a first call owns a fresh group");
+        assert!(
+            fresh_group,
+            "with no earlier task to reuse, the blob needs its own group to be cleaned up"
+        );
     }
 }
 
@@ -2542,7 +2545,10 @@ mod echo_when_sent_tests {
         let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
         verdict_tx.send(Ok(())).expect("receiver is held");
         let verdict = pending.into_iter().next().expect("verdict handle");
-        verdict.await.expect("verdict").expect("ok");
+        verdict
+            .await
+            .expect("the echo task sends the outcome before it drops its end")
+            .expect("the test fed Ok(()), and the echo task passes it on unchanged");
 
         assert_eq!(echoes(&mut events), 1, "one echo is sent");
     }
@@ -2561,7 +2567,7 @@ mod echo_when_sent_tests {
             .next()
             .expect("verdict handle")
             .await
-            .expect("verdict");
+            .expect("the echo task sends the outcome before it drops its end");
 
         assert!(verdict.is_err(), "the caller still sees the failure");
         assert_eq!(echoes(&mut events), 0, "no echo follows a failure");
@@ -2606,7 +2612,10 @@ mod sharded_leg_tests {
         ];
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(settle(handles).await.is_err(), "the leg failed");
+        assert!(
+            settle(handles).await.is_err(),
+            "one lost shard makes the receiver unable to reassemble the whole payload"
+        );
 
         let logged: usize = take_sent_legs(&mut app)
             .iter()

@@ -354,7 +354,7 @@ mod tests {
             label: label.map(str::to_owned),
         }
         .to_body()
-        .expect("ad body")
+        .expect("an advert with a valid ticket always serializes to JSON")
         .as_str()
         .to_owned()
     }

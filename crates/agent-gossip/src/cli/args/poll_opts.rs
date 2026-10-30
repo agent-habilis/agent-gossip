@@ -157,7 +157,7 @@ mod tests {
             "--nickname",
             "calm-fox",
         ])
-        .expect("gossip+nickname form must parse");
+        .expect("the session form is the documented way to name a poll target");
         let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
@@ -184,7 +184,7 @@ mod tests {
             "/tmp/s.json",
             "--long",
         ])
-        .expect("state-file form must parse");
+        .expect("a state file alone must be enough to poll a detached session");
         let Commands::Poll { options } = cli.command else {
             panic!("expected poll");
         };
@@ -212,7 +212,7 @@ mod tests {
                 "abc",
             ])
             .is_err(),
-            "--state-file conflicts with --gossip"
+            "a state file already names the session, so a gossip id would contradict it"
         );
         assert!(
             parse(&[
@@ -224,7 +224,7 @@ mod tests {
                 "calm-fox",
             ])
             .is_err(),
-            "--state-file conflicts with --nickname"
+            "a state file already names the session, so a nickname would contradict it"
         );
     }
 

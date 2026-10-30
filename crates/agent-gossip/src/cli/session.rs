@@ -491,7 +491,10 @@ mod tests {
         let own = std::process::id();
         let parent = process::parent_of(own).expect("test process has a parent");
         let mut detached = target("aaaa", "one-two", u32::MAX);
-        assert!(!owned_by(&detached, own), "no owner recorded");
+        assert!(
+            !owned_by(&detached, own),
+            "a detached session was never claimed, so no pid can own it"
+        );
         detached.owner_pid = Some(own);
         assert!(owned_by(&detached, own), "the owner itself");
         assert!(owned_by(&detached, parent), "an ancestor of the owner");

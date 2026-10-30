@@ -21,8 +21,13 @@ use super::local_gate::{LocalGate, TOKEN_HEADER};
 /// A local HTTP origin that answers every connection with the same
 /// `Content-Length`-framed response. Returns its `host:port`.
 async fn spawn_origin(response: Vec<u8>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind origin");
-    let port = listener.local_addr().expect("origin addr").port();
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("port zero asks the OS for a free port, so the bind cannot clash");
+    let port = listener
+        .local_addr()
+        .expect("a bound listener always has a local socket address")
+        .port();
     tokio::spawn(async move {
         while let Ok((mut sock, _)) = listener.accept().await {
             let response = response.clone();
@@ -57,7 +62,7 @@ async fn spawn_exposer(
 ) -> (habilis_network::iroh::Endpoint, A2aTicket) {
     let (endpoint, ticket, auth) = bind(LookupOpts::loopback(), password.as_ref())
         .await
-        .expect("bind exposer");
+        .expect("a loopback endpoint needs no network, so the bind cannot fail");
     let accept_endpoint = endpoint.clone();
     tokio::spawn(async move {
         use futures_util::StreamExt as _;
@@ -105,18 +110,25 @@ fn bridge_for<'shared>(
 /// the connect side's per-connection listener) and return the response.
 async fn drive_gated(bridge: &Bridge<'_>, request: &[u8]) -> Vec<u8> {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind local");
-    let address = listener.local_addr().expect("local addr");
+    let address = listener
+        .local_addr()
+        .expect("a bound listener always has a local socket address");
     let request = request.to_vec();
     let client = tokio::spawn(async move {
         let mut stream = TcpStream::connect(address).await.expect("connect local");
-        stream.write_all(&request).await.expect("write request");
+        stream
+            .write_all(&request)
+            .await
+            .expect("the server side stays open until the request is fully sent");
         stream.shutdown().await.expect("shutdown client write");
         let mut got = Vec::new();
         stream.read_to_end(&mut got).await.expect("read response");
         got
     });
     let (accepted, _) = listener.accept().await.expect("accept local client");
-    forward_one(bridge, accepted).await.expect("forward_one");
+    forward_one(bridge, accepted)
+        .await
+        .expect("the bridge is wired to a live origin, so one request goes through");
     client.await.expect("client task")
 }
 
@@ -139,7 +151,7 @@ async fn drive(
 async fn consumer(ticket: &A2aTicket) -> (habilis_network::iroh::Endpoint, SharedConnection) {
     let endpoint = build_peer_endpoint(&ticket.lookups)
         .await
-        .expect("consumer endpoint");
+        .expect("the ticket lookups are loopback, so the endpoint needs no network");
     add_peer_addr(&address_book(&endpoint), ticket.address.clone());
     let shared = SharedConnection::new(endpoint.clone(), ticket.address.clone());
     (endpoint, shared)

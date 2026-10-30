@@ -91,7 +91,7 @@ fn polling_a_directed_msg_sends_the_author_a_read_receipt() {
 
     assert!(
         wait_for_read_receipt(&mesh, &alice.nickname, &id),
-        "alice never got a read receipt for {id}"
+        "the bob poll served the message, which must tell the author it was read: {id}"
     );
 }
 
@@ -259,7 +259,10 @@ async fn a_parked_in_process_fetch_counts_as_a_bell() {
         .expect("alice joins")
     };
     // Serve the backlog, so the long fetch below parks.
-    bob.session.fetch(None, false).await.expect("fetch");
+    bob.session
+        .fetch(None, false)
+        .await
+        .expect("a loopback session has a live mesh, so a parked read ends only by delivery");
 
     let alice_nick = alice.nickname.clone();
     // Shorter than the park cap, so the fetch is still parked when it ends.

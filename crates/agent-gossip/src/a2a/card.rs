@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(
             super::card_error_merge(&nickname, Some("too large")),
             serde_json::json!({ "peers": { "calm-otter": { "card_error": "too large" } } }),
-            "a reason sets the card error"
+            "peers read the reason from the meta document to learn why no card was served"
         );
         assert_eq!(
             super::card_error_merge(&nickname, None),

@@ -21,13 +21,15 @@ use serde_json::Value;
 /// `(status, body)`.
 fn http(port: u16, request: &str) -> (u16, String) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to a2a port");
-    stream.write_all(request.as_bytes()).expect("write request");
+    stream
+        .write_all(request.as_bytes())
+        .expect("the server stays up until the client has sent its request");
     let mut raw = String::new();
     stream.read_to_string(&mut raw).expect("read response");
     let status_code = raw.split_whitespace().nth(1);
     let status: u16 = status_code
         .and_then(|code| code.parse().ok())
-        .expect("status code");
+        .expect("a well-formed HTTP response starts with a status line carrying a numeric code");
     let body = raw
         .split_once("\r\n\r\n")
         .map(|(_, body)| body.to_string())
@@ -163,7 +165,8 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
 fn serves_card(pair: &BindingPair) -> Value {
     let (status, card) = get(pair.port, "/.well-known/agent-card.json");
     assert_eq!(status, 200, "well-known card must not require auth");
-    let card: Value = serde_json::from_str(&card).expect("card is JSON");
+    let card: Value =
+        serde_json::from_str(&card).expect("the card endpoint serves a JSON document by contract");
     assert_eq!(
         card["name"].as_str(),
         Some(pair.host.nickname.as_str()),
@@ -245,7 +248,8 @@ fn advertises_peer_relay(pair: &BindingPair) {
     let (peer_card_status, peer_card) =
         get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
     assert_eq!(peer_card_status, 200, "peer card must be served");
-    let peer_card: Value = serde_json::from_str(&peer_card).expect("peer card is JSON");
+    let peer_card: Value = serde_json::from_str(&peer_card)
+        .expect("a relayed peer card keeps the JSON form it was published in");
     let is_relay_interface = |iface: &Value| {
         iface["protocolBinding"] == "JSONRPC"
             && iface["url"]
@@ -398,7 +402,7 @@ fn a2a_binding_is_off_by_default() {
     };
     assert!(
         parsed.get("a2a_port").is_none() && parsed.get("a2a_token").is_none(),
-        "the binding must be off by default: {parsed}"
+        "the HTTP port and token are opt-in, so an unflagged daemon must not publish them: {parsed}"
     );
     let _ = std::fs::remove_file(&state_file);
 }

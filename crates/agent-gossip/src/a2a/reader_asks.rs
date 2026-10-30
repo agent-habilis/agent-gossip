@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(
             reader_from_reply(&reply),
             Some(serde_json::json!({ "bell": true, "last_poll_secs_ago": 7 })),
-            "a reply with a result gives its reader"
+            "the worker passes the peer's bell and poll age on untouched, so its caller can judge liveness"
         );
         let before_any_poll =
             serde_json::json!({ "result": { "bell": false, "last_poll_secs_ago": null } });

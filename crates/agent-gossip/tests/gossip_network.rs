@@ -253,7 +253,10 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
     assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
 
     // No password: a crisp requirement error, not a silent empty mesh.
-    let target: agent_gossip::JoinTarget = creator.mesh.parse().expect("join target");
+    let target: agent_gossip::JoinTarget = creator
+        .mesh
+        .parse()
+        .expect("a mesh id printed by a creator is always a well-formed join target");
     let missing = agent_gossip::api::MeshSession::join(agent_gossip::api::JoinConfig::new(target))
         .await
         .expect_err("a missing password must be rejected");
@@ -956,7 +959,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
-        .expect("failed to spawn the first daemon");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
 
     // Wait until the first daemon owns the file and is serving.
     command = common::test_cmd();
@@ -980,7 +983,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn the second daemon");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let exit = loop {
@@ -1245,7 +1248,9 @@ fn test_poll_returns_messages() {
 
     // Poll with `--after <seq>` of the first message → excludes it, keeps the
     // second (the unified seq cursor).
-    let first_seq = first["seq"].as_u64().expect("seq is u64");
+    let first_seq = first["seq"]
+        .as_u64()
+        .expect("the poll report stamps every message with a numeric cursor");
     let after_json = cli_poll(&mesh, &joiner.nickname, Some(&first_seq.to_string()));
     let after: Vec<serde_json::Value> = serde_json::from_str(&after_json).unwrap_or_else(|error| {
         panic!("failed to parse after-poll JSON: {error}\nraw: {after_json}")
@@ -1905,7 +1910,10 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 fn test_join_horizon_hides_pre_join_history() {
     let (creator, mesh) = Node::create_flags("nethorizon", &FAST_AE);
     let early = Node::join_flags(&mesh, "jh-early", &FAST_AE);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
     assert!(early.wait_ready(&mesh), "early peer never ready");
 
     // History taskd *before* the late peer exists.
@@ -2009,9 +2017,18 @@ fn test_creator_sigkill_independence() {
     let (creator, mesh) = Node::create_flags("itest", &EVICT_ONLY);
     let alpha = Node::join_flags(&mesh, "ck-alpha", &EVICT_ONLY);
     let bravo = Node::join_flags(&mesh, "ck-bravo", &EVICT_ONLY);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(alpha.wait_ready(&mesh), "alpha never ready");
-    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        alpha.wait_ready(&mesh),
+        "the alpha daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bravo.wait_ready(&mesh),
+        "the bravo daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "ck-base");
     assert_received(&alpha, &creator.nickname, "ck-base", MSG_TIMEOUT);
     assert_received(&bravo, &creator.nickname, "ck-base", MSG_TIMEOUT);
@@ -2061,7 +2078,10 @@ fn test_orphaned_daemon_self_terminates() {
     let _serial = serial_guard();
 
     let (observer, mesh) = Node::create_named("itest-orphan");
-    assert!(observer.wait_ready(&mesh), "observer never ready");
+    assert!(
+        observer.wait_ready(&mesh),
+        "the observer daemon must bind its control socket before the test sends it any command"
+    );
 
     // Background the joiner under a shell, record its pid, then `exec sleep`
     // so the shell's pid *is* the joiner's parent for the rest of its life.
@@ -2166,8 +2186,14 @@ fn test_sleep_wake_heal_recovery() {
 
     let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
     let sleeper = Node::join_flags(&mesh, "sw-sleeper", &SHORT_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        sleeper.wait_ready(&mesh),
+        "the sleeper daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "sw-pre");
     assert_received(&sleeper, &creator.nickname, "sw-pre", MSG_TIMEOUT);
 
@@ -2215,8 +2241,14 @@ fn test_fixed_id_reconnect_admits_fast() {
 
     let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
     let sleeper = Node::join_flags(&mesh, "fr-sleeper", &SHORT_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        sleeper.wait_ready(&mesh),
+        "the sleeper daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "fr-pre");
     assert_received(&sleeper, &creator.nickname, "fr-pre", MSG_TIMEOUT);
 
@@ -2270,8 +2302,14 @@ fn test_resume_triggers_hard_rebootstrap() {
 
     let (creator, mesh) = Node::create_flags("itest", &STALL_EVICT);
     let sleeper = Node::join_flags(&mesh, "rb-sleeper", &STALL_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        sleeper.wait_ready(&mesh),
+        "the sleeper daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "rb-pre");
     assert_received(&sleeper, &creator.nickname, "rb-pre", MSG_TIMEOUT);
 
@@ -2328,9 +2366,18 @@ fn test_anti_entropy_set_convergence() {
     let (creator, mesh) = Node::create_flags("itest", &FAST_AE);
     let alpha = Node::join_flags(&mesh, "ae-alpha", &FAST_AE);
     let bravo = Node::join_flags(&mesh, "ae-bravo", &FAST_AE);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(alpha.wait_ready(&mesh), "alpha never ready");
-    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        alpha.wait_ready(&mesh),
+        "the alpha daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bravo.wait_ready(&mesh),
+        "the bravo daemon must bind its control socket before the test sends it any command"
+    );
 
     // alpha misses this; bravo gets it. alpha stays a member.
     alpha.stop();
@@ -2364,9 +2411,18 @@ fn test_directed_msg_never_reaches_a_bystander() {
     let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
     let bob = Node::join_flags(&mesh, "leak-bob", &FAST_AE);
     let carol = Node::join_flags(&mesh, "leak-carol", &FAST_AE);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
-    assert!(carol.wait_ready(&mesh), "carol never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "the alice daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the bob daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        carol.wait_ready(&mesh),
+        "the carol daemon must bind its control socket before the test sends it any command"
+    );
 
     // A msg is sealed to its recipient, so its card must have replicated.
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
@@ -2407,8 +2463,14 @@ fn test_directed_msg_backfills_to_its_addressee() {
 
     let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
     let bob = Node::join_flags(&mesh, "backfill-bob", &FAST_AE);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "the alice daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the bob daemon must bind its control socket before the test sends it any command"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
     // Warm the link first: a send whose dial fails is dropped on purpose (see
@@ -2465,9 +2527,18 @@ fn test_large_gap_reconnect_replication() {
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&mesh, "lg-alpha", &envs);
     let bravo = Node::join_flags(&mesh, "lg-bravo", &envs);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(alpha.wait_ready(&mesh), "alpha never ready");
-    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        alpha.wait_ready(&mesh),
+        "the alpha daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bravo.wait_ready(&mesh),
+        "the bravo daemon must bind its control socket before the test sends it any command"
+    );
 
     let author = creator.nickname.clone();
 
@@ -2922,8 +2993,14 @@ fn test_starvation_watchdog_recovers_loudly() {
 
     let (creator, mesh) = Node::create_flags("itest", &STARVE_EVICT);
     let survivor = Node::join_flags(&mesh, "sv-alpha", &STARVE_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(survivor.wait_ready(&mesh), "survivor never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        survivor.wait_ready(&mesh),
+        "the survivor daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "sv-base");
     assert_received(&survivor, &creator.nickname, "sv-base", MSG_TIMEOUT);
 
@@ -2953,7 +3030,10 @@ fn test_lone_creator_never_trips_starvation() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let (creator, mesh) = Node::create_flags("itest", &STARVE_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
     // Threshold (6s) + several heal ticks of opportunity to misfire —
     // an inherent blind wait (negative assertion), derived from the
     // injected cadence.
@@ -2995,7 +3075,10 @@ fn test_flap_storm_all_rosters_recover() {
     let joiners: Vec<Node> = (0..4)
         .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP2_STARVE))
         .collect();
-    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
     for joiner in &joiners {
         assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
     }
@@ -3155,7 +3238,10 @@ fn leave_explicit_target_stops_only_that_mesh() {
         .args(["leave", &victim_mesh])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(out.status.success(), "leave failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a daemon that is running must accept the leave and exit zero, output was {out:?}"
+    );
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
             .expect("the JSON text comes from the test itself");
@@ -3272,7 +3358,10 @@ fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
         .args(["leave", &mesh])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(out.status.success(), "leave failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a daemon that is running must accept the leave and exit zero, output was {out:?}"
+    );
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
             .expect("the JSON text comes from the test itself");
@@ -3319,7 +3408,7 @@ fn leave_report_carries_the_full_topic_string() {
         .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
-        .expect("failed to spawn topic");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let (mesh, nickname) = loop {
         if let Some(identity) = ready_identity(&log) {
@@ -3351,7 +3440,10 @@ fn leave_report_carries_the_full_topic_string() {
         .args(["leave", &mesh])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(out.status.success(), "leave failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a daemon that is running must accept the leave and exit zero, output was {out:?}"
+    );
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
             .expect("the JSON text comes from the test itself");
@@ -3413,7 +3505,10 @@ fn session_report(session_pid: &str) -> serde_json::Value {
         .args(["session", "--session-pid", session_pid])
         .output()
         .expect("failed to run agent-gossip session");
-    assert!(out.status.success(), "session failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "the session query needs no daemon and exits zero, output was {out:?}"
+    );
     serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
         .expect("the session command prints JSON on success")
 }
@@ -3454,7 +3549,10 @@ fn leave_session_scope_via_decoy_parent() {
         .args(["leave", "--session-pid", &decoy_pid])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
+    assert!(
+        leave_out.status.success(),
+        "the leave resolves the session from the decoy parent and exits zero, output was {leave_out:?}"
+    );
     let leave_report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim())
             .expect("the JSON text comes from the test itself");
@@ -3519,7 +3617,10 @@ fn bell_check_passes_without_a_session() {
         .expect("failed to spawn sleep");
 
     let out = bell_check(&idle.id().to_string());
-    assert!(out.status.success(), "bell-check failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a session with no bell must exit zero so the hook never blocks the agent, output was {out:?}"
+    );
     assert!(out.stdout.is_empty(), "no session must not block: {out:?}");
 
     let _ = idle.kill();
@@ -3651,8 +3752,14 @@ fn bell_check_and_session_track_the_bell_lock() {
 fn directed_task_delivers_point_to_point() {
     let (creator, mesh) = Node::create_named("p2p-task");
     let joiner = Node::join(&mesh, "p2p-task-b");
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(joiner.wait_ready(&mesh), "joiner never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        joiner.wait_ready(&mesh),
+        "the joiner daemon must bind its control socket before the test sends it any command"
+    );
 
     // Warmup broadcast (always gossip) meshes them + exchanges addresses.
     let _ = cli_message(&mesh, &creator.nickname, "warmup");
@@ -3704,7 +3811,7 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
         Command::new("sleep")
             .arg("600")
             .spawn()
-            .expect("failed to spawn the owner"),
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
     let sessions_dir = common::runtime_base().join("sessions");
     fs::create_dir_all(&sessions_dir).expect("the test temp dir is writable");
@@ -3724,7 +3831,7 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     let mut launcher: Child = command
         .stderr(stderr)
         .spawn()
-        .expect("failed to spawn the launcher");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
     let launcher_pid = launcher.id();
     let status = launcher
         .wait()
@@ -3778,7 +3885,10 @@ fn detached_daemon_follows_its_owner() {
         .arg("--state-file")
         .arg(&daemon.state_file);
     let ready: std::process::Output = command.output().expect("failed to run ready");
-    assert!(ready.status.success(), "ready failed: {ready:?}");
+    assert!(
+        ready.status.success(),
+        "the ready query must succeed once the detached daemon is up, output was {ready:?}"
+    );
 
     let state: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(&daemon.state_file).expect("the test file is readable"),
@@ -3839,7 +3949,10 @@ fn detached_daemon_leaves_by_owner() {
         .arg("--state-file")
         .arg(&daemon.state_file);
     let ready: std::process::Output = command.output().expect("failed to run ready");
-    assert!(ready.status.success(), "ready failed: {ready:?}");
+    assert!(
+        ready.status.success(),
+        "the ready query must succeed once the detached daemon is up, output was {ready:?}"
+    );
 
     let owner_pid = daemon.owner.0.id().to_string();
     let out: std::process::Output = common::test_cmd()
@@ -3874,7 +3987,7 @@ fn detached_daemon_releases_a_captured_pipe() {
         Command::new("sleep")
             .arg("600")
             .spawn()
-            .expect("failed to spawn the owner"),
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
     let sessions_dir = common::runtime_base().join("sessions");
     fs::create_dir_all(&sessions_dir).expect("the test temp directory is writable");
@@ -3918,12 +4031,15 @@ fn detached_daemon_releases_a_captured_pipe() {
     // pipe check alone passes without proving anything.
     assert!(
         launcher_status.success(),
-        "the launcher failed: {launcher_status}"
+        "a failed launch starts no daemon, which would make the closed pipes prove nothing; status was {launcher_status}"
     );
     command = common::test_cmd();
     command.arg("ready").arg("--state-file").arg(&state_file);
     let ready: std::process::Output = command.output().expect("failed to run ready");
-    assert!(ready.status.success(), "ready failed: {ready:?}");
+    assert!(
+        ready.status.success(),
+        "the ready query must succeed once the detached daemon is up, output was {ready:?}"
+    );
     assert!(state_file.exists(), "no daemon wrote the state file");
     assert!(
         both_closed,
@@ -3968,7 +4084,11 @@ fn owner_pid_rejects_init_and_dead_owner() {
             .env_remove("RUST_LIB_BACKTRACE")
             .stdin(Stdio::null());
         let out: std::process::Output = command.output().expect("failed to run create");
-        assert_eq!(out.status.code(), Some(1), "owner {owner}: {out:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "an owner pid that is init or dead is a usage error and exits one, owner {owner}: {out:?}"
+        );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
             stderr.trim().lines().count(),
@@ -3987,7 +4107,7 @@ fn owner_pid_launcher_reports_flag_errors() {
         Command::new("sleep")
             .arg("60")
             .spawn()
-            .expect("failed to spawn the owner"),
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
     let owner_pid = owner.0.id().to_string();
     let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
@@ -4124,8 +4244,8 @@ fn test_mass_leave_leaves_no_ghosts() {
             "a presence frame was served twice at {}",
             observer.nickname
         );
-        let roster: serde_json::Value =
-            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers json");
+        let roster: serde_json::Value = serde_json::from_str(&cli_peers(&mesh, &observer.nickname))
+            .expect("the peers command prints one JSON document on stdout and nothing else");
         assert_eq!(
             roster["peer_count"], 2,
             "ghosts in the roster of {}: {roster}",

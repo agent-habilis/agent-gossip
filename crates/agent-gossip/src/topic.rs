@@ -70,7 +70,7 @@ mod tests {
             TransportPolicy::default()
                 .multihop(false)
                 .relay_transport(true),
-            "a topic mesh is udp, webrtc and gossip with relay, not multihop"
+            "a topic has no creator to dial, so relay carries peers that cannot connect directly"
         );
     }
 }

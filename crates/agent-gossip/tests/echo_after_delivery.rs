@@ -56,8 +56,14 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_flags("echo-dead", &SHORT_EVICT);
     let bob = Node::join_flags(&mesh, "echo-dead-bob", &SHORT_EVICT);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "without a ready first peer the test cannot tell a failed dial from a slow start"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "without a ready second peer the test cannot tell a failed dial from a slow start"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
     bob.kill();
@@ -92,8 +98,14 @@ fn a_msg_whose_send_failed_never_arrives_later() {
     ];
     let (alice, mesh) = Node::create_flags("echo-late", &flags);
     let bob = Node::join_flags(&mesh, "echo-late-bob", &flags);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "without a ready first peer the test cannot tell a failed send from a slow start"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "without a ready second peer the test cannot tell a failed send from a slow start"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
     bob.stop();

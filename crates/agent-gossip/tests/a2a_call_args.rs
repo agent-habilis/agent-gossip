@@ -31,7 +31,7 @@ fn a_task_method_without_task_id_fails_on_the_cli_side() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             !out.status.success(),
-            "{method} without --task-id must fail"
+            "the parser requires a task id for {method}, so a missing one is a usage error"
         );
         assert!(
             stderr.contains("--task-id"),

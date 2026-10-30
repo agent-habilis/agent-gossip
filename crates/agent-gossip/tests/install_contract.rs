@@ -191,7 +191,8 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
         .output()
         .expect("failed to run `agent-gossip plug`");
     assert!(plug.status.success(), "`plug` failed: {:?}", plug.status);
-    let roster = String::from_utf8(plug.stdout).expect("roster is UTF-8");
+    let roster = String::from_utf8(plug.stdout)
+        .expect("the plug report is human text written by our own printer");
 
     // The doc teaches the agent to read these exact roster lines and branch on
     // them, so pin the wording, not just the harness names.
@@ -253,7 +254,7 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
         .find(|section| section["title"] == "Integrations");
     let checks: &Vec<serde_json::Value> = integrations_section
         .and_then(|section| section["checks"].as_array())
-        .expect("Integrations section");
+        .expect("the plug report lists every integration under one section");
     let state: Box<dyn Fn(&str) -> String + '_> = Box::new(|harness| -> String {
         let row = checks.iter().find(|check| check["name"] == harness);
         let detail = row

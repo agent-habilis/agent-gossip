@@ -66,7 +66,11 @@ async fn unsigned_message_is_dropped() {
     let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
         .wrap_a2a()
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     // Barrier: a real signed message from the same sender, sent *after* the
     // injection. When it arrives, the unsigned one (sent first) had its turn.
     attacker.broadcast("barrier-unsigned").await;
@@ -76,7 +80,7 @@ async fn unsigned_message_is_dropped() {
     );
     assert!(
         !surfaced(&mut victim, "evil-unsigned"),
-        "unsigned message must be dropped, never surfaced"
+        "an unsigned frame is a forgery, so surfacing it would let any peer pose as another"
     );
     victim.leave().await;
     attacker.leave().await;
@@ -92,7 +96,11 @@ async fn tampered_message_is_dropped() {
         .wrap_a2a()
         .sign(&key);
     let evil: bytes::Bytes = signed.tamper_body("tampered-after-sign").bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-tampered").await;
     assert!(
         victim.wait_body("barrier-tampered", T).await,
@@ -116,7 +124,7 @@ async fn unparseable_frame_is_dropped_and_the_receiver_survives() {
         .session
         .inject_raw(garbage.into())
         .await
-        .expect("inject");
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-unparseable").await;
     assert!(
         victim.wait_body("barrier-unparseable", T).await,
@@ -141,7 +149,11 @@ async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
         .wrap_a2a()
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(honest).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(honest)
+        .await
+        .expect("the honest control frame needs a live attacker session to reach the victim");
     assert!(
         victim.wait_body("honest", T).await,
         "a correctly signed frame must surface: the control of the tamper test"
@@ -162,7 +174,11 @@ async fn kind_flipped_after_signing_is_dropped() {
         .sign(&key)
         .flip_chat_kind()
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-kindflip").await;
     assert!(
         victim.wait_body("barrier-kindflip", T).await,
@@ -193,7 +209,11 @@ async fn equivocation_surfaces_a_fork() {
         .chain(7, None)
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(first).await.expect("inject a");
+    attacker
+        .session
+        .inject_raw(first)
+        .await
+        .expect("the first fork leg must reach the victim before the second can conflict with it");
     attacker.session.inject_raw(second).await.expect("inject b");
     let forked = victim
         .wait_for(T, |events| {
@@ -229,7 +249,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
         .session
         .inject_raw(forged)
         .await
-        .expect("inject forged");
+        .expect("the forged frame must land before the genuine one to test id suppression");
     // Barrier (same link, in order) so the victim has processed the forged copy
     // before the genuine one arrives — makes the regression deterministic.
     attacker.broadcast("after-forged").await;
@@ -245,7 +265,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
         .session
         .inject_raw(genuine)
         .await
-        .expect("inject genuine");
+        .expect("the genuine frame follows the forgery and must still be accepted");
     assert!(
         victim.wait_body("genuine", T).await,
         "a genuine signed message with a replayed id must still be delivered"
@@ -277,7 +297,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         .session
         .inject_raw(original.clone())
         .await
-        .expect("inject original");
+        .expect("the original must reach the victim once so the replay has something to duplicate");
     assert!(
         victim.wait_body("said once", T).await,
         "the original never arrived"
@@ -289,11 +309,9 @@ async fn a_replayed_chat_message_surfaces_once() {
             .wrap_a2a()
             .sign(&key)
             .bytes();
-        injector
-            .session
-            .inject_raw(filler)
-            .await
-            .expect("inject filler");
+        injector.session.inject_raw(filler).await.expect(
+            "the filler frames push the original out of the recent window before the replay",
+        );
     }
     let last_filler = format!("filler {}", fillers - 1);
     assert!(
@@ -307,7 +325,7 @@ async fn a_replayed_chat_message_surfaces_once() {
         .session
         .inject_raw(replay.into())
         .await
-        .expect("inject replay");
+        .expect("the replay is the byte-identical copy that must not surface twice");
     injector.broadcast("after-replay").await;
     assert!(victim.wait_body("after-replay", T).await, "barrier lost");
 
@@ -338,11 +356,9 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         .id(shared_id)
         .sign(&attacker_key)
         .bytes();
-    injector
-        .session
-        .inject_raw(forged)
-        .await
-        .expect("inject signed forgery");
+    injector.session.inject_raw(forged).await.expect(
+        "the forgery carries a valid signature but a replayed id that must not block the victim",
+    );
     injector.broadcast("after-forged").await;
     assert!(receiver.wait_body("after-forged", T).await, "barrier lost");
 
@@ -357,7 +373,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
         .session
         .inject_raw(genuine)
         .await
-        .expect("inject genuine");
+        .expect("the victim's real message follows the forgery and must still be accepted");
     assert!(
         receiver.wait_body("genuine", T).await,
         "a signed forgery reusing an id must not suppress the victim's genuine message"
@@ -374,7 +390,11 @@ async fn junk_payload_chat_is_dropped() {
     let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-junk").await;
     assert!(victim.wait_body("barrier-junk", T).await, "barrier lost");
     assert!(
@@ -398,7 +418,11 @@ async fn payload_frame_id_mismatch_is_dropped() {
         .id("00000000-0000-0000-0000-00000000beef")
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-mismatch").await;
     assert!(
         victim.wait_body("barrier-mismatch", T).await,
@@ -431,7 +455,11 @@ async fn status_task_id_mismatch_is_dropped() {
     )
     .sign(&key)
     .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-status").await;
     assert!(victim.wait_body("barrier-status", T).await, "barrier lost");
     let surfaced_status = victim
@@ -470,7 +498,11 @@ async fn directed_broadcast_is_dropped() {
         .address_to(Some(victim.nickname.as_str()))
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-dirbcast").await;
     assert!(
         victim.wait_body("barrier-dirbcast", T).await,
@@ -524,7 +556,11 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
         .address_to(Some(victim.nickname.as_str()))
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-msgext").await;
     assert!(victim.wait_body("barrier-msgext", T).await, "barrier lost");
     assert!(
@@ -631,7 +667,7 @@ async fn a_bystanders_task_status_is_dropped() {
     let created = initiator.create_task(&worker.nickname, "the brief").await;
     let task_id = created["result"]["task"]["id"]
         .as_str()
-        .expect("task id")
+        .expect("a created task always reports its id in the JSON-RPC result")
         .to_owned();
     assert!(
         worker.wait_task_message(T).await,
@@ -664,7 +700,11 @@ async fn a_bystanders_task_status_is_dropped() {
     )
     .sign(&key)
     .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
 
     // Barrier: a real leg on the very path the injection took — the worker's
     // artifact, a directed sealed frame sent after it. Once that lands, the
@@ -726,7 +766,7 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
         .session
         .inject_raw(old.bytes())
         .await
-        .expect("inject");
+        .expect("the attacker session stays connected to the mesh for the whole test");
 
     // Barriers: a broadcast on the gossip path the injection took, then a real
     // msg. Once the msg's receipt is back, a receipt for the injected frame
@@ -784,7 +824,11 @@ async fn a_bystanders_forged_receipt_is_dropped() {
     )
     .sign(&test_key::new_key())
     .bytes();
-    attacker.session.inject_raw(forged).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(forged)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("after the forgery").await;
     assert!(
         sender.wait_body("after the forgery", T).await,
@@ -825,7 +869,11 @@ async fn gap_future_timestamp_is_accepted() {
         .timestamp(habilis_network::protocol::UnixSecs::from(4_102_444_800)) // 2100-01-01
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     let seen = victim.wait_body("from-the-future", T).await;
     assert!(
         !seen,
@@ -849,7 +897,11 @@ async fn gap_nickname_impersonation_is_accepted() {
         .wrap_a2a()
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     let seen = victim.wait_body("i-am-you", T).await;
     assert!(
         !seen,
@@ -884,7 +936,11 @@ async fn gap_sybil_identities_are_accepted() {
             .wrap_a2a()
             .sign(&key)
             .bytes();
-        attacker.session.inject_raw(bytes).await.expect("inject");
+        attacker
+            .session
+            .inject_raw(bytes)
+            .await
+            .expect("the attacker session stays connected to the mesh for the whole test");
     }
     let all_accepted = victim
         .wait_for(T, |events| {
@@ -914,7 +970,11 @@ async fn gap_sybil_identities_are_accepted() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn severed_gossip_stream_resubscribes_and_backfills() {
     let (mut victim, attacker) = meshed_pair("sever").await;
-    victim.session.sever_gossip().await.expect("sever");
+    victim
+        .session
+        .sever_gossip()
+        .await
+        .expect("the test hook only flips an in-memory flag, so it cannot fail on a live session");
 
     // Broadcast while the victim's subscription is down: it must arrive
     // later via anti-entropy over the fresh subscription, not be lost.
@@ -977,7 +1037,11 @@ async fn unsigned_state_merge_is_never_folded() {
     // touch the state log (same authenticity gate as chat).
     let evil =
         CraftedMsg::state_merge(attacker.session.mesh_id(), "ghost", json!({"evil": true})).bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     // Barrier: a real signed merge from the attacker's own identity.
     attacker.state_merge(json!({"ok": 1})).await;
     assert!(
@@ -1016,7 +1080,7 @@ async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
         .session
         .inject_raw(forged)
         .await
-        .expect("inject forged card");
+        .expect("the forged card must reach the victim for the rejection to be tested");
 
     // Barrier: a genuine meta write from the injector's own subtree (not a card,
     // so ungated). Once the victim derives it, the forged frame — sent first on
@@ -1061,7 +1125,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .session
         .inject_raw(idx_outside)
         .await
-        .expect("inject");
+        .expect("the attacker session stays connected to the mesh for the whole test");
     // total past the header tripwire.
     let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
         .shard(GROUP, 0, agent_gossip::MAX_SHARD_TOTAL + 1)
@@ -1071,7 +1135,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .session
         .inject_raw(absurd_total)
         .await
-        .expect("inject");
+        .expect("the attacker session stays connected to the mesh for the whole test");
 
     attacker.broadcast("barrier-shard-hdr").await;
     assert!(
@@ -1082,7 +1146,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .session
         .reassembly_stats()
         .await
-        .expect("reassembly stats");
+        .expect("the victim loop answers the stats query while the node is running");
     assert_eq!(
         (groups, bytes),
         (0, 0),
@@ -1115,7 +1179,11 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
             .shard(&group, index, 1000)
             .sign(&key)
             .bytes();
-            attacker.session.inject_raw(evil).await.expect("inject");
+            attacker
+                .session
+                .inject_raw(evil)
+                .await
+                .expect("the attacker session stays connected to the mesh for the whole test");
         }
     }
 
@@ -1128,7 +1196,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
         .session
         .reassembly_stats()
         .await
-        .expect("reassembly stats");
+        .expect("the victim loop answers the stats query while the node is running");
     assert!(groups > 0, "the crafted shards were accepted and buffered");
     assert!(
         total_bytes <= test_key::REASSEMBLY_TOTAL_BUDGET_BYTES,
@@ -1157,7 +1225,11 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
         .shard("00000000-0000-4000-8000-00000000beef", 1, 2)
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(poisoned).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(poisoned)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
 
     // A genuine multipart body from the attacker's real session (its own
     // group id — the A2A messageId — differs, but even a collision would be

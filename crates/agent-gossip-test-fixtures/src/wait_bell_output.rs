@@ -12,7 +12,11 @@ pub fn wait_bell_output(bell: &mut Child) -> String {
     use std::io::Read as _;
 
     let deadline = Instant::now() + MSG_TIMEOUT;
-    while bell.try_wait().expect("try_wait").is_none() {
+    while bell
+        .try_wait()
+        .expect("polling a child that we own cannot fail unless the OS lost the process")
+        .is_none()
+    {
         assert!(Instant::now() < deadline, "bell never rang");
         std::thread::sleep(POLL);
     }
@@ -21,6 +25,6 @@ pub fn wait_bell_output(bell: &mut Child) -> String {
         .take()
         .expect("bell stdout is piped")
         .read_to_string(&mut body)
-        .expect("read bell output");
+        .expect("the bell has exited, so its piped output is complete and valid UTF-8");
     body
 }
