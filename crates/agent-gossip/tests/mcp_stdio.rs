@@ -368,7 +368,10 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         .arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let mut child: Child = command.stderr(Stdio::piped()).spawn().expect("spawn");
+    let mut child: Child = command
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the built binary exists next to the test executable, so the process starts");
     let stdin = child
         .stdin
         .as_mut()
@@ -607,7 +610,7 @@ fn leave_then_create_cycle_works_within_one_server() {
         "create_gossip",
         &serde_json::json!({ "name": "cycle1" }),
     ))
-    .expect("create");
+    .expect("a loopback create needs no network and cannot fail");
     let first_mesh = first["gossip"]
         .as_str()
         .expect("the JSON field is a string in this test")
@@ -914,7 +917,8 @@ fn send_empty_body_works() {
     let (_mesh, _) = client.create_and_get_mesh(100);
 
     let sent = client.tool_call(101, "send_broadcast", &serde_json::json!({ "text": "" }));
-    let sent_json = tool_result_json(&sent).expect("empty-body send should succeed");
+    let sent_json = tool_result_json(&sent)
+        .expect("an empty body is a valid message, so the server must not reject it");
     let id = sent_json["id"]
         .as_str()
         .expect("the JSON field is a string in this test")

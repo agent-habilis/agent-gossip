@@ -527,7 +527,11 @@ async fn broadcast_shaped_msg_is_dropped() {
             .into_msg()
             .wrap_msg();
     let evil: bytes::Bytes = crafted.address_to(None).sign(&key).bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-bcastmsg").await;
     assert!(
         victim.wait_body("barrier-bcastmsg", T).await,
@@ -584,7 +588,11 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
             .into_msg()
             .wrap_msg();
     let evil: bytes::Bytes = crafted.address_to(Some("someone-else")).sign(&key).bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-msgrelay").await;
     assert!(
         victim.wait_body("barrier-msgrelay", T).await,
@@ -624,7 +632,11 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
     .into_msg()
     .wrap_msg();
     let evil: bytes::Bytes = crafted.address_to(Some("someone-else")).sign(&key).bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(evil)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     attacker.broadcast("barrier-msgself").await;
     assert!(victim.wait_body("barrier-msgself", T).await, "barrier lost");
     assert!(

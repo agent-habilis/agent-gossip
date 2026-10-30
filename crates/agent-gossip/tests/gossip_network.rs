@@ -1270,7 +1270,10 @@ fn test_poll_returns_messages() {
     // Every returned seq is strictly greater than the cursor.
     for event in &after {
         assert!(
-            event["seq"].as_u64().expect("seq") > first_seq,
+            event["seq"]
+                .as_u64()
+                .expect("every polled event carries a numeric seq")
+                > first_seq,
             "--after must only return events with seq > cursor: {event}"
         );
     }
@@ -3365,7 +3368,10 @@ fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
             .expect("the JSON text comes from the test itself");
-    assert_eq!(report["left"][0]["confirmed"], true, "report: {report}");
+    assert_eq!(
+        report["left"][0]["confirmed"], true,
+        "leave confirms only after the daemon stopped serving; report: {report}"
+    );
 
     // The daemon's own socket is the black-box probe: `peers` reaches it from
     // the nickname alone — no state file involved — so it answers for exactly
@@ -3899,7 +3905,7 @@ fn detached_daemon_follows_its_owner() {
         let out = Command::new("ps")
             .args(["-o", field, "-p", &daemon_pid.to_string()])
             .output()
-            .expect("the ps command can start");
+            .expect("`ps` is on PATH on every unix host, so it spawns");
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     };
     assert_eq!(
@@ -4005,7 +4011,7 @@ fn detached_daemon_releases_a_captured_pipe() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn the launcher");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
     let mut stdout = launcher
         .stdout
         .take()
@@ -4025,7 +4031,9 @@ fn detached_daemon_releases_a_captured_pipe() {
         let _ = stderr_eof.send(());
     });
     let both_closed = (0..2).all(|_| eof_rx.recv_timeout(Duration::from_secs(10)).is_ok());
-    let launcher_status = launcher.wait().expect("the child can be waited for");
+    let launcher_status = launcher
+        .wait()
+        .expect("the launcher is our own child and is waited for once, so wait succeeds");
 
     // A failed launch starts no daemon and closes both pipes at once, so the
     // pipe check alone passes without proving anything.
@@ -4060,13 +4068,13 @@ fn detached_daemon_releases_a_captured_pipe() {
 fn owner_pid_rejects_init_and_dead_owner() {
     let mut dead = Command::new("true")
         .spawn()
-        .expect("the test binary can start");
+        .expect("`true` is on PATH on every unix host, so it spawns");
     let dead_pid = dead.id().to_string();
     let _ = dead.wait();
     // Exited but never reaped: a zombie still answers `kill -0`.
     let mut zombie = Command::new("true")
         .spawn()
-        .expect("the test binary can start");
+        .expect("`true` is on PATH on every unix host, so it spawns");
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
     while process::live_start_time(zombie.id()).is_some() {
