@@ -551,6 +551,35 @@ test("pub_vec_param: a file under tests counts", () => {
   expectExit("crates/demo/tests/t.rs", "pub fn f(xs: Vec<u8>) -> usize { xs.len() }", 1);
 });
 
+// The commented_out_code rule (D12): a `//` line that holds a Rust statement fails, a prose note passes.
+test("commented_out_code: a let statement fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // let value = compute(1);\n}", 1);
+});
+test("commented_out_code: a call statement fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // self.send(frame).await?;\n}", 1);
+});
+test("commented_out_code: an assignment fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // state.count = 3;\n}", 1);
+});
+test("commented_out_code: an opening block fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // if ready {\n}", 1);
+});
+test("commented_out_code: a bare closing bracket fails", () => {
+  expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    // }\n}", 1);
+});
+test("commented_out_code: a use statement fails", () => {
+  expectExit("crates/demo/src/lib.rs", "// use std::fmt::Write;\npub fn f() {}", 1);
+});
+test("commented_out_code: prose that ends with a semicolon is clean", () => {
+  expectExit("crates/demo/src/lib.rs", "// the watchdog never arms by accident;\n// it needs the flag to stay quiet.\npub fn f() {}", 0);
+});
+test("commented_out_code: a doc comment and an inner doc comment are clean", () => {
+  expectExit("crates/demo/src/lib.rs", "//! ```\n//! let value = compute(1);\n//! ```\n\n/// let value = compute(1);\npub fn f() {}", 0);
+});
+test("commented_out_code: a prose note that starts with a keyword is clean", () => {
+  expectExit("crates/demo/src/lib.rs", "// if the peer left, we stop.\n// return early when the mesh is empty\npub fn f() {}", 0);
+});
+
 // The prelude_import rule (O19): a named import from a prelude fails, the wasm_bindgen macro is the one exception.
 test("prelude_import: a named import from a prelude fails", () => {
   expectExit("crates/demo/src/lib.rs", "use proptest::prelude::any;", 1);
@@ -565,7 +594,7 @@ test("prelude_import: the wasm_bindgen macro is allowed", () => {
   expectExit("crates/demo/src/lib.rs", "use wasm_bindgen::prelude::wasm_bindgen;", 0);
 });
 test("prelude_import: the word in a comment or a path with no prelude is clean", () => {
-  expectExit("crates/demo/src/lib.rs", "// use proptest::prelude::any;\nuse proptest::arbitrary::any;", 0);
+  expectExit("crates/demo/src/lib.rs", "// any lives in the arbitrary module, not in the prelude\nuse proptest::arbitrary::any;", 0);
 });
 
 // The str_replace rule (P23): str::replace and str::replacen fail, a one-argument replace is another type.

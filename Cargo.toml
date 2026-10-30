@@ -120,6 +120,10 @@ missing_docs = "warn"
 # Reject non-ASCII identifiers (homoglyph / supply-chain hardening;
 # matches the project's ASCII-only protocol ethos).
 non_ascii_idents = "deny"
+# Google Rust Style Guide D12: `///` documents an item, `//` holds a note. A `///` on a statement,
+# an expression or a match arm is an error here, not a warning. A misplaced `//!` or a `///` at the
+# end of a block is already a compiler error.
+unused_doc_comments = "deny"
 # Require an explicit `unsafe {}` block inside any `unsafe fn`.
 unsafe_op_in_unsafe_fn = "deny"
 # NOTE: `unused_crate_dependencies` was evaluated and rejected — it is

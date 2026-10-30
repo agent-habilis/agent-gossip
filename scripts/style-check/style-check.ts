@@ -522,6 +522,24 @@ function countStrReplace(raw: string): number {
   return count;
 }
 
+// The `//` lines that hold Rust code (D12). Code is deleted, not commented out; a note says why in prose.
+// A line counts when its text is one of these shapes: a statement that starts with a keyword and ends
+// with `;` or `{`, a call or an assignment that ends with `;`, or a bare closing bracket. The compiler
+// already rejects a `///` on a statement (`unused_doc_comments`) and a misplaced `//!`.
+const KEYWORD_STATEMENT = /^(?:let|const|static|type|pub|fn|struct|enum|trait|impl|mod|if|else|for|while|loop|match|return|break|continue|unsafe|async)\b.*[;{]$|^use\s+\w+(?:::[\w{}*, ]+)*;$/;
+const CALL_STATEMENT = /^[\w.:]+(?:::<[^>]*>)?\((?:[^()]|\([^()]*\))*\)(?:\.\w+(?:::<[^>]*>)?\((?:[^()]|\([^()]*\))*\)|\.await)*\??;$/;
+const ASSIGN_STATEMENT = /^[\w.\[\]]+\s*(?:[-+*|&^]?=)\s*[^=;\s][^;]*;$/;
+const CLOSING_BRACKET = /^[})\]]+[;,]?$/;
+function countCommentedOutCode(raw: string): number {
+  let count = 0;
+  for (const line of raw.split("\n")) {
+    const note = /^\s*\/\/(?![\/!])\s*(.*?)\s*$/.exec(line)?.[1];
+    if (note === undefined) continue;
+    if ([KEYWORD_STATEMENT, CALL_STATEMENT, ASSIGN_STATEMENT, CLOSING_BRACKET].some((shape) => shape.test(note))) count++;
+  }
+  return count;
+}
+
 // The `use` statements that name a `prelude` module (O19). The glob rule stops `prelude::*`; this one
 // stops a named import from a prelude, so the reader sees the real home of each name. One import is
 // allowed: the `wasm_bindgen` attribute macro has no other public path (AGENTS.md, Code Style).
@@ -732,6 +750,12 @@ const RULES: Rule[] = [
     scan: countAbbrevNames,
     glob: "crates/**/*.rs",
     why: "An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on. A name that a crate outside our control fixes has a counted row.",
+  },
+  {
+    name: "commented_out_code",
+    scan: countCommentedOutCode,
+    glob: "crates/**/*.rs",
+    why: "Delete code, do not comment it out (D12). A `//` note says why in prose.",
   },
   {
     name: "prelude_import",
