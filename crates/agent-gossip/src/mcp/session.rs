@@ -348,7 +348,11 @@ mod tests {
     /// everything after.
     fn seq_before_bob_join(events: &[SurfacedEvent]) -> Option<u64> {
         let join_idx = events.iter().position(|item| is_bob_join(&item.event))?;
-        Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
+        Some(
+            join_idx
+                .checked_sub(1)
+                .map_or(0, |previous| events[previous].seq),
+        )
     }
 
     /// The author and the document after a meta change, if `event` is one.

@@ -381,6 +381,11 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 
 ## Rust style
 
+`scripts/style-check` and `scripts/module-layout` scan every Rust file, tests, benches, examples and
+`build.rs` included, and they count a `#[cfg(test)] mod` body like any other code. Three rules in
+`style-check.ts` skip a file, each with its reason beside the rule: `anyhow_pub` and `dyn_param` skip a
+binary (`main.rs`, `bin/`), which has no public API, and `app_impl_into` runs only in a binary.
+
 This repository follows the Google Rust Style Guide: https://google.github.io/styleguide/rustguide.html
 
 This file wins over the guide. If the two conflict, follow this file.

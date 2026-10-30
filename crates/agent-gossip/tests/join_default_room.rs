@@ -19,17 +19,17 @@ impl Drop for Killed {
 }
 
 fn join_without_target(env: Option<&str>) -> Output {
-    let mut cmd = test_cmd();
-    cmd.arg("join");
+    let mut command = test_cmd();
+    command.arg("join");
     match env {
         Some(value) => {
-            cmd.env(DEFAULT_ROOM_ENV, value);
+            command.env(DEFAULT_ROOM_ENV, value);
         }
         None => {
-            cmd.env_remove(DEFAULT_ROOM_ENV);
+            command.env_remove(DEFAULT_ROOM_ENV);
         }
     }
-    cmd.output().expect("join spawns")
+    command.output().expect("join spawns")
 }
 
 fn spawn_join(args: &[&str], env: &str) -> Killed {

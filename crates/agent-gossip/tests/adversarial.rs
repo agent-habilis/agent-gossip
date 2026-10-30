@@ -490,11 +490,11 @@ async fn broadcast_shaped_msg_is_dropped() {
     let key = test_key::new_key();
     // `a2a_msg` with no addressee: a msg on the broadcast plane. This is the
     // leak direction — it would hand every peer a line meant for one.
-    let msg: CraftedMsg =
+    let crafted: CraftedMsg =
         CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
             .into_msg()
             .wrap_msg();
-    let evil: bytes::Bytes = msg.address_to(None).sign(&key).bytes();
+    let evil: bytes::Bytes = crafted.address_to(None).sign(&key).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-bcastmsg").await;
     assert!(
@@ -543,11 +543,11 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
     // A well-formed msg for someone else entirely, injected at the victim —
     // the shape a multihop relay legitimately carries. It must forward it
     // without ever surfacing it.
-    let msg: CraftedMsg =
+    let crafted: CraftedMsg =
         CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
             .into_msg()
             .wrap_msg();
-    let evil: bytes::Bytes = msg.address_to(Some("someone-else")).sign(&key).bytes();
+    let evil: bytes::Bytes = crafted.address_to(Some("someone-else")).sign(&key).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgrelay").await;
     assert!(
@@ -580,14 +580,14 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
     let (mut victim, attacker) = meshed_pair("msgself").await;
     let key = test_key::new_key();
     let victim_nick = victim.nickname.clone();
-    let msg: CraftedMsg = CraftedMsg::new(
+    let crafted: CraftedMsg = CraftedMsg::new(
         attacker.session.mesh_id(),
         &victim_nick,
         "evil-msg-as-victim",
     )
     .into_msg()
     .wrap_msg();
-    let evil: bytes::Bytes = msg.address_to(Some("someone-else")).sign(&key).bytes();
+    let evil: bytes::Bytes = crafted.address_to(Some("someone-else")).sign(&key).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     attacker.broadcast("barrier-msgself").await;
     assert!(victim.wait_body("barrier-msgself", T).await, "barrier lost");

@@ -180,18 +180,18 @@ test("anyhow_pub: the Result import counts when a public fn returns the bare ali
 test("anyhow_pub: the Result import does not count without a public bare-alias fn", () => {
   expectExit("crates/demo/src/lib.rs", "use anyhow::Result;\npub(crate) fn f() -> Result<u8> { Ok(1) }\nfn g() -> Result<u8> { Ok(1) }", 0);
 });
-test("anyhow_pub: five public forms, not the pub(crate), the test module, or the binary", () => {
+test("anyhow_pub: six public forms (the test module included), not the pub(crate) or the binary", () => {
   expectExit("crates/demo/src/lib.rs", anyhowFixture, 1);
   expectExit("crates/demo/src/main.rs", anyhowMain, 0);
 });
 test("anyhow_pub: the exact count is allowed", () => {
-  expectExit("crates/demo/src/lib.rs", anyhowFixture, 0, "anyhow_pub|crates/demo/src/lib.rs|5|fixture");
+  expectExit("crates/demo/src/lib.rs", anyhowFixture, 0, "anyhow_pub|crates/demo/src/lib.rs|6|fixture");
 });
 test("anyhow_pub: one more than allowed fails", () => {
-  expectExit("crates/demo/src/lib.rs", anyhowFixture.replace("#[cfg(test)]", "pub fn z() -> anyhow::Result<()> { Ok(()) }\n#[cfg(test)]"), 1, "anyhow_pub|crates/demo/src/lib.rs|5|fixture");
+  expectExit("crates/demo/src/lib.rs", anyhowFixture.replace("#[cfg(test)]", "pub fn z() -> anyhow::Result<()> { Ok(()) }\n#[cfg(test)]"), 1, "anyhow_pub|crates/demo/src/lib.rs|6|fixture");
 });
 test("anyhow_pub: a stale count fails", () => {
-  expectExit("crates/demo/src/lib.rs", anyhowFixture, 1, "anyhow_pub|crates/demo/src/lib.rs|6|fixture");
+  expectExit("crates/demo/src/lib.rs", anyhowFixture, 1, "anyhow_pub|crates/demo/src/lib.rs|7|fixture");
 });
 
 // The advisor's review of the anyhow_pub rule: one case per hole, each failing on the old rule.
@@ -377,11 +377,11 @@ test("pub_vec_return: an iterator is clean", () => {
 test("pub_vec_return: a private fn is clean", () => {
   expectExit("crates/demo/src/lib.rs", "fn f() -> Vec<u8> { Vec::new() }", 0);
 });
-test("pub_vec_return: a test module is clean", () => {
-  expectExit("crates/demo/src/lib.rs", "#[cfg(test)]\nmod tests {\n    pub fn f() -> Vec<u8> { Vec::new() }\n}", 0);
+test("pub_vec_return: a test module counts", () => {
+  expectExit("crates/demo/src/lib.rs", "#[cfg(test)]\nmod tests {\n    pub fn f() -> Vec<u8> { Vec::new() }\n}", 1);
 });
-test("pub_vec_return: an example is clean", () => {
-  expectExit("crates/demo/examples/e.rs", "pub fn f() -> Vec<u8> { Vec::new() }", 0);
+test("pub_vec_return: an example counts", () => {
+  expectExit("crates/demo/examples/e.rs", "pub fn f() -> Vec<u8> { Vec::new() }", 1);
 });
 test("pub_vec_return: an allowed row with its count passes", () => {
   expectExit("crates/demo/src/lib.rs", "pub fn f() -> Vec<u8> { Vec::new() }", 0, "pub_vec_return|crates/demo/src/lib.rs|1|the owned bytes");
@@ -538,4 +538,15 @@ test("trait_import_scope: a top-level as _ import with no row fails", () => {
 });
 test("trait_import_scope: an indented as _ import inside a fn passes", () => {
   expectExit("crates/demo/src/lib.rs", "pub fn f() {\n    use std::io::Write as _;\n}", 0, "");
+});
+
+// Tests, benches and examples are in scope of the public-API rules: no path is skipped but a binary.
+test("anyhow_pub: a file under tests counts", () => {
+  expectExit("crates/demo/tests/t.rs", "pub fn f() -> anyhow::Result<()> { Ok(()) }", 1);
+});
+test("dyn_param: a file under benches counts", () => {
+  expectExit("crates/demo/benches/b.rs", "pub fn f(x: &dyn std::fmt::Debug) {}", 1);
+});
+test("pub_vec_param: a file under tests counts", () => {
+  expectExit("crates/demo/tests/t.rs", "pub fn f(xs: Vec<u8>) -> usize { xs.len() }", 1);
 });

@@ -14,7 +14,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const allowFile = process.env.STYLE_CHECK_ALLOW || "scripts/style-check/style-check.allow";
 
 // A rule is a per-line `pattern`, or a whole-file `scan` for a form that rustfmt can split across lines.
-// `skip` leaves a file out of the count.
+// `skip` leaves a file out of the count. Only three rules carry one, and none skips a test, a bench or an
+// example: `anyhow_pub` and `dyn_param` skip a binary (main.rs, bin/), because a binary has no public API
+// for a caller to match on, and anyhow plus a trait object are the normal tools at an application edge.
+// `app_impl_into` runs only in a binary, because `pub_impl_into` covers the library side.
 type Rule = {
   name: string;
   pattern?: RegExp;
@@ -26,8 +29,8 @@ type Rule = {
   why: string;
 };
 
-// The public signatures that return anyhow. Comments and `#[cfg(test)] mod` bodies are cut
-// first. A `pub fn` (also `pub extern "C" fn`, and a `$name` in a macro body) counts when its
+// The public signatures that return anyhow. Comments are cut first, and a
+// `#[cfg(test)] mod` body counts like any other code. A `pub fn` (also `pub extern "C" fn`, and a `$name` in a macro body) counts when its
 // return type names `anyhow::Result` or `anyhow::Error` anywhere, or a bare one-argument
 // `Result<T>` in a file that imports anyhow's `Result`, or an alias of either. A method of a
 // `pub trait` counts the same way, at any indent. A `FromStr` or `TryFrom` impl with anyhow as
@@ -71,17 +74,6 @@ function closeBrace(text: string, open: number): number {
     else if (text[i] === "}" && --depth === 0) return i;
   }
   return text.length - 1;
-}
-
-/** `text` with the body of every `#[cfg(test)] mod name { ... }` removed, and nothing else. */
-function stripTestModules(text: string): string {
-  const pattern = /#\[cfg\(test\)\]\s*\n\s*mod \w+\s*\{/;
-  let out = text;
-  for (let m = pattern.exec(out); m; m = pattern.exec(out)) {
-    const open = m.index + m[0].length - 1;
-    out = out.slice(0, m.index) + out.slice(closeBrace(out, open) + 1);
-  }
-  return out;
 }
 
 /** The return type after the parameter list at `from`: up to `{`, `;` or `where`. */
@@ -256,7 +248,7 @@ function countUntypedLongChainLets(raw: string): number {
 // The accessor names of the guide's Rust rules U9 to U14, on the methods of a public type. A method
 // is indented, so a free function that takes a cursor, such as take_array, is not one.
 function countAccessorNames(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   let count = 0;
   for (const m of text.matchAll(/^([ \t]*)pub (?:const )?fn (\w+)/gm)) {
     const [, indent = "", name = ""] = m;
@@ -277,7 +269,7 @@ function countAccessorNames(raw: string): number {
 // A public fn whose bool parameter has no comment above it. The guide asks for the purpose of a bool
 // parameter to be written beside it, so a call site says what true means.
 function countBoolParamNoComment(raw: string): number {
-  const text = stripTestModules(blankStrings(raw));
+  const text = blankStrings(raw);
   let count = 0;
   for (const m of text.matchAll(PUB_FN)) {
     const open = text.indexOf("(", m.index! + m[0].length);
@@ -306,7 +298,7 @@ function countBoolParamNoComment(raw: string): number {
 // The receiver of a public as_, to_ or into_ method. The guide has as_ and to_ take a reference, and into_
 // take self. A by-value as_ or to_ is allowed on a Copy type, so each one has a counted row.
 function countSelfConvention(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   let count = 0;
   for (const m of text.matchAll(/^[ \t]*pub (?:const )?fn (as|to|into)_\w+\s*\(\s*(&\s*(?:mut\s+)?)?self\b/gm)) {
     const [, kind, ref] = m;
@@ -319,7 +311,7 @@ function countSelfConvention(raw: string): number {
 // The generic parameters of a declaration that are not T, U, E, K, V, F, I, R or S, and not a CamelCase word of
 // three or more letters. A single letter says nothing about what the parameter stands for.
 function countGenericNames(raw: string): number {
-  const text = stripTestModules(blankStrings(raw.replace(/\/\/[^\n]*/g, "")));
+  const text = blankStrings(raw.replace(/\/\/[^\n]*/g, ""));
   const allowed = /^(?:[TUEKVFIRS]|[A-Z][A-Za-z]{2,})$/;
   let count = 0;
   const decls = [...text.matchAll(/\b(?:fn|struct|enum|trait|type|union) \w+<([^>{;()]*)>/g), ...text.matchAll(/^\s*impl<([^>{;()]*)>/gm)];
@@ -337,7 +329,7 @@ function countGenericNames(raw: string): number {
 // does not count, and neither does a path such as `rand::rng`.
 const ABBREVIATIONS = new Set(["ctx", "addr", "conn", "msg", "buf", "opts", "prev", "req", "resp", "idx", "cfg", "tmp", "attr", "cmd", "ident", "rng", "pos", "sig"]);
 function countAbbrevNames(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)))
+  const text = blankStrings(stripComments(raw))
     .split("\n")
     .filter((line) => !/^\s*#\[/.test(line))
     .join("\n");
@@ -350,7 +342,7 @@ function countAbbrevNames(raw: string): number {
 
 // A public fn that returns a Vec. The guide prefers an iterator, so a Vec needs a counted allow row with its reason.
 function countPubVecReturn(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   let count = 0;
   for (const m of text.matchAll(PUB_FN)) {
     if (/\bVec\s*</.test(returnType(text, m.index! + m[0].length))) count++;
@@ -360,7 +352,7 @@ function countPubVecReturn(raw: string): number {
 
 // A public fn with a Vec parameter. The guide prefers impl IntoIterator when the fn only iterates; a fn that keeps the list needs the Vec.
 function countPubVecParam(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   let count = 0;
   for (const m of text.matchAll(PUB_FN)) {
     const open = text.indexOf("(", m.index! + m[0].length);
@@ -377,7 +369,7 @@ function countPubVecParam(raw: string): number {
 
 // A public fn with an `impl Into<...>` parameter. The guide allows it in a library when call-site ergonomics matter most.
 function countPubImplInto(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   let count = 0;
   for (const m of text.matchAll(PUB_FN)) {
     const open = text.indexOf("(", m.index! + m[0].length);
@@ -462,7 +454,7 @@ function countFnImports(raw: string): number {
 }
 
 function countAnyhowPub(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   const bare = new Set<string>();
   if (ANYHOW_USE_BARE.test(text)) bare.add("Result");
   for (const [, name] of text.matchAll(ANYHOW_USE_AS)) if (name) bare.add(name);
@@ -499,7 +491,7 @@ function paramsOf(text: string, from: number): string {
 
 /** Public fns that take a `dyn` trait object as a parameter. A generic `T: Trait` is the library form. */
 function countDynParams(raw: string): number {
-  const text = stripTestModules(blankStrings(stripComments(raw)));
+  const text = blankStrings(stripComments(raw));
   let count = 0;
   for (const m of text.matchAll(PUB_FN)) {
     if (/\bdyn\b/.test(paramsOf(text, m.index! + m[0].length))) count++;
@@ -643,35 +635,32 @@ const RULES: Rule[] = [
   {
     name: "anyhow_pub",
     scan: countAnyhowPub,
-    skip: /(^|\/)(main\.rs|bin\/)|^(?!crates\/[^/]+\/src\/)/,
+    skip: /(^|\/)(main\.rs|bin\/)/,
     glob: "crates/**/*.rs",
     why: "A public signature returns a typed error, not anyhow. A binary, a CLI and a private helper may keep anyhow.",
   },
   {
     name: "dyn_param",
     scan: countDynParams,
-    skip: /(^|\/)(main\.rs|bin\/)|^(?!crates\/[^/]+\/src\/)/,
+    skip: /(^|\/)(main\.rs|bin\/)/,
     glob: "crates/**/*.rs",
     why: "A library fn takes a generic (T: Trait or impl Trait), not a dyn Trait parameter. A counted row is a trait object that stays, with its reason.",
   },
   {
     name: "pub_vec_return",
     scan: countPubVecReturn,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A public function returns an iterator, not a Vec. A Vec is allowed where the caller needs an owned collection or the function builds a byte buffer, and each such function has a counted row with its reason.",
   },
   {
     name: "pub_vec_param",
     scan: countPubVecParam,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A public function takes an impl IntoIterator, not a Vec, when it only iterates. A function that keeps the list takes a Vec, and each such function has a counted row with its reason.",
   },
   {
     name: "pub_impl_into",
     scan: countPubImplInto,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A public function takes impl Into<T> only where call-site ergonomics matter most in a library. Each such function has a counted row with its reason.",
   },
@@ -685,35 +674,30 @@ const RULES: Rule[] = [
   {
     name: "accessor_name",
     scan: countAccessorNames,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A public accessor follows the guide: no get_ prefix, replace_ returns the old value, take_ clears through &mut self, _mut returns &mut, set_ takes its value by value.",
   },
   {
     name: "bool_param_comment",
     scan: countBoolParamNoComment,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A public function with a bool parameter writes its purpose in a comment above the parameter, so a call site says what true means.",
   },
   {
     name: "self_convention",
     scan: countSelfConvention,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A public as_ or to_ method takes a reference, and an into_ method takes self. A by-value as_ or to_ is a Copy type, and it has a counted row.",
   },
   {
     name: "generic_name",
     scan: countGenericNames,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "A generic parameter is T, U, E, K, V, F, I, R or S, or a CamelCase word of three letters or more.",
   },
   {
     name: "abbrev_name",
     scan: countAbbrevNames,
-    skip: /(^|\/)(examples|tests|benches)\/|^(?!crates\/[^/]+\/src\/)/,
     glob: "crates/**/*.rs",
     why: "An identifier is not a letter-deleted abbreviation: write ctx as context, addr as address, and so on. A name that a crate outside our control fixes has a counted row.",
   },
