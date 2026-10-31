@@ -201,6 +201,33 @@ State of the investigation. Each line says how well it is proven.
       ids, that is 140 ids, not about 1,000. Why digest encode and decode still show up
       at that size is under analysis.
 
+15. [V] The digest cost is quadratic base58, small, and constant in N (`mist-frame`,
+    micro-benchmark, scratch crate, bs58 0.5.1 against hex, release, single thread, 200
+    rounds, 2 runs, load 17 to 11, noise 10% to 30%). Base58 of a packed window costs
+    (encode, decode) in microseconds: 35 ids 520 and 300; 70 ids 2,200 and 1,500; 140
+    ids 10,000 and 5,000-7,000; 1,000 ids 522,000 and 273,000. Hex needs 5 to 130
+    microseconds. So 70 ids cost 4.4 times what 35 cost.
+    - Order in `handle_digest` (verified, `antientropy.rs:243-270`): serde parse, then
+      `answers_digest`, then `admit_digest` (5 s per author), then the base58 decode.
+      So the decode runs only for the 3 answerers: about 3 digests of 2 windows per 10 s
+      per node whatever N is. A node encodes 1 digest of 2 windows per 10 s. No other
+      path encodes or decodes windows.
+    - Cost per node per 10 s: encode 4.4 ms plus decode 9 ms, about 13 ms (0.13% of a
+      core), which matches the sample (14 and 27 samples in 30 s). Before the churn
+      the log held under 70 ids, so the quadratic term was small.
+    - It does not grow with N, so it does not explain the live cost (55%). It is
+      about half of the extra CPU per wake after a churn in a small mesh (84 to
+      about 63 ms per 10 s at N=8, a guess).
+    - Fixes: skip-decode is already in the code. Caching the encoded newest window saves
+      at most one of two encodes (2.2 ms per 10 s), no wire change. Base64 ids in a new
+      field `ids64` is linear (under 10 microseconds, a guess) and removes about 13 ms
+      per 10 s, but it is a wire change: a 0.12.10 daemon fails the parse
+      (`report_unreadable_digest`, no resends), so old and new nodes would stop
+      repairing each other's chat gaps. Putting base64 in the old `ids` field must not
+      be built (an old answerer would resend its whole budget for every digest).
+    - Decision: PARK. Under my rule (no behaviour change without a measured gain that
+      pays for it) a 0.13% gain per node does not pay for a wire change.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
