@@ -56,6 +56,22 @@ State of the investigation. Each line says how well it is proven.
    peers that left, and 14 of 45 entries of the meta document are dead peers. A
    test of this (E6 below) is queued.
 
+7. [V] The cap matters, but only for a factor of 2 to 3. R2 (`lumen-gear`, engine
+   `43dc4f6f`, 12 daemons, `--max-peers 8` so the roster is above the cap, 2 reps,
+   no stalled lines outside pauses, load 2.6 to 7.0): CPU per daemon 1.81% and
+   1.27% against 0.64% and 0.66% at cap 32 (2.0 to 2.8 times); bytes in 109 and 46
+   KB per second against 9.0 and 7.0 (5 to 12 times); packets in 216 and 104 per
+   second against 51 and 39. The engine counters did not move: `idle_external` 91
+   (against 90), `idle_resent` 0.3 (against 0.3). Neighbour up and down events are
+   small (0.04 and 0.03 per 10 s). [G] The extra traffic is inside the
+   `iroh-gossip` layer (membership or shuffle, hypothesis C3); the spread between
+   the two reps is large, so the typical value is not known. The cap alone does
+   not reach the live cost (1% to 2% against 55%), so history, size or the resend
+   loop multiplies it.
+8. [V] Fresh meshes of 12 daemons never reproduce the resend loop: R1, R3 and R4
+   show `idle_resent` near 0 (R3 mean 0.3, max 40; R4 late joiner: one census
+   window of extra duplicates, back to baseline in 20 s). The loop needs history.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
