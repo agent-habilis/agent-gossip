@@ -459,6 +459,52 @@ Plan (no code change):
 
 Result: pending.
 
+## Complexity audit: what could go with little loss
+
+The user asked which complexity returns little or no benefit. Two read-only
+audits: the app (`layer-oval`, at `b588fc75`, done) and the engine (`tale-gorge`,
+pending). Rule for every item: a verdict needs a proven benefit or the words
+"none found".
+
+### App (`crates/agent-gossip`, 34,350 lines), [V] unless marked
+
+- Task state machine (`a2a/task_record.rs` 2,832 lines, `status_update_params.rs`
+  824): keep. A beat goes out only for a live task (every 30 s), and the stall
+  check runs only for a task in the map. An idle daemon with no task sends zero
+  beats and zero stall checks, so it costs nothing on idle.
+- QUIC tunnel (`tunnel/`, 2,549 lines): zero runtime cost, reached only by
+  `a2a expose` and `connect` (`cli/a2a.rs:15`). Remove candidate. Needs the user's
+  answer: is `a2a expose/connect` used?
+- Localhost JSON-RPC binding (`--a2a-serve`, off by default; `served.rs` 481 plus
+  `rpc_error.rs` 429): zero runtime cost. Remove candidate. Needs the user's
+  answer: does any local client use it?
+- MCP server (`mcp/`, 2,231 lines, 28 commits touch it): started only by the `mcp`
+  subcommand. Keep if agents use it.
+- `doctor` (639 lines), `plug`, `unplug`: on-demand CLI. [G] plug and unplug were
+  not read.
+- Hidden flags: 39 `hide = true` in `cli/args`, 24 in `tuning_opts.rs`. Test-only
+  use is verified for `--antientropy-max-resend` and `--heal-interval-secs`; the
+  rest were not checked one by one. Simplify, but only after a per-flag grep.
+- Peer meta written by the app: the agent card (about 2 KB, `card.rs` 611 lines,
+  written once at start) and 13 more fields. Readers verified: the peers rows of the
+  IPC (`ipc_command.rs:94`) and `reader_asks.rs:91`. Not verified: who reads `cwd`,
+  `host`, `card_error`. The static part of the card is 83% of the entry: simplify
+  (see "Metadata traffic", idea 4).
+
+Ranking by (cost + size) divided by benefit: 1 the static card, 2 the tunnel, 3 the
+JSON-RPC binding, 4 hidden test-only flags, 5 MCP. Note: these removals shrink the
+code, but none of them runs on an idle daemon, so none of them reduces the idle
+CPU. The idle CPU is in the engine (resends and traffic).
+
+Not done: live-log counters, the test suite, git history per feature (all files
+were last touched on 2026-10-30 by one refactor commit).
+
+### Engine (`habilis-network`, about 58,000 lines in the main crate)
+
+Pending (`tale-gorge`). First question: which engine crates and modules the native
+daemon uses at runtime, against those that serve other consumers only (the wasm
+peer, the C ABI, netplay, webrtc).
+
 ## Ideas for the CPU cost
 
 Ranked by expected CPU saved and by risk. The advisor attacked the earlier
