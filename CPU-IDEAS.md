@@ -641,6 +641,59 @@ list, and this is the result.
   verifies and applies per duplicate, and a paired A/B on R4.
 - Result: pending. Owner: `origin-magnet`, after M1.
 
+### M2c. Do not serialize the whole meta document for every meta frame (found)
+
+- Fact [V by reading, two sources agree]: the profile's 17.4% (2,713 samples,
+  `wire-straw`, call tree) is a full `to_json` of the meta document, reached as
+  `gossip rx arm` > `recv::ingest` > `dispatch_infra` > `dispatch_channel` >
+  `a2a_app on_meta_applied`. In the engine, `dispatch_channel`
+  (`gossip/recv.rs:1141-1163`) calls `app.on_meta_applied(...)` for EVERY meta
+  frame that reaches dispatch, although the comment says "post-apply hook" and the
+  `change_count() > changes` test just above is used only for the fast rounds. In
+  the app, `adopt_meta_endpoint` (`a2a/node.rs:1224`) runs
+  `state.doc(Channel::Meta).to_json()`, the whole document (about 100 KB for 45
+  peers), only to read one author's card endpoint.
+- Cross-check [G]: about 1.6 meta frames per second reach dispatch on my daemon
+  (7,883 in 83 min), and 17.4% of 61% of a core is about 106 ms of CPU per second,
+  so about 65 ms per call. That is a plausible time to hydrate a 100 KB
+  Automerge document.
+- Another 18.0% of the samples (2,804) are unattributed Automerge leaf frames under
+  `thread_start` (bad unwinding). [G] Probably the same path.
+- Fix, two parts, no wire change and no result change:
+  1. Call the hook only when the frame changed the document
+     (`change_count() > changes`): about 3 new meta changes per minute instead of
+     about 1.6 calls per second.
+  2. Read only the author's card entry, not the whole document, in
+     `adopt_meta_endpoint` (needs a single-path reader in the engine document API;
+     check that one exists).
+- Risk: a duplicate meta frame today re-adopts the author's endpoint into the dial
+  book, which can repair an entry that was evicted in between. That is an
+  accidental repair path; a measured gain must pay for losing it. Experiment: count
+  hook calls and `to_json` calls per 10 s before and after, a paired A/B on idle
+  CPU at 12 members, and the late-join and `loopback_room_split` tests.
+- Expected gain: up to 17.4% of the busy time, and up to 35% if the unattributed 18%
+  is the same path.
+- Result: pending. Owner: `origin-magnet` (engine part) and the leader (app part).
+
+### M2d. The dedup memory is too short for the flood (found)
+
+- Fact [V by reading, `origin-magnet`]: `seen` is a count-bounded FIFO of 2 x
+  `MESSAGE_LOG_SIZE` = 2,000 keys (`tuning.rs:17`, `:25`; `event_loop_state.rs:416`),
+  not a time window, and it takes the keys of every frame kind. The 90 s window is
+  the `iroh-gossip` payload dedup, not ours. Frames not in the message log (alive,
+  PeerInfo, digests, linkstate, State and Meta, stale presence) are stopped only by
+  `seen`.
+- Consequence [G]: at about 800 frames per second the 2,000 keys turn over in about
+  2.4 s, which is shorter than the 10 s digest period. So the flood evicts the
+  memory that should stop it, and a repeat passes the dedup again. This fits the
+  30 repeats per frame in the logs, and it makes the loop self-sustaining.
+- Idea: a larger cap (2,000 keys of 16 bytes is only 32 KB, so 64,000 keys is about
+  1 MB), or a time-based memory of 60 s or more. No wire change. A repeated hit
+  should not push the key again.
+- Experiment: a counter of frames per second and of `mark_seen` hits and misses
+  (add to the census), then A/B with the cap at 2,000 and at 64,000 on R4.
+- Result: pending. Owner: `origin-magnet`.
+
 ### M3. Cap the old-frame backfill and the replay of old frames
 
 - Idea: frames 3.5 days old come in every minute. Age-filter or cap what a
