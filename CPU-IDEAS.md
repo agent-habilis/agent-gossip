@@ -258,6 +258,30 @@ State of the investigation. Each line says how well it is proven.
       `get_change_by_hash` on docs with merges, forks, pending orphans and a snapshot
       load, and a micro-benchmark on a 60 KB document, decide it.
 
+17. [V] M3 on an aged document (`origin-magnet`, scratch test in the M3 worktree, release,
+    load about 30 so read it as an order of magnitude, 2,000 calls per row, 3 heads
+    asked): a gated meta-style document where every member writes 3 merges of a card
+    of about 600 bytes, all without seeing each other, so the change graph is wide.
+
+    | authors x merges | bytes | changes | old µs per call (3 heads) | old µs per `get_change_by_hash` | new µs per call |
+    |---|---|---|---|---|---|
+    | 1 x 3 | 306 | 4 | 5.9 | 5.9 | 0.77 |
+    | 10 x 3 | 1,659 | 31 | 83.0 | 23.5 | 3.6 |
+    | 30 x 3 | 4,085 | 91 | 190.8 | 60.8 | 2.6 |
+    | 60 x 3 | 6,748 | 181 | 365.6 | 122.3 | 2.6 |
+    | 120 x 3 | 11,772 | 361 | 809.2 | 268.1 | 2.6 |
+    | 60 x 12 | 9,326 | 721 | 411.4 | 154.7 | 2.6 |
+
+    The old cost grows with the number of changes (5.9 µs at 4 changes to 268 µs at
+    361, about 0.7 µs per change): a scan, not a lookup. It grows more with the number
+    of authors (the width of the graph) than with the rounds: 60 x 12 costs 155 µs
+    per lookup and 120 x 3 costs 268 µs [G, from two rows]. The new cost is flat,
+    about 2.6 µs for 3 heads, mostly the base58 decode. Gain per call: about 140 times
+    with 60 authors and 310 times with 120. A digest asks this for each of its heads,
+    so with 60 heads the old code pays up to 7.3 ms per digest. Not measured: the real
+    62 KB document of the survivors and the share of busy samples after the change
+    (that needs the aged-mesh residual test and the live A/B on `ab-stack2`).
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
