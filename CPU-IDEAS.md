@@ -499,11 +499,49 @@ CPU. The idle CPU is in the engine (resends and traffic).
 Not done: live-log counters, the test suite, git history per feature (all files
 were last touched on 2026-10-30 by one refactor commit).
 
-### Engine (`habilis-network`, about 58,000 lines in the main crate)
+### Engine (`habilis-network` at `f7cd9bb`, about 58,000 lines in the main crate)
 
-Pending (`tale-gorge`). First question: which engine crates and modules the native
-daemon uses at runtime, against those that serve other consumers only (the wasm
-peer, the C ABI, netplay, webrtc).
+Audit by `tale-gorge`, read-only, no builds. Evidence: source counts, the engine
+`Cargo.toml`, the app imports, and 42 live daemon logs (7,752 census lines).
+Correction of an earlier report: `f7cd9bb` is checked out, and the old line
+numbers came from `08b7615`.
+
+What the native daemon uses [V for the app source, G for the build]: the app
+depends on the engine with the feature `blob` only (`crates/agent-gossip/Cargo.toml:59`).
+Engine defaults are `host`, `mdns`, `dht`. The app imports `protocol`, `embed`,
+`runtime`, `ops` (8 calls to `ops::blob`), `net`, `util` and `iroh`. It does not
+import `netplay`, `webrtc`, `multihop`, the wasm peer or the C ABI. Whether the
+engine compiles them in anyway is not checked.
+
+Live logs (default level): `heal tick` 11,875 lines, `reclaim tick` 11,263,
+neighbour up 15,818 and down 15,104, linkstate 7,710, beacon 3,283, rival probe
+1,142, `maintenance timer stalled` 99. Zero hits for cohost, multihop, fast round,
+admission, shard, chunk, chain and `anti-entropy resent`. Zero is weak evidence:
+those lines are probably below the default level.
+
+Candidates, ranked by (cost + size) / benefit:
+
+1. Anti-entropy frame-log resend (`gossip/antientropy.rs` 2,115 lines plus 307):
+   SIMPLIFY. Remove the mesh-wide resend with a new nonce, keep the state heads
+   repair of the `meta` channel. Test first: R4 and the six loopback tests. This
+   agrees with the advisor's option (c).
+2. Multihop (6,603 lines, optional feature, not default) and WebRTC (10,087 lines,
+   `transport/webrtc.rs` 2,978): REMOVE from the native build, if the build
+   compiles them. A size and build-time gain only, no CPU gain on an idle daemon.
+   [G] to check.
+3. Reclaim tick gate (400 ms, 2.5 wakes per second): SIMPLIFY, with the rendezvous
+   tests. Small gain.
+4. Admission sampler (`transport/admission.rs` 1,767 lines, 5 s): SIMPLIFY or KEEP
+   after a test that the connection ceiling still holds.
+5. `cohost_arm` (2,262 lines): KEEP until a single-host run shows it is not needed.
+6. Netplay (12,931 lines): outside the daemon; move to a separate crate if it is
+   only for examples. Not checked whether the main crate depends on it.
+
+Keep: heal (15 s), linkstate (only on change), blob and chunks (the app uses
+them), the per-author hash chain (its cost is not measured).
+
+Not done: no build and no test run. Fast rounds, cohost and admission need
+debug-level runs (R1 to R5).
 
 ## Ideas for the CPU cost
 
