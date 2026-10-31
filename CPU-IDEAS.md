@@ -115,6 +115,28 @@ State of the investigation. Each line says how well it is proven.
       live gossip. The receive-side fixes that cut the work per duplicate (M2b-1,
       M2d) can be tested one member at a time in the live gossip.
 
+11. [V indicative, void by the load gate] History alone reproduces the live regime in a
+    private mesh (E6 preliminary, `wire-straw`, app `b588fc75`, release, private
+    gossip, 12 live survivors, 60 s settle, 120 s window after all short-lived
+    members left, 0 stalled lines):
+
+    | History | CPU per daemon | roster_len | link_len | idle_external per 10 s | idle_resent | meta doc | load |
+    |---|---|---|---|---|---|---|---|
+    | fresh | 0.52% | 11 | 11 | 35 | n/a | 24.6 KB | 5.6 to 6.5 |
+    | 36 dead | 2.27% | 23.7 | n/a | 246 | 0.2 | 37 KB | 12.0 to 6.7 |
+    | 60 dead | 18.36% | 44.8 | 10.0 | 3,449 | 22.5 | 70 KB | 20.6 to 31.0 |
+
+    The two history runs are void under the gate of 9 (the load rose during them), so
+    they are indicative only. Still: the cost and the external wakeups grow far
+    faster than linear in the number of dead members (7 and 100 times), and the
+    roster keeps the dead (11, 24 and 45 entries) while only 10 to 11 links exist.
+    [G] Hypothesis H9: every dead roster entry keeps costing (re-dials, probes,
+    PeerInfo or linkstate gossip about it), so the cost is about live members times
+    dead entries. Not yet shown: whether the cost decays with time (is there a prune
+    of dead peers, and after how long) or whether it is the load itself. Queued: the
+    repeat on the instrumented build with a 15 min time series of roster_len,
+    link_len and each `idle_ext_*` arm.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
