@@ -74,6 +74,57 @@ at about 13:00 local, 83 min of uptime:
 - Note: a first lsof listing of TCP sockets mixed in other processes (`lsof -p`
   with `-i` is an OR). It is not used here.
 
+### Symbolized profile of a live daemon, [V]
+
+By `wire-straw` on `nyc-macmini1`: a member built from `b588fc75` with symbols joined
+the live gossip for 5 min. One 30 s `sample` at t=180 s, so n=1 and no noise figure.
+Host load 5.0 to 5.3, no stalled-timer lines. The daemon used 18.35 s of CPU in 30 s
+(61% of a core). Census over the 5 min: `idle_external` 11,404 per 10 s,
+`idle_resent` 224, `link_len` 19.1, `roster_len` 38.3. The background CPU of the
+other live daemons was not recorded. An earlier sample at t=20 s (join spike) gave
+the same ranking.
+
+Self time, as a share of 15,629 busy samples:
+
+| Class | Share |
+|---|---|
+| `sendmsg` + `recvmsg` (syscalls) | 31.7% (`sendmsg` alone 27.9%) |
+| automerge | 15.8% |
+| ed25519 (curve25519 field ops) | 14.7% |
+| QUIC state machine (`noq`) | 11.4% |
+| alloc and memcpy | 6.1% |
+| `iroh-gossip` | 4.7% |
+| base58 | 4.5% |
+| blake3 and sha | 1.6% |
+| engine | 1.4% |
+| tokio | 1.3% |
+| QUIC AEAD | 1.0% |
+| JSON | 0.5% |
+| app | 0.1% |
+| other | 5.0% |
+
+Inclusive time (overlapping, so the rows do not add up): automerge 38.4%
+(`mesh_doc` 2,751 samples), `serde_json` 21.7% (`mesh_doc` 2,713 and `messages` 565),
+ed25519 verify 11.1% (all under `messages`), ed25519 sign 0%, X25519 seal and open
+0.0%, `antientropy missing_frames` 2.8%, `handle_state_digest` 3.1%, hyparview 0.0%.
+Caveats: hyparview near 0 can be inlining into the `iroh-gossip` actor, so it is not
+proof that the refill loop (C3) is absent. [G]
+
+What it means (the first two [V], the rest [G]):
+
+- Per-message encryption is cheap: QUIC AEAD 1.0%, directed-frame seal 0.0%
+  (there were almost no directed frames), blake3 and sha 1.6%. Signature verify
+  costs 11% (inclusive) to 15% (self). So removing the encryption would save about
+  1% of the busy time, and removing signatures at most 11% to 15%, and that is a
+  security change.
+- About 80% of the busy time sits in work that a duplicate frame triggers: syscalls
+  (32%), the automerge and JSON path of the `meta` document (38% inclusive, which
+  overlaps with the JSON share), and signature verify (11%).
+- So the cheaper fix is to stop the duplicates (M1), and to drop an already seen
+  frame before the heavy work: check the dedup key before the signature verify,
+  and check that a state change is already applied before the JSON parse and the
+  automerge apply (idea M2b below). Each one changes no wire format and no result.
+
 ### Live test of the resend flood (H7), [V]
 
 Run on the live gossip with an observer daemon (release 0.12.10, a fresh member,
@@ -442,11 +493,17 @@ previous frame, signed, `gossip/recv.rs:1046`; `messages/chain_ctx.rs`,
 encryption. The user chose: measure first, then decide. Status: no change and no
 number yet.
 
+Result of the first measurement (see "Symbolized profile of a live daemon"): QUIC
+AEAD 1.0%, seal 0.0%, hashes 1.6%, signature verify 11% to 15% of the busy time.
+So the encryption is not a cost worth removing. The verify is a cost, but it is
+paid again for every duplicate. Not measured separately: the hash chain check
+itself (no symbol of its own).
+
 Plan (no code change):
 
 - Take the share of CPU by class from the symbolized profile of the live daemon
   (`wire-straw`): signature verify, hash chain and id hashing, QUIC AEAD, seal and
-  open of directed frames, JSON parse, and syscalls.
+  open of directed frames, JSON parse, and syscalls. Done above.
 - A micro-benchmark of verify, chain check and seal per frame, if the profile does
   not separate them.
 - Decision rule: if the cost of the checks is a small share once the resend flood
@@ -569,6 +626,20 @@ list, and this is the result.
 - Experiment: count neighbour requests sent and refused and timer fires (I7).
   A/B on R2 and R3.
 - Result: pending.
+
+### M2b. Drop a seen frame before the heavy work (new, from the profile)
+
+- Idea: a duplicate frame pays for a signature verify (11% to 15% of the busy time),
+  and a duplicate `meta` change pays for a JSON parse and an automerge apply (38%
+  inclusive). Check the dedup key before the verify, and check that a state change
+  is already applied (by its change hash) before the parse and the apply.
+- Why it is safe: a frame that was already accepted needs no second verify, and a
+  change that is already applied is a no-op for a CRDT. No wire change.
+- Open: the order of the checks today. [G] The log lines `state dir="in"` that repeat
+  30 times per frame suggest that duplicates reach the apply path.
+- Experiment: read the order in `gossip/recv.rs` (3,929 lines). Then a counter of
+  verifies and applies per duplicate, and a paired A/B on R4.
+- Result: pending. Owner: `origin-magnet`, after M1.
 
 ### M3. Cap the old-frame backfill and the replay of old frames
 
