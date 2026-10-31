@@ -333,10 +333,104 @@ behaviour they change:
 - (a) remove everything. Needs a different way for a late joiner to get the
   meta document.
 
-Experiment R5 (after R1 to R4): set `--antientropy-interval-secs` very high on a
-12 member run, run the six tests above, and run SIGSTOP 20 s while others send,
-a late join, and a split with heal. The result shows what breaks, and the CPU and
-wire traffic show what is gained. Result: pending.
+### Advisor review (`ignite-bench`, read-only, nothing run)
+
+Anti-entropy is three mechanisms, not one. [V] by code reading, file:line in the
+advisor's report:
+
+- M-LOG: the chat-log digest every tick, answered by a mesh-wide resend with a new
+  nonce (`gossip/antientropy.rs:146`, `:243-334`).
+- M-DOC: the state heads digest for the `meta` document (cards, status, graph
+  membership), answered by a unicast to a linked asker, else a mesh-wide resend
+  (`:386-430`, `:598-694`).
+- M-PULL: event-driven pulls: the digest on the first link, the digest to each new
+  peer, `ask_back` and the fast rounds. They are not driven by the tick.
+
+On the advisor's own node (16:00 to 16:47) 99.7% of the logged inbound frames are
+repeats (804 distinct frames in 6,870 copies, 8.5 copies per frame), and 23 frames
+are user frames.
+
+What breaks if the tick is off, per class:
+
+- A chat broadcast is lost for a member that was frozen longer than the 15 s path
+  idle, or that lost a link (tests `gossip_network.rs:2359`, `:2513`, `:2601`,
+  `:2752`; engine `missed_chat_backfill_loopback`, `resend_dedup_loopback`).
+- Presence: a missed "left" leaves a ghost until the 90 s alive timeout, and the
+  peer then shows "went quiet" instead of a clean leave. [G]
+- A directed frame lost on an open link is not backfilled
+  (`test_directed_msg_backfills_to_its_addressee`). The sender already gets an
+  error on a failed send and a receipt when it works.
+- The meta document for a late joiner needs M-DOC or M-PULL: without the cards the
+  joiner cannot address A2A calls (`a2a/node.rs:128-130`).
+- Partition heal needs M-LOG and M-DOC. [G for chat, V by tests for documents]
+- Late join: the first-link digest (M-PULL) already gives the meta document, so the
+  tick is not needed for it. [G, test S2 below shows it]
+
+Sender retransmit: a Swarm broadcast gives the sender no recipient list and no ack
+(`iroh-gossip src/api.rs:186-188`). Receipts exist only for directed frames. A
+retry per broadcast costs N-1 receipts and a new wire frame, and it still loses a
+late joiner and any frame of a sender that left first (including its own "left"
+presence). It is cheap for chat (about 7 x 42 = 300 receipts in 83 min, against
+about 6,800 repeat frames in 47 min on one node), but it is the wrong tool for the
+document.
+
+Options and verdicts:
+
+- (a) Remove everything: breaks the classes above, about 14 integration tests and
+  30+ unit tests fail. Rejected, it violates "no regressions".
+- (b) Remove M-LOG only: saves the presence loop (3,080 of 6,850 frames) but keeps
+  the meta loop (3,747), the larger one. Rejected as stated.
+- (c) Cheap anti-entropy: each tick, send the chat digest and the two heads
+  digests by unicast to one random linked peer. The peer answers only to us, only
+  by unicast, never a mesh-wide resend and never a new nonce. Keep M-PULL. Cost
+  O(1) per node per tick instead of O(N) receptions times O(N) fan-out. The state
+  path already works by unicast in 0.12.10. One check is open: whether a 0.12.10
+  node answers a chat digest that arrives on the unicast plane (`recv.rs:725`).
+  Mixed versions: new nodes send unicast and stop answering Swarm digests with
+  Swarm resends. RECOMMENDED.
+- (d) Sender retransmit for directed frames only (retry until `delivered`, bounded)
+  on top of (c). Not a replacement for (c).
+
+Two loop fixes the advisor adds, each a behaviour change gated on R4:
+
+- Meta loop (M-DOC): `handle_state_digest` over-serves when the asker's heads hold
+  a hash we do not have: `changes_since_not_by` ignores unknown heads and sends
+  from the start, capped at 64 (`mesh_doc.rs:357-386`). If the two documents never
+  converge, the answer repeats every round. Fix: answer with heads only when the
+  asker's heads are not all held, or skip a resend to the same asker within T.
+- Chat loop (M-LOG): remember (asker, dedup key) of the resends and skip a repeat
+  within T. A second candidate cause is the log eviction at 1,000 frames: a
+  requester that evicted a frame stops listing it while the answerer's window
+  still covers it. [G]
+
+The advisor's tests: every subprocess test sets `--antientropy-interval-secs 2`,
+and two engine test files pin the tick to 1 h on purpose, so they test only M-PULL
+and guard option (c). Some tests pass trivially without anti-entropy
+(`gossip_network.rs:1390`, `:1913`, `:2410`, `:2686`, `:4172`), so they cannot
+catch a removal.
+
+### Experiment R5 (tick off), replaces the earlier plan
+
+`--antientropy-interval-secs 86400` on every node (M-PULL stays on), private
+loopback gossip, N=6, release build, quiet host. For each scenario record the
+delivered set per node, the repeat count per frame, the census `idle_resent` and
+`idle_external`, and the CPU. Run each with the tick at 10 s (control) and at 86400.
+
+- S1: `SIGSTOP` 20 s while others send 5 chat, 1 directed and 1 meta merge. Expect
+  the control to deliver all 7 within about 2 ticks, and 86400 to lose chat and the
+  directed frame for the frozen node.
+- S2: late join after 20 chat and 10 meta merges. Expect both runs to give the
+  meta document (first-link digest). This shows the tick is not needed for it.
+- S3: partition and heal (block 3 nodes from 3 for 60 s). Expect the control to
+  converge in about 2 ticks, and 86400 to converge meta only.
+- S4: the sender leaves while a member is frozen. Expect 86400 to lose the chat and
+  the "left" presence: the case sender retransmit cannot fix.
+- S5: mixed version, 3 nodes 0.12.10 and 3 nodes with option (c).
+- S6: the storm check (R4) at N=12, 10 min idle after a late join. Expect the
+  control to show frames received more than 5 times, and option (c) with the two
+  fixes to show none.
+
+Result: pending.
 
 ## Proposal: remove the chained encryption of messages
 
