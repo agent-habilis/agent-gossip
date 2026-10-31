@@ -118,6 +118,11 @@ at about 13:00 local, 83 min of uptime:
   1.78 MB/s; out 3,390 packets/s and 4.0 MB/s. Cumulative: 2.66 GB in and
   3.04 GB out. So the wire carries about 1,000 times the bytes of the logged
   frames, and the daemon sends 2.2 times what it receives.
+- Another live member, on `nyc-macmini1` (`wire-straw`, release 0.12.10, 15:30,
+  `nettop`): lifetime 56.1 GB in and 97.3 GB out over about 3.2 h; one 5 s window
+  gave 4.7 MB per second in and 10.5 MB per second out. Out is about 1.7 times
+  in, as on my daemon (2.2 times). `nettop` on that host gives bytes only, no
+  packet column.
 - Kernel and context switches: 13.1 million BSD syscalls and 13.1 million
   context switches in 83 min (about 2,600 per second of each). 42% of the CPU
   time is kernel time (7:00 of 16:38). Only one of 4 threads burns CPU, so the
