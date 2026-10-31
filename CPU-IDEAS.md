@@ -814,6 +814,61 @@ and guard option (c). Some tests pass trivially without anti-entropy
 (`gossip_network.rs:1390`, `:1913`, `:2410`, `:2686`, `:4172`), so they cannot
 catch a removal.
 
+### Write-up: what removing anti-entropy means (requested 19:21 local)
+
+Status: nothing is removed. This section answers "what depends on it, what breaks, what
+the cheaper form keeps, a recommendation, and what the tests must prove". Sources: the
+advisor design review (code reading, nothing run), `layer-oval`'s first tick-off round
+(n=1 per cell), and the measurements above.
+
+What depends on it (three mechanisms, see the advisor review above):
+- Convergence after a partition: the chat-log digest (M-LOG) and the state heads digest
+  (M-DOC) are the only way two halves exchange what each said during the split.
+- Late joiners: the meta document (peer cards, status, graph membership) arrives
+  through the first-link and new-peer digests (M-PULL), not through the periodic tick.
+  Chat from before the join is not backfilled in any case (the digest floor is the join
+  time).
+- Lost frames: a chat broadcast missed by a member whose link dropped or that was
+  frozen longer than the path idle (15 s); a directed frame lost on an open link.
+- Peer return after quiet: a missed "left" presence leaves a ghost until the 90 s alive
+  timeout, and the peer then shows "went quiet" instead of a clean leave.
+
+What breaks or degrades if the whole mechanism goes: about 14 integration tests and
+more than 30 unit tests fail (list in the advisor review); the late-joiner, resend-after-
+loss, missed-chat, partition-heal and first-broadcast-after-join cases lose their
+repair path. If only the periodic tick goes and the event-driven pulls stay (M-PULL),
+the first tick-off round (n=1) lost nothing in a 20 s freeze, a late join and a sender
+leaving; a 20 s SIGSTOP is too weak a loss (packets queue in the socket buffer), so
+round two uses 75 s and 150 s freezes with 5 repeats per cell (pending).
+
+What the cheaper unicast form keeps (option (c) of the review): every repair class
+above, because each tick still sends the digests, but to ONE random linked peer by
+unicast, answered only to that peer, with no mesh-wide resend and no new nonce. The
+cost per node per tick falls from O(N) receptions times O(N) fan-out to O(1). The
+price is slower repair of a gap, about log N ticks instead of 1 (a guess), and a
+mixed-version rule (new nodes stop answering Swarm digests with Swarm resends).
+
+Recommendation: do NOT remove it. Replace the mesh-wide resend (not the repair) with
+the unicast form, add the resend memory and the two loop fixes the advisor lists, keep
+the event-driven pulls, and add the sender retry only for directed frames (receipts
+already exist). Reasons: removal breaks the late-joiner and partition repair that the
+shared meta document needs; the measured cost is in the mesh-wide resend and the
+history work, not in the repair itself; the fixes built so far (items 10 to 19) go after
+those costs without a wire change.
+
+What the tests must prove (before any removal or replacement):
+1. The six named loopback tests (late joiner backfill, resend after loss, missed chat
+   backfill, first broadcast after join, room split, resend dedup) still pass, and
+   `gossip_network.rs` reliability tests pass (alternating baseline and candidate;
+   `mist-frame`'s gate is running).
+2. Freeze 75 s and 150 s (sends during the freeze) with the tick at 10 s against 86400
+   s: delivered set per node, 5 repeats per cell; late join; sender leaves while a
+   member is frozen; partition and heal (needs two relays or a packet filter).
+3. A mixed-version mesh (0.12.10 and the candidate) repairs both ways and shows no
+   frame received more than 5 times and no "digest could not be read" lines.
+4. The cost side: the same runs report `idle_resent`, `idle_duplicates`, bytes and CPU,
+   so a loss of repair is paid for by a measured gain.
+
 ### Experiment R5 (tick off), replaces the earlier plan
 
 `--antientropy-interval-secs 86400` on every node (M-PULL stays on), private
