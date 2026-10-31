@@ -706,6 +706,84 @@ the same frames again.
 Not an idea: dropping metadata that users need. Peer cards, nicknames and
 status stay; only the repeats and the stale copies go.
 
+## Metadata classification and reduction ideas (requested 19:30 local; analysis only)
+
+Goal given: make non-critical metadata the main target of the study. Method: classify each
+field of the meta document and each frame kind as critical for the mesh to work or not,
+then order the proposals by bytes saved per risk. Sizes are measured on the live meta
+document (45 peers, mean entry 2,290 bytes; script `field-sizes.ts` in the session
+scratchpad). "Critical" is what the mesh needs to connect, authenticate and route;
+"used by workflows" is what the gossip skills read (graph-up and status read `model`,
+`host`, `instance`, `hash`, `node` and `status`; verified by reading the skill text).
+
+### Fields of one peer entry (mean bytes per peer)
+
+| Field | Bytes | Class | Why |
+|---|---|---|---|
+| card.endpoint (id, addresses) | 122 | critical | `adopt_meta_endpoint` reads it to dial a peer before its PeerInfo arrives |
+| card extension `mesh-seal` params (X25519 key) | part of 354 | critical | directed frames are sealed to this key; without the card "no peer can send to us" (`a2a/node.rs:128-130`) |
+| card.name | 21 | critical (small) | nickname binding |
+| card.supportedInterfaces (url) | 191 | needed for A2A calls, mostly static | the url holds the peer id |
+| card.version | 42 | useful for compatibility | keep |
+| card extensions: prose descriptions of 5 URIs | about 1,000 of 1,325 | non-critical, static | `mesh-seal` 354, `mesh-blob` 289, `mesh-a2a-rpc` 277, `mesh-broadcast` 216, `mesh-state` 189 bytes each, mostly description text |
+| card.skills | 240 | non-critical, static | same for every peer |
+| card.description | 107 | non-critical | text with the nickname |
+| card.defaultInputModes, defaultOutputModes | 163 | non-critical, static | |
+| card.capabilities flags (3) | 107 | non-critical, static | |
+| status | 16 | used by workflows | availability for delegation (`idle`, `available`, `busy`) |
+| model, harness, host | 71 | used by workflows | graph-up picks peers by `model`; compares `host` for graph copy |
+| cwd | 58 | non-critical label | shown in status; also a privacy cost |
+| instance, hash, node, graph, joined_at, invited_by | 78 in 19 of 45 peers | used by workflows | only for graph members; `joined_at` orders peers |
+
+Result: of 2,290 bytes per entry, about 1,860 are the card and about 1,700 of those are
+static and identical across peers; only about 420 bytes (endpoint, key, name, version) are
+unique per peer, plus the labels. The critical bytes are well under 25% of the entry.
+
+### Frame kinds
+
+| Kind | Needed for the mesh? | Note |
+|---|---|---|
+| State and meta change frames | yes (cards, status) | the content is the problem (static card), not the frame |
+| Presence joined and left | yes for a clean roster | cosmetic if missed (ghost until the 90 s alive timeout) |
+| Alive beats | yes, only when a node is silent | already sent only if nothing else was sent in 30 s |
+| PeerInfo | yes for connectivity | [G] duplicates the card endpoint; the card hint exists to dial before PeerInfo arrives |
+| Digests (chat, state, meta) | only for repair | cheap by themselves (0.13% of a core); the cost is the resend after them |
+| Linkstate | only with multihop | every 15 s, sent on change |
+| Ping and pong | no (on demand) | |
+| Receipts | for delivery proof of directed frames | small |
+| Resends | no in steady state | the flood (items 1 to 4 above); the fixes target it |
+| Signature, ids, nonce per frame | signature yes (authenticity) | overhead measured by the new body-against-wire counters |
+
+### Proposals, ordered by bytes saved per risk (estimates from the table; not built)
+
+1. Stop sending the prose of the five card extensions: send the URI and the params only.
+   Saves about 1,000 bytes per entry (44%). Risk low: the text is static, and no code
+   found reads the description. Check first that an old receiver's card validation
+   (`card.rs`) accepts a card without them; a mixed-version plan is needed.
+2. Send the card by reference: the wire carries the 420 unique bytes and a template
+   version; the receiver rebuilds the static part from the version it knows, with a
+   full-card fallback for an unknown version. Saves about 1,700 bytes per entry (74%).
+   Risk medium: an app-level wire change with a version bump.
+3. Compress frame bodies: 48% on one entry and 91% on the whole document (gzip).
+   Independent of 1 and 2, but 1 and 2 shrink what is left to compress. Risk medium (a
+   wire change, CPU on both sides).
+4. Remove the entries and old changes of departed members: 30% of the document is dead
+   peers, and the history only grows. Risk medium: history of left peers disappears
+   from `status`; the doc crate has no GC.
+5. Send on demand what only workflows read: `cwd` (58 bytes, also a privacy cost) and
+   the graph fields could be fetched with `mesh/meta.get` when a skill needs them, not
+   replicated to every peer. Saves about 100 to 150 bytes per entry; risk medium
+   (skills must call for it).
+6. One unicast join backfill instead of floods: bytes received in the first minutes after
+   a join. Risk low to medium.
+7. Make digests unicast to one random peer (option (c) of the anti-entropy review) and
+   stop mesh-wide resends: the largest saving of repeated bytes (items 1 to 4 above).
+8. Drop one of two redundant endpoint carriers (card hint or PeerInfo) once the
+   per-kind counters show their bytes [G].
+
+What stays: endpoint, key, name, version, status, signature. The per-kind counters (item
+20) turn these estimates into measured shares.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
