@@ -228,6 +228,36 @@ State of the investigation. Each line says how well it is proven.
     - Decision: PARK. Under my rule (no behaviour change without a measured gain that
       pays for it) a 0.13% gain per node does not pay for a wire change.
 
+16. [V] The residual is named: `MeshDoc::holds_heads` under `handle_state_digest`
+    (`wire-straw`, residual profile; app `b588fc75`, engine rev `f8af1e6f`, rev edit
+    only; 12 survivors after a history of 60 dead members; two consecutive 30 s samples
+    at t >= 420 s, load 6.0 to 3.8, no stalled lines; a fresh survivor sampled 2 min
+    later, load 4.7 to 3.9). CPU then: 1.9% to 2.1% per daemon against 0.46% to 0.49%
+    fresh; meta document 62.0 KB against 24.6 KB.
+    - `holds_heads` is 234 and 240 of 535 and 524 busy samples inclusive (44% to 46%)
+      against 28 of 92 (30%) in the fresh survivor: 8.5 times the absolute cost, on the
+      same 36 `gossip_rx` per 10 s and a document 2.5 times bigger.
+    - The code (`habilis-network-doc/src/mesh_doc.rs:391`): for each head of each
+      incoming state digest, `decode_hash` and then `self.doc.get_change_by_hash`. The
+      self frames under it are Automerge `ChangeCollector`, `op_iter` and `hexane`
+      cursors, so [G] `get_change_by_hash` rebuilds the change from the op set (inlined;
+      the frames show it, the name shows 0 samples).
+    - The document already keeps `applied: HashSet<ChangeHash>` (line 152), used by
+      `ingest` for the O(1) "already applied" check, and a test pins that a change
+      recorded as applied is in the document (line 1137).
+    - Not the cause: no per-tick walk of the document (`on_tick`, `state_refresh` and
+      the state file have 0 samples in all three samples). `get_changes` 1 to 2 samples.
+    - Other rows, h60 against fresh (inclusive): `sendmsg` 101 and 100 against 11 (not
+      explained: 9 times more sends on the same `gossip_rx`; part may be the 5 to 8
+      `direct_rx` exchanges), `bs58` 66 and 93 against 17 (12% to 18%), `handle_digest`
+      53 and 84 against 13, ed25519 verify 20 and 16 against 5, `serde_json` 34 against
+      1. Samples under 5% are noise (about 530 and 92 busy samples).
+    - Idea M3 (not built): answer `holds_heads` from the `applied` set instead of
+      `get_change_by_hash`, or skip it when the digest heads equal our own heads. No
+      wire change; the result must be the same. A property test against
+      `get_change_by_hash` on docs with merges, forks, pending orphans and a snapshot
+      load, and a micro-benchmark on a 60 KB document, decide it.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
