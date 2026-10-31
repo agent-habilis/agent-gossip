@@ -361,6 +361,23 @@ State of the investigation. Each line says how well it is proven.
     one open case, worth a repeat. Caveats: built with Homebrew rustc 1.99.1 (the
     pinned nightly is absent), local relay lookup, 2 and 3 reps.
 
+20. [plan, relayed request 19:27 local] The goal of the study is to reduce the metadata on
+    the wire. The ratio of metadata to data must be measured by frame kind, next to CPU,
+    before and after each fix. Definitions used here: data = what users create (chat,
+    directed messages, task status and artifact legs); metadata = everything else
+    (state and meta change frames, presence, alive beats, PeerInfo, digests, linkstate,
+    ping and pong, receipts, resends of any kind, and the per-frame overhead of
+    signature, ids and nonce); transport overhead (QUIC, TLS, UDP, IP) is separate and
+    measured by `nettop` against the sum of the frame bytes. Counters needed (engine
+    census, per interval): bytes in by kind split into first sightings and duplicates,
+    bytes out by kind, and body bytes against wire bytes. Task assigned to
+    `origin-magnet` (branch `...-origin-magnet-m8`). Interim numbers from existing
+    data: on my daemon (83 min) the logged inbound bytes are 98% `meta` state frames
+    (15.66 MB), 2% directed (0.30 MB) and chat about 3 KB, while the wire carried 2.66 GB
+    in; a live meta document is 104 KB for 45 peers, 87% of a peer entry is the
+    static agent card, and the whole document compresses by 91% with gzip (items
+    above). The full table by kind comes from the new counters.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
