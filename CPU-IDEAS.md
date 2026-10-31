@@ -331,6 +331,36 @@ State of the investigation. Each line says how well it is proven.
       gauge: peers noted as ahead, summed over the two channels; above 0 for minutes on a
       mesh with no writes is the loop) and optionally `idle_state_rejected`.
 
+19. [V] The refill backoff in the `iroh-gossip` fork cuts the cap-exceeded traffic by
+    about 70% and CPU by 15% to 30%, but not down to the cap-32 level, and the heal
+    check has an open case (`lumen-gear`, `nyc-macmini1`, harness `mesh_peer_load`, 12
+    daemons, `--max-peers 8`, idle 10 min, last 5 min sampled, order A B A B, no
+    stalled lines; arms A = `6a8ebd12`, B = `8c068b2f` with the fork at `fec3ef8`).
+    Per daemon:
+
+    | Run | CPU | packets in/out per s | KB per s in/out |
+    |---|---|---|---|
+    | A1 | 1.33% (load 30.4 at t=240 s, contaminated) | 116 / 119 | 50.5 / 50.4 |
+    | B1 | 0.70% | 52 / 52 | 12.5 / 13.1 |
+    | A2 | 1.04% | 106 / 108 | 45.3 / 45.5 |
+    | B2 | 0.88% | 62 / 62 | 16.4 / 15.9 |
+
+    Bytes in fall about 70% (A mean 47.9, B mean 14.5 KB per second) against 7 to 9 at
+    cap 32; the clean CPU pair is 1.04% against 0.88%, against 0.64% to 0.66% at cap
+    32. Settled counts are alike in all four runs (neighbour up 0.04 to 0.05, down 0.02
+    to 0.03 per 10 s, `link_len` 7.3 to 7.6, roster 11, `idle_external` 91 to 93,
+    resends 0.2 to 0.4). So the backoff removes most of the extra Neighbor and
+    Disconnect traffic of a roster above the cap, as the patch intended.
+    Heal check (SIGKILL one random joiner at 180 s, watched 90 s, 3 reps per arm; the
+    per-second link count does not dip, so it was read from the logs): detection of
+    the victim by its gossip neighbours takes 34 to 69 s in A (n=24, median about 44) and
+    34 to 84 s in B (n=21, median 34.2), clustered at 34 and 54 s in both; replacement
+    after the detection is mostly under 1 s in both. The slowest replacement is 88.5 s
+    in both arms. In rep B-2 two survivors had no replacement by the end of the 90 s
+    watch (the load was 11.5 at the kill and the victim had 5 neighbours), A had none:
+    one open case, worth a repeat. Caveats: built with Homebrew rustc 1.99.1 (the
+    pinned nightly is absent), local relay lookup, 2 and 3 reps.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
