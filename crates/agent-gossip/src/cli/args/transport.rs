@@ -50,7 +50,7 @@ pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<Trans
     anyhow::ensure!(!transports.is_empty(), "the transport list is empty");
     let named: Vec<habilis_network::protocol::Transport> =
         transports.iter().copied().map(Into::into).collect();
-    TransportPolicy::from_transports(&named)
+    TransportPolicy::try_from(named.as_slice()).map_err(anyhow::Error::from)
 }
 
 #[cfg(test)]
@@ -64,14 +64,10 @@ mod tests {
     #[test]
     fn transport_list_is_literal() {
         assert_eq!(
-            transport_policy(&[Transport::Udp, Transport::WebRtc]).unwrap(),
-            TransportPolicy {
-                udp: true,
-                webrtc: true,
-                multihop: false,
-                gossip: false,
-                relay_transport: false
-            }
+            transport_policy(&[Transport::Udp, Transport::WebRtc])
+                .expect("this transport combination is valid"),
+            TransportPolicy::default().multihop(false).gossip(false),
+            "udp and webrtc alone enable no multihop, gossip or relay"
         );
     }
 
@@ -84,22 +80,36 @@ mod tests {
             Transport::Gossip,
             Transport::Relay,
         ])
-        .unwrap();
-        assert!(policy.multihop && policy.gossip && policy.relay_transport);
+        .expect("this transport combination is valid");
+        assert!(
+            policy.allows(habilis_network::protocol::Transport::Multihop)
+                && policy.allows(habilis_network::protocol::Transport::Gossip)
+                && policy.allows(habilis_network::protocol::Transport::Relay),
+            "udp and webrtc together enable multihop, gossip and relay transport"
+        );
     }
 
     #[test]
     fn transport_empty_list_errors() {
-        assert!(transport_policy(&[]).is_err());
+        assert!(
+            transport_policy(&[]).is_err(),
+            "an empty transport list is rejected"
+        );
     }
 
     #[test]
     fn transport_relay_alone_errors() {
-        assert!(transport_policy(&[Transport::Relay]).is_err());
+        assert!(
+            transport_policy(&[Transport::Relay]).is_err(),
+            "a relay-only list cannot carry the gossip"
+        );
     }
 
     #[test]
     fn transport_rejects_unknown_value() {
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--transport", "bogus"]).is_err());
+        assert!(
+            Cli::try_parse_from(["agent-gossip", "create", "--transport", "bogus"]).is_err(),
+            "an unknown transport name is rejected at parse time"
+        );
     }
 }

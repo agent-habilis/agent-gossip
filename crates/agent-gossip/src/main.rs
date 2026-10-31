@@ -42,13 +42,14 @@ async fn main() -> Result<()> {
     // `eprintln!` to stderr, which on a full disk is a file that fails too,
     // and `eprintln!` then panics. Under `panic = "abort"` that killed the
     // daemon with exit 134, an empty stderr, and no farewell to its peers.
-    tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(agent_gossip::log_filter())
-        .with_writer(agent_gossip::install_log_sink())
+        .with_writer(agent_gossip::install_log_sink());
+    subscriber
         .with_ansi(false)
         .log_internal_errors(false)
         .init();
     let result = agent_gossip::run_cli().await;
     agent_gossip::flush_log_if_pending();
-    result
+    Ok(result?)
 }

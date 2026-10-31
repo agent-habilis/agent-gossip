@@ -78,7 +78,9 @@ async fn rpc_message_send_opens_task_and_returns_it() {
         "got: {response}"
     );
     // The task id is server-minted — a fresh uuid, distinct from our message id.
-    let task_id = task["id"].as_str().expect("task id");
+    let task_id = task["id"]
+        .as_str()
+        .expect("the response task always carries a server-assigned identifier");
     assert_ne!(
         task_id, our_message_id,
         "the worker mints its own id, not our messageId"

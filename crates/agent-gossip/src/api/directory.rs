@@ -1,23 +1,23 @@
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use habilis_network::ops::directory::{Listing, ListingChange, Listings, directory_mesh};
-use habilis_network::protocol::{DEFAULT_DIRECTORY, resolve_lookups};
-use habilis_network::protocol::{LookupOpts, LookupSet, MeshName};
-use habilis_network::protocol::{MeshId, Nickname};
-use habilis_network::runtime::CoHostPolicy;
-use habilis_network::runtime::tuning::directory_expiry;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc;
+use habilis_network::ops::directory::{self, Listing, ListingChange, Listings};
+use habilis_network::protocol::{
+    DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
+};
+use habilis_network::runtime::{CoHostPolicy, tuning};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::MeshSession;
+use super::directory_error::DirectoryError;
+use crate::a2a::status_update_params;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
 
 /// One live directory entry handed to embedders — the public, iroh-free
 /// projection of a `habilis_network::ops::directory::Listing`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MeshListing {
     /// The advertised mesh's id — pass to [`MeshSession::join`] to join.
     pub mesh: MeshId,
@@ -37,6 +37,7 @@ pub struct MeshListing {
 
 /// A directory change observed by a [`Directory`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DirectoryEvent {
     /// A mesh appeared in the directory.
     Found(MeshListing),
@@ -57,7 +58,20 @@ fn public_listing(listing: &Listing) -> MeshListing {
     }
 }
 
-/// A live view of a directory. Joins the directory's mesh as an
+/// The collector task owns the listings; the handle reads this published copy,
+/// so no lock is shared between them.
+fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Listings) {
+    snapshot_tx.send_replace(
+        listings
+            .snapshot()
+            .map(|listing| public_listing(&listing))
+            .collect(),
+    );
+}
+
+/// A live view of a directory.
+///
+/// Joins the directory's mesh as an
 /// ordinary [`MeshSession`] and collects advertisements into
 /// `Listings`, aging out meshes whose publishers went silent. Drop
 /// (or let it fall out of scope) to leave the directory.
@@ -77,7 +91,7 @@ fn public_listing(listing: &Listing) -> MeshListing {
 #[derive(Debug)]
 pub struct Directory {
     session: Option<MeshSession>,
-    listings: Arc<Mutex<Listings>>,
+    snapshot_rx: watch::Receiver<Vec<MeshListing>>,
     events_rx: Option<mpsc::UnboundedReceiver<DirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
@@ -101,34 +115,32 @@ impl Directory {
     /// established (endpoint/gossip setup, bootstrap unreachable).
     ///
     /// # Panics
-    /// Panics only if the internal collector mutex is poisoned by a
-    /// panic in the background task — not reachable in normal use.
-    pub async fn open(name: Option<impl Into<String>>, lookups: LookupSet) -> anyhow::Result<Self> {
+    /// Panics only if `DEFAULT_DIRECTORY` is not a valid mesh name — not
+    /// reachable, it is a constant.
+    pub async fn open(name: Option<&str>, lookups: LookupSet) -> Result<Self, DirectoryError> {
         let directory_name = match name {
-            Some(value) => MeshName::new(value.into())
-                .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
-            None => {
-                MeshName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid mesh name")
-            }
+            Some(value) => MeshName::try_new(value)
+                .map_err(|error| DirectoryError::InvalidName(error.to_string()))?,
+            None => MeshName::try_new(DEFAULT_DIRECTORY)
+                .expect("DEFAULT_DIRECTORY is a valid mesh name"),
         };
         // Directories are inherently networked, so resolve as all-on:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
-        let resolved = resolve_lookups_or_public(
-            !habilis_network::runtime::tuning::directory_private_for_test(),
-            lookups,
-        );
-        let mesh = directory_mesh(&directory_name, resolved);
+        let resolved = resolve_lookups_or_public(!tuning::directory_private_for_test(), lookups);
+        let mesh = directory::directory_mesh(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
         // rendezvous (it only dials an advertiser's beacon).
-        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
+        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never)
+            .await
+            .map_err(DirectoryError::Join)?;
         let mut inbound = session.messages();
-        let listings = Arc::new(Mutex::new(Listings::new()));
+        let mut listings = Listings::new();
+        let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
         let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-        let collector = listings.clone();
         let task = tokio::spawn(async move {
-            let ttl = directory_expiry();
+            let ttl = tuning::directory_expiry();
             let mut expiry = tokio::time::interval(ttl);
             expiry.tick().await; // eat the immediate first tick
             loop {
@@ -136,24 +148,22 @@ impl Directory {
                     received = inbound.recv() => match received {
                         Ok(message) => {
                             let now = Instant::now();
-                            let event = {
-                                let mut dir = collector.lock().expect("directory mutex not poisoned");
-                                // Ads ride broadcast chat frames, so the ad
-                                // text is the payload's text projection, not
-                                // the raw frame body (a serialized A2A object).
-                                let Some(ad_text) = crate::a2a::gossip::chat_text(&message) else {
-                                    continue;
-                                };
-                                match dir.note(&ad_text, now) {
-                                    Some(ListingChange::Found(id)) => dir
-                                        .get(&id)
-                                        .map(|listing| DirectoryEvent::Found(public_listing(listing))),
-                                    Some(ListingChange::Updated(id)) => dir
-                                        .get(&id)
-                                        .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
-                                    None => None,
-                                }
+                            // Ads ride broadcast chat frames, so the ad
+                            // text is the payload's text projection, not
+                            // the raw frame body (a serialized A2A object).
+                            let Some(ad_text) = status_update_params::chat_text(&message) else {
+                                continue;
                             };
+                            let event: Option<DirectoryEvent> = match listings.note(&ad_text, now) {
+                                Some(ListingChange::Found(id)) => listings
+                                    .get(&id)
+                                    .map(|listing| DirectoryEvent::Found(public_listing(listing))),
+                                Some(ListingChange::Updated(id)) => listings
+                                    .get(&id)
+                                    .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
+                                _ => None,
+                            };
+                            publish_snapshot(&snapshot_tx, &listings);
                             if let Some(event) = event {
                                 let _ = events_tx.send(event);
                             }
@@ -165,10 +175,8 @@ impl Directory {
                     },
                     _ = expiry.tick() => {
                         let now = Instant::now();
-                        let lost = {
-                            let mut dir = collector.lock().expect("directory mutex not poisoned");
-                            dir.expire(ttl, now)
-                        };
+                        let lost: Vec<_> = listings.expire(ttl, now).collect();
+                        publish_snapshot(&snapshot_tx, &listings);
                         for id in lost {
                             let _ = events_tx.send(DirectoryEvent::Lost(id));
                         }
@@ -179,26 +187,15 @@ impl Directory {
 
         Ok(Self {
             session: Some(session),
-            listings,
+            snapshot_rx,
             events_rx: Some(events_rx),
             task: Some(task),
         })
     }
 
     /// The current live listings, sorted by name then id.
-    ///
-    /// # Panics
-    /// Panics only if the internal collector mutex was poisoned by a
-    /// prior panic in the background task — not reachable in normal use.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<MeshListing> {
-        self.listings
-            .lock()
-            .expect("directory mutex not poisoned")
-            .snapshot()
-            .iter()
-            .map(public_listing)
-            .collect()
+    pub fn snapshot(&self) -> impl Iterator<Item = MeshListing> {
+        self.snapshot_rx.borrow().clone().into_iter()
     }
 
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).
@@ -222,12 +219,12 @@ impl Directory {
     /// # Errors
     /// Propagates a clean-shutdown error from the underlying directory
     /// [`MeshSession::leave`] (event-loop task panic / loop error).
-    pub async fn close(mut self) -> anyhow::Result<()> {
+    pub async fn close(mut self) -> Result<(), DirectoryError> {
         if let Some(task) = self.task.take() {
             task.abort();
         }
         if let Some(session) = self.session.take() {
-            session.leave().await?;
+            session.leave().await.map_err(DirectoryError::Leave)?;
         }
         Ok(())
     }
@@ -258,16 +255,16 @@ pub(crate) fn resolve_lookups_or_public(public: bool, lookups: LookupSet) -> Loo
 
 #[cfg(test)]
 mod lookup_tests {
-    use habilis_network::ops::directory::directory_mesh;
+    use habilis_network::ops::directory;
     use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
-    use super::resolve_lookups_or_public;
-
     fn directory_topic(public: bool, lookups: LookupSet) -> String {
-        let name = MeshName::new(DEFAULT_DIRECTORY).unwrap();
+        let name =
+            MeshName::try_new(DEFAULT_DIRECTORY).expect("the test literal is a valid mesh name");
         format!(
             "{:?}",
-            directory_mesh(&name, resolve_lookups_or_public(public, lookups)).topic_id()
+            directory::directory_mesh(&name, super::resolve_lookups_or_public(public, lookups))
+                .topic_id()
         )
     }
 
@@ -280,21 +277,20 @@ mod lookup_tests {
     fn directory_ids_survive_the_lookup_api_change() {
         assert_eq!(
             directory_topic(true, LookupSet::default()),
-            "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)"
+            "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)",
+            "the directory topic id is stable across the lookup API"
         );
+        let mut mdns_only = LookupSet::default();
+        mdns_only.mdns = true;
         assert_eq!(
-            directory_topic(
-                true,
-                LookupSet {
-                    mdns: true,
-                    ..LookupSet::default()
-                }
-            ),
-            "TopicId(aaef8fe2a5ca5560cdecc153d4ee18d446e6448d831e97e1639e1ef8b6b42eaa)"
+            directory_topic(true, mdns_only),
+            "TopicId(aaef8fe2a5ca5560cdecc153d4ee18d446e6448d831e97e1639e1ef8b6b42eaa)",
+            "the directory topic id is stable across the lookup API"
         );
         assert_eq!(
             directory_topic(false, LookupSet::default()),
-            "TopicId(14a8001b57bb1cbcc7b94f936c71cb94c2ab39a8c9b0423dbad0da809f93db8f)"
+            "TopicId(14a8001b57bb1cbcc7b94f936c71cb94c2ab39a8c9b0423dbad0da809f93db8f)",
+            "the directory topic id is stable across the lookup API"
         );
     }
 }

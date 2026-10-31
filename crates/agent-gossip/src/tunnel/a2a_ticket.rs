@@ -1,0 +1,255 @@
+//! The a2a bridge ticket — a bare `Base58Check` token carrying everything a
+//! consumer needs to dial the exposer: the bearer secret, the mesh's discovery
+//! config, and the exposer's address. Payload layout: `secret(32) ‖ flags(1) ‖
+//! lookups ‖ address-json` (lookups is self-delimiting, so the address occupies
+//! the remainder). Bit 0 of the flags byte marks a password-protected ticket.
+//!
+//! Wire: bare `Base58Check`(`version ‖ kind ‖ payload`) with a `SHA256d`
+//! checksum. The `kind` byte marks this as an *a2a bridge* ticket so a
+//! wrong-kind token (blob / invite) fails cleanly on decode.
+
+use anyhow::{Context, Result, bail};
+use habilis_network::iroh::EndpointAddr;
+use habilis_network::net::{endpoint_addr_from_json, endpoint_addr_to_json};
+use habilis_network::protocol::{LookupOpts, TicketSecret};
+use sha2::{Digest, Sha256};
+
+use super::SECRET_LEN;
+
+/// Framing version. Bumped only on a breaking framing change; an unknown
+/// version is rejected on decode.
+const VERSION: u8 = 1;
+
+/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from blob (`1`)
+/// and invite (`3`) tickets so a wrong-kind token is rejected on decode.
+const KIND: u8 = 2;
+
+/// Bit 0 of the flags byte: the password flag.
+const PASSWORD_BIT: u8 = 0b0000_0001;
+
+/// A decoded a2a bridge ticket.
+pub(crate) struct A2aTicket {
+    pub address: EndpointAddr,
+    pub secret: TicketSecret,
+    pub lookups: LookupOpts,
+    /// Password-protected: the consumer must present the Argon2id stretch of
+    /// the password (salted by `secret`) in the stream header instead of the
+    /// raw secret, so the ticket — and any directory ad carrying it — no longer
+    /// redeems alone.
+    pub password: bool,
+}
+
+impl A2aTicket {
+    /// Encode as a bare base58 a2a bridge token.
+    pub(crate) fn encode(&self) -> String {
+        let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
+        payload.extend_from_slice(self.secret.as_bytes());
+        payload.push(if self.password { PASSWORD_BIT } else { 0 });
+        self.lookups.encode_into(&mut payload);
+        let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.address))
+            .expect("EndpointAddr JSON always serializes");
+        payload.extend_from_slice(&addr_json);
+        let mut framed = Vec::with_capacity(2 + payload.len());
+        framed.push(VERSION);
+        framed.push(KIND);
+        framed.extend_from_slice(&payload);
+        base58check_encode(&framed)
+    }
+
+    /// Decode a bare base58 a2a ticket.
+    ///
+    /// # Errors
+    /// Bad Base58/checksum, the wrong ticket kind, a bad version, or a
+    /// malformed payload.
+    pub(crate) fn decode(ticket: &str) -> Result<Self> {
+        let framed = base58check_decode(ticket.trim())?;
+        let version = *framed.first().context("ticket too short")?;
+        if version != VERSION {
+            bail!("unsupported a2a ticket version: {version}");
+        }
+        let kind = *framed.get(1).context("ticket too short")?;
+        if kind != KIND {
+            bail!("not an a2a ticket: wrong ticket kind");
+        }
+        let payload = &framed[2..];
+        let secret = TicketSecret::from(<[u8; 32]>::try_from(
+            payload.get(..SECRET_LEN).context("ticket too short")?,
+        )?);
+        let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
+        let password = flags & PASSWORD_BIT != 0;
+        let mut position = SECRET_LEN + 1;
+        let lookups = LookupOpts::decode_from(payload, &mut position)?;
+        let addr_json = payload.get(position..).context("ticket missing address")?;
+        let value: serde_json::Value =
+            serde_json::from_slice(addr_json).context("invalid ticket address json")?;
+        let (_id, address) = endpoint_addr_from_json(&value)?;
+        Ok(Self {
+            address,
+            secret,
+            lookups,
+            password,
+        })
+    }
+}
+
+fn checksum(bytes: &[u8]) -> [u8; 4] {
+    let first = Sha256::digest(bytes);
+    let second = Sha256::digest(first);
+    let mut out = [0u8; 4];
+    out.copy_from_slice(&second[..4]);
+    out
+}
+
+fn base58check_encode(payload: &[u8]) -> String {
+    let mut with_checksum = payload.to_vec();
+    with_checksum.extend_from_slice(&checksum(payload));
+    bs58::encode(with_checksum).into_string()
+}
+
+fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
+    let decoded = bs58::decode(encoded)
+        .into_vec()
+        .context("invalid Base58 in a2a ticket")?;
+    if decoded.len() < 4 {
+        bail!("a2a ticket too short");
+    }
+    let (payload, received) = decoded.split_at(decoded.len() - 4);
+    if received != checksum(payload) {
+        bail!("invalid a2a ticket checksum");
+    }
+    Ok(payload.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use habilis_network::iroh::{EndpointAddr, SecretKey};
+    use habilis_network::ops::blob;
+    use habilis_network::ops::blob::{BlobDigest, BlobTicket};
+    use habilis_network::protocol::{LookupOpts, TicketSecret};
+
+    use super::{A2aTicket, SECRET_LEN};
+
+    fn sample_addr(byte: u8) -> EndpointAddr {
+        let id = SecretKey::from_bytes(&[byte; 32]).public();
+        EndpointAddr::new(id)
+            .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"))
+    }
+
+    #[test]
+    fn ticket_round_trips() {
+        let address = sample_addr(3);
+        let ticket = A2aTicket {
+            address: address.clone(),
+            secret: TicketSecret::from([9u8; SECRET_LEN]),
+            lookups: LookupOpts::public_preset(),
+            password: false,
+        };
+        let encoded = ticket.encode();
+        assert!(encoded.is_ascii(), "the ticket is plain ascii");
+        let scheme_separator = "://";
+        assert!(
+            !encoded.contains(scheme_separator),
+            "the ticket carries no url scheme"
+        );
+        let decoded =
+            A2aTicket::decode(&encoded).expect("encode output is always text that decode accepts");
+        assert_eq!(
+            decoded.address.id, address.id,
+            "the decoded address keeps the id"
+        );
+        assert_eq!(
+            decoded.secret.as_bytes(),
+            &[9u8; SECRET_LEN],
+            "the decoded secret is the one encoded"
+        );
+        assert_eq!(
+            decoded.lookups,
+            LookupOpts::public_preset(),
+            "the lookups travel in the ticket, or the consumer would search the wrong places"
+        );
+        assert!(
+            !decoded.password,
+            "a ticket without a password decodes with no password flag"
+        );
+    }
+
+    #[test]
+    fn password_flag_round_trips() {
+        let ticket = A2aTicket {
+            address: sample_addr(11),
+            secret: TicketSecret::from([9u8; SECRET_LEN]),
+            lookups: LookupOpts::loopback(),
+            password: true,
+        };
+        let decoded = A2aTicket::decode(&ticket.encode())
+            .expect("encode output is always text that decode accepts");
+        assert!(
+            decoded.password,
+            "a ticket with a password decodes with the password flag"
+        );
+    }
+
+    #[test]
+    fn rejects_a_mesh_token() {
+        // A bare mesh id shares the base58 shape but frames a different
+        // payload, so it fails ticket decode on the checksum/kind check.
+        let mesh = habilis_network::protocol::Mesh::try_new(
+            habilis_network::protocol::Seed::new([1u8; 32]),
+            habilis_network::protocol::MeshName::try_new("t")
+                .expect("the test literal is a valid mesh name"),
+            habilis_network::protocol::MeshConfig::loopback(),
+        )
+        .expect("a mesh without a secret")
+        .to_string();
+        assert!(
+            A2aTicket::decode(&mesh).is_err(),
+            "a mesh id is not a valid ticket"
+        );
+    }
+
+    #[test]
+    fn rejects_a_cross_kind_ticket() {
+        // The blob ticket shares the bare-base58 shape but carries a different
+        // kind byte, so it must not decode as an a2a ticket — and vice versa.
+        let blob = BlobTicket::new(
+            sample_addr(3),
+            TicketSecret::from([9u8; blob::SECRET_LEN]),
+            BlobDigest::from([7u8; blob::HASH_LEN]),
+            1_234_567,
+            LookupOpts::public_preset(),
+            false.into(),
+        )
+        .password(false);
+        let a2a = A2aTicket {
+            address: sample_addr(4),
+            secret: TicketSecret::from([9u8; SECRET_LEN]),
+            lookups: LookupOpts::public_preset(),
+            password: false,
+        };
+        assert!(
+            A2aTicket::decode(&blob.encode()).is_err(),
+            "the kinds use distinct byte domains, so a blob ticket cannot be replayed as another kind"
+        );
+        assert!(
+            BlobTicket::decode(&a2a.encode()).is_err(),
+            "the kinds use distinct byte domains, so an a2a ticket cannot be replayed as another kind"
+        );
+    }
+
+    #[test]
+    fn rejects_bad_checksum() {
+        let ticket = A2aTicket {
+            address: sample_addr(5),
+            secret: TicketSecret::from([1u8; SECRET_LEN]),
+            lookups: LookupOpts::loopback(),
+            password: false,
+        };
+        let mut encoded = ticket.encode();
+        let last = encoded.pop().expect("the encoded ticket is not empty");
+        encoded.push(if last == '1' { '2' } else { '1' });
+        assert!(
+            A2aTicket::decode(&encoded).is_err(),
+            "a truncated ticket is rejected"
+        );
+    }
+}

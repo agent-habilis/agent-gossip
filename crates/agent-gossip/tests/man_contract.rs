@@ -16,7 +16,8 @@ fn man_prints_manual_to_stdout() {
         output.status
     );
 
-    let stdout = String::from_utf8(output.stdout).expect("manual is UTF-8");
+    let stdout =
+        String::from_utf8(output.stdout).expect("the manual is embedded text from a source file");
 
     // Renders the man page: the canonical sections + key agent material.
     for marker in [
@@ -49,18 +50,26 @@ fn man_prints_manual_to_stdout() {
 
 fn carries_banned_word(line: &str) -> bool {
     let lower = line.to_lowercase();
-    lower.contains("square")
-        || lower.contains("participant")
-        || lower
-            .split(|ch: char| !ch.is_ascii_alphabetic())
-            .any(|word| word == "room" || word == "rooms")
+    let has_room_word = lower
+        .split(|ch: char| !ch.is_ascii_alphabetic())
+        .any(|word| word == "room" || word == "rooms");
+    lower.contains("square") || lower.contains("participant") || has_room_word
 }
 
 #[test]
 fn a_stray_room_word_still_counts_as_banned() {
-    assert!(carries_banned_word("join the room now"));
-    assert!(carries_banned_word("Rooms are gone"));
-    assert!(!carries_banned_word("keep the headroom"));
+    assert!(
+        carries_banned_word("join the room now"),
+        "the word room, as a verb phrase, is banned"
+    );
+    assert!(
+        carries_banned_word("Rooms are gone"),
+        "a capitalized plural is banned too"
+    );
+    assert!(
+        !carries_banned_word("keep the headroom"),
+        "headroom only contains the word, so it is allowed"
+    );
 }
 
 /// The manual is the one place the old vocabulary can rot back in unnoticed:
@@ -84,7 +93,8 @@ fn manual_carries_no_pre_rename_vocabulary() {
         "`agent-gossip man` should exit 0, got {:?}",
         output.status
     );
-    let stdout = String::from_utf8(output.stdout).expect("manual is UTF-8");
+    let stdout =
+        String::from_utf8(output.stdout).expect("the manual is embedded text from a source file");
     assert!(
         !stdout.trim().is_empty(),
         "`agent-gossip man` produced no output"
@@ -92,11 +102,12 @@ fn manual_carries_no_pre_rename_vocabulary() {
 
     // The env var name is an identifier the manual must quote, and its `ROOM`
     // segment would otherwise read as the retired word.
-    let prose = stdout.replace("AGENT_GOSSIP_DEFAULT_ROOM", "");
-    let offenders: Vec<_> = prose
+    let prose: String = stdout.split("AGENT_GOSSIP_DEFAULT_ROOM").collect();
+    let banned_lines = prose
         .lines()
         .enumerate()
-        .filter(|(_, line)| carries_banned_word(line))
+        .filter(|(_, line)| carries_banned_word(line));
+    let offenders: Vec<_> = banned_lines
         .map(|(number, line)| format!("  {}: {line}", number + 1))
         .collect();
 

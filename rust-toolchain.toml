@@ -1,9 +1,12 @@
 [toolchain]
 # Single source of truth for the toolchain on every env (local + CI).
-# Exact patch pin so a floating "1.95" can't resolve to different patch
-# releases between machines. CI reads this file via
-# actions-rust-lang/setup-rust-toolchain — do not duplicate the version
-# in the workflows.
-channel = "1.95.0"
+# One toolchain for build, lint, test and fmt. The pin is nightly-2026-06-05
+# (rustc 1.98.0-nightly), which is older than the current stable 1.99.
+# Pinned by date: rustfmt.toml needs unstable options, which only nightly
+# rustfmt honours, and those options change between nightlies. The date is
+# bumped by hand. CI reads this file via
+# actions-rust-lang/setup-rust-toolchain — do not duplicate the version in
+# the workflows.
+channel = "nightly-2026-06-05"
 components = ["clippy", "rustfmt"]
 profile = "minimal"

@@ -1,0 +1,298 @@
+//! `poll` command args: retrieve buffered messages from a running gossip
+//! process via IPC.
+
+use clap::Parser;
+use habilis_network::protocol::{MeshId, Nickname};
+
+use super::legacy_output::LegacyOutput;
+use super::poll_identity::PollIdentity;
+
+#[derive(Parser, Debug)]
+pub(crate) struct PollOpts {
+    /// Gossip identifier
+    #[arg(long, alias = "room", required_unless_present = "state_file")]
+    pub gossip: Option<MeshId>,
+
+    /// Nickname of the local agent (must have a running join/create session)
+    #[arg(long, required_unless_present = "state_file")]
+    pub nickname: Option<Nickname>,
+
+    /// Resolve --gossip/--nickname from a create/join --state-file instead:
+    /// wait until that file reports the daemon serving (like `agent-gossip ready`),
+    /// then poll as the identity it carries. Lets a poll be armed before the
+    /// daemon has minted its identity.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["gossip", "nickname"])]
+    pub state_file: Option<std::path::PathBuf>,
+
+    /// Debug/recovery read: only return events surfaced after this sequence
+    /// number, without touching the daemon's read cursor. Hidden — a plain
+    /// `poll` tracks the cursor for you (it serves everything not yet served
+    /// and remembers where you are).
+    #[arg(long, hide = true)]
+    pub after: Option<u64>,
+
+    /// Block until an unserved event arrives (long-poll) — the receive bell.
+    /// Parks until the daemon holds a waking event it has not yet served to a
+    /// plain poll; state/meta document echoes and your own task echoes
+    /// (status, artifact, message) never fire it. The daemon holds
+    /// each request up to ~60s and the CLI transparently re-issues on an
+    /// empty window, so this never times out; a killed call loses nothing.
+    /// Omit for an immediate read.
+    #[arg(long)]
+    pub long: bool,
+
+    /// Wait this many seconds before the bell starts listening. The bell
+    /// counts as armed during the wait, which a shell `sleep` before the
+    /// command would not.
+    #[arg(long, value_name = "SECS", requires = "long")]
+    pub settle_secs: Option<u64>,
+
+    /// End the bell by itself once this many seconds have passed: print the
+    /// quiet empty batch `[]` and exit 0, as an ordinary empty ring does.
+    /// The bell can overshoot by one daemon park (~60s). Use it when a
+    /// harness stops a background command at a time limit, so the bell
+    /// ends first and the agent re-arms it without a notice.
+    #[arg(long, value_name = "SECS", requires = "long")]
+    pub max_secs: Option<u64>,
+
+    #[command(flatten)]
+    pub legacy_output: LegacyOutput,
+}
+
+impl PollOpts {
+    // clap's `required_unless_present` and `conflicts_with` already rule out the
+    // error arm; it exists so the caller needs no `expect`.
+    pub(crate) fn identity(&mut self) -> anyhow::Result<PollIdentity> {
+        match (
+            self.state_file.take(),
+            self.gossip.take(),
+            self.nickname.take(),
+        ) {
+            (Some(path), None, None) => Ok(PollIdentity::StateFile(path)),
+            (None, Some(gossip), Some(nickname)) => Ok(PollIdentity::Session { gossip, nickname }),
+            _ => anyhow::bail!("poll needs --state-file, or --gossip with --nickname"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use crate::cli::args::{Cli, Commands};
+
+    fn parse(argv: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(argv)
+    }
+
+    #[test]
+    fn settle_secs_requires_long() {
+        let err = parse(&[
+            "agent-gossip",
+            "poll",
+            "--gossip",
+            "g",
+            "--nickname",
+            "n",
+            "--settle-secs",
+            "5",
+        ])
+        .expect_err("--settle-secs without --long must be rejected");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--settle-secs without --long fails with a missing argument"
+        );
+        let cli = parse(&[
+            "agent-gossip",
+            "poll",
+            "--gossip",
+            "g",
+            "--nickname",
+            "n",
+            "--long",
+            "--settle-secs",
+            "5",
+        ])
+        .expect("--settle-secs with --long parses");
+        let Commands::Poll { options } = cli.command else {
+            panic!("expected Poll command");
+        };
+        assert_eq!(
+            options.settle_secs,
+            Some(5),
+            "--settle-secs with --long is kept"
+        );
+    }
+
+    #[test]
+    fn max_secs_requires_long() {
+        let base = ["agent-gossip", "poll", "--gossip", "g", "--nickname", "n"];
+        let err = parse(&[&base[..], &["--max-secs", "7000"]].concat())
+            .expect_err("--max-secs without --long must be rejected");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--max-secs without --long fails with a missing argument"
+        );
+        let cli = parse(&[&base[..], &["--long", "--max-secs", "7000"]].concat())
+            .expect("--max-secs with --long parses");
+        let Commands::Poll { options } = cli.command else {
+            panic!("expected Poll command");
+        };
+        assert_eq!(
+            options.max_secs,
+            Some(7000),
+            "--max-secs with --long is kept"
+        );
+    }
+
+    #[test]
+    fn gossip_and_nickname_form_parses() {
+        let cli = parse(&[
+            "agent-gossip",
+            "poll",
+            "--gossip",
+            "abc",
+            "--nickname",
+            "calm-fox",
+        ])
+        .expect("the session form is the documented way to name a poll target");
+        let Commands::Poll { options } = cli.command else {
+            panic!("expected poll");
+        };
+        assert!(
+            options.gossip.is_some(),
+            "--gossip and --nickname parse as a session identity"
+        );
+        assert!(
+            options.nickname.is_some(),
+            "the session form carries a nickname"
+        );
+        assert!(
+            options.state_file.is_none(),
+            "the session form has no state file"
+        );
+    }
+
+    #[test]
+    fn state_file_form_parses_without_identity() {
+        let cli = parse(&[
+            "agent-gossip",
+            "poll",
+            "--state-file",
+            "/tmp/s.json",
+            "--long",
+        ])
+        .expect("a state file alone must be enough to poll a detached session");
+        let Commands::Poll { options } = cli.command else {
+            panic!("expected poll");
+        };
+        assert!(
+            options.gossip.is_none(),
+            "--state-file alone leaves the gossip unset"
+        );
+        assert!(
+            options.nickname.is_none(),
+            "--state-file alone leaves the nickname unset"
+        );
+        assert!(options.state_file.is_some(), "--state-file is kept");
+        assert!(options.long, "--long is parsed");
+    }
+
+    #[test]
+    fn state_file_conflicts_with_gossip_and_nickname() {
+        assert!(
+            parse(&[
+                "agent-gossip",
+                "poll",
+                "--state-file",
+                "/tmp/s.json",
+                "--gossip",
+                "abc",
+            ])
+            .is_err(),
+            "a state file already names the session, so a gossip id would contradict it"
+        );
+        assert!(
+            parse(&[
+                "agent-gossip",
+                "poll",
+                "--state-file",
+                "/tmp/s.json",
+                "--nickname",
+                "calm-fox",
+            ])
+            .is_err(),
+            "a state file already names the session, so a nickname would contradict it"
+        );
+    }
+
+    /// `--after` is hidden from help but must keep parsing — it is the
+    /// debug/recovery replay and the old-protocol compatibility path.
+    #[test]
+    fn hidden_after_still_parses() {
+        let cli = parse(&[
+            "agent-gossip",
+            "poll",
+            "--gossip",
+            "abc",
+            "--nickname",
+            "calm-fox",
+            "--after",
+            "41",
+        ])
+        .expect("hidden flag parses");
+        let Commands::Poll { options } = cli.command else {
+            panic!("expected poll");
+        };
+        assert_eq!(options.after, Some(41), "the hidden --after flag is kept");
+    }
+
+    #[test]
+    fn identity_is_required_without_state_file() {
+        assert!(
+            parse(&["agent-gossip", "poll"]).is_err(),
+            "poll without an identity is rejected"
+        );
+        assert!(
+            parse(&["agent-gossip", "poll", "--gossip", "abc"]).is_err(),
+            "poll with only a gossip is rejected"
+        );
+        assert!(
+            parse(&["agent-gossip", "poll", "--nickname", "calm-fox"]).is_err(),
+            "poll with only a nickname is rejected"
+        );
+    }
+
+    #[test]
+    fn gossip_without_nickname_is_rejected() {
+        let err = parse(&["agent-gossip", "poll", "--gossip", "abc"])
+            .expect_err("--gossip alone must be rejected");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--gossip alone fails with a missing argument"
+        );
+    }
+
+    #[test]
+    fn state_file_with_gossip_is_rejected() {
+        let err = parse(&[
+            "agent-gossip",
+            "poll",
+            "--state-file",
+            "/tmp/s.json",
+            "--gossip",
+            "abc",
+            "--nickname",
+            "calm-fox",
+        ])
+        .expect_err("--state-file together with --gossip must be rejected");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "--state-file conflicts with --gossip"
+        );
+    }
+}

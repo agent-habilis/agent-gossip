@@ -1,0 +1,20 @@
+use anyhow::Result;
+
+use super::args::TopologyOpts;
+use super::msg_response::MsgResponse;
+use crate::a2a::ipc_command::IpcCommand;
+
+/// Print the multihop routing topology (assembled mesh graph) from the running
+/// daemon, as JSON.
+pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
+    let command = IpcCommand::Topology {
+        mesh: options.gossip,
+    };
+    let response = super::send::send(&command, &options.nickname).await?;
+    println!("{response}");
+    let parsed: MsgResponse = serde_json::from_str(&response)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}

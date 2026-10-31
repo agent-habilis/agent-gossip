@@ -1,6 +1,9 @@
+//! Integration tests that a self echo appears only after a delivery.
+
 use std::time::Duration;
 
-use agent_gossip::events::OutputEvent;
+use agent_gossip::a2a::status_update_params;
+use agent_gossip::output_event::OutputEvent;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, Node};
 
@@ -14,8 +17,8 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
     events.iter().any(|event| {
         matches!(
             event,
-            OutputEvent::Message { msg, is_self: true }
-                if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(text)
+            OutputEvent::Message { message, is_self: true }
+                if status_update_params::chat_text(message).as_deref() == Some(text)
         )
     })
 }
@@ -35,7 +38,7 @@ async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
 async fn msg_to_a_live_peer_echoes_after_delivery() {
     let (mut alice, bob) = meshed_pair("echo-live", "echo-live-bob").await;
 
-    alice.msg("echo-live-bob", "arrives").await;
+    alice.message("echo-live-bob", "arrives").await;
 
     assert!(
         alice
@@ -53,8 +56,14 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_flags("echo-dead", &SHORT_EVICT);
     let bob = Node::join_flags(&mesh, "echo-dead-bob", &SHORT_EVICT);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "without a ready first peer the test cannot tell a failed dial from a slow start"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "without a ready second peer the test cannot tell a failed dial from a slow start"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
     bob.kill();
@@ -89,8 +98,14 @@ fn a_msg_whose_send_failed_never_arrives_later() {
     ];
     let (alice, mesh) = Node::create_flags("echo-late", &flags);
     let bob = Node::join_flags(&mesh, "echo-late-bob", &flags);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "without a ready first peer the test cannot tell a failed send from a slow start"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "without a ready second peer the test cannot tell a failed send from a slow start"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
     bob.stop();

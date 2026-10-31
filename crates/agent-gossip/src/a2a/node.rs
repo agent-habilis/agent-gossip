@@ -1,23 +1,29 @@
 use std::time::{Duration, Instant};
 
-use habilis_network::embed::EventLoopState;
-use habilis_network::embed::HandlerCtx;
-use habilis_network::embed::{AppClass, InboundApp, NodeApp};
-use habilis_network::embed::{IpcRequest, NodeDriver};
+use habilis_network::embed::{
+    AppClass, EventLoopState, HandlerCtx, InboundApp, IpcRequest, NodeApp, NodeDriver,
+};
 use habilis_network::net::add_peer_addr;
-use habilis_network::protocol::MessageBody;
-use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{AppTag, Channel, DedupKey, Message, MessageKind, Nickname};
+use habilis_network::ops::{Farewell, MergeCtx, StateMergeParams, broadcast_state_merge};
+use habilis_network::protocol::messages::Authored;
+use habilis_network::protocol::{
+    AppTag, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
+};
 use habilis_network::runtime::state_file::StateFile;
+use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::time::Instant as TokioInstant;
 
-use crate::a2a::app::{A2aApp, A2aResponder};
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::a2a_app::{A2aApp, A2aResponder};
+use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
-use crate::a2a::rpc::{A2aOp, A2aRequest};
-use crate::a2a::session::SessionRequest;
-use crate::a2a::wire;
-use crate::output;
+use crate::a2a::rpc_error::{A2aOp, A2aRequest, RpcError};
+use crate::a2a::session_request::SessionRequest;
+use crate::a2a::{
+    broadcast_params, card, ipc_command, rpc_error, served, status_update_params, task_record,
+    tuning, wire,
+};
+use crate::cli::bell;
+use crate::emission;
 
 /// The longest wait, in ticks, between two tries to publish a card that did not publish.
 const CARD_RETRY_MAX_TICKS: u32 = 64;
@@ -32,21 +38,22 @@ impl NodeApp for A2aApp {
         &mut self,
         frame: InboundApp<'_>,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let InboundApp {
             message,
             surfaceable,
+            ..
         } = frame;
         // A directed, correlated RPC frame (request/response) is plumbing —
         // never retained. Everything else is content routed to its lifecycle
         // handler, which decides loggability.
         let tag = message.kind.app_tag().map(AppTag::as_str);
         if tag == Some(wire::REQ) || tag == Some(wire::RESP) {
-            handle_a2a_rpc(message, state, self, ctx).await;
+            handle_a2a_rpc(message, state, self, context).await;
             return false;
         }
-        let routed = route_content(message, surfaceable, self, ctx);
+        let routed = route_content(message, surfaceable, self, context);
         if routed.fresh_for_us {
             let receipt = Receipt {
                 ref_id: message.id.as_str().to_owned(),
@@ -54,7 +61,7 @@ impl NodeApp for A2aApp {
             };
             // Best effort: `send_receipt` logs its own failure, and a lost
             // receipt only leaves the sender without a delivery proof.
-            let _ = send_receipt(state, ctx, &message.author, &receipt).await;
+            let _ = send_receipt(state, context, &message.author, &receipt).await;
         }
         routed.loggable
     }
@@ -63,17 +70,17 @@ impl NodeApp for A2aApp {
         &mut self,
         author: &Nickname,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) {
-        adopt_meta_endpoint(author, state, ctx);
+        adopt_meta_endpoint(author, state, context);
     }
 
-    async fn on_meshed(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    async fn on_meshed(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Re-publish our card now that we're meshed: the home relay is homed by
         // this point, so the card's endpoint hint gets a real dial path (the
         // startup publish may have had none). A no-op if the address is
         // unchanged.
-        self.sync_own_card(state, ctx).await;
+        self.sync_own_card(state, context).await;
     }
 
     async fn on_peer_left(
@@ -86,7 +93,7 @@ impl NodeApp for A2aApp {
         // self` passed alongside it. Tasks first, then waiters: a waiter must
         // never resolve while its task record is still live.
         let out = self.output.clone();
-        crate::a2a::task::fail_tasks_for_departed_peer(&mut self.tasks, nickname, &out);
+        task_record::fail_tasks_for_departed_peer(&mut self.tasks, nickname, &out);
         self.fail_a2a_waiters_for_peer(nickname);
     }
 }
@@ -110,36 +117,42 @@ impl NodeDriver for A2aApp {
         }
     }
 
-    async fn on_startup(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        self.sync_own_card(state, ctx).await;
+    async fn on_startup(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+        self.sync_own_card(state, context).await;
     }
 
-    async fn on_tick(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    async fn on_tick(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
-        crate::a2a::send::retain_sent_legs(self, state);
+        broadcast_params::retain_sent_legs(self, state);
         // A card that did not publish is tried again, with a longer wait after each failure:
         // no peer can send to us without it.
         if self.card_error.is_some() {
             if self.card_retry_in == 0 {
-                self.sync_own_card(state, ctx).await;
+                self.sync_own_card(state, context).await;
             } else {
                 self.card_retry_in -= 1;
             }
         }
-        crate::a2a::task::tick_task_sweep(state, self, ctx, &out).await;
-        crate::a2a::task::tick_task_keepalive(state, self, ctx).await;
+        task_record::tick_task_sweep(state, self, context, &out).await;
+        task_record::tick_task_keepalive(state, self, context).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
         // to re-send the missing shards from their sender-side cache.
-        crate::a2a::send::send_shard_repair_requests(ctx.mesh, ctx.author, state, ctx.sender).await;
+        broadcast_params::send_shard_repair_requests(
+            context.mesh,
+            context.author,
+            state,
+            context.sender,
+        )
+        .await;
     }
 
-    async fn on_shutdown(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    async fn on_shutdown(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Retract our meta entry first so the merge frame is queued ahead of
         // `Left` and rides the same propagation window the engine sleeps after
         // this hook.
-        retract_own_meta_entry(state, ctx).await;
+        retract_own_meta_entry(state, context).await;
         // Empty out any parked A2A-call waiters so a held call returns a
         // clean timeout, then close the blob-serving endpoint (dropping its
         // store removes the `<nick>.blobs/` spool).
@@ -179,20 +192,20 @@ impl NodeDriver for A2aApp {
 
     async fn handle_session(
         &mut self,
-        req: SessionRequest,
+        request: SessionRequest,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
-        crate::a2a::send::handle_session_request(
-            crate::a2a::send::SessionRequestParams {
-                req,
-                mesh: ctx.mesh,
-                author: ctx.author,
+        broadcast_params::handle_session_request(
+            broadcast_params::SessionRequestParams {
+                request,
+                mesh: context.mesh,
+                author: context.author,
                 app: self,
             },
             state,
-            ctx,
+            context,
             &out,
         )
         .await
@@ -200,11 +213,11 @@ impl NodeDriver for A2aApp {
 
     async fn handle_http(
         &mut self,
-        req: A2aRequest,
+        request: A2aRequest,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) {
-        let A2aRequest { op, resp } = req;
+        let A2aRequest { op, response } = request;
         // A directed `message/send` (task creation) needs the synchronous gossip
         // request/response round-trip — the peer mints the task id and returns the
         // Task. Route it through the waiter so the HTTP handler's oneshot resolves
@@ -214,62 +227,62 @@ impl NodeDriver for A2aApp {
             message,
         } = op
         {
-            crate::a2a::send::broadcast_a2a_call(
-                crate::a2a::send::BroadcastA2aCallParams {
-                    mesh: ctx.mesh,
-                    author: ctx.author,
+            broadcast_params::broadcast_a2a_call(
+                broadcast_params::BroadcastA2aCallParams {
+                    mesh: context.mesh,
+                    author: context.author,
                     peer,
                     method: "SendMessage",
                     params: serde_json::json!({ "message": message }),
-                    timeout: Duration::from_secs(crate::a2a::tuning::CALL_TIMEOUT_SECS),
-                    responder: A2aResponder::Rpc(resp),
+                    timeout: Duration::from_secs(tuning::CALL_TIMEOUT_SECS),
+                    responder: A2aResponder::Rpc(response),
                     file: None,
                 },
                 state,
                 self,
-                ctx.sender,
+                context.sender,
             )
             .await;
             return;
         }
         let out = self.output.clone();
         let port = self.a2a_port();
-        let outcome = crate::a2a::rpc::handle_op(
-            crate::a2a::rpc::HandleOpParams {
+        let outcome = rpc_error::handle_op(
+            rpc_error::HandleOpParams {
                 op,
-                mesh: ctx.mesh,
-                author: ctx.author,
-                our_pubkey: ctx.our_pubkey,
+                mesh: context.mesh,
+                author: context.author,
+                our_pubkey: context.our_pubkey,
                 a2a_port: port,
                 app: self,
             },
             state,
-            ctx.sender,
+            context.sender,
             &out,
         )
         .await;
-        let _ = resp.send(outcome);
+        let _ = response.send(outcome);
     }
 
     async fn handle_ipc(
         &mut self,
-        req: IpcRequest<'_, IpcCommand>,
+        request: IpcRequest<'_, IpcCommand>,
         state: &mut EventLoopState,
-        ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let out = self.output.clone();
-        crate::a2a::ipc::handle_ipc_command(
-            crate::a2a::ipc::IpcDispatchParams {
-                cmd: req.cmd,
-                resp_tx: req.resp,
-                mesh: ctx.mesh,
-                name: req.name,
-                author: ctx.author,
-                endpoint: ctx.endpoint,
+        ipc_command::handle_ipc_command(
+            ipc_command::IpcDispatchParams {
+                command: request.command,
+                resp_tx: request.response,
+                mesh: context.mesh,
+                name: request.name,
+                author: context.author,
+                endpoint: context.endpoint,
                 app: self,
             },
             state,
-            ctx,
+            context,
             &out,
         )
         .await
@@ -287,35 +300,38 @@ impl NodeDriver for A2aApp {
 ///
 /// # Errors
 /// The card does not fit the frames, or a merge was refused.
-async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> anyhow::Result<()> {
+async fn publish_own_card(
+    state: &mut EventLoopState,
+    context: &HandlerCtx<'_>,
+) -> anyhow::Result<()> {
     let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-    let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
+    let card = card::own_card(context.author, context.our_pubkey, &seal_b58);
     // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
     // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
     // Re-publishing with an unchanged address is a no-op (an automerge change
     // with no ops), so this is safe to call repeatedly.
     let mut card = serde_json::to_value(&card)?;
-    card["endpoint"] = crate::a2a::card::endpoint_hint(ctx.endpoint);
+    card["endpoint"] = card::endpoint_hint(context.endpoint);
     // The cut follows the size of the frame that the gossip really sends: the merge becomes an
     // automerge change, and a passworded gossip seals it. The same steps as the merge path.
     let merges = {
         let doc = state.doc(Channel::Meta);
-        let identity = state.identity().clone();
+        let identity = state.identity();
         let actor_seed = *identity.public().as_bytes();
-        crate::a2a::card::publish_merges(ctx.author, &card, |merge| {
+        card::publish_merges(context.author, &card, |merge| {
             let Some(change) = doc.build_change(merge, &actor_seed)? else {
                 return Ok(0);
             };
             let (wire, _plain) = doc.compose_wire_body(&change, None)?;
             Ok(
-                Message::new_channel_event(ctx.mesh, ctx.author, wire, Channel::Meta)
-                    .sign(&identity)
+                Message::new_channel_event(context.mesh, context.author, wire, Channel::Meta)
+                    .sign(identity)
                     .wire_len(),
             )
         })?
     };
     for merge in merges {
-        merge_own_meta_entry(state, ctx, merge, false).await?;
+        merge_own_meta_entry(state, context, merge, false).await?;
     }
     Ok(())
 }
@@ -328,20 +344,21 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) -> a
 /// never burned) overwrites it and eventually leaves cleanly. A foreign
 /// non-card write racing the delete can survive the merge (add wins), but
 /// peers only ever write their own subtree.
-async fn retract_own_meta_entry(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-    let merge = crate::a2a::card::retract_merge(ctx.author);
+async fn retract_own_meta_entry(state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+    let merge = card::retract_merge(context.author);
     // Best effort at leave: the failure is logged by the merge.
-    let _ = merge_own_meta_entry(state, ctx, merge, true).await;
+    let _ = merge_own_meta_entry(state, context, merge, true).await;
 }
 
 impl A2aApp {
     /// Publish our card, and keep `card_error` and its `/peers/<nick>/card_error` mirror in step
     /// with the outcome. A failure is retried on the ticks that the backoff allows (see
     /// `on_tick`).
-    async fn sync_own_card(&mut self, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        let failure = publish_own_card(state, ctx).await.err().map(|error| {
+    async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+        let failure: Option<String> = publish_own_card(state, context).await.err().map(|error| {
             // The reason is read by peers: one line, and no more than a line holds.
-            error.to_string().chars().take(200).collect::<String>()
+            let reason: String = error.to_string().chars().take(200).collect();
+            reason
         });
         if failure.is_some() {
             self.card_retry_wait = (self.card_retry_wait.max(1) * 2).min(CARD_RETRY_MAX_TICKS);
@@ -351,8 +368,8 @@ impl A2aApp {
             self.card_retry_in = 0;
         }
         if failure != self.card_error {
-            let merge = crate::a2a::card::card_error_merge(ctx.author, failure.as_deref());
-            let _ = merge_own_meta_entry(state, ctx, merge, false).await;
+            let merge = card::card_error_merge(context.author, failure.as_deref());
+            let _ = merge_own_meta_entry(state, context, merge, false).await;
             self.card_error = failure;
         }
     }
@@ -375,36 +392,26 @@ impl A2aApp {
 /// The merge was refused, for example because its frame is over the size limit.
 async fn merge_own_meta_entry(
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     merge: serde_json::Value,
     farewell: bool,
 ) -> anyhow::Result<()> {
-    match habilis_network::ops::broadcast_state_merge(
+    let mirror = if farewell {
+        Farewell::UnicastMirror
+    } else {
+        Farewell::GossipOnly
+    };
+    broadcast_state_merge(
         state,
-        habilis_network::ops::StateMergeParams {
-            mesh: ctx.mesh,
-            author: ctx.author,
-            merge,
-            sender: ctx.sender,
-            sink: ctx.sink,
-            channel: Channel::Meta,
-            // Daemon plumbing: the agent didn't write this, so don't surface it
-            // as a "you changed shared state" event (nor race a fetch long-poll).
-            surface: false,
-        },
+        // Daemon plumbing: the agent didn't write this, so don't surface it
+        // as a "you changed shared state" event (nor race a fetch long-poll).
+        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge)
+            .surface(false)
+            .farewell(mirror),
     )
     .await
-    {
-        Ok(Some(bytes)) if farewell => {
-            habilis_network::ops::unicast_farewell(state, &bytes);
-            Ok(())
-        }
-        Ok(_) => Ok(()),
-        Err(error) => {
-            tracing::warn!(%error, "own /peers entry merge failed");
-            Err(error)
-        }
-    }
+    .inspect_err(|error| tracing::warn!(%error, "own /peers entry merge failed"))
+    .map_err(anyhow::Error::from)
 }
 
 /// A peer's `working` with no text on a task already `working` changes nothing
@@ -420,20 +427,20 @@ fn is_empty_working_repeat(
 ) -> bool {
     use super::TaskState;
     prior == Some(TaskState::Working)
-        && super::gossip::status_payload(message).is_ok_and(|payload| {
-            !super::gossip::is_beat(&payload)
+        && status_update_params::status_payload(message).is_ok_and(|payload| {
+            !status_update_params::is_beat(&payload)
                 && payload.status.state == TaskState::Working
-                && super::gossip::status_waiting(&payload).as_deref() == prior_waiting
+                && status_update_params::status_waiting(&payload).as_deref() == prior_waiting
         })
-        && super::gossip::task_text(message).trim().is_empty()
+        && status_update_params::task_text(message).trim().is_empty()
 }
 
 /// Whether the local agent is reading: `(bell armed, seconds since its last
 /// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
-pub(crate) fn reader_liveness(app: &A2aApp, ctx: &HandlerCtx<'_>) -> (bool, Option<u64>) {
+pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, Option<u64>) {
     // A CLI bell holds the OS lock. A parked cursor-less long fetch in process
     // is a bell too. An MCP fetch always passes a cursor, so it is a read only.
-    let bell = crate::cli::bell::is_armed(ctx.mesh.as_ref(), ctx.author.as_str())
+    let bell = bell::is_armed(context.mesh.as_ref(), context.author.as_str())
         || app.surfaced.has_parked_bell();
     (
         bell,
@@ -449,12 +456,12 @@ pub(crate) fn reader_liveness(app: &A2aApp, ctx: &HandlerCtx<'_>) -> (bool, Opti
 /// The agent's own task echoes are quiet for the same reason: it already holds
 /// the id of every leg it sent, and an echo landing right after a re-arm rang
 /// the bell for nothing and made the Stop hook refuse the turn.
-pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
-    use output::OutputEvent;
+pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
+    use emission::OutputEvent;
     if is_self_task_echo(event) {
         return false;
     }
-    output::is_visible(event)
+    emission::simple_event::is_visible(event)
         || matches!(
             event,
             OutputEvent::Task { .. }
@@ -464,11 +471,11 @@ pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
         )
 }
 
-fn is_self_task_echo(event: &output::OutputEvent) -> bool {
+fn is_self_task_echo(event: &emission::OutputEvent) -> bool {
     matches!(
         event,
-        output::OutputEvent::Task { is_self: true, .. }
-            | output::OutputEvent::TaskMessage { is_self: true, .. }
+        emission::OutputEvent::Task { is_self: true, .. }
+            | emission::OutputEvent::TaskMessage { is_self: true, .. }
     )
 }
 
@@ -480,8 +487,8 @@ fn is_self_task_echo(event: &output::OutputEvent) -> bool {
 /// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
 /// liveness widget update, never a retained record).
-pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
-    use output::OutputEvent;
+pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
+    use emission::OutputEvent;
     match event {
         OutputEvent::Message { .. }
         | OutputEvent::Presence { .. }
@@ -496,7 +503,7 @@ pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::Fork { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
-        OutputEvent::Task { msg, .. } => !classify(msg).beat,
+        OutputEvent::Task { message, .. } => !classify(message).beat(),
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
@@ -519,8 +526,8 @@ fn classify(message: &Authored) -> AppClass {
     );
     // A task liveness beat: a status update marked `mesh:beat`.
     let beat = message.kind.is_app(wire::STATUS)
-        && crate::a2a::gossip::status_payload(message)
-            .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload));
+        && status_update_params::status_payload(message)
+            .is_ok_and(|payload| status_update_params::is_beat(&payload));
     // The A2A boundary gate for a logical frame: a chat/task Message, status, or
     // artifact must parse and agree with its frame *and* carry the addressing its
     // tag mandates. `a2a_broadcast` is broadcast-only (`to: None`); `a2a_msg`,
@@ -534,13 +541,13 @@ fn classify(message: &Authored) -> AppClass {
     // must not cross to api consumers, so drop it whole. `None` is a non-App
     // frame the engine gates itself.
     let directed = matches!(message.kind, MessageKind::App { to: Some(_), .. });
-    let valid = match tag {
+    let valid: bool = match tag {
         Some(wire::BROADCAST) => {
-            !directed && crate::a2a::gossip::broadcast_payload(message).is_ok()
+            !directed && status_update_params::broadcast_payload(message).is_ok()
         }
-        Some(wire::MSG) => directed && crate::a2a::gossip::msg_payload(message).is_ok(),
-        Some(wire::STATUS) => directed && crate::a2a::gossip::status_payload(message).is_ok(),
-        Some(wire::ARTIFACT) => directed && crate::a2a::gossip::artifact_payload(message).is_ok(),
+        Some(wire::MSG) => directed && status_update_params::msg_payload(message).is_ok(),
+        Some(wire::STATUS) => directed && status_update_params::status_payload(message).is_ok(),
+        Some(wire::ARTIFACT) => directed && status_update_params::artifact_payload(message).is_ok(),
         Some(wire::REQ | wire::RESP) => directed,
         Some(wire::RECEIPT) => directed && parse_receipt(message).is_some(),
         None => true,
@@ -562,13 +569,13 @@ fn classify(message: &Authored) -> AppClass {
         tag,
         Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
     );
-    AppClass {
-        loggable,
-        beat,
-        valid,
-        chained,
-        sealed,
-    }
+    let content = AppClass::NONE
+        .plus_if(AppClass::LOGGABLE, loggable)
+        .plus_if(AppClass::BEAT, beat)
+        .plus_if(AppClass::VALID, valid);
+    content
+        .plus_if(AppClass::CHAINED, chained)
+        .plus_if(AppClass::SEALED, sealed)
 }
 
 /// Route a content frame — chat, or one of the three task shapes — to its
@@ -581,23 +588,25 @@ fn route_content(
     message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) -> Routed {
-    match &message.kind {
-        // Each chat tag is pinned to its addressing here as well as in
-        // `classify`: a directed BROADCAST or a broadcast MSG falls through to
-        // the no-op arm rather than being surfaced/logged by a relay.
-        MessageKind::App { tag, to: None, .. } if tag.as_str() == wire::BROADCAST => Routed {
+    let MessageKind::App { tag, to, .. } = &message.kind else {
+        return Routed::default();
+    };
+    // Each chat tag is pinned to its addressing here as well as in
+    // `classify`: a directed BROADCAST or a broadcast MSG falls through to
+    // the no-op arm rather than being surfaced/logged by a relay.
+    match (tag.as_str(), to) {
+        (wire::BROADCAST, None) => Routed {
             loggable: surface_chat(message, surfaceable, app, |out, surface| {
                 handle_broadcast(out, message, surface)
             }),
             fresh_for_us: false,
         },
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::MSG => {
-            let fresh_for_us =
-                surfaceable && to == ctx.author && !is_replayed_chat(&app.surfaced_chat, message);
+        (wire::MSG, Some(to)) => {
+            let fresh_for_us = surfaceable
+                && to == context.author
+                && !is_replayed_chat(&app.surfaced_chat, message);
             let loggable = surface_chat(message, surfaceable, app, |out, surface| {
                 handle_msg(
                     out,
@@ -605,7 +614,7 @@ fn route_content(
                         message,
                         to,
                         surfaceable: surface,
-                        self_author: ctx.author,
+                        self_author: context.author,
                     },
                 )
             });
@@ -614,9 +623,7 @@ fn route_content(
                 fresh_for_us,
             }
         }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::STATUS || tag.as_str() == wire::ARTIFACT => {
+        (wire::STATUS | wire::ARTIFACT, Some(to)) => {
             let leg = handle_task_leg(
                 TaskLegParams {
                     message,
@@ -624,32 +631,20 @@ fn route_content(
                     surfaceable,
                 },
                 app,
-                ctx,
+                context,
             );
             Routed {
                 loggable: leg.loggable,
                 fresh_for_us: leg.fresh_for_us,
             }
         }
-        MessageKind::App {
-            tag, to: Some(to), ..
-        } if tag.as_str() == wire::RECEIPT => {
-            if to == ctx.author {
+        (wire::RECEIPT, Some(to)) => {
+            if to == context.author {
                 surface_receipt(message, app);
             }
             Routed::default()
         }
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => Routed::default(),
+        _ => Routed::default(),
     }
 }
 
@@ -685,7 +680,7 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
         ReceiptState::Delivered => "delivered",
         ReceiptState::Read => "read",
     };
-    out.receipt(output::ReceiptParams {
+    out.receipt(emission::ReceiptParams {
         from: &message.author,
         ref_id: &receipt.ref_id,
         state,
@@ -696,16 +691,16 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
 /// The value cluster [`handle_task_leg`] needs beyond its `app`/`ctx` handles
 /// — the input of [`route_content`]'s task-leg arm.
 #[derive(Clone, Copy)]
-struct TaskLegParams<'a> {
-    message: &'a Authored,
-    to: &'a Nickname,
+struct TaskLegParams<'caller> {
+    message: &'caller Authored,
+    to: &'caller Nickname,
     surfaceable: bool,
 }
 
 /// Process an inbound task leg (a task-related `a2a_status` or `a2a_artifact`)
 /// for its addressee: advance the coarse state machine (addressee only — a
 /// third-party relay tracks nothing), then surface it via the lifecycle layer.
-fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_>) -> Routed {
+fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCtx<'_>) -> Routed {
     let TaskLegParams {
         message,
         to,
@@ -715,8 +710,8 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
     let mut replay = false;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
-    if to == ctx.author
-        && let Some(task_id) = crate::a2a::gossip::frame_task_id(message)
+    if to == context.author
+        && let Some(task_id) = status_update_params::frame_task_id(message)
     {
         // …and being the addressee is not enough: the leg must come from the
         // task's own counterparty. Anyone can seal to us (the key is published
@@ -737,7 +732,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             .get(&task_id)
             .and_then(|rec| rec.waiting.as_deref());
         surface &= !is_empty_working_repeat(prior, prior_waiting, message);
-        if crate::a2a::task::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
+        if task_record::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
             tracing::info!(
                 target: "agent_gossip::a2a",
                 %task_id,
@@ -749,9 +744,9 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             replay = true;
         }
         let now = Instant::now();
-        let reader = crate::a2a::task::ingest(
+        let reader = task_record::ingest(
             &mut app.tasks,
-            crate::a2a::task::IngestLegParams {
+            task_record::IngestLegParams {
                 frame: message,
                 task_id: &task_id,
                 mine: false,
@@ -759,13 +754,12 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             },
         );
         if let Some(reader) = reader
-            && let Some(notice) =
-                crate::a2a::task::stall_notice(&mut app.tasks, &task_id, reader, now)
+            && let Some(notice) = task_record::stall_notice(&mut app.tasks, &task_id, reader, now)
         {
             app.output.task_stalled(&notice);
         }
         if surface {
-            crate::a2a::task::note_surfaced(&mut app.tasks, &task_id, message);
+            task_record::note_surfaced(&mut app.tasks, &task_id, message);
         }
     }
     let loggable = handle_task(
@@ -774,13 +768,13 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, ctx: &HandlerCtx<'_
             message,
             to,
             surfaceable: surface,
-            self_author: ctx.author,
+            self_author: context.author,
         },
     );
     // A beat is liveness plumbing and never logged, so it earns no receipt.
     Routed {
         loggable,
-        fresh_for_us: surfaceable && to == ctx.author && loggable && !replay,
+        fresh_for_us: surfaceable && to == context.author && loggable && !replay,
     }
 }
 
@@ -793,7 +787,7 @@ fn surface_chat(
     message: &Authored,
     surfaceable: bool,
     app: &mut A2aApp,
-    handler: impl FnOnce(&output::Output, bool) -> bool,
+    handler: impl FnOnce(&emission::Output, bool) -> bool,
 ) -> bool {
     let replay = is_replayed_chat(&app.surfaced_chat, message);
     if replay && surfaceable {
@@ -812,10 +806,7 @@ fn surface_chat(
     logged
 }
 
-fn is_replayed_chat(
-    surfaced: &habilis_network::util::bounded_fifo_set::BoundedFifoSet<DedupKey>,
-    message: &Authored,
-) -> bool {
+fn is_replayed_chat(surfaced: &BoundedFifoSet<DedupKey>, message: &Authored) -> bool {
     surfaced.contains(&message.dedup_key())
 }
 
@@ -823,7 +814,7 @@ fn is_replayed_chat(
 /// `a2a_broadcast` is mesh broadcast chat — always loggable. `surfaceable`
 /// gates only the *display*: a pre-join message is still logged/relayed but not
 /// printed.
-fn handle_broadcast(out: &output::Output, message: &Authored, surfaceable: bool) -> bool {
+fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: bool) -> bool {
     if message.kind.is_app(wire::BROADCAST) {
         if surfaceable {
             out.print_message(message);
@@ -836,11 +827,11 @@ fn handle_broadcast(out: &output::Output, message: &Authored, surfaceable: bool)
 
 /// The value cluster [`handle_msg`] needs beyond its `out` sink handle.
 #[derive(Clone, Copy)]
-struct MsgParams<'a> {
-    message: &'a Authored,
-    to: &'a Nickname,
+struct MsgParams<'caller> {
+    message: &'caller Authored,
+    to: &'caller Nickname,
     surfaceable: bool,
-    self_author: &'a Nickname,
+    self_author: &'caller Nickname,
 }
 
 /// A msg: printed and logged **only by its addressee** (`to == self_author`).
@@ -862,7 +853,7 @@ struct MsgParams<'a> {
 /// An `author == self_author` escape hatch here therefore admitted nothing
 /// honest and exactly one thing hostile — a relayed msg between two other
 /// peers, surfaced to us as though we had sent it.
-fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
+fn handle_msg(out: &emission::Output, params: MsgParams<'_>) -> bool {
     let MsgParams {
         message,
         to,
@@ -880,11 +871,11 @@ fn handle_msg(out: &output::Output, params: MsgParams<'_>) -> bool {
 
 /// The value cluster [`handle_task`] needs beyond its `out` sink handle.
 #[derive(Clone, Copy)]
-struct TaskDisplayParams<'a> {
-    message: &'a Authored,
-    to: &'a Nickname,
+struct TaskDisplayParams<'caller> {
+    message: &'caller Authored,
+    to: &'caller Nickname,
     surfaceable: bool,
-    self_author: &'a Nickname,
+    self_author: &'caller Nickname,
 }
 
 /// A task leg: surfaced + logged only by the addressee (`to == self_author`)
@@ -893,7 +884,7 @@ struct TaskDisplayParams<'a> {
 /// status is liveness plumbing, surfaced as a `task_progress` widget event but
 /// never retained). `surfaceable` gates only the *display* (join-horizon),
 /// never the relay/log.
-fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
+fn handle_task(out: &emission::Output, params: TaskDisplayParams<'_>) -> bool {
     let TaskDisplayParams {
         message,
         to,
@@ -908,8 +899,8 @@ fn handle_task(out: &output::Output, params: TaskDisplayParams<'_>) -> bool {
     }
     // Content legs log; a liveness beat (a status marked `mesh:beat`) is
     // plumbing — surfaced as a `task_progress` widget event but never retained.
-    !crate::a2a::gossip::status_payload(message)
-        .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload))
+    !status_update_params::status_payload(message)
+        .is_ok_and(|payload| status_update_params::is_beat(&payload))
 }
 
 /// Route an A2A RPC frame: a request addressed to us is served (and a response
@@ -920,26 +911,21 @@ async fn handle_a2a_rpc(
     message: &Authored,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) {
-    let (tag, corr) = match &message.kind {
-        MessageKind::App {
-            tag,
-            to: Some(to),
-            corr: Some(corr),
-        } if to == ctx.author => (tag.as_str(), corr),
-        MessageKind::App { .. }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::State
-        | MessageKind::StateDigest
-        | MessageKind::Meta
-        | MessageKind::MetaDigest
-        | MessageKind::LinkState => return,
+    // A frame that is not a directed, correlated request or response is not ours.
+    let MessageKind::App {
+        tag,
+        to: Some(to),
+        corr: Some(corr),
+    } = &message.kind
+    else {
+        return;
     };
+    if to != context.author {
+        return;
+    }
+    let tag = tag.as_str();
     // The engine keeps `corr` generic (a length-bounded string); the a2a layer
     // restores the UUID contract. A non-UUID corr never came from a correct
     // client — drop the frame rather than key the waiter registry on it.
@@ -947,16 +933,7 @@ async fn handle_a2a_rpc(
         return;
     }
     if tag == wire::REQ {
-        handle_a2a_req(
-            A2aReqParams {
-                message,
-                corr: &corr.clone(),
-            },
-            state,
-            app,
-            ctx,
-        )
-        .await;
+        handle_a2a_req(A2aReqParams { message, corr }, state, app, context).await;
     } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.author) {
         // Only act on a response to a call WE actually issued (a matching
         // outstanding waiter). An unsolicited response is ignored — otherwise
@@ -970,90 +947,89 @@ async fn handle_a2a_rpc(
 /// One inbound `a2a_req` frame's request body plus the correlation id its
 /// `a2a_resp` must echo back — grouped so [`handle_a2a_req`] stays within the
 /// argument budget alongside its `state`/`app`/`ctx` handles.
-struct A2aReqParams<'a> {
-    message: &'a Authored,
-    corr: &'a habilis_network::protocol::CorrId,
+struct A2aReqParams<'caller> {
+    message: &'caller Authored,
+    corr: &'caller habilis_network::protocol::CorrId,
 }
 
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
 /// against the safe method set (`gossip_rpc::classify`), run the resulting
 /// action, and broadcast an `a2a_resp` back to the requester echoing `corr`.
 async fn handle_a2a_req(
-    req: A2aReqParams<'_>,
+    request: A2aReqParams<'_>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
 ) {
-    use crate::a2a::gossip_rpc::Served;
-    let A2aReqParams { message, corr } = req;
+    use crate::a2a::served::Served;
+    let A2aReqParams { message, corr } = request;
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
-    let outcome: Result<serde_json::Value, crate::a2a::rpc::RpcError> = match serde_json::from_str::<
-        serde_json::Value,
-    >(
-        message.body.as_str(),
-    ) {
-        Ok(envelope) => {
-            let method = envelope["method"].as_str().unwrap_or_default();
-            match crate::a2a::gossip_rpc::classify(method, &envelope["params"], &requester, app) {
-                Served::Op(op) => {
-                    let out = app.output.clone();
-                    crate::a2a::rpc::handle_op(
-                        crate::a2a::rpc::HandleOpParams {
-                            op,
-                            mesh: ctx.mesh,
-                            author: ctx.author,
-                            our_pubkey: ctx.our_pubkey,
-                            // No local HTTP port on the gossip path; only card
-                            // ops read it, and those aren't in the safe set here.
-                            a2a_port: 0,
-                            app,
-                        },
-                        state,
-                        ctx.sender,
-                        &out,
-                    )
-                    .await
+    let outcome: Result<serde_json::Value, RpcError> =
+        match serde_json::from_str::<serde_json::Value>(message.body.as_str()) {
+            Ok(envelope) => {
+                let method = envelope["method"].as_str().unwrap_or_default();
+                match served::classify(method, &envelope["params"], &requester, app) {
+                    Served::Op(op) => {
+                        let out = app.output.clone();
+                        rpc_error::handle_op(
+                            rpc_error::HandleOpParams {
+                                op,
+                                mesh: context.mesh,
+                                author: context.author,
+                                our_pubkey: context.our_pubkey,
+                                // No local HTTP port on the gossip path; only card
+                                // ops read it, and those aren't in the safe set here.
+                                a2a_port: 0,
+                                app,
+                            },
+                            state,
+                            context.sender,
+                            &out,
+                        )
+                        .await
+                    }
+                    Served::Ingest(payload) => {
+                        ingest_remote_message(&payload, &requester, app, context)
+                    }
+                    Served::ShardRepair { group, missing } => {
+                        resend_cached_shards(
+                            ShardRepairParams {
+                                group: &group,
+                                missing: &missing,
+                                requester: &requester,
+                            },
+                            state,
+                            context,
+                        )
+                        .await
+                    }
+                    Served::ReaderGet => {
+                        let (bell, last_poll_secs_ago) = reader_liveness(app, context);
+                        Ok(serde_json::json!({
+                            "bell": bell,
+                            "last_poll_secs_ago": last_poll_secs_ago,
+                        }))
+                    }
+                    Served::Reject(error) => Err(error),
                 }
-                Served::Ingest(payload) => ingest_remote_message(&payload, &requester, app, ctx),
-                Served::ShardRepair { group, missing } => {
-                    resend_cached_shards(
-                        ShardRepairParams {
-                            group: &group,
-                            missing: &missing,
-                            requester: &requester,
-                        },
-                        state,
-                        ctx,
-                    )
-                    .await
-                }
-                Served::ReaderGet => {
-                    let (bell, last_poll_secs_ago) = reader_liveness(app, ctx);
-                    Ok(serde_json::json!({
-                        "bell": bell,
-                        "last_poll_secs_ago": last_poll_secs_ago,
-                    }))
-                }
-                Served::Reject(error) => Err(error),
             }
-        }
-        Err(error) => Err(crate::a2a::rpc::RpcError::invalid_params(format!(
-            "malformed JSON-RPC request: {error}"
-        ))),
-    };
+            Err(error) => Err(RpcError::invalid_params(&format!(
+                "malformed JSON-RPC request: {error}"
+            ))),
+        };
     let response = match outcome {
         Ok(result) => serde_json::json!({ "result": result }),
         Err(error) => {
             serde_json::json!({ "error": { "code": error.code, "message": error.message } })
         }
     };
-    let Ok(body) = MessageBody::new(response.to_string()) else {
+    let Ok(body) = MessageBody::try_new(&response.to_string()) else {
         tracing::warn!("a2a rpc response body invalid");
         return;
     };
     // Seal the response to the requester — a relay forwards it but cannot read it.
-    let body = match crate::a2a::send::seal_directed(state, &requester, &body) {
+    let body = match broadcast_params::seal_directed(state, &requester, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
             tracing::warn!(%error, "cannot seal a2a rpc response — dropping");
@@ -1061,21 +1037,21 @@ async fn handle_a2a_req(
         }
     };
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::RESP),
+        tag: wire::app_tag(wire::RESP),
         to: Some(requester),
         corr: Some(corr.clone()),
     };
     // Directed reply over the shared RPC sender: unicast, transparently
     // splitting a large sealed response into shard frames.
-    if let Err(error) = crate::a2a::send::send_directed_rpc(
-        crate::a2a::send::DirectedRpcParams {
-            mesh: ctx.mesh,
-            author: ctx.author,
+    if let Err(error) = broadcast_params::send_directed_rpc(
+        broadcast_params::DirectedRpcParams {
+            mesh: context.mesh,
+            author: context.author,
             kind,
             body,
         },
         state,
-        ctx.sender,
+        context.sender,
     )
     .await
     {
@@ -1085,10 +1061,10 @@ async fn handle_a2a_req(
 
 /// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
 /// handles.
-struct ShardRepairParams<'a> {
-    group: &'a habilis_network::protocol::ShardGroup,
-    missing: &'a [u32],
-    requester: &'a Nickname,
+struct ShardRepairParams<'caller> {
+    group: &'caller habilis_network::protocol::ShardGroup,
+    missing: &'caller [u32],
+    requester: &'caller Nickname,
 }
 
 /// Serve a `shard/repair` ask: re-deliver the named cached frames of one of our
@@ -1098,23 +1074,21 @@ struct ShardRepairParams<'a> {
 async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+    context: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, RpcError> {
     let ShardRepairParams {
         group,
         missing,
         requester,
     } = params;
-    let frames = state.shard_cache_mut().frames(group, missing);
+    let frames: Vec<_> = state.shard_cache_mut().frames(group, missing).collect();
     let mut resent = 0usize;
     for bytes in frames {
-        let Some(msg) = Message::parse(bytes.as_bytes())
-            .ok()
-            .and_then(|msg| msg.verify().ok())
-        else {
+        let parsed = Message::parse(bytes.as_bytes()).ok();
+        let Some(message) = parsed.and_then(|message| message.verify().ok()) else {
             continue; // never: the cache holds frames we serialized ourselves
         };
-        if let Some(to) = habilis_network::protocol::sole_addressee(&msg.kind)
+        if let Some(to) = habilis_network::protocol::sole_addressee(&message.kind)
             && to != requester
         {
             continue;
@@ -1122,7 +1096,8 @@ async fn resend_cached_shards(
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
         // not start is asked for again on the requester's next tick.
-        if habilis_network::ops::deliver_in_background(&msg, bytes, state, ctx.sender).await {
+        if habilis_network::ops::deliver_in_background(&message, bytes, state, context.sender).await
+        {
             resent += 1;
         }
     }
@@ -1142,18 +1117,18 @@ async fn resend_cached_shards(
 /// coarse machine, surface the message to our skill, and return the
 /// authoritative `Task`.
 /// Refusal for an offer the registry has no room for, or `None` to admit.
-fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<crate::a2a::rpc::RpcError> {
-    use crate::a2a::task::Admission;
+fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<RpcError> {
+    use crate::a2a::task_record::Admission;
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     // A2A has no "too many tasks" error, so this is an application code in the
     // implementation-defined server range, alongside the party check's -32003.
     let refuse = |message: String| {
-        Some(crate::a2a::rpc::RpcError {
+        Some(RpcError {
             code: -32004,
             message,
         })
     };
-    match crate::a2a::task::admit_new_task(&app.tasks, requester) {
+    match task_record::admit_new_task(&app.tasks, requester) {
         Admission::Ok => None,
         Admission::RegistryFull => refuse(format!(
             "this peer is holding its maximum of {TASKS_CAP} tasks"
@@ -1168,9 +1143,9 @@ fn ingest_remote_message(
     payload: &crate::a2a::Message,
     requester: &Nickname,
     app: &mut A2aApp,
-    ctx: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
-    use crate::a2a::task::{LegInfo, LegKind};
+    context: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, RpcError> {
+    use crate::a2a::task_record::{LegInfo, LegKind};
     let now = Instant::now();
     let (task_id, kind) = match &payload.task_id {
         Some(task_id) => (task_id.clone(), LegKind::Text),
@@ -1182,12 +1157,12 @@ fn ingest_remote_message(
     if kind == LegKind::Text {
         match app.tasks.get(&task_id) {
             None => {
-                return Err(crate::a2a::rpc::RpcError::invalid_params(
+                return Err(RpcError::invalid_params(
                     "SendMessage names a taskId with no task on this peer",
                 ));
             }
             Some(rec) if &rec.peer != requester => {
-                return Err(crate::a2a::rpc::RpcError {
+                return Err(RpcError {
                     code: -32003,
                     message: "not a party to the task named by taskId".to_string(),
                 });
@@ -1202,7 +1177,7 @@ fn ingest_remote_message(
         // loop, so an unbounded registry is a stall as well as a leak.
         return Err(error);
     }
-    crate::a2a::task::apply(
+    task_record::apply(
         &mut app.tasks,
         &LegInfo {
             task_id: &task_id,
@@ -1215,13 +1190,15 @@ fn ingest_remote_message(
     );
     // Surface the incoming message to our skill (a `task` event, kind:message).
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
-    let text = crate::a2a::gossip::display_text(payload);
-    let label = crate::a2a::gossip::task_label(payload);
-    app.output.task_message(&output::TaskMessageLeg {
+    let text = status_update_params::display_text(payload);
+    let label = status_update_params::task_label(payload);
+    let mesh_name: &str = context.mesh.as_str();
+    let peer_name: &str = context.author.as_str();
+    app.output.task_message(&emission::TaskMessageLeg {
         id: payload.message_id.as_str(),
-        mesh: ctx.mesh.as_str(),
+        mesh: mesh_name,
         author: requester.as_str(),
-        peer: ctx.author.as_str(),
+        peer: peer_name,
         task_id: task_id.as_str(),
         state: rec_state,
         text: &text,
@@ -1233,8 +1210,8 @@ fn ingest_remote_message(
     // yields `{"task": <Task>}`.
     app.tasks
         .get(&task_id)
-        .map(|rec| serde_json::json!({ "task": crate::a2a::rpc::task_object(&task_id, rec, ctx.mesh) }))
-        .ok_or_else(|| crate::a2a::rpc::RpcError::internal("task record missing after ingest"))
+        .map(|rec| serde_json::json!({ "task": rpc_error::task_object(&task_id, rec, context.mesh) }))
+        .ok_or_else(|| RpcError::internal("task record missing after ingest"))
 }
 
 /// Adopt `author`'s published endpoint hint (`/peers/<nick>/card/endpoint`) into
@@ -1244,13 +1221,13 @@ fn ingest_remote_message(
 /// from the synced meta doc even before its gossiped `PeerInfo` arrives. Both
 /// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
 /// does **not** graft a gossip link — mesh formation stays `PeerInfo`'s job.
-fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
     let doc = state.doc(Channel::Meta).to_json();
-    let Some((peer_id, peer_addr)) = crate::a2a::card::peer_endpoint(&doc, author) else {
+    let Some((peer_id, peer_addr)) = card::peer_endpoint(&doc, author) else {
         return;
     };
     // Never bind our own endpoint or the rendezvous pseudo-node.
-    if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
+    if peer_id == context.endpoint.id() || peer_id == context.rendezvous_id {
         return;
     }
     state.note_peer_endpoint(author.clone(), peer_addr.clone());
@@ -1259,14 +1236,16 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &Hand
 
 #[cfg(test)]
 mod classify_tests {
-    use habilis_network::protocol::message::Authored;
+    use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
-        AppFrameParams, AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
+        AppFrameParams, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
+    use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
     use super::{classify, is_empty_working_repeat, is_replayed_chat, surface_chat, wakes};
-    use crate::a2a::{TaskState, wire};
-    use crate::output::OutputEvent;
+    use crate::a2a::a2a_app::A2aApp;
+    use crate::a2a::{TaskState, status_update_params, wire};
+    use crate::emission::OutputEvent;
 
     fn mesh() -> MeshId {
         MeshId::from("test")
@@ -1283,12 +1262,7 @@ mod classify_tests {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(tag),
-                to: None,
-                corr: None,
-                body: MessageBody::from("{}"),
-            },
+            AppFrameParams::new(wire::app_tag(tag), None, None, MessageBody::from("{}")),
         )
     }
 
@@ -1301,20 +1275,17 @@ mod classify_tests {
     // variable.
     fn chat_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
-        let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
-        let id = MessageId::new(payload.message_id.as_str()).unwrap();
-        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let payload = status_update_params::compose_broadcast(&sw, "hi");
+        let id = MessageId::try_new(payload.message_id.as_str())
+            .expect("the payload carries a valid message id");
+        let body =
+            status_update_params::payload_body(&payload).expect("the test payload has a body");
         Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::BROADCAST),
-                to,
-                corr: None,
-                body,
-            },
+            AppFrameParams::new(wire::app_tag(wire::BROADCAST), to, None, body),
         )
-        .with_id(id)
+        .id(id)
     }
 
     fn chat_frame(to: Option<Nickname>) -> Authored {
@@ -1324,20 +1295,17 @@ mod classify_tests {
     // The directed twin of [`chat_frame`]: a well-formed msg, `to` the variable.
     fn msg_frame_raw(to: Option<Nickname>) -> Message {
         let sw = mesh();
-        let payload = crate::a2a::gossip::compose_msg(&sw, "hi");
-        let id = MessageId::new(payload.message_id.as_str()).unwrap();
-        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let payload = status_update_params::compose_msg(&sw, "hi");
+        let id = MessageId::try_new(payload.message_id.as_str())
+            .expect("the payload carries a valid message id");
+        let body =
+            status_update_params::payload_body(&payload).expect("the test payload has a body");
         Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::MSG),
-                to,
-                corr: None,
-                body,
-            },
+            AppFrameParams::new(wire::app_tag(wire::MSG), to, None, body),
         )
-        .with_id(id)
+        .id(id)
     }
 
     fn msg_frame(to: Option<Nickname>) -> Authored {
@@ -1350,29 +1318,29 @@ mod classify_tests {
     }
 
     fn status_frame_in_raw(state: TaskState, to: Option<Nickname>) -> Message {
-        crate::a2a::gossip::test_status_frame(&mesh(), state, to)
+        status_update_params::test_status_frame(&mesh(), state, to)
     }
 
     fn status_frame_in(state: TaskState, to: Option<Nickname>) -> Authored {
         view(status_frame_in_raw(state, to))
     }
 
-    fn task_event(msg: Authored, is_self: bool) -> OutputEvent {
+    fn task_event(message: Authored, is_self: bool) -> OutputEvent {
         OutputEvent::Task {
-            msg: Box::new(msg),
+            message: Box::new(message),
             is_self,
         }
     }
 
     fn task_message(is_self: bool) -> OutputEvent {
         OutputEvent::TaskMessage {
-            id: "m".to_owned(),
-            mesh: "sw".to_owned(),
-            author: "initiator".to_owned(),
-            peer: "worker".to_owned(),
-            task_id: "t".to_owned(),
+            id: String::from("m"),
+            mesh: String::from("sw"),
+            author: String::from("initiator"),
+            peer: String::from("worker"),
+            task_id: String::from("t"),
             state: Some(TaskState::Working),
-            text: "approved".to_owned(),
+            text: String::from("approved"),
             label: None,
             message: None,
             is_self,
@@ -1426,20 +1394,23 @@ mod classify_tests {
 
     #[test]
     fn a_receipt_is_pollable_but_never_wakes_the_bell() {
-        assert!(super::is_pollable(&receipt_event()));
-        assert!(!wakes(&receipt_event()));
+        assert!(
+            super::is_pollable(&receipt_event()),
+            "a poll must still report delivery state to the sender, even though it never wakes the agent"
+        );
+        assert!(!wakes(&receipt_event()), "a receipt does not wake the bell");
     }
 
     fn receipt_frame_raw(to: Option<Nickname>, body: &str) -> Message {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::RECEIPT),
+            AppFrameParams::new(
+                wire::app_tag(wire::RECEIPT),
                 to,
-                corr: None,
-                body: MessageBody::from(body),
-            },
+                None,
+                MessageBody::from(body),
+            ),
         )
     }
 
@@ -1451,18 +1422,21 @@ mod classify_tests {
     fn a_receipt_is_valid_only_when_directed_with_a_parseable_body() {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
         let directed = classify(&receipt_frame(Some(Nickname::from("peer")), body));
-        assert!(directed.valid && directed.sealed && !directed.loggable);
-        assert!(!classify(&receipt_frame(None, body)).valid, "broadcast");
         assert!(
-            !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid,
+            directed.valid() && directed.sealed() && !directed.loggable(),
+            "a directed chat is valid, sealed and not loggable"
+        );
+        assert!(!classify(&receipt_frame(None, body)).valid(), "broadcast");
+        assert!(
+            !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid(),
             "no ref or state"
         );
     }
 
     fn working_with_raw(note: Option<&str>, metadata: Option<serde_json::Value>) -> Message {
-        let status = crate::a2a::gossip::status_update(
+        let status = status_update_params::status_update(
             &mesh(),
-            crate::a2a::gossip::StatusUpdateParams {
+            status_update_params::StatusUpdateParams {
                 task_id: &crate::a2a::TaskId::random(),
                 state: TaskState::Working,
                 note,
@@ -1472,12 +1446,12 @@ mod classify_tests {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::STATUS),
-                to: Some(Nickname::from("initiator")),
-                corr: None,
-                body: crate::a2a::gossip::payload_body(&status).unwrap(),
-            },
+            AppFrameParams::new(
+                wire::app_tag(wire::STATUS),
+                Some(Nickname::from("initiator")),
+                None,
+                status_update_params::payload_body(&status).expect("the test payload has a body"),
+            ),
         )
     }
 
@@ -1490,11 +1464,10 @@ mod classify_tests {
     #[test]
     fn only_an_empty_working_on_a_working_task_is_a_repeat() {
         let working = Some(TaskState::Working);
-        assert!(is_empty_working_repeat(
-            working,
-            None,
-            &working_with(None, None)
-        ));
+        assert!(
+            is_empty_working_repeat(working, None, &working_with(None, None)),
+            "a repeated working status is recognized"
+        );
         assert!(
             !is_empty_working_repeat(Some(TaskState::Submitted), None, &working_with(None, None)),
             "the accept surfaces"
@@ -1503,7 +1476,7 @@ mod classify_tests {
             !is_empty_working_repeat(working, None, &working_with(Some("tests pass"), None)),
             "a progress note surfaces"
         );
-        let beat = working_with(None, Some(crate::a2a::gossip::beat_metadata(None)));
+        let beat = working_with(None, Some(status_update_params::beat_metadata(None)));
         assert!(
             !is_empty_working_repeat(working, None, &beat),
             "a beat keeps its own path"
@@ -1526,7 +1499,7 @@ mod classify_tests {
     fn a_waiting_leg_and_its_clear_each_surface_once() {
         let working = Some(TaskState::Working);
         let reason = "asks its user";
-        let waiting = working_with(None, crate::a2a::gossip::waiting_metadata(Some(reason)));
+        let waiting = working_with(None, status_update_params::waiting_metadata(Some(reason)));
         assert!(
             !is_empty_working_repeat(working, None, &waiting),
             "the --waiting leg surfaces"
@@ -1553,24 +1526,30 @@ mod classify_tests {
     // Pre-fix it surfaced again as a new visible line, up to hours late.
     #[test]
     fn a_chat_line_surfaces_once() {
-        let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let mut surfaced = BoundedFifoSet::new(8);
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
         surfaced.insert(chat.dedup_key());
-        assert!(is_replayed_chat(&surfaced, &chat));
+        assert!(
+            is_replayed_chat(&surfaced, &chat),
+            "a surfaced chat is recognized as replayed"
+        );
     }
 
     // The key is the engine's `(pubkey, id)`: another author reusing the id
     // (a signed forgery) must not hide the real line.
     #[test]
     fn the_same_id_from_another_author_still_surfaces() {
-        let mut surfaced = habilis_network::util::bounded_fifo_set::BoundedFifoSet::new(8);
+        let mut surfaced = BoundedFifoSet::new(8);
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
         surfaced.insert(chat.dedup_key());
         let forgery = (*chat)
             .clone()
             .sign(&habilis_network::protocol::Identity::generate())
             .authored();
-        assert!(!is_replayed_chat(&surfaced, &forgery));
+        assert!(
+            !is_replayed_chat(&surfaced, &forgery),
+            "a forged chat is not a replay"
+        );
     }
 
     // `surface_chat` records a line only once it was really printed, and keeps
@@ -1578,29 +1557,50 @@ mod classify_tests {
     // log is one every peer's digest re-offers.
     #[test]
     fn surface_chat_records_only_printed_lines_and_keeps_loggability() {
-        let mut app = crate::a2a::app::A2aApp::detached(crate::output::Output::silent());
+        let mut app = A2aApp::detached(crate::emission::Output::silent());
         let chat = chat_from(&habilis_network::protocol::Identity::generate());
 
         // A msg addressed to someone else: the handler declines, nothing recorded.
-        assert!(!surface_chat(&chat, true, &mut app, |_, _| false));
-        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+        assert!(
+            !surface_chat(&chat, true, &mut app, |_, _| false),
+            "a chat is not surfaced when the gate refuses it"
+        );
+        assert!(
+            !is_replayed_chat(&app.surfaced_chat, &chat),
+            "a refused chat is not recorded"
+        );
 
         // Before the join horizon: logged but not printed, nothing recorded.
-        assert!(surface_chat(&chat, false, &mut app, |_, _| true));
-        assert!(!is_replayed_chat(&app.surfaced_chat, &chat));
+        assert!(
+            surface_chat(&chat, false, &mut app, |_, _| true),
+            "a fresh chat surfaces"
+        );
+        assert!(
+            !is_replayed_chat(&app.surfaced_chat, &chat),
+            "a surfaced chat is recorded"
+        );
 
         // Printed once, then recorded.
-        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
-            assert!(surface, "a new line surfaces");
-            true
-        }));
-        assert!(is_replayed_chat(&app.surfaced_chat, &chat));
+        assert!(
+            surface_chat(&chat, true, &mut app, |_, surface| {
+                assert!(surface, "a new line surfaces");
+                true
+            }),
+            "a chat surfaces once the callback accepts it"
+        );
+        assert!(
+            is_replayed_chat(&app.surfaced_chat, &chat),
+            "a surfaced chat is recorded as a replay"
+        );
 
         // The replay: kept off the surface, still logged.
-        assert!(surface_chat(&chat, true, &mut app, |_, surface| {
-            assert!(!surface, "a replay does not surface");
-            true
-        }));
+        assert!(
+            surface_chat(&chat, true, &mut app, |_, surface| {
+                assert!(!surface, "a replay does not surface");
+                true
+            }),
+            "a chat is not surfaced twice"
+        );
     }
 
     // These assertions are deliberately worded "broadcast"/"directed" rather
@@ -1608,12 +1608,18 @@ mod classify_tests {
     // wrong one would still satisfy a test phrased in terms of chat.
     #[test]
     fn msg_is_loggable_but_rpc_is_not() {
-        let msg = classify(&app_frame(wire::BROADCAST));
-        assert!(msg.loggable, "broadcast chat is loggable");
-        assert!(msg.chained, "broadcast chat carries the per-author chain");
-        let req = classify(&app_frame(wire::REQ));
-        assert!(!req.loggable, "an RPC request is plumbing, not logged");
-        assert!(!req.chained, "only broadcast chat is chained");
+        let message = classify(&app_frame(wire::BROADCAST));
+        assert!(message.loggable(), "broadcast chat is loggable");
+        assert!(
+            message.chained(),
+            "broadcast chat carries the per-author chain"
+        );
+        let request = classify(&app_frame(wire::REQ));
+        assert!(
+            !request.loggable(),
+            "an RPC request is plumbing, not logged"
+        );
+        assert!(!request.chained(), "only broadcast chat is chained");
     }
 
     // A msg is retained like broadcast chat but must stay out of the hash chain:
@@ -1622,18 +1628,24 @@ mod classify_tests {
     #[test]
     fn dm_is_loggable_and_sealed_but_never_chained() {
         let dm = classify(&msg_frame(Some(Nickname::from("bob"))));
-        assert!(dm.loggable, "a msg is retained");
-        assert!(dm.sealed, "a msg is sealed to its addressee");
-        assert!(!dm.chained, "a msg must not join the cross-author chain");
+        assert!(dm.loggable(), "a msg is retained");
+        assert!(dm.sealed(), "a msg is sealed to its addressee");
+        assert!(!dm.chained(), "a msg must not join the cross-author chain");
     }
 
     #[test]
     fn unknown_tag_is_invalid_and_not_loggable() {
         let cls = classify(&app_frame("admin"));
-        assert!(!cls.valid, "an unknown tag fails the boundary gate");
-        assert!(!cls.loggable, "an unknown tag is not logged");
-        assert!(!cls.beat, "an unknown tag is not a beat");
-        assert!(!cls.chained, "an unknown tag is not chained");
+        assert!(!cls.valid(), "an unknown tag fails the boundary gate");
+        assert!(!cls.loggable(), "an unknown tag is not logged");
+        assert!(
+            !cls.beat(),
+            "a frame that fails the gate must not count as proof that its author is alive"
+        );
+        assert!(
+            !cls.chained(),
+            "a dropped frame must leave no gap in the author's hash chain"
+        );
     }
 
     #[test]
@@ -1643,7 +1655,10 @@ mod classify_tests {
             &Nickname::from("author"),
             MessageBody::from("{}"),
         )));
-        assert!(!peer_info.loggable);
+        assert!(
+            !peer_info.loggable(),
+            "the engine owns peer info, so the app must not retain it in its log"
+        );
         let _ = MessageKind::PeerInfo;
     }
 
@@ -1654,7 +1669,7 @@ mod classify_tests {
     fn broadcast_status_is_invalid() {
         let cls = classify(&status_frame(None));
         assert!(
-            !cls.valid,
+            !cls.valid(),
             "a2a_status is directed-only; a `to: None` status is a forged broadcast"
         );
     }
@@ -1667,7 +1682,7 @@ mod classify_tests {
     fn directed_broadcast_is_invalid() {
         let cls = classify(&chat_frame(Some(Nickname::from("bob"))));
         assert!(
-            !cls.valid,
+            !cls.valid(),
             "a2a_broadcast is broadcast-only; a directed one must not cross the gate"
         );
     }
@@ -1676,7 +1691,7 @@ mod classify_tests {
     fn broadcast_dm_is_invalid() {
         let cls = classify(&msg_frame(None));
         assert!(
-            !cls.valid,
+            !cls.valid(),
             "a2a_msg is directed-only; a `to: None` msg would reach every peer"
         );
     }
@@ -1686,36 +1701,41 @@ mod classify_tests {
     #[test]
     fn dm_declaring_the_broadcast_extension_is_invalid() {
         let sw = mesh();
-        let payload = crate::a2a::gossip::compose_broadcast(&sw, "hi");
-        let id = MessageId::new(payload.message_id.as_str()).unwrap();
-        let body = crate::a2a::gossip::payload_body(&payload).unwrap();
+        let payload = status_update_params::compose_broadcast(&sw, "hi");
+        let id = MessageId::try_new(payload.message_id.as_str())
+            .expect("the payload carries a valid message id");
+        let body =
+            status_update_params::payload_body(&payload).expect("the test payload has a body");
         let frame = Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams {
-                tag: AppTag::from(wire::MSG),
-                to: Some(Nickname::from("bob")),
-                corr: None,
+            AppFrameParams::new(
+                wire::app_tag(wire::MSG),
+                Some(Nickname::from("bob")),
+                None,
                 body,
-            },
+            ),
         )
-        .with_id(id);
-        assert!(!classify(&view(frame)).valid);
+        .id(id);
+        assert!(
+            !classify(&view(frame)).valid(),
+            "a frame that is not a valid view is classified invalid"
+        );
     }
 
     // No regression: legitimate addressing still classifies valid.
     #[test]
     fn legitimate_addressing_stays_valid() {
         assert!(
-            classify(&status_frame(Some(Nickname::from("bob")))).valid,
+            classify(&status_frame(Some(Nickname::from("bob")))).valid(),
             "a directed status is valid"
         );
         assert!(
-            classify(&chat_frame(None)).valid,
+            classify(&chat_frame(None)).valid(),
             "a broadcast chat message is valid"
         );
         assert!(
-            classify(&msg_frame(Some(Nickname::from("bob")))).valid,
+            classify(&msg_frame(Some(Nickname::from("bob")))).valid(),
             "a directed chat message is valid"
         );
     }

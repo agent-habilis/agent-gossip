@@ -22,34 +22,34 @@ use anstyle::{AnsiColor, Style};
 
 /// A status line: a right-aligned-12 bold-green `verb` then `msg`, on stdout.
 /// An empty `msg` prints the verb alone, no trailing space.
-pub fn status(verb: &str, msg: &str) {
-    line(AnsiColor::Green, verb, msg);
+pub fn status(verb: &str, message: &str) {
+    line(AnsiColor::Green, verb, message);
 }
 
 /// Like [`status`] but bold-**yellow** — for "not set up" / "out of date" rows.
-pub fn status_warn(verb: &str, msg: &str) {
-    line(AnsiColor::Yellow, verb, msg);
+pub fn status_warn(verb: &str, message: &str) {
+    line(AnsiColor::Yellow, verb, message);
 }
 
-fn line(color: AnsiColor, verb: &str, msg: &str) {
+fn line(color: AnsiColor, verb: &str, message: &str) {
     let style = Style::new().fg_color(Some(color.into())).bold();
-    if msg.is_empty() {
+    if message.is_empty() {
         anstream::println!("{style}{verb:>12}{style:#}");
     } else {
-        anstream::println!("{style}{verb:>12}{style:#} {msg}");
+        anstream::println!("{style}{verb:>12}{style:#} {message}");
     }
 }
 
-/// A cargo-style `warning: {msg}` line (bold-yellow `warning`), on stderr.
-pub fn warn(msg: &str) {
+/// A cargo-style `warning: {message}` line (bold-yellow `warning`), on stderr.
+pub fn warn(message: &str) {
     let style = Style::new().fg_color(Some(AnsiColor::Yellow.into())).bold();
-    anstream::eprintln!("{style}warning{style:#}: {msg}");
+    anstream::eprintln!("{style}warning{style:#}: {message}");
 }
 
-/// A cargo-style `error: {msg}` line (bold-red `error`), on stderr.
-pub fn error(msg: &str) {
+/// A cargo-style `error: {message}` line (bold-red `error`), on stderr.
+pub fn error(message: &str) {
     let style = Style::new().fg_color(Some(AnsiColor::Red.into())).bold();
-    anstream::eprintln!("{style}error{style:#}: {msg}");
+    anstream::eprintln!("{style}error{style:#}: {message}");
 }
 
 /// A path for display: `$HOME` collapsed to `~`, else the full path.

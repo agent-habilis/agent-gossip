@@ -49,14 +49,19 @@ fn reap(child: &mut Child) {
 fn directory_advertise_then_discover() {
     // Advertiser: a private mesh that lists itself in directory `dtest`.
     let adv_log = tmp_log("dir-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let advertiser_stdout = adv_file
+        .try_clone()
+        .expect("the test log file handle is open");
+    let mut advertiser_command = test_cmd();
+    advertiser_command
         .args(["create", "--advertise", "dtest", "--nickname", "adv"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
-        .stderr(Stdio::from(adv_file))
+        .stdout(Stdio::from(advertiser_stdout))
+        .stderr(Stdio::from(adv_file));
+    let mut advertiser: Child = advertiser_command
         .spawn()
-        .expect("spawn advertiser");
+        .expect("the test binary is built and the OS can start a child process");
 
     // Pull the advertised mesh id out of the advertiser's `ready` event.
     let ready = wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT);
@@ -67,19 +72,25 @@ fn directory_advertise_then_discover() {
             fs::read_to_string(&adv_log).unwrap_or_default()
         );
     };
-    let ready: serde_json::Value = serde_json::from_str(&ready).expect("ready json");
+    let ready: serde_json::Value = serde_json::from_str(&ready)
+        .expect("the daemon prints exactly one JSON line when it is ready");
     let listed_id = ready["gossip"].as_str().expect("mesh id").to_string();
 
     // Discoverer: browse `dtest` and stream directory events.
     let disc_log = tmp_log("dir-disc");
-    let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer = test_cmd()
+    let disc_file = File::create(&disc_log).expect("the test log directory is writable");
+    let discoverer_stdout = disc_file
+        .try_clone()
+        .expect("the test log file handle is open");
+    let mut discoverer_command = test_cmd();
+    discoverer_command
         .args(["discover", "--directory", "dtest"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
-        .stderr(Stdio::from(disc_file))
+        .stdout(Stdio::from(discoverer_stdout))
+        .stderr(Stdio::from(disc_file));
+    let mut discoverer: Child = discoverer_command
         .spawn()
-        .expect("spawn discoverer");
+        .expect("the test binary is built and the OS can start a child process");
 
     // The advertised mesh should surface as `gossip_found`.
     let found = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT);
@@ -128,8 +139,12 @@ fn discover_stops_on_sigterm() {
     // Advertiser so the discoverer fully comes up (and thus has the api
     // session — and its SIGTERM handler — running) before we signal it.
     let adv_log = tmp_log("term-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let advertiser_stdout = adv_file
+        .try_clone()
+        .expect("the test log file handle is open");
+    let mut advertiser_command = test_cmd();
+    advertiser_command
         .args([
             "create",
             "--advertise",
@@ -141,24 +156,30 @@ fn discover_stops_on_sigterm() {
             "adv",
         ])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
-        .stderr(Stdio::from(adv_file))
+        .stdout(Stdio::from(advertiser_stdout))
+        .stderr(Stdio::from(adv_file));
+    let mut advertiser: Child = advertiser_command
         .spawn()
-        .expect("spawn advertiser");
+        .expect("the test binary is built and the OS can start a child process");
     if wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT).is_none() {
         reap(&mut advertiser);
         panic!("advertiser never became ready");
     }
 
     let disc_log = tmp_log("term-disc");
-    let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer = test_cmd()
+    let disc_file = File::create(&disc_log).expect("the test log directory is writable");
+    let discoverer_stdout = disc_file
+        .try_clone()
+        .expect("the test log file handle is open");
+    let mut discoverer_command = test_cmd();
+    discoverer_command
         .args(["discover", "--directory", "stoptest"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
-        .stderr(Stdio::from(disc_file))
+        .stdout(Stdio::from(discoverer_stdout))
+        .stderr(Stdio::from(disc_file));
+    let mut discoverer: Child = discoverer_command
         .spawn()
-        .expect("spawn discoverer");
+        .expect("the test binary is built and the OS can start a child process");
 
     // Proven fully up once it surfaces the advertised mesh.
     let up = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT).is_some();
@@ -180,7 +201,11 @@ fn discover_stops_on_sigterm() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut exited = false;
     while Instant::now() < deadline {
-        if discoverer.try_wait().expect("try_wait").is_some() {
+        if discoverer
+            .try_wait()
+            .expect("polling a child we own and have not reaped cannot hit an OS error")
+            .is_some()
+        {
             exited = true;
             break;
         }
@@ -202,8 +227,12 @@ fn discover_stops_on_sigterm() {
 #[test]
 fn discover_window_exits_on_its_own() {
     let adv_log = tmp_log("win-adv");
-    let adv_file = File::create(&adv_log).unwrap();
-    let mut advertiser = test_cmd()
+    let adv_file = File::create(&adv_log).expect("the test log directory is writable");
+    let advertiser_stdout = adv_file
+        .try_clone()
+        .expect("the test log file handle is open");
+    let mut advertiser_command = test_cmd();
+    advertiser_command
         .args([
             "create",
             "--advertise",
@@ -215,29 +244,36 @@ fn discover_window_exits_on_its_own() {
             "adv",
         ])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
-        .stderr(Stdio::from(adv_file))
+        .stdout(Stdio::from(advertiser_stdout))
+        .stderr(Stdio::from(adv_file));
+    let mut advertiser: Child = advertiser_command
         .spawn()
-        .expect("spawn advertiser");
+        .expect("the test binary is built and the OS can start a child process");
     let ready = wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT);
     let Some(ready) = ready else {
         reap(&mut advertiser);
         panic!("advertiser never became ready");
     };
-    let ready: serde_json::Value = serde_json::from_str(&ready).expect("ready json");
+    let ready: serde_json::Value = serde_json::from_str(&ready)
+        .expect("the daemon prints exactly one JSON line when it is ready");
     let listed_id = ready["gossip"].as_str().expect("mesh id").to_string();
 
     // Window wide enough for directory join + one 2s ad cycle even when the
     // sibling directory tests run in parallel (contended loopback ladder).
     let disc_log = tmp_log("win-disc");
-    let disc_file = File::create(&disc_log).unwrap();
-    let mut discoverer = test_cmd()
+    let disc_file = File::create(&disc_log).expect("the test log directory is writable");
+    let discoverer_stdout = disc_file
+        .try_clone()
+        .expect("the test log file handle is open");
+    let mut discoverer_command = test_cmd();
+    discoverer_command
         .args(["discover", "--directory", "wintest", "--window-secs", "30"])
         .args(common::flag_args(&DIR_FLAGS))
-        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
-        .stderr(Stdio::from(disc_file))
+        .stdout(Stdio::from(discoverer_stdout))
+        .stderr(Stdio::from(disc_file));
+    let mut discoverer: Child = discoverer_command
         .spawn()
-        .expect("spawn discoverer");
+        .expect("the test binary is built and the OS can start a child process");
 
     // The bounded run must still surface the advertised mesh.
     let found = wait_for_line(&disc_log, "\"event\":\"gossip_found\"", CONNECT_TIMEOUT);
@@ -258,7 +294,10 @@ fn discover_window_exits_on_its_own() {
     let deadline = Instant::now() + Duration::from_secs(40);
     let mut status = None;
     while Instant::now() < deadline {
-        if let Some(exit) = discoverer.try_wait().expect("try_wait") {
+        if let Some(exit) = discoverer
+            .try_wait()
+            .expect("polling a child we own and have not reaped cannot hit an OS error")
+        {
             status = Some(exit);
             break;
         }

@@ -1,7 +1,11 @@
+use std::collections::HashSet;
+
 use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
+use habilis_network::net::endpoint_address;
 use habilis_network::protocol::{AuthorKey, Nickname};
 use habilis_network::util::consts::MAX_MESSAGE_SIZE;
 use habilis_network::x25519_dalek::PublicKey;
+use serde::Deserialize;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -44,6 +48,10 @@ pub(crate) fn own_card(
         required: None,
         params: None,
     };
+    let modes: Vec<String> = ["text/plain", "application/json", "application/octet-stream"]
+        .into_iter()
+        .map(String::from)
+        .collect();
     AgentCard {
         name: nickname.as_str().to_string(),
         description: format!(
@@ -89,16 +97,8 @@ pub(crate) fn own_card(
                 },
             ],
         },
-        default_input_modes: vec![
-            "text/plain".to_string(),
-            "application/json".to_string(),
-            "application/octet-stream".to_string(),
-        ],
-        default_output_modes: vec![
-            "text/plain".to_string(),
-            "application/json".to_string(),
-            "application/octet-stream".to_string(),
-        ],
+        default_input_modes: modes.clone(),
+        default_output_modes: modes,
         skills: vec![
             AgentSkill {
                 id: "chat".to_string(),
@@ -133,7 +133,7 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
     let extensions = meta_doc
         .pointer(&format!("/peers/{peer}/card/capabilities/extensions"))?
         .as_array()?;
-    let b58 = extensions
+    let b58: &str = extensions
         .iter()
         .find(|ext| {
             ext.get("uri")
@@ -156,10 +156,10 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
 /// dial without waiting for a `PeerInfo` to arrive.
 #[must_use]
 pub(crate) fn endpoint_hint(endpoint: &Endpoint) -> serde_json::Value {
-    let addr = endpoint.addr();
+    let address = endpoint_address(endpoint);
     serde_json::json!({
-        "id": addr.id.to_string(),
-        "relay": addr.relay_urls().next().map(ToString::to_string),
+        "id": address.id.to_string(),
+        "relay": address.relay_urls().next().map(ToString::to_string),
     })
 }
 
@@ -210,12 +210,11 @@ pub(crate) fn publish_merges(
     let mut merges = Vec::new();
     let mut part = serde_json::Map::new();
     for key in keys {
-        let mut with_key = part.clone();
-        with_key.insert(key.clone(), fields[key].clone());
-        if fits(&merge_of(&with_key))? {
-            part = with_key;
+        part.insert(key.clone(), fields[key].clone());
+        if fits(&merge_of(&part))? {
             continue;
         }
+        part.remove(key);
         if part.is_empty() {
             anyhow::bail!("the card field '{key}' does not fit in one frame by itself");
         }
@@ -241,9 +240,7 @@ pub(crate) fn complete_card<'doc>(
     peer: &Nickname,
 ) -> Option<&'doc serde_json::Value> {
     let card = meta_doc.pointer(&format!("/peers/{peer}/card"))?;
-    serde_json::from_value::<AgentCard>(card.clone())
-        .is_ok()
-        .then_some(card)
+    AgentCard::deserialize(card).is_ok().then_some(card)
 }
 
 /// The RFC 7386 merge that tells the other members why our card is not published: a member that
@@ -273,18 +270,16 @@ pub(crate) fn card_error_merge(nickname: &Nickname, error: Option<&str>) -> serd
 #[must_use]
 pub(crate) fn absent_peers<'doc>(
     document: &'doc serde_json::Value,
-    live: &std::collections::HashSet<&str>,
+    live: &HashSet<&str>,
     self_nick: &Nickname,
 ) -> Vec<&'doc str> {
-    document
-        .get("peers")
-        .and_then(serde_json::Value::as_object)
+    let peers: Option<&serde_json::Map<String, serde_json::Value>> =
+        document.get("peers").and_then(serde_json::Value::as_object);
+    peers
         .map(|peers| {
-            peers
-                .keys()
-                .map(String::as_str)
-                .filter(|nick| *nick != self_nick.as_str() && !live.contains(nick))
-                .collect()
+            let self_name: &str = self_nick.as_str();
+            let is_absent = |nick: &&str| *nick != self_name && !live.contains(nick);
+            peers.keys().map(String::as_str).filter(is_absent).collect()
         })
         .unwrap_or_default()
 }
@@ -300,7 +295,10 @@ pub(crate) fn retract_merge(nickname: &Nickname) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use habilis_network::protocol::{AuthorKey, Nickname};
+    use habilis_network::util::consts;
 
     use super::{own_card, publish_merges};
 
@@ -309,11 +307,18 @@ mod tests {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(
             &Nickname::from("calm-otter"),
-            AuthorKey::from_bytes([0xab; 32]),
+            AuthorKey::from([0xab; 32]),
             &seal_b58,
         );
-        assert_eq!(card.name, "calm-otter");
-        assert_eq!(card.capabilities.streaming, Some(true));
+        assert_eq!(
+            card.name, "calm-otter",
+            "the card names the calm-otter peer"
+        );
+        assert_eq!(
+            card.capabilities.streaming,
+            Some(true),
+            "the card advertises streaming"
+        );
         let uris: Vec<&str> = card
             .capabilities
             .extensions
@@ -339,24 +344,43 @@ mod tests {
             .iter()
             .find(|ext| ext.uri.contains("mesh-seal"))
             .expect("mesh-seal extension present");
-        assert_eq!(seal_ext.params.as_ref().unwrap()["x25519"], seal_b58);
+        assert_eq!(
+            seal_ext
+                .params
+                .as_ref()
+                .expect("the extension carries params")["x25519"],
+            seal_b58,
+            "the seal extension carries the x25519 key"
+        );
         // The mesh card's only interface is the gossip binding, whose url
         // carries the cryptographic identity (no HTTP url).
-        assert_eq!(card.supported_interfaces.len(), 1);
-        assert_eq!(card.supported_interfaces[0].url, "ab".repeat(32));
+        assert_eq!(
+            card.supported_interfaces.len(),
+            1,
+            "the card lists one supported interface"
+        );
+        assert_eq!(
+            card.supported_interfaces[0].url,
+            "ab".repeat(32),
+            "the interface url is the mesh id"
+        );
     }
 
     #[test]
     fn publish_merge_targets_the_peer_card_path() {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let card = own_card(&nickname, AuthorKey::from_bytes([0xab; 32]), &seal_b58);
-        let card = serde_json::to_value(card).unwrap();
+        let card = own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58);
+        let card = serde_json::to_value(card).expect("a test value serializes to JSON");
         // A frame that is never full: the card is one merge.
-        let merges = publish_merges(&nickname, &card, |_| Ok(0)).unwrap();
-        assert_eq!(merges.len(), 1);
+        let merges = publish_merges(&nickname, &card, |_| Ok(0))
+            .expect("the test card fits the frame limit");
+        assert_eq!(merges.len(), 1, "one merge is recorded");
         let merge = &merges[0];
-        assert_eq!(merge["peers"]["calm-otter"]["card"]["name"], "calm-otter");
+        assert_eq!(
+            merge["peers"]["calm-otter"]["card"]["name"], "calm-otter",
+            "the merged peer carries its card name"
+        );
         assert!(
             merge["peers"]["calm-otter"].get("model").is_none(),
             "agent-side facts are the agent's own merge, not the daemon's"
@@ -377,7 +401,7 @@ mod tests {
             }
         });
         let self_nick = Nickname::from("print-onyx");
-        let live = std::collections::HashSet::from(["calm-otter"]);
+        let live = HashSet::from(["calm-otter"]);
 
         let absent = super::absent_peers(&document, &live, &self_nick);
 
@@ -393,17 +417,21 @@ mod tests {
     #[test]
     fn absent_peers_never_includes_our_own_entry() {
         let document = serde_json::json!({ "peers": { "print-onyx": { "status": "idle" } } });
-        let live = std::collections::HashSet::new();
-        assert!(super::absent_peers(&document, &live, &Nickname::from("print-onyx")).is_empty());
+        let live = HashSet::new();
+        assert!(
+            super::absent_peers(&document, &live, &Nickname::from("print-onyx")).is_empty(),
+            "a live peer is not reported absent"
+        );
     }
 
     /// A document with no `/peers` map at all (a fresh mesh) is not an error.
     #[test]
     fn absent_peers_tolerates_a_document_without_peers() {
-        let live = std::collections::HashSet::new();
+        let live = HashSet::new();
         assert!(
             super::absent_peers(&serde_json::json!({}), &live, &Nickname::from("print-onyx"))
-                .is_empty()
+                .is_empty(),
+            "a document without peers has no absent peers"
         );
     }
 
@@ -417,10 +445,7 @@ mod tests {
         let Some(change) = doc.build_change(merge, &[9u8; 32])? else {
             return Ok(0);
         };
-        let sealed = encrypt_body(
-            &change_body(&change, None)?,
-            &SymmetricKey::from_bytes([3u8; 32]),
-        )?;
+        let sealed = encrypt_body(&change_body(&change, None)?, &SymmetricKey::from([3u8; 32]))?;
         let frame = Message::new_channel_event(
             &MeshId::from("test"),
             &Nickname::from("calm-otter"),
@@ -434,12 +459,9 @@ mod tests {
     /// The card of the longest nickname and a relay URL of the real kind.
     fn worst_case_card(nickname: &Nickname) -> serde_json::Value {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let mut card = serde_json::to_value(own_card(
-            nickname,
-            AuthorKey::from_bytes([0xab; 32]),
-            &seal_b58,
-        ))
-        .unwrap();
+        let mut card =
+            serde_json::to_value(own_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
+                .expect("a test value serializes to JSON");
         card["endpoint"] = serde_json::json!({
             "id": "ab".repeat(32),
             "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
@@ -455,9 +477,9 @@ mod tests {
         let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
         let card = worst_case_card(&nickname);
         let whole = serde_json::json!({ "peers": { nickname.as_str(): { "card": card } } });
-        let whole_len = passworded_frame_len(&whole).unwrap();
+        let whole_len = passworded_frame_len(&whole).expect("the test frame has a length");
         assert!(
-            whole_len > habilis_network::util::consts::MAX_MESSAGE_SIZE,
+            whole_len > consts::MAX_MESSAGE_SIZE,
             "the premise of issue 41: the card as one merge is {whole_len} bytes on the wire"
         );
 
@@ -466,9 +488,9 @@ mod tests {
 
         assert!(merges.len() > 1, "a card over the frame is in pieces");
         for merge in &merges {
-            let len = passworded_frame_len(merge).unwrap();
+            let len = passworded_frame_len(merge).expect("the test frame has a length");
             assert!(
-                len + super::FRAME_MARGIN <= habilis_network::util::consts::MAX_MESSAGE_SIZE,
+                len + super::FRAME_MARGIN <= consts::MAX_MESSAGE_SIZE,
                 "a frame of {len} bytes leaves no margin"
             );
         }
@@ -481,7 +503,7 @@ mod tests {
         for merge in &merges {
             let part = merge["peers"][nickname.as_str()]["card"]
                 .as_object()
-                .unwrap();
+                .expect("the JSON value is an object in this test");
             for (key, value) in part {
                 assert!(
                     rebuilt.insert(key.clone(), value.clone()).is_none(),
@@ -489,7 +511,11 @@ mod tests {
                 );
             }
         }
-        assert_eq!(serde_json::Value::Object(rebuilt), card);
+        assert_eq!(
+            serde_json::Value::Object(rebuilt),
+            card,
+            "the rebuilt card matches the original"
+        );
     }
 
     /// The pieces arrive in order. No prefix of them but the whole set is served as a card, so a
@@ -507,7 +533,7 @@ mod tests {
         for (index, merge) in merges.iter().enumerate() {
             let part = merge["peers"][nickname.as_str()]["card"]
                 .as_object()
-                .unwrap();
+                .expect("the JSON value is an object in this test");
             arrived.extend(part.clone());
             let doc = serde_json::json!({ "peers": { nickname.as_str(): { "card": arrived } } });
             assert_eq!(
@@ -534,14 +560,14 @@ mod tests {
     fn complete_card_serves_a_card_only_when_the_schema_is_whole() {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let whole_card = serde_json::to_value(own_card(
-            &nickname,
-            AuthorKey::from_bytes([0xab; 32]),
-            &seal_b58,
-        ))
-        .unwrap();
+        let whole_card =
+            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58))
+                .expect("a test value serializes to JSON");
         let whole = serde_json::json!({ "peers": { "calm-otter": { "card": whole_card } } });
-        assert!(super::complete_card(&whole, &nickname).is_some());
+        assert!(
+            super::complete_card(&whole, &nickname).is_some(),
+            "a complete card is recovered"
+        );
 
         let only_capabilities = serde_json::json!({ "peers": { "calm-otter": { "card": {
             "capabilities": whole_card["capabilities"],
@@ -552,7 +578,10 @@ mod tests {
         );
 
         let none = serde_json::json!({ "peers": {} });
-        assert!(super::complete_card(&none, &nickname).is_none());
+        assert!(
+            super::complete_card(&none, &nickname).is_none(),
+            "a card missing a field is not recovered"
+        );
     }
 
     #[test]
@@ -560,7 +589,8 @@ mod tests {
         let nickname = Nickname::from("calm-otter");
         assert_eq!(
             super::card_error_merge(&nickname, Some("too large")),
-            serde_json::json!({ "peers": { "calm-otter": { "card_error": "too large" } } })
+            serde_json::json!({ "peers": { "calm-otter": { "card_error": "too large" } } }),
+            "peers read the reason from the meta document to learn why no card was served"
         );
         assert_eq!(
             super::card_error_merge(&nickname, None),

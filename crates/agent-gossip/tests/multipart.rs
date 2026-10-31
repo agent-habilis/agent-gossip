@@ -5,6 +5,7 @@
 //! These pin that round-trip for a plain `msg` and for a task content leg —
 //! the body surfaces **once**, as the whole logical message, never as raw shards.
 
+use agent_gossip::a2a::status_update_params;
 use agent_gossip::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
 use common::{BIG_BODY_TIMEOUT, InProcNode, MSG_TIMEOUT, chat_text};
@@ -105,7 +106,7 @@ async fn shard_repair_reserves_cached_big_group_frames() {
     // logical message id). Bob already holds them — dedup will drop the
     // re-delivery — but the serve side must find and re-send them.
     let alice_nick = alice.nickname.clone();
-    let resp = bob
+    let response = bob
         .a2a_call(
             &alice_nick,
             "shard/repair",
@@ -113,8 +114,8 @@ async fn shard_repair_reserves_cached_big_group_frames() {
         )
         .await;
     assert_eq!(
-        resp["result"]["resent"], 2,
-        "the author re-served the cached frames: {resp}"
+        response["result"]["resent"], 2,
+        "the author re-served the cached frames: {response}"
     );
 
     // An unknown group is a clean zero, not an error.
@@ -169,12 +170,10 @@ async fn multishard_message_reassembles_on_a_passworded_mesh() {
 async fn body_past_the_input_ceiling_is_refused() {
     let alice = InProcNode::create("mp-cap").await;
 
-    let body = MessageBody::new("x".repeat(MAX_LOGICAL_BODY_BYTES + 1)).expect("valid body");
-    let error = alice
-        .session
-        .broadcast(body)
-        .await
-        .expect_err("a body past the input ceiling must be refused");
+    let body = MessageBody::try_new(&"x".repeat(MAX_LOGICAL_BODY_BYTES + 1)).expect("valid body");
+    let error = alice.session.broadcast(body).await.expect_err(
+        "a body over the cap would need more shards than a mesh accepts, so sending it is unsafe",
+    );
     assert!(
         error.to_string().contains("too large"),
         "expected a too-large error, got: {error}"
@@ -183,7 +182,7 @@ async fn body_past_the_input_ceiling_is_refused() {
     alice.leave().await;
 }
 
-/// large, shards like any content leg — the initiator reassembles it once.
+/// Large, shards like any content leg — the initiator reassembles it once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_task_artifact_reassembles_into_one() {
     let mut alice = InProcNode::create("mp-ex").await;
@@ -196,8 +195,8 @@ async fn multishard_task_artifact_reassembles_into_one() {
     );
 
     // Alice creates a task on bob (native SendMessage); bob mints the id.
-    let resp = alice.create_task("mp-ex-bob", "produce a big report").await;
-    let task_id: TaskId = resp["result"]["task"]["id"]
+    let response = alice.create_task("mp-ex-bob", "produce a big report").await;
+    let task_id: TaskId = response["result"]["task"]["id"]
         .as_str()
         .expect("the worker returned a Task id")
         .parse()
@@ -216,8 +215,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     );
     let matching = alice
         .tasks()
-        .iter()
-        .filter(|(message, _)| agent_gossip::a2a::gossip::task_text(message) == big)
+        .filter(|(message, _)| status_update_params::task_text(message) == big)
         .count();
     assert_eq!(
         matching, 1,

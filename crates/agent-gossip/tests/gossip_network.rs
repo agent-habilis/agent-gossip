@@ -7,18 +7,21 @@
 //! Crypto-heavy deps are optimized even in dev builds (see the
 //! `[profile.dev.package]` overrides in `Cargo.toml`), so debug `cargo test`
 //! runs at near-release connect speeds.
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin, chat_text,
-    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
-    cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
-    wait_until,
+    CONNECT_TIMEOUT, ChatMessage, InProcNode, MSG_TIMEOUT, Node, POLL, PresenceSubtype,
+    RECOVERY_TIMEOUT, bin, chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll,
+    cli_poll_long, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
+    wait_total, wait_until,
 };
+use habilis_network::util::process;
 use serde_json::json;
 
 /// Heal cadence for the reliability tests, injected through the hidden
@@ -81,17 +84,18 @@ fn survivor_serves_rendezvous(mesh: &str, nick: &str) -> bool {
 /// link currently up.
 fn rendezvous_signals(mesh: &str, nick: &str) -> (bool, usize, usize) {
     let trace = trace_log(mesh, nick);
-    let rendezvous_links = |direction: &str| {
-        trace
-            .lines()
-            .filter(|line| line.contains(direction) && line.contains("is_rendezvous=true"))
-            .count()
-    };
     (
         trace.contains("beacon assumed"),
-        rendezvous_links("gossip neighbor up"),
-        rendezvous_links("gossip neighbor down"),
+        rendezvous_links(&trace, "gossip neighbor up"),
+        rendezvous_links(&trace, "gossip neighbor down"),
     )
+}
+
+fn rendezvous_links(trace: &str, direction: &str) -> usize {
+    let matching = trace
+        .lines()
+        .filter(|line| line.contains(direction) && line.contains("is_rendezvous=true"));
+    matching.count()
 }
 
 /// Why a survivor is not serving the rendezvous, for assertion messages. The
@@ -99,18 +103,13 @@ fn rendezvous_signals(mesh: &str, nick: &str) -> (bool, usize, usize) {
 /// clean roster — so a bare stdout tail left CI handoff failures unreadable.
 fn rendezvous_diagnosis(mesh: &str, nick: &str) -> String {
     let (assumed, ups, downs) = rendezvous_signals(mesh, nick);
+    let trace = trace_log(mesh, nick);
+    let mut tail: Vec<&str> = trace.lines().rev().take(25).collect();
+    tail.reverse();
     format!(
         "<{nick}>: beacon assumed={assumed}, rendezvous links up={ups} down={downs} \
          (needs assumed=true and up>down)\ntrace tail:\n{}",
-        trace_log(mesh, nick)
-            .lines()
-            .rev()
-            .take(25)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n")
+        tail.join("\n")
     )
 }
 
@@ -186,7 +185,7 @@ fn doctor_lists_active_mesh_as_json() {
     let (node, mesh) = Node::create_named("itest-doctor");
     assert!(node.wait_ready(&mesh), "daemon never ready");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["doctor", "--no-probe", "--output", "json"])
         .output()
         .expect("doctor command failed to spawn");
@@ -228,9 +227,13 @@ async fn test_two_node_message_delivery() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "joiner never received the creator's message"
     );
-    let received = joiner.inbound();
+    let received: Vec<_> = joiner.inbound().collect();
     assert_eq!(received.len(), 1, "expected exactly 1 delivery");
-    assert_eq!(chat_text(received[0]), "hello from the network");
+    assert_eq!(
+        chat_text(received[0]),
+        "hello from the network",
+        "the joiner receives the one message"
+    );
 }
 
 /// A passworded mesh: the right password joins and messages flow; a wrong
@@ -250,7 +253,10 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
     assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
 
     // No password: a crisp requirement error, not a silent empty mesh.
-    let target = creator.mesh.parse().expect("join target");
+    let target: agent_gossip::JoinTarget = creator
+        .mesh
+        .parse()
+        .expect("a mesh id printed by a creator is always a well-formed join target");
     let missing = agent_gossip::api::MeshSession::join(agent_gossip::api::JoinConfig::new(target))
         .await
         .expect_err("a missing password must be rejected");
@@ -268,7 +274,12 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "passworded joiner never received the creator's message"
     );
-    assert_eq!(chat_text(joiner.inbound()[0]), "hello behind the password");
+    let inbound: Vec<_> = joiner.inbound().collect();
+    assert_eq!(
+        chat_text(inbound[0]),
+        "hello behind the password",
+        "the password joiner receives the message"
+    );
 }
 
 /// The subprocess wire contract for `--password`: `create --password=pw`
@@ -345,7 +356,11 @@ async fn test_state_log_propagates_to_a_peer() {
         "joiner never converged to the creator's state log"
     );
     // The author holds its own events too (gossip never echoes to self).
-    assert_eq!(creator.state_get().await, want);
+    assert_eq!(
+        creator.state_get().await,
+        want,
+        "the creator holds its own state"
+    );
 }
 
 /// Durable state log, anti-entropy backfill: a peer that joins **after** the
@@ -390,7 +405,7 @@ async fn test_state_log_backfills_a_late_joiner() {
 
 /// Three-node full-mesh: a broadcast should reach at least 2 of the 3 nodes
 /// (the sender never receives its own broadcast). This test also documents
-/// the known HyParView relay bug where the second joiner may not receive messages.
+/// the known `HyParView` relay bug where the second joiner may not receive messages.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_node_full_delivery() {
     let alpha = InProcNode::create("net3node").await;
@@ -405,8 +420,12 @@ async fn test_three_node_full_delivery() {
         beta.wait_inbound(1, MSG_TIMEOUT).await && gamma.wait_inbound(1, MSG_TIMEOUT).await,
         "expected both beta and gamma to receive the broadcast"
     );
-    for msg in beta.inbound().into_iter().chain(gamma.inbound()) {
-        assert_eq!(chat_text(msg), "broadcast to all three nodes");
+    for message in beta.inbound().chain(gamma.inbound()) {
+        assert_eq!(
+            chat_text(message),
+            "broadcast to all three nodes",
+            "every peer receives the broadcast"
+        );
     }
 }
 
@@ -432,7 +451,7 @@ async fn test_bidirectional_messaging() {
 }
 
 /// Verify that unit-level JSON wire format tests pass.
-/// The ext field and version checks are covered in `protocol::message::tests`.
+/// The ext field and version checks are covered in `protocol::messages::tests`.
 /// This integration test confirms the CLI sends parseable MESH 1.0 blocks.
 /// One send surfaces twice: the sender's own stream echoes it (stream
 /// self-parity) and the peer receives it.
@@ -443,18 +462,18 @@ fn test_stdout_format_parseable() {
     assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
-    cli_message(&mesh, &creator.nickname, "format check message");
+    let _ = cli_message(&mesh, &creator.nickname, "format check message");
 
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
 
-    let msgs: Vec<Msg> = creator
-        .messages()
-        .into_iter()
-        .chain(joiner.messages())
-        .collect();
-    for msg in &msgs {
-        assert_eq!(msg.body, "format check message");
+    let mut msgs: Vec<ChatMessage> = creator.messages().collect();
+    msgs.extend(joiner.messages());
+    for message in &msgs {
+        assert_eq!(
+            message.body, "format check message",
+            "the message body is the format check text"
+        );
     }
 }
 
@@ -490,19 +509,19 @@ fn test_oversize_body_splits_and_reassembles() {
     // the receiver still reassembles it, so it surfaces once as the whole
     // body on each stream: the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
-    cli_message(&mesh, &creator.nickname, &body);
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    let _ = cli_message(&mesh, &creator.nickname, &body);
+    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(
         total, 2,
         "the multipart body surfaces exactly once per node"
     );
-    let got: Vec<Msg> = creator
-        .messages()
-        .into_iter()
-        .chain(joiner.messages())
-        .collect();
-    for msg in &got {
-        assert_eq!(msg.body, body, "the reassembled body matches the original");
+    let mut got: Vec<ChatMessage> = creator.messages().collect();
+    got.extend(joiner.messages());
+    for message in &got {
+        assert_eq!(
+            message.body, body,
+            "the reassembled body matches the original"
+        );
     }
 }
 
@@ -515,18 +534,15 @@ fn test_utf8_body_round_trip() {
     assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
     let body = "héllo 💬 日本語";
-    cli_message(&mesh, &creator.nickname, body);
+    let _ = cli_message(&mesh, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    let total = wait_total(|| creator.messages().count() + joiner.messages().count(), 2);
     assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
-    let msgs: Vec<Msg> = creator
-        .messages()
-        .into_iter()
-        .chain(joiner.messages())
-        .collect();
-    for msg in &msgs {
-        assert_eq!(msg.body, body);
+    let mut msgs: Vec<ChatMessage> = creator.messages().collect();
+    msgs.extend(joiner.messages());
+    for message in &msgs {
+        assert_eq!(message.body, body, "the message body is kept as sent");
     }
 }
 
@@ -558,7 +574,7 @@ async fn test_presence_block_delivery() {
     // creator must surface it.
     assert!(
         creator
-            .wait_presence("joiner-presence", true, MSG_TIMEOUT)
+            .wait_presence("joiner-presence", PresenceSubtype::Joined, MSG_TIMEOUT)
             .await,
         "creator never surfaced the joiner's 'joined' presence"
     );
@@ -571,7 +587,7 @@ async fn test_concurrent_asks() {
     let mut creator = InProcNode::create("netconc").await;
     let joiner = InProcNode::join(&creator.mesh, "joiner-concurrent").await;
 
-    let mut ids = std::collections::HashSet::new();
+    let mut ids = HashSet::new();
     for index in 0..ASK_COUNT {
         let id = joiner
             .broadcast(&format!("concurrent message {index}"))
@@ -614,13 +630,13 @@ async fn test_ask_targets_specific_agent_three_peers() {
             node.wait_body("tag-from-alpha", MSG_TIMEOUT).await,
             "alpha's message not delivered"
         );
-        let msg = node
+        let message = node
             .inbound()
             .into_iter()
-            .find(|msg| chat_text(msg) == "tag-from-alpha")
+            .find(|message| chat_text(message) == "tag-from-alpha")
             .expect("alpha's message missing");
         assert_eq!(
-            msg.author.to_string(),
+            message.author.to_string(),
             alpha_nick,
             "wrong author for alpha's message"
         );
@@ -636,13 +652,13 @@ async fn test_ask_targets_specific_agent_three_peers() {
         gamma.wait_body("tag-from-beta", MSG_TIMEOUT).await,
         "beta's message not delivered to gamma"
     );
+    let gamma_msg = beta
+        .inbound()
+        .into_iter()
+        .find(|message| chat_text(message) == "tag-from-gamma")
+        .expect("gamma msg missing on beta");
     assert_eq!(
-        beta.inbound()
-            .into_iter()
-            .find(|msg| chat_text(msg) == "tag-from-gamma")
-            .expect("gamma msg missing on beta")
-            .author
-            .to_string(),
+        gamma_msg.author.to_string(),
         gamma.nickname,
         "wrong author for gamma's message"
     );
@@ -658,7 +674,7 @@ async fn test_graceful_shutdown_handler_fires() {
     // Let the mesh form so the `Left` broadcast has a live link.
     assert!(
         creator
-            .wait_presence("joiner-shutdown", true, MSG_TIMEOUT)
+            .wait_presence("joiner-shutdown", PresenceSubtype::Joined, MSG_TIMEOUT)
             .await,
         "joiner never surfaced as joined before leaving"
     );
@@ -668,7 +684,7 @@ async fn test_graceful_shutdown_handler_fires() {
 
     assert!(
         creator
-            .wait_presence("joiner-shutdown", false, MSG_TIMEOUT)
+            .wait_presence("joiner-shutdown", PresenceSubtype::Left, MSG_TIMEOUT)
             .await,
         "creator never received the joiner's 'left' presence"
     );
@@ -688,49 +704,61 @@ async fn test_interleaved_join_leave_order() {
 
     let alpha = InProcNode::join(&observer.mesh, "alpha-order").await;
     assert!(
-        observer.wait_presence_count(true, 1, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Joined, 1, MSG_TIMEOUT)
+            .await,
         "alpha joined not received"
     );
 
     let beta = InProcNode::join(&observer.mesh, "beta-order").await;
     assert!(
-        observer.wait_presence_count(true, 2, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Joined, 2, MSG_TIMEOUT)
+            .await,
         "beta joined not received"
     );
 
     alpha.leave().await;
     assert!(
-        observer.wait_presence_count(false, 1, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Left, 1, MSG_TIMEOUT)
+            .await,
         "alpha left not received"
     );
 
     let gamma = InProcNode::join(&observer.mesh, "gamma-order").await;
     assert!(
-        observer.wait_presence_count(true, 3, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Joined, 3, MSG_TIMEOUT)
+            .await,
         "gamma joined not received"
     );
 
     beta.leave().await;
     assert!(
-        observer.wait_presence_count(false, 2, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Left, 2, MSG_TIMEOUT)
+            .await,
         "beta left not received"
     );
 
     gamma.leave().await;
     assert!(
-        observer.wait_presence_count(false, 3, MSG_TIMEOUT).await,
+        observer
+            .wait_presence_count(PresenceSubtype::Left, 3, MSG_TIMEOUT)
+            .await,
         "gamma left not received"
     );
 
     assert!(
-        observer.presence_count(true) >= 3,
+        observer.presence_count(PresenceSubtype::Joined) >= 3,
         "expected >=3 joined, got {}",
-        observer.presence_count(true)
+        observer.presence_count(PresenceSubtype::Joined)
     );
     assert!(
-        observer.presence_count(false) >= 3,
+        observer.presence_count(PresenceSubtype::Left) >= 3,
         "expected >=3 left, got {}",
-        observer.presence_count(false)
+        observer.presence_count(PresenceSubtype::Left)
     );
 }
 
@@ -738,10 +766,12 @@ async fn test_interleaved_join_leave_order() {
 #[test]
 fn test_lookup_list_accepted() {
     let log = tmp_log("public");
-    let file = File::create(&log).unwrap();
-    let mut child = common::test_cmd()
-        .args(["create", "--name", "pub-test", "--lookup", "mdns,dht,relay"])
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+    let file = File::create(&log).expect("the test log directory is writable");
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
+    let mut command = common::test_cmd();
+    command.args(["create", "--name", "pub-test", "--lookup", "mdns,dht,relay"]);
+    let mut child: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
         .expect("failed to spawn create --lookup mdns,dht,relay");
@@ -780,18 +810,21 @@ fn test_lookup_list_accepted() {
 fn test_state_file_removed_on_signal() {
     for signal in ["-TERM", "-HUP", "-INT"] {
         let log = tmp_log(&format!("statefile{signal}"));
-        let file = File::create(&log).unwrap();
+        let file = File::create(&log).expect("the test log directory is writable");
         let state_file = std::env::temp_dir().join(format!(
             "agent-gossip-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
 
-        let mut child = common::test_cmd()
+        let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
+        let mut command = common::test_cmd();
+        command
             .args(["create", "--name", "statefile-test"])
             .arg("--state-file")
-            .arg(&state_file)
-            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .arg(&state_file);
+        let mut child: Child = command
+            .stdout(stdout)
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn create --state-file");
@@ -836,30 +869,34 @@ fn test_state_file_removed_on_signal() {
 #[test]
 fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test log directory is writable");
     let state_file = std::env::temp_dir().join(format!(
         "agent-gossip-ready-before-{}.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
 
-    let mut child = common::test_cmd()
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
+    let mut command = common::test_cmd();
+    command
         .args(["create", "--name", "ready-test"])
         .arg("--state-file")
-        .arg(&state_file)
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .arg(&state_file);
+    let mut child: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
         .expect("failed to spawn create --state-file");
 
     // Gate against the live daemon: exits 0 once it is serving.
-    let status = common::test_cmd()
+    command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "60"])
-        .status()
-        .expect("failed to run agent-gossip ready");
+        .args(["--timeout-secs", "60"]);
+    let status: std::process::ExitStatus =
+        command.status().expect("failed to run agent-gossip ready");
     assert!(
         status.success(),
         "agent-gossip ready should exit 0 against a serving daemon\nlog:\n{}",
@@ -869,15 +906,23 @@ fn test_ready_gate_succeeds_when_serving() {
     // The gate returning means the file is complete and serving — the caller
     // reads identity + ready:true from it.
     let parsed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&state_file).expect("the test file is readable"))
+            .expect("the state file holds JSON written by the daemon");
     assert_eq!(parsed["ready"], true, "gate returned but ready is not true");
-    assert_eq!(parsed["name"], "ready-test");
+    assert_eq!(
+        parsed["name"], "ready-test",
+        "the ready output names the ready test"
+    );
     assert!(
         parsed["gossip"]
             .as_str()
-            .is_some_and(|mesh| agent_gossip::MeshId::new(mesh).is_ok())
+            .is_some_and(|mesh| agent_gossip::MeshId::try_new(mesh).is_ok()),
+        "the gate reports ready"
     );
-    assert!(parsed["nickname"].as_str().is_some());
+    assert!(
+        parsed["nickname"].as_str().is_some(),
+        "the ready output carries a nickname"
+    );
 
     let _ = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -899,40 +944,46 @@ fn test_ready_gate_succeeds_when_serving() {
 #[test]
 fn second_daemon_refuses_a_state_file_already_in_use() {
     let log = tmp_log("statefile-collide");
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test log directory is writable");
     let state_file =
         std::env::temp_dir().join(format!("agent-gossip-collide-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
-    let mut first = common::test_cmd()
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
+    let mut command = common::test_cmd();
+    command
         .args(["create", "--name", "collide-first"])
         .arg("--state-file")
-        .arg(&state_file)
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .arg(&state_file);
+    let mut first: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
-        .expect("failed to spawn the first daemon");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
 
     // Wait until the first daemon owns the file and is serving.
-    let status = common::test_cmd()
+    command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "60"])
-        .status()
-        .expect("failed to run agent-gossip ready");
+        .args(["--timeout-secs", "60"]);
+    let status: std::process::ExitStatus =
+        command.status().expect("failed to run agent-gossip ready");
     assert!(status.success(), "the first daemon never came up");
 
     // Spawn rather than `output()`: a daemon that is *not* refused never
     // exits, so waiting on it would hang the suite instead of failing it.
-    let mut second = common::test_cmd()
+    command = common::test_cmd();
+    command
         .args(["create", "--name", "collide-second"])
         .arg("--state-file")
-        .arg(&state_file)
+        .arg(&state_file);
+    let mut second: Child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn the second daemon");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let exit = loop {
@@ -963,8 +1014,12 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
 
     // The first daemon still owns the file and is unharmed.
     let parsed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
-    assert_eq!(parsed["name"], "collide-first");
+        serde_json::from_str(&fs::read_to_string(&state_file).expect("the test file is readable"))
+            .expect("the state file holds JSON written by the daemon");
+    assert_eq!(
+        parsed["name"], "collide-first",
+        "the collision keeps the first name"
+    );
 
     let _ = Command::new("kill")
         .args(["-TERM", &first.id().to_string()])
@@ -980,7 +1035,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
 #[test]
 fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
-    let file = File::create(&log).unwrap();
+    let file = File::create(&log).expect("the test log directory is writable");
     let state_file = std::env::temp_dir().join(format!(
         "agent-gossip-ready-after-{}.json",
         std::process::id()
@@ -988,21 +1043,24 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let _ = fs::remove_file(&state_file);
 
     // Start the gate first — nothing has written the file yet.
-    let mut gate = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "60"])
-        .spawn()
-        .expect("failed to spawn agent-gossip ready");
+        .args(["--timeout-secs", "60"]);
+    let mut gate: Child = command.spawn().expect("failed to spawn agent-gossip ready");
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
-    let mut child = common::test_cmd()
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
+    command = common::test_cmd();
+    command
         .args(["create", "--name", "ready-race"])
         .arg("--state-file")
-        .arg(&state_file)
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .arg(&state_file);
+    let mut child: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
         .expect("failed to spawn create --state-file");
@@ -1033,13 +1091,14 @@ fn test_ready_gate_times_out_without_a_daemon() {
     ));
     let _ = fs::remove_file(&state_file);
 
-    let status = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "2"])
-        .status()
-        .expect("failed to run agent-gossip ready");
+        .args(["--timeout-secs", "2"]);
+    let status: std::process::ExitStatus =
+        command.status().expect("failed to run agent-gossip ready");
     assert!(
         !status.success(),
         "agent-gossip ready should exit non-zero when no daemon ever writes the state file"
@@ -1061,15 +1120,16 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         &state_file,
         r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","peer_count":1,"ready":true,"gossip":"deadbeef"}"#,
     )
-    .unwrap();
+    .expect("the temp directory is writable");
 
-    let status = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "2"])
-        .status()
-        .expect("failed to run agent-gossip ready");
+        .args(["--timeout-secs", "2"]);
+    let status: std::process::ExitStatus =
+        command.status().expect("failed to run agent-gossip ready");
     assert!(
         !status.success(),
         "agent-gossip ready must reject a stale ready:true file (last_updated too old) and time out"
@@ -1089,7 +1149,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     ));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("the system clock is after the Unix epoch")
         .as_secs();
     fs::write(
         &state_file,
@@ -1097,24 +1157,27 @@ fn test_ready_gate_emits_identity_json_on_success() {
             r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"ready":true,"gossip":"deadbeef"}}"#
         ),
     )
-    .unwrap();
+    .expect("the temp directory is writable");
 
-    let output = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "5"])
-        .output()
-        .expect("failed to run agent-gossip ready");
+        .args(["--timeout-secs", "5"]);
+    let output: std::process::Output = command.output().expect("failed to run agent-gossip ready");
     assert!(
         output.status.success(),
         "a fresh ready:true file should pass the gate"
     );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
-    assert_eq!(parsed["gossip"], "deadbeef");
-    assert_eq!(parsed["name"], "cool-team");
-    assert_eq!(parsed["nickname"], "calm-otter");
+    assert_eq!(parsed["gossip"], "deadbeef", "ready prints the gossip id");
+    assert_eq!(parsed["name"], "cool-team", "ready prints the name");
+    assert_eq!(
+        parsed["nickname"], "calm-otter",
+        "ready prints the nickname"
+    );
     let _ = fs::remove_file(&state_file);
 }
 
@@ -1134,9 +1197,9 @@ fn test_poll_returns_messages() {
     std::thread::sleep(Duration::from_secs(2));
 
     // Send two messages via joiner's IPC.
-    cli_message(&mesh, &joiner.nickname, "hello from poll test");
+    let _ = cli_message(&mesh, &joiner.nickname, "hello from poll test");
     std::thread::sleep(Duration::from_millis(500));
-    cli_message(&mesh, &joiner.nickname, "second message");
+    let _ = cli_message(&mesh, &joiner.nickname, "second message");
     std::thread::sleep(Duration::from_millis(500));
 
     // Poll all events from joiner's process.
@@ -1145,7 +1208,10 @@ fn test_poll_returns_messages() {
         .unwrap_or_else(|error| panic!("failed to parse poll JSON: {error}\nraw: {all_json}"));
 
     // Should have at least the 2 messages we sent (plus possible presence).
-    let msg_bodies: Vec<&str> = all.iter().filter_map(|msg| msg["body"].as_str()).collect();
+    let msg_bodies: Vec<&str> = all
+        .iter()
+        .filter_map(|message| message["body"].as_str())
+        .collect();
     assert!(
         msg_bodies.contains(&"hello from poll test"),
         "first message missing from poll: {msg_bodies:?}"
@@ -1166,14 +1232,25 @@ fn test_poll_returns_messages() {
         first["seq"].is_u64(),
         "poll record must carry a seq: {first}"
     );
-    assert_eq!(first["event"], "message");
-    assert_eq!(first["type"], "broadcast");
-    assert_eq!(first["display"], "💬️ `<joiner-poll>`: hello from poll test");
+    assert_eq!(
+        first["event"], "message",
+        "the first poll event is a message"
+    );
+    assert_eq!(
+        first["type"], "broadcast",
+        "the first poll event is a broadcast"
+    );
+    assert_eq!(
+        first["display"], "💬️ `<joiner-poll>`: hello from poll test",
+        "the poll display names the joiner"
+    );
     assert_eq!(first["self"], true, "joiner authored it → self:true");
 
     // Poll with `--after <seq>` of the first message → excludes it, keeps the
     // second (the unified seq cursor).
-    let first_seq = first["seq"].as_u64().expect("seq is u64");
+    let first_seq = first["seq"]
+        .as_u64()
+        .expect("the poll report stamps every message with a numeric cursor");
     let after_json = cli_poll(&mesh, &joiner.nickname, Some(&first_seq.to_string()));
     let after: Vec<serde_json::Value> = serde_json::from_str(&after_json).unwrap_or_else(|error| {
         panic!("failed to parse after-poll JSON: {error}\nraw: {after_json}")
@@ -1193,7 +1270,10 @@ fn test_poll_returns_messages() {
     // Every returned seq is strictly greater than the cursor.
     for event in &after {
         assert!(
-            event["seq"].as_u64().expect("seq") > first_seq,
+            event["seq"]
+                .as_u64()
+                .expect("every polled event carries a numeric seq")
+                > first_seq,
             "--after must only return events with seq > cursor: {event}"
         );
     }
@@ -1214,10 +1294,10 @@ fn test_cli_broadcast_and_msg_wire_contract() {
     assert!(carol.wait_ready(&mesh), "carol socket never appeared");
     std::thread::sleep(Duration::from_secs(2));
 
-    common::cli_message_checked(&mesh, &creator.nickname, "to-everyone");
+    let _ = common::cli_message_checked(&mesh, &creator.nickname, "to-everyone");
     // A msg is sealed to its recipient, so its card must have replicated.
     common::await_peer_card_cli(&mesh, &creator.nickname, &bob.nickname);
-    common::cli_msg_checked(&mesh, &creator.nickname, &bob.nickname, "to-bob-only");
+    let _ = common::cli_msg_checked(&mesh, &creator.nickname, &bob.nickname, "to-bob-only");
     std::thread::sleep(Duration::from_secs(1));
 
     let events = |nickname: &str| -> Vec<serde_json::Value> {
@@ -1230,24 +1310,29 @@ fn test_cli_broadcast_and_msg_wire_contract() {
     // Broadcast: `type` says everyone, `to` is null, no arrow.
     let bob_events = events(&bob.nickname);
     let broadcast = find(&bob_events, "to-everyone").expect("bob received the broadcast");
-    assert_eq!(broadcast["type"], "broadcast");
-    assert!(broadcast["to"].is_null());
+    assert_eq!(broadcast["type"], "broadcast", "bob receives a broadcast");
+    assert!(broadcast["to"].is_null(), "the broadcast has no recipient");
     assert_eq!(
         broadcast["display"],
-        format!("💬️ `<{}>`: to-everyone", creator.nickname)
+        format!("💬️ `<{}>`: to-everyone", creator.nickname),
+        "the broadcast display is the expected line"
     );
 
     // Msg: `type` says one peer, `to` names them, and the arrow marks it.
-    let msg = find(&bob_events, "to-bob-only").expect("bob received the msg");
-    assert_eq!(msg["type"], "msg");
-    assert_eq!(msg["to"], bob.nickname);
-    assert_eq!(msg["is_visible"], true);
+    let message = find(&bob_events, "to-bob-only").expect("bob received the msg");
+    assert_eq!(message["type"], "msg", "bob receives a direct message");
     assert_eq!(
-        msg["display"],
+        message["to"], bob.nickname,
+        "the direct message is addressed to bob"
+    );
+    assert_eq!(message["is_visible"], true, "the direct message is visible");
+    assert_eq!(
+        message["display"],
         format!(
             "💬️ `<{}>` → `<{}>`: to-bob-only",
             creator.nickname, bob.nickname
-        )
+        ),
+        "the direct message display is the expected line"
     );
 
     // Carol got the broadcast and not the msg — over real sockets, real
@@ -1317,7 +1402,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
     drain_until_quiet(&mesh, &carol.nickname);
 
     let mut bell = common::park_bell(&mesh, &carol.nickname);
-    common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "to-bob-only");
+    let _ = common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "to-bob-only");
 
     // Long enough for several anti-entropy rounds on top of the bell grace.
     std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
@@ -1329,7 +1414,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
 
     // The negative only means something if the bell was live: a broadcast must
     // ring the very same parked poll, and carry only the public body.
-    cli_message(&mesh, &alice.nickname, "to-everyone");
+    let _ = cli_message(&mesh, &alice.nickname, "to-everyone");
     let rung = common::wait_bell_output(&mut bell);
     assert!(
         rung.contains("to-everyone"),
@@ -1346,7 +1431,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
 /// broadcasting, which is what the old overload did.
 #[test]
 fn test_cli_a2a_call_requires_a_peer() {
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args([
             "a2a",
             "call",
@@ -1371,12 +1456,10 @@ fn test_cli_a2a_call_requires_a_peer() {
 /// past its newest seq — so a long-poll after it sees only new events.
 fn poll_cursor(mesh: &str, nickname: &str) -> Option<String> {
     let baseline = cli_poll(mesh, nickname, None);
-    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
-    baseline
-        .iter()
-        .filter_map(|event| event["seq"].as_u64())
-        .max()
-        .map(|seq| seq.to_string())
+    let baseline: Vec<serde_json::Value> =
+        serde_json::from_str(&baseline).expect("the binary prints valid JSON for this command");
+    let seqs = baseline.iter().filter_map(|event| event["seq"].as_u64());
+    seqs.max().map(|seq| seq.to_string())
 }
 
 /// The wire single-park contract: a raw `{"command":"poll",...,"long":true}`
@@ -1393,9 +1476,9 @@ fn test_ipc_poll_long_park_times_out_empty() {
     let cursor = after.map_or(String::new(), |seq| format!("\"after\":{seq},"));
     let line = format!("{{\"command\":\"poll\",\"mesh\":\"{mesh}\",{cursor}\"long\":true}}");
     let started = Instant::now();
-    let resp = ipc_raw(&mesh, &creator.nickname, &line);
+    let response = ipc_raw(&mesh, &creator.nickname, &line);
     let elapsed = started.elapsed();
-    assert_eq!(resp, "[]", "park elapsed quietly → empty array");
+    assert_eq!(response, "[]", "park elapsed quietly → empty array");
     assert!(
         elapsed >= Duration::from_millis(700),
         "should have parked ~1s, took {elapsed:?}"
@@ -1425,10 +1508,10 @@ fn test_poll_long_resolves_on_traffic() {
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
-        cli_message(&mesh_for_send, &creator_nick, "via long-poll");
+        let _ = cli_message(&mesh_for_send, &creator_nick, "via long-poll");
     });
     let (got, resolve_elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
-    sender.join().unwrap();
+    sender.join().expect("the sender thread did not panic");
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
     assert!(
@@ -1461,10 +1544,10 @@ fn test_poll_long_loops_past_empty_parks() {
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(2500));
-        cli_message(&mesh_for_send, &creator_nick, "past the parks");
+        let _ = cli_message(&mesh_for_send, &creator_nick, "past the parks");
     });
     let (got, elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
-    sender.join().unwrap();
+    sender.join().expect("the sender thread did not panic");
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
     assert!(
@@ -1535,8 +1618,7 @@ fn test_ping_reports_peer_rtt() {
     assert!(
         !joiner
             .messages()
-            .iter()
-            .any(|msg| msg.body == "ping" || msg.body == "pong"),
+            .any(|message| message.body == "ping" || message.body == "pong"),
         "ping/pong leaked as chat messages to the joiner"
     );
 }
@@ -1577,12 +1659,12 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     // And messages flow across the re-seeded mesh.
     let id = cli_message(&mesh, &first.nickname, "re-seeded hello");
     assert!(!id.is_empty(), "msg returned empty id");
-    let total = wait_total(|| first.messages().len() + second.messages().len(), 1);
+    let total = wait_total(|| first.messages().count() + second.messages().count(), 1);
     assert!(
         total >= 1,
-        "no message crossed the re-seeded mesh\nfirst: {:?}\nsecond: {:?}",
-        first.messages(),
-        second.messages(),
+        "no message crossed the re-seeded mesh\nfirst: {}\nsecond: {}",
+        chat_debug(&first),
+        chat_debug(&second),
     );
 }
 
@@ -1590,7 +1672,7 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
 /// reads it from its multihop handle, so it is empty when the session has none.
 /// `node` names the daemon that is asked, for the failure text.
 fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["topology", "--gossip", mesh, "--nickname", nickname])
         .output()
         .expect("failed to run topology");
@@ -1683,7 +1765,10 @@ fn test_join_after_creator_departed_with_surviving_member() {
     // Confirm the mesh is actually live before we kill the creator.
     let pre_id = cli_message(&mesh, &creator.nickname, "pre-death ping");
     assert!(!pre_id.is_empty(), "msg returned empty id");
-    let delivered = wait_total(|| creator.messages().len() + bystander.messages().len(), 1);
+    let delivered = wait_total(
+        || creator.messages().count() + bystander.messages().count(),
+        1,
+    );
     assert!(delivered >= 1, "creator/bystander never meshed pre-death");
 
     // 2. Retire the creator and wait for its process to fully exit —
@@ -1717,13 +1802,13 @@ fn test_join_after_creator_departed_with_surviving_member() {
     let post_id = cli_message(&mesh, &latecomer.nickname, "post-death hello");
     assert!(!post_id.is_empty(), "latecomer msg returned empty id");
     let total = wait_total(
-        || bystander.messages().len() + latecomer.messages().len(),
+        || bystander.messages().count() + latecomer.messages().count(),
         1,
     );
     assert!(
         total >= 1,
-        "latecomer joined but no message crossed the post-failover mesh\nbystander msgs: {:?}",
-        bystander.messages(),
+        "latecomer joined but no message crossed the post-failover mesh\nbystander msgs: {}",
+        chat_debug(&bystander),
     );
 }
 
@@ -1751,7 +1836,10 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // Confirm the mesh is live before killing the creator.
     let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
-        wait_total(|| creator.messages().len() + bystander.messages().len(), 1) >= 1,
+        wait_total(
+            || creator.messages().count() + bystander.messages().count(),
+            1
+        ) >= 1,
         "creator/bystander never meshed pre-death"
     );
 
@@ -1790,8 +1878,8 @@ fn test_first_message_after_post_departure_join_is_delivered() {
             1,
             RECOVERY_TIMEOUT
         ) >= 1,
-        "joiner's first message was NOT received by the existing peer\nbystander msgs: {:?}",
-        bystander.messages(),
+        "joiner's first message was NOT received by the existing peer\nbystander msgs: {}",
+        chat_debug(&bystander),
     );
 
     // Reverse direction: existing peer -> joiner. Fails if the joiner
@@ -1805,8 +1893,8 @@ fn test_first_message_after_post_departure_join_is_delivered() {
             1,
             RECOVERY_TIMEOUT
         ) >= 1,
-        "existing peer's message was NOT received by the joiner\njoiner msgs: {:?}",
-        joiner.messages(),
+        "existing peer's message was NOT received by the joiner\njoiner msgs: {}",
+        chat_debug(&joiner),
     );
 }
 
@@ -1825,7 +1913,10 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 fn test_join_horizon_hides_pre_join_history() {
     let (creator, mesh) = Node::create_flags("nethorizon", &FAST_AE);
     let early = Node::join_flags(&mesh, "jh-early", &FAST_AE);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
     assert!(early.wait_ready(&mesh), "early peer never ready");
 
     // History taskd *before* the late peer exists.
@@ -1929,9 +2020,18 @@ fn test_creator_sigkill_independence() {
     let (creator, mesh) = Node::create_flags("itest", &EVICT_ONLY);
     let alpha = Node::join_flags(&mesh, "ck-alpha", &EVICT_ONLY);
     let bravo = Node::join_flags(&mesh, "ck-bravo", &EVICT_ONLY);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(alpha.wait_ready(&mesh), "alpha never ready");
-    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        alpha.wait_ready(&mesh),
+        "the alpha daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bravo.wait_ready(&mesh),
+        "the bravo daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "ck-base");
     assert_received(&alpha, &creator.nickname, "ck-base", MSG_TIMEOUT);
     assert_received(&bravo, &creator.nickname, "ck-base", MSG_TIMEOUT);
@@ -1957,9 +2057,9 @@ fn test_creator_sigkill_independence() {
     assert_received(&alpha, &charlie.nickname, "ck-newcomer", RECOVERY_TIMEOUT);
 }
 
-/// Reaps a child on drop — `std::process::Child` does not, so a test that
+/// Reaps a child on drop — `Child` does not, so a test that
 /// panics before its explicit kill would otherwise leak the process.
-struct KillOnDrop(std::process::Child);
+struct KillOnDrop(Child);
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -1981,7 +2081,10 @@ fn test_orphaned_daemon_self_terminates() {
     let _serial = serial_guard();
 
     let (observer, mesh) = Node::create_named("itest-orphan");
-    assert!(observer.wait_ready(&mesh), "observer never ready");
+    assert!(
+        observer.wait_ready(&mesh),
+        "the observer daemon must bind its control socket before the test sends it any command"
+    );
 
     // Background the joiner under a shell, record its pid, then `exec sleep`
     // so the shell's pid *is* the joiner's parent for the rest of its life.
@@ -1998,7 +2101,7 @@ fn test_orphaned_daemon_self_terminates() {
         out = joiner_log.display(),
         pid = pid_file.display(),
     );
-    // `std::process::Child` has no kill-on-drop, so guard the intermediate
+    // `Child` has no kill-on-drop, so guard the intermediate
     // shell: if an assertion panics before the explicit kill below, this drop
     // still reaps it (which orphans the daemon → the watcher terminates it).
     let mut parent = KillOnDrop(
@@ -2086,8 +2189,14 @@ fn test_sleep_wake_heal_recovery() {
 
     let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
     let sleeper = Node::join_flags(&mesh, "sw-sleeper", &SHORT_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        sleeper.wait_ready(&mesh),
+        "the sleeper daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "sw-pre");
     assert_received(&sleeper, &creator.nickname, "sw-pre", MSG_TIMEOUT);
 
@@ -2135,8 +2244,14 @@ fn test_fixed_id_reconnect_admits_fast() {
 
     let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
     let sleeper = Node::join_flags(&mesh, "fr-sleeper", &SHORT_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        sleeper.wait_ready(&mesh),
+        "the sleeper daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "fr-pre");
     assert_received(&sleeper, &creator.nickname, "fr-pre", MSG_TIMEOUT);
 
@@ -2190,8 +2305,14 @@ fn test_resume_triggers_hard_rebootstrap() {
 
     let (creator, mesh) = Node::create_flags("itest", &STALL_EVICT);
     let sleeper = Node::join_flags(&mesh, "rb-sleeper", &STALL_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        sleeper.wait_ready(&mesh),
+        "the sleeper daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "rb-pre");
     assert_received(&sleeper, &creator.nickname, "rb-pre", MSG_TIMEOUT);
 
@@ -2212,15 +2333,14 @@ fn test_resume_triggers_hard_rebootstrap() {
                 && trace.contains("rendezvous-independent re-bridge"),
         )
     };
+    let reached = wait_until(both_markers, 1, wake_settle) >= 1;
+    let sink = trace_log(&mesh, &sleeper.nickname);
+    let mut sink_tail: Vec<&str> = sink.lines().rev().take(30).collect();
+    sink_tail.reverse();
     assert!(
-        wait_until(both_markers, 1, wake_settle) >= 1,
+        reached,
         "woken peer never took the hard re-bootstrap path (or skipped the re-bridge)\nsink tail:\n{}",
-        trace_log(&mesh, &sleeper.nickname)
-            .lines()
-            .rev()
-            .take(30)
-            .collect::<Vec<_>>()
-            .join("\n"),
+        sink_tail.join("\n"),
     );
     let _ = cli_message(&mesh, &creator.nickname, "rb-post");
     assert_received(&sleeper, &creator.nickname, "rb-post", RECOVERY_TIMEOUT);
@@ -2249,9 +2369,18 @@ fn test_anti_entropy_set_convergence() {
     let (creator, mesh) = Node::create_flags("itest", &FAST_AE);
     let alpha = Node::join_flags(&mesh, "ae-alpha", &FAST_AE);
     let bravo = Node::join_flags(&mesh, "ae-bravo", &FAST_AE);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(alpha.wait_ready(&mesh), "alpha never ready");
-    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        alpha.wait_ready(&mesh),
+        "the alpha daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bravo.wait_ready(&mesh),
+        "the bravo daemon must bind its control socket before the test sends it any command"
+    );
 
     // alpha misses this; bravo gets it. alpha stays a member.
     alpha.stop();
@@ -2285,13 +2414,22 @@ fn test_directed_msg_never_reaches_a_bystander() {
     let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
     let bob = Node::join_flags(&mesh, "leak-bob", &FAST_AE);
     let carol = Node::join_flags(&mesh, "leak-carol", &FAST_AE);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
-    assert!(carol.wait_ready(&mesh), "carol never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "the alice daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the bob daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        carol.wait_ready(&mesh),
+        "the carol daemon must bind its control socket before the test sends it any command"
+    );
 
     // A msg is sealed to its recipient, so its card must have replicated.
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
-    common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "leak-secret");
+    let _ = common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "leak-secret");
     assert_received(&bob, &alice.nickname, "leak-secret", MSG_TIMEOUT);
 
     // Carol never held the frame, so her digest advertises a gap over it every
@@ -2302,11 +2440,11 @@ fn test_directed_msg_never_reaches_a_bystander() {
 
     // NOTE: greps the `directed` line emitted by `logging::messages::log`.
     // Keep the two in sync — if that event name is reworded, update this match.
-    let leaked: Vec<String> = trace_log(&mesh, &carol.nickname)
+    let trace = trace_log(&mesh, &carol.nickname);
+    let matching = trace
         .lines()
-        .filter(|line| line.contains("directed") && line.contains(&bob.nickname))
-        .map(str::to_owned)
-        .collect();
+        .filter(|line| line.contains("directed") && line.contains(&bob.nickname));
+    let leaked: Vec<String> = matching.map(str::to_owned).collect();
     assert!(
         leaked.is_empty(),
         "a frame directed at bob reached a bystander's wire:\n{}",
@@ -2328,8 +2466,14 @@ fn test_directed_msg_backfills_to_its_addressee() {
 
     let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
     let bob = Node::join_flags(&mesh, "backfill-bob", &FAST_AE);
-    assert!(alice.wait_ready(&mesh), "alice never ready");
-    assert!(bob.wait_ready(&mesh), "bob never ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "the alice daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the bob daemon must bind its control socket before the test sends it any command"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
 
     // Warm the link first: a send whose dial fails is dropped on purpose (see
@@ -2386,9 +2530,18 @@ fn test_large_gap_reconnect_replication() {
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&mesh, "lg-alpha", &envs);
     let bravo = Node::join_flags(&mesh, "lg-bravo", &envs);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(alpha.wait_ready(&mesh), "alpha never ready");
-    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        alpha.wait_ready(&mesh),
+        "the alpha daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        bravo.wait_ready(&mesh),
+        "the bravo daemon must bind its control socket before the test sends it any command"
+    );
 
     let author = creator.nickname.clone();
 
@@ -2467,11 +2620,11 @@ fn test_interior_gap_recovered_via_rolling_window() {
     );
     let author = creator.nickname.clone();
 
-    let mut idx = 0usize;
+    let mut index = 0usize;
     // OLD: shared older history; alpha gets it live.
     for _ in 0..OLD {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
-        idx += 1;
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
+        index += 1;
     }
     assert_eq!(
         wait_until(
@@ -2485,8 +2638,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // Freeze alpha, send the GAP — the interior slice alpha never sees live.
     alpha.stop();
     for _ in 0..GAP {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
-        idx += 1;
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
+        index += 1;
     }
     assert_eq!(
         wait_until(
@@ -2506,8 +2659,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // only via the rolling older window.
     alpha.cont();
     for _ in 0..TAIL {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
-        idx += 1;
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
+        index += 1;
     }
     // The rolling older window needs several cycles to sweep across the
     // interior gap. Adaptive ceiling at the injected cadences.
@@ -2573,12 +2726,12 @@ fn test_steady_state_no_resend_churn() {
     // NOTE: greps the debug line emitted by `handle_digest` in
     // `src/gossip/antientropy.rs` ("anti-entropy: resent …"). Keep the two
     // in sync — if that message is reworded, update this match.
-    let resends = || -> usize {
-        [&creator, &alpha, &bravo]
-            .iter()
-            .map(|node| node.log_contents().matches("anti-entropy: resent").count())
+    let resends: Box<dyn Fn() -> usize + '_> = Box::new(|| -> usize {
+        let nodes = [&creator, &alpha, &bravo];
+        let logs = nodes.iter().map(|node| node.log_contents());
+        logs.map(|log| log.matches("anti-entropy: resent").count())
             .sum()
-    };
+    });
     // Settle past the convergence-era resends, then observe ≥2 more
     // anti-entropy cycles in a now-converged mesh. Inherent blind waits
     // (negative assertion), derived from the injected cadence.
@@ -2673,7 +2826,7 @@ async fn same_nickname_peers_communicate() {
     let from_alpha = beta
         .inbound()
         .into_iter()
-        .find(|msg| chat_text(msg) == "from-alpha")
+        .find(|message| chat_text(message) == "from-alpha")
         .expect("alpha's message is present");
     let _: habilis_network::protocol::AuthorKey = from_alpha.key();
 
@@ -2695,7 +2848,7 @@ async fn message_event_carries_full_pubkey() {
         "message never arrived"
     );
 
-    let events = beta.message_events();
+    let events: Vec<_> = beta.message_events().collect();
     let event = events
         .iter()
         .find(|event| event["body"] == "hi")
@@ -2755,9 +2908,11 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     common::await_peer_card_cli(&mesh, &survivor.nickname, &ghost.nickname);
 
     // The doomed peer publishes an agent-side fact, as the join skill does.
-    let merged = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .args(["meta", "merge", "--gossip", &mesh])
-        .args(["--nickname", &ghost.nickname])
+        .args(["--nickname", &ghost.nickname]);
+    let merged: std::process::Output = command
         .args([
             "--merge",
             &format!(
@@ -2784,9 +2939,10 @@ fn meta_get_names_entries_whose_peer_is_gone() {
         ))
         .expect("meta_get response is JSON");
 
-        let absent: Vec<&str> = response["absent"]
+        let absent_list = response["absent"]
             .as_array()
-            .expect("meta_get carries an absent list")
+            .expect("meta_get carries an absent list");
+        let absent: Vec<&str> = absent_list
             .iter()
             .filter_map(serde_json::Value::as_str)
             .collect();
@@ -2840,8 +2996,14 @@ fn test_starvation_watchdog_recovers_loudly() {
 
     let (creator, mesh) = Node::create_flags("itest", &STARVE_EVICT);
     let survivor = Node::join_flags(&mesh, "sv-alpha", &STARVE_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(survivor.wait_ready(&mesh), "survivor never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        survivor.wait_ready(&mesh),
+        "the survivor daemon must bind its control socket before the test sends it any command"
+    );
     let _ = cli_message(&mesh, &creator.nickname, "sv-base");
     assert_received(&survivor, &creator.nickname, "sv-base", MSG_TIMEOUT);
 
@@ -2871,7 +3033,10 @@ fn test_lone_creator_never_trips_starvation() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let (creator, mesh) = Node::create_flags("itest", &STARVE_EVICT);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
     // Threshold (6s) + several heal ticks of opportunity to misfire —
     // an inherent blind wait (negative assertion), derived from the
     // injected cadence.
@@ -2913,7 +3078,10 @@ fn test_flap_storm_all_rosters_recover() {
     let joiners: Vec<Node> = (0..4)
         .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP2_STARVE))
         .collect();
-    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
     for joiner in &joiners {
         assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
     }
@@ -2957,27 +3125,54 @@ fn test_flap_storm_all_rosters_recover() {
 /// event appears on stdout, returning the child plus its minted identity.
 /// The default state-file location (under the per-user runtime base) is what `leave` /
 /// `session` discover, so no `--state-file` override here.
-#[expect(
-    clippy::zombie_processes,
-    reason = "the child is returned; every caller kills and waits it"
-)]
-fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, String, String) {
+/// A daemon a test spawned. It is killed and reaped when the test ends, even on a panic.
+struct DiscoverableDaemon(Child);
+
+impl Drop for DiscoverableDaemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+impl std::ops::Deref for DiscoverableDaemon {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for DiscoverableDaemon {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+fn spawn_discoverable_daemon(name: &str) -> (DiscoverableDaemon, PathBuf, String, String) {
     let log = tmp_log(&format!("leave-{name}"));
-    let file = File::create(&log).unwrap();
-    let mut child = common::test_cmd()
-        .args(["create", "--name", name])
-        .stdout(Stdio::from(file.try_clone().unwrap()))
-        .stderr(Stdio::from(file))
-        .spawn()
-        .expect("failed to spawn create");
+    let file = File::create(&log).expect("the test temp dir is writable");
+    let stdout = Stdio::from(
+        file.try_clone()
+            .expect("the log file handle can be cloned for stdout"),
+    );
+    let mut command = common::test_cmd();
+    command.args(["create", "--name", name]);
+    let mut daemon = DiscoverableDaemon(
+        command
+            .stdout(stdout)
+            .stderr(Stdio::from(file))
+            .spawn()
+            .expect("failed to spawn create"),
+    );
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
         if let Some((mesh, nickname)) = ready_identity(&log) {
-            return (child, log, mesh, nickname);
+            return (daemon, log, mesh, nickname);
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = daemon.kill();
+            let _ = daemon.wait();
             panic!(
                 "daemon never emitted ready\nlog:\n{}",
                 fs::read_to_string(&log).unwrap_or_default()
@@ -3002,7 +3197,8 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
 fn default_state_file(mesh: &str, nickname: &str) -> PathBuf {
     // Mirror `util::mesh_prefix`: strip the `://` scheme separator before
     // taking 16 chars, so the path matches where the daemon writes its state.
-    let prefix: String = mesh.replace("://", "").chars().take(16).collect();
+    let without_scheme: String = mesh.split("://").collect();
+    let prefix: String = without_scheme.chars().take(16).collect();
     common::runtime_base()
         .join(prefix)
         .join(format!("{nickname}.state.json"))
@@ -3016,8 +3212,13 @@ fn state_file_carries_daemon_pid() {
     let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("leave-pid");
     let state_file = default_state_file(&mesh, &nickname);
     let parsed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
-    assert_eq!(parsed["pid"], child.id());
+        serde_json::from_str(&fs::read_to_string(&state_file).expect("the test file is readable"))
+            .expect("the state file holds JSON written by the daemon");
+    assert_eq!(
+        parsed["pid"],
+        child.id(),
+        "the state file records the daemon pid"
+    );
 
     let _ = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -3036,17 +3237,27 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let (mut bystander, bystander_log, bystander_mesh, bystander_nick) =
         spawn_discoverable_daemon("leave-bystander");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", &victim_mesh])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(out.status.success(), "leave failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a daemon that is running must accept the leave and exit zero, output was {out:?}"
+    );
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    let left = report["left"].as_array().unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
-    assert_eq!(left[0]["gossip"], victim_mesh.as_str());
-    assert_eq!(left[0]["confirmed"], true);
+    assert_eq!(
+        left[0]["gossip"],
+        victim_mesh.as_str(),
+        "the leave report names the victim gossip"
+    );
+    assert_eq!(left[0]["confirmed"], true, "the victim is confirmed left");
     assert!(
         !default_state_file(&victim_mesh, &victim_nick).exists(),
         "victim state file survived leave"
@@ -3081,16 +3292,19 @@ fn ready_carries_the_stale_skill_warning() {
     let _ = fs::remove_dir_all(&home);
     // `plug` installs only into agents it detects, and detection is the
     // agent's own dotdir existing.
-    fs::create_dir_all(home.join(".codex")).unwrap();
+    fs::create_dir_all(home.join(".codex")).expect("the test temp directory is writable");
 
-    let ready = |fake_home: &std::path::Path| -> serde_json::Value {
-        let out = common::test_cmd()
-            .args(["ready", "--state-file", state_file.to_str().unwrap()])
-            .env("HOME", fake_home)
-            .output()
-            .expect("failed to run agent-gossip ready");
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
-    };
+    let ready: Box<dyn Fn(&std::path::Path) -> serde_json::Value + '_> =
+        Box::new(|fake_home| -> serde_json::Value {
+            let state = state_file.to_str().expect("the test path is valid UTF-8");
+            let out: std::process::Output = common::test_cmd()
+                .args(["ready", "--state-file", state])
+                .env("HOME", fake_home)
+                .output()
+                .expect("failed to run agent-gossip ready");
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+                .expect("the JSON text comes from the test itself")
+        });
 
     // A fresh install of this very binary is not drift.
     let plugged = common::test_cmd()
@@ -3100,14 +3314,19 @@ fn ready_carries_the_stale_skill_warning() {
         .expect("failed to run agent-gossip plug");
     assert!(plugged.status.success(), "plug failed: {plugged:?}");
     let clean = ready(&home);
-    assert_eq!(clean["nickname"], nickname.as_str());
+    assert_eq!(
+        clean["nickname"],
+        nickname.as_str(),
+        "the clean report names the nickname"
+    );
     assert!(
         clean["drift"].is_null(),
         "a matching install must not warn: {clean}"
     );
 
     // Diverge one installed skill and the warning must reach the agent.
-    fs::write(home.join(".codex/skills/gossip-join/SKILL.md"), "stale").unwrap();
+    fs::write(home.join(".codex/skills/gossip-join/SKILL.md"), "stale")
+        .expect("the test temp directory is writable");
     let stale = ready(&home);
 
     let _ = Command::new("kill")
@@ -3120,7 +3339,7 @@ fn ready_carries_the_stale_skill_warning() {
     assert!(
         stale["drift"]
             .as_str()
-            .is_some_and(|msg| msg.contains("agent-gossip plug")),
+            .is_some_and(|message| message.contains("agent-gossip plug")),
         "a diverged install must surface drift on ready: {stale}"
     );
 }
@@ -3138,14 +3357,21 @@ fn ready_carries_the_stale_skill_warning() {
 fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
     let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("leave-serving");
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", &mesh])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(out.status.success(), "leave failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a daemon that is running must accept the leave and exit zero, output was {out:?}"
+    );
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    assert_eq!(report["left"][0]["confirmed"], true, "report: {report}");
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    assert_eq!(
+        report["left"][0]["confirmed"], true,
+        "leave confirms only after the daemon stopped serving; report: {report}"
+    );
 
     // The daemon's own socket is the black-box probe: `peers` reaches it from
     // the nickname alone — no state file involved — so it answers for exactly
@@ -3180,13 +3406,15 @@ fn leave_report_carries_the_full_topic_string() {
         std::process::id()
     );
     let log = tmp_log("leave-topic");
-    let file = File::create(&log).unwrap();
-    let mut child = common::test_cmd()
-        .args(["topic", &topic])
-        .stdout(Stdio::from(file.try_clone().unwrap()))
+    let file = File::create(&log).expect("the test log directory is writable");
+    let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
+    let mut command = common::test_cmd();
+    command.args(["topic", &topic]);
+    let mut child: Child = command
+        .stdout(stdout)
         .stderr(Stdio::from(file))
         .spawn()
-        .expect("failed to spawn topic");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let (mesh, nickname) = loop {
         if let Some(identity) = ready_identity(&log) {
@@ -3203,22 +3431,41 @@ fn leave_report_carries_the_full_topic_string() {
         std::thread::sleep(POLL);
     };
 
-    let state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(default_state_file(&mesh, &nickname)).unwrap())
-            .unwrap();
-    assert_eq!(state["topic"], topic.as_str());
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(default_state_file(&mesh, &nickname))
+            .expect("the test file is readable"),
+    )
+    .expect("the state file holds JSON written by the daemon");
+    assert_eq!(
+        state["topic"],
+        topic.as_str(),
+        "the state file records the topic"
+    );
 
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["leave", &mesh])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(out.status.success(), "leave failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a daemon that is running must accept the leave and exit zero, output was {out:?}"
+    );
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    let left = report["left"].as_array().unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(left.len(), 1, "expected exactly the topic daemon: {report}");
-    assert_eq!(left[0]["topic"], topic.as_str());
-    assert_eq!(left[0]["confirmed"], true);
+    assert_eq!(
+        left[0]["topic"],
+        topic.as_str(),
+        "the leave report names the topic"
+    );
+    assert_eq!(
+        left[0]["confirmed"], true,
+        "the topic gossip is confirmed left"
+    );
 
     let _ = child.wait();
     let _ = fs::remove_file(&log);
@@ -3227,19 +3474,20 @@ fn leave_report_carries_the_full_topic_string() {
 /// A daemon under a stand-in agent process: a shell that runs `create`, so a
 /// test can pass the shell's pid as `--session-pid`. Returns the shell, its
 /// pid, the gossip id, the nickname, and the daemon's log.
-fn spawn_decoy(name: &str) -> (std::process::Child, String, String, String, PathBuf) {
+fn spawn_decoy(name: &str) -> (Child, String, String, String, PathBuf) {
     let log = tmp_log(name);
     // The trailing `:` defeats the shell's exec-of-last-command optimization,
     // keeping the shell alive as the daemon's parent — the ancestry link the
     // session scope matches on.
-    let decoy = Command::new("sh")
+    let script = format!(
+        "{} --log-dir {} create --name {name} > {} 2>&1; :",
+        bin().display(),
+        common::test_log_dir(),
+        log.display(),
+    );
+    let decoy: Child = Command::new("sh")
         .arg("-c")
-        .arg(format!(
-            "{} --log-dir {} create --name {name} > {} 2>&1; :",
-            bin().display(),
-            common::test_log_dir(),
-            log.display(),
-        ))
+        .arg(script)
         .spawn()
         .expect("failed to spawn decoy shell");
     let decoy_pid = decoy.id().to_string();
@@ -3253,17 +3501,22 @@ fn spawn_decoy(name: &str) -> (std::process::Child, String, String, String, Path
         );
         std::thread::sleep(POLL);
     }
-    let (mesh, nickname) = ready_identity(&log).unwrap();
+    let (mesh, nickname) =
+        ready_identity(&log).expect("the daemon wrote its ready line before this read");
     (decoy, decoy_pid, mesh, nickname, log)
 }
 
 fn session_report(session_pid: &str) -> serde_json::Value {
-    let out = common::test_cmd()
+    let out: std::process::Output = common::test_cmd()
         .args(["session", "--session-pid", session_pid])
         .output()
         .expect("failed to run agent-gossip session");
-    assert!(out.status.success(), "session failed: {out:?}");
-    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+    assert!(
+        out.status.success(),
+        "the session query needs no daemon and exits zero, output was {out:?}"
+    );
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+        .expect("the session command prints JSON on success")
 }
 
 /// Session scope end to end: a daemon spawned under a decoy "agent" shell is
@@ -3279,10 +3532,20 @@ fn leave_session_scope_via_decoy_parent() {
 
     // Read-only probe: reports the decoy's daemon, does not stop it.
     let report = session_report(&decoy_pid);
-    let sessions = report["sessions"].as_array().unwrap();
+    let sessions = report["sessions"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
-    assert_eq!(sessions[0]["gossip"], mesh.as_str());
-    assert_eq!(sessions[0]["nickname"], nickname.as_str());
+    assert_eq!(
+        sessions[0]["gossip"],
+        mesh.as_str(),
+        "the session report names the gossip"
+    );
+    assert_eq!(
+        sessions[0]["nickname"],
+        nickname.as_str(),
+        "the session report names the nickname"
+    );
     assert!(
         default_state_file(&mesh, &nickname).exists(),
         "session (read-only) stopped the daemon"
@@ -3292,14 +3555,27 @@ fn leave_session_scope_via_decoy_parent() {
         .args(["leave", "--session-pid", &decoy_pid])
         .output()
         .expect("failed to run agent-gossip leave");
-    assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
+    assert!(
+        leave_out.status.success(),
+        "the leave resolves the session from the decoy parent and exits zero, output was {leave_out:?}"
+    );
     let leave_report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
-    let left = leave_report["left"].as_array().unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    let left = leave_report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
     assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
-    assert_eq!(left[0]["gossip"], mesh.as_str());
-    assert_eq!(left[0]["confirmed"], true);
-    assert!(!default_state_file(&mesh, &nickname).exists());
+    assert_eq!(
+        left[0]["gossip"],
+        mesh.as_str(),
+        "the leave report names the gossip"
+    );
+    assert_eq!(left[0]["confirmed"], true, "the gossip is confirmed left");
+    assert!(
+        !default_state_file(&mesh, &nickname).exists(),
+        "the default state file is removed"
+    );
 
     let _ = decoy.wait();
     let _ = fs::remove_file(&log);
@@ -3314,15 +3590,24 @@ fn leave_nothing_owned_is_a_clean_noop() {
         .spawn()
         .expect("failed to spawn sleep");
 
-    let out = common::test_cmd()
-        .args(["leave", "--session-pid", &idle.id().to_string()])
+    let idle_pid = idle.id().to_string();
+    let out: std::process::Output = common::test_cmd()
+        .args(["leave", "--session-pid", &idle_pid])
         .output()
         .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
-    assert_eq!(report["ok"], true);
-    assert_eq!(report["left"].as_array().unwrap().len(), 0);
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
+    assert_eq!(report["ok"], true, "the no-op leave reports ok");
+    assert_eq!(
+        report["left"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        0,
+        "a no-op leave leaves nothing"
+    );
 
     let _ = idle.kill();
     let _ = idle.wait();
@@ -3338,7 +3623,10 @@ fn bell_check_passes_without_a_session() {
         .expect("failed to spawn sleep");
 
     let out = bell_check(&idle.id().to_string());
-    assert!(out.status.success(), "bell-check failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "a session with no bell must exit zero so the hook never blocks the agent, output was {out:?}"
+    );
     assert!(out.stdout.is_empty(), "no session must not block: {out:?}");
 
     let _ = idle.kill();
@@ -3371,9 +3659,18 @@ fn bell_check_block_reason(session_pid: &str) -> Option<String> {
     // A shell `bell-check && echo armed` must not lie; the Stop hook's
     // `|| true` still hands Claude Code the JSON.
     assert_eq!(out.status.code(), Some(3), "a block exits 3: {out:?}");
-    let decision: serde_json::Value = serde_json::from_str(stdout).unwrap();
-    assert_eq!(decision["decision"], "block");
-    Some(decision["reason"].as_str().unwrap().to_owned())
+    let decision: serde_json::Value =
+        serde_json::from_str(stdout).expect("bell-check prints JSON when it blocks");
+    assert_eq!(
+        decision["decision"], "block",
+        "the bell check blocks the stop"
+    );
+    Some(
+        decision["reason"]
+            .as_str()
+            .expect("a block decision carries a reason string")
+            .to_owned(),
+    )
 }
 
 fn wait_for_bell(session_pid: &str, armed: bool) {
@@ -3395,17 +3692,23 @@ fn bell_check_and_session_track_the_bell_lock() {
     let _serial = serial_guard();
     let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
 
-    assert_eq!(session_report(&decoy_pid)["sessions"][0]["bell"], false);
+    assert_eq!(
+        session_report(&decoy_pid)["sessions"][0]["bell"],
+        false,
+        "the decoy session is not bell-armed"
+    );
     let reason = bell_check_block_reason(&decoy_pid).expect("no bell blocks the turn");
     assert!(
         reason.contains("gossip bell not armed") && reason.contains(nickname.as_str()),
         "the reason names the problem and the session: {reason}"
     );
 
-    let mut session_start_bell = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .args(["poll", "--state-file"])
         .arg(default_state_file(&mesh, &nickname))
-        .arg("--long")
+        .arg("--long");
+    let mut session_start_bell: Child = command
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -3421,9 +3724,11 @@ fn bell_check_and_session_track_the_bell_lock() {
         "a killed bell is gone"
     );
 
-    let mut settling_bell = common::test_cmd()
+    command = common::test_cmd();
+    command
         .args(["poll", "--gossip", &mesh, "--nickname", &nickname, "--long"])
-        .args(["--settle-secs", "30"])
+        .args(["--settle-secs", "30"]);
+    let mut settling_bell: Child = command
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -3453,11 +3758,17 @@ fn bell_check_and_session_track_the_bell_lock() {
 fn directed_task_delivers_point_to_point() {
     let (creator, mesh) = Node::create_named("p2p-task");
     let joiner = Node::join(&mesh, "p2p-task-b");
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(joiner.wait_ready(&mesh), "joiner never ready");
+    assert!(
+        creator.wait_ready(&mesh),
+        "the creator daemon must bind its control socket before the test sends it any command"
+    );
+    assert!(
+        joiner.wait_ready(&mesh),
+        "the joiner daemon must bind its control socket before the test sends it any command"
+    );
 
     // Warmup broadcast (always gossip) meshes them + exchanges addresses.
-    cli_message(&mesh, &creator.nickname, "warmup");
+    let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
         wait_until(
             || joiner.count_from(&creator.nickname, "warmup"),
@@ -3506,26 +3817,31 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
         Command::new("sleep")
             .arg("600")
             .spawn()
-            .expect("failed to spawn the owner"),
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
     let sessions_dir = common::runtime_base().join("sessions");
-    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::create_dir_all(&sessions_dir).expect("the test temp dir is writable");
     let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
     let stderr_file = tmp_log(&format!("{name}-stderr"));
 
     let started = Instant::now();
-    let mut launcher = common::test_cmd()
+    let owner_pid = owner.0.id().to_string();
+    let stderr = File::create(&stderr_file).expect("the test temp dir is writable");
+    let mut command = common::test_cmd();
+    command
         .args(["create", "--name", name, "--owner-pid"])
-        .arg(owner.0.id().to_string())
+        .arg(owner_pid)
         .arg("--state-file")
-        .arg(&state_file)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(File::create(&stderr_file).unwrap())
+        .arg(&state_file);
+    command.stdin(Stdio::null()).stdout(Stdio::null());
+    let mut launcher: Child = command
+        .stderr(stderr)
         .spawn()
-        .expect("failed to spawn the launcher");
+        .expect("the test binary is built before the suite runs, so its path always spawns");
     let launcher_pid = launcher.id();
-    let status = launcher.wait().unwrap();
+    let status = launcher
+        .wait()
+        .expect("the launcher child can be waited on");
     let launch_time = started.elapsed();
     let launcher_stderr = fs::read_to_string(&stderr_file).unwrap_or_default();
     assert!(
@@ -3569,22 +3885,27 @@ fn detached_daemon_follows_its_owner() {
         daemon.launcher_stderr
     );
 
-    let ready = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
-        .arg(&daemon.state_file)
-        .output()
-        .expect("failed to run ready");
-    assert!(ready.status.success(), "ready failed: {ready:?}");
+        .arg(&daemon.state_file);
+    let ready: std::process::Output = command.output().expect("failed to run ready");
+    assert!(
+        ready.status.success(),
+        "the ready query must succeed once the detached daemon is up, output was {ready:?}"
+    );
 
-    let state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&daemon.state_file).unwrap()).unwrap();
+    let state: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&daemon.state_file).expect("the test file is readable"),
+    )
+    .expect("the state file holds JSON written by the daemon");
     let daemon_pid = state["pid"].as_u64().expect("state file carries the pid");
     let ps_field = |field: &str| {
         let out = Command::new("ps")
             .args(["-o", field, "-p", &daemon_pid.to_string()])
             .output()
-            .unwrap();
+            .expect("`ps` is on PATH on every unix host, so it spawns");
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     };
     assert_eq!(
@@ -3602,7 +3923,10 @@ fn detached_daemon_follows_its_owner() {
     let owner_pid = daemon.owner.0.id().to_string();
     let sessions = session_report(&owner_pid);
     assert_eq!(
-        sessions["sessions"].as_array().unwrap().len(),
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
         1,
         "session does not see the daemon through its owner: {sessions}"
     );
@@ -3625,23 +3949,31 @@ fn detached_daemon_follows_its_owner() {
 fn detached_daemon_leaves_by_owner() {
     let _serial = serial_guard();
     let daemon = launch_detached_daemon("detach-leave");
-    let ready = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .arg("ready")
         .arg("--state-file")
-        .arg(&daemon.state_file)
-        .output()
-        .expect("failed to run ready");
-    assert!(ready.status.success(), "ready failed: {ready:?}");
+        .arg(&daemon.state_file);
+    let ready: std::process::Output = command.output().expect("failed to run ready");
+    assert!(
+        ready.status.success(),
+        "the ready query must succeed once the detached daemon is up, output was {ready:?}"
+    );
 
-    let out = common::test_cmd()
-        .args(["leave", "--session-pid", &daemon.owner.0.id().to_string()])
+    let owner_pid = daemon.owner.0.id().to_string();
+    let out: std::process::Output = common::test_cmd()
+        .args(["leave", "--session-pid", &owner_pid])
         .output()
         .expect("failed to run leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
-        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("the JSON text comes from the test itself");
     assert_eq!(
-        report["left"].as_array().unwrap().len(),
+        report["left"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
         1,
         "leave missed the detached daemon: {report}"
     );
@@ -3661,25 +3993,34 @@ fn detached_daemon_releases_a_captured_pipe() {
         Command::new("sleep")
             .arg("600")
             .spawn()
-            .expect("failed to spawn the owner"),
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
     let sessions_dir = common::runtime_base().join("sessions");
-    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::create_dir_all(&sessions_dir).expect("the test temp directory is writable");
     let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
 
-    let mut launcher = common::test_cmd()
+    let owner_pid = owner.0.id().to_string();
+    let mut command = common::test_cmd();
+    command
         .args(["create", "--name", "detach-pipe", "--owner-pid"])
-        .arg(owner.0.id().to_string())
+        .arg(owner_pid)
         .arg("--state-file")
-        .arg(&state_file)
-        .stdin(Stdio::null())
+        .arg(&state_file);
+    command.stdin(Stdio::null());
+    let mut launcher: Child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn the launcher");
-    let mut stdout = launcher.stdout.take().unwrap();
-    let mut stderr = launcher.stderr.take().unwrap();
-    let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    let mut stdout = launcher
+        .stdout
+        .take()
+        .expect("the child was spawned with a piped stdout");
+    let mut stderr = launcher
+        .stderr
+        .take()
+        .expect("the child was spawned with a piped stderr");
+    let (eof_tx, eof_rx) = mpsc::channel();
     let stderr_eof = eof_tx.clone();
     std::thread::spawn(move || {
         let _ = std::io::Read::read_to_end(&mut stdout, &mut Vec::new());
@@ -3690,21 +4031,23 @@ fn detached_daemon_releases_a_captured_pipe() {
         let _ = stderr_eof.send(());
     });
     let both_closed = (0..2).all(|_| eof_rx.recv_timeout(Duration::from_secs(10)).is_ok());
-    let launcher_status = launcher.wait().unwrap();
+    let launcher_status = launcher
+        .wait()
+        .expect("the launcher is our own child and is waited for once, so wait succeeds");
 
     // A failed launch starts no daemon and closes both pipes at once, so the
     // pipe check alone passes without proving anything.
     assert!(
         launcher_status.success(),
-        "the launcher failed: {launcher_status}"
+        "a failed launch starts no daemon, which would make the closed pipes prove nothing; status was {launcher_status}"
     );
-    let ready = common::test_cmd()
-        .arg("ready")
-        .arg("--state-file")
-        .arg(&state_file)
-        .output()
-        .expect("failed to run ready");
-    assert!(ready.status.success(), "ready failed: {ready:?}");
+    command = common::test_cmd();
+    command.arg("ready").arg("--state-file").arg(&state_file);
+    let ready: std::process::Output = command.output().expect("failed to run ready");
+    assert!(
+        ready.status.success(),
+        "the ready query must succeed once the detached daemon is up, output was {ready:?}"
+    );
     assert!(state_file.exists(), "no daemon wrote the state file");
     assert!(
         both_closed,
@@ -3723,14 +4066,18 @@ fn detached_daemon_releases_a_captured_pipe() {
 /// never, so the start refuses all with one line on stderr.
 #[test]
 fn owner_pid_rejects_init_and_dead_owner() {
-    let mut dead = Command::new("true").spawn().unwrap();
+    let mut dead = Command::new("true")
+        .spawn()
+        .expect("`true` is on PATH on every unix host, so it spawns");
     let dead_pid = dead.id().to_string();
     let _ = dead.wait();
     // Exited but never reaped: a zombie still answers `kill -0`.
-    let mut zombie = Command::new("true").spawn().unwrap();
+    let mut zombie = Command::new("true")
+        .spawn()
+        .expect("`true` is on PATH on every unix host, so it spawns");
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
-    while habilis_network::util::process::live_start_time(zombie.id()).is_some() {
+    while process::live_start_time(zombie.id()).is_some() {
         assert!(Instant::now() < exited, "the zombie owner never exited");
         std::thread::sleep(POLL);
     }
@@ -3738,14 +4085,18 @@ fn owner_pid_rejects_init_and_dead_owner() {
     for owner in ["1", dead_pid.as_str(), zombie_pid.as_str()] {
         // CI sets RUST_BACKTRACE, which makes anyhow append a backtrace to the
         // error; the one-line check is about the output a user sees by default.
-        let out = common::test_cmd()
-            .args(["create", "--name", "owner-reject", "--owner-pid", owner])
+        let mut command = common::test_cmd();
+        command.args(["create", "--name", "owner-reject", "--owner-pid", owner]);
+        command
             .env_remove("RUST_BACKTRACE")
             .env_remove("RUST_LIB_BACKTRACE")
-            .stdin(Stdio::null())
-            .output()
-            .expect("failed to run create");
-        assert_eq!(out.status.code(), Some(1), "owner {owner}: {out:?}");
+            .stdin(Stdio::null());
+        let out: std::process::Output = command.output().expect("failed to run create");
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "an owner pid that is init or dead is a usage error and exits one, owner {owner}: {out:?}"
+        );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
             stderr.trim().lines().count(),
@@ -3764,7 +4115,7 @@ fn owner_pid_launcher_reports_flag_errors() {
         Command::new("sleep")
             .arg("60")
             .spawn()
-            .expect("failed to spawn the owner"),
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
     let owner_pid = owner.0.id().to_string();
     let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
@@ -3773,9 +4124,9 @@ fn owner_pid_launcher_reports_flag_errors() {
         &["create", "--name", "flag-error", "--transport", "relay"],
     ];
     for args in bad_invocations {
-        let out = common::test_cmd()
-            .args(args)
-            .args(["--owner-pid", &owner_pid])
+        let mut command = common::test_cmd();
+        command.args(args).args(["--owner-pid", &owner_pid]);
+        let out: std::process::Output = command
             .stdin(Stdio::null())
             .output()
             .expect("failed to run the launcher");
@@ -3789,11 +4140,23 @@ fn owner_pid_launcher_reports_flag_errors() {
 
 /// The presence lines of a daemon's `--output json` stream, in the order it surfaced them: the
 /// subtype, the author and the frame id.
+/// The chat messages a node has received, one per line, for an assertion message.
+fn chat_debug(node: &Node) -> String {
+    let lines: Vec<String> = node
+        .messages()
+        .map(|message| format!("{message:?}"))
+        .collect();
+    lines.join("\n")
+}
+
 fn presence_lines(node: &Node) -> Vec<(String, String, String)> {
-    node.log_contents()
+    let log = node.log_contents();
+    let events = log
         .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|event| event["type"] == "presence" || event["event"] == "presence")
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok());
+    let presence =
+        events.filter(|event| event["type"] == "presence" || event["event"] == "presence");
+    presence
         .map(|event| {
             let field = |name: &str| event[name].as_str().unwrap_or_default().to_owned();
             (field("subtype"), field("author"), field("id"))
@@ -3817,10 +4180,9 @@ fn test_mass_leave_leaves_no_ghosts() {
     let mut leavers: Vec<Node> = (0..4)
         .map(|index| Node::join_flags(&mesh, &format!("ml-leaver-{index}"), &envs))
         .collect();
+    let all_leavers_ready = || leavers.iter().all(|leaver| leaver.wait_ready(&mesh));
     assert!(
-        creator.wait_ready(&mesh)
-            && survivor.wait_ready(&mesh)
-            && leavers.iter().all(|leaver| leaver.wait_ready(&mesh)),
+        creator.wait_ready(&mesh) && survivor.wait_ready(&mesh) && all_leavers_ready(),
         "nodes never ready"
     );
     let count = |node: &Node, subtype: &str| {
@@ -3890,8 +4252,8 @@ fn test_mass_leave_leaves_no_ghosts() {
             "a presence frame was served twice at {}",
             observer.nickname
         );
-        let roster: serde_json::Value =
-            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers json");
+        let roster: serde_json::Value = serde_json::from_str(&cli_peers(&mesh, &observer.nickname))
+            .expect("the peers command prints one JSON document on stdout and nothing else");
         assert_eq!(
             roster["peer_count"], 2,
             "ghosts in the roster of {}: {roster}",

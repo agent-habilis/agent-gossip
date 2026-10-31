@@ -1,3 +1,5 @@
+//! Integration tests for the join target that `AGENT_GOSSIP_DEFAULT_ROOM` supplies.
+
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Output, Stdio};
 use std::sync::mpsc;
@@ -17,28 +19,24 @@ impl Drop for Killed {
 }
 
 fn join_without_target(env: Option<&str>) -> Output {
-    let mut cmd = test_cmd();
-    cmd.arg("join");
+    let mut command = test_cmd();
+    command.arg("join");
     match env {
         Some(value) => {
-            cmd.env(DEFAULT_ROOM_ENV, value);
+            command.env(DEFAULT_ROOM_ENV, value);
         }
         None => {
-            cmd.env_remove(DEFAULT_ROOM_ENV);
+            command.env_remove(DEFAULT_ROOM_ENV);
         }
     }
-    cmd.output().expect("join spawns")
+    command.output().expect("join spawns")
 }
 
 fn spawn_join(args: &[&str], env: &str) -> Killed {
-    let child = test_cmd()
-        .arg("join")
-        .args(args)
-        .env(DEFAULT_ROOM_ENV, env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("join spawns");
+    let mut command = test_cmd();
+    command.arg("join").args(args).env(DEFAULT_ROOM_ENV, env);
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
+    let child = command.spawn().expect("join spawns");
     Killed(child)
 }
 

@@ -2,7 +2,7 @@
 //!
 //! This crate ships as **both** a binary (the `agent-gossip`
 //! CLI / MCP server) and a library. The binary is a thin shim over
-//! [`run_cli`]; library consumers embed a mesh in-process via the
+//! [`run_cli`](fn@run_cli); library consumers embed a mesh in-process via the
 //! [`api`] module.
 //!
 //! ## The library API
@@ -20,7 +20,7 @@
 //! # async fn run() -> anyhow::Result<()> {
 //! let session = MeshSession::join(JoinConfig::new("<hash>".parse()?)).await?;
 //! let mut rx = session.messages();
-//! session.broadcast(MessageBody::new("hello")?).await?;
+//! session.broadcast(MessageBody::try_new("hello")?).await?;
 //! while let Ok(msg) = rx.recv().await {
 //!     println!("{} : {}", msg.author, msg.body);
 //! }
@@ -29,23 +29,15 @@
 //! # }
 //! ```
 
-use anyhow::Result;
 // Curated public protocol surface. These types live in the engine crate
 // (`habilis-network`); re-exporting them from this crate root keeps the
 // externally-visible `agent_gossip::` API stable across the engine split.
-pub use habilis_network::embed::Lane;
-pub use habilis_network::embed::{Reach, RosterEntry, RosterSnapshot};
-pub use habilis_network::protocol::InviteTicket;
-pub use habilis_network::protocol::JoinTarget;
+pub use habilis_network::embed::{Lane, Reach, RosterEntry, RosterSnapshot};
 pub use habilis_network::protocol::{
-    BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
-    Shard, ShardGroup,
+    BodyError, Channel, IdError, InviteTicket, JoinTarget, LookupSet, MeshId, MeshIdError,
+    MeshName, Message, MessageBody, MessageId, MessageKind, NameError, Nickname, NicknameError,
+    PresenceSubtype, RelayLadder, RelayLadderError, RelaySelection, Shard, ShardGroup,
 };
-pub use habilis_network::protocol::{
-    LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
-    RelaySelection,
-};
-pub use habilis_network::protocol::{Nickname, NicknameError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
 pub use habilis_network::util::consts::{
@@ -54,200 +46,64 @@ pub use habilis_network::util::consts::{
 pub use habilis_network::util::logging::LogSink;
 pub use habilis_network::util::mesh_prefix;
 
-pub use self::a2a::surfaced::SurfacedEvent;
+pub use self::a2a::surfaced_event::SurfacedEvent;
 pub use self::a2a::{TaskId, TaskState};
-use self::cli::Cli;
+pub use self::emission::{event_json, surfaced_event_json};
 // The `api::MeshSession::peers` / `ping` return types. Iroh-free by
 // construction (nicknames, counts, and two field-less enums), so re-exporting
 // them keeps the roster readable without widening the surface.
-pub use self::events::{OutputEvent, PingPeer, TaskGoneReason};
-pub use self::output::{event_json, surfaced_event_json};
+pub use self::output_event::{OutputEvent, PingPeer, TaskGoneReason};
 
 // Application-layer modules. The engine modules (protocol, gossip, daemon,
 // …) live in the `habilis-network` crate; this crate re-exports the
 // curated public protocol surface from there above. `a2a` is public on
 // purpose — it is the agent-communication data model both bindings (gossip,
 // local JSON-RPC) share, and embedders speak it directly.
+/// The A2A data model and the gossip binding that carries it.
 pub mod a2a;
-pub(crate) mod bridge;
 pub(crate) mod cli;
-pub mod events;
+pub(crate) mod emission;
 pub(crate) mod mcp;
-pub(crate) mod output;
+/// The typed events a daemon writes to its `--output json` stream.
+pub mod output_event;
 pub(crate) mod policy;
 pub(crate) mod topic;
+pub(crate) mod tunnel;
 
 pub mod api;
+/// Roster and health values that `status` and `doctor` report.
 pub mod status;
 
-// Not public API. Feature-gated, doc-hidden shims that expose the engine's
+// Feature-gated test-support API, outside the supported surface. These shims expose the engine's
 // internals to the crate's own bench/adversarial suites. See harness/mod.rs.
 #[cfg(any(feature = "bench", feature = "adversarial"))]
-#[doc(hidden)]
 pub mod harness;
 
-/// This binary's name — the single place it is spelled for path purposes. The
-/// engine takes it as a parameter (see [`habilis_network::util::runtime_base`])
-/// rather than assuming it, because it is embedded by more than one binary.
-pub(crate) const PRODUCT: &str = "agent-gossip";
+pub use self::app_log_pins::APP_LOG_PINS;
+pub use self::cli_command::cli_command;
+pub use self::ensure_mesh_runtime_dir::ensure_mesh_runtime_dir;
+pub use self::ensure_runtime_base::ensure_runtime_base;
+pub use self::flush_log_if_pending::flush_log_if_pending;
+pub use self::install_log_sink::install_log_sink;
+pub use self::log_filter::log_filter;
+pub(crate) use self::register_build_version::register_build_version;
+pub use self::run_cli::run_cli;
+pub use self::runtime_base::runtime_base;
+pub use self::version::version;
 
-/// This product's per-user runtime base: `/tmp/agent-gossip-<uid>`.
-///
-/// A live filesystem contract — `skills/shared/daemon-session.md` hardcodes this
-/// path, and every running daemon's socket and state file sit under it — so the
-/// bytes must not change. Only [`PRODUCT`] feeds it.
-#[must_use]
-pub fn runtime_base() -> std::path::PathBuf {
-    habilis_network::util::runtime_base(PRODUCT)
-}
-
-/// [`runtime_base`], created and validated as a private (`0700`) directory this
-/// user owns.
-///
-/// # Errors
-/// The base is a symlink, is not a directory, is owned by another user, or the
-/// create/chmod syscalls failed. See [`habilis_network::util::ensure_runtime_base`].
-pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
-    let base = runtime_base();
-    habilis_network::util::ensure_runtime_base(&base)?;
-    Ok(base)
-}
-
-/// The per-mesh folder under [`runtime_base`], created after validating the base.
-///
-/// # Errors
-/// As [`ensure_runtime_base`], or the subdir create failed.
-pub fn ensure_mesh_runtime_dir(mesh_id: &str) -> std::io::Result<std::path::PathBuf> {
-    habilis_network::util::ensure_mesh_runtime_dir(&runtime_base(), mesh_id)
-}
-
-/// This build's stamp: **this** crate's version plus the engine's git stamp,
-/// e.g. `"0.7.2 (90103e5 dirty:false)"`. Every version surface reads it —
-/// `--version`, `doctor`, the `ready` event, MCP `gossip_version`, and the A2A
-/// card peers see — so they can never disagree.
-///
-/// Not the engine's ready-made `VERSION`, and not its `GIT_STAMP` either. Its
-/// version leads with the *engine* crate's number, which shipped as a
-/// stale-looking `0.5.0` on a `0.7.2` binary; and since the engine moved to the
-/// separate `habilis-network` repo, its stamp names a commit that does not exist in this
-/// history. Both halves are this crate's own: the number from `CARGO_PKG_VERSION`,
-/// the stamp from `build.rs` (see `emit_git_stamp`).
-#[must_use]
-pub const fn version() -> &'static str {
-    concat!(
-        env!("CARGO_PKG_VERSION"),
-        " (",
-        env!("VERGEN_GIT_SHA"),
-        " dirty:",
-        env!("VERGEN_GIT_DIRTY"),
-        ")"
-    )
-}
-
-/// Hand [`version`] to the engine so its daemon-start log line reports the
-/// app's number instead of the engine's own. Idempotent; call before any
-/// daemon spawns.
-pub(crate) fn register_build_version() {
-    habilis_network::util::version::set_build_version(version());
-}
-
-/// Parse `argv` and run the selected CLI subcommand to completion.
-///
-/// This is the entire body of the `agent-gossip` binary; it is
-/// public so the thin `src/main.rs` shim (which owns only
-/// process-level concerns: tracing init, terminal echo) can call it.
-/// The subcommand dispatch + per-command logic lives in `cli`.
-///
-/// # Errors
-/// Propagates any error from the selected subcommand — mesh setup
-/// failure, join timeout, IPC errors, invalid mesh-mode flags, etc.
-pub async fn run_cli() -> Result<()> {
-    register_build_version();
-    // Parse through `cli_command()` (not `Cli::parse()`) so the `help`
-    // subcommand blurb override in that builder applies at runtime too.
-    let matches = cli_command().get_matches();
-    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
-        .unwrap_or_else(|error| error.exit());
-    // Box the single large await so it lives on the heap, not this frame —
-    // the same lever the event loop uses (see `daemon::event_loop`); the
-    // setup → run future is near clippy's `large_futures` budget.
-    Box::pin(cli::dispatch(cli)).await
-}
-
-/// The fully-built `agent-gossip` clap command tree, for offline man-page
-/// generation (`cargo task man` walks it in-process through
-/// `clap_mangen`). Arg surface only; no iroh, no runtime state.
-#[must_use]
-pub fn cli_command() -> clap::Command {
-    // Override clap's auto-generated `help` subcommand blurb — its default
-    // ("… of the given subcommand(s)") is the one `(s)` plural we can't reach
-    // from a `///` doc, since clap owns the string. The subcommand is only
-    // materialized once the command is built, so `build()` first, then
-    // `mut_subcommand` (a later `get_matches`/render is a no-op rebuild that
-    // preserves this). Keeps `agent-gossip help <cmd>` behavior intact.
-    let mut command = <Cli as clap::CommandFactory>::command();
-    command.build();
-    command.mut_subcommand("help", |help| {
-        help.about("Print this message or the help of the given subcommand")
-    })
-}
-
-/// Build the deferred log sink and register it process-globally.
-/// Call once in `main` before subscriber init; pass the returned
-/// value to `tracing_subscriber::fmt().with_writer(..)`. Logs buffer
-/// until `cli` resolves the mesh id + nickname (see `logging`).
-#[must_use]
-pub fn install_log_sink() -> LogSink {
-    habilis_network::util::logging::install()
-}
-
-/// The default tracing directive filter; pass to
-/// `tracing_subscriber::fmt().with_env_filter(..)`. `RUST_LOG` overrides
-/// it. See `logging`.
-#[must_use]
-pub fn log_filter() -> tracing_subscriber::EnvFilter {
-    habilis_network::util::logging::log_filter(APP_LOG_PINS)
-}
-
-/// This crate's own `tracing` targets, pinned to `info`.
-///
-/// **Load-bearing.** A release build's base level is `error`, so a target that
-/// matches no pin compiles, works in a debug build, and is silently dropped from
-/// every optimized one — the exact failure that once made a reliability test go
-/// red only under `--profile ci`. Any new `target:` in this crate belongs here.
-///
-/// The engine cannot hold these: it lives in its own repo with other consumers
-/// and has no business naming ours — the pins for a consumer's targets are the
-/// consumer's business.
-///
-/// `pub` + `doc(hidden)` so `tests/log_pins.rs` can assert this list covers
-/// every `target:` the crate actually emits under. Not public API.
-#[doc(hidden)]
-pub const APP_LOG_PINS: &str = "agent_gossip::a2a=info,agent_gossip::directory=info";
-
-/// Flush buffered logs to stderr if identity was never resolved
-/// (transient command, or startup failed before attach). Call after
-/// `run_cli` returns.
-pub fn flush_log_if_pending() {
-    habilis_network::util::logging::flush_pending_to_stderr();
-}
-
-// Shared config for the crate's `proptest!` blocks. Overrides the default
-// failure-persistence path so regression seeds land in
-// `tests/proptest-regressions` rather than a `proptest-regressions` folder
-// at the crate root. Every `proptest!` block opts in with
-// `#![proptest_config(crate::proptest_support::config())]`. Kept last so it
-// does not trip `clippy::items_after_test_module`.
+mod app_log_pins;
+mod cli_command;
+mod cli_error;
+mod ensure_mesh_runtime_dir;
+mod ensure_runtime_base;
+mod flush_log_if_pending;
+mod install_log_sink;
+mod log_filter;
+mod product;
 #[cfg(test)]
-pub(crate) mod proptest_support {
-    use proptest::test_runner::{Config, FileFailurePersistence};
-
-    pub(crate) fn config() -> Config {
-        Config {
-            failure_persistence: Some(Box::new(FileFailurePersistence::SourceParallel(
-                "tests/proptest-regressions",
-            ))),
-            ..Config::default()
-        }
-    }
-}
+pub(crate) mod proptest_support;
+mod register_build_version;
+mod run_cli;
+mod runtime_base;
+mod version;
+pub use self::cli_error::CliError;

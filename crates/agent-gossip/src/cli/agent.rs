@@ -128,18 +128,19 @@ impl Agent {
 
     /// The skill root this agent reads once installed.
     pub(crate) fn install_path(self, home: &Path) -> PathBuf {
-        match self {
-            Agent::ClaudeCode => home.join(".claude/skills"),
-            Agent::Pi => home.join(".pi/agent/skills"),
-            Agent::Codex => home.join(".codex/skills"),
-            Agent::Cursor => home.join(".cursor/skills"),
-            Agent::OpenCode => home.join(".config/opencode/skills"),
-        }
+        let relative = match self {
+            Agent::ClaudeCode => ".claude/skills",
+            Agent::Pi => ".pi/agent/skills",
+            Agent::Codex => ".codex/skills",
+            Agent::Cursor => ".cursor/skills",
+            Agent::OpenCode => ".config/opencode/skills",
+        };
+        home.join(relative)
     }
 
     pub(crate) fn installed(self, home: &Path) -> bool {
-        self.owned_skill_dirs(home)
-            .into_iter()
+        let dirs = self.owned_skill_dirs(home);
+        dirs.into_iter()
             .any(|path| path.is_symlink() || path.exists())
     }
 
@@ -152,7 +153,7 @@ impl Agent {
         owned_skill_dirs_under(&self.install_path(home))
     }
 
-    /// up to date / out of date / not set up / absent for this agent.
+    /// Up to date / out of date / not set up / absent for this agent.
     pub(crate) fn state(self, home: &Path) -> AgentState {
         if self.installed(home) {
             if self.in_sync(home) {
@@ -182,9 +183,8 @@ pub(crate) fn owned_skill_dirs_under(root: &Path) -> Vec<PathBuf> {
 /// Is this embedded path's final component in the skip list? Shared by the
 /// `plug` writer and the `in_sync` comparison so both filter identically.
 pub(crate) fn skipped(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| SKIP.contains(&name))
+    let name = path.file_name().and_then(|name| name.to_str());
+    name.is_some_and(|name| SKIP.contains(&name))
 }
 
 /// True iff every embedded file under `dir` (skipping [`SKIP`], recursing
@@ -225,9 +225,11 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 /// Each agent, its install path, and its state — in display order. Drives
 /// `agent-gossip doctor`'s Integrations section.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
-    Agent::ALL
+    let paths = Agent::ALL
         .into_iter()
-        .map(|agent| (agent, agent.install_path(home), agent.state(home)))
+        .map(|agent| (agent, agent.install_path(home)));
+    paths
+        .map(|(agent, path)| (agent, path, agent.state(home)))
         .collect()
 }
 
@@ -267,11 +269,11 @@ mod tests {
                 .get_dir(skill)
                 .unwrap_or_else(|| panic!("{skill} is embedded"));
             let files: Vec<_> = dir.files().collect();
+            let file_paths: Vec<&Path> = files.iter().map(|file| file.path()).collect();
             assert_eq!(
                 files.len(),
                 1,
-                "{skill}: exactly one embedded file, found {:?}",
-                files.iter().map(|file| file.path()).collect::<Vec<_>>()
+                "{skill}: exactly one embedded file, found {file_paths:?}"
             );
             assert!(dir.dirs().next().is_none(), "{skill}: no embedded subdirs");
             let body = SKILLS
@@ -287,16 +289,19 @@ mod tests {
                 "{skill}: generated skill carries an unrendered directive"
             );
         }
-        assert!(SKILLS.get_dir("shared").is_none());
+        assert!(
+            SKILLS.get_dir("shared").is_none(),
+            "the renderer must not emit a shared skill dir"
+        );
         // The loop above only catches a name OWNED_SKILL_DIRS claims but the
         // renderer didn't emit. This catches the other direction — a build.rs
         // prefix filter wide enough to sweep in a dir nobody owns, which plug
         // would then install and never clean up.
+        let dir_paths: Vec<&Path> = SKILLS.dirs().map(Dir::path).collect();
         assert_eq!(
             SKILLS.dirs().count(),
             OWNED_SKILL_DIRS.len(),
-            "embedded skill tree and OWNED_SKILL_DIRS disagree: {:?}",
-            SKILLS.dirs().map(Dir::path).collect::<Vec<_>>()
+            "embedded skill tree and OWNED_SKILL_DIRS disagree: {dir_paths:?}"
         );
     }
 
@@ -350,7 +355,10 @@ mod tests {
                 .is_file(),
             "gossip-discover still has a Monitor adapter (tracked follow-up)"
         );
-        assert!(!root.join("shared/SKILL.md").exists());
+        assert!(
+            !root.join("shared/SKILL.md").exists(),
+            "the shared partials dir must not hold a SKILL.md"
+        );
     }
 
     fn rendered(skill: &str) -> &'static str {
@@ -467,7 +475,10 @@ mod tests {
                 );
             }
         }
-        assert!(rendered("gossip-topic").contains("--long --settle-secs 5 > /dev/null 2>&1"));
+        assert!(
+            rendered("gossip-topic").contains("--long --settle-secs 5 > /dev/null 2>&1"),
+            "gossip-topic must poll with a long settle wait and silence its output"
+        );
     }
 
     /// The Monitor prohibition, pinned on the *generated* content: the daemon
@@ -527,6 +538,12 @@ mod tests {
         fn is_bell(line: &str) -> bool {
             line.starts_with("agent-gossip poll ") && line.contains("--long")
         }
+        fn assert_launch_shapes(path: &str, long_running: &[&str]) {
+            let launches = long_running.iter().filter(|line| is_daemon_launch(line));
+            for line in launches {
+                assert_launch_shape(path, line);
+            }
+        }
 
         let mut daemon_starters_checked = 0;
         for skill in OWNED_SKILL_DIRS {
@@ -579,10 +596,7 @@ mod tests {
                     1,
                     "{path}: exactly one launch carries --owner-pid \"$PPID\": {long_running:?}"
                 );
-                long_running
-                    .iter()
-                    .filter(|line| is_daemon_launch(line))
-                    .for_each(|line| assert_launch_shape(&path, line));
+                assert_launch_shapes(&path, &long_running);
                 assert!(
                     long_running.iter().any(|line| is_bell(line)),
                     "{path}: expected a poll bell, found {long_running:?}"
@@ -609,7 +623,10 @@ mod tests {
                 daemon_starters_checked += 1;
             }
         }
-        assert_eq!(daemon_starters_checked, 3);
+        assert_eq!(
+            daemon_starters_checked, 3,
+            "three skills start a daemon, so all three must be checked"
+        );
     }
 
     /// Pi, Codex and Cursor must keep the launch text they have today, so the
@@ -646,11 +663,13 @@ mod tests {
     /// generic bell keeps its old text.
     #[test]
     fn claude_code_bells_end_before_the_harness_limit() {
-        let bells = |skill: &str| -> Vec<&'static str> {
+        let bells: fn(&str) -> Vec<&'static str> = |skill| {
+            let is_bell =
+                |line: &&str| line.starts_with("agent-gossip poll ") && line.contains("--long");
             rendered(skill)
                 .lines()
                 .map(str::trim)
-                .filter(|line| line.starts_with("agent-gossip poll ") && line.contains("--long"))
+                .filter(is_bell)
                 .collect()
         };
         for skill in OWNED_SKILL_DIRS {
@@ -697,7 +716,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"))
         };
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let merge = body(skill)
+            let merge: &str = body(skill)
                 .lines()
                 .find(|line| {
                     line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"")
@@ -708,15 +727,18 @@ mod tests {
                 "{skill}: merge must report cwd: {merge}"
             );
         }
-        assert!(body("gossip-status").contains("| host | cwd |"));
+        assert!(
+            body("gossip-status").contains("| host | cwd |"),
+            "gossip-status must print a host and cwd column"
+        );
     }
 
     fn ready_gate_merge(skill: &str) -> &'static str {
         let is_merge =
             |line: &&str| line.starts_with("agent-gossip meta merge ") && line.contains("\"host\"");
-        SKILLS
-            .get_file(format!("{skill}/SKILL.md"))
-            .and_then(include_dir::File::contents_utf8)
+        let file = SKILLS.get_file(format!("{skill}/SKILL.md"));
+        let contents = file.and_then(include_dir::File::contents_utf8);
+        contents
             .and_then(|body| body.lines().find(is_merge))
             .unwrap_or_else(|| panic!("{skill}: no ready-gate meta merge"))
     }
@@ -733,18 +755,19 @@ mod tests {
         let cwd = home.join("we\"ird\\dir");
         std::fs::create_dir_all(&cwd).expect("create the odd cwd");
         for skill in ["gossip-create", "gossip-join", "gossip-topic"] {
-            let merge = ready_gate_merge(skill)
-                .replace("{MODEL}", "m")
-                .replace("{HARNESS}", "h");
+            let (before_model, after_model) = ready_gate_merge(skill)
+                .split_once("{MODEL}")
+                .unwrap_or_else(|| panic!("{skill}: the merge has no {{MODEL}} slot"));
+            let (between, after_harness) = after_model
+                .split_once("{HARNESS}")
+                .unwrap_or_else(|| panic!("{skill}: the merge has no {{HARNESS}} slot"));
+            let merge = format!("{before_model}m{between}h{after_harness}");
             let script = format!(
                 "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; {merge}"
             );
-            let out = std::process::Command::new("bash")
-                .args(["-c", &script])
-                .current_dir(&cwd)
-                .env("HOME", &home)
-                .output()
-                .expect("run bash");
+            let mut command = std::process::Command::new("bash");
+            command.args(["-c", &script]).current_dir(&cwd);
+            let out: std::process::Output = command.env("HOME", &home).output().expect("run bash");
             let json: serde_json::Value =
                 serde_json::from_slice(&out.stdout).unwrap_or_else(|error| {
                     panic!(
@@ -765,8 +788,14 @@ mod tests {
             .get_file("gossip-status/SKILL.md")
             .and_then(include_dir::File::contents_utf8)
             .expect("gossip-status/SKILL.md is embedded utf-8");
-        assert!(body.contains("`$NICKNAME (you)`"));
-        assert!(!body.contains("no peers yet"));
+        assert!(
+            body.contains("`$NICKNAME (you)`"),
+            "the status table must list the own peer as `you`"
+        );
+        assert!(
+            !body.contains("no peers yet"),
+            "the status table must not say there are no peers when self is listed"
+        );
     }
 
     /// A printed line is chat markdown, so a command left outside backticks
@@ -794,33 +823,55 @@ mod tests {
         assert!(
             Agent::ClaudeCode
                 .install_path(home)
-                .ends_with(".claude/skills")
+                .ends_with(".claude/skills"),
+            "Claude Code must install under .claude/skills"
         );
-        assert!(Agent::Pi.install_path(home).ends_with(".pi/agent/skills"));
-        assert!(Agent::Codex.install_path(home).ends_with(".codex/skills"));
-        assert!(Agent::Cursor.install_path(home).ends_with(".cursor/skills"));
+        assert!(
+            Agent::Pi.install_path(home).ends_with(".pi/agent/skills"),
+            "Pi must install under .pi/agent/skills"
+        );
+        assert!(
+            Agent::Codex.install_path(home).ends_with(".codex/skills"),
+            "Codex must install under .codex/skills"
+        );
+        assert!(
+            Agent::Cursor.install_path(home).ends_with(".cursor/skills"),
+            "Cursor must install under .cursor/skills"
+        );
         let opencode = Agent::OpenCode.install_path(home);
-        assert!(opencode.ends_with(".config/opencode/skills"));
+        assert!(
+            opencode.ends_with(".config/opencode/skills"),
+            "OpenCode must install under .config/opencode/skills, got {opencode:?}"
+        );
     }
 
     #[test]
     fn codex_in_sync_only_when_skill_tree_matches_embedded() {
         let home = std::env::temp_dir().join(format!("agent-gossip-insync-{}", std::process::id()));
         let dir = Agent::Codex.install_path(&home);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("the test temp directory is writable");
 
-        assert!(!Agent::Codex.in_sync(&home));
+        assert!(
+            !Agent::Codex.in_sync(&home),
+            "a home with no skills must count as out of sync"
+        );
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(Agent::Codex.in_sync(&home));
+        assert!(
+            Agent::Codex.in_sync(&home),
+            "a tree written from the embedded skills must count as in sync"
+        );
 
         let file = dir.join("gossip-create/SKILL.md");
-        let mut contents = std::fs::read_to_string(&file).unwrap();
+        let mut contents = std::fs::read_to_string(&file).expect("the test file is readable");
         contents.push('\n');
-        std::fs::write(&file, contents).unwrap();
-        assert!(!Agent::Codex.in_sync(&home));
+        std::fs::write(&file, contents).expect("the test temp directory is writable");
+        assert!(
+            !Agent::Codex.in_sync(&home),
+            "an edited skill file must count as out of sync"
+        );
 
-        std::fs::remove_dir_all(&home).unwrap();
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     #[test]
@@ -828,46 +879,71 @@ mod tests {
         let home =
             std::env::temp_dir().join(format!("agent-gossip-cursor-insync-{}", std::process::id()));
         let dir = Agent::Cursor.install_path(&home);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("the test temp directory is writable");
 
-        assert!(!Agent::Cursor.in_sync(&home));
+        assert!(
+            !Agent::Cursor.in_sync(&home),
+            "a home with no skills must count as out of sync"
+        );
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(Agent::Cursor.in_sync(&home));
+        assert!(
+            Agent::Cursor.in_sync(&home),
+            "a tree written from the embedded skills must count as in sync"
+        );
 
         // A stale `shared/` dir from a pre-single-file install is extra
         // content, not drift — the embedded files all still match.
-        std::fs::create_dir_all(dir.join("shared")).unwrap();
-        std::fs::write(dir.join("shared/extra.md"), "extra").unwrap();
-        assert!(Agent::Cursor.in_sync(&home));
-        std::fs::remove_file(dir.join("gossip-join/SKILL.md")).unwrap();
-        assert!(!Agent::Cursor.in_sync(&home));
+        std::fs::create_dir_all(dir.join("shared")).expect("the test temp directory is writable");
+        std::fs::write(dir.join("shared/extra.md"), "extra")
+            .expect("the test temp directory is writable");
+        assert!(
+            Agent::Cursor.in_sync(&home),
+            "an extra file must not count as drift"
+        );
+        std::fs::remove_file(dir.join("gossip-join/SKILL.md"))
+            .expect("the test temp directory is writable");
+        assert!(
+            !Agent::Cursor.in_sync(&home),
+            "a missing skill file must count as out of sync"
+        );
 
-        std::fs::remove_dir_all(&home).unwrap();
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
         let home = std::env::temp_dir().join(format!("agent-gossip-drift-{}", std::process::id()));
         let dir = Agent::Codex.install_path(&home);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("the test temp directory is writable");
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(super::drift_warning(&home).is_none());
+        assert!(
+            super::drift_warning(&home).is_none(),
+            "a matching install must not warn"
+        );
 
-        std::fs::write(dir.join("gossip-join/SKILL.md"), "stale").unwrap();
+        std::fs::write(dir.join("gossip-join/SKILL.md"), "stale")
+            .expect("the test temp directory is writable");
         let warning = super::drift_warning(&home).expect("diverged install warns");
-        assert_eq!(warning, super::SKILL_DRIFT_MSG);
-        assert!(warning.contains("agent-gossip plug"));
+        assert_eq!(
+            warning,
+            super::SKILL_DRIFT_MSG,
+            "a drift warning must use the shared drift message"
+        );
+        assert!(
+            warning.contains("agent-gossip plug"),
+            "the drift warning must name the plug command, got: {warning}"
+        );
 
-        std::fs::remove_dir_all(&home).unwrap();
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     fn write_embedded_dir(dir: &Dir<'_>, dest: &Path) {
-        std::fs::create_dir_all(dest).unwrap();
+        std::fs::create_dir_all(dest).expect("the test temp directory is writable");
         for file in dir.files() {
             let target = dest.join(file.path().file_name().expect("embedded file has a name"));
-            std::fs::write(target, file.contents()).unwrap();
+            std::fs::write(target, file.contents()).expect("the test temp directory is writable");
         }
         for subdir in dir.dirs() {
             let name = subdir.path().file_name().expect("embedded dir has a name");

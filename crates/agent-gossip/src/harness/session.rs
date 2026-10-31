@@ -16,8 +16,8 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub async fn inject_raw(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        self.core.inject_raw(bytes::Bytes::from(bytes)).await
+    pub async fn inject_raw(&self, bytes: bytes::Bytes) -> Result<(), crate::api::SessionError> {
+        self.core.inject_raw(bytes).await
     }
 
     /// Simulate the gossip stream terminally ending (the daemon must
@@ -25,7 +25,7 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub async fn sever_gossip(&self) -> anyhow::Result<()> {
+    pub async fn sever_gossip(&self) -> Result<(), crate::api::SessionError> {
         self.core.sever_gossip().await
     }
 
@@ -35,7 +35,9 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+    pub async fn reassembly_stats(
+        &self,
+    ) -> Result<(usize, usize, usize), crate::api::SessionError> {
         self.core.reassembly_stats().await
     }
 }

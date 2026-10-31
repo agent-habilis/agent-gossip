@@ -44,7 +44,7 @@ rust-version = "1.93"
 #
 # Bumping this is what carries an engine fix into the app; keep it in step with
 # agent-share, which pins the same rev.
-habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "b2026cdc1265e340f5337009547af42cbc727367" }
+habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "f7cd9bbcdc4aeb799067ee0b0e5f16c39347826c" }
 tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",
@@ -69,7 +69,7 @@ bytes = "1"
 # time — a pipe, a file or `NO_COLOR` gets plain bytes — so an agent capturing
 # stdout sees no ANSI without us branching on a flag or a TTY check.
 anstyle = "1"
-anstream = "0.6"
+anstream = "1"
 # `tracing` is already in the lockfile transitively (iroh depends on
 # it); declaring it directly only lets us emit our own spans/events and
 # adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).
@@ -79,6 +79,9 @@ tracing-subscriber = { version = "0.3", features = [
   "tracing-log",
 ] }
 async-trait = "0.1.89"
+# `FuturesUnordered` runs the per-connection futures of an accept loop on the loop's own
+# task, so they borrow the loop's context instead of holding an `Arc` of it.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 uuid = { version = "1", features = ["v4"] }
 # NOTE: no `iroh` entry, deliberately. This workspace names nothing from the
 # iroh family; `habilis_network::iroh` is the only door, and `habilis-network` owns which fork and
@@ -91,7 +94,7 @@ bs58 = "0.5"
 # merge without a bespoke ordered-log fold. `default-features` stays on (the
 # `storage-v2` on-disk format is unused — we carry changes on the wire).
 automerge = "0.10"
-sha2 = "0.10"
+sha2 = "0.11"
 rand = "0.9"
 libc = "0.2"
 # Shared dev-deps (unit + integration tests, benches).
@@ -112,9 +115,15 @@ unsafe_code = "deny"
 unreachable_pub = "warn"
 unused_qualifications = "warn"
 missing_debug_implementations = "warn"
+# Google Rust Style Guide D1: every public item states its contract.
+missing_docs = "warn"
 # Reject non-ASCII identifiers (homoglyph / supply-chain hardening;
 # matches the project's ASCII-only protocol ethos).
 non_ascii_idents = "deny"
+# Google Rust Style Guide D12: `///` documents an item, `//` holds a note. A `///` on a statement,
+# an expression or a match arm is an error here, not a warning. A misplaced `//!` or a `///` at the
+# end of a block is already a compiler error.
+unused_doc_comments = "deny"
 # Require an explicit `unsafe {}` block inside any `unsafe fn`.
 unsafe_op_in_unsafe_fn = "deny"
 # NOTE: `unused_crate_dependencies` was evaluated and rejected — it is
@@ -122,6 +131,20 @@ unsafe_op_in_unsafe_fn = "deny"
 # false-flags deps it doesn't personally use (anyhow/clap/bs58/...).
 # Not fixable without per-test `use X as _;` source shims. The genuine
 # dead deps it surfaced (`include_dir`, `schemars`) were removed below.
+
+# Google Rust Style Guide D10 and D11: the rustdoc lints that judge a doc comment. `deny`, because
+# `cargo task ci` and the CI doc job run `cargo doc` with `-D warnings` and a lint level of `warn`
+# would hide behind the flag. `private_intra_doc_links` and `redundant_explicit_links` are `warn` by
+# default; the other four are `allow` by default or only `warn` for a part of their cases.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+bare_urls = "deny"
+redundant_explicit_links = "deny"
+unescaped_backticks = "deny"
+invalid_rust_codeblocks = "deny"
+invalid_codeblock_attributes = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -136,6 +159,24 @@ shadow_unrelated = "warn"
 semicolon_inside_block = "warn"
 allow_attributes_without_reason = "warn"
 excessive_nesting = "warn"
+# Google Rust Style Guide, B3: a clone is a copy that is needed, and `Arc::clone(&x)` shows that it
+# only bumps a count.
+clone_on_ref_ptr = "warn"
+# Google Rust Style Guide, U23: a public enum is non_exhaustive, so a new variant is not a breaking change.
+exhaustive_enums = "warn"
+# Google Rust Style Guide, U26: a public struct with public fields is non_exhaustive, so a new field is not a breaking change.
+exhaustive_structs = "warn"
+# Google Rust Style Guide, O27: import the type or the parent module; a path names at most three segments (clippy.toml).
+absolute_paths = "warn"
+redundant_clone = "warn"
+# Google Rust Style Guide, B5: do not clone out of habit; borrow, move, or restructure.
+implicit_clone = "warn"
+map_clone = "warn"
+cloned_instead_of_copied = "warn"
+assigning_clones = "warn"
+unnecessary_to_owned = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error
 # instead of silently lingering.
@@ -143,12 +184,13 @@ allow_attributes = "warn"
 # Forbid `_ =>` catch-all arms on enum matches: a new variant must be
 # handled explicitly rather than silently swallowed by a wildcard.
 wildcard_enum_match_arm = "warn"
-# documented opt-out (noise / not a readability win): keep CI signal useful
-module_name_repetitions = "allow"
-# Transitive duplicate crate versions are not controllable from a leaf
-# binary (verified: ~16 dup crates, all pulled by iroh/reqwest/etc.);
-# the lint is noise here, not an actionable signal.
-multiple_crate_versions = "allow"
+undocumented_unsafe_blocks = "warn"
+# Google Rust Style Guide D10 and D11: the first paragraph of a doc comment is a short summary
+# (`doc_markdown`, `doc_link_with_quotes`, `doc_lazy_continuation` and `empty_docs` already run).
+too_long_first_doc_paragraph = "warn"
+doc_include_without_cfg = "warn"
+string_add = "warn"
+unwrap_used = "warn"
 
 # Dependencies get light optimization in dev/test builds; workspace members
 # stay at opt-level 0 (`package."*"` never applies to them) so incremental

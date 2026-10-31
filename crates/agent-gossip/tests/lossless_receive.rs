@@ -49,14 +49,19 @@ fn spawn_create(name: &str) -> (Daemon, String, String) {
 /// [`spawn_create`] with extra `create` flags, for the hidden tuning knobs.
 fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
     let log = tmp_log(&format!("lossless-{name}"));
-    let file = fs::File::create(&log).unwrap();
-    let child = test_cmd()
+    let file = fs::File::create(&log).expect("the test temp dir is writable");
+    let stdout_handle = file
+        .try_clone()
+        .expect("the log file handle can be cloned for stdout");
+    let mut command = test_cmd();
+    command
         .args(["create", "--name", name])
         .args(flags)
-        .stdout(Stdio::from(file.try_clone().unwrap()))
-        .stderr(Stdio::from(file))
+        .stdout(Stdio::from(stdout_handle))
+        .stderr(Stdio::from(file));
+    let child: Child = command
         .spawn()
-        .expect("spawn create");
+        .expect("the test binary is built and the OS can start a child process");
     let daemon = Daemon {
         child,
         log: Some(log),
@@ -83,13 +88,18 @@ fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
 fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
     use std::io::{BufRead as _, BufReader};
 
-    let mut child = test_cmd()
+    let mut command = test_cmd();
+    command
         .args(["create", "--name", name])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child: Child = command
         .spawn()
-        .expect("spawn create");
-    let mut stdout = child.stdout.take().expect("piped stdout");
+        .expect("the test binary is built and the OS can start a child process");
+    let mut stdout = child
+        .stdout
+        .take()
+        .expect("the command above set stdout to piped, so the handle is present");
     // Own the child before anything below can panic, so the daemon is always
     // killed and reaped.
     let mut daemon = Daemon {
@@ -108,10 +118,15 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line)
                 && value["event"] == "ready"
             {
-                break (
-                    value["gossip"].as_str().expect("gossip").to_owned(),
-                    value["nickname"].as_str().expect("nickname").to_owned(),
-                );
+                let gossip = value["gossip"]
+                    .as_str()
+                    .expect("every ready line names the mesh the daemon created")
+                    .to_owned();
+                let nickname = value["nickname"]
+                    .as_str()
+                    .expect("every ready line names the nickname the daemon chose")
+                    .to_owned();
+                break (gossip, nickname);
             }
         }
     };
@@ -191,30 +206,35 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
     assert!(out.status.success(), "meta merge failed");
 
     // Arm the bell AFTER the report landed: it must park, not fire.
-    let mut bell = test_cmd()
+    let mut bell_command = test_cmd();
+    bell_command
         .args(["poll", "--gossip", &mesh, "--nickname", &nick, "--long"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("bell spawns");
+        .stderr(Stdio::null());
+    let mut bell: Child = bell_command.spawn().expect("bell spawns");
     // Give an immediate fire ample time to have exited.
     std::thread::sleep(std::time::Duration::from_millis(1500));
     assert!(
-        bell.try_wait().expect("try_wait").is_none(),
+        bell.try_wait()
+            .expect("polling a child we own and have not reaped cannot hit an OS error")
+            .is_none(),
         "the bell fired on the agent's own meta report"
     );
 
     // A real message wakes it, and the batch carries the meta echo along.
-    cli_message_checked(&mesh, &nick, "wake up");
+    let _ = cli_message_checked(&mesh, &nick, "wake up");
     let deadline = Instant::now() + MSG_TIMEOUT;
-    while bell.try_wait().expect("try_wait").is_none() {
+    while bell
+        .try_wait()
+        .expect("polling a child we own and have not reaped cannot hit an OS error")
+        .is_none()
+    {
         assert!(Instant::now() < deadline, "bell never woke on a message");
         std::thread::sleep(POLL);
     }
     let mut body = String::new();
-    bell.stdout
-        .take()
-        .expect("piped")
+    let mut bell_stdout = bell.stdout.take().expect("piped");
+    bell_stdout
         .read_to_string(&mut body)
         .expect("read bell output");
     assert!(
@@ -235,7 +255,10 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
 fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
-        if let Some(status) = child.try_wait().expect("try_wait") {
+        if let Some(status) = child
+            .try_wait()
+            .expect("polling a child we own and have not reaped cannot hit an OS error")
+        {
             return status;
         }
         assert!(Instant::now() < deadline, "process never exited");
@@ -254,17 +277,17 @@ fn bell_exits_cleanly_when_the_daemon_leaves() {
     let (daemon, mesh, nick) = spawn_create("bellclean");
     let mut bell = park_bell(&mesh, &nick);
 
-    let out = std::process::Command::new("kill")
-        .args(["-TERM", &daemon.child.id().to_string()])
+    let daemon_pid = daemon.child.id().to_string();
+    let out: std::process::Output = std::process::Command::new("kill")
+        .args(["-TERM", &daemon_pid])
         .output()
         .expect("kill spawns");
     assert!(out.status.success(), "SIGTERM failed");
 
     let status = wait_exit(&mut bell);
     let mut body = String::new();
-    bell.stdout
-        .take()
-        .expect("piped")
+    let mut bell_stdout = bell.stdout.take().expect("piped");
+    bell_stdout
         .read_to_string(&mut body)
         .expect("read bell output");
     assert!(
@@ -285,7 +308,8 @@ fn bell_with_max_secs_ends_itself_as_a_quiet_ring() {
 
     let (_daemon, mesh, nick) = spawn_create_with("bellmax", &["--longpoll-max-ms", "1000"]);
     let started = Instant::now();
-    let mut bell = test_cmd()
+    let mut bell_command = test_cmd();
+    bell_command
         .args([
             "poll",
             "--gossip",
@@ -297,23 +321,20 @@ fn bell_with_max_secs_ends_itself_as_a_quiet_ring() {
             "2",
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("bell spawns");
+        .stderr(Stdio::piped());
+    let mut bell: Child = bell_command.spawn().expect("bell spawns");
 
     let status = wait_exit(&mut bell);
     let mut body = String::new();
-    bell.stdout
-        .take()
-        .expect("piped")
+    let mut bell_stdout = bell.stdout.take().expect("piped");
+    bell_stdout
         .read_to_string(&mut body)
         .expect("read bell output");
     let mut stderr = String::new();
-    bell.stderr
-        .take()
-        .expect("piped")
+    let mut bell_stderr = bell.stderr.take().expect("piped");
+    bell_stderr
         .read_to_string(&mut stderr)
-        .expect("read bell stderr");
+        .expect("the bell has exited, so its stderr pipe reaches end of file");
     assert!(
         status.success(),
         "--max-secs must end the bell with exit 0, got {status}. stderr: {stderr}"
@@ -342,7 +363,8 @@ fn bell_max_secs_cuts_the_settle_wait() {
 
     let (_daemon, mesh, nick) = spawn_create_with("bellsettle", &["--longpoll-max-ms", "1000"]);
     let started = Instant::now();
-    let mut bell = test_cmd()
+    let mut bell_command = test_cmd();
+    bell_command
         .args([
             "poll",
             "--gossip",
@@ -356,15 +378,13 @@ fn bell_max_secs_cuts_the_settle_wait() {
             "2",
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("bell spawns");
+        .stderr(Stdio::null());
+    let mut bell: Child = bell_command.spawn().expect("bell spawns");
 
     let status = wait_exit(&mut bell);
     let mut body = String::new();
-    bell.stdout
-        .take()
-        .expect("piped")
+    let mut bell_stdout = bell.stdout.take().expect("piped");
+    bell_stdout
         .read_to_string(&mut body)
         .expect("read bell output");
     assert!(status.success(), "the bell must exit 0, got {status}");
@@ -392,7 +412,9 @@ fn bell_without_max_secs_keeps_parking() {
     let mut bell = park_bell(&mesh, &nick);
     std::thread::sleep(std::time::Duration::from_secs(3));
     assert!(
-        bell.try_wait().expect("try_wait").is_none(),
+        bell.try_wait()
+            .expect("polling a child we own and have not reaped cannot hit an OS error")
+            .is_none(),
         "a bell without --max-secs must not end on a quiet daemon"
     );
     let _ = bell.kill();
@@ -421,16 +443,15 @@ fn bell_errors_when_the_daemon_crashes() {
 fn poll_returns_a_long_body_byte_for_byte() {
     let (_daemon, mesh, nick) = spawn_create("longbody");
     let body = long_body();
-    cli_message_checked(&mesh, &nick, &body);
+    let _ = cli_message_checked(&mesh, &nick, &body);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         let polled = cli_poll(&mesh, &nick, None);
         if let Ok(events) = serde_json::from_str::<serde_json::Value>(&polled)
-            && let Some(got) = events
-                .as_array()
-                .and_then(|list| list.iter().find(|event| event["type"] == "broadcast"))
-                .and_then(|event| event["body"].as_str())
+            && let Some(list) = events.as_array()
+            && let Some(broadcast) = list.iter().find(|event| event["type"] == "broadcast")
+            && let Some(got) = broadcast["body"].as_str()
         {
             assert_eq!(got, body, "poll truncated or altered a 5000-char body");
             return;

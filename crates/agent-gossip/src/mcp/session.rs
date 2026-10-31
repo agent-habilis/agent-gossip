@@ -7,19 +7,20 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
-use habilis_network::protocol::MeshName;
-use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{MeshId, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::messages::Authored;
+use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 
+use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
-    TaskArtifactParams, TaskStatusParams, TopicConfig,
+    SessionError, TaskArtifactParams, TaskStatusParams, TopicConfig,
 };
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
 /// Dropping it winds the loop down via the core's own `Drop`.
-pub(super) struct Session {
+pub(crate) struct Session {
     inner: InProcessSession,
     /// Implicit `after` seq cursor for [`Session::fetch_messages`].
     last_delivered_seq: Mutex<Option<u64>>,
@@ -31,8 +32,8 @@ impl Session {
     /// # Errors
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
-    pub(super) async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
-        Ok(Self::wrap(InProcessSession::create_poll(cfg).await?))
+    pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
+        Ok(Self::wrap(InProcessSession::create_poll(config).await?))
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -40,8 +41,8 @@ impl Session {
     ///
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
-    pub(super) async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::join_poll(cfg).await?))
+    pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::join_poll(config).await?))
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -49,8 +50,8 @@ impl Session {
     ///
     /// # Errors
     /// [`JoinError`] on setup failure.
-    pub(super) async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::topic_poll(cfg).await?))
+    pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::topic_poll(config).await?))
     }
 
     fn wrap(inner: InProcessSession) -> Self {
@@ -76,7 +77,7 @@ impl Session {
     }
 
     /// Broadcast a message. Returns `(id, echo)` — the new id and the
-    /// canonical [`Message`]. The full echo is returned here, so a caller
+    /// canonical [`Message`](crate::Message). The full echo is returned here, so a caller
     /// need not re-fetch to see its own send; the self-echo also surfaces
     /// once in a later `fetch_messages` (with `self:true`), matching the
     /// live stream.
@@ -84,8 +85,8 @@ impl Session {
     /// # Errors
     /// Fails if the event loop has stopped.
     pub(super) async fn send_broadcast(&self, body: MessageBody) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.broadcast(body).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.broadcast(body).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Send a chat message to one peer. Returns `(id, echo)`, like
@@ -99,8 +100,8 @@ impl Session {
         to: Nickname,
         body: MessageBody,
     ) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.msg(to, body).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.message(to, body).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Worker-emit a task `TaskStatusUpdate`. Returns `(id, echo)`.
@@ -111,8 +112,8 @@ impl Session {
         &self,
         status: TaskStatusParams,
     ) -> Result<(MessageId, Authored)> {
-        let msg = self.inner.task_status(status).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.task_status(status).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Worker-emit a task `TaskArtifactUpdate` (the result). Returns `(id, echo)`.
@@ -130,13 +131,13 @@ impl Session {
             file_name,
             file_mime,
         } = artifact;
-        let file = file.map(|path| crate::a2a::send::FileRef {
+        let file = file.map(|path| FileRef {
             path,
             name: file_name,
             mime: file_mime,
         });
-        let msg = self.inner.task_artifact(task_id, text, file).await?;
-        Ok((msg.id.clone(), msg))
+        let message = self.inner.task_artifact(task_id, text, file).await?;
+        Ok((message.id.clone(), message))
     }
 
     /// Call a peer's A2A server over gossip (request/response); returns the
@@ -144,7 +145,10 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn a2a_call(&self, call: A2aCallParams) -> Result<serde_json::Value> {
+    pub(super) async fn a2a_call(
+        &self,
+        call: A2aCallParams,
+    ) -> Result<serde_json::Value, SessionError> {
         self.inner.a2a_call(call).await
     }
 
@@ -152,7 +156,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn peers(&self) -> Result<RosterSnapshot> {
+    pub(super) async fn peers(&self) -> Result<RosterSnapshot, SessionError> {
         self.inner.peers().await
     }
 
@@ -161,7 +165,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>> {
+    pub(super) async fn ping(&self) -> Result<Vec<crate::emission::PingPeer>, SessionError> {
         self.inner.ping().await
     }
 
@@ -170,7 +174,10 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn apply_state_merge(&self, merge: serde_json::Value) -> Result<()> {
+    pub(super) async fn apply_state_merge(
+        &self,
+        merge: serde_json::Value,
+    ) -> Result<(), SessionError> {
         self.inner.state_merge(merge).await
     }
 
@@ -178,7 +185,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn state_get(&self) -> Result<serde_json::Value> {
+    pub(super) async fn state_get(&self) -> Result<serde_json::Value, SessionError> {
         self.inner.state_get().await
     }
 
@@ -186,7 +193,10 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn apply_meta_merge(&self, merge: serde_json::Value) -> Result<()> {
+    pub(super) async fn apply_meta_merge(
+        &self,
+        merge: serde_json::Value,
+    ) -> Result<(), SessionError> {
         self.inner.meta_merge(merge).await
     }
 
@@ -194,7 +204,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn meta_get(&self) -> Result<serde_json::Value> {
+    pub(super) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
         self.inner.meta_get().await
     }
 
@@ -209,11 +219,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn fetch_messages(
-        &self,
-        after: Option<u64>,
-        long: bool,
-    ) -> Result<crate::a2a::surfaced::PollBatch> {
+    pub(super) async fn fetch_messages(&self, after: Option<u64>, long: bool) -> Result<PollBatch> {
         let batch = self.inner.fetch(self.effective_after(after), long).await?;
         if after.is_none()
             && let Some(seq) = batch.events.last().map(|item| item.seq)
@@ -230,12 +236,20 @@ impl Session {
     /// to the cursor-less CLI `poll` alone.
     fn effective_after(&self, explicit: Option<u64>) -> Option<u64> {
         explicit
-            .or_else(|| *self.last_delivered_seq.lock().unwrap())
+            .or_else(|| {
+                *self.last_delivered_seq.lock().expect(
+                    "the cursor lock is never held across a panic, so it cannot be poisoned",
+                )
+            })
             .or(Some(0))
     }
 
     fn advance_cursor_to(&self, seq: u64) {
-        *self.last_delivered_seq.lock().unwrap() = Some(seq);
+        *self
+            .last_delivered_seq
+            .lock()
+            .expect("the cursor lock is never held across a panic, so it cannot be poisoned") =
+            Some(seq);
     }
 
     /// Clean shutdown — delegates to the core's `leave`.
@@ -250,11 +264,12 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::{Channel, JoinTarget, Message};
-    use habilis_network::protocol::{MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{Channel, JoinTarget, Message, MessageKind, PresenceSubtype};
     use serde_json::json;
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
+    use crate::a2a::status_update_params::chat_text;
+    use crate::a2a::surfaced_event::SurfacedEvent;
     use crate::api::{CreateConfig, JoinConfig};
 
     // All tests use the private network (loopback) so they work on
@@ -262,26 +277,23 @@ mod tests {
 
     /// A loopback create config with an explicit nickname, no advertising.
     fn create_cfg(name: &str, nick: &str) -> CreateConfig {
-        let mut cfg = CreateConfig::new(MeshName::new(name).unwrap());
-        cfg.nickname = Some(Nickname::from(nick));
-        cfg
+        CreateConfig::new(MeshName::try_new(name).expect("the test literal is a valid mesh name"))
+            .with_nickname(Nickname::from(nick))
     }
 
     /// A join config for an existing mesh id with an explicit nickname.
     fn join_cfg(mesh: &MeshId, nick: &str) -> JoinConfig {
-        let mut cfg = JoinConfig::new(JoinTarget::Mesh(mesh.clone()));
-        cfg.nickname = Some(Nickname::from(nick));
-        cfg
+        JoinConfig::new(JoinTarget::Mesh(mesh.clone())).with_nickname(Nickname::from(nick))
     }
 
     /// The `Message` inside a surfaced `msg`/`presence`/`task` event, if
     /// any — the test view into the now-structured `fetch_messages` result.
-    fn as_message(event: &crate::output::OutputEvent) -> Option<&Message> {
-        use crate::output::OutputEvent;
+    fn as_message(event: &crate::emission::OutputEvent) -> Option<&Message> {
+        use crate::emission::OutputEvent;
         match event {
-            OutputEvent::Message { msg, .. }
-            | OutputEvent::Presence { msg }
-            | OutputEvent::Task { msg, .. } => Some(msg),
+            OutputEvent::Message { message, .. }
+            | OutputEvent::Presence { message }
+            | OutputEvent::Task { message, .. } => Some(message),
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }
             | OutputEvent::PeerReturn { .. }
@@ -300,11 +312,11 @@ mod tests {
 
     /// Whether `event` is the self-echo of `sent` — a `Message` event
     /// tagged `is_self:true` whose id matches.
-    fn is_self_echo(event: &crate::output::OutputEvent, sent: &MessageId) -> bool {
+    fn is_self_echo(event: &crate::emission::OutputEvent, sent: &MessageId) -> bool {
         matches!(
             event,
-            crate::output::OutputEvent::Message { msg, is_self }
-                if *is_self && msg.id == *sent
+            crate::emission::OutputEvent::Message { message, is_self }
+                if *is_self && message.id == *sent
         )
     }
 
@@ -335,14 +347,18 @@ mod tests {
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
     /// the first event) — replaying from here re-includes the join and
     /// everything after.
-    fn seq_before_bob_join(events: &[crate::a2a::surfaced::SurfacedEvent]) -> Option<u64> {
+    fn seq_before_bob_join(events: &[SurfacedEvent]) -> Option<u64> {
         let join_idx = events.iter().position(|item| is_bob_join(&item.event))?;
-        Some(join_idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
+        Some(
+            join_idx
+                .checked_sub(1)
+                .map_or(0, |previous| events[previous].seq),
+        )
     }
 
     /// The author and the document after a meta change, if `event` is one.
-    fn meta_change(event: &crate::output::OutputEvent) -> Option<(&str, &serde_json::Value)> {
-        let crate::output::OutputEvent::StateChanged {
+    fn meta_change(event: &crate::emission::OutputEvent) -> Option<(&str, &serde_json::Value)> {
+        let crate::emission::OutputEvent::StateChanged {
             channel: Channel::Meta,
             event: change,
             document,
@@ -368,14 +384,14 @@ mod tests {
     /// Whether `event` is bob-cursor's join presence — the marker
     /// `implicit_cursor_returns_delta_on_subsequent_fetches` waits on to know
     /// its cursor baseline includes the join.
-    fn is_bob_join(event: &crate::output::OutputEvent) -> bool {
-        as_message(event).is_some_and(|msg| {
+    fn is_bob_join(event: &crate::emission::OutputEvent) -> bool {
+        as_message(event).is_some_and(|message| {
             matches!(
-                msg.kind,
+                message.kind,
                 MessageKind::Presence {
                     subtype: PresenceSubtype::Joined
                 }
-            ) && msg.author.as_str() == "bob-cursor"
+            ) && message.author.as_str() == "bob-cursor"
         })
     }
 
@@ -418,10 +434,9 @@ mod tests {
         poll_until(deadline, Duration::from_millis(200), || async {
             let events = session.fetch_messages(None, false).await.ok()?.events;
             events.iter().find_map(|entry| {
-                let msg = as_message(&entry.event)?;
-                (msg.author.as_str() == author
-                    && crate::a2a::gossip::chat_text(msg).as_deref() == Some(body))
-                .then(|| msg.id.clone())
+                let message = as_message(&entry.event)?;
+                (message.author.as_str() == author && chat_text(message).as_deref() == Some(body))
+                    .then(|| message.id.clone())
             })
         })
         .await
@@ -464,7 +479,7 @@ mod tests {
             let found = events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some(body));
+                .any(|message| chat_text(message).as_deref() == Some(body));
             if found {
                 break;
             }
@@ -475,10 +490,21 @@ mod tests {
     async fn create_session_yields_valid_mesh_and_nickname() {
         let session = Session::create(create_cfg("test1", "alice-test"))
             .await
-            .expect("create");
-        assert!(MeshId::new(session.mesh().as_str()).is_ok());
-        assert_eq!(session.name().as_str(), "test1");
-        assert_eq!(session.nickname().as_str(), "alice-test");
+            .expect("a loopback create needs no network and cannot fail");
+        assert!(
+            MeshId::try_new(session.mesh().as_str()).is_ok(),
+            "the mesh name is a valid mesh id"
+        );
+        assert_eq!(
+            session.name().as_str(),
+            "test1",
+            "the session reports the mesh name it joined"
+        );
+        assert_eq!(
+            session.nickname().as_str(),
+            "alice-test",
+            "the session reports its nickname"
+        );
         session.leave().await;
     }
 
@@ -486,13 +512,17 @@ mod tests {
     async fn two_sessions_same_mesh_task_messages() {
         let creator = Session::create(create_cfg("two", "alice-two"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         let mesh = creator.mesh().clone();
 
         let joiner = Session::join(join_cfg(&mesh, "bob-two"))
             .await
-            .expect("join");
-        assert_eq!(joiner.name().as_str(), "two");
+            .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
+        assert_eq!(
+            joiner.name().as_str(),
+            "two",
+            "the joiner reports the mesh name"
+        );
 
         establish_link(&creator, &joiner, "alice-two").await;
         establish_link(&joiner, &creator, "bob-two").await;
@@ -501,7 +531,7 @@ mod tests {
         let (sent_id, _) = creator
             .send_broadcast(MessageBody::from("hi bob"))
             .await
-            .expect("send_broadcast");
+            .expect("a live session accepts a broadcast while the mesh is up");
 
         let observed = wait_for_gossip(&joiner, "alice-two", "hi bob").await;
         assert_eq!(
@@ -514,9 +544,13 @@ mod tests {
         let (reply_id, _) = joiner
             .send_broadcast(MessageBody::from("hi alice"))
             .await
-            .expect("send_broadcast");
+            .expect("a live session accepts a broadcast while the mesh is up");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
-        assert_eq!(observed2, Some(reply_id));
+        assert_eq!(
+            observed2,
+            Some(reply_id),
+            "the observed reply is the one sent"
+        );
 
         joiner.leave().await;
         creator.leave().await;
@@ -526,11 +560,11 @@ mod tests {
     async fn long_poll_blocks_then_returns_on_peer_traffic() {
         let creator = Session::create(create_cfg("lp", "alice-lp"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         let mesh = creator.mesh().clone();
         let joiner = Session::join(join_cfg(&mesh, "bob-lp"))
             .await
-            .expect("join");
+            .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
 
         // Mesh first (a delivered message proves the link) so the long-poll
         // below is waiting on a *fresh* event, not racing initial bootstrap.
@@ -554,7 +588,7 @@ mod tests {
             creator
                 .send_broadcast(MessageBody::from("after warmup"))
                 .await
-                .expect("send");
+                .expect("the sender is still joined, so the broadcast that wakes the poller must go out");
         };
         // The blocking fetch should resolve as soon as the gossiped "after
         // warmup" lands — well under the park cap — not spin to the timeout. A
@@ -598,17 +632,22 @@ mod tests {
         // tagged `self:true` — the same as the live `--output json` stream.
         let alice = Session::create(create_cfg("replay", "alice-replay"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
 
         let (sent, echo) = alice
             .send_broadcast(MessageBody::from("self-echo"))
             .await
-            .expect("send_broadcast");
-        assert_eq!(echo.id, sent);
-        assert_eq!(echo.author.as_str(), "alice-replay");
+            .expect("a live session accepts a broadcast while the mesh is up");
+        assert_eq!(echo.id, sent, "the echo carries the sent message id");
         assert_eq!(
-            crate::a2a::gossip::chat_text(&echo).as_deref(),
-            Some("self-echo")
+            echo.author.as_str(),
+            "alice-replay",
+            "the echo carries the author nickname"
+        );
+        assert_eq!(
+            chat_text(&echo).as_deref(),
+            Some("self-echo"),
+            "the echo must carry the body that was sent, or the caller cannot match it to its own message"
         );
         assert!(
             echo.timestamp > habilis_network::protocol::UnixSecs::ZERO,
@@ -621,7 +660,7 @@ mod tests {
             let events = alice
                 .fetch_messages(None, false)
                 .await
-                .expect("fetch")
+                .expect("a live session returns its buffered messages without error")
                 .events;
             events
                 .iter()
@@ -665,11 +704,11 @@ mod tests {
         // `after` is a non-mutating replay that does NOT touch the cursor.
         let alice = Session::create(create_cfg("cursor", "alice-cursor"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
         let mesh = alice.mesh().clone();
         let bob = Session::join(join_cfg(&mesh, "bob-cursor"))
             .await
-            .expect("join");
+            .expect("the creator is alive and its mesh id is valid, so a loopback join succeeds");
 
         // Drive alice's first cursor-less fetches until bob's join presence AND
         // the merge of bob's card into the meta document have both landed. They
@@ -696,7 +735,7 @@ mod tests {
         let empty_delta = alice
             .fetch_messages(None, false)
             .await
-            .expect("delta fetch")
+            .expect("the cursor from the first fetch is valid, so the second fetch returns only newer messages")
             .events;
         assert!(
             empty_delta.is_empty(),
@@ -707,7 +746,7 @@ mod tests {
         // message, nothing older.
         bob.send_broadcast(MessageBody::from("hi via cursor"))
             .await
-            .expect("send");
+            .expect("a live session accepts a broadcast while the mesh is up");
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let saw_body = poll_until(delta_deadline, Duration::from_millis(150), || async {
             let events = alice
@@ -715,10 +754,9 @@ mod tests {
                 .await
                 .expect("delta fetch 2")
                 .events;
-            events
-                .iter()
-                .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor"))
+            let mut messages = events.iter().filter_map(|item| as_message(&item.event));
+            messages
+                .any(|message| chat_text(message).as_deref() == Some("hi via cursor"))
                 .then_some(())
         })
         .await
@@ -739,7 +777,7 @@ mod tests {
             forced
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor")),
+                .any(|message| chat_text(message).as_deref() == Some("hi via cursor")),
             "explicit after must replay from the given seq"
         );
 
@@ -764,7 +802,7 @@ mod tests {
         // First cycle.
         let first = Session::create(create_cfg("cy-a", "cycler-a"))
             .await
-            .expect("first create");
+            .expect("a fresh process has no session yet, so the first create is not blocked");
         let first_mesh = first.mesh().clone();
         first.leave().await;
 
@@ -777,7 +815,11 @@ mod tests {
             &first_mesh,
             "second create should mint a fresh mesh id"
         );
-        assert_eq!(second.nickname().as_str(), "cycler-b");
+        assert_eq!(
+            second.nickname().as_str(),
+            "cycler-b",
+            "the second session reports its own nickname"
+        );
         second.leave().await;
     }
 
@@ -788,15 +830,20 @@ mod tests {
     async fn apply_state_merge_applies_and_reads_back() {
         let session = Session::create(create_cfg("merge", "alice"))
             .await
-            .expect("create");
+            .expect("a loopback create needs no network and cannot fail");
 
         session
             .apply_state_merge(json!({"turn": "a"}))
             .await
             .expect("an object merge applies");
         assert_eq!(
-            session.state_get().await.expect("state_get")["turn"],
-            json!("a")
+            session
+                .state_get()
+                .await
+                .expect("a created session owns its shared state document, so reading it succeeds")
+                ["turn"],
+            json!("a"),
+            "the object merge sets turn to a"
         );
 
         // A non-object top-level merge cannot be represented on the automerge
@@ -806,8 +853,12 @@ mod tests {
             "a non-object top-level merge must be rejected"
         );
         assert_eq!(
-            session.state_get().await.expect("state_get"),
-            json!({"turn": "a"})
+            session
+                .state_get()
+                .await
+                .expect("a created session owns its shared state document, so reading it succeeds"),
+            json!({"turn": "a"}),
+            "a refused merge leaves the prior document"
         );
 
         session.leave().await;

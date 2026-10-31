@@ -5,10 +5,10 @@
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
-//! `bench` feature exposes `agent_gossip::harness::bench`, the in-crate
+//! `bench` feature exposes `agent_gossip::harness::bench_config`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_gossip::harness::bench::{self as api, BenchConfig, BenchMessage};
+use agent_gossip::harness::bench_config::{self as api, BenchConfig, BenchMessage};
 use agent_gossip::{MeshName, MessageBody, Nickname};
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
@@ -35,7 +35,7 @@ mod token {
     use super::{BenchConfig, Bencher, MAX_NAME, MeshName, SHORT_NAME, api, black_box};
 
     fn bench_encode(bencher: Bencher<'_, '_>, raw: &str) {
-        let name = MeshName::new(raw).unwrap();
+        let name = MeshName::try_new(raw).expect("the bench names are fixed and valid mesh names");
         let config = BenchConfig::public();
         bencher.bench(|| api::mesh_token(black_box(&name), black_box(&config)));
     }
@@ -52,7 +52,8 @@ mod token {
 
     #[divan::bench]
     fn decode(bencher: Bencher<'_, '_>) {
-        let name = MeshName::new(MAX_NAME).unwrap();
+        let name =
+            MeshName::try_new(MAX_NAME).expect("the bench names are fixed and valid mesh names");
         let token = api::mesh_token(&name, &BenchConfig::public());
         bencher.bench(|| api::mesh_decode(black_box(&token)));
     }
@@ -76,7 +77,7 @@ mod parsing {
     // A valid token to exercise the accept path of `MeshId::new`.
     fn valid_token() -> String {
         api::mesh_token(
-            &MeshName::new("bench").unwrap(),
+            &MeshName::try_new("bench").expect("the bench names are fixed and valid mesh names"),
             &super::BenchConfig::loopback(),
         )
     }
@@ -94,22 +95,22 @@ mod parsing {
 
     #[divan::bench]
     fn mesh_name_valid() -> bool {
-        MeshName::new(black_box(MAX_NAME)).is_ok()
+        MeshName::try_new(black_box(MAX_NAME)).is_ok()
     }
 
     #[divan::bench]
     fn mesh_name_invalid() -> bool {
-        MeshName::new(black_box("has space / slash")).is_ok()
+        MeshName::try_new(black_box("has space / slash")).is_ok()
     }
 
     #[divan::bench]
     fn nickname_valid() -> bool {
-        Nickname::new(black_box("swift-cedar")).is_ok()
+        Nickname::try_new(black_box("swift-cedar")).is_ok()
     }
 
     #[divan::bench]
     fn nickname_invalid() -> bool {
-        Nickname::new(black_box("bad#nick")).is_ok()
+        Nickname::try_new(black_box("bad#nick")).is_ok()
     }
 }
 
@@ -121,10 +122,10 @@ mod message {
 
     #[divan::bench]
     fn serialize(bencher: Bencher<'_, '_>) {
-        let msg = BenchMessage::sample(BODY);
+        let message = BenchMessage::sample(BODY);
         bencher
             .counter(BytesCount::new(BODY.len()))
-            .bench(|| msg.serialize());
+            .bench(|| message.serialize());
     }
 
     #[divan::bench]
@@ -142,6 +143,6 @@ mod validation {
     // `MessageBody` is public; keep a tiny validation bench.
     #[divan::bench]
     fn message_body_new() -> bool {
-        MessageBody::new(black_box("a normal chat line")).is_ok()
+        MessageBody::try_new(black_box("a normal chat line")).is_ok()
     }
 }

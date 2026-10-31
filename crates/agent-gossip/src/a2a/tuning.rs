@@ -10,6 +10,8 @@
 
 use std::sync::OnceLock;
 
+use habilis_network::util::tuning;
+
 /// How long one A2A task may go with no leg or keepalive from the other party
 /// before the daemon fails it (seconds). Both daemons beat every live task, so
 /// only a gone peer daemon trips it, never a silent skill.
@@ -84,7 +86,7 @@ pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice
 /// its message log), doubled, so the two layers agree on how far back a copy is a copy. Finite
 /// on purpose: a frame is served once within that horizon, not forever.
-pub(crate) const SERVED_FRAMES_CAP: usize = habilis_network::util::tuning::SEEN_IDS_CAP * 2;
+pub(crate) const SERVED_FRAMES_CAP: usize = tuning::SEEN_IDS_CAP * 2;
 
 /// Max concurrent parked long-poll waiters per daemon. A blocking `poll` /
 /// `fetch_messages` registers a waiter when the buffer is empty; over this cap
@@ -126,7 +128,7 @@ pub(crate) const TASK_SURFACED_LEGS_CAP: usize = 64;
 /// reaches the app only after the engine's dedup FIFO has seen `SEEN_IDS_CAP`
 /// newer frames, so this must hold more than that; twice the FIFO, tied to the
 /// engine constant, stays ahead of it if the engine changes it.
-pub(crate) const CHAT_SURFACED_IDS_CAP: usize = habilis_network::util::tuning::SEEN_IDS_CAP * 2;
+pub(crate) const CHAT_SURFACED_IDS_CAP: usize = tuning::SEEN_IDS_CAP * 2;
 
 /// The runtime-varied knobs, installed once at startup from the hidden flags.
 #[derive(Clone, Copy, Debug)]
@@ -206,7 +208,7 @@ mod tests {
         // like, so the call site itself is the thing to pin.
         let node = include_str!("node.rs");
         assert!(
-            node.contains("timeout: Duration::from_secs(crate::a2a::tuning::CALL_TIMEOUT_SECS)"),
+            node.contains("timeout: Duration::from_secs(tuning::CALL_TIMEOUT_SECS)"),
             "a2a/node.rs no longer reads the directed-send timeout from this module"
         );
         assert!(

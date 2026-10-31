@@ -11,45 +11,56 @@ pub(crate) fn app_transport_policy(lookups: &LookupSet) -> TransportPolicy {
 /// [`app_transport_policy`] for a caller that already knows whether the relay
 /// is a lookup.
 pub(crate) fn app_policy(relay_lookup: bool) -> TransportPolicy {
-    TransportPolicy {
-        udp: true,
-        webrtc: true,
-        multihop: false,
-        gossip: true,
-        relay_transport: relay_lookup,
-    }
+    TransportPolicy::default()
+        .multihop(false)
+        .relay_transport(relay_lookup)
 }
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::{LookupSet, RelaySelection};
+    use habilis_network::protocol::{LookupSet, RelaySelection, Transport};
 
     use super::{app_policy, app_transport_policy};
 
     #[test]
     fn loopback_lookups_carry_no_relay() {
         let policy = app_transport_policy(&LookupSet::default());
-        assert_eq!(policy, app_policy(false));
-        assert!(policy.udp && policy.webrtc && policy.gossip);
-        assert!(!policy.multihop && !policy.relay_transport);
+        assert_eq!(
+            policy,
+            app_policy(false),
+            "the app policy is the default one"
+        );
+        assert!(
+            policy.allows(Transport::Udp)
+                && policy.allows(Transport::WebRtc)
+                && policy.allows(Transport::Gossip),
+            "the default policy keeps udp, webrtc and gossip"
+        );
+        assert!(
+            !policy.allows(Transport::Multihop) && !policy.allows(Transport::Relay),
+            "the default policy has no multihop or relay transport"
+        );
     }
 
     #[test]
     fn a_relay_lookup_carries_the_relay() {
-        let lookups = LookupSet {
-            relay_lookup: RelaySelection::Default,
-            ..LookupSet::default()
-        };
-        assert_eq!(app_transport_policy(&lookups), app_policy(true));
+        let mut lookups = LookupSet::default();
+        lookups.relay_lookup = RelaySelection::Default;
+        assert_eq!(
+            app_transport_policy(&lookups),
+            app_policy(true),
+            "a relay lookup selects the relay policy"
+        );
     }
 
     #[test]
     fn mdns_and_dht_alone_carry_no_relay() {
-        let lookups = LookupSet {
-            mdns: true,
-            dht: true,
-            ..LookupSet::default()
-        };
-        assert!(!app_transport_policy(&lookups).relay_transport);
+        let mut lookups = LookupSet::default();
+        lookups.mdns = true;
+        lookups.dht = true;
+        assert!(
+            !app_transport_policy(&lookups).allows(Transport::Relay),
+            "without a relay lookup the relay transport stays off"
+        );
     }
 }

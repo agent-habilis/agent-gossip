@@ -1,3 +1,5 @@
+//! Integration tests for read receipts and the reader bell of a peer.
+
 use std::time::{Duration, Instant};
 
 use agent_gossip_test_fixtures as common;
@@ -27,15 +29,11 @@ fn msg_id(mesh: &str, from: &str, to: &str, body: &str) -> String {
 fn receipts(mesh: &str, nickname: &str, after: Option<&str>) -> Vec<(String, String)> {
     let events: Vec<serde_json::Value> =
         serde_json::from_str(&cli_poll(mesh, nickname, after)).expect("poll prints a JSON array");
-    events
-        .iter()
-        .filter(|event| event["event"] == "receipt")
-        .map(|event| {
-            (
-                event["ref"].as_str().unwrap_or_default().to_owned(),
-                event["state"].as_str().unwrap_or_default().to_owned(),
-            )
-        })
+    let text_of =
+        |event: &serde_json::Value, key: &str| event[key].as_str().unwrap_or_default().to_owned();
+    let receipt_events = events.iter().filter(|event| event["event"] == "receipt");
+    receipt_events
+        .map(|event| (text_of(event, "ref"), text_of(event, "state")))
         .collect()
 }
 
@@ -79,12 +77,9 @@ fn reads_of(mesh: &str, nickname: &str, id: &str) -> usize {
 fn reader_of(mesh: &str, asker: &str, target: &str) -> Option<serde_json::Value> {
     let out: serde_json::Value =
         serde_json::from_str(&cli_peers(mesh, asker)).expect("peers prints JSON");
-    out["peers"]
-        .as_array()?
-        .iter()
-        .find(|row| row["nickname"] == target)?
-        .get("reader")
-        .cloned()
+    let rows = out["peers"].as_array()?;
+    let row = rows.iter().find(|row| row["nickname"] == target)?;
+    row.get("reader").cloned()
 }
 
 #[test]
@@ -96,7 +91,7 @@ fn polling_a_directed_msg_sends_the_author_a_read_receipt() {
 
     assert!(
         wait_for_read_receipt(&mesh, &alice.nickname, &id),
-        "alice never got a read receipt for {id}"
+        "the bob poll served the message, which must tell the author it was read: {id}"
     );
 }
 
@@ -104,15 +99,14 @@ fn polling_a_directed_msg_sends_the_author_a_read_receipt() {
 fn a_long_poll_alone_sends_no_read_receipt() {
     let (alice, bob, mesh) = pair("rl-bell");
     // Serve the join backlog first so the bell parks. No directed msg exists yet.
-    cli_poll(&mesh, &bob.nickname, None);
+    let _ = cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
     // The directed msg rings the bell. A bell is not a reader.
     let rang: Vec<serde_json::Value> =
         serde_json::from_str(&common::wait_bell_output(&mut bell)).expect("bell prints JSON");
-    let ping_seq = rang
-        .iter()
-        .find(|event| event["id"] == id.as_str())
+    let ping_event = rang.iter().find(|event| event["id"] == id.as_str());
+    let ping_seq: String = ping_event
         .and_then(|event| event["seq"].as_u64())
         .expect("the bell served the ping")
         .to_string();
@@ -121,7 +115,10 @@ fn a_long_poll_alone_sends_no_read_receipt() {
     // receipt the bell could have caused.
     let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
     poll_until_served(&mesh, &bob.nickname, Some(&ping_seq), "barrier");
-    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &barrier));
+    assert!(
+        wait_for_read_receipt(&mesh, &alice.nickname, &barrier),
+        "the barrier message gets its read receipt"
+    );
 
     assert_eq!(
         reads_of(&mesh, &alice.nickname, &id),
@@ -135,14 +132,20 @@ fn a_re_read_with_after_sends_no_second_read_receipt() {
     let (alice, bob, mesh) = pair("rl-reread");
     let id = msg_id(&mesh, &alice.nickname, &bob.nickname, "ping");
     poll_until_served(&mesh, &bob.nickname, None, "ping");
-    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &id));
+    assert!(
+        wait_for_read_receipt(&mesh, &alice.nickname, &id),
+        "the first message gets its read receipt"
+    );
 
-    cli_poll(&mesh, &bob.nickname, Some("0"));
+    let _ = cli_poll(&mesh, &bob.nickname, Some("0"));
     // Barrier: a later msg, read after the re-read. Its read receipt is sent
     // after any second receipt the re-read could have caused.
     let barrier = msg_id(&mesh, &alice.nickname, &bob.nickname, "barrier");
     poll_until_served(&mesh, &bob.nickname, None, "barrier");
-    assert!(wait_for_read_receipt(&mesh, &alice.nickname, &barrier));
+    assert!(
+        wait_for_read_receipt(&mesh, &alice.nickname, &barrier),
+        "the barrier message gets its read receipt"
+    );
 
     assert_eq!(
         reads_of(&mesh, &alice.nickname, &id),
@@ -181,7 +184,7 @@ fn wait_for_reader(mesh: &str, asker: &str, target: &str) -> Option<serde_json::
 #[test]
 fn peers_shows_the_bell_and_the_last_poll_of_a_reader() {
     let (alice, bob, mesh) = pair("rl-peers");
-    cli_poll(&mesh, &bob.nickname, None);
+    let _ = cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
 
     let seen = wait_for_reader(&mesh, &alice.nickname, &bob.nickname);
@@ -196,7 +199,7 @@ fn peers_shows_the_bell_and_the_last_poll_of_a_reader() {
 #[test]
 fn the_reader_query_leaves_the_bell_parked_and_the_poll_unchanged() {
     let (alice, bob, mesh) = pair("rl-quiet");
-    cli_poll(&mesh, &bob.nickname, None);
+    let _ = cli_poll(&mesh, &bob.nickname, None);
     let mut bell = park_bell(&mesh, &bob.nickname);
     let before = poll_len(&mesh, &bob.nickname);
 
@@ -256,7 +259,10 @@ async fn a_parked_in_process_fetch_counts_as_a_bell() {
         .expect("alice joins")
     };
     // Serve the backlog, so the long fetch below parks.
-    bob.session.fetch(None, false).await.expect("fetch");
+    bob.session
+        .fetch(None, false)
+        .await
+        .expect("a loopback session has a live mesh, so a parked read ends only by delivery");
 
     let alice_nick = alice.nickname.clone();
     // Shorter than the park cap, so the fetch is still parked when it ends.

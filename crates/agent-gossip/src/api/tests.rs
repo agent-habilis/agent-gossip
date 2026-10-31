@@ -3,22 +3,25 @@
 
 use std::time::Duration;
 
-use habilis_network::protocol::message::Authored;
-use habilis_network::protocol::{Mesh, MeshConfig, MeshName, TransportPolicy};
-use habilis_network::protocol::{MessageBody, Nickname};
+use habilis_network::protocol::messages::Authored;
+use habilis_network::protocol::{
+    Mesh, MeshConfig, MeshName, MessageBody, Nickname, TransportPolicy,
+};
 use habilis_network::runtime::CoHostPolicy;
-use tokio::sync::broadcast;
+use tokio::sync::broadcast::Receiver;
 
 use super::{CreateConfig, JoinError, MeshSession, TopicConfig};
+use crate::a2a::status_update_params;
 
 /// Wait for alice's topic message on `bob_rx`, ignoring anything else
 /// (e.g. earlier retries' echoes) until the channel closes.
-async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Authored>) -> bool {
+async fn recv_hello_topic(bob_rx: &mut Receiver<Authored>) -> bool {
     loop {
         match bob_rx.recv().await {
-            Ok(msg)
-                if msg.author.as_str() == "alice-topic"
-                    && crate::a2a::gossip::chat_text(&msg).as_deref() == Some("hello topic") =>
+            Ok(message)
+                if message.author.as_str() == "alice-topic"
+                    && status_update_params::chat_text(&message).as_deref()
+                        == Some("hello topic") =>
             {
                 return true;
             }
@@ -50,8 +53,10 @@ async fn topic_rejects_empty_string() {
 #[tokio::test]
 async fn topic_peers_from_same_string_converge_and_exchange() {
     let topic = "agent-habilis";
-    let first = Mesh::from_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
-    let second = Mesh::from_topic(topic, MeshConfig::loopback()).expect("a topic mesh");
+    let first = Mesh::for_topic(topic, MeshConfig::loopback())
+        .expect("the same topic string always derives a valid mesh id");
+    let second = Mesh::for_topic(topic, MeshConfig::loopback())
+        .expect("the same topic string always derives a valid mesh id");
     assert_eq!(
         first.to_string(),
         second.to_string(),
@@ -60,18 +65,18 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
 
     let alice = MeshSession::join_decoded(
         first,
-        Some(Nickname::new("alice-topic").unwrap()),
+        Some(Nickname::try_new("alice-topic").expect("the test nickname is valid")),
         CoHostPolicy::EagerProbed,
     )
     .await
-    .expect("alice topic session");
+    .expect("the first loopback joiner becomes the host and needs no other peer");
     let bob = MeshSession::join_decoded(
         second,
-        Some(Nickname::new("bob-topic").unwrap()),
+        Some(Nickname::try_new("bob-topic").expect("the test nickname is valid")),
         CoHostPolicy::EagerProbed,
     )
     .await
-    .expect("bob topic session");
+    .expect("the second loopback joiner finds the first one through its beacon");
     assert_eq!(alice.mesh_id(), bob.mesh_id(), "both derived the same id");
 
     let mut bob_rx = bob.messages();
@@ -99,15 +104,38 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
 /// The app default carries no multihop: a mesh that wants it names it.
 #[test]
 fn create_config_default_transport_is_udp_webrtc_gossip() {
-    let cfg = CreateConfig::new(MeshName::new("defaults").expect("valid name"));
+    let config = CreateConfig::new(MeshName::try_new("defaults").expect("valid name"));
     assert_eq!(
-        cfg.transport,
-        TransportPolicy {
-            udp: true,
-            webrtc: true,
-            multihop: false,
-            gossip: true,
-            relay_transport: false,
-        }
+        config.transport,
+        TransportPolicy::default().multihop(false),
+        "existing meshes only connect if the app default keeps udp and webrtc with gossip on"
+    );
+}
+
+#[test]
+fn create_config_builder_sets_only_the_named_fields() {
+    let name = MeshName::try_new("builder").expect("valid name");
+    let untouched = CreateConfig::new(name.clone());
+    let config = CreateConfig::new(name)
+        .with_max_peers(3)
+        .with_password("secret".to_owned())
+        .with_advertise(true);
+    assert_eq!(config.max_peers, 3, "with_max_peers sets the cap");
+    assert_eq!(
+        config.password.as_deref(),
+        Some("secret"),
+        "the builder must store the given secret unchanged, or the mesh gate would reject every joiner"
+    );
+    assert!(
+        config.advertise,
+        "with_advertise(true) turns advertising on"
+    );
+    assert_eq!(
+        config.transport, untouched.transport,
+        "a field that no with_ call names keeps its default"
+    );
+    assert!(
+        config.nickname.is_none(),
+        "the nickname stays random when unset"
     );
 }

@@ -1,5 +1,4 @@
 use std::fs::{File, OpenOptions, TryLockError};
-use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -21,13 +20,11 @@ fn lock_path(mesh: &str, nickname: &str) -> PathBuf {
 /// is never unlinked: removing it while another bell holds it would split the
 /// lock across two inodes.
 pub(crate) async fn acquire(mesh: &str, nickname: &str) -> Option<File> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(lock_path(mesh, nickname))
-        .ok()?;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut options: OpenOptions = OpenOptions::new();
+    options.create(true).truncate(false).write(true).mode(0o600);
+    let file: File = options.open(lock_path(mesh, nickname)).ok()?;
     // Retry to ride out a probe's momentary shared lock.
     let deadline = tokio::time::Instant::now() + ACQUIRE_RETRY_FOR;
     loop {

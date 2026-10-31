@@ -1,16 +1,18 @@
+use std::env::consts;
+use std::str::FromStr;
 use std::time::Duration;
 
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use habilis_network::net::{self, NetworkCapability};
-use habilis_network::protocol::MeshId;
-use habilis_network::protocol::{LockedMesh, Mesh, RelayChoice};
+use habilis_network::protocol::{LockedMesh, Mesh, MeshId, RelayChoice};
 use habilis_network::runtime::ipc;
+use habilis_network::util::logs;
 use serde::Serialize;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
-use crate::a2a::ipc::IpcCommand;
+use crate::a2a::ipc_command::IpcCommand;
 use crate::status as output;
 
 /// Budget for the machine net-report (build endpoint + first completed report).
@@ -47,17 +49,17 @@ struct Check {
 }
 
 impl Check {
-    fn new(name: impl Into<String>, verdict: Verdict, detail: impl Into<String>) -> Self {
+    fn new(name: &str, verdict: Verdict, detail: &str) -> Self {
         Self {
-            name: name.into(),
+            name: name.to_owned(),
             verdict,
-            detail: Some(detail.into()),
+            detail: Some(detail.to_owned()),
         }
     }
 
-    fn bare(name: impl Into<String>, verdict: Verdict) -> Self {
+    fn bare(name: &str, verdict: Verdict) -> Self {
         Self {
-            name: name.into(),
+            name: name.to_owned(),
             verdict,
             detail: None,
         }
@@ -106,13 +108,13 @@ impl Report {
     }
 }
 
-pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
-    let report = match opts.gossip {
-        Some(mesh) => mesh_report(&mesh, opts.no_probe).await,
-        None => machine_report(opts.no_probe).await,
+pub(super) async fn run(options: DoctorOpts) -> Result<()> {
+    let report = match options.gossip {
+        Some(mesh) => mesh_report(&mesh, options.no_probe).await,
+        None => machine_report(options.no_probe).await,
     };
 
-    match opts.output {
+    match options.output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Human => render_human(&report),
     }
@@ -141,17 +143,13 @@ fn environment_section() -> Section {
         Check::new(
             "platform",
             Verdict::Ok,
-            format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+            &format!("{}/{}", consts::OS, consts::ARCH),
         ),
-        Check::new(
-            "log dir",
-            Verdict::Ok,
-            output::home_path(&habilis_network::util::logs::log_dir()),
-        ),
+        Check::new("log dir", Verdict::Ok, &output::home_path(&logs::log_dir())),
         Check::new(
             "runtime dir",
             Verdict::Ok,
-            output::home_path(&crate::runtime_base()),
+            &output::home_path(&crate::runtime_base()),
         ),
     ];
     Section {
@@ -177,10 +175,10 @@ fn integrations_section() -> Section {
                 } else {
                     base
                 };
-                Check::new(agent.label(), verdict, detail)
+                Check::new(agent.label(), verdict, &detail)
             })
             .collect(),
-        Err(error) => vec![Check::new("home", Verdict::Fail, error.to_string())],
+        Err(error) => vec![Check::new("home", Verdict::Fail, &error.to_string())],
     };
     Section {
         title: "Integrations".to_owned(),
@@ -200,7 +198,7 @@ async fn network_section(no_probe: bool) -> Section {
             Err(error) => vec![Check::new(
                 "local endpoint",
                 Verdict::Fail,
-                format!("failed to bind: {error}"),
+                &format!("failed to bind: {error}"),
             )],
         }
     };
@@ -213,18 +211,18 @@ async fn network_section(no_probe: bool) -> Section {
 fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
     let mut checks = Vec::new();
 
-    let local = if capability.local_addrs.is_empty() {
+    let local: String = if capability.local_addrs.is_empty() {
         capability.node_id.clone()
     } else {
-        let addrs = capability
+        let addrs: Vec<String> = capability
             .local_addrs
             .iter()
             .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect();
+        let addrs = addrs.join(", ");
         format!("{} ({addrs})", capability.node_id)
     };
-    checks.push(Check::new("local endpoint", Verdict::Ok, local));
+    checks.push(Check::new("local endpoint", Verdict::Ok, &local));
 
     if !capability.report_obtained {
         checks.push(Check::new(
@@ -245,7 +243,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
     checks.push(Check::new(
         "UDP",
         udp_verdict,
-        format!("IPv4 {}, IPv6 {}", yes_no(udp_v4), yes_no(udp_v6)),
+        &format!("IPv4 {}, IPv6 {}", yes_no(udp_v4), yes_no(udp_v6)),
     ));
 
     let (nat_verdict, nat_detail) = match capability.mapping_varies_by_dest {
@@ -269,13 +267,13 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
         )),
         (v4, v6) => {
             let mut parts = Vec::new();
-            if let Some(addr) = v4 {
-                parts.push(addr.clone());
+            if let Some(address) = v4 {
+                parts.push(address.clone());
             }
-            if let Some(addr) = v6 {
-                parts.push(addr.clone());
+            if let Some(address) = v6 {
+                parts.push(address.clone());
             }
-            checks.push(Check::new("public address", Verdict::Ok, parts.join(", ")));
+            checks.push(Check::new("public address", Verdict::Ok, &parts.join(", ")));
         }
     }
 
@@ -285,7 +283,7 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
                 Some(latency) => format!("{relay} ({latency}ms)"),
                 None => relay.clone(),
             };
-            checks.push(Check::new("relay", Verdict::Ok, detail));
+            checks.push(Check::new("relay", Verdict::Ok, &detail));
         }
         None => checks.push(Check::new("relay", Verdict::Warn, "no relay reachable")),
     }
@@ -328,7 +326,7 @@ async fn active_meshes_section() -> Section {
             info.peer_count,
             plural(info.peer_count, "member", "members"),
         );
-        checks.push(Check::new(format!("#{}", info.name), Verdict::Ok, detail));
+        checks.push(Check::new(&format!("#{}", info.name), Verdict::Ok, &detail));
     }
     if checks.is_empty() {
         checks.push(Check::bare(
@@ -358,7 +356,7 @@ struct InfoResponse {
 // ---- Mode 2: per-mesh connection analysis ---------------------------------
 
 async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
-    let mesh = match mesh_id.as_str().parse::<LockedMesh>() {
+    let mesh = match LockedMesh::from_str(mesh_id.as_str()) {
         Ok(mesh) => mesh,
         Err(error) => {
             let section = Section {
@@ -366,7 +364,7 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
                 checks: vec![Check::new(
                     "decode",
                     Verdict::Fail,
-                    format!("could not decode gossip id: {error}"),
+                    &format!("could not decode gossip id: {error}"),
                 )],
             };
             return Report::new("gossip", vec![section]);
@@ -393,7 +391,7 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
 
 fn mesh_identity_section(mesh: &LockedMesh) -> Section {
     let mut checks = vec![
-        Check::new("name", Verdict::Ok, format!("#{}", mesh.name().as_str())),
+        Check::new("name", Verdict::Ok, &format!("#{}", mesh.name().as_str())),
         Check::new("network", Verdict::Ok, mesh.network_label()),
     ];
     if mesh.requires_password() {
@@ -418,29 +416,26 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
             checks.push(Check::new("relay", Verdict::Ok, "disabled"));
         }
         RelayChoice::Pinned => {
-            let rungs = net::relay_ladder(&lookups.relay_lookup)
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let rungs: Vec<String> = net::relay_ladder(&lookups.relay_lookup)
+                .map(|rung| rung.to_string())
+                .collect();
+            let rungs = rungs.join(", ");
             checks.push(Check::new(
                 "relay",
                 Verdict::Ok,
-                format!("pinned ladder: {rungs}"),
+                &format!("pinned ladder: {rungs}"),
             ));
         }
         RelayChoice::Custom(ladder) => {
-            let rungs = ladder
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let rungs: Vec<String> = ladder.iter().map(ToString::to_string).collect();
+            let rungs = rungs.join(", ");
             checks.push(Check::new(
                 "relay",
                 Verdict::Ok,
-                format!("custom ladder: {rungs}"),
+                &format!("custom ladder: {rungs}"),
             ));
         }
+        _ => {}
     }
 
     checks.push(Check::new(
@@ -471,19 +466,20 @@ fn declared_methods_section(mesh: &LockedMesh) -> Section {
                 "password-derived — need --password to compute",
             ));
         } else {
-            let ports = mesh
+            let unlocked = mesh
                 .clone()
                 .unlock(None)
-                .expect("an open mesh unlocks without a password")
+                .expect("an open mesh unlocks without a password");
+            let ports: Vec<String> = unlocked
                 .rendezvous_ports()
                 .iter()
                 .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
+                .collect();
+            let ports = ports.join(", ");
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
-                format!("127.0.0.1 ladder: {ports}"),
+                &format!("127.0.0.1 ladder: {ports}"),
             ));
         }
     }
@@ -499,7 +495,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     let mut checks = Vec::new();
 
     // Relay rungs — show the whole ladder's health, not just the first pick.
-    let ladder = net::relay_ladder(&lookups.relay_lookup);
+    let ladder: Vec<_> = net::relay_ladder(&lookups.relay_lookup).collect();
     let mut first_reachable = None;
     if !ladder.is_empty() {
         for (rung, reachable) in net::probe_ladder(&ladder, RUNG_TIMEOUT).await {
@@ -514,7 +510,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
             checks.push(Check::new(
                 "relay rung",
                 verdict,
-                format!("{rung} {}", if reachable { "online" } else { "offline" }),
+                &format!("{rung} {}", if reachable { "online" } else { "offline" }),
             ));
         }
     }
@@ -523,26 +519,26 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
     match net::build_peer_endpoint(lookups).await {
         Ok(endpoint) => {
             let rendezvous_id = mesh.rendezvous_id();
-            let mut addr = habilis_network::iroh::EndpointAddr::new(rendezvous_id);
+            let mut address = habilis_network::iroh::EndpointAddr::new(rendezvous_id);
             if mesh.is_loopback() {
                 for port in mesh.rendezvous_ports() {
-                    addr = addr.with_ip_addr(std::net::SocketAddr::from((
+                    address = address.with_ip_addr(std::net::SocketAddr::from((
                         std::net::Ipv4Addr::LOCALHOST,
                         port,
                     )));
                 }
             } else if let Some(rung) = first_reachable {
-                addr = addr.with_relay_url(rung);
+                address = address.with_relay_url(rung);
             }
 
-            let reached = net::probe_connect(&endpoint, addr, RENDEZVOUS_TIMEOUT).await;
+            let reached = net::probe_connect(&endpoint, address, RENDEZVOUS_TIMEOUT).await;
             if reached {
                 let (path, relay) = net::conn_path(&endpoint, rendezvous_id).await;
                 let detail = match relay {
                     Some(url) => format!("reachable — {} path (relay {url})", path.label()),
                     None => format!("reachable — {} path", path.label()),
                 };
-                checks.push(Check::new("rendezvous", Verdict::Ok, detail));
+                checks.push(Check::new("rendezvous", Verdict::Ok, &detail));
             } else {
                 checks.push(Check::new(
                     "rendezvous",
@@ -556,7 +552,7 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
             checks.push(Check::new(
                 "endpoint",
                 Verdict::Fail,
-                format!("failed to bind: {error}"),
+                &format!("failed to bind: {error}"),
             ));
         }
     }
@@ -609,16 +605,14 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 mod tests {
     use habilis_network::protocol::{LockedMesh, Mesh, MeshConfig, MeshName, Seed};
 
-    use super::declared_methods_section;
-
     #[test]
     fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {
         // Regression: an invite-only mesh withholds its derivation secret from
         // the bare hash, so deriving the loopback ladder used to panic in
         // `effective_seed`. `doctor` must report the reason instead of crashing.
-        let mut mesh = Mesh::new(
-            Seed::from_bytes([1u8; 32]),
-            MeshName::new("t").unwrap(),
+        let mut mesh = Mesh::try_new(
+            Seed::new([1u8; 32]),
+            MeshName::try_new("t").expect("the test literal is a valid mesh name"),
             MeshConfig::loopback(),
         )
         .expect("a mesh without a secret");
@@ -627,7 +621,7 @@ mod tests {
             .to_string()
             .parse()
             .expect("the id of an invite-only mesh parses");
-        let section = declared_methods_section(&locked);
+        let section = super::declared_methods_section(&locked);
         let ports = section
             .checks
             .iter()

@@ -1,8 +1,9 @@
 use habilis_network::embed::{EventLoopState, HandlerCtx};
-use habilis_network::protocol::{AppTag, MessageBody, MessageKind, Nickname};
+use habilis_network::protocol::{MessageBody, MessageKind, Nickname};
 use serde::{Deserialize, Serialize};
 
-use crate::a2a::send::{DirectedRpcParams, seal_directed, send_directed_rpc};
+use crate::a2a::a2a_app::A2aApp;
+use crate::a2a::broadcast_params::{DirectedRpcParams, seal_directed, send_directed_rpc};
 use crate::a2a::wire;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,11 +27,11 @@ pub(crate) struct Receipt {
 /// receipt, so a failure only costs the sender a proof.
 pub(crate) async fn send_receipt(
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     to: &Nickname,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
-    let outcome = send_sealed(state, ctx, to, receipt).await;
+    let outcome = send_sealed(state, context, to, receipt).await;
     if let Err(error) = &outcome {
         tracing::debug!(target: "agent_gossip::a2a", %error, "receipt not sent");
     }
@@ -41,17 +42,17 @@ pub(crate) async fn send_receipt(
 /// this cursor is about to serve. The bell is not a reader, so a long poll
 /// sends none.
 pub(crate) async fn send_read_receipts(
-    app: &mut crate::a2a::app::A2aApp,
+    app: &mut A2aApp,
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     after: Option<u64>,
 ) {
-    for (to, ref_id) in app.surfaced.take_read_targets(after, ctx.author) {
+    for (to, ref_id) in app.surfaced.read_targets(after, context.author) {
         let receipt = Receipt {
             ref_id,
             state: ReceiptState::Read,
         };
-        let _ = send_receipt(state, ctx, &to, &receipt).await;
+        let _ = send_receipt(state, context, &to, &receipt).await;
     }
 }
 
@@ -59,26 +60,26 @@ pub(crate) async fn send_read_receipts(
 /// who got or read which frame.
 async fn send_sealed(
     state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
+    context: &HandlerCtx<'_>,
     to: &Nickname,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
-    let plain = MessageBody::new(serde_json::to_string(receipt)?)?;
+    let plain = MessageBody::try_new(&serde_json::to_string(receipt)?)?;
     let body = seal_directed(state, to, &plain)?;
     let kind = MessageKind::App {
-        tag: AppTag::from(wire::RECEIPT),
+        tag: wire::app_tag(wire::RECEIPT),
         to: Some(to.clone()),
         corr: None,
     };
     send_directed_rpc(
         DirectedRpcParams {
-            mesh: ctx.mesh,
-            author: ctx.author,
+            mesh: context.mesh,
+            author: context.author,
             kind,
             body,
         },
         state,
-        ctx.sender,
+        context.sender,
     )
     .await
 }
@@ -94,10 +95,16 @@ mod tests {
             state: ReceiptState::Delivered,
         };
         assert_eq!(
-            serde_json::to_string(&receipt).unwrap(),
-            r#"{"ref":"abc","state":"delivered"}"#
+            serde_json::to_string(&receipt).expect("a test value serializes to JSON"),
+            r#"{"ref":"abc","state":"delivered"}"#,
+            "a delivered receipt serializes its ref and state"
         );
-        let read: Receipt = serde_json::from_str(r#"{"ref":"abc","state":"read"}"#).unwrap();
-        assert_eq!(read.state, ReceiptState::Read);
+        let read: Receipt = serde_json::from_str(r#"{"ref":"abc","state":"read"}"#)
+            .expect("the JSON text comes from the test itself");
+        assert_eq!(
+            read.state,
+            ReceiptState::Read,
+            "a read receipt parses to the read state"
+        );
     }
 }

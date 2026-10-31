@@ -5,7 +5,7 @@ messages without a central server. Peers communicate exclusively through the
 A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
-`src/cli/mod.rs`). `src/bridge/` is a different thing — the `a2a expose` /
+`src/cli/mod.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
 `connect` QUIC tunnel. This file is guidance for working **on**
 the project; user/agent-facing usage of the `agent-gossip` CLI lives in `agent-gossip man`
 (source: `docs/manual.txt`).
@@ -34,6 +34,24 @@ This codebase keeps comments sparse. Follow these rules:
 - **Drop derivable doc comments.** A `///` that just paraphrases a function's
   name and signature is noise — remove it. Keep a doc comment only when it
   carries a *why* the signature can't.
+
+- **Doc comments follow the rustdoc rules.** The first paragraph is a short
+  summary (`clippy::too_long_first_doc_paragraph`), followed by a blank line.
+  Every link resolves, and a public doc does not link to a private item.
+  Wrap an identifier in backticks and a URL in `<...>`.
+  The `[workspace.lints.rustdoc]` table, `clippy::doc_markdown`, and
+  `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --features agent-gossip/bench,agent-gossip/adversarial`
+  enforce this. `cargo task ci` and the CI `doc` job run the last one.
+  `--document-private-items` is there because most items are private.
+- **A message or a comment says why, not what.** `style-check` fails an
+  `.expect("...")`, `.expect_err("...")` or `assert*!` message when every word of it is a word of the
+  expression, of the enclosing fn name, or a filler word (`restating_message`, P14). It fails a `//`
+  comment when every word of it is a word of the next line (`restating_comment`, D6). Together with
+  `restating_doc` and `doc_basics` this covers the cases a tool can see. A human still judges a message
+  that adds a word but no reason, and a comment that explains the language in new words.
+- **`///` documents an item, `//` holds a note.** A `///` on a statement is an
+  error (`unused_doc_comments = "deny"`). Delete commented-out code: the
+  `commented_out_code` rule of `style-check` fails on it.
 
 ### Load-bearing comments — keep these
 
@@ -149,7 +167,7 @@ adding to the engine:
 
 - Name the **mechanism**, not the consumer: an engine field carrying a served
   port is `http_port`, never `a2a_port`. The app renames at its own boundary
-  (`output/mod.rs`, which owns the `a2a_port` JSON key) rather than pushing the
+  (`emission/mod.rs`, which owns the `a2a_port` JSON key) rather than pushing the
   product's word down. `NodeEvent::Ready` carries only `mesh`/`name`/`nickname`
   today — the port reaches the app through `Startup`, not the event.
 - Push app vocabulary into config. The `meta` channel's per-peer write gate is a
@@ -337,13 +355,21 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   `cargo clippy --all-targets -- -D warnings`, so any warning fails CI.
 - `min_ident_chars` rejects single-char identifiers — rename closure params
   (`|e|` → `|error|`, `|m|` → `|msg|`).
+  `clippy.toml` allows `_` and the generic parameters `T`, `E`, `K` and `V`, because these names are
+  idiomatic Rust for a type, an error, a key and a value. No loop variable, such as `i` or `j`, is allowed:
+  write `index`, `row` or `column`. `doc-valid-idents` is not set: write a name such as `Base58Check` in backticks.
 - Imports form one block at the top of the file, before any `mod`, in three
   groups: std, then external crates (`habilis_network` and the workspace crates
   included), then `self`/`super`/`crate`. Write a child-module import as
   `self::child::…` so that it sorts into the last group. `cargo task fmt` runs
-  nightly rustfmt (pinned in `crates/tasks/src/fmt.rs`) for the
-  `group_imports` option in `rustfmt.toml`, and `cargo task ci` and the CI fmt
-  job fail on drift. rustfmt does not move a `use` that comes after a `mod`.
+  rustfmt from the nightly toolchain in `rust-toolchain.toml`, which the
+  `group_imports` and `imports_granularity` options in `rustfmt.toml` need.
+  `cargo task ci` and the CI fmt job fail on drift. rustfmt does not move a
+  `use` that comes after a `mod`.
+- Import a name from the module that defines it, never from a third-party
+  prelude. One prelude import stays: `use wasm_bindgen::prelude::wasm_bindgen;`,
+  because the `wasm_bindgen` attribute macro has no other public path.
+  `style-check` (`prelude_import`) enforces this and allows only that line.
 - Renaming a serde-serialized field needs `#[serde(rename = "…")]` to keep the
   wire format stable.
 - Use the typestate pattern only when one function or one builder drives a
@@ -369,14 +395,42 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
 - A state owns its data: put the data of each state inside its `enum` variant,
   take the state by value, and return the next one. Do not use `unreachable!`
   on a state mismatch, and do not keep side flags next to the state `enum`
-  (`State` in `bridge/card_rewrite.rs`).
+  (`State` in `tunnel/card_rewrite.rs`).
 - When a struct holds values that must agree, keep its fields private and give
   it one constructor that derives them. A `#[cfg(test)]` constructor is the only
-  other way in (`Bridge::new` in `bridge/connect.rs`).
+  other way in (`Bridge::new` in `tunnel/connect.rs`).
 - When a step must pass before a later read or action, make the step return a
   value that only it can build: a private field, in its own module. Make the
   later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
   `wait_for_ready` returns).
+
+## Rust style
+
+`scripts/style-check` and `scripts/module-layout` scan every Rust file, tests, benches, examples and
+`build.rs` included, and they count a `#[cfg(test)] mod` body like any other code. Three rules in
+`style-check.ts` skip a file, each with its reason beside the rule: `anyhow_pub` and `dyn_param` skip a
+binary (`main.rs`, `bin/`), which has no public API, and `app_impl_into` runs only in a binary.
+
+This repository follows the Google Rust Style Guide: https://google.github.io/styleguide/rustguide.html
+
+This file wins over the guide. If the two conflict, follow this file.
+
+`clippy.toml` and `rustfmt.toml` already enforce these rules:
+
+- No wildcard imports, including `use super::*` in test modules.
+- Imports in three groups: std, then external crates, then `self`/`super`/`crate`.
+- No single-character identifiers, except the names in `allowed-idents-below-min-chars`.
+- `unwrap_used` is on, in tests as well: `clippy.toml` has no `allow-unwrap-in-tests`. Use `.expect("reason")` in production code, in test helpers, and in tests. The reason states why the call cannot fail.
+- `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
+- U4 (a technical reason for every `unsafe`) has two gates. `unsafe_code = "deny"` rejects each `unsafe` block, `unsafe fn` and `unsafe impl`, so the only way in is an `#[expect(unsafe_code, reason = "...")]`, and `allow_attributes_without_reason` demands the reason. `undocumented_unsafe_blocks` rejects an `unsafe` block or `unsafe impl` with no `// SAFETY:` comment. (Checked on 2026-10-30 with a planted block, fn and impl: all three failed clippy.) No `unsafe` exists today. A human still reads the reason when a new one appears, and asks for a benchmark if the reason is speed: no tool can judge that.
+- `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.
+- `imports_granularity = "Module"` in `rustfmt.toml` merges the imports of one module into one `use`.
+- R22: a config struct with a required field, such as the mesh name or join target, has no `Default`, because a default would build an invalid value. It takes the required field in `new`, and a `with_*` method sets each optional field (`JoinConfig`, `TopicConfig`, `CreateConfig`, `StatusUpdateParams`). A config struct with no required field derives `Default`.
+- B5 adopted: `[workspace.lints.clippy]` enforces `redundant_clone`, `clone_on_ref_ptr`, `implicit_clone`, `map_clone`, `cloned_instead_of_copied`, `assigning_clones`, `unnecessary_to_owned`, `needless_pass_by_value` and `redundant_closure_for_method_calls`, so a clone that a borrow or a move replaces fails CI. The clones that remain have one of four reasons: a `'static` task or a spawned future owns the value (`tokio::spawn`, `Arc` and sender handles); a value goes into an owned struct, event, or wire message while the source stays (building `OutputEvent`, `TaskRecord`, `Message`); a getter returns `&T` and the callee needs `T` (`mesh()`, `nickname()`, the `habilis_network` `Authored` deref); a snapshot ends a lock or `watch` borrow (`snapshot_rx.borrow().clone()`).
+- Adopted B1: borrow, or own the value in one place. `Arc` stays only where a `'static` task and a second owner must share one value, in one place (1 site):
+  - The wasm `Inbox` (`gossip_driver.rs`): the engine event loop writes it and JS polls it on demand, and the driver the engine owns must be `'static`.
+  - The engine no longer forces an `Arc` on the app: `SetupParams::new` takes the sink by value, `LiveCount` owns the shared counter, and `EventLoopState::identity()` returns `&Identity`. The shard loop in `broadcast_params.rs` still clones the `Identity`, because it signs after it borrows the state mutably (E0502).
+  - Accept loops borrow instead: `tunnel/` runs each connection as a `FuturesUnordered` future, and the directory tasks own their listings.
 
 ## Agent Restrictions
 

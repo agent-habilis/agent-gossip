@@ -90,17 +90,12 @@ fn render_skills(src: &Path, dest: &Path) {
             .unwrap_or_else(|error| panic!("clear {}: {error}", dest.display()));
     }
 
-    let mut skills: Vec<PathBuf> = std::fs::read_dir(src)
-        .unwrap_or_else(|error| panic!("read {}: {error}", src.display()))
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_dir()
-                && path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().starts_with("gossip-"))
-        })
-        .collect();
+    let entries: std::fs::ReadDir =
+        std::fs::read_dir(src).unwrap_or_else(|error| panic!("read {}: {error}", src.display()));
+    let paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    let is_gossip_name = |name: &std::ffi::OsStr| name.to_string_lossy().starts_with("gossip-");
+    let mut skills: Vec<PathBuf> = paths.into_iter().filter(|path| path.is_dir()).collect();
+    skills.retain(|path| path.file_name().is_some_and(is_gossip_name));
     skills.sort();
 
     let mut loader = |path: &Path| std::fs::read_to_string(path).map_err(|error| error.to_string());

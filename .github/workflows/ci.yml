@@ -24,10 +24,45 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      # Nightly only for `group_imports` in rustfmt.toml; keep in step with
-      # `NIGHTLY` in crates/tasks/src/fmt.rs.
-      - run: rustup toolchain install nightly-2026-06-05 --profile minimal --component rustfmt
-      - run: cargo +nightly-2026-06-05 fmt --all -- --check
+      - run: cargo fmt --all -- --check
+
+  # The rules of the Google Rust Style Guide that no lint checks. Each script keeps its
+  # exceptions as counted rows in a `.allow` file next to it: a count may only go down.
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - name: Style rules without a lint
+        run: |
+          bun test scripts/style-check/style-check.test.ts
+          bun scripts/style-check/style-check.ts
+      - name: Script language
+        run: |
+          bun test scripts/script-language/script-language.test.ts
+          bun scripts/script-language/script-language.ts
+      - name: Macro rules
+        run: |
+          bun test scripts/macro-rules/macro-rules.test.ts
+          bun scripts/macro-rules/macro-rules.ts
+      - name: Pub traits
+        run: |
+          bun test scripts/pub-trait/pub-trait.test.ts
+          bun scripts/pub-trait/pub-trait.ts
+      - name: Module layout
+        run: |
+          bun test scripts/module-layout/module-layout.test.ts
+          bun scripts/module-layout/module-layout.ts
+      - name: Naming
+        run: |
+          bun test scripts/naming/naming.test.ts
+          bun scripts/naming/naming.ts
+      # Needs a Rust toolchain: the test runs rustdoc and clippy on a scratch crate.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Doc lints
+        run: bun test scripts/rustdoc-lints/rustdoc-lints.test.ts
 
   clippy:
     runs-on: ubuntu-latest
@@ -44,6 +79,25 @@ jobs:
       # adversarial suite is `required-features`-gated, so without it clippy
       # skips that file.
       - run: cargo clippy --workspace --all-targets --features agent-gossip/adversarial -- -D warnings
+
+      # The `bench` feature compiles the bench shim and the divan benches, which
+      # no other job builds. A change to the engine API broke it unseen once.
+      - run: cargo check -p agent-gossip --features bench --benches
+
+  # Google Rust Style Guide D10 and D11. The rustdoc lint levels live in `[workspace.lints.rustdoc]`;
+  # `-D warnings` makes every other rustdoc warning an error too, as in `cargo task ci`.
+  # `--document-private-items`: most items are private, and rustdoc skips their docs otherwise.
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # The two features bring in the `harness` shims, whose docs rustdoc skips without them.
+      - run: cargo doc --workspace --no-deps --document-private-items --features agent-gossip/bench,agent-gossip/adversarial
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   test:
     runs-on: ubuntu-latest
