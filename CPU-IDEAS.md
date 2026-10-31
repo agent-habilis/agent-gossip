@@ -155,10 +155,10 @@ State of the investigation. Each line says how well it is proven.
       `changes_since`, the sweep and the state-file refresh stay near 0.
     - So digest build and receive explain 43 of the 84 extra busy samples (the
       profile is a 30 s sample at 1 ms on a loaded host; the noise is not measured).
-    [G] Each digest lists the ids of the whole log window as base58 text. After the
-    churn the log is full (about 1,000 ids), so each of the 3 digests a node sends per
-    10 s encodes about 1,000 ids and each digest it answers is decoded again. The cost
-    scales with log size times peers at the same wake count. H7 is again NOT
+    [G, corrected: a digest holds at most 140 ids, see item 14] Each digest lists the
+    ids of the log window as base58 text, so the cost scales with the log size and
+    the number of peers at the same wake count, and the calls may come from more paths
+    than the 10 s tick. H7 is again NOT
     reproduced, this time with history above both caps and for 10 min.
     Candidate fixes (not built): send the ids as raw bytes, or a hash or Bloom filter
     of the window, instead of base58 text; or decode only after the digest was
@@ -170,6 +170,36 @@ State of the investigation. Each line says how well it is proven.
     version and not by another (`loggable` differs between versions, `recv.rs`
     `retained_after_lifecycle`). Test: a private mesh with 6 members of the installed
     0.12.10 and 6 of `b588fc75`, against the all-new mesh (0.40% to 0.48%).
+
+14. [V] E7 corrects item 11: dead entries do NOT keep costing; the cost is a transient
+    storm that ends, followed by a residual. (`wire-straw`, app `b588fc75` with the
+    engine rev `f8af1e6f` (instrumented, rev edit only, dirty), private gossip, 12
+    survivors, 2 runs with 60 dead members and fresh runs; 0 stalled lines.)
+    - Storm: after the last member leaves, `idle_external` stays at 2,400 to 3,900 per
+      10 s for about 1 to 3.5 min and then collapses to about 50 (run 1: 3,258 at 0 s,
+      3,458 at 90 s, 1,454 at 180 s, 55 at 210 s; run 2: 2,443 at 0 s, 3,945 at 30 s,
+      443 at 60 s, 48 at 90 s). The roster then prunes from about 44 to 11 entries at
+      about 150 to 300 s. So a prune exists and works; the E6 window (60 to 180 s)
+      fell inside the storm. The two runs differ by about 2.5 times in time.
+    - In the storm: duplicates are about 2,800 of 3,050 external (about 90%);
+      `gossip_rx` is the arm that grows (2,573 to 2,802), then `unicast` (244 to 467);
+      `neighbor_up` about 1; `direct_rx` 11 to 12; no address or probe arm above 1. CPU
+      per daemon 21% to 23% at t=30 s, host load up to 36, and the live daemons on the
+      host stayed at 119% to 125% of a core.
+    - Residual that does not decay in 15 min: 3.03% and 2.03% per daemon (mean for
+      t >= 420 s) against 0.50% fresh, 4 to 6 times, with the same `gossip_rx` (36),
+      resends 0 and duplicates 0. `cpu_user_ms` 140 to 230 per 10 s against 33;
+      `idle_external` 43 to 50 against 36 (the extra is `direct_rx` 5 to 8 and
+      `other` 2 to 5). So more CPU per wake, not more wakes. The meta document is 82.7
+      KB and 64.0 KB against 24.6 KB and does not shrink after the prune. [G] The
+      residual follows the size of the meta document or the history (work per frame or
+      per tick); n=2. A residual profile is queued.
+    - A private mesh reproduces a storm of about 3,000 external for a few minutes, not
+      the live steady 12,000. [G] The live flood needs ongoing joins and leaves to
+      restart the storm, or mixed versions (S5 queued).
+    - Correction on item 12 (`mist-frame`): a digest carries at most 2 windows of 70
+      ids, that is 140 ids, not about 1,000. Why digest encode and decode still show up
+      at that size is under analysis.
 
 Ranked fixes (none is done and measured yet):
 
