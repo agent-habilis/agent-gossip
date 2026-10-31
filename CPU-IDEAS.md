@@ -282,6 +282,55 @@ State of the investigation. Each line says how well it is proven.
     62 KB document of the survivors and the share of busy samples after the change
     (that needs the aged-mesh residual test and the live A/B on `ab-stack2`).
 
+18. [V by reading, G for the effect on a live mesh] A fast-round loop can keep a node
+    sending for ever (`origin-magnet`, engine `ac08f822`, no code changed, not measured
+    on a mesh). It answers why an aged survivor sends about 9 times more per received
+    frame. File:line under `crates/habilis-network/src` unless noted.
+    - What a node SENDS when a state or meta digest arrives (`gossip/recv.rs:775` and
+      `:792` call `handle_state_digest`, `gossip/antientropy.rs:613`):
+      - `ask_back` (`antientropy.rs:478`): if the digest heads are not all in our
+        document, we note the sender as "ahead" (`fast_rounds.rs:130`) and, if allowed,
+        send our own digest to it by unicast (`ask`, `:558`). The same peer may be asked
+        again after 200 ms (`FAST_ROUND_MIN_INTERVAL`, `tuning.rs:1049`).
+      - The answer (`:639-693`): if the asker lacks something we hold, we send up to 64
+        frames plus a closing digest, by unicast to a linked neighbour, else by gossip
+        broadcast with a new nonce. Gate (`serve_budget.rs:46`): per 5 s window up to 8
+        answers per asker, channel and plane on unicast (1 on gossip), so one asker can
+        draw up to 8 x 64 = 512 frames per 5 s per channel.
+      - Own digests by the 10 s tick and on a new peer or first link: about 2 per 10 s.
+      - A fast round that repeats by itself, with no digest arriving
+        (`resume_fast_rounds`, `antientropy.rs:527`): called from the reclaim ticker (400
+        ms, `daemon/event_loop.rs:1436`), it asks one "ahead" peer per channel when
+        nothing was asked for 400 ms (`FAST_ROUND_RETRY`, `tuning.rs:1058`).
+    - What can repeat for ever: the retry fed by `ask_back`. A peer stays "ahead" for 1
+      min (`FAST_ROUND_AHEAD_TTL`, `tuning.rs:1065`) after its last digest, and every
+      digest that still shows heads we lack (every 10 s) renews it. The retry forgets
+      the peer only when we hold its heads. So while a peer advertises heads we can
+      never hold, we send it a unicast digest every 400 to 800 ms per channel and it
+      answers up to 64 frames each time: up to 5 sends per second, 50 per 10 s, which
+      fits `direct_rx` 5 to 8 and `other` 2 to 5 and the 9 times `sendmsg` [G on the
+      exact link].
+    - Heads that never converge (a node is "ahead" only through its applied heads):
+      a change the receiver refuses and the holder applied (the card-forgery gate,
+      `Ingested::Rejected`, `recv.rs:1227`; a repeated actor and seq with other
+      content, `mesh_doc.rs:501`), so the refused hash is never in `applied`; and the
+      over-serve of unknown heads (`changes_since_not_by`, `mesh_doc.rs:371-385`,
+      Automerge drops unknown hashes from `have`, so all unknown heads return the
+      whole history cut to 64, the same first 64 frames every time, while the frames
+      really missing come later in the order). A change whose dependency nobody holds
+      waits in `pending` and is not in the heads, so it is not a source of the loop.
+    - Growth: there is no GC or horizon in the document crate for the changes of
+      departed members: `applied`, `frames` (a signed frame per change, kept for
+      re-serve) and the Automerge history only grow. The engine never builds a change
+      outside tests, so a delete of a departed member's entry is the app's job, and
+      even then the tombstones stay [G]. The growth 24.6 KB to 62 to 83 KB fits that
+      [G, not measured].
+    - Not visible today: the send side. The census counts only receive-side wakes. Planned
+      counters (census only): `idle_fr_asks` and `idle_fr_retries`, `idle_state_answers`
+      and `idle_state_answer_frames` (split unicast and broadcast), `idle_ahead_peers` (a
+      gauge: peers noted as ahead, summed over the two channels; above 0 for minutes on a
+      mesh with no writes is the loop) and optionally `idle_state_rejected`.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
