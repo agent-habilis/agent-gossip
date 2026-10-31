@@ -27,6 +27,50 @@ two rounds), census series from the live gossip (`valve-comet`, `lumen-gear`,
 `wire-straw`), and measurement runs (`layer-oval`, `wire-straw`, `lumen-gear`,
 pending).
 
+## Summary so far (read this first)
+
+State of the investigation. Each line says how well it is proven.
+
+1. [V] A calm private mesh is cheap. Release 0.12.10 and `b588fc75`, same host, CPU
+   per daemon: 1 daemon 0.125%; K=2 0.08%, K=4 0.12%, K=8 0.30%, K=12 0.40% to
+   0.48% (`wire-straw`, load 3 to 6, no stalled timers, fit exponent 0.98). So the
+   idle upkeep (timers, keep-alives, pings) is small.
+2. [V] The live gossip is far more expensive: 55% to 91% of a core per daemon on
+   `nyc-macmini1`, 16% on the leader's host, over 100 times the calm mesh, with
+   `idle_external` 11,400 per 10 s against 121 to 149. Size does not explain it:
+   a linear extrapolation to 40 members gives about 1.5% [G].
+3. [V] What the live daemons do: the wire carries about 1,000 times the bytes of
+   the logged messages (5.8 MB per second), and the same frames come in again and
+   again (30 repeats per frame in my log). 98% of the logged bytes are `meta`
+   frames, 2% are tasks and replies, and chat is a few KB.
+4. [V mechanism, G effect] Why: a digest answer re-floods up to 64 frames mesh-wide
+   with a new nonce, 3 answerers per digest, every 10 s, and nothing remembers what
+   was sent. A live test measured 13.1 resends per second from one member, within
+   31% of the prediction. The dedup memory (2,000 keys) is shorter than the flood
+   (2.4 s against a 10 s digest period), so repeats pass it again.
+5. [V] Where the CPU goes in a live daemon (one profile, n=1): syscalls 32%,
+   Automerge 16% (38% inclusive; 17.4% is a full-document JSON hydration run for
+   every meta frame, `on_meta_applied`), signature verify 11% to 15%, QUIC 11%.
+   Encryption (AEAD) is 1%.
+6. [G] The cost grows with the age of the gossip: 45% of the state frames come from
+   peers that left, and 14 of 45 entries of the meta document are dead peers. A
+   test of this (E6 below) is queued.
+
+Ranked fixes (none is done and measured yet):
+
+- M1: remember what was resent to whom (prototype with red and green tests exists,
+  off by default, not benchmarked).
+- M2c: do not hydrate the whole meta document for every meta frame (up to 17% to 35%
+  of the busy time).
+- M2d: a longer dedup memory.
+- M2b-1: check the dedup before the signature verify.
+- Cheap unicast anti-entropy (option c) and removal of the state of dead peers.
+- Not worth it: removing the encryption (1%); removing anti-entropy as a whole (it
+  breaks 14 integration tests and the late-join and loss repair).
+
+Open: R1 to R4 (`lumen-gear`), the instrumented bench (`mist-frame`), the M1 branch
+(`origin-magnet`), E6.
+
 ## What we know now
 
 ### The cost is received frames, not own timers
