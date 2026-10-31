@@ -137,6 +137,40 @@ State of the investigation. Each line says how well it is proven.
     repeat on the instrumented build with a 15 min time series of roster_len,
     link_len and each `idle_ext_*` arm.
 
+12. [V] The extra cost per wake with history has a name: the anti-entropy digest
+    (`mist-frame`, engine `43dc4f6f` plus an uncommitted-then-committed example
+    change, release build with symbols; 8 survivors, 9 batches of 4 members, each
+    sending 60 chat messages and 5 state merges, so about 2,160 chat and 180 state
+    frames, above the log of 1,000 and the seen set of 2,000; window 17:00 to 17:19
+    local, no stalled lines, max census gap 10.55 s; load 11 to 26, above the gate
+    in the idle window). Per survivor per 10 s: CPU 43 to 46 ms before, 272 ms during
+    the churn, 84 ms in the 10 min idle after it; `idle_external` 68, 504 and 67;
+    `idle_resent`, `idle_duplicates` and `idle_resend_dropped` 0 in every idle slot.
+    A 30 s `sample` of the same survivor before and after (busy samples 147 and 231):
+    - New cost after the churn: `bs58::decode_into` 27 and `bs58::encode_into` 14
+      samples (none before). Callers: decode comes from `antientropy::handle_digest`
+      (`decode_ids`), encode from `WireWindow::encode` under `broadcast_digest`.
+    - Inclusive, before to after: `handle_digest` 2 to 29, `broadcast_digest` 0 to
+      14, any "digest" 2 to 44, `ingest` 10 to 38. `MeshDoc`, `to_json`,
+      `changes_since`, the sweep and the state-file refresh stay near 0.
+    - So digest build and receive explain 43 of the 84 extra busy samples (the
+      profile is a 30 s sample at 1 ms on a loaded host; the noise is not measured).
+    [G] Each digest lists the ids of the whole log window as base58 text. After the
+    churn the log is full (about 1,000 ids), so each of the 3 digests a node sends per
+    10 s encodes about 1,000 ids and each digest it answers is decoded again. The cost
+    scales with log size times peers at the same wake count. H7 is again NOT
+    reproduced, this time with history above both caps and for 10 min.
+    Candidate fixes (not built): send the ids as raw bytes, or a hash or Bloom filter
+    of the window, instead of base58 text; or decode only after the digest was
+    admitted (check the order). A wire change needs the compatibility plan from the
+    advisor review.
+13. [G] New hypothesis H10: the resend loop needs MIXED VERSIONS. Every private mesh
+    so far ran one build. The live gossip mixes releases (0.12.9, 0.12.10, main), and
+    the advisor and `origin-magnet` found that a frame class can be retained by one
+    version and not by another (`loggable` differs between versions, `recv.rs`
+    `retained_after_lifecycle`). Test: a private mesh with 6 members of the installed
+    0.12.10 and 6 of `b588fc75`, against the all-new mesh (0.40% to 0.48%).
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
