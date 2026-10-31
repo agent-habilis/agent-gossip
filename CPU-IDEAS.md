@@ -72,6 +72,26 @@ State of the investigation. Each line says how well it is proven.
    show `idle_resent` near 0 (R3 mean 0.3, max 40; R4 late joiner: one census
    window of extra duplicates, back to baseline in 20 s). The loop needs history.
 
+9. [V] Churn history alone does not start the resend loop, but it makes every wake
+   dearer. `mist-frame`, engine `43dc4f6f`, release `mesh_peer_load`, local relay,
+   8 survivors, then 9 batches of 4 short-lived members (36 dead) that send
+   directed messages for 15 s and leave by SIGTERM or by SIGKILL; survivors idle
+   10 min. Census gaps: none (max gap 10.01 s). The SIGTERM churn phase overlapped
+   the suspected suspension window (14:44 to 15:04 local) and is voided; its idle
+   window and the whole SIGKILL run count. Results per survivor per 10 s:
+   - resends and duplicates: 0.0 in every slot of both variants during the 10 min
+     idle; `idle_resent_top` empty; `idle_external` 67 and `gossip_rx` 28, the same
+     as a fresh 8-daemon mesh. H7 is NOT reproduced in this setup (history of
+     presence and directed frames only, about 8 min old, no broadcast chat, no
+     state merges). During each batch join: duplicates 34 to 102, resends 3 to 17.
+   - CPU: 42 ms before the churn (matches the fresh N=8 run), then 85 ms (SIGTERM)
+     and 90 ms (SIGKILL) in the 10 min after, 2.0 to 2.2 times as much, with the
+     same wake counts. It decays slowly (about 100 to 65 ms). So each wake costs
+     more with history. [G] The per-tick work grows with the retained history
+     (the message log, the documents, the tables of dead peers). A symbolized
+     sample before and after names the function (task queued).
+   - Wire after the churn: 6.7 KB per second in and 19 KB per second out.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
