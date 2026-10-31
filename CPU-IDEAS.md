@@ -92,6 +92,29 @@ State of the investigation. Each line says how well it is proven.
      sample before and after names the function (task queued).
    - Wire after the churn: 6.7 KB per second in and 19 KB per second out.
 
+10. [V] M2c in the live gossip (`wire-straw`, `nyc-macmini1`): app `b588fc75` with only
+    the engine rev changed (a scratch edit of `Cargo.toml` and `Cargo.lock`, the
+    binary says dirty): A = `f8af1e6f`, B = `e265eaba`. Two pairs, n=2: both members
+    joined the live gossip together, 480 s window from t=120 s, load 5.9 to 8.1, no
+    stalled lines, the 3 live daemons in the background used 188% and 210% of a core.
+    - The cost it targets is gone: `doc_json` under `on_meta_applied` is 31% and
+      14% of the busy samples in A and 0.0% (0 samples) in B.
+    - User CPU falls 22% to 26% (`cpu_user_ms` 3,858 to 2,836 and 4,102 to 3,186 per
+      10 s), but system CPU rises 21% to 28% (1,996 to 2,561 and 2,649 to 3,201). The
+      net: 58.6% to 54.0% of a core (-7.8%) and 67.5% to 63.9% (-5.4%).
+    - Duplicates dominate in both arms: `idle_duplicates` about 10,000 per 10 s, which
+      is 82% to 85% of `idle_external`; `idle_resent` 129 to 221.
+    - Not explained: B sent more bytes out than A in both 60 s windows (6.4 to 10.4
+      and 4.8 to 13.1 MB per second out). [G] The freed CPU drains the send queue or
+      the receive queue faster, so the daemon does more of the same work; the cause
+      of the work (the duplicates) is unchanged. n=2 single windows.
+    - Reading: M2c is real but small in net (5% to 8%) because the flood stays. A
+      receive-side fix does not stop the flood from the other members. Only the
+      senders stop it (M1 on every member), so M1 can only be tested in a private
+      mesh in which every member runs the arm (E6b), not as one member in the
+      live gossip. The receive-side fixes that cut the work per duplicate (M2b-1,
+      M2d) can be tested one member at a time in the live gossip.
+
 Ranked fixes (none is done and measured yet):
 
 - M1: remember what was resent to whom (prototype with red and green tests exists,
