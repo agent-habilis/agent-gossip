@@ -869,6 +869,87 @@ What the tests must prove (before any removal or replacement):
 4. The cost side: the same runs report `idle_resent`, `idle_duplicates`, bytes and CPU,
    so a loss of repair is paid for by a measured gain.
 
+### Reassessment: anti-entropy for state only (requested 19:24 local)
+
+Position given: anti-entropy is not needed for messages; it is needed only for state
+changes (the meta document), because state is event based and a snapshot is built from
+the events. Scope of this section: analysis only, nothing is implemented before the
+performance study is done.
+
+1. Does it also cover messages, receipts and presence today, and what does it cost?
+   [V by code reading, advisor review]
+   - Chat-log digest (M-LOG, `gossip/antientropy.rs:146`, `:243-334`): the frame log
+     holds chat broadcasts, `msg`, task status and artifact legs (app
+     `a2a/node.rs:523-526`) and joined/left presence (`gossip/recv.rs:1691`). Not
+     logged: alive beats, PeerInfo, digests, A2A request and response, receipts. So
+     receipts are not covered; directed frames are backfilled only to their addressee
+     (`daemon/message_log.rs:377-395`).
+   - State heads digests (M-DOC, `:386-430`, `:598-694`) cover the meta document and any
+     state channel. Event-driven pulls (M-PULL: first link, new peer, `ask_back`, fast
+     rounds) are separate and not driven by the tick.
+   - Cost, measured: of the logged repeated frames on the advisor's node (6,850), 3,080
+     are presence (45%) and 3,747 are state (55%); on mine, 6,140 presence (44%) and
+     7,883 state (56%). 23 user frames in 47 min. So the log path (presence and chat)
+     is about 45% of the repeats and the state path about 55%. The chat digest itself
+     is cheap (about 13 ms per 10 s, 0.13% of a core, constant in N); the cost is the
+     mesh-wide resend (up to 64 frames per answer, 3 answerers) that follows it.
+2. Can it be restricted to state, or replaced by a snapshot-from-events sync?
+   - Restriction: yes, in principle, and it is small: the 10 s tick sends the chat
+     digest and the state digests separately (`daemon/event_loop.rs:640-661`), so one
+     const can skip the chat digest only, with answering left in place for old peers.
+     The state path already has its own repair (heads digest, unicast ask, fast rounds)
+     and does not need the chat log.
+   - Snapshot sync: the document is built from signed change frames, and the forgery
+     gate and the per-change signature check need each frame (`frames`, one per change,
+     `mesh_doc.rs:153`). A plain Automerge snapshot would drop those signatures, so a
+     late joiner must still receive the signed change frames. That is what the answer
+     of `handle_state_digest` does now (up to 64 per answer; the unicast path with
+     fast rounds). A single unicast transfer of all frames to a late joiner is a
+     reasonable replacement for the many 64-frame rounds, but it still carries the
+     frames, so it is an optimisation of the round trips, not a snapshot.
+   - What must stay: the state repair after a partition (heads digest and its answer)
+     and the first-link pull for a late joiner; the loop fixes of items 16 to 19 still
+     apply to it (heads that never converge, the retry loop, the over-serve).
+3. What is lost for messages if they are best-effort only? [V mechanism, G effect]
+   - A chat broadcast is lost for a member that was frozen longer than the path idle
+     (15 s) or whose link dropped when it was sent. A directed frame lost on an open
+     link is not backfilled; the sender still gets an error for a failed send and a
+     receipt (`delivered`, `read`) when it works, so a bounded sender retry until
+     `delivered` closes that gap for directed messages and tasks.
+   - Presence: a missed "left" leaves a ghost until the 90 s alive timeout and then
+     shows "went quiet" instead of a clean leave; a missed "joined" shows the peer when
+     its alive beat or PeerInfo arrives. Cosmetic and bounded.
+   - Task beats keep tasks alive without the log, so a lost status leg shows as a stale
+     state, not a timeout [G].
+   - Evidence so far: the first tick-off round (n=1) lost nothing in a 20 s freeze, a late
+     join and a sender leaving, but a 20 s SIGSTOP is too weak; round two (75 s and 150 s
+     freezes, 5 repeats, path check) is pending.
+   - The product decision: is a missed broadcast chat for a sleeping or frozen member
+     acceptable? Agents mostly talk by directed tasks with receipts, but a human chat
+     broadcast would be lost for that member.
+4. Updated recommendation and test plan.
+   - Recommendation: a staged path. Stage 1: keep anti-entropy for state only, and make
+     the log path best-effort by skipping the chat digest tick and the mesh-wide resend
+     of chat and presence (behind a const, off by default, so the A/B uses one binary),
+     keeping the answering of old peers' chat digests unchanged. Add the sender retry
+     for directed frames. Stage 2, only if stage 1 shows a gain and the tests pass:
+     remove the log repair code. This removes the 45% log share of the repeats without
+     touching the state repair that the late-joiner and partition cases need.
+   - Mixed versions: old daemons keep sending chat digests; new ones answer them or
+     ignore them (a choice for the test), and old nodes lose one answerer at most.
+   - Tests that must prove it: (a) state convergence with the chat digest off: late
+     join gets the meta document and the peer cards, partition and heal converge the
+     meta document, a member frozen 75 s and 150 s while a meta merge happens, sender
+     leaves; (b) message semantics under best-effort: directed message and task with
+     receipt and sender retry survive a 75 s freeze, broadcast chat loss is recorded
+     as the documented behaviour, presence ghost timing; (c) the existing loopback
+     tests that name chat backfill are expected to FAIL or to be rewritten: list them
+     (`missed_chat_backfill_loopback`, `resend_dedup_loopback` chat cases,
+     `test_anti_entropy_set_convergence` and the others in the advisor review), so the
+     change is deliberate; (d) the cost: resends, duplicates, bytes and CPU in the
+     paired A/B and the live A/B (items 10 to 19), against the same run with the chat
+     digest on.
+
 ### Experiment R5 (tick off), replaces the earlier plan
 
 `--antientropy-interval-secs 86400` on every node (M-PULL stays on), private
