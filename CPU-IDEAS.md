@@ -826,6 +826,22 @@ What this says (each point is [V] from the counters unless marked):
 7. Against the target: at cap 8 and 12 daemons the worst daemon is above 1% in every clean window of
    both arms (median below 1% in the late windows). This agrees with the old runs (worst 1.05% at N=12).
 
+Early window and the short connections (`lumen-gear`, B4 rep 2, totals over 12 daemons, 300 s,
+cap 8, so the roster of 12 is above the cap): UDP bytes in 153.5 MB early against 52.5 MB late; relay
+bytes 60.6 against 10.8 MB; datagrams 464k against 211k. IP paths added 15,602 against 3,150; paths
+removed about half of that. Gossip messages received: neighbor 3,854 against 772, shuffle_reply 3,753
+against 692, disconnect 3,704 against 633, while \`gossip\` data messages and shuffle requests are flat.
+So the early excess goes with short connections: each reply or neighbor message opens a connection
+that a disconnect closes soon, and each connection costs a handshake and new paths [V counters, G
+cause]. F6 shows the same shape and more of it in the late window (paths added 4,986 against 1,725;
+shuffle_reply 940 against 370), so it is further from settled, or churns more; open. This is the
+roster-above-cap regime. The real daemon has cap 32, and a mesh of 50 is above it too, so this churn
+should exist at 50 [G]. The refill backoff of the gossip fork (item 1 of the duplicate steps) targets
+exactly this, with -70% bytes in at cap 8 in the earlier A/B. Arms for it, with no new fork push:
+F8 = F7 (U1) with the fork pinned at the refill commit (\`...-ab-full8\`, \`a9135a18\`), and F9 = F6 with
+the same pin (\`...-ab-full9\`, \`21520872\`); the gm counters read zero in them. The wake counts of B4
+and F6 are equal (40,812 and 40,734), so the wakes do not explain the CPU gap between them.
+
 Loaded phase (B4, rep 2, 480 s to 780 s, 200 bytes per daemon per 30 s; data tag \`msg\`):
 \`data_in\` 891,905 bytes, \`meta_per_data_in\` 18.5, \`udp_per_data_in\` 80.4, \`gossip_per_data_in\` 53.9; CPU
 median 0.99%, worst 1.69% (overlapped). The F6 loaded values are void. Caveat: \`data\` counts the wire bytes of
