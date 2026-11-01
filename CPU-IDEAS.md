@@ -1341,6 +1341,19 @@ What this says [V counters for the table; G for the fit, two points only]:
    second, 0.8% of a core, before the growth of the digest work. That is close to the 1% line; fewer packets per link, fewer links and a
    faster base58 are the margin. The calm 50-daemon runs will say.
 
+## Fast base58 for the digest ids (M12, `origin-magnet`, 03:40 local)
+
+Branch `...-origin-magnet-m12` (`01f77427`, pushed): `gossip/antientropy/base58.rs` encodes and decodes the digest id strings with u32 limbs, 5 digits
+per step. The output is byte-identical to `bs58`, so there is no wire change and an old peer still reads it. 4 call sites in `antientropy.rs`.
+Evidence: 4 property tests that failed first against a stub and pass now (encode of 0 to 5,040 bytes with 0 to 39 leading zeros; decode of 0 to
+7,000 characters with leading '1's and one stray character; round trip; edges); the old golden digest test passes. fmt and clippy clean; 697 lib
+tests pass. Bench (release, `frame_cost` of `mist-frame`): decode of the ids 2,173 to 106 microseconds (20 times); build of a 140-id chat digest
+4,206 to 594 (7 times); answer of a chat digest 2,208 to 191. Encode is still 594 microseconds; u64 limbs could halve it (not done).
+At 12 daemons base58 was 22% of the busy samples (800 microseconds per second); this removes most of it, about 0.07 percentage points of the
+0.36% in the idle profile [G: from the profile share and the bench]. Task B of the same branch: a census of the chat log by kind and tag, once a
+minute (`log_len`, `kinds`), to find what fills the log; its live read waits for a quiet host.
+Arm F10 = F8 (unicast digests on, refill backoff, backoff 16 s, seen set 64,000) + M12: branch `...-ab-full10` (`7652b798`), compile-checked.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
