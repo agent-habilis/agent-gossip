@@ -62,6 +62,7 @@ async fn idle_pair_holds_without_peer_timeout_or_return() {
 #[test]
 fn killed_peer_does_not_return_after_fifth_joins() {
     let (creator, mesh) = Node::create_named("churn-kill");
+    let _leave = LeaveOnDrop(mesh.clone());
     let mut victim = Node::join(&mesh, "churn-victim");
     let survivor_a = Node::join(&mesh, "churn-a");
     let survivor_b = Node::join(&mesh, "churn-b");
@@ -211,6 +212,7 @@ fn late_joiner_reports_same_peer_count_as_creator() {
 #[ignore = "280 s SIGSTOP run, run with --ignored"]
 fn stopped_daemon_resumes_with_matching_roster() {
     let (creator, mesh) = Node::create_named("churn-stop");
+    let _leave = LeaveOnDrop(mesh.clone());
     let stopped = Node::join(&mesh, "churn-stopped");
     let peer = Node::join(&mesh, "churn-peer");
     std::thread::sleep(Duration::from_secs(20));
