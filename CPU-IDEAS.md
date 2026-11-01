@@ -714,6 +714,12 @@ worst daemon. The target passes when the worst daemon is below 1% in a mesh of 5
 (50 daemons, an aged meta document, the size of the live mesh) and in calm meshes of 12, 24 and 50
 daemons, with no regression and no behaviour change that lacks a measured gain.
 
+Worst daemon, from `mist-frame` (old runs on 43dc4f6f, before any fix; CPU = (user + sys) over wall
+time, without the first 30 s, loads below 12; median / worst): N=2 0.17% / 0.17%; N=8 0.42% /
+0.73%; N=12 0.67% / 1.05%; after churn, 10 min, 8 survivors: kill 0.83% / 1.27%, publish 0.80% /
+1.12%. So the median is below 1% everywhere, but the worst daemon is above 1% already at N=12
+and after churn.
+
 Where we are (measured; the live figures are as recorded earlier in this file, and I read them
 as one daemon, 🟡 80%):
 - 1 daemon alone: 0.125%. Calm mesh of 12: 0.40% to 0.70% per daemon. Both are below 1%.
@@ -734,6 +740,36 @@ How the target is tested: every CPU run reports the median and the worst daemon 
 1% line. The live A/B (arms B4 against F6) says how far the built stack gets. The profile of F6
 then names what remains, and each next step is chosen by its share of that remaining busy time.
 A scaling curve of F6 at 12, 24 and 50 daemons shows where the 1% line breaks as the mesh grows.
+
+## Tracking: metadata to data ratio, before and after (requested 22:20 local)
+
+Data is what users create: the app tags `a2a_broadcast`, `a2a_msg`, `a2a_status`, `a2a_artifact`.
+Everything else on the wire is metadata. The tags `a2a_req` and `a2a_resp` carry directed calls
+that can hold user text or a protocol call; they count as metadata in the strict ratio and are
+reported apart (`calls_*`, `meta_per_data_in_loose`). Tool: `scripts/perf/summarize.ts` on branch
+`feat-reduce-resource-consumption-leader-ratio` (sha 307004f0), run on the output folder of a run. Fields,
+per run, in and out: `data_*`, `calls_*`, `meta_share_*` (metadata bytes over wire bytes),
+`meta_per_data_*` (metadata bytes per data byte), `udp_per_data_*` and `gossip_per_data_*` (the bytes
+of the layers below per data byte). Evidence: a 2-node fixture with known tag bytes; the new fields
+are absent in the old script and every value matches a hand calculation.
+
+Limits. The census names the 6 largest tags per interval, so a small data tag can be missing from a
+sum. In an idle mesh the data is near zero, so the ratio is undefined there ("no-data"); the idle
+cost is then read as absolute bytes per second per daemon. For a defined ratio, every floor cell
+adds a loaded phase, the last 5 min of rep 2: each daemon sends 1 broadcast of 200 bytes every
+30 s. Both arms get the same load, so the ratio compares before and after.
+
+Results table (filled when the runs arrive; one row per arm and cell):
+
+| Arm | Cell | CPU worst / median | bytes per s per daemon in / out | meta share in | meta per data byte, wire | udp per data byte | D share |
+|---|---|---|---|---|---|---|---|
+| before (B4) | pending | | | | | | |
+| after (F6) | pending | | | | | | |
+| after (F7, unicast digests) | pending | | | | | | |
+
+Earlier datapoint, before any fix (live daemon, 83 min; the data is the logged inbound directed
+frames, 0.30 MB, plus chat about 3 KB; the wire figure is nettop, 2.66 GB in): about 8,900 wire bytes
+in per data byte. Caveat: two different instruments, and the data is only what that daemon logged.
 
 ## Metadata classification and reduction ideas (requested 19:30 local; analysis only)
 
