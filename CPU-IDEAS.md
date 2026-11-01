@@ -782,6 +782,56 @@ Earlier datapoint, before any fix (live daemon, 83 min; the data is the logged i
 frames, 0.30 MB, plus chat about 3 KB; the wire figure is nettop, 2.66 GB in): about 8,900 wire bytes
 in per data byte. Caveat: two different instruments, and the data is only what that daemon logged.
 
+## First floor read: calm mesh, 12 daemons (`lumen-gear`, cell 1, 23:18 local)
+
+Setup: example driver, 12 daemons, transports UDP and multihop (no gossip transport, so the gt
+counters are 0), cap 8, no user traffic. Arms B4 (`d694bbcc`) and F6 (`2f2bce89`). Values are sums over
+the 12 daemons per second, window 480 s to 780 s (rep 1), no stalled timers. The host was shared
+with another bench and with builds, so the CPU is overlapped (an upper reading). The run
+`c1-F6-2` is void (load above 12 from 23:10 to 23:12); it repeats.
+
+| | B4 (before) | F6 (stack, no U1) |
+|---|---|---|
+| wire frames in | 59 KB/s (4.9 KB/s per daemon) | 59 KB/s |
+| body in (payload of frames) | 35 KB/s (59%) | 35 KB/s |
+| socket (UDP) bytes in / out | 138 / 146 KB/s | 217 / 248 KB/s |
+| our frames as share of socket bytes in / out | 35.8% / 3.3% | 19.9% / 1.8% |
+| repeats (dup, cdup, d_share) | 0 | 0 |
+| gossip layer: control share in; IHave bytes | 21.2%; 4.0 MB | 22.3%; 3.9 MB |
+| CPU per daemon, median / worst | 0.70% / 1.22% | 0.93% / 1.57% |
+
+Share of the frame bytes received, by kind (both arms alike): chat digest 49%, linkstate 26% to 27%,
+state digest 11%, meta digest 11%, presence 2%, peerinfo 1%, app 0, state and meta change frames 0.
+
+What this says (each point is [V] from the counters unless marked):
+1. In a calm mesh 100% of the frame bytes are metadata, and 71% of them are the three digests. The
+   anti-entropy tick is the largest frame cost of an idle daemon, and it grows with the member count:
+   a daemon receives one digest per member per tick. This is the same N-linear growth as the CPU curve.
+2. Linkstate (26%) comes from multihop, which this driver has on and the real daemon has off, so
+   it does not exist in the real policy. In the real policy the digests are a larger share.
+3. The unicast digest form (U1, arm F7) sends one digest per tick to one peer. In a calm mesh it
+   should remove most of the 71% and the per-digest verify and compare cost. This is the lever with
+   the best fit to the data so far. F7 cells are queued to read it [G until then].
+4. Our frames are only 35.8% (B4) and 19.9% (F6) of the UDP bytes in, and 3.3% of the bytes out.
+   The rest is the gossip layer, QUIC and keep-alives. The bytes out understate the frames by the
+   fan-out. So the wire cost below our frames is larger than our frames; P3 splits it by variant: IHave
+   is 4 MB beside 19 MB of gossip data messages.
+5. F6 shows 57% more UDP bytes in than B4 for the same frame bytes, and a higher CPU (0.93%
+   against 0.70% median). The F6 fixes target the flood, so in a calm mesh they should do nothing.
+   Two reps of overlapped runs cannot tell noise from effect; this is open, not a claim.
+6. Early window: in rep 2 the UDP bytes in at 180 s to 480 s are about 3 times those at 480 s to 780 s
+   in both arms, while the frame bytes are flat. So 3 min of settle is too short for the socket layer.
+   The floor is read from the late window. The cause is not established (asked: relay and IP split,
+   datagram counts, early against late).
+7. Against the target: at cap 8 and 12 daemons the worst daemon is above 1% in every clean window of
+   both arms (median below 1% in the late windows). This agrees with the old runs (worst 1.05% at N=12).
+
+Loaded phase (B4, rep 2, 480 s to 780 s, 200 bytes per daemon per 30 s; data tag \`msg\`):
+\`data_in\` 891,905 bytes, \`meta_per_data_in\` 18.5, \`udp_per_data_in\` 80.4, \`gossip_per_data_in\` 53.9; CPU
+median 0.99%, worst 1.69% (overlapped). The F6 loaded values are void. Caveat: \`data\` counts the wire bytes of
+the data frames, envelope included. If the payload is about a third of a data frame (200 of about
+600 bytes), the metadata per payload byte is about 3 times larger, about 57 [G: from the frame size].
+
 ## Metadata classification and reduction ideas (requested 19:30 local; analysis only)
 
 Goal given: make non-critical metadata the main target of the study. Method: classify each
