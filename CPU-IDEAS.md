@@ -877,9 +877,10 @@ cputime after 180 s, median / worst, overlapped so an upper bound. Runs that cro
    420 / 453 bytes per second per daemon; UDP in 8.41 / 8.38 KB/s; wire in 5.44 / 5.48 KB/s. By hand: metadata per
    data byte about 12 on the wire (wire minus app, over app) and about 19 to 20 on UDP. Both arms alike, as
    expected, because the stack fixes target the flood.
-5. [G] What it means at 50 daemons. A digest holds up to 140 ids (2 windows of 70) as base58, about 6 KB
-   at the cap, and every member sends one per 10 s. At 50 members each daemon would receive 49 digests per
-   10 s: about 30 KB/s of chat digests alone, a few times the whole floor at 12 (4.3 KB/s). The cost is
+5. [G] What it means at 50 daemons. A digest holds up to 140 ids (2 windows of 70, `ANTIENTROPY_DIGEST_WINDOW_IDS`, tick
+   10 s; verified in `tuning.rs`) as base58. The measured chat digest at 12 daemons is about 2.5 KB (65% of 4.3 KB/s over
+   11 digests per 10 s); the cap is about 6 KB. At 50 members each daemon receives 49 digests per 10 s: about 11 to 30 KB/s
+   of chat digests alone (the range is 2.2 to 6 KB per digest), 2.5 to 7 times the whole floor at 12 (4.3 KB/s). The cost is
    linear in the member count, as the CPU curve is. At the cost per member of this read (about 0.047% per
    member) a daemon would use about 2.4% at 50. Unicast digests (U1, arm F7) cut the digests received by a
    factor of N. This is the evidence that points at U1; it is not proven until the F7 runs read it.
