@@ -730,6 +730,17 @@ as one daemon, 🟡 80%):
   traffic and the benches ran) and the host was loaded, so this is an upper reading of the live
   figure. It still shows that every daemon on the host is far above the target today.
 
+Expectation at 50 agents, before any fix [G, a linear extrapolation of measured calm points]: the calm
+curve is linear in the number of daemons (fit exponent 0.98: K=8 0.30%, K=12 0.40% to 0.48%). That is
+about 0.035% per member, so a calm mesh of 50 would use about 1.7% to 2.0% per daemon, with no flood
+and no history. So the target at 50 needs two things: the flood and history cost removed (the live
+16 to 91 times), and the per-member upkeep roughly halved. The cap is not the lever for the second:
+at cap 8 the CPU was higher than at cap 32 (R2: 1.27% to 1.81% against 0.64% to 0.66%; with the refill
+backoff 0.88% against 0.64%), so lowering the cap is not a way to the target. The cost per member is
+unnamed. Candidates are the digests (N frames per 10 s received and verified), the alive beats, the
+per-link QUIC upkeep (up to 32 links), and the wakes per frame. The tick-off runs of `layer-oval` and
+the 50-daemon profile of F6 will name it.
+
 What the measured fixes give: M2c is -5% to -8% net (user CPU -22% to -26%, system CPU +21% to
 +28%). The refill backoff is 1.04% to 0.88% in the lab (-15%). These are tens of percent. A
 gap of 16 to 91 times needs the cause removed, not trimmed: the resend flood, the history storm
