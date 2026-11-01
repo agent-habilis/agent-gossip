@@ -1354,6 +1354,30 @@ At 12 daemons base58 was 22% of the busy samples (800 microseconds per second); 
 minute (`log_len`, `kinds`), to find what fills the log; its live read waits for a quiet host.
 Arm F10 = F8 (unicast digests on, refill backoff, backoff 16 s, seen set 64,000) + M12: branch `...-ab-full10` (`7652b798`), compile-checked.
 
+### Idle CPU against the number of links (`mist-frame`, partial 4, 03:57 local)
+
+The N=12 rerun, N=9 and N=3 are void (the load reached 13 to 17 during the windows, from other agents); the numbers show the shape only. CPU of the
+sampled daemon, median; packets per second in plus out; microseconds per packet:
+
+| N (links) | CPU | packets per s | microseconds per packet |
+|---|---|---|---|
+| 3 (2) | 0.114% | 6.4 | 178 |
+| 6 (5), valid | 0.208% | 22.2 | 94 |
+| 9 (8) | 0.287% | 44.5 | 65 |
+| 12 (11) | 0.405% (first run 0.358%) | 69.9 (82.2) | 58 (44) |
+
+Reading [V for the table; G for the fit and the projection]:
+1. CPU is close to linear in the number of links: about 600 microseconds per second fixed plus about 270 microseconds per second per link
+   (steps of 937, 793 and 708 per 3 links, a little concave). Packets grow faster than links, so the CPU follows the link or peer count more than
+   the datagram count. The largest category at every N is tokio and timers (58% at N=3, 48% at 6, 37% at 9, 40% at 12; 1,000 to 1,600 microseconds
+   per second); base58 is 12% to 22% from N=9; QUIC 10% to 14%; sysctl 5% to 6%.
+2. Projection to 50 daemons from this fit: 32 links at the default cap: 600 + 270 x 32 = 9,200 microseconds per second, about 0.9% of a core,
+   on the edge of the target, before any fix; 49 links (no cap): about 1.4%; cap 8 (8 links): about 0.28%. With the fast base58 (M12) the per-link
+   slope should fall by the base58 share (12% to 22%): the cap-32 projection becomes about 0.75% to 0.8%.
+3. So the strongest lever in the data is the number of links, not our frame work or our digests: a cap of 8 with the refill backoff (no churn) would
+   put the projection near 0.3%, well below 1%. It needs a run: 50 daemons, \`--max-peers 8\` against 32, on F8 or F10. Each link costs timers
+   and QUIC upkeep even when idle; a longer QUIC keep-alive would cut the per-link part further (not tested).
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
