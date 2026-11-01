@@ -303,6 +303,17 @@ mod tests {
     use super::{own_card, publish_merges};
 
     #[test]
+    fn a_peer_card_stays_under_the_per_peer_byte_budget() {
+        let nickname = Nickname::try_new("budget-peer").expect("nickname");
+        let card = own_card(&nickname, AuthorKey::from([0xab; 32]), "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U");
+        let bytes = serde_json::to_string(&card).expect("card serializes").len();
+        assert!(
+            bytes <= 800,
+            "a peer card is {bytes} bytes; the static part repeats for every peer, so cut it"
+        );
+    }
+
+    #[test]
     fn card_declares_the_mesh_extensions_and_identity() {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(
