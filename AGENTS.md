@@ -404,6 +404,24 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
   `wait_for_ready` returns).
 
+## Bounded memory
+
+A mesh must run for 1 year or more with no restart. Every data structure
+that lives as long as the process has a bound. Only memory counts. Log files
+on disk are out of scope.
+
+- Give each collection a cap, a time limit, or both. This covers every map,
+  set, queue, log, cache, document, table of dead peers and list of pending
+  items. Growth with time, peers, messages or tasks is never free.
+- State the bound where you declare the collection: use a bounded type
+  (`BoundedFifoSet`, `BoundedQueue`) or write one comment with the cap and the
+  reason for its size.
+- Write down what happens when the bound is full: drop the oldest item, or
+  refuse the new one. Do not leave the case open.
+- A new collection with no bound fails review.
+- A bound has proof: a test that feeds the collection 10 times its cap, or a
+  size gauge in the census line.
+
 ## Rust style
 
 `scripts/style-check` and `scripts/module-layout` scan every Rust file, tests, benches, examples and
