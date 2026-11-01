@@ -1141,6 +1141,32 @@ under random order, loss, duplication and a frozen member; an epoch change durin
 epoch starters at once; a joiner during the change; a forged keyframe frame (the gate must refuse
 it); a mixed mesh.
 
+## Regression gate so far (`mist-frame`, baseline `f7cd9bbc` against integration `ac08f822`, 00:05 local)
+
+Each side builds in its own target directory (checked). Counts are pass / fail / ignored.
+
+| Group | Baseline | Integration |
+|---|---|---|
+| workspace tests, `--no-fail-fast` | 1993 / 1 / 97 | 2008 / 0 / 97 |
+| `itu_run` | 836 / 0 / 85 | 846 / 0 / 85 |
+| `blob` | 803 / 0 / 6 | 813 / 0 / 6 |
+| `webrtc_native`, `tasks_bench` | 60 / 0 / 0 and 22 / 0 / 0 | same |
+| matrix (7 files, ignored included) | 85 / 1 / 0 | 86 / 0 / 0 |
+
+The 10 extra passes on the integration side in two groups are the new tests of the stack. Flaky
+tests, each sensitive to host load and an iroh warning in the tracing guard, recorded as flakes
+of both sides: `the_rendezvous_link_stays_up_when_ip_is_lost` (failed on one baseline run),
+`a_joiner_meets_a_running_beacon_before_the_grace` (one baseline run) and
+`webrtc_multihop_relay_none_direct` (alone, 3 runs per side: baseline 3 of 3 pass, integration 2 of 3;
+over all runs one failure in four on each side). The load was 12 to 157 during these runs.
+
+Lint and wasm are where the stack failed, in three steps, all fixed in `...-mist-frame-wasmfix-p3`
+(`5435c60c`, on the stack tip `a9c7b215`): (1) the instrumentation counter `note_ppid_wake` is unused on
+wasm; (2) `SocketBytes::read` calls `Endpoint::metrics`, which the browser build lacks; (3) a unit test
+copied three event loop states into an array above the `large_stack_arrays` limit once the state
+grew. On that tree fmt, `cargo task wasm` (24 rows and the disallowed-methods check) and
+`cargo task lint` (4 host rows) pass. Not yet gated: U1 (`c5e30263`, running now), M11 (`47bd1468`).
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
