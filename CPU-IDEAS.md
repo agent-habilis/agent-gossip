@@ -895,17 +895,20 @@ Added as an explicit requirement, next to the CPU and the metadata ratio.
 Metric D: duplicate bytes received (the second and later copy of content that the node
 already holds) as a share of all bytes received, per frame kind, before and after each fix.
 
-What the counters read today, and a gap to close:
-- `wire census` (`idle_bin_dup` against `idle_bin_fresh`) counts a repeat by frame id. It sees
-  fan-out copies (the same frame over several links) and replays of the same frame.
-- A resend of the anti-entropy path carries a new nonce, so it has a new frame id. The
-  id dedup counts it as FRESH, although the content is old. So `idle_bin_dup` understates the
-  duplicates that the resend flood makes [V by code: `copy_with_resend_nonce`].
-- `idle_resent`, `idle_duplicates` and `idle_fresh` (M2d, the meta hook that saw new content)
-  count at content level, but not in bytes and not by kind.
-- Task M10 for `origin-magnet`: a content-level duplicate counter in bytes by kind: for a state
-  frame, the change hash was already applied; for a log frame, the message id was already in
-  the log. Then D = (id-duplicate bytes + content-duplicate bytes) / all bytes in, by kind.
+What the counters read today (corrected 20:46 by `origin-magnet`; my first text was wrong):
+- The dedup key is SHA-256(author key + message id). The resend nonce is a trailer outside
+  the signed message, so a resend keeps its id and its dedup key. An anti-entropy resend of a
+  frame the node still remembers is caught by the id dedup and counted in `idle_bin_dup`.
+  Plumtree names a message by its bytes, nonce included, so each resend is a new gossip
+  message and reaches our ingest. That is why the resend flood costs the receive path.
+- Frames that slip past the id dedup: those whose key left the `seen` set (a FIFO of 2,000
+  keys; 64,000 in the experiment arms), and a frame that carries the same change under
+  another id. For chat the log (1,000 messages) is a second id source, so a chat resend is
+  still a duplicate. Only the state and meta channels have a second check, the change hash.
+- `idle_bin_cdup` (M10): bytes by kind of a frame that is new by id and whose change the
+  document had applied. It is part of `idle_bin_fresh`, so a reader adds it to the repeats.
+  For chat and app frames it is 0 by construction. `summarize.ts` reports
+  d_share = (dup + cdup) / (fresh + dup), in total and by kind.
 
 Sources of duplicates, with the evidence we hold:
 
