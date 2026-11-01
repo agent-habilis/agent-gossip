@@ -1,8 +1,9 @@
 # Bounded memory audit: habilis-network engine
 
 Scope: daemon-shipping crates of `habilis-network` (read-only).
+Base: pinned commit `f7cd9bbc`. Line numbers below are for `f7cd9bbc`, except where a row says it was not re-verified. The first draft read a dirty worktree, and many file paths changed at the pin. Rows that were not re-checked at the pin are marked `(not re-verified)`.
 Status: partial. Worst-case bytes are estimates from struct shapes, not measured.
-Assumed sizes: key 32 B, `Instant` 16 B, wire frame up to 3840 B, `Verified` about 0.8 KB extra.
+Sizes: one wire frame is at most 3,840 B (`MAX_MESSAGE_SIZE`). One stored frame is at most 3,920 B (3,840 B plus about 80 B overhead). Every row uses this value.
 
 ## Constants checked
 
@@ -24,16 +25,15 @@ Assumed sizes: key 32 B, `Instant` 16 B, wire frame up to 3840 B, `Verified` abo
 
 | # | file:line | type | growth driver | bound | worst case | when full | proposed bound and drop rule |
 |---|---|---|---|---|---|---|---|
-| 1 | `habilis-network-doc/src/lib.rs:140` (`MeshDoc.frames`) | `HashMap<ChangeHash, Verified>` | every applied change, never removed | NONE | 1M x ~4.6 KB ≈ 4.6 GB | grows | snapshot, then drop frames covered by a checkpoint |
+| 1 | `habilis-network-doc/src/mesh_doc.rs:509` (`MeshDoc.frames`) | `HashMap<ChangeHash, Verified>` | every applied change; only inserts (`mesh_doc.rs:508-509`). Largest real leak: about 3 meta changes per minute gives about 1.58M frames per year per document | NONE | per year: 1,576,800 x 3,920 B ≈ 6.2 GB per document | grows | snapshot, then drop frames covered by a checkpoint |
 | 2 | `habilis-network-doc/src/lib.rs:133` (`MeshDoc.doc`) | Automerge doc | full op history | NONE | not measured | grows | periodic save and compaction |
-| 3 | `habilis-network/src/daemon/event_loop.rs:226` (`flush_failed`) | unbounded channel | failed dials, only while the loop stalls | NONE | 1M x ~4.6 KB ≈ 4.6 GB | never drops | reroute to `pending_outbound` or a bounded channel |
-| 4 | `habilis-network/src/transport/pool.rs:117` (`PoolInner.addrs`) | `Mutex<HashMap<EndpointId, EndpointAddr>>` | each new peer address from any signed author | NONE | 1M x ~300 B ≈ 300 MB | grows | forget on sweep; FIFO cap at `KNOWN_ENDPOINTS_CAP` |
+| 4 | `habilis-network/src/transport/pool/unicast_pool.rs:256` (`addrs`) | `Mutex<HashMap<EndpointId, EndpointAddr>>` | each address note. Graceful leave removes the entry: `forget` (`unicast_pool.rs:720`), called from `lifecycle/presence_event.rs:55`. Remaining risk: an address noted at `probe.rs:998` or `:1092` (not re-verified) for an endpoint that no `forget` reaches | NONE in count; bounded per peer on graceful leave only | per leaked endpoint ≈ 300 B est.; grows only with endpoints that never leave gracefully | grows | cap with FIFO at `KNOWN_ENDPOINTS_CAP`; drop on silence timeout too |
 | 5 | `habilis-network/src/daemon/state.rs:592` (`address_book`) | iroh `MemoryLookup` | each first sighting; only `beacon_arm.rs` removes | NONE (unverified) | ~300 MB per 1M | unknown | forget with row 4 |
 | 6 | `habilis-network/src/membership/event.rs:177` (`json_sink`) | unbounded channel | every event line | NONE by design | 1M x ~300 B ≈ 300 MB | grows if consumer stops | bounded; drop app-message lines first |
 | 7 | `habilis-network/src/gossip/split.rs:187` (`control_tx`) | unbounded channel | topic events from peer churn | NONE | ~200 MB | grows if stalled | coalesce per peer |
-| 8 | `habilis-network/src/transport/graft_backoff.rs:48` (`by_peer`) | `HashMap<EndpointId, Entry>` | each refused neighbor request | NONE in time | 1M x ~110 B ≈ 110 MB | grows | prune after the wait; cap 256 |
+| 8 | `habilis-network/src/transport/graft_backoff.rs:48` (`by_peer`) (not re-verified at pin) | `HashMap<EndpointId, Entry>` | each refused neighbor request. Attack path: any member can mint keys at no cost | NONE in time | 1M x ~110 B ≈ 110 MB | grows | count cap 256, drop the oldest |
 | 9 | `habilis-network/src/daemon/state.rs:239, 263` (`direct`, `path_kinds`) | `HashMap` | each probed endpoint; rebind keeps the old endpoint | NONE on rebind path | 1M x 2 x ~50 B ≈ 100 MB | grows | remove old endpoint entries on bind |
-| 10 | `habilis-network/src/transport/admission.rs:300` (`closed_on_rung`) | `HashMap<EndpointId, Instant>` | each closed peer | NONE; read checks age, nothing removes | 1M x ~80 B ≈ 80 MB | grows | retain by 1-minute window on insert |
+| 10 | `habilis-network/src/transport/admission/inner.rs:54` (`closed_on_rung`) | `HashMap<EndpointId, Instant>` | each peer closed by the recursion rule (`signal_admission.rs:157-158`) | `RUNG_CLOSE_MEMORY` 15 s; pruned by `retain` on each sync (`inner.rs:196-197`) | keys in the 15 s window | n/a | keep |
 | 11 | `habilis-network/src/daemon/event_loop.rs:216` (`direct_tx`) | unbounded channel | each probe verdict | NONE | ~80 MB if stalled | grows | bounded; coalesce per peer |
 | 12 | `habilis-network/src/daemon/event_loop.rs:222` (`path_tx`) | unbounded channel | each path change | NONE | ~64 MB if stalled | grows | coalesce to latest per endpoint |
 | 13 | `event_loop.rs:240` (`rung_report_tx`); `beacon/mod.rs:1558` (`reports`) | unbounded channel | each rung probe | NONE | ~64 MB if stalled | grows | bounded; coalesce by rung |
@@ -45,7 +45,7 @@ Assumed sizes: key 32 B, `Instant` 16 B, wire frame up to 3840 B, `Verified` abo
 | 20 | `habilis-network/src/transport/pool.rs:87, 100` (`conns`, `dial_failures`) | `Mutex<HashMap>`, `Mutex<Cooldown>` | each dialed peer | idle sweep; cooldown 10 s; no count cap | live connections x idle time | idle sweep | count cap |
 | 21 | `habilis-network/src/daemon/state.rs:260, 267` (`path_watchers`, `route_dialed`) | `HashMap` | each watched path or dialed route | removed on replace and forget | roster-bound | removed on forget | keep |
 | 22 | `habilis-network/src/beacon/mod.rs:923` (`tasks`) | `Vec<JoinHandle>` | each beacon task | `retain !is_finished` | live tasks only | finished tasks dropped | keep |
-| 23 | `habilis-network/src/blob/store.rs:72, 37` (`map`, `owners`) | `HashMap<BlobDigest, BlobEntry>` | each produced blob | `MAX_BLOB_STORE_BYTES` 4 GiB; `evict_to_budget` | 4 GiB on disk | drops oldest, may drop a referenced blob | keep; review referenced blobs |
+| 23 | `habilis-network/src/blob/store/blob_store.rs:131` (`evict_to_budget`) | `HashMap<BlobDigest, BlobEntry>` | each produced blob | `MAX_BLOB_STORE_BYTES` 4 GiB (`evict_to_budget`, `blob_store.rs:131-146`) | 4 GiB on disk | removes the least recently registered blob and deletes its file (`remove`, `blob_store.rs:146-150`), even when a peer or user still refers to it. Files can vanish silently | refuse the new blob when over budget; never evict a referenced blob (user work rule) |
 | 24 | `habilis-network-chunks/src/lib.rs:181` (`ChunkMap.leaves`) | `Vec<ChunkHash>` | each blob | `MAX_BLOB_BYTES` 2 GiB / 64 KiB = 32,768 leaves | 1 MiB per blob | n/a | keep |
 
 ### Bounded rows (cap and drop rule known)
@@ -80,7 +80,7 @@ Sizes marked `est.` come from struct shape, not measurement. `unverified` means 
 |---|---|---|---|---|---|---|
 | `event_loop.rs:216` `direct_tx` | unbounded channel | one probe verdict per probe | none; producers bounded by probes in flight | est. 40 B per message | never full | bounded channel sized to probes in flight |
 | `event_loop.rs:222` `path_tx` | unbounded channel | path change per watched conn | none; producers bounded by watched conns | est. 50 B per message | never full | bounded channel sized to watched conns |
-| `event_loop.rs:226` `flush_failed_tx` | unbounded channel | failed flush, one per `watch_flush` task | producers bounded by `PENDING_OUTBOUND_CAP` 1024 | 1024 x 7.7 KB ≈ 7.9 MB | never full | bounded 1024; drop and count when full |
+| `event_loop.rs:226` `flush_failed_tx` | unbounded channel | failed flush, one per `watch_flush` task | producers come from `pending_outbound.take()` (`gossip/recv.rs:420`), capped at `PENDING_OUTBOUND_CAP` 1024 | 1024 x 3,920 B ≈ 4.0 MB | never full | bounded 1024; drop and count when full |
 | `transport/ipc.rs:147` `handle_connection` task | task | each local client connection | none on count | unverified | n/a | cap concurrent connections |
 | `daemon/state.rs:347` `peers` | set | each distinct nickname heard | time only: `ALIVE_TIMEOUT` 90 s | N x ~66 B | grows within 90 s window | cap at roster size |
 | `daemon/state.rs:360` `peer_endpoints` | map | each peer | pruned with `peers` | N x ~250 B est. | n/a | keep |
@@ -88,7 +88,7 @@ Sizes marked `est.` come from struct shape, not measurement. `unverified` means 
 | `daemon/state.rs:469` `rival_holders` | map | signer keys with rival flag | removed on flag clear and roster retain; no count cap | N x ~72 B; keys free to mint | none | cap with FIFO; unverified whether non-roster signers reach it |
 | `daemon/state.rs:74` `ParkedLinkStates` | map | link vectors for authors with no endpoint yet | count cap 256 | up to 16 MB (64 KB per cell, unverified) | refused at cap | cap bytes, not only count |
 | `gossip/split.rs:187` `control_tx` | unbounded channel | NeighborUp/Down and default-route items | none | est. 100 B per item | never drops | bound it; drop oldest with a counter |
-| `gossip/recv.rs:422` `watch_flush` task | task | one per flushed frame | `PENDING_OUTBOUND_CAP` 1024 | 1024 x 7.7 KB ≈ 7.9 MB | returns frame on failure | bound by dial timeout (unverified) |
+| `gossip/recv.rs:422` `watch_flush` task | task | one per flushed frame | `PENDING_OUTBOUND_CAP` 1024 | 1024 x 3,920 B ≈ 4.0 MB | returns frame on failure | bound by dial timeout (unverified) |
 | `transport/probe.rs` nudge tasks | task | one per WebRTC rider per alive tick | none on count | small per task | n/a | rate-limit per peer with `Cooldown` |
 | `transport/pool.rs:117` `addrs` | map | each address note | removed on `forget`; no count cap | N x ~280 B est. | none | cap at roster size |
 | `transport/pool.rs:87` `conns` | map | each dialed or accepted connection | idle sweep; ceiling enforcement unverified | N x conn handle | n/a | explicit cap from `MAX_DIRECT_PEERS` |
@@ -97,13 +97,13 @@ Sizes marked `est.` come from struct shape, not measurement. `unverified` means 
 | `membership/join.rs:149` inbound channel | channel | inbound `msg` frames | `INBOUND_CAP` 256 | 256 x 1,408 B ≈ 0.36 MB | drop policy unverified | keep |
 | `membership/event.rs:178` `json_sink` | unbounded channel | every node event | none | est. 200 B per event | never drops | bounded; daemon use unverified (tests only in repo) |
 | `registry.rs:55` WebRTC `slots` | map | one per attached session | `MAX_DIRECT_PEERS` 64 (`transport/webrtc.rs:678`); enforcement unverified | 64 x per-session size (unverified) | `reserve` refused | verify ceiling check |
-| `admission.rs:300` `closed_on_rung` | map | each closed peer | retained by 15 s window | keys in window | n/a | keep |
+| `admission/inner.rs:54` `closed_on_rung` | map | each closed peer | retained by `RUNG_CLOSE_MEMORY` 15 s (`inner.rs:196-197`) | keys in window | n/a | keep |
 | `beacon/mod.rs` `RungWatch.tasks` | Vec | one per probe | live probes only | live probes only | n/a | keep |
 | `beacon/mod.rs:1761` `arrivals` | channel(32) | arrivals | bounded 32 | 32 x 32 B | drop policy unverified | keep |
 | `habilis-network-doc/src/lib.rs:147` `pending` | map | orphan frames | `DOC_PENDING_TOTAL_MAX` 512; `DOC_PENDING_AUTHOR_MAX` 128 | 512 x 3.9 KB ≈ 2 MB per doc | victim evicted | keep |
 | `habilis-network-doc/src/lib.rs:162` `dropped` | Vec | orphans dropped | drained by `take_dropped` | per-ingest count | n/a | keep; relies on caller draining |
 | `SelfWriteGate` per-peer map (`lib.rs:101-108`) | automerge map | one key per nickname | no cap; no removal on leave in crate | ~100 B per nick est. plus history | n/a | prune on leave (caller unverified) |
-| `topology.rs:116` `vectors` | map | each origin's freshest link vector | expiry after 45 s (`topology.rs:23`) | N origins x up to 64 KB (unverified) | refused or expired | add link-count cap |
+| `topology.rs:116` `vectors` (not re-verified) | map | each origin's freshest link vector. Attack path: any member can mint new origin keys at no cost | expiry after 45 s (`topology.rs:23`) | N origins x up to 64 KB (unverified) | refused or expired | count cap, drop the oldest |
 | `topology.rs:122` `tombstones` | map | removed origins | retained by max age | N x ~24 B | n/a | keep |
 | `graph.rs:18` `Graph` | struct | built per call | transient | O(V+E) per call | n/a | keep |
 | `selector.rs:44` `select` | per call | path selection | no persistent state | 0 | n/a | keep |
@@ -118,6 +118,15 @@ Sizes marked `est.` come from struct shape, not measurement. `unverified` means 
 - Per document at N = 1,000,000: about 3.96 GB. Meta and state together: about 7.9 GB, before Automerge history.
 
 **Document B: Automerge history.** Not compacted. A grep of `crates/` finds no call to `save_incremental`, `save`, `save_after`, `compact`, `load`, `load_incremental`, or `autosave`. The crate has no persistence. Full history stays in memory for the process lifetime. Automerge cost per change is unverified.
+
+## EventLoopState rows (`daemon/state/event_loop_state.rs` at `f7cd9bbc`)
+
+| collection | type | growth driver | bound | worst case | when full | note |
+|---|---|---|---|---|---|---|
+| `author_seqs` (`:703`), `forked` (`:706`), `by_hash` (`:712`), `dag_heads` (`:713`) | maps and sets | each loggable chained message | bounded only because `push_to_log` (`gossip/recv.rs:1071`, forget path at `recv.rs:1030-1037`) calls `forget_msg_seq` and `forget_hash` for each evicted message (`event_loop_state.rs:1534`, `:1549`) | about 1,000 x 80 B ≈ 80 KB, tied to `MESSAGE_LOG_SIZE` | follows log eviction | dependency: removing or changing `push_to_log`'s forget calls makes these grow without bound |
+| `last_seen` (`:350`), `quiet_since` (`:380`), `left_at` (`:388`), `surfaced` (`:408`) | map and set | each peer heard, or evicted or departed | pruned by `heartbeat.rs:50-101` | bounded by peer count | n/a | keep |
+| `probes`, `pongs` (`:775-777`) | maps | each probe or pong | not re-verified at pin | unverified | unverified | verify before relying on it |
+| `SelfWriteGate` peer keys (`habilis-network-doc`, `lib.rs:101-108` in the first draft) | automerge map keys | one key per nickname | nothing prunes them | ~100 B per nick est. | n/a | prune on leave (caller unverified) |
 
 ## Open items
 
