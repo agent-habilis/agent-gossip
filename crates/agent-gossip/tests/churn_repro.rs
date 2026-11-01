@@ -1,0 +1,227 @@
+//! Churn repro for issue #75: verify H1 (replayed frame revives a dead peer)
+//! and H2 (false timeouts of live peers) with red tests at default timings.
+
+use std::time::Duration;
+
+use agent_gossip::OutputEvent;
+use agent_gossip_test_fixtures as common;
+use common::{InProcNode, Node, PresenceSubtype, cli_peers, cli_poll};
+
+/// Idle hold for repro (a). Brief asks for more than 3 min at default timings.
+const IDLE_HOLD: Duration = Duration::from_secs(190);
+
+/// Budget for a pair to see each other at default timings.
+const ROSTER_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Silence after SIGKILL that outlives the 90 s peer timeout plus one sweep.
+const KILL_SETTLE: Duration = Duration::from_secs(120);
+
+/// Repro (a), H2: an idle pair at default timings must not time out a live peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "190 s hold, run with --ignored"]
+async fn idle_pair_holds_without_peer_timeout_or_return() {
+    let mut creator = InProcNode::create("churn-idle").await;
+    let mesh = creator.mesh.clone();
+    let mut joiner = InProcNode::join(&mesh, "churn-b").await;
+
+    assert!(
+        creator
+            .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
+            .await,
+        "creator never saw the joiner"
+    );
+    assert!(
+        joiner
+            .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
+            .await,
+        "joiner never saw the creator"
+    );
+
+    tokio::time::sleep(IDLE_HOLD).await;
+
+    for (label, node) in [("creator", &mut creator), ("joiner", &mut joiner)] {
+        let timeouts = node
+            .events()
+            .iter()
+            .filter(|event| matches!(event, OutputEvent::PeerTimeout { .. }))
+            .count();
+        let returns = node
+            .events()
+            .iter()
+            .filter(|event| matches!(event, OutputEvent::PeerReturn { .. }))
+            .count();
+        assert_eq!(
+            timeouts + returns,
+            0,
+            "{label}: {timeouts} peer_timeout and {returns} peer_return during an idle hold of {IDLE_HOLD:?}"
+        );
+    }
+}
+
+/// Repro (b), H1: a SIGKILLed peer must not come back after a fifth peer joins.
+#[test]
+fn killed_peer_does_not_return_after_fifth_joins() {
+    let (creator, mesh) = Node::create_named("churn-kill");
+    let mut victim = Node::join(&mesh, "churn-victim");
+    let survivor_a = Node::join(&mesh, "churn-a");
+    let survivor_b = Node::join(&mesh, "churn-b");
+    std::thread::sleep(Duration::from_secs(20));
+
+    victim.kill();
+    victim.wait_exit();
+    let victim_nick = victim.nickname.clone();
+    std::thread::sleep(KILL_SETTLE);
+
+    let fifth = Node::join(&mesh, "churn-fifth");
+    std::thread::sleep(Duration::from_secs(30));
+
+    let mut timeouts_of_victim = 0;
+    let mut returns_of_victim = 0;
+    for nick in [&creator.nickname, &survivor_a.nickname, &survivor_b.nickname] {
+        let served = cli_poll(&mesh, nick, None);
+        let events: Vec<serde_json::Value> = serde_json::from_str(&served).unwrap_or_default();
+        let about_victim = |kind: &str| {
+            events
+                .iter()
+                .filter(|event| event["event"] == kind && event["nickname"] == victim_nick.as_str())
+                .count()
+        };
+        timeouts_of_victim += about_victim("peer_timeout");
+        returns_of_victim += about_victim("peer_return");
+    }
+    assert!(
+        timeouts_of_victim > 0,
+        "victim `{victim_nick}` never timed out, so the kill was not detected"
+    );
+
+    let counts: Vec<String> = [&creator.nickname, &survivor_a.nickname, &fifth.nickname]
+        .iter()
+        .map(|nick| cli_peers(&mesh, nick))
+        .collect();
+    assert_eq!(
+        returns_of_victim, 0,
+        "victim `{victim_nick}` came back {returns_of_victim} time(s) after SIGKILL; peer counts: {counts:?}"
+    );
+}
+
+/// Repro (a) long form: six minutes covers one 270 s cycle from the notes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "six-minute hold, run with --ignored"]
+async fn idle_pair_holds_six_minutes() {
+    let mut creator = InProcNode::create("churn-long").await;
+    let mesh = creator.mesh.clone();
+    let mut joiner = InProcNode::join(&mesh, "churn-long-b").await;
+
+    assert!(
+        creator
+            .wait_presence_count(PresenceSubtype::Joined, 1, ROSTER_TIMEOUT)
+            .await,
+        "creator never saw the joiner"
+    );
+    tokio::time::sleep(Duration::from_secs(360)).await;
+
+    for (label, node) in [("creator", &mut creator), ("joiner", &mut joiner)] {
+        let flaps = node
+            .events()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    OutputEvent::PeerTimeout { .. } | OutputEvent::PeerReturn { .. }
+                )
+            })
+            .count();
+        assert_eq!(flaps, 0, "{label}: {flaps} peer_timeout/peer_return in six minutes");
+    }
+}
+
+/// Repro H4/H5: eight peers start within a few seconds; each sees N-1 joins and a count of N.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn burst_start_counts_each_peer_once() {
+    const PEERS: usize = 8;
+    let mut creator = InProcNode::create("churn-burst").await;
+    let mesh = creator.mesh.clone();
+    let mut others = Vec::new();
+    for index in 1..PEERS {
+        others.push(InProcNode::join(&mesh, &format!("churn-burst-{index}")).await);
+    }
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let joined_at_10 = creator.presence_count(PresenceSubtype::Joined);
+    tokio::time::sleep(Duration::from_secs(50)).await;
+    let joined_at_60 = creator.presence_count(PresenceSubtype::Joined);
+    let joined_rows: Vec<String> = creator
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            OutputEvent::Presence { message }
+                if matches!(&message.kind, habilis_network::protocol::MessageKind::Presence { subtype } if *subtype == PresenceSubtype::Joined) =>
+            {
+                Some(format!("author={} id={} ts={}", message.author, message.id, message.timestamp))
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        joined_at_60,
+        PEERS - 1,
+        "creator saw {joined_at_60} joined events (at 10 s: {joined_at_10}): {joined_rows:#?}"
+    );
+}
+
+/// Repro H5: a ninth peer joins after the burst; its joined count must match the creator's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn late_joiner_counts_match_creator() {
+    let mut creator = InProcNode::create("churn-late").await;
+    let mesh = creator.mesh.clone();
+    let mut others = Vec::new();
+    for index in 1..8 {
+        others.push(InProcNode::join(&mesh, &format!("churn-late-{index}")).await);
+    }
+    tokio::time::sleep(Duration::from_secs(60)).await;
+
+    let mut late = InProcNode::join(&mesh, "churn-late-9").await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let creator_joined = creator.presence_count(PresenceSubtype::Joined);
+    let late_joined = late.presence_count(PresenceSubtype::Joined);
+    assert_eq!(
+        late_joined, creator_joined,
+        "late joiner saw {late_joined} joined events, creator saw {creator_joined}"
+    );
+}
+
+/// Repro H3: a SIGSTOPped daemon, held for 60 s then 200 s, must not leave a split roster.
+#[test]
+#[ignore = "280 s SIGSTOP run, run with --ignored"]
+fn stopped_daemon_resumes_with_matching_roster() {
+    let (creator, mesh) = Node::create_named("churn-stop");
+    let stopped = Node::join(&mesh, "churn-stopped");
+    let peer = Node::join(&mesh, "churn-peer");
+    std::thread::sleep(Duration::from_secs(20));
+
+    stopped.stop();
+    std::thread::sleep(Duration::from_secs(60));
+    stopped.cont();
+    std::thread::sleep(Duration::from_secs(200));
+
+    let mut timeouts = 0;
+    let mut returns = 0;
+    for nick in [&creator.nickname, &peer.nickname] {
+        let served = cli_poll(&mesh, nick, None);
+        let events: Vec<serde_json::Value> = serde_json::from_str(&served).unwrap_or_default();
+        timeouts += events.iter().filter(|event| event["event"] == "peer_timeout").count();
+        returns += events.iter().filter(|event| event["event"] == "peer_return").count();
+    }
+    let count = |nick: &str| -> u64 {
+        let raw: serde_json::Value = serde_json::from_str(&cli_peers(&mesh, nick)).unwrap_or_default();
+        raw["peer_count"].as_u64().unwrap_or(0)
+    };
+    let count_creator = count(&creator.nickname);
+    let count_stopped = count(&stopped.nickname);
+    assert_eq!(
+        count_creator, count_stopped,
+        "resumed daemon peer_count {count_stopped} differs from creator {count_creator}; {timeouts} peer_timeout, {returns} peer_return across survivors"
+    );
+}
