@@ -826,6 +826,32 @@ What this says (each point is [V] from the counters unless marked):
 7. Against the target: at cap 8 and 12 daemons the worst daemon is above 1% in every clean window of
    both arms (median below 1% in the late windows). This agrees with the old runs (worst 1.05% at N=12).
 
+### Arms compared at 12 daemons, cap 8 (`lumen-gear`, example driver, 01:30 local)
+
+Late idle window 480 s to 780 s unless marked; bytes are 300 s totals over 12 daemons; CPU median / worst per daemon,
+overlapped. Void runs (load above 12) are left out. F9 is F6 with the refill backoff of the gossip fork (gossip counters read zero).
+
+| Arm | CPU median / worst | UDP in | frame bytes in | IP paths added |
+|---|---|---|---|---|
+| B4 (before) | 0.70% / 1.22% | 41.4 MB | 17.8 MB | 1,725 |
+| F6 (stack, no U1) | 0.93% / 1.57% | 65.2 MB | 17.7 MB | 4,986 |
+| F7 (F6 + unicast digests) | 0.87% / 1.60% | 63.6 MB | 6.07 MB | 6,841 |
+| F9 (F6 + refill backoff) | 0.68% / 1.03% | 31.0 MB | 16.8 MB | 735 |
+| early window 180 s to 480 s: F6 / F7 / F9 | 1.43 to 1.63 / 3.0 to 3.2 ; F9 0.63 to 0.72 / 1.1 to 1.2 | F6 165 MB, F7 141 MB, F9 35 to 37 MB | | 16,792 / 15,659 / 1,068 to 1,477 |
+
+What the counters say [V]:
+1. No arm has the worst daemon below 1% at 12 daemons and cap 8. F9 is closest (1.03% to 1.18%) and its medians are
+   below 1% in every window.
+2. The refill backoff removes the early churn: UDP bytes about 4 times lower than F6 in the early window, paths added about 11
+   times lower, flat over the age of the run. Its early CPU equals its late CPU.
+3. Unicast digests cut the frame bytes by about 65% (6.07 against 17.7 MB) but not the UDP bytes or the CPU while the churn
+   runs: F7 matches F6 there. In the roster-above-cap regime the handshake cost of the churn is larger than the frames.
+4. F6 sits above B4 in late UDP bytes and worst CPU. Not explained; two arms differ by the whole stack. Open.
+5. Two regimes, so two levers [G, from points 2 and 3 and the real CLI read]. At cap 32 and 12 daemons the roster is below
+   the cap, there is no churn, and the digests are 96% of the frame bytes (the real CLI read). At 50 daemons the roster is above
+   the cap of 32, the same ratio as 12 above 8, so both costs should appear: the churn (the refill backoff) and the digests
+   (unicast digests). F8 = F7 + refill backoff is the arm that has both. It decides the target at 50.
+
 ### Floor read on the real CLI (`wire-straw`, 12 calm daemons, 00:35 local)
 
 Setup: the real `agent-gossip` CLI (app `b588fc75` with the engine arm), default policy (no multihop), 12 daemons, overlapped
