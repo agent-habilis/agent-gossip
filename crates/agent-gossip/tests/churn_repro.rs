@@ -79,7 +79,7 @@ fn killed_peer_does_not_return_after_fifth_joins() {
     let mut returns_of_victim = 0;
     for nick in [&creator.nickname, &survivor_a.nickname, &survivor_b.nickname] {
         let served = cli_poll(&mesh, nick, None);
-        let events: Vec<serde_json::Value> = serde_json::from_str(&served).unwrap_or_default();
+        let events: Vec<serde_json::Value> = serde_json::from_str(&served).expect("poll prints JSON");
         let about_victim = |kind: &str| {
             events
                 .iter()
@@ -170,25 +170,39 @@ async fn burst_start_counts_each_peer_once() {
     );
 }
 
-/// Repro H5: a ninth peer joins after the burst; its joined count must match the creator's.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn late_joiner_counts_match_creator() {
-    let mut creator = InProcNode::create("churn-late").await;
-    let mesh = creator.mesh.clone();
+/// Leaves the mesh on drop, so a panicking test does not leave its daemons running.
+struct LeaveOnDrop(String);
+
+impl Drop for LeaveOnDrop {
+    fn drop(&mut self) {
+        let _ = common::test_cmd().args(["leave", &self.0]).output();
+    }
+}
+
+/// Repro H5: a ninth peer joins after the burst; creator and late joiner must report one `peer_count`.
+#[test]
+fn late_joiner_reports_same_peer_count_as_creator() {
+    let (creator, mesh) = Node::create_named("churn-late");
+    let _leave = LeaveOnDrop(mesh.clone());
     let mut others = Vec::new();
     for index in 1..8 {
-        others.push(InProcNode::join(&mesh, &format!("churn-late-{index}")).await);
+        others.push(Node::join(&mesh, &format!("churn-late-{index}")));
     }
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    std::thread::sleep(Duration::from_secs(60));
 
-    let mut late = InProcNode::join(&mesh, "churn-late-9").await;
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    let late = Node::join(&mesh, "churn-late-9");
+    std::thread::sleep(Duration::from_secs(10));
 
-    let creator_joined = creator.presence_count(PresenceSubtype::Joined);
-    let late_joined = late.presence_count(PresenceSubtype::Joined);
+    let peer_count = |nick: &str| -> u64 {
+        let raw: serde_json::Value =
+            serde_json::from_str(&cli_peers(&mesh, nick)).expect("peers prints JSON");
+        raw["peer_count"].as_u64().expect("peers carries a numeric peer_count")
+    };
+    let creator_count = peer_count(&creator.nickname);
+    let late_count = peer_count(&late.nickname);
     assert_eq!(
-        late_joined, creator_joined,
-        "late joiner saw {late_joined} joined events, creator saw {creator_joined}"
+        late_count, creator_count,
+        "late joiner peer_count {late_count} differs from creator {creator_count}"
     );
 }
 
@@ -210,13 +224,14 @@ fn stopped_daemon_resumes_with_matching_roster() {
     let mut returns = 0;
     for nick in [&creator.nickname, &peer.nickname] {
         let served = cli_poll(&mesh, nick, None);
-        let events: Vec<serde_json::Value> = serde_json::from_str(&served).unwrap_or_default();
+        let events: Vec<serde_json::Value> = serde_json::from_str(&served).expect("poll prints JSON");
         timeouts += events.iter().filter(|event| event["event"] == "peer_timeout").count();
         returns += events.iter().filter(|event| event["event"] == "peer_return").count();
     }
     let count = |nick: &str| -> u64 {
-        let raw: serde_json::Value = serde_json::from_str(&cli_peers(&mesh, nick)).unwrap_or_default();
-        raw["peer_count"].as_u64().unwrap_or(0)
+        let raw: serde_json::Value =
+            serde_json::from_str(&cli_peers(&mesh, nick)).expect("peers prints JSON");
+        raw["peer_count"].as_u64().expect("peers carries a numeric peer_count")
     };
     let count_creator = count(&creator.nickname);
     let count_stopped = count(&stopped.nickname);
