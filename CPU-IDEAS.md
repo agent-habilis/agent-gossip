@@ -1378,6 +1378,30 @@ Reading [V for the table; G for the fit and the projection]:
    put the projection near 0.3%, well below 1%. It needs a run: 50 daemons, \`--max-peers 8\` against 32, on F8 or F10. Each link costs timers
    and QUIC upkeep even when idle; a longer QUIC keep-alive would cut the per-link part further (not tested).
 
+## What fills the chat log: N squared joined frames (`origin-magnet`, M12 task B, 04:05 local)
+
+Setup: real CLI built from the M12 engine (`01f77427`), release, `nice` 10, 12 daemons, 540 s, a census line each minute (`log_len`, `kinds`).
+Result [V], all 12 daemons, from minute 2 to the end: `log_len=110`, `kinds=presence:joined=110`. Nothing else: no `a2a_*` tag, no chat, no alive,
+no left, no state or meta frame. The whole chat log, and so the whole chat digest (about 110 ids), is `joined` presence frames: about 9 per member
+at N=12.
+
+Cause [V by reading `presence_event.rs:102`; not measured per author]: a node re-announces its OWN `joined`, with a fresh id, every time it sees a NEW member
+join ("so late joiners seed their roster"), and each copy is kept in the log (`retain_own_broadcast`). So N members make about N x N
+`joined` frames. That is O(N^2) ids in every digest and in every backfill.
+
+Why it may matter more than anything else we have found [G, 75%; needs a run]:
+1. The log holds 1,000 frames (`MESSAGE_LOG_SIZE`) and the dedup memory 2,000 keys. N squared passes 1,000 at N=32 (32 x 32 = 1,024) and passes
+   2,000 at N=45. The live mesh has 45 or more members: about 2,000 `joined` frames against a log of 1,000. Nodes then cannot hold the full set, the
+   oldest are evicted at different times on different nodes, every digest diff finds "missing" frames, and the answers re-flood them. That would be the
+   resend loop of the live mesh (items 4 and 18 above), and it would explain why fresh meshes of 12 (144 frames) never reproduce it.
+2. At N=50 the target mesh holds about 2,500 `joined` frames, above both caps.
+3. Each new join also triggers N re-announce broadcasts: about N squared extra frames while a mesh forms.
+
+Test: a calm CLI mesh of 36 to 40 daemons with the census gauges; the log should reach 1,000 (full) and `idle_resent` should leave 0 if the
+hypothesis holds. Fix to test (behaviour change in retention, off by default): keep only the NEWEST `joined` per author in the log (supersede on push,
+as the `left` case already does), or do not log a re-announce. The retained set must stay a function of the message set on every node. Needs a loopback
+test (a late joiner still gets the full roster), a mixed-version check and a measured gain.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
