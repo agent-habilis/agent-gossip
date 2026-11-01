@@ -784,6 +784,75 @@ unique per peer, plus the labels. The critical bytes are well under 25% of the e
 What stays: endpoint, key, name, version, status, signature. The per-kind counters (item
 20) turn these estimates into measured shares.
 
+### Item 7 explained: unicast digests, no mesh-wide resend (requested 20:02 local)
+
+How it works today [V by code reading and the live flood test]:
+1. Every 10 s each node broadcasts a digest to the whole mesh: the heads of the chat log
+   and of the state documents, at most 140 ids.
+2. A member that holds frames the sender lacks answers. Up to 3 members answer per digest.
+   A 5 s cooldown per author limits each answerer.
+3. An answer resends up to 64 frames. It re-broadcasts them to the whole mesh with a new
+   nonce (`copy_with_resend_nonce`). The new nonce makes the frame look new, so the dedup
+   set does not drop it.
+4. Every member receives the copy. Each one verifies the signature, then finds that it
+   already holds the content. That is the repeat cost.
+5. A peer that is "ahead" of the sender also triggers fast rounds: a 400 ms retry that
+   renews itself with each digest and can loop for ever (item 16 to 19).
+
+Measured cost today (live daemon, 45 members): 13.1 resent frames per second per member,
+mean 47.7 frames per answer, cap 64 reached. On my daemon 98% of the logged inbound bytes
+were state frames, and the wire carried 2.66 GB in 83 min (about 530 KB/s).
+
+The unicast form, step by step [design, not built]:
+1. A node sends its digest to one random peer each tick, not to the whole mesh.
+2. That peer compares the digest with its own heads. If it holds more, it sends the missing
+   frames to the asker only, on a unicast stream, with the original nonce.
+3. If the asker still lacks frames, it asks again at the next tick or at once if the answer
+   was full. The retry has a cap and a backoff (the M5 mechanism).
+4. No re-broadcast. One copy of each missing frame crosses the wire, to the node that lacks it.
+
+Expected bytes [G, not measured]: a repair that today costs up to N copies of 64 frames
+(one per member) would cost 1 copy to the asker. In a calm 45-member mesh the repeats should
+fall to near zero, as the heads match. The paired A/B (arms B0 and F2, `wire census`) will
+give the number. Until then, treat any figure as a guess.
+
+What it still guarantees:
+- Late joiner: the first-link pull stays (M-PULL), and the digest finds what is left.
+- Partition heal: when two sides meet, the first digest to a peer of the other side
+  finds the difference, and the answer is a unicast backfill.
+- Quiet peer return: the next tick pulls what it missed, one peer at a time, with no flood.
+
+What it gives up:
+- Speed of repair for a gap that many members share: one random peer per tick, so
+  convergence takes more ticks. A node that misses a frame heals in about
+  (peers holding it)^-1 ticks, not in one broadcast round.
+- The chance that a frame reaches a node that never sent a digest. A digest is the only
+  way to ask, so a node that is silent on digests is repaired by the others' digests only
+  if the answerer pushes to it. The first-link pull covers a new node, and the node's own
+  digest covers the rest.
+- Old peers still broadcast digests and expect a broadcast answer. A mixed mesh keeps the
+  old cost until all nodes upgrade; new nodes can answer an old digest by unicast.
+
+Relation to the pending anti-entropy decision: it is the "cheaper form" that the advisor
+review recommended (option (c)), not the removal. It keeps the repair and removes the
+flood, so the decision to keep or remove the whole mechanism stays open and independent.
+If the user chooses removal, item 7 is moot. If the user chooses to keep state repair
+only (see the reassessment above), item 7 is the form of that repair.
+
+Risk: medium. It changes who answers and how. The risks are slower convergence, a
+retry loop (the M5 cap covers it), and the mixed-version mesh.
+
+Test plan:
+1. Unit tests: the answer goes to the asker only, with the original nonce; no
+   re-broadcast; the 64 cap and the cooldown still hold.
+2. Loopback tests that must stay green: late join, partition heal, a member frozen 75 s
+   and 150 s, a sender that leaves, sender and receiver on old and new versions (S5).
+3. Convergence time: time to heal a gap with 12 daemons, old against new, in the heal
+   check of `lumen-gear` (the same cases as the refill backoff A/B).
+4. Cost: repeats, bytes and CPU per kind from the `wire census`, B0 against F2 and then
+   against the new arm, in the calm and the live mesh.
+5. The red test for each guarantee above comes first, as the rules require.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
