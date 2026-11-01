@@ -853,6 +853,41 @@ Test plan:
    against the new arm, in the calm and the live mesh.
 5. The red test for each guarantee above comes first, as the rules require.
 
+## Target: zero non-critical bytes in a calm mesh (relayed 20:03 local)
+
+Target as I read it: in steady state a calm mesh carries no non-critical byte. That means no
+repeated frame, no static card, no label that the mesh does not need. It does not mean zero
+bytes: liveness, identity and signatures are critical, so a floor remains. If the user
+meant literal zero bytes, that is not reachable and a peer would look dead after 90 s.
+
+Floor per source in a calm mesh (G unless a counter is named; the `wire census` and the
+layer counters P1 and P3 turn each row into a number):
+
+| Source | Can reach zero? | Floor left |
+|---|---|---|
+| Resent and repeated frames | yes | 0 after the loop fixes (M2b to M6) and unicast digests |
+| Static card (prose, skills, modes, flags) | yes in steady state; once per join today | 0 with the prose removed and the card by reference; the unique 420 bytes per peer stay, sent once per join |
+| Labels (cwd, host, harness, model) | yes | 0 if fetched on demand; `status` stays |
+| Join backfill of history and dead members | yes | 0 after the entries of left peers are removed |
+| Alive beats | no | 1 frame per node per 30 s, only when the node sent nothing else |
+| Digests (repair) | no, unless repair is removed | 1 small frame per node per tick to one peer; can ride on the alive beat |
+| PeerInfo, linkstate, ping and pong | to be measured | linkstate only with multihop; the others on change or on demand |
+| Envelope of each frame (JSON, hex keys, signature) | no | about 300 bytes per frame; a binary encoding would halve it (wire change) |
+| QUIC keepalive and ACK, gossip control (HyParView, IHave, Shuffle) | no | below our frames; P1 and P3 measure it |
+
+Closest steps, in order of distance to zero (each one is measured before the next):
+1. Counters first: the `wire census` (done), P1 endpoint bytes (next), P3 gossip bytes by
+   message type. They give the floor and the ratio.
+2. Remove repeats: M2c, M3, M5, M6 (built) and the unicast digests (item 7).
+3. Remove the card prose, then send the card by reference (proposals 1 and 2).
+4. Fetch labels and graph fields on demand (proposal 5).
+5. Remove the entries and history of left peers (proposal 4).
+6. Shrink what stays: compress, then a binary envelope (proposal 3 and a wire change).
+
+The result to report with each step is the floor: bytes per second in a calm mesh of
+12 daemons, split into data, critical metadata, non-critical metadata and the layers
+below, and the ratio, next to CPU.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
