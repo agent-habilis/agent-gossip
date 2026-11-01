@@ -888,6 +888,53 @@ The result to report with each step is the floor: bytes per second in a calm mes
 12 daemons, split into data, critical metadata, non-critical metadata and the layers
 below, and the ratio, next to CPU.
 
+## Requirement: less duplicated data (relayed 20:05 local)
+
+Added as an explicit requirement, next to the CPU and the metadata ratio.
+
+Metric D: duplicate bytes received (the second and later copy of content that the node
+already holds) as a share of all bytes received, per frame kind, before and after each fix.
+
+What the counters read today, and a gap to close:
+- `wire census` (`idle_bin_dup` against `idle_bin_fresh`) counts a repeat by frame id. It sees
+  fan-out copies (the same frame over several links) and replays of the same frame.
+- A resend of the anti-entropy path carries a new nonce, so it has a new frame id. The
+  id dedup counts it as FRESH, although the content is old. So `idle_bin_dup` understates the
+  duplicates that the resend flood makes [V by code: `copy_with_resend_nonce`].
+- `idle_resent`, `idle_duplicates` and `idle_fresh` (M2d, the meta hook that saw new content)
+  count at content level, but not in bytes and not by kind.
+- Task M10 for `origin-magnet`: a content-level duplicate counter in bytes by kind: for a state
+  frame, the change hash was already applied; for a log frame, the message id was already in
+  the log. Then D = (id-duplicate bytes + content-duplicate bytes) / all bytes in, by kind.
+
+Sources of duplicates, with the evidence we hold:
+
+| Source | Evidence | Can reach zero? |
+|---|---|---|
+| Anti-entropy resend flood (new nonce) | 13.1 frames/s/member live; 80% of busy time follows a duplicate | yes, in a calm mesh |
+| Fast-round retry loop | `origin-magnet` M5: loop shown; backoff built | yes, after the cap |
+| Fan-out copies (one broadcast over several links) | refill backoff A/B (`lumen-gear`, 12 daemons, cap 8): bytes in -70% | no: a tree needs a floor of copies; IHave and Graft add control bytes (P3 reads them) |
+| Join backfill of the whole history | late join and churn runs; `holds_heads` cost | to one copy per joiner with a unicast backfill |
+| Repeated state frames (the same change over many paths) | 98% of logged inbound bytes are state frames | to 1 copy per node, in steady state |
+
+Floor for D: 0% from resends, join backfills and repeated state frames in a calm mesh. The
+fan-out copies of a broadcast keep a floor above 0 until the gossip layer shows an eager tree
+with no cycles; the floor is read from P3 (Gossip bytes out per frame) and the `wire census`.
+I do not give a number before the counters read it.
+
+Steps to cut duplicates, ordered by bytes saved per risk (estimates are guesses; the A/B reads them):
+1. Refill backoff in the gossip fork: measured -70% bytes in on 12 daemons; the heal check
+   has one open case (rep B-2). Risk low to medium.
+2. Backoff on the stalled fast-round retry (M5): stops the loop; risk low.
+3. Unicast digests, answer to the asker only, no re-broadcast (item 7): removes the resend
+   flood; risk medium.
+4. A unicast join backfill: one copy per joiner; risk low to medium.
+5. Smaller duplicates: remove card prose, card by reference, compression (proposals 1 to 3
+   of the classification): shrinks each copy that stays; risk low to medium.
+6. Remove dead members' entries (proposal 4): fewer bytes in every backfill; risk medium.
+7. Tune the eager tree (the active view size and the prune rules): the fan-out floor; needs
+   P3 first; risk higher, as it changes gossip behaviour.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
