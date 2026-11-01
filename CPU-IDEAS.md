@@ -826,6 +826,39 @@ What this says (each point is [V] from the counters unless marked):
 7. Against the target: at cap 8 and 12 daemons the worst daemon is above 1% in every clean window of
    both arms (median below 1% in the late windows). This agrees with the old runs (worst 1.05% at N=12).
 
+### Floor read on the real CLI (`wire-straw`, 12 calm daemons, 00:35 local)
+
+Setup: the real `agent-gossip` CLI (app `b588fc75` with the engine arm), default policy (no multihop), 12 daemons, overlapped
+with `lumen-gear`'s 12 on the same host. All 12 alive, full mesh, no stalled timers. CPU per daemon from
+cputime after 180 s, median / worst, overlapped so an upper bound. Runs that crossed the load rule of 12 are void
+(cell 3 B4-1, cell 3 F6-1, default B4-1); the rest agree with them within about 5%.
+
+| Valid run | CPU median / worst | UDP in / out KB/s per daemon | wire in KB/s | body in KB/s |
+|---|---|---|---|---|
+| cell 3 (no gossip transport) B4-2, calm | 0.58% / 0.79% | 7.30 / 7.71 | 4.30 | 2.73 |
+| cell 3 F6-2, calm | 0.57% / 0.78% | 7.59 / 8.04 | 4.68 | 3.11 |
+| default policy F6-1, calm | 0.43% / 0.59% | 7.65 / 8.11 | 4.74 | 3.19 |
+
+1. [V] Every valid run is below 1% at 12 daemons, worst daemon included (0.59% to 0.79%). The 12-daemon
+   floor of the real CLI is under the target; the example driver of `lumen-gear` (multihop on, cap 8) read higher.
+2. [V] About 96% of the received frame bytes are the three digest kinds: chat digest 65% to 72%, meta
+   digest 15% to 21%, state digest 10% to 12%, presence 2%. Repeats are near zero. There is no churn
+   (paths added 0.01 to 0.03 per 10 s). The idle floor of a calm mesh is the digest tick.
+3. [V] The gossip transport carries no frames or bytes in the calm mesh (counters 0), but drops 30 to 35 frames per
+   10 s per daemon in the default policy. Joiners take the creator's policy, or have no handle. Removing the transport
+   changed the bytes within noise (7.59 against 7.65 KB/s in; n=1 per cell), so it is not a lever so far.
+4. [V] Loaded phase (rep 2, 1 broadcast of 200 bytes per daemon per 30 s), B4 / F6: broadcast frames in
+   420 / 453 bytes per second per daemon; UDP in 8.41 / 8.38 KB/s; wire in 5.44 / 5.48 KB/s. By hand: metadata per
+   data byte about 12 on the wire (wire minus app, over app) and about 19 to 20 on UDP. Both arms alike, as
+   expected, because the stack fixes target the flood.
+5. [G] What it means at 50 daemons. A digest holds up to 140 ids (2 windows of 70) as base58, about 6 KB
+   at the cap, and every member sends one per 10 s. At 50 members each daemon would receive 49 digests per
+   10 s: about 30 KB/s of chat digests alone, a few times the whole floor at 12 (4.3 KB/s). The cost is
+   linear in the member count, as the CPU curve is. At the cost per member of this read (about 0.047% per
+   member) a daemon would use about 2.4% at 50. Unicast digests (U1, arm F7) cut the digests received by a
+   factor of N. This is the evidence that points at U1; it is not proven until the F7 runs read it.
+6. The ratio tool now also reads a folder of logs without a summary file (\`...-leader-ratio\` sha \`a02723f5\`).
+
 Early window and the short connections (`lumen-gear`, B4 rep 2, totals over 12 daemons, 300 s,
 cap 8, so the roster of 12 is above the cap): UDP bytes in 153.5 MB early against 52.5 MB late; relay
 bytes 60.6 against 10.8 MB; datagrams 464k against 211k. IP paths added 15,602 against 3,150; paths
