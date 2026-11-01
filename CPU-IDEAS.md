@@ -1227,6 +1227,29 @@ copied three event loop states into an array above the `large_stack_arrays` limi
 grew. On that tree fmt, `cargo task wasm` (24 rows and the disallowed-methods check) and
 `cargo task lint` (4 host rows) pass. Not yet gated: U1 (`c5e30263`, running now), M11 (`47bd1468`).
 
+## What breaks with the digest tick off: round two (`layer-oval`, 01:10 local)
+
+Setup: one binary for both arms (a profile build of `962d1963`), control (tick 10 s) against off
+(`--antientropy-interval-secs 86400`), 30 runs, n=5 per cell. Voided for a host gap: control s1b r1, control s1c r1,
+control s4 r1. The fields for stalled and resent in its first JSON were read from the wrong log path and were
+corrected.
+
+| Case | Result, both arms unless marked |
+|---|---|
+| S1b: a member frozen 75 s | the frozen node got 5 of 5 chat messages and the meta in all 10 runs |
+| S1c: frozen 150 s | 5 of 5 chat and meta in 9 of 10 runs; the miss is `off-s1c-r5` (0 of 5 chat); other nodes got everything |
+| S4: sender leaves, a node frozen 20 s | chat and the left presence seen; "went quiet" not seen; all 10 runs |
+| directed message to the frozen node | NOT delivered in any of the 10 freeze runs, both arms (round one had it): open, not explained |
+| resend lines on the other nodes | control 18 to 19, off 18 to 21: the resend path fires with the tick off too |
+
+Reading [V counters, G cause]: with the tick off, a frozen member still catches up on chat and meta in 19 of 20 freeze runs. The
+repair is partly event-driven (the pulls at a new link, a new peer and the retry), so the tick is not the only repair.
+The one failure, 1 of 5 at a 150 s freeze with the tick off, says the tick is a safety net for long freezes; n=5 is too small to
+rate it. For the decision on the tick (anti-entropy options and the unicast form): the tick carries 96% of the calm frame bytes, and
+removing it costs, at most, a rare late repair; the unicast form keeps the net and removes most of the bytes.
+Open and independent of the tick: a directed message to a frozen member is not delivered in any run of either arm, so best-effort
+delivery of directed messages needs a sender retry with a receipt, as the reassessment said.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
