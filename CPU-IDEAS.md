@@ -1080,6 +1080,67 @@ Steps to cut duplicates, ordered by bytes saved per risk (estimates are guesses;
 7. Tune the eager tree (the active view size and the prune rules): the fan-out floor; needs
    P3 first; risk higher, as it changes gossip behaviour.
 
+## Design idea: epochs with a keyframe, like HLS (from the user, 23:40 local)
+
+The idea: every N events a new keyframe (I-frame); up to X deltas follow it; older events are dropped.
+A late joiner takes the last keyframe and the deltas after it. The user's condition: no bad sync, ever.
+Status: design and measurement only. Nothing is built.
+
+What we keep today [V]: the meta and state documents keep every applied change (the signed frame of
+each, in \`frames\`, plus the Automerge history), with no cap and no compaction, in memory only. So a
+late joiner replays the whole history, and dead members stay in it.
+
+Why a plain snapshot does not fit [V from the code]: every change is signed by its author, and a
+receiver checks that an author writes only its own entry (the forgery gate). A keyframe made by one
+peer would contain other peers' data without their signatures. The receiver would have to trust the
+keyframe maker, and the gate would be gone. Dropping old changes from the middle of the history
+does not work either: later changes name earlier ones as dependencies.
+
+The fit for this data: in the meta document each peer owns its own entry (last writer wins per field).
+So the keyframe can be made by the owners, not by one maker:
+1. An epoch number e is part of the document id. A keyframe is a new epoch e+1.
+2. At the epoch change every live peer re-issues its own full entry, signed by itself, as the first
+   change of e+1. The set of these frames is the keyframe. It needs no trust in a maker, and the
+   forgery gate stays. A dead peer does not re-issue, so its entry and history are gone by
+   construction.
+3. After that, changes of e+1 are the deltas. After X deltas (or N events, or a size ratio) a node
+   starts e+2. The trigger is a signed marker; the lowest epoch number never wins over a higher one.
+4. A joiner takes the frames of the highest epoch it hears of, and nothing older.
+
+Rules that make a bad sync impossible, or at least detected and repaired by a rebuild:
+- The state of a node is a pure function of (highest epoch it holds, the set of frames of that
+  epoch). Two nodes with the same set hold the same state: the frames form a CRDT inside an epoch,
+  and the order of epochs is total. So the nodes converge.
+- Every frame and every digest carries its epoch and the hash of its keyframe set. A mismatch is
+  explicit: the node asks for the keyframe set, it does not guess from heads.
+- Completeness check: the keyframe lists the authors that issued it. A node that holds a frame from
+  each listed author knows the base is complete; otherwise it pulls the missing ones.
+- The repair is always the same: drop the local copy of the old epoch and rebuild from the keyframe
+  set of the highest epoch, pulled from any peer by unicast. A node that was frozen or partitioned
+  rebuilds this way. The keyframe set is self-sufficient, as in HLS.
+- Nothing is dropped early: epoch e is kept until every peer on the roster has issued in e+1, or the
+  peer is gone (alive timeout 90 s). A peer that was gone is a late joiner when it returns.
+- A peer's own newer values from the old epoch are not lost: the owner re-issues its current local
+  values in the new epoch, and nobody else writes them.
+
+Open points (these must be answered before any code):
+1. The shared state channel (not meta) can have several writers per key. There the owner rule does not
+   hold, so re-issue by the owner is not enough. Keep that channel as it is (it is small), or define the
+   owner of a key. Question for the user.
+2. It is a wire change: an old node does not understand epochs. A capability or version field is
+   needed, and a mixed mesh must keep working.
+3. The gain is not measured. We do not know how much of a late joiner's cost is history that a keyframe
+   removes. Measurement first: per daemon, the number of retained changes and frames, their bytes, the
+   Automerge save size and the hydrated JSON size, in an aged mesh of the live size and in a fresh
+   one (task M11, counters only). If the history is a small part of the cost, the idea is not worth it.
+4. It addresses the document history and the dead entries. It does not touch the digest and resend
+   costs, which the floor read shows to be the largest frame cost of a calm mesh.
+
+Test plan if the measurement says it pays: the property test "same frame set implies same state"
+under random order, loss, duplication and a frozen member; an epoch change during a partition; two
+epoch starters at once; a joiner during the change; a forged keyframe frame (the gate must refuse
+it); a mixed mesh.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
