@@ -706,19 +706,23 @@ the same frames again.
 Not an idea: dropping metadata that users need. Peer cards, nicknames and
 status stay; only the repeats and the stale copies go.
 
-## Target: each idle process below 1% CPU (set by the user, 22:10 local)
+## Target: each idle process below 1% CPU, in a mesh of 50 agents (set by the user, 22:10 and 22:15 local)
 
 Definition. CPU of one daemon process = cputime delta divided by wall time, times 100
 (100% is one core), over at least 10 min, with no user traffic. Report the median and the
-worst daemon. The target passes when the worst daemon is below 1% in a mesh of the live size
-(about 45 members, an aged meta document) and in calm meshes of 12, 24 and 48 daemons, with no
-regression and no behaviour change that lacks a measured gain.
+worst daemon. The target passes when the worst daemon is below 1% in a mesh of 50 agents
+(50 daemons, an aged meta document, the size of the live mesh) and in calm meshes of 12, 24 and 50
+daemons, with no regression and no behaviour change that lacks a measured gain.
 
 Where we are (measured; the live figures are as recorded earlier in this file, and I read them
 as one daemon, 🟡 80%):
 - 1 daemon alone: 0.125%. Calm mesh of 12: 0.40% to 0.70% per daemon. Both are below 1%.
 - Live mesh: 16% on the leader host and 55% to 91% on `nyc-macmini1`. That is 16 to 91 times the
-  target.
+  target. [V] These are per daemon (the live-gossip fact above says "of a core per daemon").
+- New reading, 22:14 local, leader host: 10 daemons, 60 s window (cputime deltas), host load 36:
+  median 38%, mean 37.9%, maximum 39%; all 10 are above 1%. Caveat: the mesh was not idle (the study
+  traffic and the benches ran) and the host was loaded, so this is an upper reading of the live
+  figure. It still shows that every daemon on the host is far above the target today.
 
 What the measured fixes give: M2c is -5% to -8% net (user CPU -22% to -26%, system CPU +21% to
 +28%). The refill backoff is 1.04% to 0.88% in the lab (-15%). These are tens of percent. A
@@ -729,7 +733,7 @@ a unicast join backfill, the entries of dead members removed, and the M5 backoff
 How the target is tested: every CPU run reports the median and the worst daemon against the
 1% line. The live A/B (arms B4 against F6) says how far the built stack gets. The profile of F6
 then names what remains, and each next step is chosen by its share of that remaining busy time.
-A scaling curve of F6 at 12, 24 and 48 daemons shows where the 1% line breaks as the mesh grows.
+A scaling curve of F6 at 12, 24 and 50 daemons shows where the 1% line breaks as the mesh grows.
 
 ## Metadata classification and reduction ideas (requested 19:30 local; analysis only)
 
