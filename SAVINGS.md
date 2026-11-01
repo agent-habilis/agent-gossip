@@ -34,6 +34,7 @@ run counts.
 | Goal | Commit | Change | Metric | Before | After | Method | Status |
 |---|---|---|---|---|---|---|---|
 | G5 | `25864570` (`…-r17-no-event-capture`) | A directory session holds no event channel | Events held in memory by a directory session | grows without bound (1 event per mesh event, kept for the life of the process) | 0 (no channel) | Test `api::directory_session_holds_no_event_stream`: red on `27f86c9c`, green after. Bytes not measured. | pending: the soak gauge of unbounded channels gives the bytes |
+| none (measurement) | `167b3273` (`habilis-network` `…-counters`, 13 commits on `f7cd9bbc`) | Counters and gauges, no behaviour change | Idle CPU of 12 daemons, 150 s window, 3 valid interleaved pairs | main: 22.25 s, 14.23 s, 14.50 s | head: 19.12 s, 12.92 s, 11.77 s (14%, 9%, 19% below main) | `gold-velvet`: `mesh_peer_load`, `scripts/perf/run.ts`, load 3 to 12. The spread is load noise: the claim is no measurable overhead, not a gain. 1 pair dropped (load 36 to 68). | done; full engine test suite after the last commits still to run |
 | G2, G3 | pending | Baseline B4 at 64 daemons | Metadata bytes per delivered data byte; duplicates as a share of received frames; CPU median and worst | pending | not applicable | Runner of `stale-bundle`, 3 pairs | pending: needs part A (counters) and part B+C (runner) |
 
 ## Cumulative result
