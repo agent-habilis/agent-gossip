@@ -1313,6 +1313,34 @@ What this means [V for the cost per frame; G for the rest]:
    the meta change rebuilds the whole document (2.35 ms per change, the `on_meta_applied` item); neither matters at idle with one id
    per member.
 
+## Idle CPU profile of a calm daemon (`mist-frame`, partial 2, 03:13 local)
+
+Setup: real CLI (app `d069652a`) on the U1 engine tip `c5e30263`, release build with line tables, `nice` 10, default policy, settle 8 min,
+the sampled daemon is the first joiner, all links direct, two samples of 30 s per run (174 busy samples; expect about plus or minus 5 points).
+
+| Run | Daemon CPU | Packets per s in + out | CPU per packet |
+|---|---|---|---|
+| N=6 (5 links), valid, load 5.9 to 7.5 | 0.208% (median 0.183%) | 10.7 + 11.5 | 93.5 microseconds |
+| N=12 (11 links), void by the load rule (last reading 21.4; the load was 6.9 to 7.6 in the samples) | 0.358% (all 0.33% to 0.48%) | 41.3 + 40.9 | 43.5 microseconds |
+
+Busy samples by category at N=12: base58 22% (800 microseconds per second); tokio and timers 22% (780); QUIC (noq) 13% (450); recvmsg 8%
+(290); sendmsg 7% (250); sysctl 6% (210); our event loop 6% (210); other syscalls 4%; iroh-gossip 3%; ed25519 3% (100); AEAD 2%.
+At N=6: tokio and timers 48% (1,000 microseconds per second); QUIC 10%; sysctl 6%; iroh 5%; recv 5%; our loop 4%; base58 4% (84);
+ed25519 2%.
+
+What this says [V counters for the table; G for the fit, two points only]:
+1. A fit on two points gives CPU = 1,520 microseconds per second fixed + 25 microseconds per packet. The fixed part is mostly timers and
+   wakes of the async runtime; the packet part follows the links, as the packet rate grows from 22 to 82 between N=6 and N=12.
+2. base58 is the largest single piece of our own code at N=12: 800 microseconds per second, as much as all the receive and send syscalls
+   together. Callers: the answer path of a chat digest (decode of the ids) about three quarters, the build of the digest
+   (`WireWindow::encode`) about a quarter. The digest ids are one long base58 string, and base58 of a long string is quadratic.
+   A faster implementation with the SAME output needs no wire change and no behaviour change.
+3. The chat log of an idle CLI daemon holds about 100 ids (a decode of 0.45 ms per second at 0.3 answers per second fits about 100 ids per
+   digest), not about 1 per member as assumed. What fills the log in a calm mesh is not known; to find out.
+4. Projection at 50 daemons and cap 32 [G]: about 32 links, packets about 250 per second, so about 1,520 + 25 x 250 = 7,800 microseconds per
+   second, 0.8% of a core, before the growth of the digest work. That is close to the 1% line; fewer packets per link, fewer links and a
+   faster base58 are the margin. The calm 50-daemon runs will say.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
