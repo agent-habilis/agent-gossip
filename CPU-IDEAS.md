@@ -29,6 +29,28 @@ pending).
 
 ## Summary so far (read this first)
 
+### Where the study stands (02:50 local, 1 November)
+
+Goal (user): each idle daemon below 1% CPU in a mesh of 50 agents, and less metadata on the wire. Not yet measured at 50 daemons.
+
+- Calm mesh of 12 on the real CLI: median 0.43% to 0.58%, worst daemon 0.59% to 0.79% (below 1%). The lab driver at cap 8 reads 1.0% to 1.6% worst.
+- Live mesh (45 or more members): 16% to 91% per daemon earlier; 38% median in a 60 s reading at 22:14. 16 to 91 times the target.
+- Frame bytes in a calm mesh: about 96% are the three digests; our own frame work costs only 0.10% of a core at 50 daemons (0.019% with
+  unicast digests). So digests matter for bytes, not for CPU.
+- The idle CPU follows the datagram rate below our frames, which follows the number of links (a guess that matches the numbers). A
+  linear extrapolation gives about 1.7% to 2.4% per daemon at 50 and cap 32 if nothing else changes.
+- Two separate regimes: no churn when the roster is below the cap (12 daemons, cap 32); churn above it (12 above cap 8; 50 above cap 32).
+  The refill backoff of the gossip fork (arm F9) removes the churn: UDP bytes 4 times lower, paths 11 times lower.
+- Built, tested, none merged: dedup before verify (M2b-1), no document rebuild without a new change (M2c), the faster head check (M3), the
+  stalled retry backoff (M5), the self-echo fix (M6), unicast digests (U1, off by default, gate clean), the refill backoff (fork branch).
+  Counters: wire bytes by kind, duplicates, socket bytes, gossip layer, gossip transport, document history, ratio script.
+- Running or queued: the 50-daemon runs of F8, B4, F6, F7, F9 on the real CLI (`wire-straw`); the heal check and an F8 cell
+  (`lumen-gear`); the calm digest-tick CPU A/B (`layer-oval`); the idle CPU profile of 12 and 6 daemons (`mist-frame`); the advisor reviews
+  of U1 and of the keyframe design (`ignite-bench`).
+- Decisions waiting for the user: keep, restrict or remove anti-entropy; whether a missed broadcast chat for a frozen member is acceptable;
+  the owner rule for the shared state channel (keyframe design); a push of one combined fork branch (counters plus refill backoff).
+
+
 State of the investigation. Each line says how well it is proven.
 
 1. [V] A calm private mesh is cheap. Release 0.12.10 and `b588fc75`, same host, CPU
