@@ -20,7 +20,24 @@ How to measure:
   budget. RSS is reported only.
 - A bug fix carries a test that fails first, for the reason of the bug.
 
+Rule: after each commit, the owner of the commit writes or updates its row in
+the same work step. The leader checks the ledger before a side branch is merged
+into `feat-reduce-resource-consumption`.
+
+Cumulative delta: at the end, measure the head of the branch against the
+baseline binary (`main` at `f7cd9bbc`, built once, kept with its sha in
+`~/bench-results/baseline/`), with the same runner, the same workload and the
+same method as above. The result goes into the section "Cumulative result" at
+the bottom. The sum of the rows is not the delta: gains overlap, so only this
+run counts.
+
 | Goal | Commit | Change | Metric | Before | After | Method | Status |
 |---|---|---|---|---|---|---|---|
 | G5 | `25864570` (`…-r17-no-event-capture`) | A directory session holds no event channel | Events held in memory by a directory session | grows without bound (1 event per mesh event, kept for the life of the process) | 0 (no channel) | Test `api::directory_session_holds_no_event_stream`: red on `27f86c9c`, green after. Bytes not measured. | pending: the soak gauge of unbounded channels gives the bytes |
 | G2, G3 | pending | Baseline B4 at 64 daemons | Metadata bytes per delivered data byte; duplicates as a share of received frames; CPU median and worst | pending | not applicable | Runner of `stale-bundle`, 3 pairs | pending: needs part A (counters) and part B+C (runner) |
+
+## Cumulative result
+
+Pending. Baseline: `main` at `f7cd9bbc`. Head: not set. Metrics: idle CPU median
+and worst per daemon at 64 daemons; metadata bytes per delivered data byte;
+duplicates as a share of received frames; the slope of every memory gauge.
