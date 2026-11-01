@@ -1220,6 +1220,14 @@ of both sides: `the_rendezvous_link_stays_up_when_ip_is_lost` (failed on one bas
 `webrtc_multihop_relay_none_direct` (alone, 3 runs per side: baseline 3 of 3 pass, integration 2 of 3;
 over all runs one failure in four on each side). The load was 12 to 157 during these runs.
 
+Gate on U1 (`c5e30263`, const off) against the wasm-fixed stack tip `p3` (`5435c60c`), final, 02:05: no regression. fmt, lint and
+wasm pass on U1. Workspace: p3 2034 / 1 / 97, U1 2051 / 0 / 97. `itu_run`: p3 872 / 0 / 85, U1 887 / 1 / 85. The one U1 failure,
+`a_node_steps_down_the_ladder_and_climbs_back`, was foreign LAN and Tailscale dials into the test port (handshake warnings from
+other hosts); alone, 3 of 3 pass on each side: a flake of the environment. The base failure
+`a_pair_races_again_when_udp_drops_and_bob_has_the_lower_id` fails 3 times in 4 on p3 (a relay warning, "Another endpoint
+connected with the same endpoint id", and a send panic, "relay-only path refused") and 0 in 4 on U1: a base-side flake. U1 changes
+`transport/send.rs` (+260 lines), which may explain why it passes; not proven. The two known flakes pass 3 of 3 on each side.
+
 Lint and wasm are where the stack failed, in three steps, all fixed in `...-mist-frame-wasmfix-p3`
 (`5435c60c`, on the stack tip `a9c7b215`): (1) the instrumentation counter `note_ppid_wake` is unused on
 wasm; (2) `SocketBytes::read` calls `Endpoint::metrics`, which the browser build lacks; (3) a unit test
