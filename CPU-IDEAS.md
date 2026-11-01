@@ -1258,6 +1258,39 @@ removing it costs, at most, a rare late repair; the unicast form keeps the net a
 Open and independent of the tick: a directed message to a frozen member is not delivered in any run of either arm, so best-effort
 delivery of directed messages needs a sender retry with a receipt, as the reassessment said.
 
+## Frame cost model (`mist-frame`, micro-benchmark, 02:35 local)
+
+Branch `...-mist-frame-bench-frames` (`cb1297a0`, on U1): an ignored in-crate test, `frame_cost`. Distinct signed frames, median of 1,000,
+release build, the flag off, a 45-peer roster and a meta document with 14 dead entries. 4 runs at load 10 to 19 agree within 5%.
+
+Whole ingest path, per received frame, microseconds: chat digest 140 ids 60; 40 ids 55; state digest 51; meta digest 55; alive 50; joined 51;
+PeerInfo 54; one meta change on a 45-card document 2,350 (the document rebuild ran each time). Parts: ed25519 verify 46 to 48 (85% to 95%
+of every small frame); parse 7; dedup 0.4. A node that ANSWERS a 140-id chat digest pays 2,220 (base58 decode of 140 ids 2,125,
+quadratic); a send of a full chat digest costs 4,160 (base58 encode). Rates per member: 3 digests per 10 s, 1 alive per 30 s.
+
+Model, total CPU of one daemon from frame work, as a share of one core: N=12, tick on 0.022% (219 microseconds per second); unicast 0.005%;
+tick off 0.002%. N=50: tick on 0.10% (digest ingest 789 microseconds per second, answers 87); unicast 0.019%; off 0.008%.
+
+Correction (mine): `mist-frame` compared this model with 0.047%, which is my per-member figure (0.57% over 12 members). The measured TOTAL
+per daemon at N=12 on the real CLI is 0.43% to 0.58%. So the frame work explains about 4% of the measured idle CPU, not 47%; about
+5,400 of the 5,700 microseconds per second at N=12 are something else. [V arithmetic from two measured sets]
+
+What this means [V for the cost per frame; G for the rest]:
+1. Our own frame processing is negligible at 50 daemons: 0.10% of a core with the tick on, 0.019% with unicast digests. Unicast digests
+   cannot bring the CPU near 1% by themselves; they remove a share worth at most 0.08% at N=50. This agrees with `lumen-gear`: F7 cut the
+   frame bytes by 65% and did not move the CPU.
+2. The idle CPU is below our frames: the per-datagram work of QUIC and the gossip layer (receive, decrypt, acknowledge, send), the gossip
+   messages, the timers. Rough check [G]: `lumen-gear` counted about 59 datagrams per second received per daemon at cap 8; at 45 to 50
+   microseconds per packet in and out that is 118 packets times 45 microseconds, about 5.3 ms per second, 0.53% of a core. That matches
+   the measured 0.5%. So the idle CPU follows the packet rate, and the packet rate follows the number of links, which is
+   min(N - 1, cap). At N=50 and cap 32 there are about 32 links against 11 at N=12: about 3 times the packets, about 1.7% [G].
+3. The levers that fit this are fewer packets per link and fewer links: a lower cap WITH the refill backoff (so the roster above the cap
+   does not churn), a longer QUIC keep-alive, fewer gossip control messages, batching. A lower cap alone raised the CPU earlier (churn);
+   the refill backoff (F9) removed the churn. This needs a measurement: F8 at `--max-peers` 8 against 32 at 50 daemons.
+4. Two small own-code costs for the notes: the base58 of digest ids is quadratic (4.2 ms to build and 2.1 ms to read a full digest) and
+   the meta change rebuilds the whole document (2.35 ms per change, the `on_meta_applied` item); neither matters at idle with one id
+   per member.
+
 ## Proposal: remove anti-entropy
 
 The user proposes to remove the whole anti-entropy mechanism: it costs CPU and
