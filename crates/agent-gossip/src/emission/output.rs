@@ -564,6 +564,8 @@ mod tests {
     use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
     use super::Output;
+    use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
+    use crate::a2a::surfaced_event::SurfacedEvent;
     use crate::a2a::tuning::SURFACED_EVENTS_CAP;
     use crate::emission::OutputEvent;
 
@@ -614,29 +616,53 @@ mod tests {
         (Output::capture(live_tx).set_tap(ring_tx), live, ring)
     }
 
+    /// The bytes of the change body that an event holds: the change itself, a patch.
+    fn held_body_bytes(event: &OutputEvent) -> usize {
+        let OutputEvent::StateChanged { event, .. } = event else {
+            return 0;
+        };
+        event.body.as_str().len()
+    }
+
+    /// What the real surfaced ring holds after `count` changes went through the tap and
+    /// `A2aApp::drain_surfaced_ring`, as the event loop does it.
+    fn ring_after(count: usize, channel: Channel, kind: &MessageKind) -> Vec<SurfacedEvent> {
+        let (live_tx, _live) = unbounded_channel();
+        let mut app = A2aApp::new_with_io(SurfacedIo::new(Output::capture(live_tx)));
+        for _ in 0..count {
+            app.output.emit(change(channel, kind.clone()));
+        }
+        app.drain_surfaced_ring();
+        app.surfaced.poll_since(None).events
+    }
+
     /// The ring keeps up to `SURFACED_EVENTS_CAP` events. A Meta document is the agent card of
     /// every peer, and the poll JSON drops it, so the ring copy of a Meta change holds none: the
-    /// document bytes that the ring feed holds for Meta changes are 0 per event. The event still
-    /// holds its body, the change with the card (about 4 KB), so the ring holds up to
-    /// `SURFACED_EVENTS_CAP` bodies. That bound is in the audit file, row R12.
+    /// document bytes that the ring holds for Meta changes are 0 per event. The event still holds
+    /// its body, the change with the card (about 4 KB), so the ring holds `SURFACED_EVENTS_CAP`
+    /// bodies. That bound is in the audit file, row R12.
     #[test]
-    fn the_ring_copy_of_a_meta_change_holds_no_document() {
-        let (output, _live, mut ring) = tapped();
-        for _ in 0..10 * SURFACED_EVENTS_CAP {
-            output.emit(change(Channel::Meta, MessageKind::Meta));
-        }
-        let events = drain(&mut ring);
+    fn the_ring_holds_no_meta_document_after_ten_times_its_cap() {
+        let events = ring_after(10 * SURFACED_EVENTS_CAP, Channel::Meta, &MessageKind::Meta);
         assert_eq!(
             events.len(),
-            10 * SURFACED_EVENTS_CAP,
-            "every change reaches the ring feed"
+            SURFACED_EVENTS_CAP,
+            "the ring is full and capped"
         );
-        let held: usize = events.iter().map(held_document_bytes).sum();
-        let most = events.iter().map(held_document_bytes).max();
+        let documents: usize = events
+            .iter()
+            .map(|item| held_document_bytes(&item.event))
+            .sum();
         assert!(
-            most <= Some("None".len()),
-            "a Meta change holds no document in the ring feed, yet {} events hold {held} bytes",
+            documents <= SURFACED_EVENTS_CAP * "None".len(),
+            "the ring holds {documents} document bytes for {} Meta changes",
             events.len()
+        );
+        let bodies: usize = events.iter().map(|item| held_body_bytes(&item.event)).sum();
+        assert_eq!(
+            bodies,
+            SURFACED_EVENTS_CAP * card_patch().len(),
+            "the ring still holds one patch per event: the bound of the audit row R12"
         );
     }
 
@@ -655,13 +681,11 @@ mod tests {
 
     /// A State document is part of the poll JSON, so its ring copy keeps the document.
     #[test]
-    fn the_ring_copy_of_a_state_change_keeps_the_document() {
-        let (output, _live, mut ring) = tapped();
-        output.emit(change(Channel::State, MessageKind::State));
-        let events = drain(&mut ring);
+    fn the_ring_keeps_the_document_of_a_state_change() {
+        let events = ring_after(1, Channel::State, &MessageKind::State);
         assert_eq!(events.len(), 1, "one ring event");
         assert!(
-            held_document_bytes(&events[0]) > 4096,
+            held_document_bytes(&events[0].event) > 4096,
             "the ring copy holds the document"
         );
     }
