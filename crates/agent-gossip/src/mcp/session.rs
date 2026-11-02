@@ -372,7 +372,7 @@ mod tests {
                     .filter_map(|item| meta_change_author(&item.event))
                     .any(|author| author == "bob-cursor"),
         );
-        saw_card.set(saw_card.get() || is_bob_card_merge("bob-cursor", &before, &after));
+        saw_card.set(saw_card.get() || is_bob_card_merge(&before, &after));
         (replay_from.get().is_some() && saw_card.get() && bob_wrote.get()).then_some(())
     }
 
@@ -389,17 +389,14 @@ mod tests {
         Some(change.author.as_str())
     }
 
-    /// Whether a meta change by `author`, taking the document from `before` to
-    /// `after`, is the merge that completes bob-cursor's card: the card is whole in `after` and was
-    /// not in `before`. The first merge of a card in several merges does not complete it.
-    fn is_bob_card_merge(
-        author: &str,
-        before: &serde_json::Value,
-        after: &serde_json::Value,
-    ) -> bool {
+    /// Whether the document going from `before` to `after` gets bob-cursor's card whole: the card
+    /// is whole in `after` and was not in `before`. The first merge of a card in several merges
+    /// does not complete it. Who wrote the change is not asked here: the wait asks it of the ring
+    /// event (`bob_wrote`).
+    fn is_bob_card_merge(before: &serde_json::Value, after: &serde_json::Value) -> bool {
         let bob = Nickname::from("bob-cursor");
         let whole = |doc: &serde_json::Value| complete_card(doc, &bob).is_some();
-        author == "bob-cursor" && !whole(before) && whole(after)
+        !whole(before) && whole(after)
     }
 
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
@@ -721,26 +718,22 @@ mod tests {
     #[test]
     fn bob_card_merge_is_the_absent_to_present_transition() {
         // A failed card publish writes `card_error` under bob-cursor's own entry.
-        // It has his author but no card, so it must not count as the card merge.
+        // It adds no card, so it must not count as the card merge.
         let empty = json!({ "peers": {} });
         let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
         let card = json!({ "peers": { "bob-cursor": { "card": bob_card() } } });
 
         assert!(
-            !is_bob_card_merge("bob-cursor", &empty, &card_error),
+            !is_bob_card_merge(&empty, &card_error),
             "a card_error merge by bob-cursor is not his card merge"
         );
         assert!(
-            is_bob_card_merge("bob-cursor", &empty, &card),
+            is_bob_card_merge(&empty, &card),
             "the merge that adds bob-cursor's card is the card merge"
         );
         assert!(
-            !is_bob_card_merge("bob-cursor", &card, &card),
+            !is_bob_card_merge(&card, &card),
             "a later meta change with the card already present is not the card merge"
-        );
-        assert!(
-            !is_bob_card_merge("alice-cursor", &empty, &card),
-            "a card that another author wrote is not bob-cursor's card merge"
         );
     }
 
@@ -768,7 +761,7 @@ mod tests {
             );
             let after = json!({ "peers": { "bob-cursor": { "card": arrived } } });
             assert_eq!(
-                is_bob_card_merge("bob-cursor", &before, &after),
+                is_bob_card_merge(&before, &after),
                 index + 1 == merges.len(),
                 "after merge {} of {}",
                 index + 1,
