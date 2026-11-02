@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageId, Nickname};
 
@@ -148,7 +150,7 @@ pub enum OutputEvent {
         /// copy that feeds the surfaced-events ring when `channel` is `Meta`: the poll JSON drops
         /// the Meta document, and the ring holds up to `SURFACED_EVENTS_CAP` events, so a Meta
         /// document per event would be the agent card of every peer, many times over.
-        document: Option<std::sync::Arc<serde_json::Value>>,
+        document: Option<Arc<serde_json::Value>>,
         /// `true` when the local node made the change.
         is_self: bool,
     },

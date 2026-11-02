@@ -649,6 +649,7 @@ impl SurfacedState {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
     use habilis_network::protocol::messages::Authored;
@@ -684,7 +685,7 @@ mod tests {
                     .sign(&habilis_network::protocol::Identity::generate())
                     .authored(),
             ),
-            document: Some(std::sync::Arc::new(serde_json::json!({}))),
+            document: Some(Arc::new(serde_json::json!({}))),
             is_self: true,
         }
     }

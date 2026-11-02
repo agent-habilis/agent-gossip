@@ -559,6 +559,8 @@ impl Output {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use habilis_network::embed::{NodeEvent, NodeSink};
     use habilis_network::protocol::{Channel, Identity, Message, MessageKind};
     use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -715,7 +717,7 @@ mod tests {
             panic!("one live event and one ring event, both with a document");
         };
         assert!(
-            std::sync::Arc::ptr_eq(live_document, ring_document),
+            Arc::ptr_eq(live_document, ring_document),
             "the live copy and the ring copy hold two documents, not one"
         );
     }

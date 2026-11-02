@@ -7,7 +7,7 @@
 //! stdout forms stay byte-identical.
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs};
+use habilis_network::protocol::{Channel, MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
@@ -704,15 +704,15 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// card, ~4k tokens with four peers, repeated on each change; readers take it on demand with
 /// `meta get`. The live and capture copies of a change keep the document for in-process readers.
 /// This is the one place that holds the rule.
-pub(super) fn poll_carries_document(channel: habilis_network::protocol::Channel) -> bool {
-    channel != habilis_network::protocol::Channel::Meta
+pub(super) fn poll_carries_document(channel: Channel) -> bool {
+    channel != Channel::Meta
 }
 
 /// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
-    channel: habilis_network::protocol::Channel,
+    channel: Channel,
     event: &Authored,
     document: Option<&serde_json::Value>,
     is_self: bool,
