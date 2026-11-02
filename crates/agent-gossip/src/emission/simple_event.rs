@@ -730,7 +730,8 @@ pub(super) fn format_state_json(
             // The meta document is every peer's agent card, ~4k tokens with
             // four peers, repeated on each change; readers take it on demand
             // with `meta get`. Only this JSON form drops it: the typed
-            // `OutputEvent::StateChanged` keeps it for in-process readers.
+            // `OutputEvent::StateChanged` keeps it in the live and capture copies, for in-process
+            // readers; the ring copy of a Meta change holds none, as the poll JSON drops it.
             document: document.filter(|_| channel != habilis_network::protocol::Channel::Meta),
             display: state_display(author, is_self, &what),
             is_self,
