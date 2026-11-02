@@ -176,30 +176,41 @@ pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json
         return Some(stored.clone());
     };
     let nickname = Nickname::try_new(&parsed.name).ok();
-    let seal = parsed
+    let seal_extension = parsed
         .capabilities
         .extensions
         .iter()
-        .find(|extension| extension.uri.contains("mesh-seal"))
-        .and_then(|extension| extension.params.as_ref())
+        .find(|extension| extension.uri.contains("mesh-seal"));
+    let seal_params: Option<&serde_json::Value> =
+        seal_extension.and_then(|extension| extension.params.as_ref());
+    let seal: Option<&str> = seal_params
         .and_then(|params| params.get("x25519"))
         .and_then(serde_json::Value::as_str);
     let (Some(nickname), Some(seal)) = (nickname, seal) else {
         return Some(stored.clone());
     };
-    let template = serde_json::to_value(full_card(&nickname, AuthorKey::from([0; 32]), seal)).ok()?;
+    let template =
+        serde_json::to_value(full_card(&nickname, AuthorKey::from([0; 32]), seal)).ok()?;
 
     let mut rebuilt = stored.clone();
     let object = rebuilt.as_object_mut()?;
     if parsed.description.is_empty() {
         object.insert("description".to_owned(), template["description"].clone());
     }
-    for key in ["defaultInputModes", "defaultOutputModes", "skills", "securitySchemes"] {
+    for key in [
+        "defaultInputModes",
+        "defaultOutputModes",
+        "skills",
+        "securitySchemes",
+    ] {
         if let Some(value) = template.get(key).filter(|value| !value.is_null()) {
             object.insert(key.to_owned(), value.clone());
         }
     }
-    let known = template["capabilities"]["extensions"].as_array().cloned().unwrap_or_default();
+    let known = template["capabilities"]["extensions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if let Some(stored_extensions) = object
         .get_mut("capabilities")
         .and_then(|capabilities| capabilities.get_mut("extensions"))
@@ -218,9 +229,15 @@ pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json
             }
         }
     }
-    if let Some(capabilities) = object.get_mut("capabilities").and_then(serde_json::Value::as_object_mut) {
+    if let Some(capabilities) = object
+        .get_mut("capabilities")
+        .and_then(serde_json::Value::as_object_mut)
+    {
         for flag in ["streaming", "pushNotifications", "extendedAgentCard"] {
-            if let (false, Some(value)) = (capabilities.contains_key(flag), template["capabilities"].get(flag)) {
+            if let (false, Some(value)) = (
+                capabilities.contains_key(flag),
+                template["capabilities"].get(flag),
+            ) {
                 capabilities.insert(flag.to_owned(), value.clone());
             }
         }
@@ -408,34 +425,49 @@ mod tests {
 
     #[test]
     fn a_served_peer_card_keeps_the_endpoint_hint() {
-        let nickname = Nickname::try_new("endpoint-peer").expect("nickname");
+        let nickname =
+            Nickname::try_new("endpoint-peer").expect("a literal peer name is a valid nickname");
         let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let mut stored = serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-            .expect("card serializes");
-        stored["endpoint"] = serde_json::json!({ "id": "ab".repeat(32), "relay": "https://relay.example/" });
-        let rebuilt = full_from_minimal(&stored).expect("the stored card rebuilds");
-        assert_eq!(rebuilt["endpoint"], stored["endpoint"], "the rebuilt card drops the endpoint hint");
+        let mut stored =
+            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+                .expect("an AgentCard is plain data and always serializes");
+        stored["endpoint"] =
+            serde_json::json!({ "id": "ab".repeat(32), "relay": "https://relay.example/" });
+        let rebuilt = full_from_minimal(&stored).expect("a card this module stored must rebuild");
+        assert_eq!(
+            rebuilt["endpoint"], stored["endpoint"],
+            "the rebuilt card drops the endpoint hint"
+        );
     }
 
     #[test]
     fn a_served_peer_card_takes_its_extensions_from_the_stored_card() {
-        let nickname = Nickname::try_new("extension-peer").expect("nickname");
+        let nickname =
+            Nickname::try_new("extension-peer").expect("a literal peer name is a valid nickname");
         let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let mut stored = serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-            .expect("card serializes");
+        let mut stored =
+            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+                .expect("an AgentCard is plain data and always serializes");
         stored["capabilities"]["extensions"]
             .as_array_mut()
-            .expect("extensions is an array")
+            .expect("a card built by this module has an extensions array")
             .push(serde_json::json!({ "uri": "https://example.test/ext/later/v1" }));
-        let rebuilt = full_from_minimal(&stored).expect("the stored card rebuilds");
-        let uris_and_params = |card: &serde_json::Value| -> Vec<(serde_json::Value, serde_json::Value)> {
-            card["capabilities"]["extensions"]
-                .as_array()
-                .expect("extensions is an array")
-                .iter()
-                .map(|ext| (ext["uri"].clone(), ext.get("params").cloned().unwrap_or_default()))
-                .collect()
-        };
+        let rebuilt = full_from_minimal(&stored).expect("a card this module stored must rebuild");
+        let uris_and_params =
+            |card: &serde_json::Value| -> Vec<(serde_json::Value, serde_json::Value)> {
+                let extensions: &Vec<serde_json::Value> = card["capabilities"]["extensions"]
+                    .as_array()
+                    .expect("a card built by this module has an extensions array");
+                extensions
+                    .iter()
+                    .map(|ext| {
+                        (
+                            ext["uri"].clone(),
+                            ext.get("params").cloned().unwrap_or_default(),
+                        )
+                    })
+                    .collect()
+            };
         assert_eq!(
             uris_and_params(&rebuilt),
             uris_and_params(&stored),
@@ -445,10 +477,12 @@ mod tests {
 
     #[test]
     fn a_card_that_cannot_be_rebuilt_is_served_as_stored() {
-        let nickname = Nickname::try_new("rebuild-peer").expect("nickname");
+        let nickname =
+            Nickname::try_new("rebuild-peer").expect("a literal peer name is a valid nickname");
         let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let mut stored = serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-            .expect("card serializes");
+        let mut stored =
+            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+                .expect("an AgentCard is plain data and always serializes");
         stored["name"] = serde_json::json!("");
         assert!(
             full_from_minimal(&stored).is_some(),
@@ -460,9 +494,12 @@ mod tests {
     fn a_real_0_12_10_card_rebuilds_to_itself() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../../tests/fixtures/card_0_12_10.json"))
-                .expect("the 0.12.10 fixture is JSON");
-        let rebuilt = full_from_minimal(&fixture).expect("a 0.12.10 card rebuilds");
-        assert_eq!(rebuilt, fixture, "a full 0.12.10 card must come back unchanged");
+                .expect("the checked-in 0.12.10 fixture is valid JSON");
+        let rebuilt = full_from_minimal(&fixture).expect("a real 0.12.10 card must rebuild");
+        assert_eq!(
+            rebuilt, fixture,
+            "a full 0.12.10 card must come back unchanged"
+        );
     }
 
     #[test]
@@ -477,30 +514,48 @@ mod tests {
 
     #[test]
     fn an_old_full_card_rebuilds_to_the_same_full_card() {
-        let nickname = Nickname::try_new("old-member").expect("nickname");
+        let nickname =
+            Nickname::try_new("old-member").expect("a literal peer name is a valid nickname");
         let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let old_full = serde_json::to_value(full_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-            .expect("full card serializes");
-        let rebuilt = full_from_minimal(&old_full).expect("an old full card rebuilds");
-        assert_eq!(rebuilt, old_full, "an old full card must come back unchanged");
+        let old_full =
+            serde_json::to_value(full_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+                .expect("an AgentCard is plain data and always serializes");
+        let rebuilt = full_from_minimal(&old_full).expect("an old full card must rebuild");
+        assert_eq!(
+            rebuilt, old_full,
+            "an old full card must come back unchanged"
+        );
     }
 
     #[test]
     fn a_minimal_card_rebuilds_to_the_full_card() {
-        let nickname = Nickname::try_new("new-member").expect("nickname");
+        let nickname =
+            Nickname::try_new("new-member").expect("a literal peer name is a valid nickname");
         let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
         let key = AuthorKey::from([0xab; 32]);
-        let minimal = serde_json::to_value(own_card(&nickname, key, seal)).expect("card serializes");
-        let rebuilt = full_from_minimal(&minimal).expect("a minimal card rebuilds");
-        let full = serde_json::to_value(full_card(&nickname, key, seal)).expect("full card serializes");
-        assert_eq!(rebuilt, full, "the rebuilt card must match the full card for the same member");
+        let minimal = serde_json::to_value(own_card(&nickname, key, seal))
+            .expect("an AgentCard is plain data and always serializes");
+        let rebuilt = full_from_minimal(&minimal).expect("a minimal card must rebuild");
+        let full = serde_json::to_value(full_card(&nickname, key, seal))
+            .expect("an AgentCard is plain data and always serializes");
+        assert_eq!(
+            rebuilt, full,
+            "the rebuilt card must match the full card for the same member"
+        );
     }
 
     #[test]
     fn a_peer_card_stays_under_the_per_peer_byte_budget() {
-        let nickname = Nickname::try_new("budget-peer").expect("nickname");
-        let card = own_card(&nickname, AuthorKey::from([0xab; 32]), "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U");
-        let bytes = serde_json::to_string(&card).expect("card serializes").len();
+        let nickname =
+            Nickname::try_new("budget-peer").expect("a literal peer name is a valid nickname");
+        let card = own_card(
+            &nickname,
+            AuthorKey::from([0xab; 32]),
+            "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U",
+        );
+        let bytes = serde_json::to_string(&card)
+            .expect("an AgentCard is plain data and always serializes")
+            .len();
         assert!(
             bytes <= 800,
             "a peer card is {bytes} bytes; the static part repeats for every peer, so cut it"
@@ -548,12 +603,12 @@ mod tests {
             .extensions
             .iter()
             .find(|ext| ext.uri.contains("mesh-seal"))
-            .expect("mesh-seal extension present");
+            .expect("the card always declares the mesh-seal extension");
         assert_eq!(
             seal_ext
                 .params
                 .as_ref()
-                .expect("the extension carries params")["x25519"],
+                .expect("the mesh-seal extension always carries params")["x25519"],
             seal_b58,
             "the seal extension carries the x25519 key"
         );
@@ -576,10 +631,11 @@ mod tests {
         let nickname = Nickname::from("calm-otter");
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58);
-        let card = serde_json::to_value(card).expect("a test value serializes to JSON");
+        let card =
+            serde_json::to_value(card).expect("a test value is plain data and always serializes");
         // A frame that is never full: the card is one merge.
         let merges = publish_merges(&nickname, &card, |_| Ok(0))
-            .expect("the test card fits the frame limit");
+            .expect("the test card is far below the frame limit");
         assert_eq!(merges.len(), 1, "one merge is recorded");
         let merge = &merges[0];
         assert_eq!(
@@ -666,7 +722,7 @@ mod tests {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let mut card =
             serde_json::to_value(full_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
-                .expect("a test value serializes to JSON");
+                .expect("a test value is plain data and always serializes");
         card["endpoint"] = serde_json::json!({
             "id": "ab".repeat(32),
             "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
@@ -682,18 +738,20 @@ mod tests {
         let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
         let card = worst_case_card(&nickname);
         let whole = serde_json::json!({ "peers": { nickname.as_str(): { "card": card } } });
-        let whole_len = passworded_frame_len(&whole).expect("the test frame has a length");
+        let whole_len =
+            passworded_frame_len(&whole).expect("a JSON frame in the test always has a length");
         assert!(
             whole_len > consts::MAX_MESSAGE_SIZE,
             "the premise of issue 41: the card as one merge is {whole_len} bytes on the wire"
         );
 
         let merges = publish_merges(&nickname, &card, passworded_frame_len)
-            .expect("every field fits a frame");
+            .expect("the fixture card fields each fit one frame");
 
         assert!(merges.len() > 1, "a card over the frame is in pieces");
         for merge in &merges {
-            let len = passworded_frame_len(merge).expect("the test frame has a length");
+            let len =
+                passworded_frame_len(merge).expect("a JSON frame in the test always has a length");
             assert!(
                 len + super::FRAME_MARGIN <= consts::MAX_MESSAGE_SIZE,
                 "a frame of {len} bytes leaves no margin"
@@ -708,7 +766,7 @@ mod tests {
         for merge in &merges {
             let part = merge["peers"][nickname.as_str()]["card"]
                 .as_object()
-                .expect("the JSON value is an object in this test");
+                .expect("the test builds a JSON object for each merge");
             for (key, value) in part {
                 assert!(
                     rebuilt.insert(key.clone(), value.clone()).is_none(),
@@ -731,14 +789,14 @@ mod tests {
         let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
         let card = worst_case_card(&nickname);
         let merges = publish_merges(&nickname, &card, passworded_frame_len)
-            .expect("every field fits a frame");
+            .expect("the fixture card fields each fit one frame");
         assert!(merges.len() > 1, "the premise: the card is in pieces");
 
         let mut arrived = serde_json::Map::new();
         for (index, merge) in merges.iter().enumerate() {
             let part = merge["peers"][nickname.as_str()]["card"]
                 .as_object()
-                .expect("the JSON value is an object in this test");
+                .expect("the test builds a JSON object for each merge");
             arrived.extend(part.clone());
             let doc = serde_json::json!({ "peers": { nickname.as_str(): { "card": arrived } } });
             assert_eq!(
@@ -767,7 +825,7 @@ mod tests {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let whole_card =
             serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58))
-                .expect("a test value serializes to JSON");
+                .expect("a test value is plain data and always serializes");
         let whole = serde_json::json!({ "peers": { "calm-otter": { "card": whole_card } } });
         assert!(
             super::complete_card(&whole, &nickname).is_some(),

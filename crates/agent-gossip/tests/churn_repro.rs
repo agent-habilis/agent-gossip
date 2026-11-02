@@ -58,7 +58,7 @@ async fn idle_pair_holds_without_peer_timeout_or_return() {
     }
 }
 
-/// Repro (b), H1: a SIGKILLed peer must not come back after a fifth peer joins.
+/// Repro (b), H1: a `SIGKILL`ed peer must not come back after a fifth peer joins.
 #[test]
 fn killed_peer_does_not_return_after_fifth_joins() {
     let (creator, mesh) = Node::create_named("churn-kill");
@@ -78,9 +78,14 @@ fn killed_peer_does_not_return_after_fifth_joins() {
 
     let mut timeouts_of_victim = 0;
     let mut returns_of_victim = 0;
-    for nick in [&creator.nickname, &survivor_a.nickname, &survivor_b.nickname] {
+    for nick in [
+        &creator.nickname,
+        &survivor_a.nickname,
+        &survivor_b.nickname,
+    ] {
         let served = cli_poll(&mesh, nick, None);
-        let events: Vec<serde_json::Value> = serde_json::from_str(&served).expect("poll prints JSON");
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(&served).expect("poll prints JSON");
         let about_victim = |kind: &str| {
             events
                 .iter()
@@ -132,7 +137,10 @@ async fn idle_pair_holds_six_minutes() {
                 )
             })
             .count();
-        assert_eq!(flaps, 0, "{label}: {flaps} peer_timeout/peer_return in six minutes");
+        assert_eq!(
+            flaps, 0,
+            "{label}: {flaps} peer_timeout/peer_return in six minutes"
+        );
     }
 }
 
@@ -154,13 +162,21 @@ async fn burst_start_counts_each_peer_once() {
     let joined_rows: Vec<String> = creator
         .events()
         .iter()
-        .filter_map(|event| match event {
-            OutputEvent::Presence { message }
-                if matches!(&message.kind, habilis_network::protocol::MessageKind::Presence { subtype } if *subtype == PresenceSubtype::Joined) =>
-            {
-                Some(format!("author={} id={} ts={}", message.author, message.id, message.timestamp))
-            }
-            _ => None,
+        .filter_map(|event| {
+            let OutputEvent::Presence { message } = event else {
+                return None;
+            };
+            let is_joined = matches!(
+                &message.kind,
+                habilis_network::protocol::MessageKind::Presence { subtype }
+                    if *subtype == PresenceSubtype::Joined
+            );
+            is_joined.then(|| {
+                format!(
+                    "author={} id={} ts={}",
+                    message.author, message.id, message.timestamp
+                )
+            })
         })
         .collect();
 
@@ -176,7 +192,7 @@ struct LeaveOnDrop(String);
 
 impl Drop for LeaveOnDrop {
     fn drop(&mut self) {
-        let _ = common::test_cmd().args(["leave", &self.0]).output();
+        let _ = test_cmd().args(["leave", &self.0]).output();
     }
 }
 
@@ -197,7 +213,9 @@ fn late_joiner_reports_same_peer_count_as_creator() {
     let peer_count = |nick: &str| -> u64 {
         let raw: serde_json::Value =
             serde_json::from_str(&cli_peers(&mesh, nick)).expect("peers prints JSON");
-        raw["peer_count"].as_u64().expect("peers carries a numeric peer_count")
+        raw["peer_count"]
+            .as_u64()
+            .expect("peers carries a numeric peer_count")
     };
     let creator_count = peer_count(&creator.nickname);
     let late_count = peer_count(&late.nickname);
@@ -207,7 +225,7 @@ fn late_joiner_reports_same_peer_count_as_creator() {
     );
 }
 
-/// Repro H3: a SIGSTOPped daemon, held for 60 s then 200 s, must not leave a split roster.
+/// Repro H3: a `SIGSTOP`ped daemon, held for 60 s then 200 s, must not leave a split roster.
 #[test]
 #[ignore = "280 s SIGSTOP run, run with --ignored"]
 fn stopped_daemon_resumes_with_matching_roster() {
@@ -226,14 +244,23 @@ fn stopped_daemon_resumes_with_matching_roster() {
     let mut returns = 0;
     for nick in [&creator.nickname, &peer.nickname] {
         let served = cli_poll(&mesh, nick, None);
-        let events: Vec<serde_json::Value> = serde_json::from_str(&served).expect("poll prints JSON");
-        timeouts += events.iter().filter(|event| event["event"] == "peer_timeout").count();
-        returns += events.iter().filter(|event| event["event"] == "peer_return").count();
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(&served).expect("poll prints JSON");
+        timeouts += events
+            .iter()
+            .filter(|event| event["event"] == "peer_timeout")
+            .count();
+        returns += events
+            .iter()
+            .filter(|event| event["event"] == "peer_return")
+            .count();
     }
     let count = |nick: &str| -> u64 {
         let raw: serde_json::Value =
             serde_json::from_str(&cli_peers(&mesh, nick)).expect("peers prints JSON");
-        raw["peer_count"].as_u64().expect("peers carries a numeric peer_count")
+        raw["peer_count"]
+            .as_u64()
+            .expect("peers carries a numeric peer_count")
     };
     let count_creator = count(&creator.nickname);
     let count_stopped = count(&stopped.nickname);
@@ -243,7 +270,7 @@ fn stopped_daemon_resumes_with_matching_roster() {
     );
 }
 
-/// Count surfaces (task B): after a SIGKILLed peer goes quiet, the peer count the daemon reports
+/// Count surfaces (task B): after a `SIGKILL`ed peer goes quiet, the peer count the daemon reports
 /// must equal live peers plus self, the number a user means by "online".
 #[test]
 #[ignore = "140 s quiet-peer guard, run with --ignored"]
@@ -260,19 +287,21 @@ fn peer_count_surfaces_count_only_live_peers_after_a_quiet_one() {
 
     let roster: serde_json::Value =
         serde_json::from_str(&cli_peers(&mesh, &creator.nickname)).expect("peers prints JSON");
-    let roster_count = roster["peer_count"].as_u64().expect("peers carries peer_count");
-    let live_plus_self = roster["peers"]
+    let roster_count = roster["peer_count"]
+        .as_u64()
+        .expect("peers carries peer_count");
+    let peers: &Vec<serde_json::Value> = roster["peers"]
         .as_array()
-        .expect("peers carries a peers array")
-        .iter()
-        .filter(|entry| entry["quiet"] == false)
-        .count() as u64
-        + 1;
+        .expect("peers carries a peers array");
+    let live_entries = peers.iter().filter(|entry| entry["quiet"] == false).count();
+    let live_plus_self = live_entries as u64 + 1;
 
     let info_line = r#"{"command":"info"}"#;
     let info: serde_json::Value =
-        serde_json::from_str(&ipc_raw(&mesh, &creator.nickname, info_line)).expect("info prints JSON");
-    let info_count = info["peer_count"].as_u64().expect("info carries peer_count");
+        serde_json::from_str(&ipc_raw(&mesh, &creator.nickname, info_line))
+            .expect("info prints JSON");
+    let info_peer_count: &serde_json::Value = &info["peer_count"];
+    let info_count: u64 = info_peer_count.as_u64().expect("info carries peer_count");
 
     assert_eq!(
         (roster_count, info_count),
@@ -299,5 +328,5 @@ fn doctor_members(out: &str, nick: &str) -> Option<u64> {
     let key = format!("<{nick}>");
     let rest = &out[out.find(&key)? + key.len()..];
     let after_dot = rest.split_once('·')?.1;
-    after_dot.trim_start().split_whitespace().next()?.parse().ok()
+    after_dot.split_whitespace().next()?.parse().ok()
 }
