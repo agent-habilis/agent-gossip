@@ -260,11 +260,11 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::{JoinTarget, Message, MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{Channel, JoinTarget, Message, MessageKind, PresenceSubtype};
     use serde_json::json;
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
@@ -323,20 +323,30 @@ mod tests {
     /// One cursor-less fetch of the baseline wait: remember the seq before
     /// bob-cursor's join and whether his card merge has been seen. `Some` once
     /// both have, across all the fetches so far.
-    async fn baseline_step(
-        alice: &Session,
-        replay_from: &Cell<Option<u64>>,
-        saw_card: &Cell<bool>,
-    ) -> Option<()> {
-        // Read the document before the fetch: the card merge emits its event as it lands in the
-        // document, so a card that is in the document has its event in the fetch that follows. The
-        // ring copy of a meta change holds no document, so the event itself cannot say.
-        let card_landed = alice
-            .meta_get()
-            .await
-            .expect("meta get")
-            .pointer("/peers/bob-cursor/card")
-            .is_some();
+    /// What the baseline wait has seen so far across its fetches.
+    #[derive(Default)]
+    struct Baseline {
+        /// The seq before bob-cursor's join, once the join was seen.
+        replay_from: Cell<Option<u64>>,
+        /// Whether the meta document went from no card to bob-cursor's card.
+        saw_card: Cell<bool>,
+        /// The meta document of the last step.
+        meta_doc: RefCell<serde_json::Value>,
+        /// Whether a meta change authored by bob-cursor reached the ring.
+        bob_wrote: Cell<bool>,
+    }
+
+    async fn baseline_step(alice: &Session, baseline: &Baseline) -> Option<()> {
+        let Baseline {
+            replay_from,
+            saw_card,
+            meta_doc,
+            bob_wrote,
+        } = baseline;
+        // The ring copy of a meta change holds no document, so the card cannot be read from the
+        // event: the event says who wrote, and `meta_get` gives the document. Both flags are
+        // sticky, so the order in which the event and the document reach this loop does not matter.
+        let after = alice.meta_get().await.expect("meta get");
         let events = alice
             .fetch_messages(None, false)
             .await
@@ -345,8 +355,40 @@ mod tests {
         if replay_from.get().is_none() {
             replay_from.set(seq_before_bob_join(&events));
         }
-        saw_card.set(saw_card.get() || card_landed);
-        (replay_from.get().is_some() && saw_card.get()).then_some(())
+        let before = meta_doc.replace(after.clone());
+        bob_wrote.set(
+            bob_wrote.get()
+                || events
+                    .iter()
+                    .filter_map(|item| meta_change_author(&item.event))
+                    .any(|author| author == "bob-cursor"),
+        );
+        saw_card.set(saw_card.get() || is_bob_card_merge("bob-cursor", &before, &after));
+        (replay_from.get().is_some() && saw_card.get() && bob_wrote.get()).then_some(())
+    }
+
+    /// The author of a meta change, if `event` is one.
+    fn meta_change_author(event: &crate::emission::OutputEvent) -> Option<&str> {
+        let crate::emission::OutputEvent::StateChanged {
+            channel: Channel::Meta,
+            event: change,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        Some(change.author.as_str())
+    }
+
+    /// Whether a meta change by `author`, taking the document from `before` to
+    /// `after`, is the merge of bob-cursor's card.
+    fn is_bob_card_merge(
+        author: &str,
+        before: &serde_json::Value,
+        after: &serde_json::Value,
+    ) -> bool {
+        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
+        author == "bob-cursor" && !card(before) && card(after)
     }
 
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
@@ -654,6 +696,32 @@ mod tests {
         alice.leave().await;
     }
 
+    #[test]
+    fn bob_card_merge_is_the_absent_to_present_transition() {
+        // A failed card publish writes `card_error` under bob-cursor's own entry.
+        // It has his author but no card, so it must not count as the card merge.
+        let empty = json!({ "peers": {} });
+        let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
+        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+
+        assert!(
+            !is_bob_card_merge("bob-cursor", &empty, &card_error),
+            "a card_error merge by bob-cursor is not his card merge"
+        );
+        assert!(
+            is_bob_card_merge("bob-cursor", &empty, &card),
+            "the merge that adds bob-cursor's card is the card merge"
+        );
+        assert!(
+            !is_bob_card_merge("bob-cursor", &card, &card),
+            "a later meta change with the card already present is not the card merge"
+        );
+        assert!(
+            !is_bob_card_merge("alice-cursor", &empty, &card),
+            "a card that another author wrote is not bob-cursor's card merge"
+        );
+    }
+
     #[tokio::test]
     async fn implicit_cursor_returns_delta_on_subsequent_fetches() {
         // First `fetch_messages(None)` sees full history. Subsequent
@@ -677,15 +745,14 @@ mod tests {
         // buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
-        let replay_from = Cell::new(None);
-        let saw_card = Cell::new(false);
+        let baseline = Baseline::default();
         let deadline = tokio::time::Instant::now() + DELIVER;
         poll_until(deadline, Duration::from_millis(150), || {
-            baseline_step(&alice, &replay_from, &saw_card)
+            baseline_step(&alice, &baseline)
         })
         .await
         .expect("first fetches should see bob's join presence and his card merge");
-        let replay_from = replay_from.get().expect("set with the join");
+        let replay_from = baseline.replay_from.get().expect("set with the join");
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
