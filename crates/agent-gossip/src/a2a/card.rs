@@ -455,6 +455,15 @@ mod tests {
     }
 
     #[test]
+    fn a_real_0_12_10_card_rebuilds_to_itself() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/card_0_12_10.json"))
+                .expect("the 0.12.10 fixture is JSON");
+        let rebuilt = full_from_minimal(&fixture).expect("a 0.12.10 card rebuilds");
+        assert_eq!(rebuilt, fixture, "a full 0.12.10 card must come back unchanged");
+    }
+
+    #[test]
     fn an_old_full_card_rebuilds_to_the_same_full_card() {
         let nickname = Nickname::try_new("old-member").expect("nickname");
         let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
