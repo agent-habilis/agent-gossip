@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use agent_gossip::OutputEvent;
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, Node, PresenceSubtype, cli_peers, cli_poll};
+use common::{InProcNode, Node, PresenceSubtype, cli_peers, cli_poll, ipc_raw, test_cmd};
 
 /// Idle hold for repro (a). Brief asks for more than 3 min at default timings.
 const IDLE_HOLD: Duration = Duration::from_secs(190);
@@ -241,4 +241,62 @@ fn stopped_daemon_resumes_with_matching_roster() {
         count_creator, count_stopped,
         "resumed daemon peer_count {count_stopped} differs from creator {count_creator}; {timeouts} peer_timeout, {returns} peer_return across survivors"
     );
+}
+
+/// Count surfaces (task B): after a SIGKILLed peer goes quiet, the peer count the daemon reports
+/// must equal live peers plus self, the number a user means by "online".
+#[test]
+fn peer_count_surfaces_count_only_live_peers_after_a_quiet_one() {
+    let (creator, mesh) = Node::create_named("churn-count");
+    let _leave = LeaveOnDrop(mesh.clone());
+    let mut victim = Node::join(&mesh, "churn-count-victim");
+    let survivor = Node::join(&mesh, "churn-count-survivor");
+    std::thread::sleep(Duration::from_secs(20));
+
+    victim.kill();
+    victim.wait_exit();
+    std::thread::sleep(Duration::from_secs(120));
+
+    let roster: serde_json::Value =
+        serde_json::from_str(&cli_peers(&mesh, &creator.nickname)).expect("peers prints JSON");
+    let roster_count = roster["peer_count"].as_u64().expect("peers carries peer_count");
+    let live_plus_self = roster["peers"]
+        .as_array()
+        .expect("peers carries a peers array")
+        .iter()
+        .filter(|entry| entry["quiet"] == false)
+        .count() as u64
+        + 1;
+
+    let info_line = r#"{"command":"info"}"#;
+    let info: serde_json::Value =
+        serde_json::from_str(&ipc_raw(&mesh, &creator.nickname, info_line)).expect("info prints JSON");
+    let info_count = info["peer_count"].as_u64().expect("info carries peer_count");
+
+    assert_eq!(
+        (roster_count, info_count),
+        (live_plus_self, live_plus_self),
+        "peer_count counts the quiet victim: peers says {roster_count}, info says {info_count}, live plus self is {live_plus_self} (survivor {})",
+        survivor.nickname
+    );
+
+    let doctor = test_cmd()
+        .args(["doctor", "--no-probe", "--output", "json"])
+        .output()
+        .expect("doctor runs");
+    let doctor_out = String::from_utf8_lossy(&doctor.stdout).to_string();
+    let doctor_count = doctor_members(&doctor_out, &creator.nickname)
+        .expect("doctor reports the creator's member count");
+    assert_eq!(
+        doctor_count, live_plus_self,
+        "doctor says {doctor_count} members, live plus self is {live_plus_self}"
+    );
+}
+
+/// The member count doctor prints after `<nick> · `, from its JSON or human text.
+fn doctor_members(out: &str, nick: &str) -> Option<u64> {
+    let key = format!("<{nick}>");
+    let rest = &out[out.find(&key)? + key.len()..];
+    let after_dot = rest.split_once('·')?.1;
+    after_dot.trim_start().split_whitespace().next()?.parse().ok()
 }
