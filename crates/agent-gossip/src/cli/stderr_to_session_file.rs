@@ -48,9 +48,9 @@ fn redirect_stderr(file: File) -> Result<()> {
     // process, the detached daemon, must not inherit it.
     keep_from_child(std::io::stderr().as_handle());
     let handle = file.into_raw_handle();
+    #[expect(unsafe_code, reason = "SetStdHandle has no safe std wrapper")]
     // SAFETY: `handle` is an open file handle that this process now owns and
     // never closes, so it stays valid as the stderr of the process.
-    #[expect(unsafe_code, reason = "SetStdHandle has no safe std wrapper")]
     let set = unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) };
     anyhow::ensure!(
         set != 0,

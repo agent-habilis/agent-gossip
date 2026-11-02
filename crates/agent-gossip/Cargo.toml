@@ -101,7 +101,7 @@ mimalloc = { version = "0.1", default-features = false }
 
 # The process flags, the handle type and the stderr handle that start the
 # daemon on Windows (`cli::spawn_detached`, `cli::detached_stdio`,
-# `cli::redirect_stderr`). Already transitive in
+# `cli::keep_from_child`, `cli::stderr_to_session_file`). Already transitive in
 # the lockfile at 0.61, as in the engine, so it adds no crate to the graph.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
