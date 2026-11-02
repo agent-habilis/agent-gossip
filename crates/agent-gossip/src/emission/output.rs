@@ -343,10 +343,10 @@ impl Output {
             document: keep_document.then(|| Arc::clone(document)),
             is_self,
         };
-        // The ring keeps the document of a State change, which the poll JSON carries, and none of
-        // a Meta change, which it drops. The live stream keeps both, for in-process readers. Every
-        // copy keeps the event with its body, the change itself.
-        let ring_keeps_document = channel != habilis_network::protocol::Channel::Meta;
+        // The ring keeps what a poll reader gets (see `poll_carries_document`). The live stream
+        // keeps the document of every change, for in-process readers. Every copy keeps the event
+        // with its body, the change itself.
+        let ring_keeps_document = simple_event::poll_carries_document(channel);
         match self {
             Output::Stream { mode, tap, .. } => {
                 match mode {

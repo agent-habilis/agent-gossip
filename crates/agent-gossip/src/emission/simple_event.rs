@@ -699,6 +699,15 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
     }
 }
 
+/// Whether a poll reader gets the document of a change on `channel`: in the JSON line, and in the
+/// ring copy of the event that the JSON line is made from. The Meta document is every peer's agent
+/// card, ~4k tokens with four peers, repeated on each change; readers take it on demand with
+/// `meta get`. The live and capture copies of a change keep the document for in-process readers.
+/// This is the one place that holds the rule.
+pub(super) fn poll_carries_document(channel: habilis_network::protocol::Channel) -> bool {
+    channel != habilis_network::protocol::Channel::Meta
+}
+
 /// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
@@ -727,12 +736,7 @@ pub(super) fn format_state_json(
             pubkey,
             ts: event.timestamp.as_secs(),
             merge: merge_value,
-            // The meta document is every peer's agent card, ~4k tokens with
-            // four peers, repeated on each change; readers take it on demand
-            // with `meta get`. Only this JSON form drops it: the typed
-            // `OutputEvent::StateChanged` keeps it in the live and capture copies, for in-process
-            // readers; the ring copy of a Meta change holds none, as the poll JSON drops it.
-            document: document.filter(|_| channel != habilis_network::protocol::Channel::Meta),
+            document: document.filter(|_| poll_carries_document(channel)),
             display: state_display(author, is_self, &what),
             is_self,
         })
