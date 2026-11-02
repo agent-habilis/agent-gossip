@@ -344,7 +344,8 @@ impl Output {
             is_self,
         };
         // The ring keeps the document of a State change, which the poll JSON carries, and none of
-        // a Meta change, which it drops. The live stream keeps both, for in-process readers.
+        // a Meta change, which it drops. The live stream keeps both, for in-process readers. Every
+        // copy keeps the event with its body, the change itself.
         let ring_keeps_document = channel != habilis_network::protocol::Channel::Meta;
         match self {
             Output::Stream { mode, tap, .. } => {
@@ -571,11 +572,16 @@ mod tests {
         serde_json::json!({ "peers": { "bob": { "card": "x".repeat(4096) } } })
     }
 
+    /// The body of a Meta change that writes that card: the change of the document, about 4 KB.
+    fn card_patch() -> String {
+        serde_json::json!({ "k": "change", "c": "x".repeat(4096) }).to_string()
+    }
+
     fn change(channel: Channel, kind: MessageKind) -> NodeEvent {
         NodeEvent::StateChanged {
             channel,
             event: Box::new(
-                Message::fixture(kind, "{}")
+                Message::fixture(kind, &card_patch())
                     .sign(&Identity::generate())
                     .authored(),
             ),
@@ -610,7 +616,9 @@ mod tests {
 
     /// The ring keeps up to `SURFACED_EVENTS_CAP` events. A Meta document is the agent card of
     /// every peer, and the poll JSON drops it, so the ring copy of a Meta change holds none: the
-    /// bytes that the ring holds for Meta changes do not grow with the number of events.
+    /// document bytes that the ring feed holds for Meta changes are 0 per event. The event still
+    /// holds its body, the change with the card (about 4 KB), so the ring holds up to
+    /// `SURFACED_EVENTS_CAP` bodies. That bound is in the audit file, row R12.
     #[test]
     fn the_ring_copy_of_a_meta_change_holds_no_document() {
         let (output, _live, mut ring) = tapped();
