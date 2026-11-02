@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{Output, PingPeer, ReadyParams, StateChangedParams};
 
 /// The app renders the engine's generic
@@ -52,7 +54,7 @@ impl habilis_network::embed::NodeSink for Output {
             } => self.state_changed(StateChangedParams {
                 channel,
                 event: &event,
-                document: &document,
+                document: &Arc::new(document),
                 is_self,
             }),
             _ => {}

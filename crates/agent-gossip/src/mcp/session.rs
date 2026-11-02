@@ -264,10 +264,13 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::{Channel, JoinTarget, Message, MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{
+        AuthorKey, Channel, JoinTarget, Message, MessageKind, PresenceSubtype,
+    };
     use serde_json::json;
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
+    use crate::a2a::card::{complete_card, own_card, publish_merges};
     use crate::a2a::status_update_params::chat_text;
     use crate::a2a::surfaced_event::SurfacedEvent;
     use crate::api::{CreateConfig, JoinConfig};
@@ -320,15 +323,39 @@ mod tests {
         )
     }
 
+    /// What the baseline wait has seen so far across its fetches.
+    #[derive(Default)]
+    struct Baseline {
+        /// The seq before bob-cursor's join, once the join was seen.
+        replay_from: Cell<Option<u64>>,
+        /// Whether the meta document went from no card to bob-cursor's card.
+        saw_card: Cell<bool>,
+        /// The meta document of the last step.
+        meta_doc: RefCell<serde_json::Value>,
+        /// Whether a meta change authored by bob-cursor reached the ring.
+        bob_wrote: Cell<bool>,
+    }
+
     /// One cursor-less fetch of the baseline wait: remember the seq before
     /// bob-cursor's join and whether his card merge has been seen. `Some` once
     /// both have, across all the fetches so far.
-    async fn baseline_step(
-        alice: &Session,
-        replay_from: &Cell<Option<u64>>,
-        saw_card: &Cell<bool>,
-        meta_doc: &RefCell<serde_json::Value>,
-    ) -> Option<()> {
+    async fn baseline_step(alice: &Session, baseline: &Baseline) -> Option<()> {
+        let Baseline {
+            replay_from,
+            saw_card,
+            meta_doc,
+            bob_wrote,
+        } = baseline;
+        // The ring copy of a meta change holds no document, so the card cannot be read from the
+        // event: the event says who wrote, and `meta_get` gives the document. A card that does not
+        // fit one frame is written in several merges (`publish_merges`), and the document holds a
+        // whole card, by its schema (`complete_card`), only after the last merge. The event of
+        // each merge is in the ring before the fetch that follows the `meta_get` that shows the
+        // card: the engine loop drains the tap into the ring after every step
+        // (`event_loop.rs`, `lp.app.drain_surfaced()`), and the two requests are later steps.
+        // Both flags are sticky, so the order in which the event and the document reach this loop
+        // does not matter.
+        let after = alice.meta_get().await.expect("meta get");
         let events = alice
             .fetch_messages(None, false)
             .await
@@ -337,11 +364,39 @@ mod tests {
         if replay_from.get().is_none() {
             replay_from.set(seq_before_bob_join(&events));
         }
-        for (author, document) in events.iter().filter_map(|item| meta_change(&item.event)) {
-            let before = meta_doc.replace(document.clone());
-            saw_card.set(saw_card.get() || is_bob_card_merge(author, &before, document));
-        }
-        (replay_from.get().is_some() && saw_card.get()).then_some(())
+        let before = meta_doc.replace(after.clone());
+        bob_wrote.set(
+            bob_wrote.get()
+                || events
+                    .iter()
+                    .filter_map(|item| meta_change_author(&item.event))
+                    .any(|author| author == "bob-cursor"),
+        );
+        saw_card.set(saw_card.get() || is_bob_card_merge(&before, &after));
+        (replay_from.get().is_some() && saw_card.get() && bob_wrote.get()).then_some(())
+    }
+
+    /// The author of a meta change, if `event` is one.
+    fn meta_change_author(event: &crate::emission::OutputEvent) -> Option<&str> {
+        let crate::emission::OutputEvent::StateChanged {
+            channel: Channel::Meta,
+            event: change,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        Some(change.author.as_str())
+    }
+
+    /// Whether the document going from `before` to `after` gets bob-cursor's card whole: the card
+    /// is whole in `after` and was not in `before`. The first merge of a card in several merges
+    /// does not complete it. Who wrote the change is not asked here: the wait asks it of the ring
+    /// event (`bob_wrote`).
+    fn is_bob_card_merge(before: &serde_json::Value, after: &serde_json::Value) -> bool {
+        let bob = Nickname::from("bob-cursor");
+        let whole = |doc: &serde_json::Value| complete_card(doc, &bob).is_some();
+        !whole(before) && whole(after)
     }
 
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
@@ -354,31 +409,6 @@ mod tests {
                 .checked_sub(1)
                 .map_or(0, |previous| events[previous].seq),
         )
-    }
-
-    /// The author and the document after a meta change, if `event` is one.
-    fn meta_change(event: &crate::emission::OutputEvent) -> Option<(&str, &serde_json::Value)> {
-        let crate::emission::OutputEvent::StateChanged {
-            channel: Channel::Meta,
-            event: change,
-            document,
-            ..
-        } = event
-        else {
-            return None;
-        };
-        Some((change.author.as_str(), document))
-    }
-
-    /// Whether a meta change by `author`, taking the document from `before` to
-    /// `after`, is the merge of bob-cursor's card.
-    fn is_bob_card_merge(
-        author: &str,
-        before: &serde_json::Value,
-        after: &serde_json::Value,
-    ) -> bool {
-        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
-        author == "bob-cursor" && !card(before) && card(after)
     }
 
     /// Whether `event` is bob-cursor's join presence — the marker
@@ -674,26 +704,71 @@ mod tests {
         alice.leave().await;
     }
 
+    /// The card of bob-cursor as his daemon builds it.
+    fn bob_card() -> serde_json::Value {
+        let seal = bs58::encode([7u8; 32]).into_string();
+        serde_json::to_value(own_card(
+            &Nickname::from("bob-cursor"),
+            AuthorKey::from([0xab; 32]),
+            &seal,
+        ))
+        .expect("a test value serializes to JSON")
+    }
+
     #[test]
     fn bob_card_merge_is_the_absent_to_present_transition() {
         // A failed card publish writes `card_error` under bob-cursor's own entry.
-        // It has his author but no card, so it must not count as the card merge.
+        // It adds no card, so it must not count as the card merge.
         let empty = json!({ "peers": {} });
         let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
-        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+        let card = json!({ "peers": { "bob-cursor": { "card": bob_card() } } });
 
         assert!(
-            !is_bob_card_merge("bob-cursor", &empty, &card_error),
+            !is_bob_card_merge(&empty, &card_error),
             "a card_error merge by bob-cursor is not his card merge"
         );
         assert!(
-            is_bob_card_merge("bob-cursor", &empty, &card),
+            is_bob_card_merge(&empty, &card),
             "the merge that adds bob-cursor's card is the card merge"
         );
         assert!(
-            !is_bob_card_merge("bob-cursor", &card, &card),
+            !is_bob_card_merge(&card, &card),
             "a later meta change with the card already present is not the card merge"
         );
+    }
+
+    /// A card that does not fit one frame is written in several merges. Only the last one makes
+    /// the card whole, so the baseline wait must not close on the first.
+    #[test]
+    fn a_card_in_two_merges_is_complete_only_after_the_last_merge() {
+        let nickname = Nickname::from("bob-cursor");
+        // A model of the frame that a merge becomes: its JSON text and 2000 bytes of envelope,
+        // signature and sealing. It cuts this card into 2 merges.
+        let merges = publish_merges(&nickname, &bob_card(), |merge| {
+            Ok(merge.to_string().len() + 2000)
+        })
+        .expect("every field fits a frame");
+        assert_eq!(merges.len(), 2, "the premise: the card is in 2 merges");
+
+        let mut arrived = serde_json::Map::new();
+        let mut before = json!({ "peers": {} });
+        for (index, merge) in merges.iter().enumerate() {
+            arrived.extend(
+                merge["peers"]["bob-cursor"]["card"]
+                    .as_object()
+                    .expect("a merge of the card is an object")
+                    .clone(),
+            );
+            let after = json!({ "peers": { "bob-cursor": { "card": arrived } } });
+            assert_eq!(
+                is_bob_card_merge(&before, &after),
+                index + 1 == merges.len(),
+                "after merge {} of {}",
+                index + 1,
+                merges.len()
+            );
+            before = after;
+        }
     }
 
     #[tokio::test]
@@ -719,16 +794,14 @@ mod tests {
         // buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
-        let replay_from = Cell::new(None);
-        let saw_card = Cell::new(false);
-        let meta_doc = RefCell::new(serde_json::Value::Null);
+        let baseline = Baseline::default();
         let deadline = tokio::time::Instant::now() + DELIVER;
         poll_until(deadline, Duration::from_millis(150), || {
-            baseline_step(&alice, &replay_from, &saw_card, &meta_doc)
+            baseline_step(&alice, &baseline)
         })
         .await
         .expect("first fetches should see bob's join presence and his card merge");
-        let replay_from = replay_from.get().expect("set with the join");
+        let replay_from = baseline.replay_from.get().expect("set with the join");
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.

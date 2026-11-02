@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MessageKind, Nickname};
 use tokio::sync::mpsc::UnboundedSender;
@@ -335,35 +337,41 @@ impl Output {
             document,
             is_self,
         } = params;
-        let make = || OutputEvent::StateChanged {
+        let make = |keep_document: bool| OutputEvent::StateChanged {
             channel,
             event: Box::new(event.clone()),
-            document: document.clone(),
+            document: keep_document.then(|| Arc::clone(document)),
             is_self,
         };
+        // The ring keeps what a poll reader gets (see `poll_carries_document`). The live stream
+        // keeps the document of every change, for in-process readers. Every copy keeps the event
+        // with its body, the change itself.
+        let ring_keeps_document = simple_event::poll_carries_document(channel);
         match self {
             Output::Stream { mode, tap, .. } => {
                 match mode {
                     OutputMode::Json => {
                         emit(&simple_event::format_state_json(
-                            channel, event, document, is_self,
+                            channel,
+                            event,
+                            Some(document),
+                            is_self,
                         ));
                     }
                     OutputMode::Silent => {}
                 }
                 if let Some(tap) = tap {
-                    let _ = tap.send(make());
+                    let _ = tap.send(make(ring_keeps_document));
                 }
             }
             Output::Capture { tx, tap, .. } => {
-                let evt = make();
                 // Poll/fetch history always sees it.
                 if let Some(tap) = tap {
-                    let _ = tap.send(evt.clone());
+                    let _ = tap.send(make(ring_keeps_document));
                 }
                 // F5: never wake an agent on its own patch.
                 if !is_self {
-                    let _ = tx.send(evt);
+                    let _ = tx.send(make(true));
                 }
             }
         }
@@ -546,5 +554,171 @@ impl Output {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use habilis_network::embed::{NodeEvent, NodeSink};
+    use habilis_network::protocol::{Channel, Identity, Message, MessageKind};
+    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+
+    use super::Output;
+    use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
+    use crate::a2a::surfaced_event::SurfacedEvent;
+    use crate::a2a::tuning::SURFACED_EVENTS_CAP;
+    use crate::emission::OutputEvent;
+
+    /// A document of about 4 KB: one agent card, as a peer of the mesh writes it.
+    fn card_document() -> serde_json::Value {
+        serde_json::json!({ "peers": { "bob": { "card": "x".repeat(4096) } } })
+    }
+
+    /// The body of a Meta change that writes that card: the change of the document, about 4 KB.
+    fn card_patch() -> String {
+        serde_json::json!({ "k": "change", "c": "x".repeat(4096) }).to_string()
+    }
+
+    fn change(channel: Channel, kind: MessageKind) -> NodeEvent {
+        NodeEvent::StateChanged {
+            channel,
+            event: Box::new(
+                Message::fixture(kind, &card_patch())
+                    .sign(&Identity::generate())
+                    .authored(),
+            ),
+            document: card_document(),
+            is_self: false,
+        }
+    }
+
+    /// The bytes of the document that an event holds, as text. `Debug` reads the same through any
+    /// wrapper of the document, and prints `None` for a document that the event does not hold.
+    fn held_document_bytes(event: &OutputEvent) -> usize {
+        let OutputEvent::StateChanged { document, .. } = event else {
+            return 0;
+        };
+        format!("{document:?}").len()
+    }
+
+    fn drain(rx: &mut UnboundedReceiver<OutputEvent>) -> Vec<OutputEvent> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    /// A capturing output with a tap: the live stream is `live`, the ring feed is `ring`.
+    fn tapped() -> (
+        Output,
+        UnboundedReceiver<OutputEvent>,
+        UnboundedReceiver<OutputEvent>,
+    ) {
+        let (live_tx, live) = unbounded_channel();
+        let (ring_tx, ring) = unbounded_channel();
+        (Output::capture(live_tx).set_tap(ring_tx), live, ring)
+    }
+
+    /// The bytes of the change body that an event holds: the change itself, a patch.
+    fn held_body_bytes(event: &OutputEvent) -> usize {
+        let OutputEvent::StateChanged { event, .. } = event else {
+            return 0;
+        };
+        event.body.as_str().len()
+    }
+
+    /// What the real surfaced ring holds after `count` changes went through the tap and
+    /// `A2aApp::drain_surfaced_ring`, as the event loop does it.
+    fn ring_after(count: usize, channel: Channel, kind: &MessageKind) -> Vec<SurfacedEvent> {
+        let (live_tx, _live) = unbounded_channel();
+        let mut app = A2aApp::new_with_io(SurfacedIo::new(Output::capture(live_tx)));
+        for _ in 0..count {
+            app.output.emit(change(channel, kind.clone()));
+        }
+        app.drain_surfaced_ring();
+        app.surfaced.poll_since(None).events
+    }
+
+    /// The ring keeps up to `SURFACED_EVENTS_CAP` events. A Meta document is the agent card of
+    /// every peer, and the poll JSON drops it, so the ring copy of a Meta change holds none: the
+    /// document bytes that the ring holds for Meta changes are 0 per event. The event still holds
+    /// its body, the change with the card (about 4 KB), so the ring holds `SURFACED_EVENTS_CAP`
+    /// bodies. That bound is in the audit file, row R12.
+    #[test]
+    fn the_ring_holds_no_meta_document_after_ten_times_its_cap() {
+        let events = ring_after(10 * SURFACED_EVENTS_CAP, Channel::Meta, &MessageKind::Meta);
+        assert_eq!(
+            events.len(),
+            SURFACED_EVENTS_CAP,
+            "the ring is full and capped"
+        );
+        let documents: usize = events
+            .iter()
+            .map(|item| held_document_bytes(&item.event))
+            .sum();
+        assert!(
+            documents <= SURFACED_EVENTS_CAP * "None".len(),
+            "the ring holds {documents} document bytes for {} Meta changes",
+            events.len()
+        );
+        let bodies: usize = events.iter().map(|item| held_body_bytes(&item.event)).sum();
+        assert_eq!(
+            bodies,
+            SURFACED_EVENTS_CAP * card_patch().len(),
+            "the ring still holds one patch per event: the bound of the audit row R12"
+        );
+    }
+
+    /// The live stream is what an in-process reader sees, so it keeps the whole document.
+    #[test]
+    fn the_live_copy_of_a_meta_change_still_carries_the_document() {
+        let (output, mut live, _ring) = tapped();
+        output.emit(change(Channel::Meta, MessageKind::Meta));
+        let events = drain(&mut live);
+        assert_eq!(events.len(), 1, "one live event");
+        assert!(
+            held_document_bytes(&events[0]) > 4096,
+            "the live copy holds the card"
+        );
+    }
+
+    /// A State document is part of the poll JSON, so its ring copy keeps the document.
+    #[test]
+    fn the_ring_keeps_the_document_of_a_state_change() {
+        let events = ring_after(1, Channel::State, &MessageKind::State);
+        assert_eq!(events.len(), 1, "one ring event");
+        assert!(
+            held_document_bytes(&events[0].event) > 4096,
+            "the ring copy holds the document"
+        );
+    }
+
+    /// The live copy and the ring copy of one State change share one document: no deep copy per
+    /// copy of the event.
+    #[test]
+    fn the_copies_of_a_state_change_share_one_document() {
+        let (output, mut live, mut ring) = tapped();
+        output.emit(change(Channel::State, MessageKind::State));
+        let (live, ring) = (drain(&mut live), drain(&mut ring));
+        let (
+            [
+                OutputEvent::StateChanged {
+                    document: Some(live_document),
+                    ..
+                },
+            ],
+            [
+                OutputEvent::StateChanged {
+                    document: Some(ring_document),
+                    ..
+                },
+            ],
+        ) = (live.as_slice(), ring.as_slice())
+        else {
+            panic!("one live event and one ring event, both with a document");
+        };
+        assert!(
+            Arc::ptr_eq(live_document, ring_document),
+            "the live copy and the ring copy hold two documents, not one"
+        );
     }
 }

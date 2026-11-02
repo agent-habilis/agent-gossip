@@ -823,7 +823,7 @@ mod snapshots {
         super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
             &view(Message::fixture(MessageKind::State, &body)),
-            document,
+            Some(document),
             is_self,
         )
     }
@@ -869,7 +869,7 @@ mod snapshots {
         let line = super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::Meta,
             &message,
-            &document,
+            Some(&document),
             false,
         );
         let parsed: serde_json::Value =
@@ -900,7 +900,7 @@ mod snapshots {
         let line = super::super::simple_event::format_state_json(
             habilis_network::protocol::Channel::State,
             &message,
-            &document,
+            Some(&document),
             false,
         );
         let parsed: serde_json::Value =
