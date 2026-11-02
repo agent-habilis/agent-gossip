@@ -166,27 +166,64 @@ fn minimal(full: AgentCard) -> AgentCard {
     }
 }
 
-/// The full card rebuilt from a stored card. Its own fields (name, description, interfaces,
-/// version, sealing key) are kept; the static parts come from [`full_card`]. A stored card that
-/// is already full, as older members wrote it, rebuilds to the same card.
+/// The full card rebuilt from a stored card. The stored card's own fields (name, interfaces,
+/// version, extensions, endpoint hint) are kept as stored. The static parts a minimal card drops
+/// (description when empty, modes, skills, security schemes, streaming) come from [`full_card`].
+/// A stored card whose name or sealing key cannot rebuild is served as stored.
 #[must_use]
 pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json::Value> {
-    let stored: AgentCard = serde_json::from_value(stored.clone()).ok()?;
-    let nickname = Nickname::try_new(&stored.name).ok()?;
-    let seal = stored
+    let parsed: AgentCard = serde_json::from_value(stored.clone()).ok()?;
+    let nickname = Nickname::try_new(&parsed.name).ok();
+    let seal = parsed
         .capabilities
         .extensions
         .iter()
-        .find(|extension| extension.uri.contains("mesh-seal"))?
-        .params
-        .as_ref()?
-        .get("x25519")?
-        .as_str()?
-        .to_string();
-    let mut full = full_card(&nickname, AuthorKey::from([0; 32]), &seal);
-    full.supported_interfaces = stored.supported_interfaces;
-    full.version = stored.version;
-    serde_json::to_value(full).ok()
+        .find(|extension| extension.uri.contains("mesh-seal"))
+        .and_then(|extension| extension.params.as_ref())
+        .and_then(|params| params.get("x25519"))
+        .and_then(serde_json::Value::as_str);
+    let (Some(nickname), Some(seal)) = (nickname, seal) else {
+        return Some(stored.clone());
+    };
+    let template = serde_json::to_value(full_card(&nickname, AuthorKey::from([0; 32]), seal)).ok()?;
+
+    let mut rebuilt = stored.clone();
+    let object = rebuilt.as_object_mut()?;
+    if parsed.description.is_empty() {
+        object.insert("description".to_owned(), template["description"].clone());
+    }
+    for key in ["defaultInputModes", "defaultOutputModes", "skills", "securitySchemes"] {
+        if let Some(value) = template.get(key).filter(|value| !value.is_null()) {
+            object.insert(key.to_owned(), value.clone());
+        }
+    }
+    let known = template["capabilities"]["extensions"].as_array().cloned().unwrap_or_default();
+    if let Some(stored_extensions) = object
+        .get_mut("capabilities")
+        .and_then(|capabilities| capabilities.get_mut("extensions"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for extension in stored_extensions.iter_mut() {
+            let Some(uri) = extension.get("uri").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if let Some(description) = known
+                .iter()
+                .find(|known| known["uri"] == uri)
+                .and_then(|known| known.get("description"))
+            {
+                extension["description"] = description.clone();
+            }
+        }
+    }
+    if let Some(capabilities) = object.get_mut("capabilities").and_then(serde_json::Value::as_object_mut) {
+        for flag in ["streaming", "pushNotifications", "extendedAgentCard"] {
+            if let (false, Some(value)) = (capabilities.contains_key(flag), template["capabilities"].get(flag)) {
+                capabilities.insert(flag.to_owned(), value.clone());
+            }
+        }
+    }
+    Some(rebuilt)
 }
 
 /// Read peer `<nick>`'s published X25519 sealing key from the derived meta
@@ -366,6 +403,56 @@ mod tests {
     use habilis_network::util::consts;
 
     use super::{full_card, full_from_minimal, own_card, publish_merges};
+
+    #[test]
+    fn a_served_peer_card_keeps_the_endpoint_hint() {
+        let nickname = Nickname::try_new("endpoint-peer").expect("nickname");
+        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
+        let mut stored = serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+            .expect("card serializes");
+        stored["endpoint"] = serde_json::json!({ "id": "ab".repeat(32), "relay": "https://relay.example/" });
+        let rebuilt = full_from_minimal(&stored).expect("the stored card rebuilds");
+        assert_eq!(rebuilt["endpoint"], stored["endpoint"], "the rebuilt card drops the endpoint hint");
+    }
+
+    #[test]
+    fn a_served_peer_card_takes_its_extensions_from_the_stored_card() {
+        let nickname = Nickname::try_new("extension-peer").expect("nickname");
+        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
+        let mut stored = serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+            .expect("card serializes");
+        stored["capabilities"]["extensions"]
+            .as_array_mut()
+            .expect("extensions is an array")
+            .push(serde_json::json!({ "uri": "https://example.test/ext/later/v1" }));
+        let rebuilt = full_from_minimal(&stored).expect("the stored card rebuilds");
+        let uris_and_params = |card: &serde_json::Value| -> Vec<(serde_json::Value, serde_json::Value)> {
+            card["capabilities"]["extensions"]
+                .as_array()
+                .expect("extensions is an array")
+                .iter()
+                .map(|ext| (ext["uri"].clone(), ext.get("params").cloned().unwrap_or_default()))
+                .collect()
+        };
+        assert_eq!(
+            uris_and_params(&rebuilt),
+            uris_and_params(&stored),
+            "the rebuilt card keeps the stored extension URIs and params"
+        );
+    }
+
+    #[test]
+    fn a_card_that_cannot_be_rebuilt_is_served_as_stored() {
+        let nickname = Nickname::try_new("rebuild-peer").expect("nickname");
+        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
+        let mut stored = serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+            .expect("card serializes");
+        stored["name"] = serde_json::json!("");
+        assert!(
+            full_from_minimal(&stored).is_some(),
+            "a card that cannot be rebuilt must still be served, as stored"
+        );
+    }
 
     #[test]
     fn an_old_full_card_rebuilds_to_the_same_full_card() {
