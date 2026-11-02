@@ -557,7 +557,7 @@ mod tests {
     fn worst_case_card(nickname: &Nickname) -> serde_json::Value {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let mut card =
-            serde_json::to_value(own_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
+            serde_json::to_value(full_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
                 .expect("a test value serializes to JSON");
         card["endpoint"] = serde_json::json!({
             "id": "ab".repeat(32),
