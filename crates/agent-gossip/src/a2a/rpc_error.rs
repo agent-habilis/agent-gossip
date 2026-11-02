@@ -329,7 +329,7 @@ pub(crate) async fn handle_op(
         }
         A2aOp::OwnCard => {
             let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-            let mut card = super::card::own_card(author, our_pubkey, &seal_b58);
+            let mut card = super::card::full_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
             card.supported_interfaces.push(super::AgentInterface {
@@ -344,7 +344,7 @@ pub(crate) async fn handle_op(
             let doc = state.doc(Channel::Meta).to_json();
             // A card that is still arriving, in pieces, is not served.
             let mut card = super::card::complete_card(&doc, &peer)
-                .cloned()
+                .and_then(super::card::full_from_minimal)
                 .unwrap_or(Value::Null);
             if card.is_null() {
                 return Err(RpcError {

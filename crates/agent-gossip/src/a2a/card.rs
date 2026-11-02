@@ -42,6 +42,17 @@ pub(crate) fn own_card(
     author_key: AuthorKey,
     seal_pubkey_b58: &str,
 ) -> AgentCard {
+    minimal(full_card(nickname, author_key, seal_pubkey_b58))
+}
+
+/// The card with every optional protocol field filled in. Served to a client; the meta
+/// document holds only [`own_card`]'s minimal form.
+#[must_use]
+pub(crate) fn full_card(
+    nickname: &Nickname,
+    author_key: AuthorKey,
+    seal_pubkey_b58: &str,
+) -> AgentCard {
     let extension = |uri: &str, description: &str| AgentExtension {
         uri: uri.to_string(),
         description: Some(description.to_string()),
@@ -122,6 +133,60 @@ pub(crate) fn own_card(
         ],
         security_schemes: None,
     }
+}
+
+/// What the meta document keeps of a card: the fields an A2A reader needs to parse it and to find
+/// the extensions and the sealing key. The static parts (skills, modes, extension descriptions)
+/// are the same for every member, so [`full_from_minimal`] rebuilds them.
+fn minimal(full: AgentCard) -> AgentCard {
+    let extensions = full
+        .capabilities
+        .extensions
+        .into_iter()
+        .map(|extension| AgentExtension {
+            uri: extension.uri,
+            description: None,
+            required: None,
+            params: extension.params,
+        })
+        .collect();
+    AgentCard {
+        description: String::new(),
+        documentation_url: None,
+        capabilities: AgentCapabilities {
+            streaming: full.capabilities.streaming,
+            extensions,
+            ..AgentCapabilities::default()
+        },
+        default_input_modes: Vec::new(),
+        default_output_modes: Vec::new(),
+        skills: Vec::new(),
+        security_schemes: None,
+        ..full
+    }
+}
+
+/// The full card rebuilt from a stored card. Its own fields (name, description, interfaces,
+/// version, sealing key) are kept; the static parts come from [`full_card`]. A stored card that
+/// is already full, as older members wrote it, rebuilds to the same card.
+#[must_use]
+pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json::Value> {
+    let stored: AgentCard = serde_json::from_value(stored.clone()).ok()?;
+    let nickname = Nickname::try_new(&stored.name).ok()?;
+    let seal = stored
+        .capabilities
+        .extensions
+        .iter()
+        .find(|extension| extension.uri.contains("mesh-seal"))?
+        .params
+        .as_ref()?
+        .get("x25519")?
+        .as_str()?
+        .to_string();
+    let mut full = full_card(&nickname, AuthorKey::from([0; 32]), &seal);
+    full.supported_interfaces = stored.supported_interfaces;
+    full.version = stored.version;
+    serde_json::to_value(full).ok()
 }
 
 /// Read peer `<nick>`'s published X25519 sealing key from the derived meta
@@ -300,7 +365,28 @@ mod tests {
     use habilis_network::protocol::{AuthorKey, Nickname};
     use habilis_network::util::consts;
 
-    use super::{own_card, publish_merges};
+    use super::{full_card, full_from_minimal, own_card, publish_merges};
+
+    #[test]
+    fn an_old_full_card_rebuilds_to_the_same_full_card() {
+        let nickname = Nickname::try_new("old-member").expect("nickname");
+        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
+        let old_full = serde_json::to_value(full_card(&nickname, AuthorKey::from([0xab; 32]), seal))
+            .expect("full card serializes");
+        let rebuilt = full_from_minimal(&old_full).expect("an old full card rebuilds");
+        assert_eq!(rebuilt, old_full, "an old full card must come back unchanged");
+    }
+
+    #[test]
+    fn a_minimal_card_rebuilds_to_the_full_card() {
+        let nickname = Nickname::try_new("new-member").expect("nickname");
+        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
+        let key = AuthorKey::from([0xab; 32]);
+        let minimal = serde_json::to_value(own_card(&nickname, key, seal)).expect("card serializes");
+        let rebuilt = full_from_minimal(&minimal).expect("a minimal card rebuilds");
+        let full = serde_json::to_value(full_card(&nickname, key, seal)).expect("full card serializes");
+        assert_eq!(rebuilt, full, "the rebuilt card must match the full card for the same member");
+    }
 
     #[test]
     fn a_peer_card_stays_under_the_per_peer_byte_budget() {
