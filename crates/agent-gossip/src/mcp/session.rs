@@ -264,10 +264,13 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use habilis_network::protocol::{Channel, JoinTarget, Message, MessageKind, PresenceSubtype};
+    use habilis_network::protocol::{
+        AuthorKey, Channel, JoinTarget, Message, MessageKind, PresenceSubtype,
+    };
     use serde_json::json;
 
     use super::{MeshId, MeshName, MessageBody, MessageId, Nickname, Session};
+    use crate::a2a::card::{complete_card, own_card, publish_merges};
     use crate::a2a::status_update_params::chat_text;
     use crate::a2a::surfaced_event::SurfacedEvent;
     use crate::api::{CreateConfig, JoinConfig};
@@ -344,8 +347,14 @@ mod tests {
             bob_wrote,
         } = baseline;
         // The ring copy of a meta change holds no document, so the card cannot be read from the
-        // event: the event says who wrote, and `meta_get` gives the document. Both flags are
-        // sticky, so the order in which the event and the document reach this loop does not matter.
+        // event: the event says who wrote, and `meta_get` gives the document. A card that does not
+        // fit one frame is written in several merges (`publish_merges`), and the document holds a
+        // whole card, by its schema (`complete_card`), only after the last merge. The event of
+        // each merge is in the ring before the fetch that follows the `meta_get` that shows the
+        // card: the engine loop drains the tap into the ring after every step
+        // (`event_loop.rs`, `lp.app.drain_surfaced()`), and the two requests are later steps.
+        // Both flags are sticky, so the order in which the event and the document reach this loop
+        // does not matter.
         let after = alice.meta_get().await.expect("meta get");
         let events = alice
             .fetch_messages(None, false)
@@ -381,14 +390,16 @@ mod tests {
     }
 
     /// Whether a meta change by `author`, taking the document from `before` to
-    /// `after`, is the merge of bob-cursor's card.
+    /// `after`, is the merge that completes bob-cursor's card: the card is whole in `after` and was
+    /// not in `before`. The first merge of a card in several merges does not complete it.
     fn is_bob_card_merge(
         author: &str,
         before: &serde_json::Value,
         after: &serde_json::Value,
     ) -> bool {
-        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
-        author == "bob-cursor" && !card(before) && card(after)
+        let bob = Nickname::from("bob-cursor");
+        let whole = |doc: &serde_json::Value| complete_card(doc, &bob).is_some();
+        author == "bob-cursor" && !whole(before) && whole(after)
     }
 
     /// The seq strictly before bob-cursor's join in `events` (0 if the join is
@@ -696,13 +707,24 @@ mod tests {
         alice.leave().await;
     }
 
+    /// The card of bob-cursor as his daemon builds it.
+    fn bob_card() -> serde_json::Value {
+        let seal = bs58::encode([7u8; 32]).into_string();
+        serde_json::to_value(own_card(
+            &Nickname::from("bob-cursor"),
+            AuthorKey::from([0xab; 32]),
+            &seal,
+        ))
+        .expect("a test value serializes to JSON")
+    }
+
     #[test]
     fn bob_card_merge_is_the_absent_to_present_transition() {
         // A failed card publish writes `card_error` under bob-cursor's own entry.
         // It has his author but no card, so it must not count as the card merge.
         let empty = json!({ "peers": {} });
         let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
-        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+        let card = json!({ "peers": { "bob-cursor": { "card": bob_card() } } });
 
         assert!(
             !is_bob_card_merge("bob-cursor", &empty, &card_error),
@@ -720,6 +742,40 @@ mod tests {
             !is_bob_card_merge("alice-cursor", &empty, &card),
             "a card that another author wrote is not bob-cursor's card merge"
         );
+    }
+
+    /// A card that does not fit one frame is written in several merges. Only the last one makes
+    /// the card whole, so the baseline wait must not close on the first.
+    #[test]
+    fn a_card_in_two_merges_is_complete_only_after_the_last_merge() {
+        let nickname = Nickname::from("bob-cursor");
+        // A model of the frame that a merge becomes: its JSON text and 2000 bytes of envelope,
+        // signature and sealing. It cuts this card into 2 merges.
+        let merges = publish_merges(&nickname, &bob_card(), |merge| {
+            Ok(merge.to_string().len() + 2000)
+        })
+        .expect("every field fits a frame");
+        assert_eq!(merges.len(), 2, "the premise: the card is in 2 merges");
+
+        let mut arrived = serde_json::Map::new();
+        let mut before = json!({ "peers": {} });
+        for (index, merge) in merges.iter().enumerate() {
+            arrived.extend(
+                merge["peers"]["bob-cursor"]["card"]
+                    .as_object()
+                    .expect("a merge of the card is an object")
+                    .clone(),
+            );
+            let after = json!({ "peers": { "bob-cursor": { "card": arrived } } });
+            assert_eq!(
+                is_bob_card_merge("bob-cursor", &before, &after),
+                index + 1 == merges.len(),
+                "after merge {} of {}",
+                index + 1,
+                merges.len()
+            );
+            before = after;
+        }
     }
 
     #[tokio::test]
