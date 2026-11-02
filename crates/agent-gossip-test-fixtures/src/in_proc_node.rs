@@ -344,20 +344,11 @@ impl InProcNode {
         channel: Channel,
     ) -> impl Iterator<Item = (serde_json::Value, bool)> + '_ {
         self.pump();
-        self.drained.iter().filter_map(move |event| {
-            if let OutputEvent::StateChanged {
-                channel: chan,
-                document: Some(document),
-                is_self,
-                ..
-            } = event
-                && *chan == channel
-            {
-                Some((serde_json::Value::clone(document), *is_self))
-            } else {
-                None
-            }
-        })
+        self.drained
+            .iter()
+            .filter_map(change_parts)
+            .filter(move |(chan, _, _)| *chan == channel)
+            .map(|(_, document, is_self)| (document.clone(), is_self))
     }
 
     /// Wait until a change on `channel` **from a peer** (`is_self == false`)
@@ -371,13 +362,10 @@ impl InProcNode {
         mut pred: impl FnMut(&serde_json::Value) -> bool,
     ) -> bool {
         self.wait_for(timeout, |events| {
-            events.iter().any(|event| {
-                matches!(
-                    event,
-                    OutputEvent::StateChanged { channel: chan, document: Some(document), is_self: false, .. }
-                        if *chan == channel && pred(document)
-                )
-            })
+            events
+                .iter()
+                .filter_map(change_parts)
+                .any(|(chan, document, is_self)| chan == channel && !is_self && pred(document))
         })
         .await
     }
@@ -891,4 +879,24 @@ impl InProcNode {
         })
         .await
     }
+}
+
+/// The channel, the document and the self flag of a state change that the live stream captured.
+/// The live copy of a change keeps its document: a change without one is a bug of the emitter, so
+/// the fixture stops there and does not skip it, where a check would then pass with nothing to
+/// check.
+fn change_parts(event: &OutputEvent) -> Option<(Channel, &serde_json::Value, bool)> {
+    let OutputEvent::StateChanged {
+        channel,
+        document,
+        is_self,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let document = document
+        .as_deref()
+        .expect("the live copy of a change keeps its document");
+    Some((*channel, document, *is_self))
 }
