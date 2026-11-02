@@ -684,7 +684,7 @@ mod tests {
                     .sign(&habilis_network::protocol::Identity::generate())
                     .authored(),
             ),
-            document: serde_json::json!({}),
+            document: Some(std::sync::Arc::new(serde_json::json!({}))),
             is_self: true,
         }
     }

@@ -6,6 +6,6 @@ use habilis_network::protocol::messages::Authored;
 pub(crate) struct StateChangedParams<'caller> {
     pub channel: habilis_network::protocol::Channel,
     pub event: &'caller Authored,
-    pub document: &'caller serde_json::Value,
+    pub document: &'caller std::sync::Arc<serde_json::Value>,
     pub is_self: bool,
 }

@@ -52,7 +52,7 @@ impl habilis_network::embed::NodeSink for Output {
             } => self.state_changed(StateChangedParams {
                 channel,
                 event: &event,
-                document: &document,
+                document: &std::sync::Arc::new(document),
                 is_self,
             }),
             _ => {}

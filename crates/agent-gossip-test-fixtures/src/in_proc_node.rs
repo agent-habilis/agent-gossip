@@ -347,13 +347,13 @@ impl InProcNode {
         self.drained.iter().filter_map(move |event| {
             if let OutputEvent::StateChanged {
                 channel: chan,
-                document,
+                document: Some(document),
                 is_self,
                 ..
             } = event
                 && *chan == channel
             {
-                Some((document.clone(), *is_self))
+                Some((serde_json::Value::clone(document), *is_self))
             } else {
                 None
             }
@@ -374,7 +374,7 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::StateChanged { channel: chan, document, is_self: false, .. }
+                    OutputEvent::StateChanged { channel: chan, document: Some(document), is_self: false, .. }
                         if *chan == channel && pred(document)
                 )
             })

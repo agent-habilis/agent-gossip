@@ -144,8 +144,11 @@ pub enum OutputEvent {
         channel: habilis_network::protocol::Channel,
         /// The signed event that caused the change.
         event: Box<Authored>,
-        /// The whole document after the change.
-        document: serde_json::Value,
+        /// The whole document after the change, shared by the copies of this event. `None` in the
+        /// copy that feeds the surfaced-events ring when `channel` is `Meta`: the poll JSON drops
+        /// the Meta document, and the ring holds up to `SURFACED_EVENTS_CAP` events, so a Meta
+        /// document per event would be the agent card of every peer, many times over.
+        document: Option<std::sync::Arc<serde_json::Value>>,
         /// `true` when the local node made the change.
         is_self: bool,
     },

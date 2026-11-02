@@ -705,7 +705,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 pub(super) fn format_state_json(
     channel: habilis_network::protocol::Channel,
     event: &Authored,
-    document: &serde_json::Value,
+    document: Option<&serde_json::Value>,
     is_self: bool,
 ) -> String {
     // The surfaced delta feeds both the `merge` field and the touched-paths
@@ -731,7 +731,7 @@ pub(super) fn format_state_json(
             // four peers, repeated on each change; readers take it on demand
             // with `meta get`. Only this JSON form drops it: the typed
             // `OutputEvent::StateChanged` keeps it for in-process readers.
-            document: (channel != habilis_network::protocol::Channel::Meta).then_some(document),
+            document: document.filter(|_| channel != habilis_network::protocol::Channel::Meta),
             display: state_display(author, is_self, &what),
             is_self,
         })
@@ -824,7 +824,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             event,
             document,
             is_self,
-        } => format_state_json(*channel, event, document, *is_self),
+        } => format_state_json(*channel, event, document.as_deref(), *is_self),
         OutputEvent::Ready { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskStalled { .. }
