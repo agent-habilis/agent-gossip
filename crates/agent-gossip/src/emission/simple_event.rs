@@ -702,7 +702,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// Whether a poll reader gets the document of a change on `channel`: in the JSON line, and in the
 /// ring copy of the event that the JSON line is made from. The Meta document is every peer's agent
 /// card, ~4k tokens with four peers, repeated on each change; readers take it on demand with
-/// `meta get`. The live and capture copies of a change keep the document for in-process readers.
+/// `meta get`. The live copy of a change (the capture stream) keeps the document for in-process readers.
 /// This is the one place that holds the rule.
 pub(super) fn poll_carries_document(channel: Channel) -> bool {
     channel != Channel::Meta
