@@ -689,4 +689,34 @@ mod tests {
             "the ring copy holds the document"
         );
     }
+
+    /// The live copy and the ring copy of one State change share one document: no deep copy per
+    /// copy of the event.
+    #[test]
+    fn the_copies_of_a_state_change_share_one_document() {
+        let (output, mut live, mut ring) = tapped();
+        output.emit(change(Channel::State, MessageKind::State));
+        let (live, ring) = (drain(&mut live), drain(&mut ring));
+        let (
+            [
+                OutputEvent::StateChanged {
+                    document: Some(live_document),
+                    ..
+                },
+            ],
+            [
+                OutputEvent::StateChanged {
+                    document: Some(ring_document),
+                    ..
+                },
+            ],
+        ) = (live.as_slice(), ring.as_slice())
+        else {
+            panic!("one live event and one ring event, both with a document");
+        };
+        assert!(
+            std::sync::Arc::ptr_eq(live_document, ring_document),
+            "the live copy and the ring copy hold two documents, not one"
+        );
+    }
 }
