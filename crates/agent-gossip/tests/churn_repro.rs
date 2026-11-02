@@ -246,6 +246,7 @@ fn stopped_daemon_resumes_with_matching_roster() {
 /// Count surfaces (task B): after a SIGKILLed peer goes quiet, the peer count the daemon reports
 /// must equal live peers plus self, the number a user means by "online".
 #[test]
+#[ignore = "140 s quiet-peer guard, run with --ignored"]
 fn peer_count_surfaces_count_only_live_peers_after_a_quiet_one() {
     let (creator, mesh) = Node::create_named("churn-count");
     let _leave = LeaveOnDrop(mesh.clone());
