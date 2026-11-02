@@ -172,7 +172,9 @@ fn minimal(full: AgentCard) -> AgentCard {
 /// A stored card whose name or sealing key cannot rebuild is served as stored.
 #[must_use]
 pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json::Value> {
-    let parsed: AgentCard = serde_json::from_value(stored.clone()).ok()?;
+    let Ok(parsed) = serde_json::from_value::<AgentCard>(stored.clone()) else {
+        return Some(stored.clone());
+    };
     let nickname = Nickname::try_new(&parsed.name).ok();
     let seal = parsed
         .capabilities
@@ -461,6 +463,16 @@ mod tests {
                 .expect("the 0.12.10 fixture is JSON");
         let rebuilt = full_from_minimal(&fixture).expect("a 0.12.10 card rebuilds");
         assert_eq!(rebuilt, fixture, "a full 0.12.10 card must come back unchanged");
+    }
+
+    #[test]
+    fn a_stored_card_that_does_not_parse_is_served_as_stored() {
+        let stored = serde_json::json!({ "name": "unparsed-peer", "endpoint": { "id": "ab" } });
+        assert_eq!(
+            full_from_minimal(&stored),
+            Some(stored.clone()),
+            "a stored card that does not parse as AgentCard is served raw, not dropped"
+        );
     }
 
     #[test]
