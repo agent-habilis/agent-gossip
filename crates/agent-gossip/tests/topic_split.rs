@@ -30,20 +30,20 @@ fn init_short_tuning() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
-    init(Tuning {
-        // Probe budget self-clamps to min(HEAL_PROBE, heal_interval);
-        // keep it at the full 5s — an mDNS resolve of the rendezvous id
-        // takes a query round, and a too-short probe re-binds a duplicate.
-        heal_interval: Duration::from_secs(5),
-        rival_recheck_first: Duration::from_secs(3),
-        rival_recheck: Duration::from_secs(8),
-        rival_recheck_meshed: Duration::from_secs(12),
-        // Both halves of a split have an empty roster, so the alone ceiling
-        // is the cap this test's ramp actually meets.
-        rival_recheck_alone: Duration::from_secs(12),
-        topic_mdns_only: true,
-        ..Tuning::DEFAULTS
-    });
+    // Probe budget self-clamps to min(HEAL_PROBE, heal_interval);
+    // keep it at the full 5s — an mDNS resolve of the rendezvous id
+    // takes a query round, and a too-short probe re-binds a duplicate.
+    let mut tuning = Tuning::DEFAULTS
+        .heal_interval(Duration::from_secs(5))
+        .rival_recheck_first(Duration::from_secs(3))
+        .rival_recheck(Duration::from_secs(8));
+    // Both halves of a split have an empty roster, so the alone ceiling
+    // is the cap this test's ramp actually meets.
+    tuning = tuning
+        .rival_recheck_meshed(Duration::from_secs(12))
+        .rival_recheck_alone(Duration::from_secs(12));
+    tuning.topic_mdns_only = true;
+    init(tuning);
 }
 
 /// `await_mutual_cards` with an explicit deadline instead of the fixture's
@@ -53,8 +53,8 @@ async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Du
     let left_sees = format!("/peers/{}/card", right.nickname);
     let right_sees = format!("/peers/{}/card", left.nickname);
     loop {
-        let crossed = left.meta_get().await.pointer(&left_sees).is_some()
-            && right.meta_get().await.pointer(&right_sees).is_some();
+        let left_crossed = left.meta_get().await.pointer(&left_sees).is_some();
+        let crossed: bool = left_crossed && right.meta_get().await.pointer(&right_sees).is_some();
         if crossed {
             return;
         }
@@ -116,7 +116,10 @@ async fn staggered_topic_joiners_converge() {
     let alice = InProcNode::topic(&topic, "stag-alice").await;
     tokio::time::sleep(Duration::from_secs(3)).await;
     let bob = InProcNode::topic(&topic, "stag-bob").await;
-    assert_eq!(alice.mesh, bob.mesh);
+    assert_eq!(
+        alice.mesh, bob.mesh,
+        "both topic joiners derive the same gossip id"
+    );
 
     // Same bound as the simultaneous test, not the fixture's fixed 60s
     // helper: when host mDNS is slow, even the no-race path may fall back

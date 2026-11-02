@@ -20,13 +20,14 @@ publish = false
 workspace = true
 
 [dependencies]
-# The harness drives the app's *public* surface only (`api`, `a2a::gossip`,
+# The harness drives the app's *public* surface only (`api`, `a2a::status_update_params`,
 # `mesh_prefix`, `runtime_base`, `event_json`) — never a `pub(crate)` internal.
 # `agent-gossip` in turn dev-depends on this crate; cargo permits the cycle
 # because the back-edge is a dev-dependency, and this is the standard shape of
 # a fixtures crate.
 agent-gossip = { path = "../agent-gossip" }
 habilis-network.workspace = true
+parking_lot = "0.12"
 tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

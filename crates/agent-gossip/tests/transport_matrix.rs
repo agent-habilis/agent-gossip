@@ -26,8 +26,8 @@ const FULL_MESH: usize = 64;
 // crate's own `tests/e2e.rs` (A↔B over one and two relays).
 
 /// Parse the `Task` id out of a `SendMessage` response.
-fn task_id_of(resp: &Value) -> TaskId {
-    resp["result"]["task"]["id"]
+fn task_id_of(response: &Value) -> TaskId {
+    response["result"]["task"]["id"]
         .as_str()
         .expect("the worker returned a Task with an id")
         .parse()
@@ -87,8 +87,8 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
     );
 
     // 4. Directed A2A task lifecycle + streaming — the unicast-only path.
-    let resp = alice.create_task(&bob.nickname, "port the parser").await;
-    let task_id = task_id_of(&resp);
+    let response = alice.create_task(&bob.nickname, "port the parser").await;
+    let task_id = task_id_of(&response);
     // A multi-frame brief (~20 KB seals past the single-frame cap) proves the
     // sharded RPC plane on this transport: the request splits into shard
     // frames that each ride the forced lane, and the worker still serves it

@@ -8,23 +8,28 @@
 //! `iroh` type crosses this boundary: a join target is a mesh id parsed from a
 //! string.
 
-pub(crate) use self::advertise::{DIRECTORY_ADVERTISER_COHOST, spawn_advertiser};
-pub use self::config::{CreateConfig, JoinConfig, TopicConfig};
+pub use self::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
+pub(crate) use self::advertiser::{
+    DIRECTORY_ADVERTISER_COHOST, initial_live_count, spawn_advertiser,
+};
+pub use self::create_error::{CreateError, JoinError};
 pub use self::directory::{Directory, DirectoryEvent, MeshListing};
-pub use self::error::{CreateError, JoinError};
-pub(crate) use self::inproc::InProcessSession;
-pub use self::params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
-pub use self::session::MeshSession;
+pub use self::directory_error::DirectoryError;
+pub(crate) use self::in_process_session::InProcessSession;
+pub use self::join_config::{CreateConfig, JoinConfig, TopicConfig};
+pub use self::mesh_session::MeshSession;
+pub use self::session_error::SessionError;
 
-mod advertise;
-mod config;
-mod directory;
-pub(crate) use self::directory::resolve_lookups_or_public;
-mod error;
-mod inproc;
-mod params;
-mod session;
-mod setup;
+mod a2a_call_params;
+mod advertiser;
+mod create_error;
+pub(crate) mod directory;
+mod directory_error;
+mod in_process_session;
+mod join_config;
+mod mesh_session;
+mod session_error;
+mod spawn_env;
 
 // Last, so it does not trip `clippy::items_after_test_module`.
 #[cfg(test)]

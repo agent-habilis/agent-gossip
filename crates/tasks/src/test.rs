@@ -1,9 +1,7 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::output;
+use crate::util::{Invocation, output};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     // `--profile ci` (release-derived, LTO off) rather than dev, for two reasons.
     //
     // Speed: debug-built curve/AEAD/hash math is ~10x slower and every test here
@@ -22,7 +20,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // and the suite's subprocess layer runs the real `agent-gossip` binary. The
     // C-ABI cdylib this line also used to produce left with the engine — its
     // conformance suite lives in the `habilis-network` repo now.
-    cmd!(sh, "cargo build --workspace --profile ci")
+    Invocation::cargo(["build", "--workspace", "--profile", "ci"])
         .quiet()
         .run()?;
 
@@ -55,16 +53,31 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // Both runs always happen and a red in either fails the task at the end. A
     // `?` after the first run once returned early on a red there, so the
     // adversarial binary never ran and its own red stayed hidden.
-    let workspace = cmd!(
-        sh,
-        "cargo test --workspace --profile ci --no-fail-fast -- --test-threads=2"
-    )
+    let workspace = Invocation::cargo([
+        "test",
+        "--workspace",
+        "--profile",
+        "ci",
+        "--no-fail-fast",
+        "--",
+        "--test-threads=2",
+    ])
     .quiet()
     .run();
-    let adversarial = cmd!(
-        sh,
-        "cargo test -p agent-gossip --features adversarial --test adversarial --profile ci --no-fail-fast -- --test-threads=4"
-    )
+    let adversarial = Invocation::cargo([
+        "test",
+        "-p",
+        "agent-gossip",
+        "--features",
+        "adversarial",
+        "--test",
+        "adversarial",
+        "--profile",
+        "ci",
+        "--no-fail-fast",
+        "--",
+        "--test-threads=4",
+    ])
     .quiet()
     .run();
 
@@ -79,6 +92,6 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
         return Err(format!("test run failed: {}", failed.join(", ")).into());
     }
 
-    crate::util::sweep_stale_artifacts(sh);
+    crate::util::sweep_stale_artifacts();
     Ok(())
 }

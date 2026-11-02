@@ -102,6 +102,6 @@ Releases go through knope change files and a release PR, not this crate. See
 
 Not published, not installed, and not shipped to anyone — it is a workspace
 member that exists only to be run through the `cargo task` alias. It is also not
-a general build system: it wraps cargo, and every task is a handful of `cmd!`
-invocations plus the comment explaining the flags. Keep it that way; logic that
+a general build system: it wraps cargo, and every task is a handful of `Invocation`
+chains plus the comment explaining the flags. Keep it that way; logic that
 grows past that belongs in the code being built.

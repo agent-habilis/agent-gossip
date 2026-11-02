@@ -1,11 +1,9 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::output;
+use crate::util::{Invocation, output};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     output::status("Building", "release binary");
-    cmd!(sh, "cargo build -p agent-gossip --release")
+    Invocation::cargo(["build", "-p", "agent-gossip", "--release"])
         .quiet()
         .run()?;
     output::status("Built", "target/release/agent-gossip");

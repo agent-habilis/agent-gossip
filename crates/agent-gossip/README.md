@@ -76,7 +76,7 @@ Public: `a2a`, `api`, `events`. Everything else is `pub(crate)`.
   tickets, Agent Card URL rewriting so discovery resolves through the
   bridge, and its own ALPN. A bridge subsystem, not A2A core.
 - **`output`** — the stdout event stream. `events::OutputEvent` is the typed
-  event; `output::json` serializes it.
+  event; `emission::json` serializes it.
 - **`harness`** — `#[doc(hidden)]`, feature-gated. The testkit and the
   crafted-message injector live here rather than in `api` so a test feature
   cannot widen the public surface (nor put an `iroh` type on it).

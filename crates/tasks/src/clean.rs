@@ -1,12 +1,10 @@
-use xshell::{Shell, cmd};
-
 use crate::TaskOutcome;
-use crate::util::{output, repo_root};
+use crate::util::{Invocation, output, repo_root};
 
-pub(crate) fn run(sh: &Shell) -> TaskOutcome {
+pub(crate) fn run() -> TaskOutcome {
     output::status("Cleaning", "build artifacts");
-    cmd!(sh, "cargo clean").quiet().run()?;
+    Invocation::cargo(["clean"]).quiet().run()?;
     // llvm-cov uses a separate target dir
-    let _ = sh.remove_path(repo_root().join("target/llvm-cov-target"));
+    let _ = std::fs::remove_dir_all(repo_root().join("target/llvm-cov-target"));
     Ok(())
 }

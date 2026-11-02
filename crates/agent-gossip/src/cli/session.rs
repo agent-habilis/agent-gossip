@@ -2,41 +2,17 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
-use habilis_network::runtime::state_file::read_session_entry;
+use habilis_network::runtime::state_file::{self, read_session_entry};
 use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
-use super::bell;
+use super::discovery::Discovery;
+use super::target::Target;
+use super::{bell, daemon_endpoint};
+use crate::a2a::ipc_command::IpcCommand::Info;
 use crate::runtime_base;
 
-/// One live daemon on this machine, resolved from its state file. `mesh`
-/// and `pid` are required to act on an entry; `name`/`nickname`/`topic` are
-/// carried for reporting only.
-#[derive(Debug, Clone)]
-pub(crate) struct Target {
-    path: PathBuf,
-    mesh: String,
-    name: Option<String>,
-    nickname: Option<String>,
-    /// The raw topic string (topic gossips only) — what the leave report
-    /// echoes instead of the lossy derived `name`.
-    topic: Option<String>,
-    pid: u32,
-    /// The agent process a detached daemon (`--owner-pid`) answers to. Such a
-    /// daemon is no descendant of it, so ancestry alone cannot match.
-    owner_pid: Option<u32>,
-}
-
-pub(crate) struct Discovery {
-    live: Vec<Target>,
-    /// State files whose recorded pid is gone (or reused by a non-`agent-gossip`
-    /// process) — leftovers of a SIGKILL/power-loss that the daemon never
-    /// got to remove itself. Deleted during discovery so they stop
-    /// rendering as ghost sessions (e.g. a statusline pill).
-    cleaned: usize,
-}
-
-/// Walk every state file under [`runtime_base`] and resolve it to a live
+/// Walk every state file under [`runtime_base`](fn@runtime_base) and resolve it to a live
 /// daemon or clean it up. Covers both per-mesh files
 /// (`<prefix>/<nick>.state.json`) and the CLI-fallback location the skills
 /// use (`sessions/<ppid>.json`) — any first-level `*.json`.
@@ -95,12 +71,11 @@ fn state_file_paths() -> Vec<PathBuf> {
     let Ok(mesh_dirs) = std::fs::read_dir(runtime_base()) else {
         return Vec::new();
     };
-    mesh_dirs
-        .flatten()
-        .map(|dir_entry| dir_entry.path())
-        .filter(|path| path.is_dir())
-        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
-        .map(|file_entry| file_entry.path())
+    let entries = mesh_dirs.flatten().map(|dir_entry| dir_entry.path());
+    let dirs = entries.filter(|path| path.is_dir());
+    let files = dirs.flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten());
+    let paths = files.map(|file_entry| file_entry.path());
+    paths
         .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
         .collect()
 }
@@ -119,8 +94,10 @@ fn split_owned(live: Vec<Target>, is_owned: impl Fn(&Target) -> bool) -> (Vec<Ta
 /// Select by explicit mesh id (full or prefix) and optional nickname — no
 /// ownership check: naming the mesh is the intent.
 fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec<Target> {
-    live.into_iter()
-        .filter(|target| target.mesh.starts_with(mesh))
+    let in_mesh = live
+        .into_iter()
+        .filter(|target| target.mesh.starts_with(mesh));
+    in_mesh
         .filter(|target| nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted)))
         .collect()
 }
@@ -158,48 +135,6 @@ struct Owner {
     pid: u32,
 }
 
-/// The IPC endpoint of one live daemon on this machine: the socket path on
-/// Unix, as before the port, and the pipe name that the marker holds on
-/// Windows.
-pub(crate) struct DaemonEndpoint {
-    #[cfg(unix)]
-    path: PathBuf,
-    #[cfg(windows)]
-    name: habilis_network::runtime::ipc::IpcName,
-}
-
-impl DaemonEndpoint {
-    /// Send one command and return the raw JSON reply.
-    #[cfg(unix)]
-    pub(crate) async fn send<C: serde::Serialize>(&self, cmd: &C) -> Result<String> {
-        habilis_network::runtime::ipc::send_to_path(&self.path, cmd).await
-    }
-
-    /// Send one command and return the raw JSON reply.
-    #[cfg(windows)]
-    pub(crate) async fn send<C: serde::Serialize>(&self, cmd: &C) -> Result<String> {
-        habilis_network::runtime::ipc::send_to_endpoint(&self.name, cmd).await
-    }
-}
-
-/// Every daemon endpoint under the runtime base.
-#[cfg(unix)]
-pub(crate) fn active_endpoints() -> Vec<DaemonEndpoint> {
-    habilis_network::runtime::ipc::active_socket_paths(&runtime_base())
-        .into_iter()
-        .map(|path| DaemonEndpoint { path })
-        .collect()
-}
-
-/// Every daemon endpoint under the runtime base.
-#[cfg(windows)]
-pub(crate) fn active_endpoints() -> Vec<DaemonEndpoint> {
-    habilis_network::runtime::ipc::active_endpoints(&runtime_base())
-        .into_iter()
-        .map(|name| DaemonEndpoint { name })
-        .collect()
-}
-
 /// Ask every daemon endpoint on this machine to identify itself.
 ///
 /// Best-effort by design: a stale socket or marker left by a killed daemon simply
@@ -207,20 +142,19 @@ pub(crate) fn active_endpoints() -> Vec<DaemonEndpoint> {
 /// tell apart from a live one.
 async fn live_owners() -> Vec<Owner> {
     let mut owners = Vec::new();
-    for endpoint in active_endpoints() {
-        let Ok(response) = endpoint.send(&crate::a2a::ipc::IpcCommand::Info).await else {
+    for endpoint in daemon_endpoint::active_endpoints() {
+        let Ok(response) = endpoint.send(&Info).await else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
             continue;
         };
-        let (Some(gossip), Some(nickname), Some(pid)) = (
-            value["gossip"].as_str(),
-            value["nickname"].as_str(),
-            value["pid"]
-                .as_u64()
-                .and_then(|pid| u32::try_from(pid).ok()),
-        ) else {
+        let pid = value["pid"]
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok());
+        let (Some(gossip), Some(nickname), Some(pid)) =
+            (value["gossip"].as_str(), value["nickname"].as_str(), pid)
+        else {
             continue;
         };
         owners.push(Owner {
@@ -304,31 +238,28 @@ async fn stop_daemon(target: &Target) -> bool {
 #[cfg(windows)]
 async fn stop_daemon(target: &Target) -> bool {
     use habilis_network::protocol::MeshId;
-    use habilis_network::runtime::ipc::{QuitTarget, terminate};
+    use habilis_network::runtime::ipc;
+    use habilis_network::runtime::ipc::QuitTarget;
 
     let (Ok(mesh), Some(Ok(nickname))) = (
-        MeshId::new(target.mesh.clone()),
-        target.nickname.clone().map(Nickname::new),
+        MeshId::try_new(&target.mesh),
+        target.nickname.as_deref().map(Nickname::try_new),
     ) else {
         return false;
     };
     let base = runtime_base();
-    let quit = QuitTarget {
-        base: &base,
-        mesh: &mesh,
-        nickname: &nickname,
-    };
-    terminate(&quit, target.pid).await.is_ok()
+    let quit = QuitTarget::new(&base, &mesh, &nickname);
+    ipc::terminate(&quit, target.pid).await.is_ok()
 }
 
-pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
+pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     let LeaveOpts {
         gossip: mesh,
         nickname,
         session_pid,
         confirm_timeout_secs,
         legacy_output: _,
-    } = opts;
+    } = options;
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
         (
@@ -404,16 +335,17 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
+    let left_json: Vec<serde_json::Value> = outcomes
+        .iter()
+        .map(|(target, _, gone)| {
+            let mut obj = target_json(target);
+            obj["confirmed"] = (*gone).into();
+            obj
+        })
+        .collect();
     let report = serde_json::json!({
         "ok": true,
-        "left": outcomes
-            .iter()
-            .map(|(target, _, gone)| {
-                let mut obj = target_json(target);
-                obj["confirmed"] = (*gone).into();
-                obj
-            })
-            .collect::<Vec<_>>(),
+        "left": left_json,
         "other_sessions": other_sessions,
         "cleaned": cleaned,
     });
@@ -421,17 +353,13 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     Ok(())
 }
 
-#[expect(
-    clippy::unused_async,
-    reason = "keeps the dispatch arm uniform with every other subcommand"
-)]
-pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
+pub(crate) fn session(options: &SessionOpts) {
     let SessionOpts {
         session_pid,
         legacy_output: _,
-    } = opts;
+    } = options;
     let Discovery { live, cleaned } = discover();
-    let (owned, other_sessions) = owned_sessions(live, session_pid);
+    let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
     let sessions: Vec<_> = owned
         .iter()
@@ -452,7 +380,6 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
         "cleaned": cleaned,
     });
     println!("{report}");
-    Ok(())
 }
 
 fn owned_sessions(live: Vec<Target>, session_pid: Option<u32>) -> (Vec<Target>, usize) {
@@ -478,11 +405,11 @@ fn unarmed(
 }
 
 fn is_ready(target: &Target) -> bool {
-    habilis_network::runtime::state_file::read_snapshot(&target.path)
+    state_file::read_snapshot(&target.path)
         .ok()
         .flatten()
         .is_some_and(|snapshot| {
-            snapshot.ready && super::ready::ready_is_fresh(snapshot.last_updated)
+            snapshot.ready && super::ready_state_file::ready_is_fresh(snapshot.last_updated)
         })
 }
 
@@ -491,11 +418,11 @@ fn is_ready(target: &Target) -> bool {
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
 /// turn, and Claude Code still reads the JSON.
-pub(crate) fn bell_check(opts: &BellCheckOpts) -> bool {
+pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
-    } = opts;
+    } = options;
     let (owned, _) = owned_sessions(discover().live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
@@ -522,6 +449,8 @@ pub(crate) fn bell_check(opts: &BellCheckOpts) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use habilis_network::util::process;
+
     use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
@@ -551,7 +480,7 @@ mod tests {
             |target| target.pid != 2,
             |_, nickname| nickname == "armed",
         );
-        assert_eq!(missing, ["deaf"]);
+        assert_eq!(missing, ["deaf"], "only the deaf session is missing a bell");
     }
 
     /// The scenario that reissued pids create, and the reason `leave` cannot
@@ -578,7 +507,10 @@ mod tests {
             "a live daemon on another gossip must not stand in for this one"
         );
         // The daemon that does answer for its own gossip is confirmed.
-        assert!(confirm_owner(&owners, &target("bbbb", "three-four", 10)));
+        assert!(
+            confirm_owner(&owners, &target("bbbb", "three-four", 10)),
+            "a session owned by the caller is confirmed"
+        );
         // Right gossip, but the pid moved on: also not ours to signal.
         assert!(
             !confirm_owner(&owners, &target("bbbb", "three-four", 11)),
@@ -586,16 +518,21 @@ mod tests {
         );
         // A nickname that disagrees rules it out even with mesh and pid equal,
         // which is what separates two daemons sharing one state-file path.
-        assert!(!confirm_owner(&owners, &target("bbbb", "someone-else", 10)));
+        assert!(
+            !confirm_owner(&owners, &target("bbbb", "someone-else", 10)),
+            "a session of another owner is not confirmed"
+        );
     }
 
     #[test]
     fn owned_by_follows_the_recorded_owner() {
         let own = std::process::id();
-        let parent =
-            habilis_network::util::process::parent_of(own).expect("test process has a parent");
+        let parent = process::parent_of(own).expect("test process has a parent");
         let mut detached = target("aaaa", "one-two", u32::MAX);
-        assert!(!owned_by(&detached, own), "no owner recorded");
+        assert!(
+            !owned_by(&detached, own),
+            "a detached session was never claimed, so no pid can own it"
+        );
         detached.owner_pid = Some(own);
         assert!(owned_by(&detached, own), "the owner itself");
         assert!(owned_by(&detached, parent), "an ancestor of the owner");
@@ -608,9 +545,9 @@ mod tests {
             target("bbbb", "three-four", 20),
         ];
         let (owned, other_sessions) = split_owned(live, |target| target.pid == 10);
-        assert_eq!(owned.len(), 1);
-        assert_eq!(owned[0].pid, 10);
-        assert_eq!(other_sessions, 1);
+        assert_eq!(owned.len(), 1, "one live target is owned by this session");
+        assert_eq!(owned[0].pid, 10, "the owned target is the one with pid 10");
+        assert_eq!(other_sessions, 1, "the other session is counted separately");
     }
 
     #[test]
@@ -620,11 +557,14 @@ mod tests {
             target("zzzzyyyyxxxxwwww2222", "three-four", 20),
         ];
         let full = select_explicit(live.clone(), "aaaabbbbccccdddd1111", None);
-        assert_eq!(full.len(), 1);
-        assert_eq!(full[0].pid, 10);
+        assert_eq!(full.len(), 1, "the full nickname selects one target");
+        assert_eq!(full[0].pid, 10, "the full selection is the pid 10 target");
         let prefix = select_explicit(live, "aaaabbbbccccddd", None);
-        assert_eq!(prefix.len(), 1);
-        assert_eq!(prefix[0].pid, 10);
+        assert_eq!(prefix.len(), 1, "a nickname prefix selects one target");
+        assert_eq!(
+            prefix[0].pid, 10,
+            "the prefix selection is the pid 10 target"
+        );
     }
 
     #[test]
@@ -634,13 +574,16 @@ mod tests {
             target("aaaa", "three-four", 20),
         ];
         let matched = select_explicit(live, "aaaa", Some("three-four"));
-        assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].pid, 20);
+        assert_eq!(matched.len(), 1, "a nickname matches its own target");
+        assert_eq!(matched[0].pid, 20, "the matched target is pid 20");
     }
 
     #[test]
     fn select_explicit_no_match_is_empty() {
         let live = vec![target("aaaa", "one-two", 10)];
-        assert!(select_explicit(live, "none", None).is_empty());
+        assert!(
+            select_explicit(live, "none", None).is_empty(),
+            "an unknown mesh selects nothing"
+        );
     }
 }

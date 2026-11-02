@@ -5,9 +5,9 @@
 # and prelude globs (clippy's wildcard_imports exempts those by default).
 warn-on-all-wildcard-imports = true
 
-# Flag single-character identifiers; keep idiomatic generics and loop vars.
+# Flag single-character identifiers; keep the idiomatic generics T, E, K and V (AGENTS.md).
 min-ident-chars-threshold = 1
-allowed-idents-below-min-chars = ["_", "T", "E", "K", "V", "R", "S", "i", "j"]
+allowed-idents-below-min-chars = ["_", "T", "E", "K", "V"]
 
 # Complexity ceilings (favor small, readable functions).
 cognitive-complexity-threshold = 20
@@ -15,16 +15,26 @@ too-many-lines-threshold = 120
 too-many-arguments-threshold = 4
 excessive-nesting-threshold = 4
 
-# Domain terms that must not trip clippy::doc_markdown (extends the default
-# allow-list rather than replacing it).
-doc-valid-idents = [
-    "iroh",
-    "QUIC",
-    "HyParView",
-    "Plumtree",
-    "Base58Check",
-    "Ed25519",
-    "TopicId",
-    "EndpointId",
-    "JSON-RPC",
+
+# Google Rust Style Guide, O27: a path names at most three segments; a longer one imports its parent
+# module or its type (absolute_paths, Cargo.toml).
+absolute-paths-max-segments = 3
+
+# Google Rust Style Guide: no exception without a reason. These crates have two or more versions
+# in Cargo.lock, and upstream code that this repository does not change pulls each version. Find the
+# cause of one with `cargo tree -i <crate>@<version>`. A new duplicate that is not listed here fails
+# `cargo clippy -- -D warnings`. Remove a crate from the list when its versions meet.
+allowed-duplicate-crates = [
+    # Two generations of RustCrypto and `rand`: `rand` 0.9 (engine), `rand` 0.10 (`chacha20` 0.10),
+    # `chacha20poly1305` 0.10 (`chacha20` 0.9), and `crypto-common` 0.1 against 0.2.
+    "base16ct", "chacha20", "const-oid", "cpufeatures", "crypto-common", "der", "getrandom",
+    "pem-rfc7468", "pkcs8", "r-efi", "rand", "rand_core", "signature", "spki",
+    # `dimpl` uses `nom` 8; `acto` uses `smol_str` 0.1 and `automerge` uses 0.3.
+    "nom", "smol_str",
+    # Two generations of the platform bindings under the network and TLS stack.
+    "core-foundation", "jni", "jni-sys", "thiserror", "thiserror-impl", "untrusted", "windows-sys",
+    "windows-targets", "windows_aarch64_gnullvm", "windows_aarch64_msvc", "windows_i686_gnu",
+    "windows_i686_msvc", "windows_x86_64_gnu", "windows_x86_64_gnullvm", "windows_x86_64_msvc",
+    # `futures-buffered` uses `spin` 0.10; an older line of `spin` and `embedded-io` sits beside it.
+    "embedded-io", "spin",
 ]

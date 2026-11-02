@@ -24,10 +24,13 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
 
     // A delegates a task to B — a directed, sealed `message/send`.
-    let resp = alice
+    let response = alice
         .create_task("seal-bob", "the private brief for bob")
         .await;
-    assert!(resp["result"]["task"].is_object(), "task created: {resp}");
+    assert!(
+        response["result"]["task"].is_object(),
+        "task created: {response}"
+    );
 
     // B is the addressee: it decrypts the sealed brief and surfaces it.
     assert!(
@@ -73,7 +76,7 @@ async fn a_msg_works_on_a_passworded_gossip() {
     alice.await_peer_card("msgpw-bob").await;
     bob.await_peer_card(&alice.nickname).await;
 
-    alice.msg("msgpw-bob", SECRET).await;
+    alice.message("msgpw-bob", SECRET).await;
     assert!(
         bob.wait_body(SECRET, MSG_TIMEOUT).await,
         "the addressee must surface the msg on a passworded gossip"
@@ -103,7 +106,7 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
     // A msg is sealed to its recipient, so the card must have replicated.
     alice.await_peer_card("msgpriv-bob").await;
 
-    alice.msg("msgpriv-bob", SECRET).await;
+    alice.message("msgpriv-bob", SECRET).await;
 
     // B is the addressee: it decrypts and renders the msg as a chat line.
     assert!(
@@ -115,9 +118,12 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
         .into_iter()
         .find(|event| event["body"] == SECRET)
         .expect("bob surfaced the msg as a chat event");
-    assert_eq!(received["type"], "msg");
+    assert_eq!(received["type"], "msg", "the received frame is a msg");
     assert_eq!(received["to"], "msgpriv-bob", "the msg names its recipient");
-    assert_eq!(received["self"], false);
+    assert_eq!(
+        received["self"], false,
+        "the received frame comes from a peer, not from us"
+    );
     assert_eq!(
         received["is_visible"], true,
         "a msg is printed, not context"
@@ -134,8 +140,11 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
         .into_iter()
         .find(|event| event["body"] == SECRET)
         .expect("the sender surfaced its own msg echo");
-    assert_eq!(echoed["self"], true);
-    assert_eq!(echoed["to"], "msgpriv-bob");
+    assert_eq!(echoed["self"], true, "the echo is marked as ours");
+    assert_eq!(
+        echoed["to"], "msgpriv-bob",
+        "the echo is addressed to the private recipient"
+    );
 
     // C relays the frame but is not a party to it. Assert on the *content*
     // rather than on an empty window: presence beats and a late copy of the
@@ -184,7 +193,9 @@ async fn msgs_do_not_advance_the_chain_or_fork_the_gossip() {
     // A burst of msgs C cannot see. If these were chained, C would observe a
     // run of missing seqs from A.
     for index in 0..5 {
-        alice.msg("msgchain-bob", &format!("private {index}")).await;
+        alice
+            .message("msgchain-bob", &format!("private {index}"))
+            .await;
     }
     assert!(
         bob.wait_body("private 4", MSG_TIMEOUT).await,
@@ -202,7 +213,6 @@ async fn msgs_do_not_advance_the_chain_or_fork_the_gossip() {
     for (node, who) in [(&mut bob, "bob"), (&mut carol, "carol")] {
         let forks = node
             .json_events()
-            .into_iter()
             .filter(|event| event["event"] == "fork")
             .count();
         assert_eq!(forks, 0, "{who} must not see a fork");

@@ -1,0 +1,550 @@
+use habilis_network::protocol::messages::Authored;
+use habilis_network::protocol::{MessageKind, Nickname};
+use tokio::sync::mpsc::UnboundedSender;
+
+use super::{
+    OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent, StateChangedParams,
+    TaskGoneReason, TaskId, TaskMessageLeg, emit, emit_json, format_presence_json,
+    peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
+    simple_event, task_stalled_event,
+};
+use crate::a2a::task_record::StallNotice;
+use crate::a2a::wire;
+
+/// Per-event-loop output destination. Replaces the former
+/// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
+/// sessions (library api, tests) can run with independent output
+/// instead of racing a first-write-wins `OnceLock`. Threaded by
+/// `&Output` (not `Copy` — `Capture` holds a channel sender).
+#[derive(Debug, Clone)]
+pub(crate) enum Output {
+    /// Write to the process stdout/stderr in the given mode (CLI /
+    /// MCP-silent).
+    ///
+    /// `tap` is an optional fan-out: when set, every surfaced
+    /// [`OutputEvent`] is *also* sent here, in addition to being rendered
+    /// to stdout. The CLI daemon attaches one so the event loop can mirror
+    /// the surfaced stream into its local `surfaced_events` ring (the
+    /// `poll`/`fetch` history), without each emit site needing `&mut
+    /// state`. The tap carries the *same* structured events the `Capture`
+    /// sink would, so a tapped event renders byte-identically through
+    /// [`event_json`](fn@crate::event_json) later. Self-filtering still applies before the tap
+    /// (a suppressed self-message is neither printed nor tapped).
+    Stream {
+        mode: OutputMode,
+        filter_self: bool,
+        tap: Option<UnboundedSender<OutputEvent>>,
+    },
+    /// Push structured events into an in-process channel (the api
+    /// facade / tests). Mode-agnostic: every event is captured.
+    ///
+    /// `tap` mirrors each event into the daemon's `surfaced_events` ring,
+    /// exactly as the `Stream` tap does — so the api's `fetch`
+    /// (pull) sees the same events its `events()` subscription (push) does.
+    Capture {
+        tx: UnboundedSender<OutputEvent>,
+        filter_self: bool,
+        tap: Option<UnboundedSender<OutputEvent>>,
+    },
+}
+
+impl Output {
+    pub(crate) fn new(mode: OutputMode, filter_self: bool) -> Self {
+        Self::Stream {
+            mode,
+            filter_self,
+            tap: None,
+        }
+    }
+
+    /// Attach a fan-out `tap`, returning the tapped sink. Every surfaced
+    /// [`OutputEvent`] is then *also* sent to `tap` (the daemon's
+    /// `surfaced_events` mirror) in addition to being rendered/captured.
+    /// Applies to BOTH the `Stream` sink (CLI daemon) and the `Capture` sink
+    /// (in-process — so its `fetch` sees the same events its `events()`
+    /// subscription does); replaces any existing tap (there is only ever one
+    /// attach site). Lets the event loop wrap the sink it was handed without
+    /// `EventLoopConfig` carrying a receiver.
+    pub(crate) fn set_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
+        match self {
+            Output::Stream {
+                mode, filter_self, ..
+            } => Output::Stream {
+                mode,
+                filter_self,
+                tap: Some(tap),
+            },
+            Output::Capture {
+                tx, filter_self, ..
+            } => Output::Capture {
+                tx,
+                filter_self,
+                tap: Some(tap),
+            },
+        }
+    }
+
+    /// Suppresses all stdout/stderr output (MCP server).
+    pub(crate) fn silent() -> Self {
+        Self::Stream {
+            mode: OutputMode::Silent,
+            filter_self: false,
+            tap: None,
+        }
+    }
+
+    /// Capture every event into `tx` (the library API / in-process tests).
+    pub(crate) fn capture(tx: UnboundedSender<OutputEvent>) -> Self {
+        Self::Capture {
+            tx,
+            filter_self: false,
+            tap: None,
+        }
+    }
+
+    fn filters_self(&self) -> bool {
+        match self {
+            Self::Stream { filter_self, .. } | Self::Capture { filter_self, .. } => *filter_self,
+        }
+    }
+
+    /// The one sink skeleton every event method shares: in `Capture`
+    /// mode push the structured [`OutputEvent`]; in `Stream` mode render
+    /// that event's own human / JSON / (silent) form, and — when a `tap`
+    /// is attached — *also* push the structured event so the daemon's
+    /// `surfaced_events` ring sees the identical stream. Factoring this
+    /// out is what removes the ~10× duplicated `match Stream/Capture`.
+    fn dispatch(&self, event: impl FnOnce() -> OutputEvent, stream: impl FnOnce(OutputMode)) {
+        match self {
+            Output::Stream { mode, tap, .. } => {
+                stream(*mode);
+                if let Some(tap) = tap {
+                    let _ = tap.send(event());
+                }
+            }
+            Output::Capture { tx, tap, .. } => {
+                // Build once; the live `events()` subscription and the
+                // `surfaced_events` ring (tap) each get a copy.
+                let event = event();
+                if let Some(tap) = tap {
+                    let _ = tap.send(event.clone());
+                }
+                let _ = tx.send(event);
+            }
+        }
+    }
+
+    pub(crate) fn ready(&self, params: ReadyParams<'_>) {
+        let ReadyParams {
+            mesh,
+            name,
+            nickname,
+            drift,
+            a2a_port,
+        } = params;
+        self.dispatch(
+            || OutputEvent::Ready {
+                mesh: mesh.clone(),
+                name: name.clone(),
+                nickname: nickname.clone(),
+                drift: drift.map(str::to_owned),
+                a2a_port,
+            },
+            |mode| {
+                if mode == OutputMode::Json {
+                    emit_json(
+                        &SimpleEvent::Ready {
+                            version: crate::version(),
+                            gossip: mesh.as_str(),
+                            name: name.as_str(),
+                            nickname: nickname.as_str(),
+                            drift,
+                            a2a_port,
+                        },
+                        false,
+                    );
+                }
+            },
+        );
+    }
+
+    pub(crate) fn print_message(&self, message: &Authored) {
+        self.print_message_ex(message, false);
+    }
+
+    /// Print a message with an optional self flag (for echo-back).
+    /// When `filter_self` is enabled, self-authored messages are
+    /// suppressed. Presence events should use `print_presence` instead.
+    pub(crate) fn print_message_ex(&self, message: &Authored, is_self: bool) {
+        if matches!(
+            message.kind,
+            MessageKind::PeerInfo
+                | MessageKind::Digest
+                | MessageKind::StateDigest
+                | MessageKind::MetaDigest
+                | MessageKind::Ping
+                | MessageKind::Pong { .. }
+        ) {
+            return;
+        }
+        if is_self && self.filters_self() {
+            return;
+        }
+        self.dispatch(
+            || OutputEvent::Message {
+                message: Box::new(message.clone()),
+                is_self,
+            },
+            |mode| match mode {
+                OutputMode::Json => print_message_json(message, is_self),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Surface a worker-pushed task frame (an `a2a_status` or `a2a_artifact`).
+    /// Distinct top-level `task` event (not the `message` family) so skills
+    /// branch on `event`. When `filter_self` is enabled, self-authored legs are
+    /// suppressed.
+    pub(crate) fn print_task(&self, message: &Authored, is_self: bool) {
+        // Only worker-pushed status/artifact frames surface as a `task` event.
+        let MessageKind::App {
+            tag, to: Some(_), ..
+        } = &message.kind
+        else {
+            return;
+        };
+        if !matches!(tag.as_str(), wire::STATUS | wire::ARTIFACT) {
+            return;
+        }
+        if is_self && self.filters_self() {
+            return;
+        }
+        self.dispatch(
+            || OutputEvent::Task {
+                message: Box::new(message.clone()),
+                is_self,
+            },
+            |mode| match mode {
+                OutputMode::Json => simple_event::print_task_json(message, is_self),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Surface an RPC `message/send` task leg — the initiator's brief / answer
+    /// (on the worker), or the created `Task` (on the initiator). No frame
+    /// backs it (the leg arrived over the request/response binding), so the
+    /// fields are passed explicitly. Emits a `task` event with `kind:message`.
+    pub(crate) fn task_message(&self, leg: &TaskMessageLeg<'_>) {
+        if leg.is_self && self.filters_self() {
+            return;
+        }
+        let state = leg.state;
+        let is_self = leg.is_self;
+        let id = leg.id.to_owned();
+        let mesh = leg.mesh.to_owned();
+        let author = leg.author.to_owned();
+        let peer = leg.peer.to_owned();
+        let task_id = leg.task_id.to_owned();
+        let text = leg.text.to_owned();
+        let label = leg.label.map(ToOwned::to_owned);
+        let message = leg.message.cloned().map(Box::new);
+        self.dispatch(
+            || OutputEvent::TaskMessage {
+                id,
+                mesh,
+                author,
+                peer,
+                task_id,
+                state,
+                text,
+                label,
+                message,
+                is_self,
+            },
+            |mode| match mode {
+                OutputMode::Json => {
+                    emit(&simple_event::format_task_message_json(leg));
+                }
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// A task went terminal without a peer-authored status: evicted by the
+    /// daemon's per-task silence sweep (the task analogue of
+    /// [`peer_timeout`](Self::peer_timeout)) or canceled because its
+    /// counterparty left. JSON mode emits a `task_timeout` event for the
+    /// widget; `reason` says which trigger fired.
+    pub(crate) fn task_timeout(&self, task_id: &TaskId, reason: TaskGoneReason) {
+        self.dispatch(
+            || OutputEvent::TaskTimeout {
+                task_id: task_id.clone(),
+                reason,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::TaskTimeout {
+                        task_id: task_id.as_str(),
+                        reason,
+                    },
+                    false,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// A worker's agent has not polled for `check_secs` with no bell armed. JSON
+    /// mode emits a visible `task_stalled` event; nothing is canceled.
+    pub(crate) fn task_stalled(&self, notice: &StallNotice) {
+        self.dispatch(
+            || OutputEvent::TaskStalled {
+                task_id: notice.task_id.clone(),
+                peer: notice.peer.clone(),
+                last_poll_secs_ago: notice.last_poll_secs,
+                check_secs: notice.check_secs,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &task_stalled_event(
+                        &notice.task_id,
+                        &notice.peer,
+                        notice.last_poll_secs,
+                        notice.check_secs,
+                    ),
+                    true,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Surface a shared-state change: the human ` … changed shared state`
+    /// line, the structured `state` event for the agent API (poll / `--output
+    /// json` / api `events()`), and the surfaced-ring mirror. F5: a *self*
+    /// change goes to poll/UI but is **never** delivered to the api `events()`
+    /// reaction channel, so an agent is never woken by its own patch (alternation
+    /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
+    /// self-skip is the Monitor's job.
+    pub(crate) fn state_changed(&self, params: StateChangedParams<'_>) {
+        let StateChangedParams {
+            channel,
+            event,
+            document,
+            is_self,
+        } = params;
+        let make = || OutputEvent::StateChanged {
+            channel,
+            event: Box::new(event.clone()),
+            document: document.clone(),
+            is_self,
+        };
+        match self {
+            Output::Stream { mode, tap, .. } => {
+                match mode {
+                    OutputMode::Json => {
+                        emit(&simple_event::format_state_json(
+                            channel, event, document, is_self,
+                        ));
+                    }
+                    OutputMode::Silent => {}
+                }
+                if let Some(tap) = tap {
+                    let _ = tap.send(make());
+                }
+            }
+            Output::Capture { tx, tap, .. } => {
+                let evt = make();
+                // Poll/fetch history always sees it.
+                if let Some(tap) = tap {
+                    let _ = tap.send(evt.clone());
+                }
+                // F5: never wake an agent on its own patch.
+                if !is_self {
+                    let _ = tx.send(evt);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn print_presence(&self, message: &Authored) {
+        let MessageKind::Presence { subtype } = &message.kind else {
+            return;
+        };
+        self.dispatch(
+            || OutputEvent::Presence {
+                message: Box::new(message.clone()),
+            },
+            |mode| match mode {
+                OutputMode::Json => emit(&format_presence_json(message, *subtype)),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Emit a peer-timeout event. Distinct from `presence left` (a
+    /// voluntary departure): this fires when the local heartbeat
+    /// sweeper evicts a peer silent past `ALIVE_TIMEOUT_SECS`.
+    pub(crate) fn peer_timeout(&self, nickname: &Nickname, last_seen_secs_ago: u64) {
+        self.dispatch(
+            || OutputEvent::PeerTimeout {
+                nickname: nickname.clone(),
+                last_seen_secs_ago,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::PeerTimeout {
+                        nickname: nickname.as_str(),
+                        last_seen_secs_ago,
+                        display: peer_timeout_display(nickname.as_str()),
+                    },
+                    true,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Equivocation / fork alert (Phase 2): an author's signing key produced
+    /// two different messages at the same `seq` — cryptographic proof of a
+    /// fork. Surfaced once per offending key. JSON mode emits a `fork` event
+    /// for agents.
+    pub(crate) fn fork(&self, nickname: &Nickname, pubkey: &str, seq: u64) {
+        self.dispatch(
+            || OutputEvent::Fork {
+                nickname: nickname.clone(),
+                pubkey: pubkey.to_owned(),
+                seq,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::Fork {
+                        nickname: nickname.as_str(),
+                        pubkey,
+                        seq,
+                    },
+                    false,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Symmetric counterpart to `peer_timeout`: fires when a peer we
+    /// previously evicted for silence resumes sending (any message,
+    /// including an `Alive` keepalive).
+    pub(crate) fn peer_return(&self, nickname: &Nickname) {
+        self.dispatch(
+            || OutputEvent::PeerReturn {
+                nickname: nickname.clone(),
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::PeerReturn {
+                        nickname: nickname.as_str(),
+                        display: peer_return_display(nickname.as_str()),
+                    },
+                    true,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// A receipt is proof for the sender, not work for the agent, so it is
+    /// pollable but never wakes the bell.
+    pub(crate) fn receipt(&self, params: ReceiptParams<'_>) {
+        let ReceiptParams {
+            from,
+            ref_id,
+            state,
+            ts,
+        } = params;
+        self.dispatch(
+            || OutputEvent::Receipt {
+                from: from.clone(),
+                ref_id: ref_id.to_owned(),
+                state: state.to_owned(),
+                ts,
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::Receipt {
+                        from: from.as_str(),
+                        ref_id,
+                        state,
+                        ts,
+                    },
+                    false,
+                ),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Print an informational line.
+    pub(crate) fn info(&self, message: &str) {
+        self.dispatch(
+            || OutputEvent::Info {
+                message: message.to_owned(),
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(&SimpleEvent::Info { message }, false),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Print an error line.
+    pub(crate) fn error(&self, message: &str) {
+        self.dispatch(
+            || OutputEvent::Error {
+                message: message.to_owned(),
+            },
+            |mode| match mode {
+                OutputMode::Json => emit_json(&SimpleEvent::Error { message }, false),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Emit the result of an `agent-gossip ping` round: per-peer RTT, plus how
+    /// many of the known peers responded (the responder count is just
+    /// `peers.len()`). `known` is the current peer roster size.
+    pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {
+        // Not routed through `dispatch`: `peers` is owned and each arm
+        // consumes (or drops) it, so there is nothing to clone.
+        match self {
+            Output::Capture { tx, tap, .. } => {
+                if let Some(tap) = tap {
+                    let _ = tap.send(OutputEvent::PingReport {
+                        peers: peers.clone(),
+                        known,
+                    });
+                }
+                let _ = tx.send(OutputEvent::PingReport { peers, known });
+            }
+            Output::Stream { mode, tap, .. } => {
+                match mode {
+                    OutputMode::Json => emit_json(
+                        &SimpleEvent::PingReport {
+                            responded: peers.len(),
+                            display: ping_report_display(&peers, known),
+                            peers: &peers,
+                            known,
+                        },
+                        true,
+                    ),
+                    OutputMode::Silent => {}
+                }
+                // Mirror into the daemon's surfaced-events ring so `poll`
+                // can return the same `ping_report` the stream just showed.
+                if let Some(tap) = tap {
+                    let _ = tap.send(OutputEvent::PingReport { peers, known });
+                }
+            }
+        }
+    }
+}

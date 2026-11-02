@@ -53,13 +53,14 @@ slot-template = { path = "../slot-template" }
 # Stamps this repo's commit into `VERGEN_GIT_SHA`/`VERGEN_GIT_DIRTY`. Ours, not
 # the engine's: `habilis-network` lives in a separate repo now, so its stamp names a
 # commit that does not exist in this history.
-vergen-gitcl = { version = "1", features = ["build"] }
+vergen-gitcl = { version = "9", features = ["build"] }
 
 [dependencies]
 habilis-network = { workspace = true, features = ["blob"] }
 # Optional: only compiled in under the `dhat-heap` feature (heap profiling).
 dhat = { version = "0.3", optional = true }
 tokio.workspace = true
+futures-util.workspace = true
 clap = { version = "4", features = ["derive"] }
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-gossip plug` is self-contained.
@@ -69,7 +70,7 @@ include_dir = "0.7"
 # that is, and a second declaration here would resolve the published crate
 # beside it. See the root manifest.
 anyhow.workspace = true
-libc.workspace = true
+rustix = { version = "1", default-features = false, features = ["process"] }
 uuid.workspace = true
 sha2.workspace = true
 bytes.workspace = true

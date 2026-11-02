@@ -165,8 +165,6 @@ pub(crate) fn concrete_args(
 mod tests {
     use std::ffi::OsString;
 
-    use super::concrete_args;
-
     fn args(list: &[&str]) -> Vec<OsString> {
         list.iter().map(OsString::from).collect()
     }
@@ -174,7 +172,7 @@ mod tests {
     #[test]
     fn concrete_args_replaces_auto_and_drops_the_stderr_file() {
         let state = std::path::Path::new(r"C:\base\sessions\42.json");
-        let out = concrete_args(
+        let out = super::concrete_args(
             args(&[
                 "create",
                 "--name",
@@ -200,7 +198,8 @@ mod tests {
                 "--state-file",
                 r"C:\base\sessions\42.json",
                 "--quiet",
-            ])
+            ]),
+            "auto is resolved and the stderr file is left to the launcher"
         );
     }
 
@@ -209,6 +208,10 @@ mod tests {
         // The test runner is no shell, so the walk stops at once or after the
         // shells that started it.
         let pid = super::agent_pid().expect("the test has an agent above it");
-        assert_ne!(pid, std::process::id());
+        assert_ne!(
+            pid,
+            std::process::id(),
+            "the agent is an ancestor, never the test process itself"
+        );
     }
 }

@@ -1,0 +1,894 @@
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use agent_gossip::a2a::status_update_params;
+use agent_gossip::api::{
+    A2aCallParams, CreateConfig, JoinConfig, MeshSession, SessionError, TaskArtifactParams,
+    TaskStatusParams,
+};
+use agent_gossip::{
+    Channel, JoinTarget, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
+    PresenceSubtype, TaskId, TaskState,
+};
+use habilis_network::protocol::messages::Authored;
+use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
+
+/// One in-process mesh node with its captured [`OutputEvent`] stream.
+///
+/// It is a real [`MeshSession`] (real iroh
+/// endpoint + the real `daemon::run` loop on a background task). Drop-in analogue of the
+/// subprocess [`Node`](crate::Node), but everything runs in the test process — so
+/// coverage is recorded and teardown is deterministic.
+pub struct InProcNode {
+    /// The live session, for calls the wrappers of this harness do not cover.
+    pub session: MeshSession,
+    pub(crate) rx: UnboundedReceiver<OutputEvent>,
+    pub(crate) drained: Vec<OutputEvent>,
+    /// The mesh id the node joined.
+    pub mesh: String,
+    /// The nickname of the node in that mesh.
+    pub nickname: String,
+}
+
+// `MeshSession` and the event receiver are not `Debug`; the identity plus how
+// much has been captured is all a failing assertion needs anyway.
+impl std::fmt::Debug for InProcNode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug: std::fmt::DebugStruct<'_, '_> = formatter.debug_struct("InProcNode");
+        let drained: usize = self.drained.len();
+        debug
+            .field("mesh", &self.mesh)
+            .field("nickname", &self.nickname)
+            .field("drained", &drained)
+            .finish_non_exhaustive()
+    }
+}
+
+impl InProcNode {
+    /// Create a new private mesh. `self.mesh` holds the id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mesh cannot be created.
+    pub async fn create(name: &str) -> Self {
+        init_test_tracing();
+        Self::with_session(
+            MeshSession::create(CreateConfig::new(test_mesh_name(name)))
+                .await
+                .expect("in-process create failed"),
+        )
+    }
+
+    /// Create a new private mesh with an explicit nickname.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
+    pub async fn create_with_nick(name: &str, nick: &str) -> Self {
+        init_test_tracing();
+        let config = CreateConfig::new(test_mesh_name(name))
+            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"));
+        Self::with_session(
+            MeshSession::create(config)
+                .await
+                .expect("in-process create failed"),
+        )
+    }
+
+    /// Create a new private, password-protected mesh.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mesh cannot be created.
+    pub async fn create_with_password(name: &str, password: &str) -> Self {
+        init_test_tracing();
+        let config = CreateConfig::new(test_mesh_name(name)).with_password(password.to_owned());
+        Self::with_session(
+            MeshSession::create(config)
+                .await
+                .expect("in-process passworded create failed"),
+        )
+    }
+
+    /// Create a mesh under an explicit active-view cap (a small cap forces a
+    /// partial mesh, so directed traffic must reach non-neighbours).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
+    pub async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
+        init_test_tracing();
+        let config = CreateConfig::new(test_mesh_name(name))
+            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
+            .with_max_peers(max_peers);
+        Self::with_session(
+            MeshSession::create(config)
+                .await
+                .expect("in-process transport create failed"),
+        )
+    }
+
+    /// Join `mesh` under an explicit active-view cap.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mesh` or `nick` is invalid, or if the join fails.
+    pub async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
+        init_test_tracing();
+        let target: JoinTarget = mesh.parse().expect("valid test join target");
+        let config = JoinConfig::new(target)
+            .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
+            .with_max_peers(max_peers);
+        Self::with_session(
+            MeshSession::join(config)
+                .await
+                .expect("in-process transport join failed"),
+        )
+    }
+
+    fn with_session(mut session: MeshSession) -> Self {
+        let rx = session.events().expect("events() receiver");
+        let mesh = session.mesh_id().to_string();
+        let nickname = session.nickname().to_string();
+        Self {
+            session,
+            rx,
+            drained: Vec::new(),
+            mesh,
+            nickname,
+        }
+    }
+
+    /// Join `mesh` (a mesh id) with an explicit nickname.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mesh` or `nickname` is invalid, or if the join fails.
+    pub async fn join(mesh: &str, nickname: &str) -> Self {
+        init_test_tracing();
+        let target: JoinTarget = mesh.parse().expect("valid test join target");
+        let config = JoinConfig::new(target)
+            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
+        Self::with_session(
+            MeshSession::join(config)
+                .await
+                .expect("in-process join failed"),
+        )
+    }
+
+    /// Join the public topic mesh derived from `string`, with an explicit
+    /// nickname.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nickname` is invalid, or if the topic join fails.
+    pub async fn topic(string: &str, nickname: &str) -> Self {
+        init_test_tracing();
+        let config = agent_gossip::api::TopicConfig::new(string.to_owned())
+            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
+        Self::with_session(
+            MeshSession::topic(config)
+                .await
+                .expect("in-process topic join failed"),
+        )
+    }
+
+    /// Join a password-protected `mesh`, surfacing the join error (so a
+    /// wrong-password test can assert on it).
+    ///
+    /// # Errors
+    ///
+    /// Returns the join error, for example when the password is wrong.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mesh` or `nickname` is invalid.
+    pub async fn try_join_with_password(
+        mesh: &str,
+        nickname: &str,
+        password: &str,
+    ) -> Result<Self, agent_gossip::api::JoinError> {
+        let target: JoinTarget = mesh.parse().expect("valid test join target");
+        let config = JoinConfig::new(target)
+            .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"))
+            .with_password(password.to_owned());
+        Ok(Self::with_session(MeshSession::join(config).await?))
+    }
+
+    /// Broadcast a plain message to everyone; returns the new message id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` is not a valid body, or if the send fails.
+    pub async fn broadcast(&self, text: &str) -> MessageId {
+        self.session
+            .broadcast(MessageBody::try_new(text).expect("valid body"))
+            .await
+            .expect("in-process broadcast failed")
+            .id
+            .clone()
+    }
+
+    /// Send a msg to one peer; returns the new message id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `to` or `text` is invalid, or if the send fails.
+    pub async fn message(&self, to: &str, text: &str) -> MessageId {
+        self.try_msg(to, text)
+            .await
+            .expect("in-process msg failed")
+            .id
+            .clone()
+    }
+
+    /// `Self::msg` without the panic — a msg is sealed to the recipient, so
+    /// it legitimately fails until that peer's card has replicated, and a test
+    /// that races the card needs to see the error rather than die on it.
+    ///
+    /// # Errors
+    /// Propagates the send failure (loop stopped, or the recipient's seal key
+    /// is not known yet).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `to` is not a valid nickname or `text` is not a valid body.
+    pub async fn try_msg(&self, to: &str, text: &str) -> Result<Authored, SessionError> {
+        self.session
+            .message(
+                Nickname::try_new(to).expect("valid test nickname"),
+                MessageBody::try_new(text).expect("valid body"),
+            )
+            .await
+    }
+
+    /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
+    /// rejected (not a JSON object / loop stopped).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the merge is rejected.
+    pub async fn state_merge(&self, merge: serde_json::Value) {
+        self.try_state_merge(merge)
+            .await
+            .expect("in-process state_merge failed");
+    }
+
+    /// Like [`Self::state_merge`] but returns the raw result.
+    async fn try_state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
+        self.session.state_merge(merge).await
+    }
+
+    /// The current derived shared-state document (the merge fold over the
+    /// state log).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read fails.
+    pub async fn state_get(&self) -> serde_json::Value {
+        self.session
+            .state_get()
+            .await
+            .expect("in-process state_get failed")
+    }
+
+    /// Apply an RFC 7386 merge to the `meta` channel. Panics on rejection —
+    /// use [`Self::try_meta_merge`] to exercise rejection deliberately.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the merge is rejected.
+    pub async fn meta_merge(&self, merge: serde_json::Value) {
+        self.try_meta_merge(merge)
+            .await
+            .expect("in-process meta_merge failed");
+    }
+
+    /// Like [`Self::meta_merge`] but returns the raw result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the session error when the merge is rejected (not a JSON object, or the loop stopped).
+    pub async fn try_meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
+        self.session.meta_merge(merge).await
+    }
+
+    /// The current derived `meta`-channel document.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read fails.
+    pub async fn meta_get(&self) -> serde_json::Value {
+        self.session
+            .meta_get()
+            .await
+            .expect("in-process meta_get failed")
+    }
+
+    // ── channel-parameterized dispatch ──
+    // The behavioral tests run against both channels by selecting one at the
+    // call site; these forward to the `state_*` / `meta_*` twins above so a
+    // single test body covers `Channel::State` and `Channel::Meta`.
+
+    /// Apply a merge to `channel`. Panics on rejection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the merge is rejected, or if `channel` is neither `State` nor `Meta`.
+    pub async fn merge(&self, channel: Channel, merge: serde_json::Value) {
+        match channel {
+            Channel::State => self.state_merge(merge).await,
+            Channel::Meta => self.meta_merge(merge).await,
+            _ => panic!("the fixture has no twin for this channel"),
+        }
+    }
+
+    /// The current derived document for `channel`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read fails, or if `channel` is neither `State` nor `Meta`.
+    pub async fn get(&self, channel: Channel) -> serde_json::Value {
+        match channel {
+            Channel::State => self.state_get().await,
+            Channel::Meta => self.meta_get().await,
+            _ => panic!("the fixture has no twin for this channel"),
+        }
+    }
+
+    /// Captured changes on `channel` so far, each `(derived document, is_self)`.
+    pub fn changes(
+        &mut self,
+        channel: Channel,
+    ) -> impl Iterator<Item = (serde_json::Value, bool)> + '_ {
+        self.pump();
+        self.drained.iter().filter_map(move |event| {
+            if let OutputEvent::StateChanged {
+                channel: chan,
+                document,
+                is_self,
+                ..
+            } = event
+                && *chan == channel
+            {
+                Some((document.clone(), *is_self))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Wait until a change on `channel` **from a peer** (`is_self == false`)
+    /// whose freshly-derived document satisfies `pred` is captured — the
+    /// reaction-hook check (a self-change never satisfies it, exercising the F5
+    /// self-wake guard).
+    pub async fn wait_change(
+        &mut self,
+        channel: Channel,
+        timeout: Duration,
+        mut pred: impl FnMut(&serde_json::Value) -> bool,
+    ) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::StateChanged { channel: chan, document, is_self: false, .. }
+                        if *chan == channel && pred(document)
+                )
+            })
+        })
+        .await
+    }
+
+    /// Create a task on `target` (native A2A `message/send`, no `taskId`): the
+    /// worker mints the id and returns the `Task`. Returns the parsed JSON-RPC
+    /// response.
+    pub async fn create_task(&self, target: &str, text: &str) -> serde_json::Value {
+        self.create_task_labeled(target, text, None).await
+    }
+
+    /// As [`Self::create_task`], with the initiator's one-line task label
+    /// (`mesh:label`) the worker is meant to reuse verbatim.
+    pub async fn create_task_labeled(
+        &self,
+        target: &str,
+        text: &str,
+        label: Option<&str>,
+    ) -> serde_json::Value {
+        // Task creation seals the request to `target`'s card
+        // (`a2a::card::peer_seal_key`). The card propagates asynchronously and the
+        // seal is one-shot, so wait for it first — otherwise, under the concurrent
+        // suite's load, the request is silently dropped and the call hangs.
+        self.await_peer_card(target).await;
+        let message =
+            status_update_params::send_message_payload(self.session.mesh_id(), None, text, label);
+        self.a2a_call_retrying(
+            target,
+            "SendMessage",
+            serde_json::json!({ "message": message }),
+        )
+        .await
+    }
+
+    /// Block until `target`'s card is present in this node's `meta` doc — the
+    /// seal-key source for any directed A2A call, and the precondition
+    /// [`Self::a2a_call`] cannot enforce itself (the unknown-peer tests call a
+    /// nickname whose card will never arrive and must fail fast, not block).
+    /// [`Self::create_task`] applies it for you; a bare `a2a_call` to a real
+    /// peer must call this first or it races card propagation.
+    ///
+    /// The card is not enough on its own: the meta doc and the live roster
+    /// converge separately, and a directed send checks the roster. Until
+    /// `target` is in it on a lane that carries payload, the send fails as an
+    /// unknown peer or is held for a relay that is lookup only — both seen as
+    /// CI flakes in `tests/seal.rs`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the card or a direct lane does not appear before `MSG_TIMEOUT`.
+    pub async fn await_peer_card(&self, target: &str) {
+        let pointer = format!("/peers/{target}/card");
+        let deadline = Instant::now() + MSG_TIMEOUT;
+        while self.meta_get().await.pointer(&pointer).is_none()
+            || !self.carries_directed_frames_to(target).await
+        {
+            assert!(
+                Instant::now() < deadline,
+                "{target}'s card never reached this node's meta doc, or no direct lane to it formed"
+            );
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
+    async fn carries_directed_frames_to(&self, target: &str) -> bool {
+        self.session.peers().await.is_ok_and(|roster| {
+            roster.peers.iter().any(|entry| {
+                entry.nickname.as_str() == target
+                    && !entry.quiet
+                    && matches!(entry.transport, Lane::Unicast | Lane::Multihop)
+            })
+        })
+    }
+
+    /// Send a follow-up message (answer / approval / change) into an existing
+    /// task on `target`. Returns the updated `Task` response.
+    pub async fn task_message(
+        &self,
+        target: &str,
+        task_id: &TaskId,
+        text: &str,
+    ) -> serde_json::Value {
+        let message = status_update_params::send_message_payload(
+            self.session.mesh_id(),
+            Some(task_id),
+            text,
+            None,
+        );
+        self.a2a_call_retrying(
+            target,
+            "SendMessage",
+            serde_json::json!({ "message": message }),
+        )
+        .await
+    }
+
+    /// A directed A2A call to `target`, sent **exactly once**; returns the
+    /// parsed JSON-RPC response.
+    ///
+    /// Reach for this only to assert on single-shot behaviour itself. Anything
+    /// that merely needs the call to *land* wants [`Self::a2a_call_retrying`]:
+    /// a directed request dropped by a momentarily linkless overlay is never
+    /// retransmitted, so a lone attempt just burns the caller's deadline.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `target` is invalid, or if the call fails at the transport level.
+    pub async fn a2a_call(
+        &self,
+        target: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let call = A2aCallParams::new(
+            Nickname::try_new(target).expect("valid target"),
+            method.to_owned(),
+            params,
+            MSG_TIMEOUT,
+        );
+        self.session
+            .a2a_call(call)
+            .await
+            .expect("a2a_call transport")
+    }
+
+    /// A small directed A2A call, **re-issued while the peer never answers**.
+    ///
+    /// A directed request is broadcast into the gossip overlay, and `A2aReq` /
+    /// `A2aResp` are unlogged — anti-entropy never heals them. So a request sent
+    /// while the overlay happens to hold no live peer link is dropped *for good*
+    /// and the caller simply blocks to its deadline. That window is real and
+    /// routine right after a join: `linked_endpoints` is written only by
+    /// `NeighborUp`/`NeighborDown`, so a fresh pair can link, deliver, and then
+    /// watch the neighbor go down, leaving the daemon at "silent partition
+    /// (meshed but zero peer links)" until the next heal tick re-bridges it 15s
+    /// later. A single-shot call therefore races overlay convergence — this was
+    /// the suite's long-standing ~50% flake in `a2a_rpc`, reproducible on one
+    /// test with no concurrency at all.
+    ///
+    /// Retrying is the same remedy the subprocess unicast test already applies
+    /// (`gossip_network.rs`, "retry until it lands"), and it is safe here: the
+    /// task registry treats a duplicate leg as a no-op (`a2a/task.rs`). Each
+    /// attempt gets a short deadline so a dropped frame is re-sent promptly
+    /// rather than burning the budget waiting on a frame the overlay discarded —
+    /// which is exactly why this must stay off the large-payload path, where a
+    /// resend overflows the outbound queue instead. See [`Self::a2a_call`].
+    ///
+    /// Only a transport timeout is retried. Any genuine answer — including a
+    /// semantic error such as "not permitted" or "unknown peer" — means
+    /// the round trip completed, and is returned untouched.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `target` is invalid, or if a call fails at the transport level.
+    pub async fn a2a_call_retrying(
+        &self,
+        target: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let peer = Nickname::try_new(target).expect("valid target");
+        let deadline = Instant::now() + MSG_TIMEOUT;
+        loop {
+            let call =
+                A2aCallParams::new(peer.clone(), method.to_owned(), params.clone(), RPC_ATTEMPT);
+            let response: serde_json::Value = self
+                .session
+                .a2a_call(call)
+                .await
+                .expect("a2a_call transport");
+            if !is_rpc_timeout(&response) || Instant::now() >= deadline {
+                return response;
+            }
+        }
+    }
+
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
+    pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
+        let status = match note {
+            Some(text) => TaskStatusParams::new(task_id.clone(), state).with_note(text.to_owned()),
+            None => TaskStatusParams::new(task_id.clone(), state),
+        };
+        self.session
+            .task_status(status)
+            .await
+            .expect("in-process task_status failed");
+    }
+
+    /// Worker-emit a `working` status that says the worker waits on its user.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
+    pub async fn task_waiting(&self, task_id: &TaskId, reason: &str) {
+        let status = TaskStatusParams::new(task_id.clone(), TaskState::Working)
+            .with_waiting(reason.to_owned());
+        self.session
+            .task_status(status)
+            .await
+            .expect("in-process task_waiting failed");
+    }
+
+    /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
+    pub async fn task_artifact(&self, task_id: &TaskId, text: &str) {
+        self.session
+            .task_artifact(TaskArtifactParams::new(task_id.clone(), text.to_owned()))
+            .await
+            .expect("in-process task_artifact failed");
+    }
+
+    /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
+    /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
+    /// so a test can read the minted ticket reference.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the send fails.
+    pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Authored {
+        let artifact =
+            TaskArtifactParams::new(task_id.clone(), String::new()).with_file(path.to_path_buf());
+        self.session
+            .task_artifact(artifact)
+            .await
+            .expect("in-process task_artifact_file failed")
+    }
+
+    /// Captured worker-pushed task frames (status/artifact; includes self
+    /// echoes — filter on `is_self`/author as needed).
+    pub fn tasks(&mut self) -> impl Iterator<Item = (&Authored, bool)> + '_ {
+        self.pump();
+        self.drained.iter().filter_map(|event| {
+            if let OutputEvent::Task { message, is_self } = event {
+                Some((&**message, *is_self))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Whether any `message`-kind task event (an RPC `message/send` leg) has
+    /// been surfaced so far.
+    pub fn saw_task_message(&mut self) -> bool {
+        self.pump();
+        self.drained
+            .iter()
+            .any(|event| matches!(event, OutputEvent::TaskMessage { .. }))
+    }
+
+    /// Wait until a worker-pushed task frame in `state` (from any author) is
+    /// surfaced.
+    pub async fn wait_task_state(&mut self, state: TaskState, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Task { message, .. }
+                        if status_update_params::frame_task_state(message) == Some(state)
+                )
+            })
+        })
+        .await
+    }
+
+    /// Wait until a `message`-kind task event (an RPC `message/send` leg) is
+    /// surfaced to us (the worker).
+    pub async fn wait_task_message(&mut self, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, OutputEvent::TaskMessage { .. }))
+        })
+        .await
+    }
+
+    /// The `mesh:label` on the first `message`-kind task event surfaced to us —
+    /// `Some(None)` when that leg carried no label, `None` when no such leg has
+    /// been surfaced at all.
+    pub fn task_message_label(&mut self) -> Option<Option<String>> {
+        self.pump();
+        self.drained.iter().find_map(|event| {
+            if let OutputEvent::TaskMessage { label, .. } = event {
+                Some(label.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Clean shutdown (broadcasts `Left`).
+    pub async fn leave(self) {
+        let _ = self.session.leave().await;
+    }
+
+    /// Non-blocking: move every pending captured event into the buffer.
+    fn pump(&mut self) {
+        while let Ok(event) = self.rx.try_recv() {
+            self.drained.push(event);
+        }
+    }
+
+    /// Every captured event so far (drains pending first).
+    pub fn events(&mut self) -> &[OutputEvent] {
+        self.pump();
+        &self.drained
+    }
+
+    /// Captured events rendered to the documented `--output json`
+    /// wire format and parsed — byte-identical to what the subprocess
+    /// emitted.
+    pub fn json_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
+        self.pump();
+        let lines = self.drained.iter().filter_map(agent_gossip::event_json);
+        lines.filter_map(|line| serde_json::from_str(&line).ok())
+    }
+
+    /// Only `{"event":"message"}` lines (both `msg` and `presence`
+    /// carry `event:"message"`).
+    pub fn message_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
+        self.json_events()
+            .filter(|value| value["event"] == "message")
+    }
+
+    /// `{"event":"message","type":"broadcast"}` lines only — gossip-wide chat,
+    /// excluding presence and msgs.
+    pub fn broadcast_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
+        self.chat_events("broadcast").into_iter()
+    }
+
+    /// `{"event":"message","type":"msg"}` lines only — chat addressed to one
+    /// peer.
+    pub fn msg_events(&mut self) -> impl Iterator<Item = serde_json::Value> + '_ {
+        self.chat_events("msg").into_iter()
+    }
+
+    fn chat_events(&mut self, ty: &str) -> Vec<serde_json::Value> {
+        self.json_events()
+            .filter(|value| value["event"] == "message" && value["type"] == ty)
+            .collect()
+    }
+
+    /// Inbound `msg`-kind messages captured so far (includes self
+    /// echoes — filter on `is_self` if needed).
+    pub fn messages(&mut self) -> impl Iterator<Item = &Authored> + '_ {
+        self.pump();
+        self.drained.iter().filter_map(|event| {
+            if let OutputEvent::Message { message, .. } = event {
+                Some(&**message)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// `msg` events from *other* peers only (drops our own echoes).
+    /// The subprocess [`Node`](crate::Node) parsed only peer lines, so ports that
+    /// counted "deliveries" use this.
+    pub fn inbound(&mut self) -> impl Iterator<Item = &Authored> + '_ {
+        self.pump();
+        self.drained.iter().filter_map(|event| {
+            if let OutputEvent::Message {
+                message,
+                is_self: false,
+            } = event
+            {
+                Some(&**message)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Wait until a peer (non-self) `msg` with exactly `body` is
+    /// captured, or `timeout` elapses.
+    pub async fn wait_body(&mut self, body: &str, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Message { message, is_self: false }
+                        if status_update_params::chat_text(message).as_deref() == Some(body)
+                )
+            })
+        })
+        .await
+    }
+
+    /// Wait until at least `min_count` peer (non-self) messages have
+    /// been captured, or `timeout` elapses.
+    pub async fn wait_inbound(&mut self, min_count: usize, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events
+                .iter()
+                .filter(|event| matches!(event, OutputEvent::Message { is_self: false, .. }))
+                .count()
+                >= min_count
+        })
+        .await
+    }
+
+    /// Count inbound (non-self) `msg` events whose body equals `body`.
+    pub fn count_body(&mut self, body: &str) -> usize {
+        self.pump();
+        self.drained
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Message { message, is_self: false }
+                        if status_update_params::chat_text(message).as_deref() == Some(body)
+                )
+            })
+            .count()
+    }
+
+    /// Number of surfaced presence events of the given kind.
+    pub fn presence_count(&mut self, want: PresenceSubtype) -> usize {
+        self.pump();
+        self.drained
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Presence { message }
+                        if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
+                )
+            })
+            .count()
+    }
+
+    /// Wait until a `joined`/`left` presence for `nick` is surfaced.
+    pub async fn wait_presence(
+        &mut self,
+        nick: &str,
+        want: PresenceSubtype,
+        timeout: Duration,
+    ) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Presence { message }
+                        if message.author.to_string() == nick
+                            && matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
+                )
+            })
+        })
+        .await
+    }
+
+    /// Wait until at least `min_count` `joined`/`left` presence events
+    /// (any author) have been surfaced.
+    pub async fn wait_presence_count(
+        &mut self,
+        want: PresenceSubtype,
+        min_count: usize,
+        timeout: Duration,
+    ) -> bool {
+        self.wait_for(timeout, |events| {
+            events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        OutputEvent::Presence { message }
+                            if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
+                    )
+                })
+                .count()
+                >= min_count
+        })
+        .await
+    }
+
+    /// Poll until `pred` over the accumulated events holds, or
+    /// `timeout` elapses. Returns whether the predicate was satisfied.
+    pub async fn wait_for(
+        &mut self,
+        timeout: Duration,
+        mut pred: impl FnMut(&[OutputEvent]) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.pump();
+            if pred(&self.drained) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
+    /// Convenience: wait until at least `n` inbound `msg` events are
+    /// seen (any author, including self echoes).
+    pub async fn wait_messages(&mut self, min_count: usize, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events
+                .iter()
+                .filter(|event| matches!(event, OutputEvent::Message { .. }))
+                .count()
+                >= min_count
+        })
+        .await
+    }
+}
