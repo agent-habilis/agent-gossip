@@ -320,9 +320,6 @@ mod tests {
         )
     }
 
-    /// One cursor-less fetch of the baseline wait: remember the seq before
-    /// bob-cursor's join and whether his card merge has been seen. `Some` once
-    /// both have, across all the fetches so far.
     /// What the baseline wait has seen so far across its fetches.
     #[derive(Default)]
     struct Baseline {
@@ -336,6 +333,9 @@ mod tests {
         bob_wrote: Cell<bool>,
     }
 
+    /// One cursor-less fetch of the baseline wait: remember the seq before
+    /// bob-cursor's join and whether his card merge has been seen. `Some` once
+    /// both have, across all the fetches so far.
     async fn baseline_step(alice: &Session, baseline: &Baseline) -> Option<()> {
         let Baseline {
             replay_from,
