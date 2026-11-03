@@ -19,6 +19,7 @@ pub(crate) struct LeaveOpts {
     /// Defaults to this command's parent process; agent skills pass their
     /// shell's `$PPID` (the agent process itself).
     #[arg(long)]
+    #[cfg_attr(windows, arg(value_parser = crate::cli::auto::pid))]
     pub session_pid: Option<u32>,
 
     /// Seconds to wait for a signalled daemon to drop its state file and stop

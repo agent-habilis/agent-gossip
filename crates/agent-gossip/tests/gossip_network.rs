@@ -499,6 +499,7 @@ fn test_no_server_error() {
 /// too-large refusal now sits at `MAX_LOGICAL_BODY_BYTES` (64 `MiB`), beyond
 /// what an OS argv can carry, so it is covered in-process in `multipart.rs`.)
 #[test]
+#[cfg_attr(windows, ignore = "the body passes the 32 KiB command line of Windows")]
 fn test_oversize_body_splits_and_reassembles() {
     let (creator, mesh) = Node::create();
     let joiner = Node::join(&mesh, "joiner-mp");
@@ -807,6 +808,7 @@ fn test_lookup_list_accepted() {
 /// graceful `shutdown()` path that deletes the file. SIGKILL is excluded:
 /// it is uncatchable, so the file legitimately survives it.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_state_file_removed_on_signal() {
     for signal in ["-TERM", "-HUP", "-INT"] {
         let log = tmp_log(&format!("statefile{signal}"));
@@ -924,9 +926,7 @@ fn test_ready_gate_succeeds_when_serving() {
         "the ready output carries a nickname"
     );
 
-    let _ = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status();
+    common::terminate_child(&mut child);
     let _ = child.wait();
     let _ = fs::remove_file(&log);
     let _ = fs::remove_file(&state_file);
@@ -992,9 +992,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
             None if Instant::now() >= deadline => {
                 let _ = second.kill();
                 let _ = second.wait();
-                let _ = Command::new("kill")
-                    .args(["-TERM", &first.id().to_string()])
-                    .status();
+                common::terminate_child(&mut first);
                 let _ = first.wait();
                 panic!("the second daemon kept running on a state file already in use");
             }
@@ -1021,9 +1019,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         "the collision keeps the first name"
     );
 
-    let _ = Command::new("kill")
-        .args(["-TERM", &first.id().to_string()])
-        .status();
+    common::terminate_child(&mut first);
     let _ = first.wait();
     let _ = fs::remove_file(&log);
     let _ = fs::remove_file(&state_file);
@@ -1072,9 +1068,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         fs::read_to_string(&log).unwrap_or_default()
     );
 
-    let _ = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status();
+    common::terminate_child(&mut child);
     let _ = child.wait();
     let _ = fs::remove_file(&log);
     let _ = fs::remove_file(&state_file);
@@ -1627,6 +1621,7 @@ fn test_ping_reports_peer_rtt() {
 /// **not** dead: joining it must still succeed. The joiner becomes the
 /// rendezvous via `ensure`, and peers that arrive later connect to it.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_join_empty_mesh_succeeds_and_reseeds() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -1748,6 +1743,7 @@ fn test_joiner_takes_no_multihop_from_the_app_default_id() {
 /// that the bystander took over the seed-derived rendezvous (private mode:
 /// claim-if-free on the deterministic loopback port).
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_join_after_creator_departed_with_surviving_member() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -1821,6 +1817,7 @@ fn test_join_after_creator_departed_with_surviving_member() {
 /// path: without it, the joiner's lost first `PeerInfo` is never
 /// resent and existing peers never integrate it.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_first_message_after_post_departure_join_is_delivered() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2077,6 +2074,7 @@ impl Drop for KillOnDrop {
 /// alive as its parent. Killing that shell (not the daemon) is what an
 /// agent reinstall / `kill -9` does in production.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_orphaned_daemon_self_terminates() {
     let _serial = serial_guard();
 
@@ -2180,6 +2178,7 @@ fn test_orphaned_daemon_self_terminates() {
 /// the mesh evicts it, then `SIGCONT` and assert the heal primitive
 /// re-meshes it and traffic resumes.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_sleep_wake_heal_recovery() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2230,6 +2229,7 @@ fn test_sleep_wake_heal_recovery() {
 /// `test_sleep_wake_heal_recovery` proves recovery *happens*; this one
 /// proves it is heal-bound, not timeout-bound.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_fixed_id_reconnect_admits_fast() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2283,6 +2283,7 @@ fn test_fixed_id_reconnect_admits_fast() {
 /// asserts both the hard-path log marker and that post-wake traffic
 /// flows again.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_resume_triggers_hard_rebootstrap() {
     // SHORT_EVICT + a shortened stall threshold. The threshold MUST
     // comfortably exceed the injected heal cadence (else every normal
@@ -2356,6 +2357,7 @@ fn test_resume_triggers_hard_rebootstrap() {
 /// cadences). The irreducible cost is the iroh-bound
 /// `LINK_DEATH_FREEZE`; the adaptive probe pays only real latency.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_anti_entropy_set_convergence() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2459,6 +2461,7 @@ fn test_directed_msg_never_reaches_a_bystander() {
 /// blanket "never resend directed frames" would lose a msg whose unicast leg
 /// died, silently and with no repair.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_directed_msg_backfills_to_its_addressee() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2510,6 +2513,7 @@ fn test_directed_msg_backfills_to_its_addressee() {
 /// so anti-entropy stalled and the gap never reconciled. The compact,
 /// windowed digest keeps every digest under the cap, so it recovers.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_large_gap_reconnect_replication() {
     // Comfortably past the old ~98-uuid overflow *before* the gap, so the
     // old string-array digest would have been dropped.
@@ -2598,6 +2602,7 @@ fn test_large_gap_reconnect_replication() {
 /// that path end to end (the tail-loss `test_large_gap_reconnect_replication`
 /// does not).
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_interior_gap_recovered_via_rolling_window() {
     const OLD: usize = 80; // shared older history
     const GAP: usize = 40; // interior gap (frozen peer misses these)
@@ -2749,6 +2754,7 @@ fn test_steady_state_no_resend_churn() {
 /// than the gap forces recovery across several anti-entropy cycles (not one
 /// burst). Proves the cumulative catch-up converges.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_multi_round_throttled_backfill() {
     const GAP: usize = 40;
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
@@ -3055,6 +3061,7 @@ fn test_lone_creator_never_trips_starvation() {
 /// loss. Post-fix (link truth + starvation watchdog), every node must
 /// deliver again once the storm passes.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_flap_storm_all_rosters_recover() {
     const CAP2_STARVE: [(&str, &str); 5] = [
         ("--alive-timeout-secs", "3"),
@@ -3220,9 +3227,7 @@ fn state_file_carries_daemon_pid() {
         "the state file records the daemon pid"
     );
 
-    let _ = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status();
+    common::terminate_child(&mut child);
     let _ = child.wait();
     let _ = fs::remove_file(&log);
 }
@@ -3268,9 +3273,7 @@ fn leave_explicit_target_stops_only_that_mesh() {
     );
 
     let _ = victim.wait();
-    let _ = Command::new("kill")
-        .args(["-TERM", &bystander.id().to_string()])
-        .status();
+    common::terminate_child(&mut bystander);
     let _ = bystander.wait();
     let _ = fs::remove_file(&victim_log);
     let _ = fs::remove_file(&bystander_log);
@@ -3297,9 +3300,11 @@ fn ready_carries_the_stale_skill_warning() {
     let ready: Box<dyn Fn(&std::path::Path) -> serde_json::Value + '_> =
         Box::new(|fake_home| -> serde_json::Value {
             let state = state_file.to_str().expect("the test path is valid UTF-8");
-            let out: std::process::Output = common::test_cmd()
+            let mut command = common::test_cmd();
+            // Windows reads the home from USERPROFILE first.
+            command.env("HOME", fake_home).env("USERPROFILE", fake_home);
+            let out: std::process::Output = command
                 .args(["ready", "--state-file", state])
-                .env("HOME", fake_home)
                 .output()
                 .expect("failed to run agent-gossip ready");
             serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
@@ -3307,9 +3312,11 @@ fn ready_carries_the_stale_skill_warning() {
         });
 
     // A fresh install of this very binary is not drift.
-    let plugged = common::test_cmd()
+    let mut plug_command = common::test_cmd();
+    // Windows reads the home from USERPROFILE first.
+    plug_command.env("HOME", &home).env("USERPROFILE", &home);
+    let plugged = plug_command
         .args(["plug", "--agent", "codex"])
-        .env("HOME", &home)
         .output()
         .expect("failed to run agent-gossip plug");
     assert!(plugged.status.success(), "plug failed: {plugged:?}");
@@ -3329,9 +3336,7 @@ fn ready_carries_the_stale_skill_warning() {
         .expect("the test temp directory is writable");
     let stale = ready(&home);
 
-    let _ = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status();
+    common::terminate_child(&mut child);
     let _ = child.wait();
     let _ = fs::remove_file(&log);
     let _ = fs::remove_dir_all(&home);
@@ -3372,6 +3377,24 @@ fn leave_confirms_only_when_the_daemon_has_stopped_serving() {
         report["left"][0]["confirmed"], true,
         "leave confirms only after the daemon stopped serving; report: {report}"
     );
+
+    // On Windows `peers` finds the daemon by its marker, and the daemon removes
+    // the marker before it broadcasts `left`, so `peers` fails there even while
+    // the daemon runs and the probe below proves nothing. The process is the
+    // probe on Windows: `leave` waits for it to exit before it confirms.
+    #[cfg(windows)]
+    {
+        let exited = child.try_wait().expect("failed to query the daemon");
+        if exited.is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_file(&log);
+        }
+        assert!(
+            exited.is_some(),
+            "leave reported confirmed while the daemon was still running"
+        );
+    }
 
     // The daemon's own socket is the black-box probe: `peers` reaches it from
     // the nickname alone — no state file involved — so it answers for exactly
@@ -3525,6 +3548,7 @@ fn session_report(session_pid: &str) -> serde_json::Value {
 /// belonging to other tests (children of this test binary, not of the decoy
 /// shell) must never match.
 #[test]
+#[cfg_attr(windows, ignore = "the decoy parent is a POSIX shell line")]
 fn leave_session_scope_via_decoy_parent() {
     let _serial = serial_guard();
 
@@ -3585,8 +3609,7 @@ fn leave_session_scope_via_decoy_parent() {
 /// error, and never someone else's daemons.
 #[test]
 fn leave_nothing_owned_is_a_clean_noop() {
-    let mut idle = Command::new("sleep")
-        .arg("60")
+    let mut idle = common::idle_command(60)
         .spawn()
         .expect("failed to spawn sleep");
 
@@ -3617,8 +3640,7 @@ fn leave_nothing_owned_is_a_clean_noop() {
 /// gossip.
 #[test]
 fn bell_check_passes_without_a_session() {
-    let mut idle = Command::new("sleep")
-        .arg("60")
+    let mut idle = common::idle_command(60)
         .spawn()
         .expect("failed to spawn sleep");
 
@@ -3688,6 +3710,7 @@ fn wait_for_bell(session_pid: &str, armed: bool) {
 /// holds: both bell forms take it, the OS drops it when the bell dies, and a
 /// settle delay does not open a window with no bell.
 #[test]
+#[cfg_attr(windows, ignore = "the decoy parent is a POSIX shell line")]
 fn bell_check_and_session_track_the_bell_lock() {
     let _serial = serial_guard();
     let (mut decoy, decoy_pid, mesh, nickname, log) = spawn_decoy("bell-lock");
@@ -3805,6 +3828,7 @@ fn directed_task_delivers_point_to_point() {
 struct DetachedDaemon {
     owner: KillOnDrop,
     state_file: PathBuf,
+    #[cfg(unix)]
     launcher_pid: u32,
     launcher_stderr: String,
     launch_time: Duration,
@@ -3814,8 +3838,7 @@ struct DetachedDaemon {
 /// to exit. The state file sits where `session` discovery looks for it.
 fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     let owner = KillOnDrop(
-        Command::new("sleep")
-            .arg("600")
+        common::idle_command(600)
             .spawn()
             .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
@@ -3838,6 +3861,7 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
         .stderr(stderr)
         .spawn()
         .expect("the test binary is built before the suite runs, so its path always spawns");
+    #[cfg(unix)]
     let launcher_pid = launcher.id();
     let status = launcher
         .wait()
@@ -3852,6 +3876,7 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     DetachedDaemon {
         owner,
         state_file,
+        #[cfg(unix)]
         launcher_pid,
         launcher_stderr,
         launch_time,
@@ -3879,10 +3904,20 @@ fn detached_daemon_follows_its_owner() {
         "the launcher took {:?}",
         daemon.launch_time
     );
+    // A test runs inside a job of the runner, and a job that refuses breakaway
+    // makes the launcher say so (`cli::spawn_detached`). Nothing else may show.
+    #[cfg(windows)]
+    let launcher_stderr: String = daemon
+        .launcher_stderr
+        .split(
+            "warning: the daemon could not leave the job of its parent, so it ends when the job ends\n",
+        )
+        .collect();
+    #[cfg(unix)]
+    let launcher_stderr = &daemon.launcher_stderr;
     assert!(
-        daemon.launcher_stderr.is_empty(),
-        "the launcher wrote to stderr: {}",
-        daemon.launcher_stderr
+        launcher_stderr.is_empty(),
+        "the launcher wrote to stderr: {launcher_stderr}"
     );
 
     let mut command = common::test_cmd();
@@ -3896,11 +3931,16 @@ fn detached_daemon_follows_its_owner() {
         "the ready query must succeed once the detached daemon is up, output was {ready:?}"
     );
 
+    // Unix only: Windows has no process group id, and a Windows process keeps
+    // the pid of its creator as its parent, so neither field tells there.
+    #[cfg(unix)]
     let state: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(&daemon.state_file).expect("the test file is readable"),
     )
     .expect("the state file holds JSON written by the daemon");
+    #[cfg(unix)]
     let daemon_pid = state["pid"].as_u64().expect("state file carries the pid");
+    #[cfg(unix)]
     let ps_field = |field: &str| {
         let out = Command::new("ps")
             .args(["-o", field, "-p", &daemon_pid.to_string()])
@@ -3908,14 +3948,15 @@ fn detached_daemon_follows_its_owner() {
             .expect("`ps` is on PATH on every unix host, so it spawns");
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     };
+    #[cfg(unix)]
     assert_eq!(
         ps_field("pgid="),
         daemon_pid.to_string(),
         "the daemon is not the leader of its own process group"
     );
-    let parent_pid = ps_field("ppid=");
+    #[cfg(unix)]
     assert_ne!(
-        parent_pid,
+        ps_field("ppid="),
         daemon.launcher_pid.to_string(),
         "the daemon is still a child of the launcher"
     );
@@ -3990,8 +4031,7 @@ fn detached_daemon_leaves_by_owner() {
 fn detached_daemon_releases_a_captured_pipe() {
     let _serial = serial_guard();
     let mut owner = KillOnDrop(
-        Command::new("sleep")
-            .arg("600")
+        common::idle_command(600)
             .spawn()
             .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
@@ -4112,8 +4152,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
 #[test]
 fn owner_pid_launcher_reports_flag_errors() {
     let mut owner = KillOnDrop(
-        Command::new("sleep")
-            .arg("60")
+        common::idle_command(60)
             .spawn()
             .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
@@ -4169,6 +4208,7 @@ fn presence_lines(node: &Node) -> Vec<(String, String, String)> {
 /// reproduction: a room this small never forgets a frame, so the replay storm the engine fix
 /// closed cannot start here. It holds the line the fix drew.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_mass_leave_leaves_no_ghosts() {
     let _serial = serial_guard();
     let envs = [

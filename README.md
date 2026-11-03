@@ -92,6 +92,14 @@ brew install agent-habilis/tap/agent-gossip && agent-gossip plug
 cargo install --git https://github.com/agent-habilis/agent-gossip agent-gossip && agent-gossip plug
 ```
 
+On Windows, take the `.zip` of a release, put `agent-gossip.exe` on the
+`PATH`, and run `agent-gossip plug`. The skills run in the Bash tool, so
+Claude Code needs Git for Windows. There the skills pass `auto` for the
+agent process and the session files, and the binary finds them itself,
+because `$PPID` in Git Bash is not the pid of the agent. A body passed
+as a command-line argument must fit in the Windows command line, 32,767
+characters in all.
+
 <br>
 
 ### MCP server

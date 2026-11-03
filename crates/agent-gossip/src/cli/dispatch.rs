@@ -17,6 +17,8 @@ use super::poll::poll;
 use super::ready_state_file;
 use super::reject_id_encoded_flag::reject_id_encoded_flag;
 use super::state::state;
+#[cfg(windows)]
+use super::stderr_to_session_file::stderr_to_session_file;
 use super::topic::topic;
 use super::topology_cmd::topology_cmd;
 use crate::a2a::tuning as a2a_tuning;
@@ -48,10 +50,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
         Commands::Create { options } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&options.shared)?;
             install_tuning(&options.shared.tuning);
             Box::pin(create(options)).await
         }
         Commands::Join { options } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&options.shared)?;
             reject_id_encoded_flag("--name", options.name.is_some())?;
             install_tuning(&options.shared.tuning);
             let env_room = std::env::var(args::DEFAULT_ROOM_ENV).ok();
@@ -69,6 +75,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             .await
         }
         Commands::Topic { options } => {
+            #[cfg(windows)]
+            stderr_to_session_file(&options.shared)?;
             install_tuning(&options.shared.tuning);
             Box::pin(topic(options)).await
         }

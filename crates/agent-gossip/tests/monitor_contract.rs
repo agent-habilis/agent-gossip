@@ -447,6 +447,7 @@ async fn test_self_echo_suppression() {
 /// Peer departure: when joiner-A is killed via SIGINT, creator receives a
 /// presence `left` event with the correct JSON shape.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_peer_departure_event() {
     // Disruption/recovery test — serialize against the other heavy departure
     // tests so concurrent SIGINTs don't starve each other's heal cycles (the
@@ -616,6 +617,7 @@ async fn test_message_event_has_all_required_fields() {
 /// When the creator leaves, remaining peers should stay alive and be able
 /// to pass messages.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_creator_departure_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
@@ -711,6 +713,7 @@ fn test_creator_hard_kill_peers_survive() {
 /// With 4 peers, all joiners survive after creator departs and can
 /// continue exchanging messages.
 #[test]
+#[cfg_attr(windows, ignore = "sends a POSIX signal, which Windows lacks")]
 fn test_creator_departure_four_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
@@ -2103,6 +2106,14 @@ fn cli_call(mesh: &str, nickname: &str, to: &str, extra: &[&OsStr]) -> Command {
     command
 }
 
+/// Wait until the creator and the worker each hold the other's card. Each side
+/// seals to the other, so a worker without the creator's card drops its reply
+/// and the call times out.
+fn await_cards_both_ways(mesh: &str, creator: &str, worker: &str) {
+    common::await_peer_card_cli(mesh, creator, worker);
+    common::await_peer_card_cli(mesh, worker, creator);
+}
+
 fn assert_success(out: &std::process::Output, what: &str) {
     assert!(
         out.status.success(),
@@ -2231,7 +2242,7 @@ async fn test_task_first_call_carries_a_file() {
         worker.wait_ready(&mesh),
         "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
     );
-    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-first");
+    await_cards_both_ways(&mesh, &creator.nickname, "tf-first");
 
     let (sent, bytes) = scratch_file("first.tar");
     let out: std::process::Output = cli_call(
@@ -2292,7 +2303,7 @@ async fn test_call_file_path_is_relative_to_the_caller() {
         worker.wait_ready(&mesh),
         "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
     );
-    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-rel");
+    await_cards_both_ways(&mesh, &creator.nickname, "tf-rel");
 
     let (sent, bytes) = scratch_file("relative.tar");
     let dir = sent.0.parent().expect("a temp dir");
@@ -2378,7 +2389,7 @@ async fn test_call_file_errors_exit_non_zero() {
         worker.wait_ready(&mesh),
         "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
     );
-    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-err");
+    await_cards_both_ways(&mesh, &creator.nickname, "tf-err");
 
     let missing = std::env::temp_dir().join(format!(
         "agent-gossip-call-file-{}-missing.tar",
@@ -2472,8 +2483,8 @@ async fn test_same_file_on_two_tasks_outlives_the_first() {
             "a node that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
         );
     }
-    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-share-a");
-    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-share-b");
+    await_cards_both_ways(&mesh, &creator.nickname, "tf-share-a");
+    await_cards_both_ways(&mesh, &creator.nickname, "tf-share-b");
 
     let (sent, bytes) = scratch_file("shared.tar");
     let mut task_ids = Vec::new();
@@ -2557,7 +2568,7 @@ async fn test_timed_out_file_call_is_cancelled_at_the_worker() {
         worker.wait_ready(&mesh),
         "a worker that never becomes ready cannot take part in the mesh, so the rest of the test proves nothing"
     );
-    common::await_peer_card_cli(&mesh, &creator.nickname, "tf-late");
+    await_cards_both_ways(&mesh, &creator.nickname, "tf-late");
 
     let (sent, _bytes) = scratch_file("late.tar");
     let out: std::process::Output = cli_call(

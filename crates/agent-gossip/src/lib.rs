@@ -96,6 +96,8 @@ mod cli_command;
 mod cli_error;
 mod ensure_mesh_runtime_dir;
 mod ensure_runtime_base;
+#[cfg(windows)]
+mod exit_on_parse_error;
 mod flush_log_if_pending;
 mod install_log_sink;
 mod log_filter;

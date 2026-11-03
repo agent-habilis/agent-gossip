@@ -238,6 +238,7 @@ impl Node {
     // expects a frozen one (or the reverse), which fails much later with a
     // timing symptom. INT and KILL stay lenient: a test may signal a child
     // that has already exited.
+    #[cfg(unix)]
     fn signal(&self, signature: &str) {
         let pid = self.child.id();
         let status = Command::new("kill")
@@ -249,6 +250,25 @@ impl Node {
                 "kill {signature} {pid} failed: {status:?}"
             );
         }
+    }
+
+    // Windows has no POSIX signals. KILL is `taskkill /F`, which ends the
+    // process at once, as SIGKILL does. INT, STOP and CONT have no Windows form
+    // that reaches a child here, so a test that sends one is ignored on Windows
+    // (`#[cfg_attr(windows, ignore = ...)]`) and fails here if it runs anyway.
+    #[cfg(windows)]
+    fn signal(&self, signature: &str) {
+        let pid = self.child.id();
+        assert_eq!(
+            signature, "-KILL",
+            "signal {signature} has no Windows form in the fixtures"
+        );
+        let mut taskkill = Command::new("taskkill");
+        taskkill.args(["/F", "/PID", &pid.to_string()]);
+        let _ = taskkill
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     fn await_stopped(&self, want_stopped: bool) {

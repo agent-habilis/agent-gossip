@@ -6,7 +6,6 @@ use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use habilis_network::net::{self, NetworkCapability};
 use habilis_network::protocol::{LockedMesh, Mesh, MeshId, RelayChoice};
-use habilis_network::runtime::ipc;
 use habilis_network::util::logs;
 use serde::Serialize;
 
@@ -310,10 +309,11 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
 
 async fn active_meshes_section() -> Section {
     let mut checks = Vec::new();
-    for path in ipc::active_socket_paths(&crate::runtime_base()) {
+    for endpoint in super::daemon_endpoint::active_endpoints() {
         // `Info` carries no mesh — the daemon answers with its own identity.
-        // A dead/stale socket errors and is skipped.
-        let Ok(response) = ipc::send_to_path(&path, &IpcCommand::Info).await else {
+        // A dead or stale endpoint (a socket, or a marker on Windows) errors
+        // and is skipped.
+        let Ok(response) = endpoint.send(&IpcCommand::Info).await else {
             continue;
         };
         let Ok(info) = serde_json::from_str::<InfoResponse>(&response) else {

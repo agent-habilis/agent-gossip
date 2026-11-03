@@ -2,14 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
-use habilis_network::runtime::state_file::read_session_entry;
-use habilis_network::runtime::{ipc, state_file};
+use habilis_network::runtime::state_file::{self, read_session_entry};
 use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
-use super::bell;
 use super::discovery::Discovery;
 use super::target::Target;
+use super::{bell, daemon_endpoint};
 use crate::a2a::ipc_command::IpcCommand::Info;
 use crate::runtime_base;
 
@@ -136,15 +135,15 @@ struct Owner {
     pid: u32,
 }
 
-/// Ask every daemon socket on this machine to identify itself.
+/// Ask every daemon endpoint on this machine to identify itself.
 ///
-/// Best-effort by design: a stale socket left by a `SIGKILL`ed daemon simply
+/// Best-effort by design: a stale socket or marker left by a killed daemon simply
 /// fails to answer and is skipped, which is exactly the case this is here to
 /// tell apart from a live one.
 async fn live_owners() -> Vec<Owner> {
     let mut owners = Vec::new();
-    for path in ipc::active_socket_paths(&runtime_base()) {
-        let Ok(response) = ipc::send_to_path(&path, &Info).await else {
+    for endpoint in daemon_endpoint::active_endpoints() {
+        let Ok(response) = endpoint.send(&Info).await else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
@@ -222,6 +221,37 @@ pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
     Some(format!("{who} on gossip {mesh}"))
 }
 
+/// Ask one daemon to stop. On Unix it is SIGTERM, as before the port.
+#[cfg(unix)]
+#[expect(
+    clippy::unused_async,
+    reason = "the Windows form awaits the IPC quit, and leave calls both alike"
+)]
+async fn stop_daemon(target: &Target) -> bool {
+    process::terminate(target.pid).is_ok()
+}
+
+/// Ask one daemon to stop. Windows has no SIGTERM, so it is the IPC quit of the
+/// engine (`runtime::ipc::terminate`), sent to the endpoint of the mesh and the
+/// nickname of the state file. True means that the daemon accepted the quit,
+/// not that it is gone.
+#[cfg(windows)]
+async fn stop_daemon(target: &Target) -> bool {
+    use habilis_network::protocol::MeshId;
+    use habilis_network::runtime::ipc;
+    use habilis_network::runtime::ipc::QuitTarget;
+
+    let (Ok(mesh), Some(Ok(nickname))) = (
+        MeshId::try_new(&target.mesh),
+        target.nickname.as_deref().map(Nickname::try_new),
+    ) else {
+        return false;
+    };
+    let base = runtime_base();
+    let quit = QuitTarget::new(&base, &mesh, &nickname);
+    ipc::terminate(&quit, target.pid).await.is_ok()
+}
+
 pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     let LeaveOpts {
         gossip: mesh,
@@ -248,7 +278,8 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     let owners = live_owners().await;
     let mut left = Vec::new();
     for target in &matched {
-        // Confirm the pid still belongs to *this* session before signalling.
+        // Confirm the pid still belongs to *this* session before stopping it
+        // (SIGTERM on Unix, the IPC quit on Windows).
         // `discover` accepts any live `agent-gossip` process, which is enough
         // to list a session but not to kill one: a SIGKILLed daemon leaves its
         // state file behind, and once the OS reissues that pid to another
@@ -259,9 +290,10 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
             left.push((target.clone(), false));
             continue;
         }
-        // A failed SIGTERM (EPERM/vanished pid) is reported per-entry, not a
-        // hard error: the other matches must still be signalled.
-        let signalled = process::terminate(target.pid).is_ok();
+        // A failed stop (EPERM or a vanished pid for SIGTERM; a quit that was
+        // not heard or was refused on Windows) is reported per-entry, not a
+        // hard error: the other matches must still be stopped.
+        let signalled = stop_daemon(target).await;
         left.push((target.clone(), signalled));
     }
     // `confirmed` has to mean the daemon is gone, not that its file is. It
@@ -285,7 +317,13 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
             if !*signalled || *gone {
                 continue;
             }
-            if target.path.exists() || confirm_owner(&still_serving, target) {
+            let serving = target.path.exists() || confirm_owner(&still_serving, target);
+            // On Windows the daemon removes its marker, which is how
+            // `live_owners` finds it, before it broadcasts `left`, so a
+            // missing marker does not mean it is gone. The process does.
+            #[cfg(windows)]
+            let serving = serving || process::is_alive(target.pid);
+            if serving {
                 waiting = true;
             } else {
                 *gone = true;
