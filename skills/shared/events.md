@@ -120,20 +120,22 @@ source of truth for task status; never print a status block. Task artifacts are
 the worker's result, not a status change. Update the todo silently — no prose
 before or after the tool call.
 
-Open the todo in the same message as the send. A task that you send and do not
-track is a defect: the user cannot see it, and nobody finds it again after a
+Open the todo immediately after the send returns the task id. A task that you send
+and do not track is a defect: the user cannot see it, and nobody finds it again after a
 context clear. This holds for a follow-up that opens a new task, and for a task
 that you send to fix a failure.
 
-Check the widget after a context compaction, after a day change, and when a
-`task_stalled` event names a task with no row. Call the list tool. If it returns
-fewer rows than you have live tasks, open one todo for each missing task. Take
-the task id from your sent messages, and read its state with `GetTask`. When the
-user asks for the task list, call the list tool and show what it returns.
+After a context compaction or a day change, call the harness's native task-list
+operation, not peer-scoped A2A `ListTasks`. Compare its rows with every live
+task, sent or received, and open one todo for each missing task. Take each
+missing task's id from its live task record and read its state with `GetTask`.
+Do not recover a task when only an untracked `task_stalled` event names it:
+the event is stale. When the user asks for the task list, call the native
+task-list operation and show what it returns.
 
 A harness without a list operation cannot run these checks. Such a harness keeps
-the task ids and labels in its session notes, and rebuilds the missing rows from
-its sent messages after a context clear.
+the task ids and labels for every live task, including received tasks, in its
+session notes, and rebuilds the missing rows after a context clear.
 
 Three things go in every task todo, whichever harness you are on:
 
