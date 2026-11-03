@@ -24,6 +24,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
+use crate::api::event_feed::event_feed;
 use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
@@ -220,7 +221,7 @@ pub(crate) enum TicketDirectoryEvent {
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
     session: Option<MeshSession>,
-    events_rx: Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>>,
+    events_rx: Option<mpsc::Receiver<TicketDirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -238,7 +239,7 @@ impl TicketDirectory {
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let mut listings = TicketListings::new();
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = event_feed();
 
         let task = tokio::spawn(async move {
             let ttl = directory_expiry();
@@ -263,7 +264,7 @@ impl TicketDirectory {
                                 }
                             };
                             if let Some(event) = event {
-                                let _ = events_tx.send(event);
+                                events_tx.publish(event);
                             }
                         }
                         // A slow consumer dropped inbound — listings self-heal on
@@ -275,7 +276,7 @@ impl TicketDirectory {
                         let now = Instant::now();
                         let lost = listings.expire(ttl, now);
                         for ticket in lost {
-                            let _ = events_tx.send(TicketDirectoryEvent::Lost(ticket));
+                            events_tx.publish(TicketDirectoryEvent::Lost(ticket));
                         }
                     }
                 }
@@ -291,7 +292,7 @@ impl TicketDirectory {
 
     /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
     /// returns the receiver once, then `None`.
-    pub(crate) fn events(&mut self) -> Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>> {
+    pub(crate) fn events(&mut self) -> Option<mpsc::Receiver<TicketDirectoryEvent>> {
         self.events_rx.take()
     }
 
