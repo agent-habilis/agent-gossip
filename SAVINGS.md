@@ -44,6 +44,10 @@ run counts.
 
 ## Cumulative result
 
-Pending. Baseline: `main` at `f7cd9bbc`. Head: not set. Metrics: idle CPU median
-and worst per daemon at 64 daemons; metadata bytes per delivered data byte;
-duplicates as a share of received frames; the slope of every memory gauge.
+Baseline: `main` at `f7cd9bbc` with counters only (`853c14177211`, no behaviour change). Head: PR 48
+head `cfd38466` (engine `69689473`, binary sha256 `91d27538d802`). Part 1 is done (N=16, 3
+interleaved pairs). Part 2, the CPU curve at N = 8, 12, 16, 20, is pending.
+
+| Goal | Commit | Change | Metric | Before | After | Method | Status |
+|---|---|---|---|---|---|---|---|
+| G1 to G4 | PR 48 head `cfd38466` against `f7cd9bbc` with counters | Cumulative engine change at the head: unicast digests, resend memory and stall backoff removed, counters | N=16 loaded: ratio (frame and UDP layer), idle metadata, CPU, RSS, UDP bytes, delivered data | Ratio 76.70 frame / 130.19 UDP; idle metadata 6957 B/s; CPU idle 1.97%, loaded 2.30%; RSS 55.9 MB; 623 MB sent | Ratio 12.85 frame (-83.2%) / 25.91 UDP (-80.1%); idle metadata 655 B/s (-90.6%); CPU idle 0.77% (-61%), loaded 1.13% (-51%); RSS 48.8 MB (-12.7%, the baseline runs vary by 10 MB); 218 MB sent (-65.0%); delivered data 577280 B in all 6 runs | `stale-bundle`: `scripts/perf` `b4.ts`, `nyc-macmini1`, 3 interleaved pairs, loaded 300 s, same gates. Pair 3 kept with a failed A/B load gate (1.39 twice); its ratios agree with pairs 1 and 2. Folder `~/bench-results/final-pairs`. Not proved: only N=16, no churn or loss run. Duplicate share of received bytes rises from 35.6% to 67.2% because the other bytes fell. | done, part 1 |
