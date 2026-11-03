@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 
 use super::MeshSession;
 use super::directory_error::DirectoryError;
+use super::event_feed::event_feed;
 use crate::a2a::status_update_params;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
@@ -92,7 +93,7 @@ fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Li
 pub struct Directory {
     session: Option<MeshSession>,
     snapshot_rx: watch::Receiver<Vec<MeshListing>>,
-    events_rx: Option<mpsc::UnboundedReceiver<DirectoryEvent>>,
+    events_rx: Option<mpsc::Receiver<DirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -137,7 +138,7 @@ impl Directory {
         let mut inbound = session.messages();
         let mut listings = Listings::new();
         let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = event_feed();
 
         let task = tokio::spawn(async move {
             let ttl = tuning::directory_expiry();
@@ -165,7 +166,7 @@ impl Directory {
                             };
                             publish_snapshot(&snapshot_tx, &listings);
                             if let Some(event) = event {
-                                let _ = events_tx.send(event);
+                                events_tx.publish(event);
                             }
                         }
                         // Slow consumer dropped some inbound — listings
@@ -178,7 +179,7 @@ impl Directory {
                         let lost: Vec<_> = listings.expire(ttl, now).collect();
                         publish_snapshot(&snapshot_tx, &listings);
                         for id in lost {
-                            let _ = events_tx.send(DirectoryEvent::Lost(id));
+                            events_tx.publish(DirectoryEvent::Lost(id));
                         }
                     }
                 }
@@ -201,7 +202,7 @@ impl Directory {
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).
     /// Single-consumer, so this returns the receiver **once**;
     /// subsequent calls return `None`.
-    pub fn events(&mut self) -> Option<mpsc::UnboundedReceiver<DirectoryEvent>> {
+    pub fn events(&mut self) -> Option<mpsc::Receiver<DirectoryEvent>> {
         self.events_rx.take()
     }
 
