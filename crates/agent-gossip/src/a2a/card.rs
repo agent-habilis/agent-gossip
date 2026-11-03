@@ -135,9 +135,11 @@ pub(crate) fn full_card(
     }
 }
 
-/// What the meta document keeps of a card: the fields an A2A reader needs to parse it and to find
-/// the extensions and the sealing key. The static parts (skills, modes, extension descriptions)
-/// are the same for every member, so [`full_from_minimal`] rebuilds them.
+/// What the meta document keeps of a card.
+///
+/// The kept fields are those an A2A reader needs to parse the card and to find the extensions and
+/// the sealing key. The static parts (skills, modes, extension descriptions) are the same for
+/// every member, so [`full_from_minimal`] rebuilds them.
 fn minimal(full: AgentCard) -> AgentCard {
     let extensions = full
         .capabilities
@@ -166,10 +168,12 @@ fn minimal(full: AgentCard) -> AgentCard {
     }
 }
 
-/// The full card rebuilt from a stored card. The stored card's own fields (name, interfaces,
-/// version, extensions, endpoint hint) are kept as stored. The static parts a minimal card drops
-/// (description when empty, modes, skills, security schemes, streaming) come from [`full_card`].
-/// A stored card whose name or sealing key cannot rebuild is served as stored.
+/// The full card rebuilt from a stored card.
+///
+/// The stored card's own fields (name, interfaces, version, extensions, endpoint hint) are kept as
+/// stored. The static parts a minimal card drops (description when empty, modes, skills, security
+/// schemes, streaming) come from [`full_card`]. A stored card whose name or sealing key cannot
+/// rebuild is served as stored.
 #[must_use]
 pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json::Value> {
     let parsed = serde_json::from_value::<AgentCard>(stored.clone()).ok()?;
