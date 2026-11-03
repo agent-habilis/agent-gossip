@@ -436,7 +436,7 @@ This file wins over the guide. If the two conflict, follow this file.
 
 Until version 1.0, this project does not keep backward compatibility.
 Before 1.0, break compatibility when it gives a better design, better performance, or better reliability.
-Do not keep a shim, an alias, or a fallback only for old versions.
+Do not keep a shim, an alias, or a fallback only for old versions unless it is required to keep existing installed workflows operational.
 
 ## Agent Restrictions
 
