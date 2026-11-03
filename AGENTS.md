@@ -432,6 +432,12 @@ This file wins over the guide. If the two conflict, follow this file.
   - The engine no longer forces an `Arc` on the app: `SetupParams::new` takes the sink by value, `LiveCount` owns the shared counter, and `EventLoopState::identity()` returns `&Identity`. The shard loop in `broadcast_params.rs` still clones the `Identity`, because it signs after it borrows the state mutably (E0502).
   - Accept loops borrow instead: `tunnel/` runs each connection as a `FuturesUnordered` future, and the directory tasks own their listings.
 
+## Compatibility
+
+Until version 1.0, this project does not keep backward compatibility.
+Before 1.0, break compatibility when it gives a better design, better performance, or better reliability.
+Do not keep a shim, an alias, or a fallback only for old versions.
+
 ## Agent Restrictions
 
 - **NEVER** run `git commit` unless the user explicitly asks for it in the
