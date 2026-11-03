@@ -1128,8 +1128,10 @@ A2A
        self-description (A2A v1.0: supportedInterfaces, capabilities,
        declared extensions, skills, and the member's Ed25519 identity in the
        gossip interface url, the bare <pubkey>) — into the meta channel at
-       /peers/<nick>/card on join; read it with `meta get`. So peer
-       discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
+       /peers/<nick>/card on join as a minimal card (no description,
+       skills or modes). `meta get` returns that minimal card. The full
+       card comes from /peers/<nick>/.well-known/agent-card.json on the
+       local A2A binding. So peer discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
        server to a peer, see `a2a expose` / `a2a connect`. See
        docs/a2a-binding.md in the repository for the custom-binding
        conformance statement.
@@ -1351,8 +1353,8 @@ JSON EVENTS
 
        meta   The gossip's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta",
-              but WITHOUT the document field: the meta document is every
-              peer's agent card, so read it on demand with `meta get`. The
+              but WITHOUT the document field: the meta document holds every
+              peer's minimal card, so read it on demand with `meta get`. The
               merge and self fields and the reaction contract are the same.
               Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
