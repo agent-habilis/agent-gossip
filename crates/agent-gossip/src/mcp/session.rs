@@ -355,7 +355,7 @@ mod tests {
         // (`event_loop.rs`, `lp.app.drain_surfaced()`), and the two requests are later steps.
         // Both flags are sticky, so the order in which the event and the document reach this loop
         // does not matter.
-        let after = alice.meta_get().await.expect("meta get");
+        let after = alice.meta_get().await.expect("the card written by the merge reads back from the document");
         let events = alice
             .fetch_messages(None, false)
             .await
@@ -365,15 +365,14 @@ mod tests {
             replay_from.set(seq_before_bob_join(&events));
         }
         let before = meta_doc.replace(after.clone());
-        bob_wrote.set(
-            bob_wrote.get()
-                || events
-                    .iter()
-                    .filter_map(|item| meta_change_author(&item.event))
-                    .any(|author| author == "bob-cursor"),
-        );
+        let bob_authored = events
+            .iter()
+            .filter_map(|item| meta_change_author(&item.event))
+            .any(|author| author == "bob-cursor");
+        bob_wrote.set(bob_wrote.get() || bob_authored);
         saw_card.set(saw_card.get() || is_bob_card_merge(&before, &after));
-        (replay_from.get().is_some() && saw_card.get() && bob_wrote.get()).then_some(())
+        let ready = replay_from.get().is_some() && saw_card.get() && bob_wrote.get();
+        ready.then_some(())
     }
 
     /// The author of a meta change, if `event` is one.
@@ -756,7 +755,7 @@ mod tests {
             arrived.extend(
                 merge["peers"]["bob-cursor"]["card"]
                     .as_object()
-                    .expect("a merge of the card is an object")
+                    .expect("the card is an object by its schema, so its fields extend arrived")
                     .clone(),
             );
             let after = json!({ "peers": { "bob-cursor": { "card": arrived } } });
