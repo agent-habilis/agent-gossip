@@ -1,5 +1,7 @@
-//! Churn repro for issue #75: verify H1 (replayed frame revives a dead peer)
-//! and H2 (false timeouts of live peers) with red tests at default timings.
+#![expect(
+    missing_docs,
+    reason = "an integration test crate has no public docs; the module path names it"
+)]
 
 use std::time::Duration;
 
@@ -196,6 +198,9 @@ impl Drop for LeaveOnDrop {
     }
 }
 
+/// The nine members of the late-joiner mesh, each counting the others and itself.
+const EXPECTED_PEER_COUNT: u64 = 9;
+
 /// Repro H5: a ninth peer joins after the burst; creator and late joiner must report one `peer_count`.
 #[test]
 fn late_joiner_reports_same_peer_count_as_creator() {
@@ -217,8 +222,23 @@ fn late_joiner_reports_same_peer_count_as_creator() {
             .as_u64()
             .expect("peers carries a numeric peer_count")
     };
-    let creator_count = peer_count(&creator.nickname);
-    let late_count = peer_count(&late.nickname);
+    let mut counts = (0, 0);
+    for _ in 0..60 {
+        counts = (peer_count(&creator.nickname), peer_count(&late.nickname));
+        if counts == (EXPECTED_PEER_COUNT, EXPECTED_PEER_COUNT) {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    let (creator_count, late_count) = counts;
+    assert_eq!(
+        creator_count, EXPECTED_PEER_COUNT,
+        "creator peer_count {creator_count} is not {EXPECTED_PEER_COUNT}"
+    );
+    assert_eq!(
+        late_count, EXPECTED_PEER_COUNT,
+        "late joiner peer_count {late_count} is not {EXPECTED_PEER_COUNT}"
+    );
     assert_eq!(
         late_count, creator_count,
         "late joiner peer_count {late_count} differs from creator {creator_count}"
