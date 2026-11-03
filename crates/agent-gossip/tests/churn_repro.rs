@@ -233,11 +233,11 @@ fn late_joiner_reports_same_peer_count_as_creator() {
     let (creator_count, late_count) = counts;
     assert_eq!(
         creator_count, EXPECTED_PEER_COUNT,
-        "creator peer_count {creator_count} is not {EXPECTED_PEER_COUNT}"
+        "the creator counts the nine members, itself included: {creator_count}"
     );
     assert_eq!(
         late_count, EXPECTED_PEER_COUNT,
-        "late joiner peer_count {late_count} is not {EXPECTED_PEER_COUNT}"
+        "the late joiner counts the nine members, itself included: {late_count}"
     );
     assert_eq!(
         late_count, creator_count,
