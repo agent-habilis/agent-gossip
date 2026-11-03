@@ -8,9 +8,8 @@ use habilis_network::runtime::{CoHostPolicy, tuning};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
-use super::MeshSession;
 use super::directory_error::DirectoryError;
-use super::event_feed::event_feed;
+use super::{MeshSession, event_sink};
 use crate::a2a::status_update_params;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
@@ -138,7 +137,7 @@ impl Directory {
         let mut inbound = session.messages();
         let mut listings = Listings::new();
         let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
-        let (events_tx, events_rx) = event_feed();
+        let (events_tx, events_rx) = event_sink::event_feed();
 
         let task = tokio::spawn(async move {
             let ttl = tuning::directory_expiry();
