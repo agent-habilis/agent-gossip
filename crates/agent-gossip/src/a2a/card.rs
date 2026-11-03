@@ -485,9 +485,10 @@ mod tests {
         let mut stored =
             serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
                 .expect("an AgentCard is plain data and always serializes");
-        let seal_extension = stored["capabilities"]["extensions"]
+        let extensions: &mut Vec<serde_json::Value> = stored["capabilities"]["extensions"]
             .as_array_mut()
-            .expect("the card declares extensions")
+            .expect("the card declares extensions");
+        let seal_extension: &mut serde_json::Value = extensions
             .iter_mut()
             .find(|extension| {
                 extension["uri"]
