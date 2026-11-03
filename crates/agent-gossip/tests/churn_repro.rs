@@ -146,7 +146,7 @@ async fn idle_pair_holds_six_minutes() {
     }
 }
 
-/// Repro H4/H5: eight peers start within a few seconds; each sees N-1 joins and a count of N.
+/// Repro H4/H5: eight peers start within a few seconds; the creator sees N-1 joins, each once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn burst_start_counts_each_peer_once() {
     const PEERS: usize = 8;
