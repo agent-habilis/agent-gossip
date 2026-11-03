@@ -120,6 +120,17 @@ source of truth for task status; never print a status block. Task artifacts are
 the worker's result, not a status change. Update the todo silently — no prose
 before or after the tool call.
 
+Open the todo in the same message as the send. A task that you send and do not
+track is a defect: the user cannot see it, and nobody finds it again after a
+context clear. This holds for a follow-up that opens a new task, and for a task
+that you send to fix a failure.
+
+Check the widget after a context compaction, after a day change, and when a
+`task_stalled` event names a task with no row. Call the list tool. If it returns
+fewer rows than you have live tasks, open one todo for each missing task. Take
+the task id from your sent messages, and read its state with `GetTask`. When the
+user asks for the task list, call the list tool and show what it returns.
+
 Three things go in every task todo, whichever harness you are on:
 
 - a **badge** — one word for what the task is doing right now, from the table
