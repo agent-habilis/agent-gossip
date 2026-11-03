@@ -485,10 +485,21 @@ mod tests {
         let mut stored =
             serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
                 .expect("an AgentCard is plain data and always serializes");
-        stored["name"] = serde_json::json!("");
-        assert!(
-            full_from_minimal(&stored).is_some(),
-            "a card that cannot be rebuilt must still be served, as stored"
+        let seal_extension = stored["capabilities"]["extensions"]
+            .as_array_mut()
+            .expect("the card declares extensions")
+            .iter_mut()
+            .find(|extension| {
+                extension["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.contains("mesh-seal"))
+            })
+            .expect("the card declares the mesh-seal extension");
+        seal_extension["params"]["x25519"] = serde_json::json!(7);
+        assert_eq!(
+            full_from_minimal(&stored),
+            Some(stored.clone()),
+            "a card with no usable seal must still be served as stored"
         );
     }
 
