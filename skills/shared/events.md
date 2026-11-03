@@ -131,6 +131,10 @@ fewer rows than you have live tasks, open one todo for each missing task. Take
 the task id from your sent messages, and read its state with `GetTask`. When the
 user asks for the task list, call the list tool and show what it returns.
 
+A harness without a list operation cannot run these checks. Such a harness keeps
+the task ids and labels in its session notes, and rebuilds the missing rows from
+its sent messages after a context clear.
+
 Three things go in every task todo, whichever harness you are on:
 
 - a **badge** — one word for what the task is doing right now, from the table
