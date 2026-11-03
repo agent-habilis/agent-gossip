@@ -52,7 +52,8 @@ mod tests {
         );
         assert_eq!(
             sink.dropped(),
-            u64::try_from(9 * EVENT_FEED_CAP).expect("the cap fits in u64")
+            u64::try_from(9 * EVENT_FEED_CAP).expect("the cap fits in u64"),
+            "every event past the cap is dropped and counted"
         );
     }
 }
