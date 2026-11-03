@@ -1131,7 +1131,10 @@ A2A
        /peers/<nick>/card on join as a minimal card (no description,
        skills or modes). `meta get` returns that minimal card. The full
        card comes from /peers/<nick>/.well-known/agent-card.json on the
-       local A2A binding. So peer discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
+       local A2A binding. A daemon of version 0.12.10 serves the stored
+       minimal card as it is, so a new peer shows empty skills and modes
+       there until the local serving daemon is upgraded too. So peer
+       discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
        server to a peer, see `a2a expose` / `a2a connect`. See
        docs/a2a-binding.md in the repository for the custom-binding
        conformance statement.
