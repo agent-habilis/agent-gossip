@@ -355,7 +355,10 @@ mod tests {
         // (`event_loop.rs`, `lp.app.drain_surfaced()`), and the two requests are later steps.
         // Both flags are sticky, so the order in which the event and the document reach this loop
         // does not matter.
-        let after = alice.meta_get().await.expect("the card written by the merge reads back from the document");
+        let after = alice
+            .meta_get()
+            .await
+            .expect("the card written by the merge reads back from the document");
         let events = alice
             .fetch_messages(None, false)
             .await
