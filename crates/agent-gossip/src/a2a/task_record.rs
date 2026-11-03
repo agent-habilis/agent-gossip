@@ -478,6 +478,10 @@ pub(crate) fn adopt_initiator(
         task_state,
         now,
     } = params;
+    // A refused adoption leaves no record here; the worker still holds its own.
+    if !tasks.contains_key(task_id) && admit_new_task(tasks, peer) != Admission::Ok {
+        return;
+    }
     match tasks.entry(task_id.clone()) {
         Entry::Vacant(slot) => {
             // First adoption (task creation): open the initiator-side record at
@@ -2096,6 +2100,35 @@ mod tests {
             admit_new_task(&tasks, &flooder),
             Admission::Ok,
             "a new task is admitted under the cap"
+        );
+    }
+
+    /// An initiator-side adoption respects the registry cap, as a remote offer does.
+    ///
+    /// Pre-fix `adopt_initiator` inserted with no admission check, so the registry
+    /// grew past `TASKS_CAP` and every remote offer was refused after.
+    #[test]
+    fn an_initiator_adoption_past_the_cap_is_refused() {
+        let mut tasks = HashMap::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            super::adopt_initiator(
+                &mut tasks,
+                super::AdoptInitiatorParams {
+                    task_id: &task_id,
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        assert!(
+            tasks.len() <= tuning::TASKS_CAP,
+            "held {} tasks, cap is {}",
+            tasks.len(),
+            tuning::TASKS_CAP
         );
     }
 
