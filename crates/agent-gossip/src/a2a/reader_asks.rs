@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use habilis_network::embed::EventLoopState;
@@ -117,15 +118,21 @@ pub(crate) struct ReaderAskParams<'caller> {
 }
 
 /// The names to ask: a name held by two or more live members is not asked, because the ask
-/// would reach one of its holders by a name that is not unique.
-fn askable_names(candidates: &[&Nickname], live: &[&Nickname]) -> Vec<Nickname> {
-    let mut asked = Vec::new();
-    for name in candidates {
-        if super::broadcast_params::live_holders(live.iter().copied(), name) == 1 {
-            asked.push((*name).clone());
-        }
+/// would reach one of its holders by a name that is not unique. Holders are counted once per
+/// pass, and the walk stops as soon as `room` names are chosen.
+fn askable_names(candidates: &[&Nickname], live: &[&Nickname], room: usize) -> Vec<Nickname> {
+    if room == 0 {
+        return Vec::new();
     }
-    asked
+    let mut holders: HashMap<&Nickname, usize> = HashMap::new();
+    for nick in live {
+        *holders.entry(nick).or_insert(0) += 1;
+    }
+    let unique = candidates
+        .iter()
+        .filter(|name| holders.get(*name) == Some(&1));
+    let chosen = unique.take(room);
+    chosen.map(|name| (*name).clone()).collect()
 }
 
 /// The endpoint that a `peers` row may report: a name held by two or more live members has no
@@ -149,17 +156,17 @@ pub(crate) async fn ask_readers(
     } = params;
     let room = (POLL_WAITERS_CAP / 2).saturating_sub(app.a2a_waiters.len());
     let snapshot = state.roster_snapshot();
-    let fresh = snapshot
-        .peers
-        .iter()
-        .filter(|entry| !entry.quiet && entry.nickname != *author);
-    let with_endpoint = fresh.filter(|entry| state.peer_endpoint(&entry.nickname).is_some());
-    let reachable: Vec<&Nickname> = with_endpoint.map(|entry| &entry.nickname).collect();
+    let mut reachable: Vec<&Nickname> = Vec::new();
+    for entry in &snapshot.peers {
+        if !entry.quiet
+            && entry.nickname != *author
+            && state.peer_endpoint(&entry.nickname).is_some()
+        {
+            reachable.push(&entry.nickname);
+        }
+    }
     let live: Vec<&Nickname> = state.live_nicknames().collect();
-    let askable: Vec<Nickname> = askable_names(&reachable, &live)
-        .into_iter()
-        .take(room)
-        .collect();
+    let askable: Vec<Nickname> = askable_names(&reachable, &live, room);
     let deadline = TokioInstant::now() + READER_ASK_TIMEOUT;
     let mut pending = Vec::with_capacity(askable.len());
     for peer in askable {
@@ -339,11 +346,32 @@ mod askable_tests {
         let shared = Nickname::from("shared-name");
         let single = Nickname::from("single-name");
         let live = [&shared, &single, &shared];
-        let asked = super::askable_names(&[&shared, &single], &live);
+        let asked = super::askable_names(&[&shared, &single], &live, 2);
         assert_eq!(
             asked,
             vec![single.clone()],
             "only the name with one live holder is asked"
+        );
+    }
+}
+
+#[cfg(test)]
+mod askable_room_tests {
+    use habilis_network::protocol::Nickname;
+
+    #[test]
+    fn no_room_asks_no_one_and_a_full_room_takes_the_first_names() {
+        let first = Nickname::from("first-name");
+        let second = Nickname::from("second-name");
+        let live = [&first, &second];
+        assert!(
+            super::askable_names(&[&first, &second], &live, 0).is_empty(),
+            "a pass with no room asks nobody"
+        );
+        assert_eq!(
+            super::askable_names(&[&first, &second], &live, 1),
+            vec![first.clone()],
+            "a room of one takes the first unique name only"
         );
     }
 }
