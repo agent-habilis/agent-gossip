@@ -141,12 +141,10 @@ pub(crate) async fn ask_readers(
         .peers
         .iter()
         .filter(|entry| !entry.quiet && entry.nickname != *author);
-    let reachable: Vec<&Nickname> = fresh
-        .filter(|entry| state.peer_endpoint(&entry.nickname).is_some())
-        .map(|entry| &entry.nickname)
-        .collect();
+    let with_endpoint = fresh.filter(|entry| state.peer_endpoint(&entry.nickname).is_some());
+    let reachable: Vec<&Nickname> = with_endpoint.map(|entry| &entry.nickname).collect();
     let live: Vec<&Nickname> = state.live_nicknames().collect();
-    let askable: Vec<Nickname> = askable_names(&reachable, &live)
+    let askable: Vec<Nickname> = super::askable_names(&reachable, &live)
         .into_iter()
         .take(room)
         .collect();
@@ -324,14 +322,12 @@ mod tests {
 mod askable_tests {
     use habilis_network::protocol::Nickname;
 
-    use super::askable_names;
-
     #[test]
     fn a_name_held_by_two_live_keys_is_not_asked() {
         let shared = Nickname::from("shared-name");
         let single = Nickname::from("single-name");
         let live = [&shared, &single, &shared];
-        let asked = askable_names(&[&shared, &single], &live);
+        let asked = super::askable_names(&[&shared, &single], &live);
         assert_eq!(
             asked,
             vec![single.clone()],
