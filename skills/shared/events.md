@@ -120,6 +120,10 @@ source of truth for task status; never print a status block. Task artifacts are
 the worker's result, not a status change. Update the todo silently — no prose
 before or after the tool call.
 
+Keep one standing row while you are in the gossip. Never complete that row before
+you leave. Open one row at each send. If the native task list is empty while a task
+is live, open the missing rows at once.
+
 Open the todo immediately after the send returns the task id. A task that you send
 and do not track is a defect: the user cannot see it, and nobody finds it again after a
 context clear. This holds for a follow-up that opens a new task, and for a task
