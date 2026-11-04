@@ -60,13 +60,17 @@ pub(crate) fn respond_with_paths(
     resp_tx: oneshot::Sender<String>,
 ) {
     let snapshot = state.roster_snapshot();
+    let live: Vec<&Nickname> = state.live_nicknames().collect();
     let endpoints: Vec<_> = snapshot
         .peers
         .iter()
         .map(|entry| {
+            let holders =
+                super::broadcast_params::live_holders(live.iter().copied(), &entry.nickname);
             (!entry.quiet)
                 .then(|| state.peer_endpoint(&entry.nickname))
                 .flatten()
+                .and_then(|id| row_endpoint(holders, Some(id)))
         })
         .collect();
     let mut rows = match serde_json::to_value(&snapshot.peers) {
@@ -122,6 +126,12 @@ fn askable_names(candidates: &[&Nickname], live: &[&Nickname]) -> Vec<Nickname> 
         }
     }
     asked
+}
+
+/// The endpoint that a `peers` row may report: a name held by two or more live members has no
+/// single endpoint, so the row reports none rather than the endpoint of one holder.
+fn row_endpoint<T>(holders: usize, endpoint: Option<T>) -> Option<T> {
+    if holders == 1 { endpoint } else { None }
 }
 
 /// Send `mesh/reader.get` to each live peer that has a known endpoint.
@@ -334,6 +344,23 @@ mod askable_tests {
             asked,
             vec![single.clone()],
             "only the name with one live holder is asked"
+        );
+    }
+}
+
+#[cfg(test)]
+mod row_endpoint_tests {
+    #[test]
+    fn a_name_held_by_two_live_keys_reports_no_endpoint() {
+        assert_eq!(
+            super::row_endpoint(2, Some("holder-a")),
+            None,
+            "a shared name has no single endpoint to report"
+        );
+        assert_eq!(
+            super::row_endpoint(1, Some("holder-a")),
+            Some("holder-a"),
+            "a name with one live holder reports that holder's endpoint"
         );
     }
 }
