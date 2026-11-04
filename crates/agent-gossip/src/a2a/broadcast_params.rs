@@ -2748,15 +2748,13 @@ mod status_leg_tests {
 mod live_holder_tests {
     use habilis_network::protocol::Nickname;
 
-    use super::live_holders;
-
     #[test]
     fn a_name_held_by_two_live_keys_counts_twice() {
         let shared = Nickname::from("dup-name");
         let other = Nickname::from("other-name");
         let live = [&shared, &other, &shared];
         assert_eq!(
-            live_holders(live.into_iter(), &shared),
+            super::live_holders(live.into_iter(), &shared),
             2,
             "two live keys under one name are two holders"
         );
