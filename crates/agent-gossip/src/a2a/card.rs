@@ -567,12 +567,16 @@ mod tests {
             AuthorKey::from([0xab; 32]),
             "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U",
         );
-        let bytes = serde_json::to_string(&card)
-            .expect("an AgentCard is plain data and always serializes")
-            .len();
+        let mut stored =
+            serde_json::to_value(&card).expect("an AgentCard is plain data and always serializes");
+        stored["endpoint"] = serde_json::json!({
+            "id": "a".repeat(52),
+            "relay": "https://use1-1.relay.n0.iroh-canary.iroh.link./",
+        });
+        let bytes = stored.to_string().len();
         assert!(
-            bytes <= 800,
-            "a peer card is {bytes} bytes; the static part repeats for every peer, so cut it"
+            bytes <= 900,
+            "a stored peer card with its endpoint hint is {bytes} bytes; the budget is 900 because the hint (about 130 bytes) is part of the stored card"
         );
     }
 
