@@ -187,7 +187,12 @@ pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json
         seal_extension.and_then(|extension| extension.params.as_ref());
     let seal: Option<&str> = seal_params
         .and_then(|params| params.get("x25519"))
-        .and_then(serde_json::Value::as_str);
+        .and_then(serde_json::Value::as_str)
+        .filter(|seal| {
+            bs58::decode(seal)
+                .into_vec()
+                .is_ok_and(|bytes| bytes.len() == 32)
+        });
     let (Some(nickname), Some(seal)) = (nickname, seal) else {
         return Some(stored.clone());
     };
@@ -474,6 +479,35 @@ mod tests {
             uris_and_params(&rebuilt),
             uris_and_params(&stored),
             "the rebuilt card keeps the stored extension URIs and params"
+        );
+    }
+
+    #[test]
+    fn a_card_with_an_undecodable_seal_string_is_served_as_stored() {
+        let nickname =
+            Nickname::try_new("rebuild-peer").expect("a literal peer name is a valid nickname");
+        let mut stored = serde_json::to_value(own_card(
+            &nickname,
+            AuthorKey::from([0xab; 32]),
+            "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U",
+        ))
+        .expect("an AgentCard is plain data and always serializes");
+        let extensions: &mut Vec<serde_json::Value> = stored["capabilities"]["extensions"]
+            .as_array_mut()
+            .expect("the card declares extensions");
+        let seal_extension: &mut serde_json::Value = extensions
+            .iter_mut()
+            .find(|extension| {
+                extension["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.contains("mesh-seal"))
+            })
+            .expect("the card declares the mesh-seal extension");
+        seal_extension["params"]["x25519"] = serde_json::json!("not-base58!!");
+        assert_eq!(
+            full_from_minimal(&stored),
+            Some(stored.clone()),
+            "a seal string that is not a 32-byte key is served as stored, not rebuilt"
         );
     }
 
