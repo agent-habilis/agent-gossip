@@ -1833,7 +1833,7 @@ pub(crate) async fn broadcast_a2a_call(
         .tasks
         .values()
         .any(|rec| rec.peer == peer && !rec.state.is_terminal());
-    if !party_to_a_task && !state.peers().contains(peer.as_str()) {
+    if !party_to_a_task && !state.is_peer(peer.as_str()) {
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
