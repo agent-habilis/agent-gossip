@@ -1206,6 +1206,17 @@ pub(crate) async fn send_msg(
             text.as_str().len()
         ));
     }
+    let live_with_name = state
+        .roster_snapshot()
+        .peers
+        .iter()
+        .filter(|entry| !entry.quiet && entry.nickname == *peer)
+        .count();
+    if live_with_name > 1 {
+        return Err(anyhow::anyhow!(
+            "ambiguous peer '{peer}': {live_with_name} live members use this name"
+        ));
+    }
     let payload = status_update_params::compose_msg(mesh, text.as_str());
     let payload_id = MessageId::try_new(payload.message_id.as_str())
         .expect("an a2a message id is a valid frame id");

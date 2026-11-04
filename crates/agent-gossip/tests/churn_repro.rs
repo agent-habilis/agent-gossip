@@ -350,3 +350,51 @@ fn doctor_members(out: &str, nick: &str) -> Option<u64> {
     let after_dot = rest.split_once('·')?.1;
     after_dot.split_whitespace().next()?.parse().ok()
 }
+
+/// Two daemons under one nickname: a message to that nickname is refused, not sent to one of them.
+#[test]
+fn message_to_an_ambiguous_nickname_is_refused() {
+    let (_creator, mesh) = Node::create_named("churn-amb");
+    let _leave = LeaveOnDrop(mesh.clone());
+    let _first = Node::join(&mesh, "churn-amb-dup");
+    let _second = Node::join(&mesh, "churn-amb-dup");
+    let observer = Node::join(&mesh, "churn-amb-obs");
+    std::thread::sleep(Duration::from_secs(10));
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    loop {
+        let raw: serde_json::Value =
+            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers prints JSON");
+        let rows: &Vec<serde_json::Value> = raw["peers"].as_array().expect("peers carries a list");
+        let rows_named_dup = rows
+            .iter()
+            .filter(|row| row["nickname"] == "churn-amb-dup")
+            .count();
+        if rows_named_dup == 2 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the observer never saw two peers named churn-amb-dup ({rows_named_dup} seen)"
+        );
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
+    let sent = test_cmd()
+        .args([
+            "a2a",
+            "msg",
+            "--gossip",
+            &mesh,
+            "--nickname",
+            &observer.nickname,
+        ])
+        .args(["--to", "churn-amb-dup", "--text", "to-the-ambiguous-name"])
+        .output()
+        .expect("a2a msg runs");
+    assert!(
+        !sent.status.success(),
+        "a message to an ambiguous nickname was sent: {}",
+        String::from_utf8_lossy(&sent.stdout)
+    );
+}
