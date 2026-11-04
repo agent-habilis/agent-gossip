@@ -1184,6 +1184,11 @@ pub(crate) struct MsgParams<'caller> {
 /// the addressee's seal key has not replicated yet (rather than sending in
 /// plaintext), and propagates a serialize/deliver failure or a full unmeshed
 /// pending-outbound buffer.
+/// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
+fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
+    live.filter(|nick| *nick == peer).count()
+}
+
 pub(crate) async fn send_msg(
     params: MsgParams<'_>,
     state: &mut EventLoopState,
@@ -1206,12 +1211,7 @@ pub(crate) async fn send_msg(
             text.as_str().len()
         ));
     }
-    let live_with_name = state
-        .roster_snapshot()
-        .peers
-        .iter()
-        .filter(|entry| !entry.quiet && entry.nickname == *peer)
-        .count();
+    let live_with_name = live_holders(state.live_nicknames(), peer);
     if live_with_name > 1 {
         return Err(anyhow::anyhow!(
             "ambiguous peer '{peer}': {live_with_name} live members use this name"
@@ -1848,12 +1848,7 @@ pub(crate) async fn broadcast_a2a_call(
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
-    let live_with_name = state
-        .roster_snapshot()
-        .peers
-        .iter()
-        .filter(|entry| !entry.quiet && entry.nickname == peer)
-        .count();
+    let live_with_name = live_holders(state.live_nicknames(), &peer);
     if live_with_name > 1 {
         responder.send_response(&rpc_error(
             -32602,
@@ -2745,6 +2740,25 @@ mod status_leg_tests {
             status_waiting(&leg).as_deref(),
             Some("asks its user"),
             "the status waiting reason is kept"
+        );
+    }
+}
+
+#[cfg(test)]
+mod live_holder_tests {
+    use habilis_network::protocol::Nickname;
+
+    use super::live_holders;
+
+    #[test]
+    fn a_name_held_by_two_live_keys_counts_twice() {
+        let shared = Nickname::from("dup-name");
+        let other = Nickname::from("other-name");
+        let live = [&shared, &other, &shared];
+        assert_eq!(
+            live_holders(live.into_iter(), &shared),
+            2,
+            "two live keys under one name are two holders"
         );
     }
 }
