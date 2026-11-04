@@ -344,9 +344,8 @@ impl InProcNode {
         channel: Channel,
     ) -> impl Iterator<Item = (serde_json::Value, bool)> + '_ {
         self.pump();
-        self.drained
-            .iter()
-            .filter_map(change_parts)
+        let parts = self.drained.iter().filter_map(change_parts);
+        parts
             .filter(move |(chan, _, _)| *chan == channel)
             .map(|(_, document, is_self)| (document.clone(), is_self))
     }

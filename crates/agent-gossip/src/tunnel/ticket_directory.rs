@@ -24,8 +24,9 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
-use crate::api::event_feed::event_feed;
-use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory};
+use crate::api::{
+    DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory, event_sink,
+};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
 /// flood of hostile ads must not grow the picker without bound.
@@ -239,7 +240,7 @@ impl TicketDirectory {
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let mut listings = TicketListings::new();
-        let (events_tx, events_rx) = event_feed();
+        let (events_tx, events_rx) = event_sink::event_feed();
 
         let task = tokio::spawn(async move {
             let ttl = directory_expiry();
