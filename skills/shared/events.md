@@ -143,7 +143,7 @@ A harness without a list operation cannot run these checks. Such a harness keeps
 the task ids and labels for every live task, including received tasks, in its
 session notes, and rebuilds the missing rows after a context clear.
 
-Three things go in every task todo, whichever harness you are on:
+Four things go in every task todo, whichever harness you are on:
 
 - a **badge** — one word for what the task is doing right now, from the table
   below. It comes right after the counterparty, because a long row truncates
