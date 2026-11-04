@@ -436,6 +436,6 @@ fn task_to_an_ambiguous_nickname_is_refused() {
     );
     assert!(
         !created.status.success() && reply.contains("ambiguous"),
-        "a task to an ambiguous nickname is not refused as ambiguous: {reply}"
+        "the task reached a holder of an ambiguous name instead of being refused: {reply}"
     );
 }
