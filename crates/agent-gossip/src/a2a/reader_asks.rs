@@ -115,11 +115,13 @@ pub(crate) struct ReaderAskParams<'caller> {
 /// The names to ask: a name held by two or more live members is not asked, because the ask
 /// would reach one of its holders by a name that is not unique.
 fn askable_names(candidates: &[&Nickname], live: &[&Nickname]) -> Vec<Nickname> {
-    candidates
-        .iter()
-        .filter(|name| super::broadcast_params::live_holders(live.iter().copied(), name) == 1)
-        .map(|name| (*name).clone())
-        .collect()
+    let mut asked = Vec::new();
+    for name in candidates {
+        if super::broadcast_params::live_holders(live.iter().copied(), name) == 1 {
+            asked.push((*name).clone());
+        }
+    }
+    asked
 }
 
 /// Send `mesh/reader.get` to each live peer that has a known endpoint.
@@ -144,7 +146,7 @@ pub(crate) async fn ask_readers(
     let with_endpoint = fresh.filter(|entry| state.peer_endpoint(&entry.nickname).is_some());
     let reachable: Vec<&Nickname> = with_endpoint.map(|entry| &entry.nickname).collect();
     let live: Vec<&Nickname> = state.live_nicknames().collect();
-    let askable: Vec<Nickname> = super::askable_names(&reachable, &live)
+    let askable: Vec<Nickname> = askable_names(&reachable, &live)
         .into_iter()
         .take(room)
         .collect();
