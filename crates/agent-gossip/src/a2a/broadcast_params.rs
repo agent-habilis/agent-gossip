@@ -1848,6 +1848,19 @@ pub(crate) async fn broadcast_a2a_call(
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
     }
+    let live_with_name = state
+        .roster_snapshot()
+        .peers
+        .iter()
+        .filter(|entry| !entry.quiet && entry.nickname == peer)
+        .count();
+    if live_with_name > 1 {
+        responder.send_response(&rpc_error(
+            -32602,
+            &format!("ambiguous peer '{peer}': {live_with_name} live members use this name"),
+        ));
+        return;
+    }
     let blob = match file {
         None => None,
         Some(file) => {

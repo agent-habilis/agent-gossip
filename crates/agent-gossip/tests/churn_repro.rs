@@ -398,3 +398,44 @@ fn message_to_an_ambiguous_nickname_is_refused() {
         String::from_utf8_lossy(&sent.stdout)
     );
 }
+
+/// A task sent to an ambiguous nickname is refused, not parked on one of its holders.
+#[test]
+fn task_to_an_ambiguous_nickname_is_refused() {
+    let (_creator, mesh) = Node::create_named("churn-task");
+    let _leave = LeaveOnDrop(mesh.clone());
+    let _first = Node::join(&mesh, "churn-task-dup");
+    let _second = Node::join(&mesh, "churn-task-dup");
+    let observer = Node::join(&mesh, "churn-task-obs");
+    std::thread::sleep(Duration::from_secs(10));
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    loop {
+        let raw: serde_json::Value =
+            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers prints JSON");
+        let rows: &Vec<serde_json::Value> = raw["peers"].as_array().expect("peers carries a list");
+        let rows_named_dup = rows
+            .iter()
+            .filter(|row| row["nickname"] == "churn-task-dup")
+            .count();
+        if rows_named_dup == 2 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the observer never saw two peers named churn-task-dup ({rows_named_dup} seen)"
+        );
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
+    let created = common::cli_task_create_raw(&mesh, &observer.nickname, "churn-task-dup", "t");
+    let reply = format!(
+        "{}{}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    assert!(
+        !created.status.success() && reply.contains("ambiguous"),
+        "a task to an ambiguous nickname is not refused as ambiguous: {reply}"
+    );
+}
