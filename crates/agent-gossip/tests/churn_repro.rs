@@ -392,10 +392,14 @@ fn message_to_an_ambiguous_nickname_is_refused() {
         .args(["--to", "churn-amb-dup", "--text", "to-the-ambiguous-name"])
         .output()
         .expect("a2a msg runs");
+    let reply = format!(
+        "{}{}",
+        String::from_utf8_lossy(&sent.stdout),
+        String::from_utf8_lossy(&sent.stderr)
+    );
     assert!(
-        !sent.status.success(),
-        "a message to an ambiguous nickname was sent: {}",
-        String::from_utf8_lossy(&sent.stdout)
+        !sent.status.success() && reply.contains("ambiguous peer"),
+        "the message reached a holder of an ambiguous name instead of being refused: {reply}"
     );
 }
 
