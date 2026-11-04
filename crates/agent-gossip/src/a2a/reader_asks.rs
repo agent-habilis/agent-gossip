@@ -112,6 +112,16 @@ pub(crate) struct ReaderAskParams<'caller> {
     pub(crate) sender: &'caller MeshSender,
 }
 
+/// The names to ask: a name held by two or more live members is not asked, because the ask
+/// would reach one of its holders by a name that is not unique.
+fn askable_names(candidates: &[&Nickname], live: &[&Nickname]) -> Vec<Nickname> {
+    candidates
+        .iter()
+        .filter(|name| super::broadcast_params::live_holders(live.iter().copied(), name) == 1)
+        .map(|name| (*name).clone())
+        .collect()
+}
+
 /// Send `mesh/reader.get` to each live peer that has a known endpoint.
 ///
 /// Real `a2a call`s share the waiter registry, so `peers` stops at half of it.
@@ -131,13 +141,14 @@ pub(crate) async fn ask_readers(
         .peers
         .iter()
         .filter(|entry| !entry.quiet && entry.nickname != *author);
-    let reachable = fresh.filter(|entry| {
-        state.peer_endpoint(&entry.nickname).is_some()
-            && super::broadcast_params::live_holders(state.live_nicknames(), &entry.nickname) == 1
-    });
-    let askable: Vec<Nickname> = reachable
+    let reachable: Vec<&Nickname> = fresh
+        .filter(|entry| state.peer_endpoint(&entry.nickname).is_some())
+        .map(|entry| &entry.nickname)
+        .collect();
+    let live: Vec<&Nickname> = state.live_nicknames().collect();
+    let askable: Vec<Nickname> = askable_names(&reachable, &live)
+        .into_iter()
         .take(room)
-        .map(|entry| entry.nickname.clone())
         .collect();
     let deadline = TokioInstant::now() + READER_ASK_TIMEOUT;
     let mut pending = Vec::with_capacity(askable.len());
@@ -305,6 +316,26 @@ mod tests {
             path_label(&[]),
             "unknown",
             "no path gives the unknown label"
+        );
+    }
+}
+
+#[cfg(test)]
+mod askable_tests {
+    use habilis_network::protocol::Nickname;
+
+    use super::askable_names;
+
+    #[test]
+    fn a_name_held_by_two_live_keys_is_not_asked() {
+        let shared = Nickname::from("shared-name");
+        let single = Nickname::from("single-name");
+        let live = [&shared, &single, &shared];
+        let asked = askable_names(&[&shared, &single], &live);
+        assert_eq!(
+            asked,
+            vec![single.clone()],
+            "only the name with one live holder is asked"
         );
     }
 }
