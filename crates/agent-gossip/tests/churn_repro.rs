@@ -285,6 +285,10 @@ fn stopped_daemon_resumes_with_matching_roster() {
     let count_creator = count(&creator.nickname);
     let count_stopped = count(&stopped.nickname);
     assert_eq!(
+        count_creator, 3,
+        "the creator counts the three members, itself included: {count_creator}"
+    );
+    assert_eq!(
         count_creator, count_stopped,
         "resumed daemon peer_count {count_stopped} differs from creator {count_creator}; {timeouts} peer_timeout, {returns} peer_return across survivors"
     );
