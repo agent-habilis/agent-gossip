@@ -570,13 +570,13 @@ mod tests {
         let mut stored =
             serde_json::to_value(&card).expect("an AgentCard is plain data and always serializes");
         stored["endpoint"] = serde_json::json!({
-            "id": "a".repeat(52),
+            "id": habilis_network::iroh::SecretKey::from_bytes(&[7; 32]).public().to_string(),
             "relay": "https://use1-1.relay.n0.iroh-canary.iroh.link./",
         });
         let bytes = stored.to_string().len();
         assert!(
             bytes <= 900,
-            "a stored peer card with its endpoint hint is {bytes} bytes; the budget is 900 because the hint (about 130 bytes) is part of the stored card"
+            "a stored peer card with its endpoint hint is {bytes} bytes; the budget is 900 because the hint (about 140 bytes) is part of the stored card"
         );
     }
 
