@@ -126,12 +126,14 @@ context clear. This holds for a follow-up that opens a new task, and for a task
 that you send to fix a failure.
 
 After a context compaction or a day change, call the harness's native task-list
-operation, not peer-scoped A2A `ListTasks`. Compare its rows with every live
-task, sent or received, and open one todo for each missing task. Take each
-missing task's id from its live task record and read its state with `GetTask`.
-Do not recover a task when only an untracked `task_stalled` event names it:
-the event is stale. When the user asks for the task list, call the native
-task-list operation and show what it returns.
+operation, not peer-scoped A2A `ListTasks`. The list gives each row's id, subject
+and status, not the full task id or the counterparty. Read each row's description
+with `TaskGet` for those. Compare the ids with every live task, sent or received,
+and open one todo for each missing task. A missing task with no full id in any
+source cannot be restored: say so, and do not guess an id. Do not recover a task
+when only an untracked `task_stalled` event names it: the event is stale. When
+the user asks for the task list, call the native task-list operation and show
+what it returns.
 
 A harness without a list operation cannot run these checks. Such a harness keeps
 the task ids and labels for every live task, including received tasks, in its
@@ -152,6 +154,8 @@ Three things go in every task todo, whichever harness you are on:
   initiator that is the worker; on the worker it is the initiator. Never
   yourself: your own nickname is the one value that tells your user nothing.
   It leads the todo, so the rows line up by peer.
+- the **task id** — the full id from the send response or the opening event. Put
+  it in the todo's description, so a context clear can recover the row.
 
 Lifecycle, in task-event terms — every harness maps these onto its own tool:
 
