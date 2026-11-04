@@ -24,6 +24,10 @@ const VERSION: u8 = 1;
 /// and invite (`3`) tickets so a wrong-kind token is rejected on decode.
 const KIND: u8 = 2;
 
+/// The most bytes a ticket decodes to: one wire frame. A bigger ticket is refused before its
+/// JSON is read.
+const MAX_TICKET_BYTES: usize = 3840;
+
 /// Bit 0 of the flags byte: the password flag.
 const PASSWORD_BIT: u8 = 0b0000_0001;
 
@@ -63,6 +67,9 @@ impl A2aTicket {
     /// malformed payload.
     pub(crate) fn decode(ticket: &str) -> Result<Self> {
         let framed = base58check_decode(ticket.trim())?;
+        if framed.len() > MAX_TICKET_BYTES {
+            bail!("a2a ticket is larger than one frame");
+        }
         let version = *framed.first().context("ticket too short")?;
         if version != VERSION {
             bail!("unsupported a2a ticket version: {version}");
@@ -123,16 +130,40 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use habilis_network::iroh::{EndpointAddr, SecretKey};
+    use habilis_network::net::endpoint_addr_to_json;
     use habilis_network::ops::blob;
     use habilis_network::ops::blob::{BlobDigest, BlobTicket};
     use habilis_network::protocol::{LookupOpts, TicketSecret};
 
-    use super::{A2aTicket, SECRET_LEN};
+    use super::{A2aTicket, KIND, MAX_TICKET_BYTES, SECRET_LEN, VERSION, base58check_encode};
 
     fn sample_addr(byte: u8) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[byte; 32]).public();
         EndpointAddr::new(id)
             .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"))
+    }
+
+    /// A ticket whose address JSON carries `pad` bytes of an extra field, encoded the way
+    /// [`A2aTicket::encode`] does.
+    fn padded_ticket(pad: usize) -> String {
+        let mut value = endpoint_addr_to_json(&sample_addr(3));
+        value["pad"] = serde_json::Value::String("x".repeat(pad));
+        let mut framed = vec![VERSION, KIND];
+        framed.extend_from_slice(&[9u8; SECRET_LEN]);
+        framed.push(0);
+        LookupOpts::public_preset().encode_into(&mut framed);
+        framed.extend_from_slice(&serde_json::to_vec(&value).expect("json serializes"));
+        base58check_encode(&framed)
+    }
+
+    /// A ticket is one frame at most: 10 times the cap is refused.
+    #[test]
+    fn a_ticket_past_the_cap_is_refused() {
+        let ticket = padded_ticket(10 * MAX_TICKET_BYTES);
+        assert!(
+            A2aTicket::decode(&ticket).is_err(),
+            "a ticket of 10 times the cap is refused"
+        );
     }
 
     #[test]
