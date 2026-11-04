@@ -2,7 +2,7 @@
 
 agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
-A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
+A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 13.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
 `src/cli/mod.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
