@@ -1185,7 +1185,7 @@ pub(crate) struct MsgParams<'caller> {
 /// plaintext), and propagates a serialize/deliver failure or a full unmeshed
 /// pending-outbound buffer.
 /// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
-fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
+pub(crate) fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
     live.filter(|nick| *nick == peer).count()
 }
 

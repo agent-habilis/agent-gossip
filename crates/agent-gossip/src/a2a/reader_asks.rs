@@ -131,7 +131,10 @@ pub(crate) async fn ask_readers(
         .peers
         .iter()
         .filter(|entry| !entry.quiet && entry.nickname != *author);
-    let reachable = fresh.filter(|entry| state.peer_endpoint(&entry.nickname).is_some());
+    let reachable = fresh.filter(|entry| {
+        state.peer_endpoint(&entry.nickname).is_some()
+            && super::broadcast_params::live_holders(state.live_nicknames(), &entry.nickname) == 1
+    });
     let askable: Vec<Nickname> = reachable
         .take(room)
         .map(|entry| entry.nickname.clone())
