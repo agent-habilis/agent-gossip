@@ -552,7 +552,12 @@ COMMANDS
                   {"event":"gap","missed_before":SEQ}
 
               — every event below that seq was evicted unread and is gone;
-              the daemon re-baselines automatically.
+              the daemon re-baselines automatically. When the ring also
+              dropped events because it held too many bytes of body, the
+              line adds "lost_to_bytes":EVENTS,"lost_bytes":BYTES: how many
+              events and how many bytes of body the byte cap dropped among the
+              events above the cursor of this reader. The counts are left out
+              when the daemon no longer knows them.
 
               --long
                      The receive bell: block until the daemon holds a WAKING
@@ -1213,6 +1218,15 @@ JSON EVENTS
 
                  {"event":"fork","nickname":"word-word","pubkey":"<hex>",
                   "seq":42}
+
+       events_lost
+              The daemon dropped events before they reached the poll history,
+              because a burst was larger than its feed channel. It takes the
+              place of the lost events in the history, so it has a seq. lost
+              is how many events were dropped. display is the line to show.
+
+                 {"event":"events_lost","lost":9216,
+                  "display":"💬️ 9216 events were lost before the poll history"}
 
        ping_report
               One per agent-gossip ping round, ~10s after the trigger, from the node

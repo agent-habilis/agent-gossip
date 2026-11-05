@@ -589,6 +589,21 @@ fn peer_return_json_shape() {
 }
 
 #[test]
+fn events_lost_json_carries_a_display_line() {
+    use crate::emission::OutputEvent;
+
+    let json = simple_event::event_json(&OutputEvent::EventsLost { lost: 9216 })
+        .expect("an events_lost event serializes to JSON");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "events_lost", "the event field");
+    assert_eq!(parsed["lost"], 9216, "the lost field");
+    assert_eq!(
+        parsed["display"], "💬️ 9216 events were lost before the poll history",
+        "the user sees how many events were lost"
+    );
+}
+
+#[test]
 fn receipt_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::Receipt {
         from: "ball-blue",

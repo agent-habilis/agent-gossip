@@ -105,6 +105,46 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// with the client's cursor advancing past them).
 pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 
+/// Bytes of event bodies that the surfaced ring holds: one body of the largest legal size
+/// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB), so one legal body always fits. The count cap alone allows
+/// 1000 bodies of 64 MiB. Past the cap the oldest events leave the ring, and a reader whose cursor
+/// pointed at one of them gets a gap marker. There is no cap on one body: a body that is alone in
+/// the ring stays, because the ring must not drop the event that just arrived.
+pub(crate) const SURFACED_EVENTS_BYTES_CAP: usize = MAX_LOGICAL_BODY_BYTES;
+
+/// How many surfaced events may wait between the event that made them and the loop turn that moves
+/// them into the ring. The loop drains the channel at each turn, so a full channel means a burst of
+/// more than this many events inside one turn, or a loop that does not turn. An event past the cap
+/// is counted, not queued, and the ring gets one marker for them. Sized to the engine's inbound
+/// queue (`NODE_INBOUND_CAP`).
+pub(crate) const SURFACED_TAP_CAP: usize = 1024;
+
+/// How many blob groups of calls that produced no task wait for their eviction. Each waits at
+/// most one task timeout, and one waiter makes one entry, so a count above the waiter cap is a
+/// burst of timeouts. Past the cap the entry that is due first leaves the list and its group goes
+/// to the next sweep; the call keeps awaiting its late reply (see `LATE_REPLIES_CAP`). A released
+/// group that the list of released groups forgets waits for the caps of the blob store. The byte
+/// cap (4 GiB) holds at every engine rev. The entry cap and the owner cap hold only from the
+/// engine rev that has the `…-blobcap` commits, so an app built on an older rev has the byte
+/// cap alone.
+pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
+
+/// How many timed-out calls await a late reply without a group in the orphan list: the calls whose
+/// group the orphan cap released. An entry is about 100 bytes and lives at most one task timeout.
+/// Past the cap the entry that is due first is forgotten: a worker that answers that call late
+/// then runs a task that nothing cancels, a gap that this cap accepts. Each drop is counted in
+/// `late_replies_forgotten` and logged as a warning.
+pub(crate) const LATE_REPLIES_CAP: usize = 1024;
+
+/// How many blob groups of calls one task may hold. A task keeps the groups of its calls until it
+/// is reaped, and a follow-up that carries a file adds one. A call past the cap is refused with a
+/// failed reason, before its file is offloaded: the user must know that the file was not sent.
+pub(crate) const CALL_BLOB_GROUPS_PER_TASK_CAP: usize = 64;
+
+/// How many cancels owed to workers wait for the next task sweep. A cancel is user work that
+/// the worker needs, so a full list is not dropped: the receive path sends the cancels at once.
+pub(crate) const LATE_CANCELS_CAP: usize = 64;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice
@@ -166,6 +206,7 @@ pub(crate) struct Tuning {
     pub(crate) unsent_legs_cap: usize,
     pub(crate) own_legs_bytes_cap: usize,
     pub(crate) unsent_legs_bytes_cap: usize,
+    pub(crate) call_blob_groups_per_task_cap: usize,
 }
 
 impl Tuning {
@@ -179,6 +220,7 @@ impl Tuning {
         unsent_legs_cap: UNSENT_LEGS_CAP,
         own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
         unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
+        call_blob_groups_per_task_cap: CALL_BLOB_GROUPS_PER_TASK_CAP,
     };
 }
 
@@ -236,6 +278,10 @@ pub(crate) fn own_legs_bytes_cap() -> usize {
 
 pub(crate) fn unsent_legs_bytes_cap() -> usize {
     current().unsent_legs_bytes_cap
+}
+
+pub(crate) fn call_blob_groups_per_task_cap() -> usize {
+    current().call_blob_groups_per_task_cap
 }
 
 #[cfg(test)]

@@ -1480,6 +1480,7 @@ pub(crate) async fn attach_call_file(
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
     app.admit_unsent_leg(0)?;
+    app.admit_call_blob_group(message.task_id.as_ref())?;
     let opens_task = message.task_id.is_none();
     let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(

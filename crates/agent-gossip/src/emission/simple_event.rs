@@ -82,6 +82,11 @@ pub(super) enum SimpleEvent<'source> {
     Error {
         message: &'source str,
     },
+    EventsLost {
+        lost: u64,
+        /// Pre-formatted line (see [`events_lost_display`]).
+        display: String,
+    },
     PingReport {
         peers: &'source [PingPeer],
         responded: usize,
@@ -335,6 +340,16 @@ pub(super) fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
 }
 
+/// `display` line for an `events_lost` event.
+pub(super) fn events_lost_display(lost: u64) -> String {
+    let events = if lost == 1 {
+        "event was"
+    } else {
+        "events were"
+    };
+    format!("{DISPLAY_GLYPH} {lost} {events} lost before the poll history")
+}
+
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
 pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
@@ -383,6 +398,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::TaskStalled { .. } => true,
         OutputEvent::Presence { message } => matches!(
             &message.kind,
@@ -840,6 +856,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. } => return Formatted::Serialized,
     };
     Formatted::Line(line)
@@ -925,6 +942,11 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
         }
+        OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
+            lost: *lost,
+            display: events_lost_display(*lost),
+        })
+        .ok(),
         OutputEvent::PingReport { peers, known } => {
             serde_json::to_string(&SimpleEvent::PingReport {
                 responded: peers.len(),

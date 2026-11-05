@@ -712,6 +712,46 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
     }
 }
 
+/// Tell each worker in `cancels` that its task is cancelled, and why.
+async fn send_cancels(
+    state: &EventLoopState,
+    context: &HandlerCtx<'_>,
+    cancels: Vec<(&TaskId, &Nickname, &str)>,
+) {
+    for (task_id, peer, reason) in cancels {
+        let update = status_update_params::status_update(
+            context.mesh,
+            status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
+                .with_metadata(serde_json::json!({ META_REASON: reason })),
+        );
+        broadcast_status(
+            state,
+            context,
+            BroadcastStatusParams {
+                peer,
+                task_id,
+                update: &update,
+            },
+        )
+        .await;
+    }
+}
+
+/// Send the cancels that the app owes now, without waiting for the task sweep. The receive path
+/// calls it when the list reached its cap, so a cancel is never dropped for want of room.
+pub(crate) async fn send_late_cancels(
+    state: &EventLoopState,
+    app: &mut A2aApp,
+    context: &HandlerCtx<'_>,
+) {
+    let owed = app.take_late_cancels();
+    let cancels: Vec<(&TaskId, &Nickname, &str)> = owed
+        .iter()
+        .map(|(task_id, peer, reason)| (task_id, peer, *reason))
+        .collect();
+    send_cancels(state, context, cancels).await;
+}
+
 /// Sweep the registry for tasks idle past the debounce timeout, then
 /// **garbage-collect** records that have been terminal longer than the
 /// timeout. Each eviction freezes the record, emits a `task_timeout` event,
@@ -746,23 +786,7 @@ pub(crate) async fn tick_task_sweep(
         .map(|(task_id, peer, reason)| (task_id, peer, *reason))
         .collect();
     cancels.extend(late);
-    for (task_id, peer, reason) in cancels {
-        let update = status_update_params::status_update(
-            context.mesh,
-            status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
-                .with_metadata(serde_json::json!({ META_REASON: reason })),
-        );
-        broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer,
-                task_id,
-                update: &update,
-            },
-        )
-        .await;
-    }
+    send_cancels(state, context, cancels).await;
 
     // A reaped task's offloaded blobs go with it — unlink their spool files
     // (the review window has long closed).

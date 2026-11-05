@@ -66,6 +66,12 @@ pub enum OutputEvent {
         /// The notice text.
         message: String,
     },
+    /// Surfaced events that never reached the poll history because the channel that feeds it was
+    /// full. It takes the place of the lost events in the ring, so a reader sees where they were.
+    EventsLost {
+        /// How many events were dropped.
+        lost: u64,
+    },
     /// An error the operator must see. The daemon keeps running.
     Error {
         /// The error text.
