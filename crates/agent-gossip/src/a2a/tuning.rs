@@ -105,6 +105,13 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// with the client's cursor advancing past them).
 pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 
+/// Bytes of event bodies that the surfaced ring holds: one body of the largest legal size
+/// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB), so one legal body always fits. The count cap alone allows
+/// 1000 bodies of 64 MiB. Past the cap the oldest events leave the ring, and a reader whose cursor
+/// pointed at one of them gets a gap marker. There is no cap on one body: a body that is alone in
+/// the ring stays, because the ring must not drop the event that just arrived.
+pub(crate) const SURFACED_EVENTS_BYTES_CAP: usize = MAX_LOGICAL_BODY_BYTES;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice

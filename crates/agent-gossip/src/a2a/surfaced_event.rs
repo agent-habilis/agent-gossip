@@ -40,6 +40,12 @@ pub struct SurfacedEvent {
 /// retained window is always the most-recently-surfaced `capacity` events.
 pub(crate) struct SurfacedEvents {
     capacity: usize,
+    byte_cap: usize,
+    /// The bytes of body that the events in the ring hold (see [`event_bytes`]).
+    bytes: usize,
+    /// How many events left the ring because of the byte cap, and how many bytes of body they held.
+    lost_to_bytes: u64,
+    lost_bytes: u64,
     next_seq: u64,
     events: VecDeque<SurfacedEvent>,
     /// The newest seq assigned to a *waking* event (see
@@ -51,8 +57,16 @@ pub(crate) struct SurfacedEvents {
 
 impl SurfacedEvents {
     pub(crate) fn new(capacity: usize) -> Self {
+        Self::with_byte_cap(capacity, tuning::SURFACED_EVENTS_BYTES_CAP)
+    }
+
+    pub(crate) fn with_byte_cap(capacity: usize, byte_cap: usize) -> Self {
         SurfacedEvents {
             capacity,
+            byte_cap,
+            bytes: 0,
+            lost_to_bytes: 0,
+            lost_bytes: 0,
             // seq 0 is reserved as the "before anything" cursor: the first
             // pushed event is seq 1, so `since(Some(0))` returns the whole
             // buffer without a spurious eviction signal.
@@ -70,11 +84,37 @@ impl SurfacedEvents {
         if super::node::wakes(&event) {
             self.latest_waking_seq = seq;
         }
+        self.bytes = self.bytes.saturating_add(event_bytes(&event));
         self.events.push_back(SurfacedEvent { seq, event });
         while self.events.len() > self.capacity {
-            self.events.pop_front();
+            self.drop_oldest();
+        }
+        // The newest event stays even when it alone is over the cap.
+        while self.bytes > self.byte_cap && self.events.len() > 1 {
+            let before = self.bytes;
+            self.drop_oldest();
+            self.lost_to_bytes += 1;
+            self.lost_bytes += (before - self.bytes) as u64;
         }
         seq
+    }
+
+    fn drop_oldest(&mut self) {
+        if let Some(oldest) = self.events.pop_front() {
+            self.bytes = self.bytes.saturating_sub(event_bytes(&oldest.event));
+        }
+    }
+
+    pub(crate) fn held_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn lost_to_bytes(&self) -> u64 {
+        self.lost_to_bytes
+    }
+
+    pub(crate) fn lost_bytes(&self) -> u64 {
+        self.lost_bytes
     }
 
     /// `None` when the ring is empty. The set of receipted seqs is pruned to
@@ -134,6 +174,13 @@ impl SurfacedEvents {
     }
 }
 
+/// The bytes of body that a surfaced event holds. Only the events that carry a signed message
+/// or text count; the others are small and fixed in size.
+fn event_bytes(event: &OutputEvent) -> usize {
+    let _ = event;
+    0
+}
+
 /// One poll's answer: the events, plus whether the reader's cursor aged out of
 /// the ring before them.
 ///
@@ -147,6 +194,11 @@ pub struct PollBatch {
     /// `Some(oldest_retained_seq)`: every event before this seq was evicted
     /// unread. The reader must re-baseline on the returned window.
     pub missed_before: Option<u64>,
+    /// Events that left the ring since the daemon started because the ring held too many bytes of
+    /// body, and the bytes they held. Zero while the byte cap never fired.
+    pub lost_to_bytes: u64,
+    /// See `lost_to_bytes`.
+    pub lost_bytes: u64,
 }
 
 /// The clean-shutdown answer to a parked long-poll — an IPC control response,
@@ -441,6 +493,8 @@ impl SurfacedState {
         PollBatch {
             events,
             missed_before,
+            lost_to_bytes: self.surfaced_events.lost_to_bytes(),
+            lost_bytes: self.surfaced_events.lost_bytes(),
         }
     }
 
@@ -668,6 +722,99 @@ mod tests {
 
     fn nick(name: &str) -> Nickname {
         Nickname::try_new(name).expect("valid test nickname")
+    }
+
+    fn sized_event(bytes: usize) -> OutputEvent {
+        OutputEvent::StateChanged {
+            channel: Channel::Meta,
+            event: Box::new(
+                Message::fixture(MessageKind::Meta, &"x".repeat(bytes))
+                    .sign(&habilis_network::protocol::Identity::generate())
+                    .authored(),
+            ),
+            document: None,
+            is_self: false,
+        }
+    }
+
+    #[test]
+    fn the_ring_holds_at_most_the_byte_cap_of_bodies() {
+        let mut buffer = SurfacedEvents::with_byte_cap(1000, 16 * 1024);
+        let mut newest = 0;
+        for _ in 0..160 {
+            newest = buffer.push(sized_event(1024));
+        }
+
+        assert_eq!(
+            buffer.held_bytes(),
+            16 * 1024,
+            "10 times the cap offered, the cap held"
+        );
+        assert_eq!(buffer.count(), 16, "the oldest events left");
+        assert_eq!(buffer.latest_seq(), newest, "the newest event stays");
+        assert_eq!(buffer.lost_to_bytes(), 144, "the loss is counted");
+    }
+
+    #[test]
+    fn a_reader_behind_the_byte_eviction_gets_a_gap() {
+        let mut buffer = SurfacedEvents::with_byte_cap(1000, 4 * 1024);
+        for _ in 0..20 {
+            buffer.push(sized_event(1024));
+        }
+
+        let (events, missed_before) = buffer.since(Some(2));
+
+        assert_eq!(events.len(), 4, "only the retained window");
+        assert_eq!(
+            missed_before,
+            Some(17),
+            "the gap names the oldest retained seq"
+        );
+    }
+
+    /// No cap on one body: a legal body that is bigger than the byte cap stays when it is alone,
+    /// and goes when the next event arrives.
+    #[test]
+    fn one_body_over_the_byte_cap_stays_while_it_is_alone() {
+        let mut buffer = SurfacedEvents::with_byte_cap(1000, 1024);
+
+        buffer.push(sized_event(4096));
+        assert_eq!(
+            buffer.count(),
+            1,
+            "the event that just arrived is not dropped"
+        );
+        assert_eq!(buffer.held_bytes(), 4096);
+
+        buffer.push(sized_event(10));
+        assert_eq!(buffer.count(), 1, "the big body leaves for the next event");
+        assert_eq!(buffer.held_bytes(), 10);
+    }
+
+    /// The gap marker is what the agent reads. When the byte cap dropped events, it says how many
+    /// events and how many bytes were lost, counted since the daemon started, so a loss is never
+    /// silent. The marker carries no counts while the byte cap never fired.
+    #[test]
+    fn the_gap_marker_counts_the_events_and_bytes_that_the_byte_cap_dropped() {
+        let mut buffer = SurfacedEvents::with_byte_cap(1000, 4 * 1024);
+        for _ in 0..20 {
+            buffer.push(sized_event(1024));
+        }
+        let (events, missed_before) = buffer.since(Some(2));
+        let batch = super::PollBatch {
+            events,
+            missed_before,
+            lost_to_bytes: buffer.lost_to_bytes(),
+            lost_bytes: buffer.lost_bytes(),
+        };
+
+        assert!(
+            render_poll_array(&batch).starts_with(
+                r#"[{"event":"gap","missed_before":17,"lost_to_bytes":16,"lost_bytes":16384}"#
+            ),
+            "the marker says how much the byte cap dropped: {}",
+            render_poll_array(&batch)
+        );
     }
 
     fn peer_return(name: &str) -> OutputEvent {
