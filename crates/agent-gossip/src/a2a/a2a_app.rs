@@ -752,7 +752,8 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
-    use crate::a2a::{TaskId, tuning, wire};
+    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState, tuning, wire};
 
     fn leg(body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(
@@ -1168,8 +1169,6 @@ mod tests {
     /// opened: the initiator refused the task, so the worker must not run it unseen.
     #[test]
     fn a_refused_adoption_cancels_the_task_on_the_worker() {
-        use crate::a2a::TaskState;
-        use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
         let mut app = super::A2aApp::new();
         let now = Instant::now();
         for index in 0..10 * tuning::TASKS_CAP {
@@ -1231,7 +1230,7 @@ mod tests {
                 crate::a2a::task_record::AdoptInitiatorParams {
                     task_id: &filler,
                     peer: &peer,
-                    task_state: crate::a2a::TaskState::Working,
+                    task_state: TaskState::Working,
                     now: Instant::now(),
                 },
             );
@@ -1258,8 +1257,6 @@ mod tests {
     /// would see a task that this node then cancels without any output line.
     #[test]
     fn a_refused_adoption_answers_the_caller_with_an_error() {
-        use crate::a2a::TaskState;
-        use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
         let mut app = super::A2aApp::new();
         let now = Instant::now();
         for index in 0..10 * tuning::TASKS_CAP {
@@ -1325,7 +1322,7 @@ mod tests {
 
         assert_eq!(
             app.tasks[&task_id].state,
-            crate::a2a::TaskState::Working,
+            TaskState::Working,
             "a late cancel leaves the task working"
         );
         assert!(
