@@ -24,6 +24,7 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
         id: "frame-id",
         mesh: "mesh",
         author: "alice-bot",
+        author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
         peer: "calm-otter",
         task_id: "task-id",
         state: None,
@@ -56,6 +57,15 @@ fn sid() -> habilis_network::protocol::MeshId {
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
+/// The key of the test peer called `name`: a label picks the key, and two names give two keys.
+fn test_key(name: &str) -> habilis_network::protocol::AuthorKey {
+    let mut bytes = [0_u8; 32];
+    for (slot, byte) in bytes.iter_mut().zip(name.bytes().cycle()) {
+        *slot = byte;
+    }
+    habilis_network::protocol::AuthorKey::from(bytes)
+}
+
 fn view(message: Message) -> Authored {
     Verified::fixture_unchecked(message, habilis_network::protocol::AuthorKey::from([0; 32]))
         .authored()
@@ -86,7 +96,7 @@ fn chat_frame(author: &str, text: &str) -> Authored {
 #[test]
 fn json_message_has_all_fields() {
     let message = chat_frame("alice", "hello");
-    let json = format_msg_json(&message, false);
+    let json = format_msg_json(&message, false, None);
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message", "the event field is message");
     assert_eq!(parsed["type"], "broadcast", "the type field is broadcast");
@@ -129,7 +139,7 @@ fn json_signed_message_exposes_full_pubkey() {
     // (hex) in the JSON event — the identity behind the display nickname.
     let identity = habilis_network::protocol::Identity::generate();
     let message = chat_frame_raw("alice", "hi").sign(&identity).authored();
-    let parsed = parse(&format_msg_json(&message, false));
+    let parsed = parse(&format_msg_json(&message, false, None));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
     assert_eq!(
         pubkey,
@@ -187,14 +197,14 @@ fn fork_event_json_shape() {
 #[test]
 fn json_self_flag_true() {
     let message = chat_frame("alice", "hi");
-    let parsed = parse(&format_msg_json(&message, true));
+    let parsed = parse(&format_msg_json(&message, true, None));
     assert_eq!(parsed["self"], true, "the self field is true");
 }
 
 #[test]
 fn json_body_escapes_quotes() {
     let message = chat_frame("alice", r#"say "hello""#);
-    let json = format_msg_json(&message, false);
+    let json = format_msg_json(&message, false, None);
     let parsed = parse(&json);
     assert_eq!(
         parsed["body"], r#"say "hello""#,
@@ -205,7 +215,7 @@ fn json_body_escapes_quotes() {
 #[test]
 fn json_body_escapes_backslashes() {
     let message = chat_frame("alice", r"path\to\file");
-    let json = format_msg_json(&message, false);
+    let json = format_msg_json(&message, false, None);
     let parsed = parse(&json);
     assert_eq!(
         parsed["body"], r"path\to\file",
@@ -272,7 +282,7 @@ fn status_frame_raw(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Messag
         },
     );
     let body = status_update_params::payload_body(&update).expect("payload serializes");
-    let kind = MessageKind::app_to(wire::STATUS, nick(to), None);
+    let kind = MessageKind::app_to(wire::STATUS, test_key(to), None);
     Message::new_frame(&sid(), &nick(author), kind, body)
 }
 
@@ -298,6 +308,7 @@ fn task_event_json_shape() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
+        to_name: Some(nick("calm-otter")),
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -346,6 +357,7 @@ fn task_self_echo_flag() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: true,
+        to_name: Some(nick("calm-otter")),
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -378,6 +390,7 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
         let json = simple_event::event_json(&OutputEvent::Task {
             message: Box::new(message),
             is_self: false,
+            to_name: Some(nick("drift-oak")),
         })
         .expect("task event produces a JSON line");
         parse(&json)
@@ -413,6 +426,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
+        to_name: Some(nick("drift-oak")),
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -439,6 +453,7 @@ fn task_progress_event_json_shape() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
+        to_name: Some(nick("drift-oak")),
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);
@@ -630,7 +645,7 @@ fn receipt_event_is_invisible_and_stamped_so() {
 #[test]
 fn json_output_is_single_line() {
     let msgs: Vec<String> = vec![
-        format_msg_json(&chat_frame("alice", "hello world"), false),
+        format_msg_json(&chat_frame("alice", "hello world"), false, None),
         format_presence_json(
             &view(Message::new_joined(&sid(), &nick("charlie"))),
             PresenceSubtype::Joined,
@@ -653,7 +668,7 @@ mod snapshots {
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
-    use super::{format_msg_json, format_presence_json, view};
+    use super::{format_msg_json, format_presence_json, nick, test_key, view};
     use crate::a2a::{status_update_params, wire};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
@@ -690,14 +705,10 @@ mod snapshots {
         }
         let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
-            MessageKind::app_to(
-                wire::STATUS,
-                habilis_network::protocol::Nickname::from("calm-otter"),
-                None,
-            ),
+            MessageKind::app_to(wire::STATUS, test_key("calm-otter"), None),
             body.as_str(),
         );
-        super::super::simple_event::format_task_json(&frame, false)
+        super::super::simple_event::format_task_json(&frame, false, Some(&nick("calm-otter")))
     }
 
     #[test]
@@ -729,14 +740,14 @@ mod snapshots {
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
         let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
-            MessageKind::app_to(
-                wire::ARTIFACT,
-                habilis_network::protocol::Nickname::from("calm-otter"),
-                None,
-            ),
+            MessageKind::app_to(wire::ARTIFACT, test_key("calm-otter"), None),
             body.as_str(),
         );
-        insta::assert_snapshot!(super::super::simple_event::format_task_json(&frame, false));
+        insta::assert_snapshot!(super::super::simple_event::format_task_json(
+            &frame,
+            false,
+            Some(&nick("calm-otter"))
+        ));
     }
 
     /// A deterministic chat frame for snapshots: the payload's random
@@ -765,11 +776,7 @@ mod snapshots {
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = status_update_params::payload_body(&payload).expect("payload serializes");
         Message::fixture(
-            MessageKind::app_to(
-                wire::MSG,
-                habilis_network::protocol::Nickname::from("addressed-nick"),
-                None,
-            ),
+            MessageKind::app_to(wire::MSG, test_key("addressed-nick"), None),
             body.as_str(),
         )
     }
@@ -780,7 +787,11 @@ mod snapshots {
 
     #[test]
     fn snap_broadcast_message() {
-        insta::assert_snapshot!(format_msg_json(&snap_chat_frame("What is Rust?"), false));
+        insta::assert_snapshot!(format_msg_json(
+            &snap_chat_frame("What is Rust?"),
+            false,
+            None
+        ));
     }
 
     /// Pins the two fields that separate a private line from a public one:
@@ -789,7 +800,8 @@ mod snapshots {
     fn snap_msg_message() {
         insta::assert_snapshot!(format_msg_json(
             &snap_msg_frame("Rust is a systems language."),
-            false
+            false,
+            Some(&nick("addressed-nick"))
         ));
     }
 
@@ -980,7 +992,7 @@ mod prop {
         ) {
             let expected = body_text.clone();
             let message = super::chat_frame(author.as_str(), &body_text);
-            let json = format_msg_json(&message, is_self);
+            let json = format_msg_json(&message, is_self, None);
             let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(parsed["body"].as_str().expect("the JSON field is a string in this test"), expected.as_str());
             prop_assert_eq!(

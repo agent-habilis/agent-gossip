@@ -1,5 +1,5 @@
 use habilis_network::embed::{EventLoopState, HandlerCtx};
-use habilis_network::protocol::{MessageBody, MessageKind, Nickname};
+use habilis_network::protocol::{AuthorKey, MessageBody, MessageKind};
 use serde::{Deserialize, Serialize};
 
 use crate::a2a::a2a_app::A2aApp;
@@ -28,7 +28,7 @@ pub(crate) struct Receipt {
 pub(crate) async fn send_receipt(
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-    to: &Nickname,
+    to: &AuthorKey,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
     let outcome = send_sealed(state, context, to, receipt).await;
@@ -47,7 +47,7 @@ pub(crate) async fn send_read_receipts(
     context: &HandlerCtx<'_>,
     after: Option<u64>,
 ) {
-    for (to, ref_id) in app.surfaced.read_targets(after, context.author) {
+    for (to, ref_id) in app.surfaced.read_targets(after, &context.our_pubkey) {
         let receipt = Receipt {
             ref_id,
             state: ReceiptState::Read,
@@ -61,14 +61,17 @@ pub(crate) async fn send_read_receipts(
 async fn send_sealed(
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-    to: &Nickname,
+    to: &AuthorKey,
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
     let plain = MessageBody::try_new(&serde_json::to_string(receipt)?)?;
-    let body = seal_directed(state, to, &plain)?;
+    let Some(name) = state.nickname_of(to) else {
+        anyhow::bail!("cannot seal a receipt to a key that is not live");
+    };
+    let body = seal_directed(state, &name, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::RECEIPT),
-        to: Some(to.clone()),
+        to: Some(*to),
         corr: None,
     };
     send_directed_rpc(

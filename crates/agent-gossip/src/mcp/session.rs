@@ -315,7 +315,7 @@ mod tests {
     fn is_self_echo(event: &crate::emission::OutputEvent, sent: &MessageId) -> bool {
         matches!(
             event,
-            crate::emission::OutputEvent::Message { message, is_self }
+            crate::emission::OutputEvent::Message { message, is_self, .. }
                 if *is_self && message.id == *sent
         )
     }

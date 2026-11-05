@@ -8,7 +8,7 @@ use habilis_network::embed::{
 };
 use habilis_network::ops::{Delivered, deliver};
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, Message, MessageBody, MessageId, Nickname,
+    AppFrameParams, AppTag, AuthorKey, Message, MessageBody, MessageId, Nickname,
 };
 use serde::Serialize;
 
@@ -204,6 +204,7 @@ impl NodeApp for GossipDriver {
 
     async fn on_peer_left(
         &mut self,
+        _key: &AuthorKey,
         nickname: &Nickname,
         _state: &mut EventLoopState,
         _ctx: &HandlerCtx<'_>,

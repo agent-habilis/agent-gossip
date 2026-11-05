@@ -7,7 +7,7 @@ use habilis_network::net::add_peer_addr;
 use habilis_network::ops::{Farewell, MergeCtx, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
-    AppTag, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
+    AppTag, AuthorKey, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
@@ -61,18 +61,21 @@ impl NodeApp for A2aApp {
             };
             // Best effort: `send_receipt` logs its own failure, and a lost
             // receipt only leaves the sender without a delivery proof.
-            let _ = send_receipt(state, context, &message.author, &receipt).await;
+            let _ = send_receipt(state, context, &message.key(), &receipt).await;
         }
         routed.loggable
     }
 
     fn on_meta_applied(
         &mut self,
-        author: &Nickname,
+        author: &AuthorKey,
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) {
-        adopt_meta_endpoint(author, state, context);
+        let Some(nickname) = state.nickname_of(author) else {
+            return;
+        };
+        adopt_meta_endpoint(&nickname, state, context);
     }
 
     async fn on_meshed(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
@@ -85,6 +88,7 @@ impl NodeApp for A2aApp {
 
     async fn on_peer_left(
         &mut self,
+        key: &AuthorKey,
         nickname: &Nickname,
         _state: &mut EventLoopState,
         _ctx: &HandlerCtx<'_>,
@@ -93,8 +97,8 @@ impl NodeApp for A2aApp {
         // self` passed alongside it. Tasks first, then waiters: a waiter must
         // never resolve while its task record is still live.
         let out = self.output.clone();
-        task_record::fail_tasks_for_departed_peer(&mut self.tasks, nickname, &out);
-        self.fail_a2a_waiters_for_peer(nickname);
+        task_record::fail_tasks_for_departed_peer(&mut self.tasks, key, &out);
+        self.fail_a2a_waiters_for_peer((key, nickname));
     }
 }
 
@@ -605,7 +609,7 @@ fn route_content(
         },
         (wire::MSG, Some(to)) => {
             let fresh_for_us = surfaceable
-                && to == context.author
+                && *to == context.our_pubkey
                 && !is_replayed_chat(&app.surfaced_chat, message);
             let loggable = surface_chat(message, surfaceable, app, |out, surface| {
                 handle_msg(
@@ -614,7 +618,8 @@ fn route_content(
                         message,
                         to,
                         surfaceable: surface,
-                        self_author: context.author,
+                        self_key: &context.our_pubkey,
+                        self_name: context.author,
                     },
                 )
             });
@@ -639,7 +644,7 @@ fn route_content(
             }
         }
         (wire::RECEIPT, Some(to)) => {
-            if to == context.author {
+            if *to == context.our_pubkey {
                 surface_receipt(message, app);
             }
             Routed::default()
@@ -666,7 +671,7 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
     };
     if !app
         .sent_refs
-        .contains(&(receipt.ref_id.clone(), message.author.clone()))
+        .contains(&(receipt.ref_id.clone(), message.key()))
     {
         tracing::debug!(
             target: "agent_gossip::a2a",
@@ -693,7 +698,7 @@ fn surface_receipt(message: &Authored, app: &A2aApp) {
 #[derive(Clone, Copy)]
 struct TaskLegParams<'caller> {
     message: &'caller Authored,
-    to: &'caller Nickname,
+    to: &'caller AuthorKey,
     surfaceable: bool,
 }
 
@@ -710,7 +715,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
     let mut replay = false;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
-    if to == context.author
+    if *to == context.our_pubkey
         && let Some(task_id) = status_update_params::frame_task_id(message)
     {
         // …and being the addressee is not enough: the leg must come from the
@@ -722,7 +727,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         if app
             .tasks
             .get(&task_id)
-            .is_some_and(|rec| rec.peer != message.author)
+            .is_some_and(|rec| rec.peer_key != message.key())
         {
             return Routed::default();
         }
@@ -768,13 +773,14 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
             message,
             to,
             surfaceable: surface,
-            self_author: context.author,
+            self_key: &context.our_pubkey,
+            self_name: context.author,
         },
     );
     // A beat is liveness plumbing and never logged, so it earns no receipt.
     Routed {
         loggable,
-        fresh_for_us: surfaceable && to == context.author && loggable && !replay,
+        fresh_for_us: surfaceable && *to == context.our_pubkey && loggable && !replay,
     }
 }
 
@@ -817,7 +823,7 @@ fn is_replayed_chat(surfaced: &BoundedFifoSet<DedupKey>, message: &Authored) -> 
 fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: bool) -> bool {
     if message.kind.is_app(wire::BROADCAST) {
         if surfaceable {
-            out.print_message(message);
+            out.print_message(message, None);
         }
         true
     } else {
@@ -829,12 +835,13 @@ fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: boo
 #[derive(Clone, Copy)]
 struct MsgParams<'caller> {
     message: &'caller Authored,
-    to: &'caller Nickname,
+    to: &'caller AuthorKey,
     surfaceable: bool,
-    self_author: &'caller Nickname,
+    self_key: &'caller AuthorKey,
+    self_name: &'caller Nickname,
 }
 
-/// A msg: printed and logged **only by its addressee** (`to == self_author`).
+/// A msg: printed and logged **only by its addressee** (`to == self_key`).
 /// Anyone else is a relay: it forwards the frame and returns `false` here, so
 /// the msg never reaches that peer's transcript or poll buffer.
 ///
@@ -858,13 +865,14 @@ fn handle_msg(out: &emission::Output, params: MsgParams<'_>) -> bool {
         message,
         to,
         surfaceable,
-        self_author,
+        self_key,
+        self_name,
     } = params;
-    if to != self_author {
+    if to != self_key {
         return false;
     }
     if surfaceable {
-        out.print_message(message);
+        out.print_message(message, Some(self_name));
     }
     true
 }
@@ -873,12 +881,13 @@ fn handle_msg(out: &emission::Output, params: MsgParams<'_>) -> bool {
 #[derive(Clone, Copy)]
 struct TaskDisplayParams<'caller> {
     message: &'caller Authored,
-    to: &'caller Nickname,
+    to: &'caller AuthorKey,
     surfaceable: bool,
-    self_author: &'caller Nickname,
+    self_key: &'caller AuthorKey,
+    self_name: &'caller Nickname,
 }
 
-/// A task leg: surfaced + logged only by the addressee (`to == self_author`)
+/// A task leg: surfaced + logged only by the addressee (`to == self_key`)
 /// and, via the sender's echo path, the sender itself — third parties relay it
 /// without retaining. Returns whether to **log** (content legs only — a beat
 /// status is liveness plumbing, surfaced as a `task_progress` widget event but
@@ -889,13 +898,14 @@ fn handle_task(out: &emission::Output, params: TaskDisplayParams<'_>) -> bool {
         message,
         to,
         surfaceable,
-        self_author,
+        self_key,
+        self_name,
     } = params;
-    if to != self_author {
+    if to != self_key {
         return false;
     }
     if surfaceable {
-        out.print_task(message, false);
+        out.print_task(message, false, Some(self_name));
     }
     // Content legs log; a liveness beat (a status marked `mesh:beat`) is
     // plumbing — surfaced as a `task_progress` widget event but never retained.
@@ -922,7 +932,7 @@ async fn handle_a2a_rpc(
     else {
         return;
     };
-    if to != context.author {
+    if *to != context.our_pubkey {
         return;
     }
     let tag = tag.as_str();
@@ -934,13 +944,17 @@ async fn handle_a2a_rpc(
     }
     if tag == wire::REQ {
         handle_a2a_req(A2aReqParams { message, corr }, state, app, context).await;
-    } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.author) {
+    } else if tag == wire::RESP && app.has_a2a_waiter(corr, &message.key()) {
         // Only act on a response to a call WE actually issued (a matching
         // outstanding waiter). An unsolicited response is ignored — otherwise
         // any member could inject phantom initiator-side task records by forging
         // responses. The waiter adopts the authoritative `Task` a `SendMessage`
         // returned.
-        app.fulfill_a2a_waiter(corr, &message.author, message.body.as_str());
+        app.fulfill_a2a_waiter(
+            corr,
+            (&message.key(), &message.author),
+            message.body.as_str(),
+        );
     }
 }
 
@@ -963,13 +977,14 @@ async fn handle_a2a_req(
 ) {
     use crate::a2a::served::Served;
     let A2aReqParams { message, corr } = request;
+    let requester_key = message.key();
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
     let outcome: Result<serde_json::Value, RpcError> =
         match serde_json::from_str::<serde_json::Value>(message.body.as_str()) {
             Ok(envelope) => {
                 let method = envelope["method"].as_str().unwrap_or_default();
-                match served::classify(method, &envelope["params"], &requester, app) {
+                match served::classify(method, &envelope["params"], &requester_key, app) {
                     Served::Op(op) => {
                         let out = app.output.clone();
                         rpc_error::handle_op(
@@ -990,14 +1005,14 @@ async fn handle_a2a_req(
                         .await
                     }
                     Served::Ingest(payload) => {
-                        ingest_remote_message(&payload, &requester, app, context)
+                        ingest_remote_message(&payload, (&requester_key, &requester), app, context)
                     }
                     Served::ShardRepair { group, missing } => {
                         resend_cached_shards(
                             ShardRepairParams {
                                 group: &group,
                                 missing: &missing,
-                                requester: &requester,
+                                requester: &requester_key,
                             },
                             state,
                             context,
@@ -1038,7 +1053,7 @@ async fn handle_a2a_req(
     };
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::RESP),
-        to: Some(requester),
+        to: Some(requester_key),
         corr: Some(corr.clone()),
     };
     // Directed reply over the shared RPC sender: unicast, transparently
@@ -1064,7 +1079,7 @@ async fn handle_a2a_req(
 struct ShardRepairParams<'caller> {
     group: &'caller habilis_network::protocol::ShardGroup,
     missing: &'caller [u32],
-    requester: &'caller Nickname,
+    requester: &'caller AuthorKey,
 }
 
 /// Serve a `shard/repair` ask: re-deliver the named cached frames of one of our
@@ -1117,7 +1132,7 @@ async fn resend_cached_shards(
 /// coarse machine, surface the message to our skill, and return the
 /// authoritative `Task`.
 /// Refusal for an offer the registry has no room for, or `None` to admit.
-fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<RpcError> {
+fn task_admission_error(app: &A2aApp, requester: &AuthorKey) -> Option<RpcError> {
     use crate::a2a::task_record::Admission;
     use crate::a2a::tuning::{TASKS_CAP, TASKS_PER_PEER_CAP};
     // A2A has no "too many tasks" error, so this is an application code in the
@@ -1141,7 +1156,7 @@ fn task_admission_error(app: &A2aApp, requester: &Nickname) -> Option<RpcError> 
 
 fn ingest_remote_message(
     payload: &crate::a2a::Message,
-    requester: &Nickname,
+    (requester_key, requester): (&AuthorKey, &Nickname),
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
 ) -> Result<serde_json::Value, RpcError> {
@@ -1161,7 +1176,7 @@ fn ingest_remote_message(
                     "SendMessage names a taskId with no task on this peer",
                 ));
             }
-            Some(rec) if &rec.peer != requester => {
+            Some(rec) if rec.peer_key != *requester_key => {
                 return Err(RpcError {
                     code: -32003,
                     message: "not a party to the task named by taskId".to_string(),
@@ -1169,7 +1184,7 @@ fn ingest_remote_message(
             }
             Some(_) => {}
         }
-    } else if let Some(error) = task_admission_error(app, requester) {
+    } else if let Some(error) = task_admission_error(app, requester_key) {
         // An offer (no taskId) is the one registry entry a remote peer mints
         // directly. Refusing over the quota keeps `app.tasks` bounded and,
         // just as importantly, keeps the sweep's per-expiry work bounded: it
@@ -1181,7 +1196,8 @@ fn ingest_remote_message(
         &mut app.tasks,
         &LegInfo {
             task_id: &task_id,
-            peer: requester,
+            peer_key: requester_key,
+            peer: Some(requester),
             kind,
             mine: false,
             fraction: None,
@@ -1198,6 +1214,7 @@ fn ingest_remote_message(
         id: payload.message_id.as_str(),
         mesh: mesh_name,
         author: requester.as_str(),
+        author_key: *requester_key,
         peer: peer_name,
         task_id: task_id.as_str(),
         state: rec_state,
@@ -1238,7 +1255,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &
 mod classify_tests {
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
-        AppFrameParams, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
+        AppFrameParams, AuthorKey, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
@@ -1249,6 +1266,15 @@ mod classify_tests {
 
     fn mesh() -> MeshId {
         MeshId::from("test")
+    }
+
+    /// The key of the test peer called `name`: a label picks the key, and two names give two keys.
+    fn key(name: &str) -> AuthorKey {
+        let mut bytes = [0_u8; 32];
+        for (slot, byte) in bytes.iter_mut().zip(name.bytes().cycle()) {
+            *slot = byte;
+        }
+        AuthorKey::from(bytes)
     }
 
     /// The author's view of a test frame: signed by a throwaway key, then opened as a view.
@@ -1273,7 +1299,7 @@ mod classify_tests {
     // A well-formed broadcast chat frame: its frame id equals the payload's
     // messageId, so `broadcast_payload` accepts it — the `to` is the only
     // variable.
-    fn chat_frame_raw(to: Option<Nickname>) -> Message {
+    fn chat_frame_raw(to: Option<AuthorKey>) -> Message {
         let sw = mesh();
         let payload = status_update_params::compose_broadcast(&sw, "hi");
         let id = MessageId::try_new(payload.message_id.as_str())
@@ -1288,12 +1314,12 @@ mod classify_tests {
         .id(id)
     }
 
-    fn chat_frame(to: Option<Nickname>) -> Authored {
+    fn chat_frame(to: Option<AuthorKey>) -> Authored {
         view(chat_frame_raw(to))
     }
 
     // The directed twin of [`chat_frame`]: a well-formed msg, `to` the variable.
-    fn msg_frame_raw(to: Option<Nickname>) -> Message {
+    fn msg_frame_raw(to: Option<AuthorKey>) -> Message {
         let sw = mesh();
         let payload = status_update_params::compose_msg(&sw, "hi");
         let id = MessageId::try_new(payload.message_id.as_str())
@@ -1308,20 +1334,20 @@ mod classify_tests {
         .id(id)
     }
 
-    fn msg_frame(to: Option<Nickname>) -> Authored {
+    fn msg_frame(to: Option<AuthorKey>) -> Authored {
         view(msg_frame_raw(to))
     }
 
     // A well-formed task-status frame (its payload's contextId names the mesh).
-    fn status_frame(to: Option<Nickname>) -> Authored {
+    fn status_frame(to: Option<AuthorKey>) -> Authored {
         status_frame_in(TaskState::Working, to)
     }
 
-    fn status_frame_in_raw(state: TaskState, to: Option<Nickname>) -> Message {
+    fn status_frame_in_raw(state: TaskState, to: Option<AuthorKey>) -> Message {
         status_update_params::test_status_frame(&mesh(), state, to)
     }
 
-    fn status_frame_in(state: TaskState, to: Option<Nickname>) -> Authored {
+    fn status_frame_in(state: TaskState, to: Option<AuthorKey>) -> Authored {
         view(status_frame_in_raw(state, to))
     }
 
@@ -1329,6 +1355,7 @@ mod classify_tests {
         OutputEvent::Task {
             message: Box::new(message),
             is_self,
+            to_name: None,
         }
     }
 
@@ -1337,6 +1364,7 @@ mod classify_tests {
             id: String::from("m"),
             mesh: String::from("sw"),
             author: String::from("initiator"),
+            author_key: key("initiator"),
             peer: String::from("worker"),
             task_id: String::from("t"),
             state: Some(TaskState::Working),
@@ -1352,16 +1380,16 @@ mod classify_tests {
     // which made the Stop hook refuse the turn. The peer's legs still wake.
     #[test]
     fn no_self_task_echo_wakes_the_bell() {
-        let to = Some(Nickname::from("initiator"));
+        let to = Some(key("initiator"));
         for state in [
             TaskState::Working,
             TaskState::InputRequired,
             TaskState::Completed,
             TaskState::Failed,
         ] {
-            let own = task_event(status_frame_in(state, to.clone()), true);
+            let own = task_event(status_frame_in(state, to), true);
             assert!(!wakes(&own), "own {state:?} echo is quiet");
-            let peer = task_event(status_frame_in(state, to.clone()), false);
+            let peer = task_event(status_frame_in(state, to), false);
             assert!(wakes(&peer), "a peer's {state:?} status still wakes");
         }
 
@@ -1401,7 +1429,7 @@ mod classify_tests {
         assert!(!wakes(&receipt_event()), "a receipt does not wake the bell");
     }
 
-    fn receipt_frame_raw(to: Option<Nickname>, body: &str) -> Message {
+    fn receipt_frame_raw(to: Option<AuthorKey>, body: &str) -> Message {
         Message::new_app(
             &mesh(),
             &Nickname::from("author"),
@@ -1414,21 +1442,21 @@ mod classify_tests {
         )
     }
 
-    fn receipt_frame(to: Option<Nickname>, body: &str) -> Authored {
+    fn receipt_frame(to: Option<AuthorKey>, body: &str) -> Authored {
         view(receipt_frame_raw(to, body))
     }
 
     #[test]
     fn a_receipt_is_valid_only_when_directed_with_a_parseable_body() {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
-        let directed = classify(&receipt_frame(Some(Nickname::from("peer")), body));
+        let directed = classify(&receipt_frame(Some(key("peer")), body));
         assert!(
             directed.valid() && directed.sealed() && !directed.loggable(),
             "a directed chat is valid, sealed and not loggable"
         );
         assert!(!classify(&receipt_frame(None, body)).valid(), "broadcast");
         assert!(
-            !classify(&receipt_frame(Some(Nickname::from("peer")), "{}")).valid(),
+            !classify(&receipt_frame(Some(key("peer")), "{}")).valid(),
             "no ref or state"
         );
     }
@@ -1448,7 +1476,7 @@ mod classify_tests {
             &Nickname::from("author"),
             AppFrameParams::new(
                 wire::app_tag(wire::STATUS),
-                Some(Nickname::from("initiator")),
+                Some(key("initiator")),
                 None,
                 status_update_params::payload_body(&status).expect("the test payload has a body"),
             ),
@@ -1627,7 +1655,7 @@ mod classify_tests {
     // gaps in the author's chain — which fork detection reads as a fork.
     #[test]
     fn dm_is_loggable_and_sealed_but_never_chained() {
-        let dm = classify(&msg_frame(Some(Nickname::from("bob"))));
+        let dm = classify(&msg_frame(Some(key("bob"))));
         assert!(dm.loggable(), "a msg is retained");
         assert!(dm.sealed(), "a msg is sealed to its addressee");
         assert!(!dm.chained(), "a msg must not join the cross-author chain");
@@ -1680,7 +1708,7 @@ mod classify_tests {
     // every peer.
     #[test]
     fn directed_broadcast_is_invalid() {
-        let cls = classify(&chat_frame(Some(Nickname::from("bob"))));
+        let cls = classify(&chat_frame(Some(key("bob"))));
         assert!(
             !cls.valid(),
             "a2a_broadcast is broadcast-only; a directed one must not cross the gate"
@@ -1709,12 +1737,7 @@ mod classify_tests {
         let frame = Message::new_app(
             &sw,
             &Nickname::from("author"),
-            AppFrameParams::new(
-                wire::app_tag(wire::MSG),
-                Some(Nickname::from("bob")),
-                None,
-                body,
-            ),
+            AppFrameParams::new(wire::app_tag(wire::MSG), Some(key("bob")), None, body),
         )
         .id(id);
         assert!(
@@ -1727,7 +1750,7 @@ mod classify_tests {
     #[test]
     fn legitimate_addressing_stays_valid() {
         assert!(
-            classify(&status_frame(Some(Nickname::from("bob")))).valid(),
+            classify(&status_frame(Some(key("bob")))).valid(),
             "a directed status is valid"
         );
         assert!(
@@ -1735,7 +1758,7 @@ mod classify_tests {
             "a broadcast chat message is valid"
         );
         assert!(
-            classify(&msg_frame(Some(Nickname::from("bob")))).valid(),
+            classify(&msg_frame(Some(key("bob")))).valid(),
             "a directed chat message is valid"
         );
     }

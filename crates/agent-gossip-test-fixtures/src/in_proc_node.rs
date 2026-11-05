@@ -617,7 +617,10 @@ impl InProcNode {
     pub fn tasks(&mut self) -> impl Iterator<Item = (&Authored, bool)> + '_ {
         self.pump();
         self.drained.iter().filter_map(|event| {
-            if let OutputEvent::Task { message, is_self } = event {
+            if let OutputEvent::Task {
+                message, is_self, ..
+            } = event
+            {
                 Some((&**message, *is_self))
             } else {
                 None
@@ -748,6 +751,7 @@ impl InProcNode {
             if let OutputEvent::Message {
                 message,
                 is_self: false,
+                ..
             } = event
             {
                 Some(&**message)
@@ -764,7 +768,7 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { message, is_self: false }
+                    OutputEvent::Message { message, is_self: false, .. }
                         if status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
@@ -793,7 +797,7 @@ impl InProcNode {
             .filter(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { message, is_self: false }
+                    OutputEvent::Message { message, is_self: false, .. }
                         if status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })

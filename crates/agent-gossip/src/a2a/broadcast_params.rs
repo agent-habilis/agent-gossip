@@ -13,8 +13,8 @@ use habilis_network::ops::{
 };
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
-    AppFrameParams, Channel, ContentHash, Identity, MeshId, Message, MessageBody, MessageId,
-    MessageKind, Nickname, Shard, ShardGroup, reassembly,
+    AppFrameParams, AuthorKey, Channel, ContentHash, Identity, MeshId, Message, MessageBody,
+    MessageId, MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
 use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
@@ -63,7 +63,8 @@ fn commit_outbound_part(
     state.advance_chain(hash);
     state.note_dag(hash, &message.parents, message.timestamp);
     if echo {
-        out.print_message_ex(&message.authored(), true);
+        let authored = message.authored();
+        out.print_message_ex(&authored, true, addressee_name(state, &authored).as_ref());
     }
     retain_outbound(state, message);
 }
@@ -598,7 +599,7 @@ async fn send_single_broadcast(
             .ok_or_else(|| {
                 anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
             })?;
-        out.print_message_ex(&plain, true);
+        out.print_message_ex(&plain, true, addressee_name(state, &plain).as_ref());
         return Ok((id, plain));
     }
     send_msg_part(
@@ -682,7 +683,7 @@ pub(crate) async fn send_broadcast(
     )?;
     let (header, group) = shards.send(state, sender, out).await?;
     let logical = reassembly::synthesize_from(&header, body.plain, &group);
-    out.print_message_ex(&logical, true);
+    out.print_message_ex(&logical, true, addressee_name(state, &logical).as_ref());
     Ok((logical.id.clone(), logical))
 }
 
@@ -848,16 +849,43 @@ async fn broadcast_directed_frame(
     let pending = queue_sharded_leg(app, frames, cache, shard_pending);
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
-    let pending = echo_when_sent(out, echo.clone(), echo_as, pending);
+    let addressee = addressee_name(state, &echo);
+    let own_echo = OwnEcho {
+        message: echo.clone(),
+        echo_as,
+        addressee,
+    };
+    let pending = echo_when_sent(out, own_echo, pending);
     let pending = ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending);
     Ok((logical.id.clone(), logical, pending))
 }
 
+/// The one live key that uses `peer`. A shared name has no key, so the send is refused.
+pub(crate) fn peer_key(state: &EventLoopState, peer: &Nickname) -> anyhow::Result<AuthorKey> {
+    state
+        .key_of(peer)
+        .map_err(|error| anyhow::anyhow!("cannot address '{peer}': {error}"))
+}
+
+/// The addressee's name for a directed line, read from the roster at print time. `None` for a
+/// broadcast, or when the addressee is not live.
+pub(crate) fn addressee_name(state: &EventLoopState, message: &Authored) -> Option<Nickname> {
+    let MessageKind::App { to: Some(key), .. } = &message.kind else {
+        return None;
+    };
+    state.nickname_of(key)
+}
+
 /// Print a directed leg's self-echo down the surface its kind belongs to.
-fn print_echo(out: &emission::Output, echo: &Authored, echo_as: EchoAs) {
+fn print_echo(
+    out: &emission::Output,
+    echo: &Authored,
+    echo_as: EchoAs,
+    addressee: Option<&Nickname>,
+) {
     match echo_as {
-        EchoAs::Task => out.print_task(echo, true),
-        EchoAs::Chat => out.print_message_ex(echo, true),
+        EchoAs::Task => out.print_task(echo, true, addressee),
+        EchoAs::Chat => out.print_message_ex(echo, true, addressee),
     }
 }
 
@@ -1128,7 +1156,7 @@ pub(crate) async fn broadcast_task_status(
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::STATUS),
-        to: Some(peer.clone()),
+        to: Some(peer_key(state, peer)?),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1224,7 +1252,7 @@ pub(crate) async fn send_msg(
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::MSG),
-        to: Some(peer.clone()),
+        to: Some(peer_key(state, peer)?),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1298,7 +1326,7 @@ pub(crate) async fn broadcast_task_artifact(
     let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::ARTIFACT),
-        to: Some(peer.clone()),
+        to: Some(peer_key(state, peer)?),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1521,7 +1549,7 @@ async fn send_directed_leg(
             Delivered::Done => {
                 retain_leg(state, message, content);
                 if let Some(echo) = echo {
-                    print_echo(out, echo, echo_as);
+                    print_echo(out, echo, echo_as, addressee_name(state, echo).as_ref());
                 }
                 Ok(None)
             }
@@ -1532,7 +1560,15 @@ async fn send_directed_leg(
                     pending
                 };
                 let pending = match echo {
-                    Some(echo) => echo_when_sent(out, echo.clone(), echo_as, vec![pending]),
+                    Some(echo) => {
+                        let addressee = addressee_name(state, echo);
+                        let own_echo = OwnEcho {
+                            message: echo.clone(),
+                            echo_as,
+                            addressee,
+                        };
+                        echo_when_sent(out, own_echo, vec![pending])
+                    }
                     None => vec![pending],
                 };
                 Ok(pending.into_iter().next())
@@ -1543,7 +1579,7 @@ async fn send_directed_leg(
         // Buffered until the meshed edge flushes it through the send decision.
         retain_leg(state, message, content);
         if let Some(echo) = echo {
-            print_echo(out, echo, echo_as);
+            print_echo(out, echo, echo_as, addressee_name(state, echo).as_ref());
         }
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
@@ -1642,18 +1678,30 @@ pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
     }
 }
 
+/// An own line to print once its sends succeed: the plaintext twin of the frame, the surface it
+/// goes down, and the addressee's name as the roster gave it when the line was sent.
+struct OwnEcho {
+    message: Authored,
+    echo_as: EchoAs,
+    addressee: Option<Nickname>,
+}
+
 /// Print `echo` once the sends in `pending` all succeed, and give the verdict on
 /// to the caller. A failed send prints nothing: the sender must not read a
 /// message that never arrived as sent. With nothing pending the verdict is known
 /// now, and the echo prints at once.
 fn echo_when_sent(
     out: &emission::Output,
-    echo: Authored,
-    echo_as: EchoAs,
+    echo: OwnEcho,
     pending: Vec<PendingSend>,
 ) -> Vec<PendingSend> {
+    let OwnEcho {
+        message,
+        echo_as,
+        addressee,
+    } = echo;
     if pending.is_empty() {
-        print_echo(out, &echo, echo_as);
+        print_echo(out, &message, echo_as, addressee.as_ref());
         return pending;
     }
     let out = out.clone();
@@ -1661,7 +1709,7 @@ fn echo_when_sent(
     tokio::spawn(async move {
         let verdict = settle(pending).await;
         if verdict.is_ok() {
-            print_echo(&out, &echo, echo_as);
+            print_echo(&out, &message, echo_as, addressee.as_ref());
         }
         let _ = verdict_tx.send(verdict);
     });
@@ -1673,7 +1721,7 @@ fn echo_when_sent(
 /// body is sealed to the addressee, so a status leg's state could not be read
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
-pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Message, task_id: &crate::a2a::TaskId) {
+pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Authored, task_id: &crate::a2a::TaskId) {
     task_record::ingest(
         &mut app.tasks,
         task_record::IngestLegParams {
@@ -1764,13 +1812,16 @@ pub(crate) async fn send_shard_repair_requests(
                 continue;
             }
         };
+        let Ok(author_key) = peer_key(state, &ticket.author) else {
+            continue;
+        };
         let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
         let frame = Message::new_app(
             mesh,
             author,
             AppFrameParams::new(
                 wire::app_tag(wire::REQ),
-                Some(ticket.author.clone()),
+                Some(author_key),
                 Some(corr),
                 sealed,
             ),
@@ -1856,6 +1907,13 @@ pub(crate) async fn broadcast_a2a_call(
         ));
         return;
     }
+    let Ok(peer_key) = state.key_of(&peer) else {
+        responder.send_response(&rpc_error(
+            -32602,
+            &format!("ambiguous or unknown peer '{peer}'"),
+        ));
+        return;
+    };
     let blob = match file {
         None => None,
         Some(file) => {
@@ -1872,7 +1930,7 @@ pub(crate) async fn broadcast_a2a_call(
     let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
     let blob_group = blob.map(|blob| blob.group);
     if let Some(message_id) = params["message"]["messageId"].as_str() {
-        app.note_sent_ref(message_id, &peer);
+        app.note_sent_ref(message_id, &peer_key);
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
@@ -1897,7 +1955,7 @@ pub(crate) async fn broadcast_a2a_call(
     let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::REQ),
-        to: Some(peer.clone()),
+        to: Some(peer_key),
         corr: Some(corr.clone()),
     };
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
@@ -1913,7 +1971,7 @@ pub(crate) async fn broadcast_a2a_call(
     let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
     if let Some(unregistered) = app.register_a2a_waiter(A2aWaiter {
         corr,
-        peer,
+        peer_key,
         deadline,
         responder,
         blob_group,
@@ -2454,7 +2512,7 @@ mod call_blob_group_tests {
     use std::collections::HashMap;
     use std::time::Instant;
 
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{AuthorKey, Nickname};
 
     use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
     use crate::a2a::{TaskId, TaskState};
@@ -2486,6 +2544,7 @@ mod call_blob_group_tests {
             &mut tasks,
             AdoptInitiatorParams {
                 task_id: &known,
+                peer_key: &AuthorKey::from([0xb0; 32]),
                 peer: &Nickname::from("bob"),
                 task_state: TaskState::Working,
                 now: Instant::now(),
@@ -2526,11 +2585,13 @@ mod call_blob_group_tests {
 #[cfg(test)]
 mod echo_when_sent_tests {
     use habilis_network::protocol::messages::Authored;
-    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use habilis_network::protocol::{
+        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
+    };
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::oneshot;
 
-    use super::{EchoAs, PendingSend, echo_when_sent};
+    use super::{EchoAs, OwnEcho, PendingSend, echo_when_sent};
     use crate::a2a::wire;
     use crate::emission;
     use crate::output_event::OutputEvent;
@@ -2545,7 +2606,7 @@ mod echo_when_sent_tests {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
-            MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
+            MessageKind::app_to(wire::MSG, AuthorKey::from([0xb0; 32]), None),
             MessageBody::try_new("hi").expect("valid body"),
         )
     }
@@ -2561,7 +2622,12 @@ mod echo_when_sent_tests {
         let (out, mut events) = emission::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
-        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        let own_echo = OwnEcho {
+            message: echo(),
+            echo_as: EchoAs::Chat,
+            addressee: None,
+        };
+        let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
         verdict_tx.send(Ok(())).expect("receiver is held");
         let verdict = pending.into_iter().next().expect("verdict handle");
         verdict
@@ -2577,7 +2643,12 @@ mod echo_when_sent_tests {
         let (out, mut events) = emission::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
-        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        let own_echo = OwnEcho {
+            message: echo(),
+            echo_as: EchoAs::Chat,
+            addressee: None,
+        };
+        let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
         verdict_tx
             .send(Err(anyhow::anyhow!("unicast dial failed")))
             .expect("receiver is held");
@@ -2596,7 +2667,9 @@ mod echo_when_sent_tests {
 #[cfg(test)]
 mod sharded_leg_tests {
     use habilis_network::protocol::messages::Verified;
-    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use habilis_network::protocol::{
+        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
+    };
     use tokio::sync::oneshot;
 
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
@@ -2611,7 +2684,7 @@ mod sharded_leg_tests {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
-            MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
+            MessageKind::app_to(wire::MSG, AuthorKey::from([0xb0; 32]), None),
             MessageBody::try_new(text).expect("valid body"),
         )
     }

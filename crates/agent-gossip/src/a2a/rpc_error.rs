@@ -80,7 +80,7 @@ pub(crate) enum A2aOp {
     /// `peer` — what a remote caller over gossip may see. `None` is the local
     /// binding, where the caller owns the daemon and sees every task.
     ListTasks {
-        peer: Option<Nickname>,
+        peer: Option<AuthorKey>,
     },
     CancelTask {
         task_id: TaskId,
@@ -186,13 +186,13 @@ pub(crate) fn parse_op(
 /// The `ListTasks` payload. `peer` scopes the listing to that counterparty's
 /// tasks — what a remote caller may see; `None` lists everything, for the
 /// local binding whose caller owns the daemon.
-fn list_tasks(app: &A2aApp, peer: Option<&Nickname>, mesh: &MeshId) -> Value {
+fn list_tasks(app: &A2aApp, peer: Option<&AuthorKey>, mesh: &MeshId) -> Value {
     // Sort by task id so the response order is stable across calls
     // (`app.tasks` is a HashMap with unspecified iteration order).
     let mut entries: Vec<(&TaskId, &TaskRecord)> = app
         .tasks
         .iter()
-        .filter(|(_, rec)| peer.is_none_or(|peer| rec.peer == *peer))
+        .filter(|(_, rec)| peer.is_none_or(|peer| rec.peer_key == *peer))
         .collect();
     entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
     let tasks: Vec<Value> = entries

@@ -168,14 +168,19 @@ impl Output {
         );
     }
 
-    pub(crate) fn print_message(&self, message: &Authored) {
-        self.print_message_ex(message, false);
+    pub(crate) fn print_message(&self, message: &Authored, addressee_name: Option<&Nickname>) {
+        self.print_message_ex(message, false, addressee_name);
     }
 
     /// Print a message with an optional self flag (for echo-back).
     /// When `filter_self` is enabled, self-authored messages are
     /// suppressed. Presence events should use `print_presence` instead.
-    pub(crate) fn print_message_ex(&self, message: &Authored, is_self: bool) {
+    pub(crate) fn print_message_ex(
+        &self,
+        message: &Authored,
+        is_self: bool,
+        addressee_name: Option<&Nickname>,
+    ) {
         if matches!(
             message.kind,
             MessageKind::PeerInfo
@@ -194,9 +199,10 @@ impl Output {
             || OutputEvent::Message {
                 message: Box::new(message.clone()),
                 is_self,
+                to_name: addressee_name.cloned(),
             },
             |mode| match mode {
-                OutputMode::Json => print_message_json(message, is_self),
+                OutputMode::Json => print_message_json(message, is_self, addressee_name),
                 OutputMode::Silent => {}
             },
         );
@@ -206,7 +212,12 @@ impl Output {
     /// Distinct top-level `task` event (not the `message` family) so skills
     /// branch on `event`. When `filter_self` is enabled, self-authored legs are
     /// suppressed.
-    pub(crate) fn print_task(&self, message: &Authored, is_self: bool) {
+    pub(crate) fn print_task(
+        &self,
+        message: &Authored,
+        is_self: bool,
+        addressee_name: Option<&Nickname>,
+    ) {
         // Only worker-pushed status/artifact frames surface as a `task` event.
         let MessageKind::App {
             tag, to: Some(_), ..
@@ -224,9 +235,10 @@ impl Output {
             || OutputEvent::Task {
                 message: Box::new(message.clone()),
                 is_self,
+                to_name: addressee_name.cloned(),
             },
             |mode| match mode {
-                OutputMode::Json => simple_event::print_task_json(message, is_self),
+                OutputMode::Json => simple_event::print_task_json(message, is_self, addressee_name),
                 OutputMode::Silent => {}
             },
         );
@@ -245,6 +257,7 @@ impl Output {
         let id = leg.id.to_owned();
         let mesh = leg.mesh.to_owned();
         let author = leg.author.to_owned();
+        let author_key = leg.author_key;
         let peer = leg.peer.to_owned();
         let task_id = leg.task_id.to_owned();
         let text = leg.text.to_owned();
@@ -255,6 +268,7 @@ impl Output {
                 id,
                 mesh,
                 author,
+                author_key,
                 peer,
                 task_id,
                 state,
