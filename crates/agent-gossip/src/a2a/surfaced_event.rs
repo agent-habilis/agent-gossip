@@ -175,14 +175,23 @@ impl SurfacedEvents {
     }
 }
 
-/// The bytes of body that a surfaced event holds. Only the events that carry a signed message
-/// or text count; the others are small and fixed in size.
+/// The bytes of body that a surfaced event holds, and of the document of a State change. Only
+/// the events that carry a signed message, text or a document count; the others are small and fixed in size.
 fn event_bytes(event: &OutputEvent) -> usize {
     match event {
         OutputEvent::Message { message, .. }
         | OutputEvent::Presence { message }
         | OutputEvent::Task { message, .. } => message.body.as_str().len(),
-        OutputEvent::StateChanged { event, .. } => event.body.as_str().len(),
+        OutputEvent::StateChanged {
+            event, document, ..
+        } => {
+            // A document that two events share is counted for each of them: the cap then holds
+            // fewer events than the memory allows, never more.
+            let document_bytes = document.as_ref().map_or(0, |document| {
+                serde_json::to_string(&**document).map_or(0, |text| text.len())
+            });
+            event.body.as_str().len() + document_bytes
+        }
         OutputEvent::TaskMessage { text, .. } => text.len(),
         OutputEvent::Info { message } | OutputEvent::Error { message } => message.len(),
         OutputEvent::Ready { .. }
@@ -783,6 +792,37 @@ mod tests {
         assert_eq!(buffer.count(), 16, "the oldest events left");
         assert_eq!(buffer.latest_seq(), newest, "the newest event stays");
         assert_eq!(buffer.lost_to_bytes(), 144, "the loss is counted");
+    }
+
+    /// A State change keeps the whole document in the ring, so the byte cap counts it.
+    #[test]
+    fn the_ring_counts_the_document_of_a_state_change() {
+        const MIB: usize = 1024 * 1024;
+        let mut buffer = SurfacedEvents::with_byte_cap(1000, 4 * MIB);
+        for _ in 0..40 {
+            let document = serde_json::json!({ "notes": "x".repeat(MIB) });
+            buffer.push(OutputEvent::StateChanged {
+                channel: Channel::State,
+                event: Box::new(
+                    Message::fixture(MessageKind::State, "{}")
+                        .sign(&habilis_network::protocol::Identity::generate())
+                        .authored(),
+                ),
+                document: Some(Arc::new(document)),
+                is_self: false,
+            });
+        }
+
+        assert!(
+            buffer.count() <= 4,
+            "40 documents of 1 MiB under a cap of 4 MiB: the ring holds {} events",
+            buffer.count()
+        );
+        assert!(
+            buffer.held_bytes() <= 4 * MIB,
+            "the ring holds {} bytes",
+            buffer.held_bytes()
+        );
     }
 
     #[test]
