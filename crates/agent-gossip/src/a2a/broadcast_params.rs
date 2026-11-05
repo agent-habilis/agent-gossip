@@ -939,14 +939,14 @@ pub(crate) async fn emit_task_status(
         app,
     } = params;
     let leg = WorkerLeg::parse(task_state, waiting)?;
-    let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
+    let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_status(
         BroadcastTaskStatusParams {
             mesh,
             author,
-            peer: &peer,
+            peer_key: &peer_key,
             task_id,
             leg,
             note,
@@ -1028,14 +1028,14 @@ pub(crate) async fn emit_task_artifact(
         file,
         app,
     } = params;
-    let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
+    let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_artifact(
         BroadcastTaskArtifactParams {
             mesh,
             author,
-            peer: &peer,
+            peer_key: &peer_key,
             task_id,
             text,
             file,
@@ -1090,7 +1090,7 @@ pub(crate) fn seal_directed(
 pub(crate) struct BroadcastTaskStatusParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
-    pub(crate) peer: &'caller Nickname,
+    pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
     pub(crate) leg: WorkerLeg<'caller>,
     pub(crate) note: Option<&'caller str>,
@@ -1130,7 +1130,7 @@ struct StatusLegParams<'caller> {
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
-/// payload and push it to `peer` fire-and-forget.
+/// payload and push it to the key `peer_key` fire-and-forget.
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
@@ -1143,7 +1143,7 @@ pub(crate) async fn broadcast_task_status(
     let BroadcastTaskStatusParams {
         mesh,
         author,
-        peer,
+        peer_key,
         task_id,
         leg,
         note,
@@ -1157,7 +1157,7 @@ pub(crate) async fn broadcast_task_status(
         waiting: leg.waiting(),
     });
     let plain = status_update_params::payload_body(&update)?;
-    let to = peer_key(state, peer)?;
+    let to = *peer_key;
     let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::STATUS),
@@ -1288,7 +1288,7 @@ pub(crate) async fn send_msg(
 pub(crate) struct BroadcastTaskArtifactParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
-    pub(crate) peer: &'caller Nickname,
+    pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
     pub(crate) text: &'caller str,
     pub(crate) file: Option<FileRef>,
@@ -1296,7 +1296,7 @@ pub(crate) struct BroadcastTaskArtifactParams<'caller> {
 }
 
 /// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
-/// artifact payload and push it to `peer` fire-and-forget.
+/// artifact payload and push it to the key `peer_key` fire-and-forget.
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
@@ -1309,7 +1309,7 @@ pub(crate) async fn broadcast_task_artifact(
     let BroadcastTaskArtifactParams {
         mesh,
         author,
-        peer,
+        peer_key,
         task_id,
         text,
         file,
@@ -1329,7 +1329,7 @@ pub(crate) async fn broadcast_task_artifact(
     .await?;
     let update = status_update_params::artifact_update_parts(mesh, task_id, parts);
     let plain = status_update_params::payload_body(&update)?;
-    let to = peer_key(state, peer)?;
+    let to = *peer_key;
     let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::ARTIFACT),
