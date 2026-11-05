@@ -141,7 +141,7 @@ pub(crate) struct A2aApp {
     orphan_blobs: Vec<OrphanBlob>,
     /// Tasks that a late reply opened after the caller was told the call
     /// timed out. The next task sweep cancels each one at its worker.
-    late_cancels: Vec<(TaskId, Nickname)>,
+    late_cancels: Vec<(TaskId, Nickname, &'static str)>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -385,7 +385,8 @@ impl A2aApp {
             // an error instead of a task it would then see cancelled with no output line.
             let answer = match Self::returned_task_id(body) {
                 Some(refused) if waiter.opens_task && adopted.is_none() => {
-                    self.late_cancels.push((refused, from.clone()));
+                    self.late_cancels
+                        .push((refused, from.clone(), "registry-full"));
                     serde_json::json!({
                         "error": {
                             "code": -32004,
@@ -446,11 +447,12 @@ impl A2aApp {
                 rec.state = crate::a2a::TaskState::Canceled;
                 rec.last_activity = Instant::now();
             }
-            self.late_cancels.push((task_id, from.clone()));
+            self.late_cancels
+                .push((task_id, from.clone(), "call-timed-out"));
         }
     }
 
-    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, Nickname)> {
+    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, Nickname, &'static str)> {
         std::mem::take(&mut self.late_cancels)
     }
 
@@ -1157,7 +1159,7 @@ mod tests {
         );
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, Nickname::from("bob"))],
+            vec![(task_id, Nickname::from("bob"), "call-timed-out")],
             "the cancel reply is ok"
         );
     }
@@ -1208,7 +1210,7 @@ mod tests {
         );
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, Nickname::from("bob"))],
+            vec![(task_id, Nickname::from("bob"), "registry-full")],
             "the worker is told to cancel the task it opened"
         );
     }

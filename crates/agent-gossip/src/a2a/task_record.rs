@@ -743,7 +743,7 @@ pub(crate) async fn tick_task_sweep(
         .collect();
     let late: Vec<(&TaskId, &Nickname, &str)> = late_cancels
         .iter()
-        .map(|(task_id, peer)| (task_id, peer, "call-timed-out"))
+        .map(|(task_id, peer, reason)| (task_id, peer, *reason))
         .collect();
     cancels.extend(late);
     for (task_id, peer, reason) in cancels {
