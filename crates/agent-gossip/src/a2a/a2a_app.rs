@@ -388,11 +388,11 @@ impl A2aApp {
             let answer = match &adoption {
                 Adoption::Refused(refused) if waiter.opens_task => {
                     self.late_cancels
-                        .push((refused.clone(), from.clone(), "registry-full"));
+                        .push((refused.clone(), from.clone(), "task-refused"));
                     serde_json::json!({
                         "error": {
                             "code": -32004,
-                            "message": "the task registry has no room for this task",
+                            "message": "the task could not be recorded on this node",
                         }
                     })
                     .to_string()
@@ -1220,7 +1220,7 @@ mod tests {
         );
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, Nickname::from("bob"), "registry-full")],
+            vec![(task_id, Nickname::from("bob"), "task-refused")],
             "the worker is told to cancel the task it opened"
         );
     }
