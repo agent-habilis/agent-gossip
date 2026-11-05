@@ -2588,7 +2588,9 @@ mod sharded_leg_tests {
     use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
     use tokio::sync::oneshot;
 
-    use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
+    use super::{
+        OwnLeg, PendingSend, ingest_own_leg_when_sent, queue_sharded_leg, settle, take_sent_legs,
+    };
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
     use crate::a2a::{tuning, wire};
 
@@ -2663,6 +2665,77 @@ mod sharded_leg_tests {
             .map(|leg| leg.frames.len())
             .sum();
         assert_eq!(logged, 2, "two shards are logged");
+    }
+
+    fn verdict_after(delay: std::time::Duration) -> PendingSend {
+        let (verdict_tx, verdict_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = verdict_tx.send(Ok(()));
+        });
+        verdict_rx
+    }
+
+    /// The limit is for the whole leg, not for each send in it: the first shard answers late and
+    /// the second never does.
+    #[tokio::test(start_paused = true)]
+    async fn the_timeout_covers_all_the_shards_of_a_leg_together() {
+        let mut app = A2aApp::new();
+        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
+        let late = verdict_after(std::time::Duration::from_secs(100));
+        let handles = queue_sharded_leg(
+            &mut app,
+            vec![shard("a"), shard("b")],
+            None,
+            vec![Some(late), Some(silent)],
+        );
+        let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS + 5);
+
+        let [verdict] = <[PendingSend; 1]>::try_from(handles).expect("one verdict for the leg");
+        let outcome = tokio::time::timeout(limit, verdict).await;
+
+        assert!(
+            matches!(outcome, Ok(Ok(Err(_)))),
+            "the leg must fail at the limit, not at the limit of each shard"
+        );
+    }
+
+    /// The layers of one leg wrap each other's verdict. When the caller was told that the leg
+    /// failed, the log must not keep it: anti-entropy would send a leg that the user thinks is lost.
+    #[tokio::test(start_paused = true)]
+    async fn a_leg_that_the_caller_was_told_failed_is_not_logged_by_a_late_shard() {
+        let mut app = A2aApp::new();
+        let early = verdict_after(std::time::Duration::from_secs(50));
+        let late = verdict_after(std::time::Duration::from_secs(130));
+        let inner = queue_sharded_leg(
+            &mut app,
+            vec![shard("a"), shard("b")],
+            None,
+            vec![Some(early), Some(late)],
+        );
+        let task = crate::a2a::TaskId::from("550e8400-e29b-41d4-a716-446655440000");
+        let outer = ingest_own_leg_when_sent(
+            &mut app,
+            OwnLeg {
+                echo: shard("echo").authored(),
+                task_id: Some(&task),
+            },
+            inner,
+        );
+        let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS + 5);
+        let [verdict] = <[PendingSend; 1]>::try_from(outer).expect("one verdict for the leg");
+
+        let outcome = tokio::time::timeout(limit, verdict).await;
+        tokio::time::sleep(std::time::Duration::from_secs(100)).await;
+
+        assert!(
+            matches!(outcome, Ok(Ok(Err(_)))),
+            "the caller must hear a failure at the limit"
+        );
+        assert!(
+            take_sent_legs(&mut app).is_empty(),
+            "a leg that the caller was told failed must not enter the log"
+        );
     }
 
     #[tokio::test(start_paused = true)]
