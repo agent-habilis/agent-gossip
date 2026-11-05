@@ -180,15 +180,22 @@ fn build_msg(
 }
 
 /// Wait for the sends that run on a task of their own. The first failure is the verdict.
-async fn settle(pending: Vec<PendingSend>) -> anyhow::Result<()> {
-    let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS);
+async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> anyhow::Result<()> {
     for handle in pending {
-        tokio::time::timeout(limit, handle)
+        tokio::time::timeout_at(deadline, handle)
             .await
-            .map_err(|_| anyhow::anyhow!("a send gave no outcome within {limit:?}"))?
+            .map_err(|_| anyhow::anyhow!("a send gave no outcome by its deadline"))?
             .map_err(|_| anyhow::anyhow!("a send task ended before it gave its outcome"))??;
     }
     Ok(())
+}
+
+/// The moment by which the sends of one layer must have an outcome. A layer takes it where it is
+/// built, not where its task first runs, so a layer that wraps another one is built later and
+/// never expires before it.
+fn send_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now()
+        + std::time::Duration::from_secs(tuning::send_outcome_timeout_secs())
 }
 
 /// Give the verdict of the sends to `then`, off the event loop. With nothing pending the verdict
@@ -201,7 +208,8 @@ pub(crate) fn when_sent(
         then(Ok(()));
         return;
     }
-    tokio::spawn(async move { then(settle(pending).await) });
+    let deadline = send_deadline();
+    tokio::spawn(async move { then(settle(pending, deadline).await) });
 }
 
 /// For a caller with no one to tell: a failure of a send on a task is only logged.
@@ -209,8 +217,9 @@ pub(crate) fn log_pending(pending: Vec<PendingSend>) {
     if pending.is_empty() {
         return;
     }
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        if let Err(error) = settle(pending).await {
+        if let Err(error) = settle(pending, deadline).await {
             tracing::warn!(target: "agent_gossip::a2a", %error, "directed send failed");
         }
     });
@@ -1569,8 +1578,9 @@ fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -
         cache: None,
         sent: sent_rx,
     });
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(vec![pending]).await;
+        let verdict = settle(vec![pending], deadline).await;
         let _ = sent_tx.send(verdict.is_ok());
         let _ = verdict_tx.send(verdict);
     });
@@ -1600,8 +1610,9 @@ fn queue_sharded_leg(
         return pending;
     }
     let (verdict_tx, verdict_rx) = oneshot::channel();
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(pending).await;
+        let verdict = settle(pending, deadline).await;
         let _ = sent_tx.send(verdict.is_ok());
         let _ = verdict_tx.send(verdict);
     });
@@ -1655,8 +1666,9 @@ fn echo_when_sent(
     }
     let out = out.clone();
     let (verdict_tx, verdict_rx) = oneshot::channel();
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(pending).await;
+        let verdict = settle(pending, deadline).await;
         if verdict.is_ok() {
             print_echo(&out, &echo, echo_as);
         }
@@ -1716,8 +1728,9 @@ fn ingest_own_leg_when_sent(
     let (queue_tx, queue_rx) = oneshot::channel();
     let (verdict_tx, verdict_rx) = oneshot::channel();
     app.queue_own_leg(delivered, queue_rx);
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(pending).await;
+        let verdict = settle(pending, deadline).await;
         let _ = queue_tx.send(verdict.is_ok());
         let _ = verdict_tx.send(verdict);
     });
@@ -2589,7 +2602,8 @@ mod sharded_leg_tests {
     use tokio::sync::oneshot;
 
     use super::{
-        OwnLeg, PendingSend, ingest_own_leg_when_sent, queue_sharded_leg, settle, take_sent_legs,
+        OwnLeg, PendingSend, ingest_own_leg_when_sent, queue_sharded_leg, send_deadline, settle,
+        take_sent_legs,
     };
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
     use crate::a2a::{tuning, wire};
@@ -2623,7 +2637,7 @@ mod sharded_leg_tests {
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
         assert!(
-            settle(handles).await.is_err(),
+            settle(handles, send_deadline()).await.is_err(),
             "one lost shard makes the receiver unable to reassemble the whole payload"
         );
 
@@ -2658,7 +2672,10 @@ mod sharded_leg_tests {
         let pending = vec![None, Some(verdict(Ok(())))];
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(settle(handles).await.is_ok(), "the leg was sent");
+        assert!(
+            settle(handles, send_deadline()).await.is_ok(),
+            "the leg was sent"
+        );
 
         let logged: usize = take_sent_legs(&mut app)
             .iter()
@@ -2689,7 +2706,7 @@ mod sharded_leg_tests {
             None,
             vec![Some(late), Some(silent)],
         );
-        let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS + 5);
+        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
 
         let [verdict] = <[PendingSend; 1]>::try_from(handles).expect("one verdict for the leg");
         let outcome = tokio::time::timeout(limit, verdict).await;
@@ -2722,7 +2739,7 @@ mod sharded_leg_tests {
             },
             inner,
         );
-        let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS + 5);
+        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
         let [verdict] = <[PendingSend; 1]>::try_from(outer).expect("one verdict for the leg");
 
         let outcome = tokio::time::timeout(limit, verdict).await;
@@ -2741,9 +2758,9 @@ mod sharded_leg_tests {
     #[tokio::test(start_paused = true)]
     async fn a_send_that_gives_no_outcome_fails_after_the_timeout() {
         let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
-        let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS + 5);
+        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
 
-        let outcome = tokio::time::timeout(limit, settle(vec![silent])).await;
+        let outcome = tokio::time::timeout(limit, settle(vec![silent], send_deadline())).await;
 
         assert!(
             matches!(outcome, Ok(Err(_))),

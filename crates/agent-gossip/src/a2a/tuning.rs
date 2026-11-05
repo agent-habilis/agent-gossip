@@ -17,11 +17,6 @@ use habilis_network::util::tuning;
 /// only a gone peer daemon trips it, never a silent skill.
 pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 
-/// How long a send may wait for its outcome before it counts as failed (seconds). A peer that
-/// stays silent this long has failed its tasks too, so a longer wait only keeps the body of the
-/// leg in memory.
-pub(crate) const SEND_OUTCOME_TIMEOUT_SECS: u64 = TASK_TIMEOUT_SECS;
-
 /// How many own task legs may wait for the outcome of their send. Each leg holds its body, up to
 /// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
 /// is refused with a failed reason: the caller must know that nothing was sent.
@@ -183,6 +178,14 @@ fn current() -> Tuning {
 
 pub(crate) fn task_timeout_secs() -> u64 {
     current().task_timeout_secs
+}
+
+/// How long a send may wait for its outcome before it counts as failed (seconds). A peer that
+/// stays silent as long as a task may be quiet has failed its tasks too, so a longer wait only
+/// keeps the body of the leg in memory. Read from the run-time task timeout, so the hidden flag
+/// moves both.
+pub(crate) fn send_outcome_timeout_secs() -> u64 {
+    task_timeout_secs()
 }
 
 pub(crate) fn task_keepalive_secs() -> u64 {
