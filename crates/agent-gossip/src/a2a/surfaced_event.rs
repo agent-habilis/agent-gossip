@@ -811,11 +811,19 @@ mod tests {
             1,
             "the event that just arrived is not dropped"
         );
-        assert_eq!(buffer.held_bytes(), 4096);
+        assert_eq!(
+            buffer.held_bytes(),
+            4096,
+            "the body is counted whole, over the cap or not"
+        );
 
         buffer.push(sized_event(10));
         assert_eq!(buffer.count(), 1, "the big body leaves for the next event");
-        assert_eq!(buffer.held_bytes(), 10);
+        assert_eq!(
+            buffer.held_bytes(),
+            10,
+            "the bytes of the dropped body leave the count"
+        );
     }
 
     /// The gap marker is what the agent reads. When the byte cap dropped events, it says how many
