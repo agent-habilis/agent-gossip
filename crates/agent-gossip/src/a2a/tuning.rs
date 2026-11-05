@@ -17,6 +17,11 @@ use habilis_network::util::tuning;
 /// only a gone peer daemon trips it, never a silent skill.
 pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 
+/// How long a send may wait for its outcome before it counts as failed (seconds). A peer that
+/// stays silent this long has failed its tasks too, so a longer wait only keeps the body of the
+/// leg in memory.
+pub(crate) const SEND_OUTCOME_TIMEOUT_SECS: u64 = TASK_TIMEOUT_SECS;
+
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 

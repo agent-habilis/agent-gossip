@@ -2582,6 +2582,7 @@ mod sharded_leg_tests {
 
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
+    use crate::a2a::tuning;
     use crate::a2a::wire;
 
     fn shard(text: &str) -> Verified {
@@ -2655,6 +2656,19 @@ mod sharded_leg_tests {
             .map(|leg| leg.frames.len())
             .sum();
         assert_eq!(logged, 2, "two shards are logged");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_send_that_gives_no_outcome_fails_after_the_timeout() {
+        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
+        let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS + 5);
+
+        let outcome = tokio::time::timeout(limit, settle(vec![silent])).await;
+
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "a send with no outcome must end as a failure, not wait for ever"
+        );
     }
 }
 
