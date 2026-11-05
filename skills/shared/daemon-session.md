@@ -136,6 +136,7 @@ From the script's printed JSON hold:
 - `$GOSSIP` = `gossip`
 - `$NAME` = `name`
 - `$NICKNAME` = `nickname`
+- `$PUBKEY` = `pubkey`
 
 Then print the output <!-- slot name="noun" -->. The bell is already
 outstanding and your own meta report cannot fire it (document changes never

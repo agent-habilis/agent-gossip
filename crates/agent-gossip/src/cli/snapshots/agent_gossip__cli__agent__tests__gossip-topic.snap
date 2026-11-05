@@ -1,5 +1,6 @@
 ---
 source: crates/agent-gossip/src/cli/agent.rs
+assertion_line: 655
 expression: shared
 ---
 ## Daemon session
@@ -107,6 +108,7 @@ From the script's printed JSON hold:
 - `$GOSSIP` = `gossip`
 - `$NAME` = `name`
 - `$NICKNAME` = `nickname`
+- `$PUBKEY` = `pubkey`
 
 Then print the output line. The bell is already
 outstanding and your own meta report cannot fire it (document changes never

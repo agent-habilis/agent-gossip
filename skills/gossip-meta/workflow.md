@@ -37,4 +37,8 @@ reader is not misled by those entries:
 💬 not currently active: `<nick-a>`, `<nick-b>`
 ```
 
+Each name comes from its slot: read `document.peers[<slot>].nickname`, else
+`document.peers[<slot>].card.name`. If neither exists, print the first 8 hex
+digits of the slot instead.
+
 Omit the line when `absent` is empty.
