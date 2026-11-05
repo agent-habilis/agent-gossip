@@ -19,7 +19,9 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 
 /// How many own task legs may wait for the outcome of their send. Each leg holds its body, up to
 /// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
-/// is refused with a failed reason: the caller must know that nothing was sent.
+/// is refused with a failed reason: the caller must know that nothing was sent. The queue is one for
+/// all peers, so a leg to a dead peer holds the legs behind it until its send times out (see
+/// [`send_outcome_timeout_secs`]); at the default 120 s the cap is reached at 8.5 legs per second.
 pub(crate) const OWN_LEGS_CAP: usize = 1024;
 
 /// How many own content legs may wait for the outcome of their send. Each holds its sealed frames,

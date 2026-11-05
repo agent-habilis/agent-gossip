@@ -8,7 +8,7 @@ use common::Node;
 /// offer of a call is not an own leg (the initiator learns its task from the reply), so the leg
 /// here is the status of a worker.
 #[test]
-fn a_task_leg_past_the_own_legs_cap_is_refused_and_nothing_is_sent() {
+fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_named("itest-own-cap");
     let capped = Node::join_flags(&mesh, "own-cap-bob", &[("--own-legs-cap", "0")]);
@@ -51,7 +51,7 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_and_nothing_is_sent() {
 }
 
 #[test]
-fn a_content_leg_past_the_unsent_legs_cap_is_refused_and_nothing_is_sent() {
+fn a_content_leg_past_the_unsent_legs_cap_is_refused_with_the_reason() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_flags("itest-unsent-cap", &[("--unsent-legs-cap", "0")]);
     let bob = Node::join(&mesh, "unsent-cap-bob");

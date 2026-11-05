@@ -192,7 +192,9 @@ async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> an
 
 /// The moment by which the sends of one layer must have an outcome. A layer takes it where it is
 /// built, not where its task first runs, so a layer that wraps another one is built later and
-/// never expires before it.
+/// never expires before it. Two layers built in the same instant can fire in the same tick, and
+/// then the outer layer can answer with its own timeout instead of the verdict of the inner one:
+/// both are a failure, so the caller and the log still agree.
 fn send_deadline() -> tokio::time::Instant {
     tokio::time::Instant::now()
         + std::time::Duration::from_secs(tuning::send_outcome_timeout_secs())
@@ -1287,6 +1289,9 @@ pub(crate) async fn broadcast_task_artifact(
         file,
         app,
     } = params;
+    // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
+    app.admit_own_leg()?;
+    app.admit_unsent_leg()?;
     let parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1461,6 +1466,7 @@ pub(crate) async fn attach_call_file(
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
+    app.admit_unsent_leg()?;
     let opens_task = message.task_id.is_none();
     let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(
