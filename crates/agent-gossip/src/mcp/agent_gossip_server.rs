@@ -506,7 +506,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\"}}} (`host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<pubkey>`, where `<pubkey>` is your author key from the `ready` output (64 lowercase hex), e.g. {\"peers\":{\"<pubkey>\":{\"nickname\":\"swift-cedar\",\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\"}}} (`nickname` is a label inside your entry; `host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
     async fn apply_meta_merge(
         &self,
