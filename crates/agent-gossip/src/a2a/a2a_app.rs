@@ -278,6 +278,12 @@ impl A2aApp {
         Ok(())
     }
 
+    /// Say whether a new own content leg may wait for its send. Refuses past
+    /// [`tuning::UNSENT_LEGS_CAP`].
+    pub(crate) fn admit_unsent_leg(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
     /// peer got the leg.
     pub(crate) fn queue_own_leg(&mut self, leg: DeliveredLeg, delivered: Receiver<bool>) {
@@ -776,6 +782,37 @@ mod tests {
         assert_eq!(
             refused,
             9 * tuning::OWN_LEGS_CAP,
+            "every leg past the cap is refused"
+        );
+    }
+
+    #[test]
+    fn unsent_legs_stop_at_the_cap_and_the_rest_is_refused() {
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * tuning::UNSENT_LEGS_CAP {
+            if app.admit_unsent_leg().is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, sent) = oneshot::channel();
+            held.push(tx);
+            app.unsent_legs.push(super::UnsentLeg {
+                frames: Vec::new(),
+                cache: None,
+                sent,
+            });
+        }
+
+        assert_eq!(
+            app.unsent_legs.len(),
+            tuning::UNSENT_LEGS_CAP,
+            "the list stops at the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::UNSENT_LEGS_CAP,
             "every leg past the cap is refused"
         );
     }

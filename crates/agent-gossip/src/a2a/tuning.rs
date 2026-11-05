@@ -27,6 +27,11 @@ pub(crate) const SEND_OUTCOME_TIMEOUT_SECS: u64 = TASK_TIMEOUT_SECS;
 /// is refused with a failed reason: the caller must know that nothing was sent.
 pub(crate) const OWN_LEGS_CAP: usize = 1024;
 
+/// How many own content legs may wait for the outcome of their send. Each holds its sealed frames,
+/// and a split leg holds a second copy for the shard cache. Same size as [`OWN_LEGS_CAP`]. A new
+/// leg past the cap is refused with a failed reason.
+pub(crate) const UNSENT_LEGS_CAP: usize = 1024;
+
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 
