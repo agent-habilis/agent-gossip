@@ -389,6 +389,7 @@ impl A2aApp {
                 Adoption::Refused(refused) if waiter.opens_task => {
                     self.late_cancels
                         .push((refused.clone(), from.clone(), "task-refused"));
+                    // The same code a refused offer gets (node.rs, task_admission_error).
                     serde_json::json!({
                         "error": {
                             "code": -32004,
