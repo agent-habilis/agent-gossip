@@ -139,8 +139,10 @@ pub(crate) struct A2aApp {
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
-    /// Tasks that a late reply opened after the caller was told the call
-    /// timed out. The next task sweep cancels each one at its worker.
+    /// Cancels owed to workers: a task a late reply opened after the caller was told the call
+    /// timed out, or a task this node refused. Each push answers one waiter or one orphan,
+    /// both bounded, and the next task sweep drains the whole Vec, so it holds one sweep's
+    /// pushes at most. The reason says which one it is.
     late_cancels: Vec<(TaskId, Nickname, &'static str)>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
