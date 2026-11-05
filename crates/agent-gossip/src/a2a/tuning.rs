@@ -153,6 +153,8 @@ pub(crate) struct Tuning {
     pub(crate) task_skill_silence_max_secs: u64,
     pub(crate) task_stall_check_secs: u64,
     pub(crate) longpoll_max_ms: u64,
+    pub(crate) own_legs_cap: usize,
+    pub(crate) unsent_legs_cap: usize,
 }
 
 impl Tuning {
@@ -162,6 +164,8 @@ impl Tuning {
         task_skill_silence_max_secs: TASK_SKILL_SILENCE_MAX_SECS,
         task_stall_check_secs: TASK_STALL_CHECK_SECS,
         longpoll_max_ms: LONGPOLL_MAX_MS,
+        own_legs_cap: OWN_LEGS_CAP,
+        unsent_legs_cap: UNSENT_LEGS_CAP,
     };
 }
 
@@ -195,6 +199,14 @@ pub(crate) fn task_stall_check_secs() -> u64 {
 
 pub(crate) fn longpoll_max_ms() -> u64 {
     current().longpoll_max_ms
+}
+
+pub(crate) fn own_legs_cap() -> usize {
+    current().own_legs_cap
+}
+
+pub(crate) fn unsent_legs_cap() -> usize {
+    current().unsent_legs_cap
 }
 
 #[cfg(test)]

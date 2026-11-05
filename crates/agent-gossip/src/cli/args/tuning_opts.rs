@@ -50,6 +50,14 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::TASK_STALL_CHECK_SECS)]
     pub task_stall_check_secs: u64,
 
+    /// Own task legs that may wait for their send before a new one is refused.
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::OWN_LEGS_CAP)]
+    pub own_legs_cap: usize,
+
+    /// Own content legs that may wait for their send before a new one is refused.
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_CAP)]
+    pub unsent_legs_cap: usize,
+
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = secs(defaults::BEACON_COHOST_GRACE))]
     pub beacon_cohost_grace_secs: u64,
@@ -162,6 +170,8 @@ impl TuningOpts {
             task_skill_silence_max_secs: self.task_skill_silence_max_secs,
             task_stall_check_secs: self.task_stall_check_secs,
             longpoll_max_ms: self.longpoll_max_ms,
+            own_legs_cap: self.own_legs_cap,
+            unsent_legs_cap: self.unsent_legs_cap,
         }
     }
 }
