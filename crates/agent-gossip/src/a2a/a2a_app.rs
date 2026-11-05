@@ -1205,6 +1205,53 @@ mod tests {
         );
     }
 
+    /// The caller of a refused task gets an error, not the worker's Task: otherwise it
+    /// would see a task that this node then cancels without any output line.
+    #[test]
+    fn a_refused_adoption_answers_the_caller_with_an_error() {
+        use crate::a2a::TaskState;
+        use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+        let mut app = super::A2aApp::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        let (tx, mut rx) = oneshot::channel();
+        let mut waiter = waiter_with_blob("corr-error", "group-error");
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-error"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+
+        let answer = rx.try_recv().expect("the caller is answered");
+        assert!(
+            answer.get("error").is_some(),
+            "the caller gets an error, not the worker's task: {answer}"
+        );
+        assert!(
+            answer.get("result").is_none(),
+            "no task is returned: {answer}"
+        );
+    }
+
     /// A follow-up on a task this node does not hold can still be accepted: the
     /// worker holds the task. Its late reply adopts the task and keeps the blob,
     /// but the call did not open the task, so it is not cancelled.
