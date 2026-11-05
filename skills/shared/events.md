@@ -47,8 +47,10 @@ A poll response may lead with:
 This is not an event. It says every event below that `seq` aged out of the
 daemon's ring before you read it, and is gone. Tell the user plainly that
 events were dropped, then continue with the returned window. When the marker
-also has `lost_to_bytes` and `lost_bytes`, the ring dropped that many events and
-bytes of body because it held too much; say the counts.
+also has `lost_to_bytes` and `lost_bytes`, the ring dropped that many of the
+events you missed, and that many bytes of body, because it held too much; say
+the counts. The counts come only with the marker, and only for events after
+your cursor.
 
 ### Lost events
 

@@ -46,6 +46,10 @@ pub(crate) struct SurfacedEvents {
     /// How many events left the ring because of the byte cap, and how many bytes of body they held.
     lost_to_bytes: u64,
     lost_bytes: u64,
+    /// One mark per event that left the ring, newest last, so a reader that missed events can be
+    /// told how many of them the byte cap dropped. Bounded to `capacity` marks: a cursor older
+    /// than the oldest mark gets no counts (see [`Self::byte_losses_above`]).
+    evictions: VecDeque<Eviction>,
     next_seq: u64,
     events: VecDeque<SurfacedEvent>,
     /// The newest seq assigned to a *waking* event (see
@@ -67,6 +71,7 @@ impl SurfacedEvents {
             bytes: 0,
             lost_to_bytes: 0,
             lost_bytes: 0,
+            evictions: VecDeque::new(),
             // seq 0 is reserved as the "before anything" cursor: the first
             // pushed event is seq 1, so `since(Some(0))` returns the whole
             // buffer without a spurious eviction signal.
@@ -87,22 +92,52 @@ impl SurfacedEvents {
         self.bytes = self.bytes.saturating_add(event_bytes(&event));
         self.events.push_back(SurfacedEvent { seq, event });
         while self.events.len() > self.capacity {
-            self.drop_oldest();
+            self.drop_oldest(false);
         }
         // The newest event stays even when it alone is over the cap.
         while self.bytes > self.byte_cap && self.events.len() > 1 {
-            let before = self.bytes;
-            self.drop_oldest();
-            self.lost_to_bytes += 1;
-            self.lost_bytes += (before - self.bytes) as u64;
+            self.drop_oldest(true);
         }
         seq
     }
 
-    fn drop_oldest(&mut self) {
-        if let Some(oldest) = self.events.pop_front() {
-            self.bytes = self.bytes.saturating_sub(event_bytes(&oldest.event));
+    /// Drop the oldest event and mark it. `for_bytes` says the byte cap dropped it.
+    fn drop_oldest(&mut self, for_bytes: bool) {
+        let Some(oldest) = self.events.pop_front() else {
+            return;
+        };
+        let bytes = event_bytes(&oldest.event);
+        self.bytes = self.bytes.saturating_sub(bytes);
+        if for_bytes {
+            self.lost_to_bytes += 1;
+            self.lost_bytes += bytes as u64;
         }
+        self.evictions.push_back(Eviction {
+            seq: oldest.seq,
+            lost_to_bytes: self.lost_to_bytes,
+            lost_bytes: self.lost_bytes,
+        });
+        if self.evictions.len() > self.capacity {
+            self.evictions.pop_front();
+        }
+    }
+
+    /// The events and bytes that the byte cap dropped with a seq above `after`. `None` when
+    /// `after` is older than the oldest mark, because the counts are then unknown. Zero for a
+    /// cursor that the ring still holds.
+    pub(crate) fn byte_losses_above(&self, after: u64) -> Option<(u64, u64)> {
+        if self.events.front().is_none_or(|oldest| after >= oldest.seq) {
+            return Some((0, 0));
+        }
+        let index = self
+            .evictions
+            .binary_search_by_key(&after, |mark| mark.seq)
+            .ok()?;
+        let mark = self.evictions.get(index)?;
+        Some((
+            self.lost_to_bytes - mark.lost_to_bytes,
+            self.lost_bytes - mark.lost_bytes,
+        ))
     }
 
     #[cfg(test)]
@@ -110,10 +145,12 @@ impl SurfacedEvents {
         self.bytes
     }
 
+    #[cfg(test)]
     pub(crate) fn lost_to_bytes(&self) -> u64 {
         self.lost_to_bytes
     }
 
+    #[cfg(test)]
     pub(crate) fn lost_bytes(&self) -> u64 {
         self.lost_bytes
     }
@@ -175,6 +212,13 @@ impl SurfacedEvents {
     }
 }
 
+/// What the ring had dropped in total when it dropped the event `seq`, that event included.
+struct Eviction {
+    seq: u64,
+    lost_to_bytes: u64,
+    lost_bytes: u64,
+}
+
 /// The bytes of body that a surfaced event holds, and of the document of a State change. Only
 /// the events that carry a signed message, text or a document count; the others are small and fixed in size.
 fn event_bytes(event: &OutputEvent) -> usize {
@@ -225,6 +269,16 @@ pub struct PollBatch {
     pub lost_to_bytes: u64,
     /// See `lost_to_bytes`.
     pub lost_bytes: u64,
+}
+
+impl PollBatch {
+    /// The events and bytes that the byte cap dropped above the reader's cursor, for the readers
+    /// that have a gap. `None` when the batch has no gap or the cap dropped nothing above it. The
+    /// gap marker of the CLI and the result of the MCP fetch both read the counts here.
+    pub(crate) fn byte_losses(&self) -> Option<(u64, u64)> {
+        (self.missed_before.is_some() && self.lost_to_bytes > 0)
+            .then_some((self.lost_to_bytes, self.lost_bytes))
+    }
 }
 
 /// The clean-shutdown answer to a parked long-poll — an IPC control response,
@@ -320,8 +374,8 @@ pub(crate) struct PollWaiter {
 ///
 /// A `gap` marker leads the array when the reader's cursor aged out: `missed_before` is the oldest
 /// seq that the ring still holds. When the ring also dropped events for its byte cap, the marker
-/// adds `lost_to_bytes` and `lost_bytes`, the events and the bytes of body dropped since the daemon
-/// started, so the agent can tell the user how much was lost. It is
+/// adds `lost_to_bytes` and `lost_bytes`, the events and the bytes of body dropped among the events
+/// above the reader's cursor, so the agent can tell the user how much was lost. It is
 /// synthesized *here*, at render time, and never pushed into the ring: the
 /// ring is fed by the user-facing sink, so a real event announcing the loss
 /// would itself become a ring entry (and, on the api path, a live
@@ -331,14 +385,11 @@ pub(crate) struct PollWaiter {
 pub(crate) fn render_poll_array(batch: &PollBatch) -> String {
     let mut lines: Vec<String> = Vec::with_capacity(batch.events.len() + 1);
     if let Some(missed_before) = batch.missed_before {
-        let lost = if batch.lost_to_bytes > 0 {
-            format!(
-                r#","lost_to_bytes":{},"lost_bytes":{}"#,
-                batch.lost_to_bytes, batch.lost_bytes
-            )
-        } else {
-            String::new()
-        };
+        let lost = batch
+            .byte_losses()
+            .map_or_else(String::new, |(events, bytes)| {
+                format!(r#","lost_to_bytes":{events},"lost_bytes":{bytes}"#)
+            });
         lines.push(format!(
             r#"{{"event":"gap","missed_before":{missed_before}{lost}}}"#
         ));
@@ -529,11 +580,14 @@ impl SurfacedState {
             missed_before = events.first().map(|item| item.seq).or(missed_before);
         }
         tracing::debug!(returned = events.len(), missed_before, "poll served");
+        let (lost_to_bytes, lost_bytes) = after
+            .and_then(|after| self.surfaced_events.byte_losses_above(after))
+            .unwrap_or_default();
         PollBatch {
             events,
             missed_before,
-            lost_to_bytes: self.surfaced_events.lost_to_bytes(),
-            lost_bytes: self.surfaced_events.lost_bytes(),
+            lost_to_bytes,
+            lost_bytes,
         }
     }
 
@@ -872,6 +926,84 @@ mod tests {
     /// The gap marker is what the agent reads. When the byte cap dropped events, it says how many
     /// events and how many bytes were lost, counted since the daemon started, so a loss is never
     /// silent. The marker carries no counts while the byte cap never fired.
+    /// A state that byte-evicted the first 16 of 20 events of 1 KiB under a cap of 4 KiB.
+    fn state_after_byte_eviction() -> SurfacedState {
+        let mut state = SurfacedState::new();
+        state.surfaced_events = SurfacedEvents::with_byte_cap(1000, 4 * 1024);
+        for _ in 0..20 {
+            state.surfaced_events.push(sized_event(1024));
+        }
+        state
+    }
+
+    /// The counts are for the events above the reader's cursor: a reader that read seq 15 misses
+    /// seq 16 only, not the 15 that left before it read them.
+    #[test]
+    fn a_reader_gets_only_the_byte_losses_above_its_cursor() {
+        let state = state_after_byte_eviction();
+
+        let batch = state.poll_since(Some(15));
+
+        assert_eq!(batch.missed_before, Some(17), "the reader missed seq 16");
+        assert_eq!(batch.lost_to_bytes, 1, "one event above the cursor");
+        assert_eq!(batch.lost_bytes, 1024, "its bytes");
+        assert_eq!(
+            batch.byte_losses(),
+            Some((1, 1024)),
+            "the gap marker and the MCP result read the counts here"
+        );
+    }
+
+    /// A reader with no gap gets no counts, whatever the ring dropped before it.
+    #[test]
+    fn a_reader_with_no_gap_gets_no_byte_losses() {
+        let state = state_after_byte_eviction();
+
+        let batch = state.poll_since(Some(16));
+
+        assert_eq!(batch.missed_before, None, "the reader missed nothing");
+        assert_eq!(batch.lost_to_bytes, 0, "no event lost above the cursor");
+        assert_eq!(batch.byte_losses(), None, "no counts are sent");
+    }
+
+    /// The CLI marker for a reader with a gap carries the counts above its cursor.
+    #[test]
+    fn the_cli_gap_marker_carries_the_counts_above_the_reader_cursor() {
+        let state = state_after_byte_eviction();
+
+        assert!(
+            render_poll_array(&state.poll_since(Some(15))).starts_with(
+                r#"[{"event":"gap","missed_before":17,"lost_to_bytes":1,"lost_bytes":1024}"#
+            ),
+            "the marker counts seq 16 only"
+        );
+        assert!(
+            !render_poll_array(&state.poll_since(Some(16))).contains("lost_to_bytes"),
+            "a reader with no gap gets no counts"
+        );
+    }
+
+    /// The marks are bounded: ten times the capacity of events leaves `capacity` marks, and a
+    /// cursor older than the oldest mark gets no counts.
+    #[test]
+    fn the_eviction_marks_stay_at_the_capacity_and_an_old_cursor_gets_no_counts() {
+        let mut buffer = SurfacedEvents::with_byte_cap(8, 1024);
+        for _ in 0..80 {
+            buffer.push(sized_event(1024));
+        }
+
+        assert_eq!(buffer.evictions.len(), 8, "the marks stop at the capacity");
+        assert_eq!(
+            buffer.byte_losses_above(1),
+            None,
+            "too old: the count is unknown"
+        );
+        assert!(
+            buffer.byte_losses_above(79).is_some(),
+            "a cursor behind by one event is known"
+        );
+    }
+
     #[test]
     fn the_gap_marker_counts_the_events_and_bytes_that_the_byte_cap_dropped() {
         let mut buffer = SurfacedEvents::with_byte_cap(1000, 4 * 1024);

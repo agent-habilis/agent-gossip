@@ -555,8 +555,9 @@ COMMANDS
               the daemon re-baselines automatically. When the ring also
               dropped events because it held too many bytes of body, the
               line adds "lost_to_bytes":EVENTS,"lost_bytes":BYTES: how many
-              events and how many bytes of body the byte cap dropped since
-              the daemon started.
+              events and how many bytes of body the byte cap dropped among the
+              events above the cursor of this reader. The counts are left out
+              when the daemon no longer knows them.
 
               --long
                      The receive bell: block until the daemon holds a WAKING
