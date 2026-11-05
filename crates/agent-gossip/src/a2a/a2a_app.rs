@@ -1259,8 +1259,8 @@ mod tests {
 
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, Nickname::from("bob"), "registry-full")],
-            "the cancel says the registry refused the task"
+            vec![(task_id, Nickname::from("bob"), "task-refused")],
+            "the cancel says the task could not be recorded here"
         );
     }
 
