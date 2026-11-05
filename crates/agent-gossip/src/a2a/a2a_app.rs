@@ -380,6 +380,14 @@ impl A2aApp {
         {
             let waiter = self.a2a_waiters.swap_remove(index);
             let adopted = self.adopt_returned_task(from, body);
+            // The registry refused the task the worker opened for us: no record is kept, so
+            // the worker is told to cancel it rather than run it unseen.
+            if waiter.opens_task
+                && adopted.is_none()
+                && let Some(refused) = Self::returned_task_id(body)
+            {
+                self.late_cancels.push((refused, from.clone()));
+            }
             match (waiter.blob_group, adopted) {
                 (Some(group), Some(task_id)) => {
                     self.call_blobs.entry(task_id).or_default().push(group);
@@ -516,6 +524,18 @@ impl A2aApp {
             .get(&task_id)
             .is_some_and(|rec| rec.peer == *peer)
             .then_some(task_id)
+    }
+
+    /// The task id a reply carries, for a reply the registry refused.
+    fn returned_task_id(body: &str) -> Option<TaskId> {
+        let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+        let result = &value["result"];
+        let task = if result.get("task").is_some() {
+            &result["task"]
+        } else {
+            result
+        };
+        task["id"].as_str().and_then(TaskId::from_uuid_str)
     }
 
     /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
@@ -1153,7 +1173,11 @@ mod tests {
                 },
             );
         }
-        assert_eq!(app.tasks.len(), tuning::TASKS_CAP, "the registry is at the cap");
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "the registry is at the cap"
+        );
         let task_id = TaskId::random();
         app.a2a_waiters
             .push(waiter_with_blob("corr-refused", "group-refused"));
