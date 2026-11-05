@@ -33,7 +33,8 @@ The app then builds authorization on top of the label:
   `gossip_rpc.rs`'s `classify`, `task.rs`'s `apply` and `adopt_initiator`).
 - `card.rs` — the seal key and the endpoint hint are looked up at
   `/peers/<nick>/card`, so a nickname decides both who can read a directed
-  frame and where its bytes are dialed.
+  frame and where its bytes are dialed. The fix keys the slot by the author's
+  public key, `/peers/<pubkey>/card`; the nickname stays a label in the entry.
 - `node.rs` — `handle_msg` gates on `to == self_author`.
 
 Nothing pins `message.author` to `message.pubkey`. The two layers are each

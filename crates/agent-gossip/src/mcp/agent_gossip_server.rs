@@ -522,7 +522,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host, cwd}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers` entries with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
+        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<pubkey> = {nickname, model, harness, host, cwd}`, where `<pubkey>` is the 64-digit hex of the author key of the member: a nickname is a label that two members can share. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers/<pubkey>` slots with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
     )]
     async fn get_meta(
         &self,

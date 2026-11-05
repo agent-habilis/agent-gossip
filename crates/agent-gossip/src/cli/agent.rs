@@ -762,8 +762,9 @@ mod tests {
                 .split_once("{HARNESS}")
                 .unwrap_or_else(|| panic!("{skill}: the merge has no {{HARNESS}} slot"));
             let merge = format!("{before_model}m{between}h{after_harness}");
+            let key = "ab".repeat(32);
             let script = format!(
-                "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; {merge}"
+                "agent-gossip() {{ printf '%s' \"${{@: -1}}\"; }}; nick=n; gossip=g; pubkey={key}; {merge}"
             );
             let mut command = std::process::Command::new("bash");
             command.args(["-c", &script]).current_dir(&cwd);
@@ -775,7 +776,11 @@ mod tests {
                         String::from_utf8_lossy(&out.stdout)
                     )
                 });
-            assert_eq!(json["peers"]["n"]["cwd"], "~/we\"ird\\dir", "{skill}");
+            assert_eq!(json["peers"][&key]["cwd"], "~/we\"ird\\dir", "{skill}");
+            assert_eq!(
+                json["peers"][&key]["nickname"], "n",
+                "{skill}: the nickname is a label inside the entry of the key"
+            );
         }
         let _ = std::fs::remove_dir_all(&home);
     }
