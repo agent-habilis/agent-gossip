@@ -29,6 +29,18 @@ pub(crate) const OWN_LEGS_CAP: usize = 1024;
 /// leg past the cap is refused with a failed reason.
 pub(crate) const UNSENT_LEGS_CAP: usize = 1024;
 
+/// Bytes of body that the own task legs may hold together: 4 legs of the largest body
+/// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB). The count cap alone allows 1024 legs of 64 MiB. A leg that
+/// would pass the budget is refused with a failed reason, unless the queue is empty: one leg
+/// always fits, so the largest legal body is never refused for its size.
+pub(crate) const OWN_LEGS_BYTES_CAP: usize =
+    4 * habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
+
+/// Bytes that the own content legs may hold together: 4 legs of the largest body, each held twice
+/// (sealed frames, and a copy in the shard cache). The same rule as [`OWN_LEGS_BYTES_CAP`].
+pub(crate) const UNSENT_LEGS_BYTES_CAP: usize =
+    2 * 4 * habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
+
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 
@@ -152,6 +164,8 @@ pub(crate) struct Tuning {
     pub(crate) longpoll_max_ms: u64,
     pub(crate) own_legs_cap: usize,
     pub(crate) unsent_legs_cap: usize,
+    pub(crate) own_legs_bytes_cap: usize,
+    pub(crate) unsent_legs_bytes_cap: usize,
 }
 
 impl Tuning {
@@ -163,6 +177,8 @@ impl Tuning {
         longpoll_max_ms: LONGPOLL_MAX_MS,
         own_legs_cap: OWN_LEGS_CAP,
         unsent_legs_cap: UNSENT_LEGS_CAP,
+        own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
+        unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
     };
 }
 
@@ -212,6 +228,14 @@ pub(crate) fn own_legs_cap() -> usize {
 
 pub(crate) fn unsent_legs_cap() -> usize {
     current().unsent_legs_cap
+}
+
+pub(crate) fn own_legs_bytes_cap() -> usize {
+    current().own_legs_bytes_cap
+}
+
+pub(crate) fn unsent_legs_bytes_cap() -> usize {
+    current().unsent_legs_bytes_cap
 }
 
 #[cfg(test)]

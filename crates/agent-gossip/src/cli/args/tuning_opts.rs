@@ -58,6 +58,14 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_CAP)]
     pub unsent_legs_cap: usize,
 
+    /// Bytes of body that the own task legs may hold before a new one is refused.
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::OWN_LEGS_BYTES_CAP)]
+    pub own_legs_bytes_cap: usize,
+
+    /// Bytes that the own content legs may hold before a new one is refused.
+    #[arg(long, hide = true, default_value_t = crate::a2a::tuning::UNSENT_LEGS_BYTES_CAP)]
+    pub unsent_legs_bytes_cap: usize,
+
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = secs(defaults::BEACON_COHOST_GRACE))]
     pub beacon_cohost_grace_secs: u64,
@@ -172,6 +180,8 @@ impl TuningOpts {
             longpoll_max_ms: self.longpoll_max_ms,
             own_legs_cap: self.own_legs_cap,
             unsent_legs_cap: self.unsent_legs_cap,
+            own_legs_bytes_cap: self.own_legs_bytes_cap,
+            unsent_legs_bytes_cap: self.unsent_legs_bytes_cap,
         }
     }
 }
