@@ -10,12 +10,36 @@
 
 use std::sync::OnceLock;
 
+use habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
 use habilis_network::util::tuning;
 
 /// How long one A2A task may go with no leg or keepalive from the other party
 /// before the daemon fails it (seconds). Both daemons beat every live task, so
 /// only a gone peer daemon trips it, never a silent skill.
 pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
+
+/// How many own task legs may wait for the outcome of their send. Each leg holds its body, up to
+/// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
+/// is refused with a failed reason: the caller must know that nothing was sent. The queue is one for
+/// all peers, so a leg to a dead peer holds the legs behind it until its send times out (see
+/// [`send_outcome_timeout_secs`]); at the default 120 s the cap is reached at 8.5 legs per second.
+pub(crate) const OWN_LEGS_CAP: usize = 1024;
+
+/// How many own content legs may wait for the outcome of their send. Each holds its sealed frames,
+/// and a split leg holds a second copy for the shard cache. Same size as [`OWN_LEGS_CAP`]. A new
+/// leg past the cap is refused with a failed reason.
+pub(crate) const UNSENT_LEGS_CAP: usize = 1024;
+
+/// Bytes of body that the own task legs may hold together: 4 legs of the largest body
+/// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB). The count cap alone allows 1024 legs of 64 MiB. A leg that
+/// would pass the budget is refused with a failed reason, unless the queue is empty: one leg
+/// always fits, so the largest legal body is never refused for its size. A leg counts the size of
+/// its text only: the size of a file that an artifact offloads is not known before the offload.
+pub(crate) const OWN_LEGS_BYTES_CAP: usize = 4 * MAX_LOGICAL_BODY_BYTES;
+
+/// Bytes that the own content legs may hold together: 4 legs of the largest body, each held twice
+/// (sealed frames, and a copy in the shard cache). The same rule as [`OWN_LEGS_BYTES_CAP`].
+pub(crate) const UNSENT_LEGS_BYTES_CAP: usize = 2 * 4 * MAX_LOGICAL_BODY_BYTES;
 
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
@@ -138,6 +162,10 @@ pub(crate) struct Tuning {
     pub(crate) task_skill_silence_max_secs: u64,
     pub(crate) task_stall_check_secs: u64,
     pub(crate) longpoll_max_ms: u64,
+    pub(crate) own_legs_cap: usize,
+    pub(crate) unsent_legs_cap: usize,
+    pub(crate) own_legs_bytes_cap: usize,
+    pub(crate) unsent_legs_bytes_cap: usize,
 }
 
 impl Tuning {
@@ -147,6 +175,10 @@ impl Tuning {
         task_skill_silence_max_secs: TASK_SKILL_SILENCE_MAX_SECS,
         task_stall_check_secs: TASK_STALL_CHECK_SECS,
         longpoll_max_ms: LONGPOLL_MAX_MS,
+        own_legs_cap: OWN_LEGS_CAP,
+        unsent_legs_cap: UNSENT_LEGS_CAP,
+        own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
+        unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
     };
 }
 
@@ -166,6 +198,14 @@ pub(crate) fn task_timeout_secs() -> u64 {
     current().task_timeout_secs
 }
 
+/// How long a send may wait for its outcome before it counts as failed (seconds). A peer that
+/// stays silent as long as a task may be quiet has failed its tasks too, so a longer wait only
+/// keeps the body of the leg in memory. Read from the run-time task timeout, so the hidden flag
+/// moves both.
+pub(crate) fn send_outcome_timeout_secs() -> u64 {
+    task_timeout_secs()
+}
+
 pub(crate) fn task_keepalive_secs() -> u64 {
     current().task_keepalive_secs
 }
@@ -180,6 +220,22 @@ pub(crate) fn task_stall_check_secs() -> u64 {
 
 pub(crate) fn longpoll_max_ms() -> u64 {
     current().longpoll_max_ms
+}
+
+pub(crate) fn own_legs_cap() -> usize {
+    current().own_legs_cap
+}
+
+pub(crate) fn unsent_legs_cap() -> usize {
+    current().unsent_legs_cap
+}
+
+pub(crate) fn own_legs_bytes_cap() -> usize {
+    current().own_legs_bytes_cap
+}
+
+pub(crate) fn unsent_legs_bytes_cap() -> usize {
+    current().unsent_legs_bytes_cap
 }
 
 #[cfg(test)]

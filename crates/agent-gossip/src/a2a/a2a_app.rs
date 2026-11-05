@@ -191,6 +191,17 @@ pub(crate) struct UnsentLeg {
     pub(crate) sent: Receiver<bool>,
 }
 
+impl UnsentLeg {
+    fn held_bytes(&self) -> usize {
+        let frames: usize = self.frames.iter().map(|frame| frame.wire_len()).sum();
+        let cache: usize = self
+            .cache
+            .as_ref()
+            .map_or(0, |(_, cached)| cached.iter().map(WireFrame::len).sum());
+        frames + cache
+    }
+}
+
 /// An own task leg to ingest into the task record once the peer got it.
 pub(crate) struct DeliveredLeg {
     pub(crate) echo: Authored,
@@ -268,6 +279,59 @@ impl A2aApp {
             card_retry_in: 0,
             card_retry_wait: 0,
         }
+    }
+
+    /// Say whether a new own task leg of `bytes` may wait for its send. Refuses past
+    /// [`tuning::OWN_LEGS_CAP`] legs or [`tuning::OWN_LEGS_BYTES_CAP`] bytes.
+    pub(crate) fn admit_own_leg(&self, bytes: usize) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.own_legs.len() < tuning::own_legs_cap(),
+            "{} own task legs still wait for their send, so this leg was not sent",
+            tuning::own_legs_cap()
+        );
+        self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
+    }
+
+    /// Say whether a new own content leg of `bytes` may wait for its send. Refuses past
+    /// [`tuning::UNSENT_LEGS_CAP`] legs or [`tuning::UNSENT_LEGS_BYTES_CAP`] bytes.
+    pub(crate) fn admit_unsent_leg(&self, bytes: usize) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.unsent_legs.len() < tuning::unsent_legs_cap(),
+            "{} own content legs still wait for their send, so this leg was not sent",
+            tuning::unsent_legs_cap()
+        );
+        self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
+    }
+
+    /// The bytes of body that the own legs in the queue hold.
+    pub(crate) fn own_legs_held_bytes(&self) -> usize {
+        self.own_legs
+            .iter()
+            .map(|queued| queued.leg.echo.body.as_str().len())
+            .sum()
+    }
+
+    /// The bytes that the own content legs in the list hold: the sealed frames and the shard cache.
+    pub(crate) fn unsent_legs_held_bytes(&self) -> usize {
+        self.unsent_legs.iter().map(UnsentLeg::held_bytes).sum()
+    }
+
+    fn admit_own_bytes_within(&self, bytes: usize, budget: usize) -> anyhow::Result<()> {
+        let held = self.own_legs_held_bytes();
+        anyhow::ensure!(
+            self.own_legs.is_empty() || held.saturating_add(bytes) <= budget,
+            "{held} bytes of own task legs still wait for their send, the budget is {budget}, so this leg of {bytes} bytes was not sent"
+        );
+        Ok(())
+    }
+
+    fn admit_unsent_bytes_within(&self, bytes: usize, budget: usize) -> anyhow::Result<()> {
+        let held = self.unsent_legs_held_bytes();
+        anyhow::ensure!(
+            self.unsent_legs.is_empty() || held.saturating_add(bytes) <= budget,
+            "{held} bytes of own content legs still wait for their send, the budget is {budget}, so this leg of {bytes} bytes was not sent"
+        );
+        Ok(())
     }
 
     /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
@@ -784,6 +848,144 @@ mod tests {
                 .authored(),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         }
+    }
+
+    #[test]
+    fn own_legs_stop_at_the_cap_and_the_rest_is_refused() {
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * tuning::OWN_LEGS_CAP {
+            if app.admit_own_leg(0).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, rx) = oneshot::channel();
+            held.push(tx);
+            app.queue_own_leg(leg("status"), rx);
+        }
+
+        assert_eq!(
+            app.own_legs.len(),
+            tuning::OWN_LEGS_CAP,
+            "the queue stops at the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::OWN_LEGS_CAP,
+            "every leg past the cap is refused"
+        );
+    }
+
+    #[test]
+    fn unsent_legs_stop_at_the_cap_and_the_rest_is_refused() {
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * tuning::UNSENT_LEGS_CAP {
+            if app.admit_unsent_leg(0).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, sent) = oneshot::channel();
+            held.push(tx);
+            app.unsent_legs.push(super::UnsentLeg {
+                frames: Vec::new(),
+                cache: None,
+                sent,
+            });
+        }
+
+        assert_eq!(
+            app.unsent_legs.len(),
+            tuning::UNSENT_LEGS_CAP,
+            "the list stops at the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::UNSENT_LEGS_CAP,
+            "every leg past the cap is refused"
+        );
+    }
+
+    const MIB: usize = 1024 * 1024;
+
+    #[test]
+    fn own_legs_stop_at_the_byte_budget_and_the_rest_is_refused() {
+        let budget = 16 * MIB;
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * budget / MIB {
+            if app.admit_own_bytes_within(MIB, budget).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, rx) = oneshot::channel();
+            held.push(tx);
+            app.queue_own_leg(leg(&"x".repeat(MIB)), rx);
+        }
+
+        assert_eq!(
+            app.own_legs_held_bytes(),
+            budget,
+            "the held bytes stop at the budget"
+        );
+        assert_eq!(
+            refused,
+            9 * budget / MIB,
+            "every leg past the budget is refused"
+        );
+    }
+
+    #[test]
+    fn one_own_leg_always_fits_even_past_the_budget() {
+        let app = super::A2aApp::new();
+
+        assert!(
+            app.admit_own_bytes_within(2 * MIB, MIB).is_ok(),
+            "the largest legal body must not be refused for its size when nothing waits"
+        );
+    }
+
+    #[test]
+    fn unsent_legs_stop_at_the_byte_budget_and_the_rest_is_refused() {
+        let frame = Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::App {
+                tag: wire::app_tag("status"),
+                to: None,
+                corr: None,
+            },
+            MessageBody::from("x"),
+        )
+        .sign(&habilis_network::protocol::Identity::generate());
+        let size = frame.wire_len();
+        let budget = 64 * size;
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * 64 {
+            if app.admit_unsent_bytes_within(size, budget).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, sent) = oneshot::channel();
+            held.push(tx);
+            app.unsent_legs.push(super::UnsentLeg {
+                frames: vec![frame.clone()],
+                cache: None,
+                sent,
+            });
+        }
+
+        assert_eq!(
+            app.unsent_legs_held_bytes(),
+            budget,
+            "the held bytes stop at the budget"
+        );
+        assert_eq!(refused, 9 * 64, "every leg past the budget is refused");
     }
 
     fn bodies(legs: &[DeliveredLeg]) -> Vec<&str> {

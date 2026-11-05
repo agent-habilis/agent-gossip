@@ -30,7 +30,7 @@ use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
+use crate::a2a::{card, receipt, served, status_update_params, task_record, tuning, wire};
 use crate::emission;
 
 /// Retain a just-built outbound message in the local log (pruning the
@@ -180,13 +180,36 @@ fn build_msg(
 }
 
 /// Wait for the sends that run on a task of their own. The first failure is the verdict.
-async fn settle(pending: Vec<PendingSend>) -> anyhow::Result<()> {
+async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> anyhow::Result<()> {
     for handle in pending {
-        handle
+        tokio::time::timeout_at(deadline, handle)
             .await
+            .map_err(|_| anyhow::anyhow!("a send gave no outcome by its deadline"))?
             .map_err(|_| anyhow::anyhow!("a send task ended before it gave its outcome"))??;
     }
     Ok(())
+}
+
+/// The bytes that an own task leg holds in the queue while its send waits: the plaintext body.
+fn own_leg_bytes(body: &str) -> usize {
+    body.len()
+}
+
+/// The bytes that an own content leg holds in the list while its send waits: the sealed frames,
+/// and for a split leg a second copy in the shard cache. The size of a file that an artifact
+/// offloads is not known before the offload, so only its text counts.
+fn unsent_leg_bytes(body: &str) -> usize {
+    body.len().saturating_mul(2)
+}
+
+/// The moment by which the sends of one layer must have an outcome. A layer takes it where it is
+/// built, not where its task first runs, so a layer that wraps another one is built later and
+/// never expires before it. Two layers built in the same instant can fire in the same tick, and
+/// then the outer layer can answer with its own timeout instead of the verdict of the inner one:
+/// both are a failure, so the caller and the log still agree.
+fn send_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now()
+        + std::time::Duration::from_secs(tuning::send_outcome_timeout_secs())
 }
 
 /// Give the verdict of the sends to `then`, off the event loop. With nothing pending the verdict
@@ -199,7 +222,8 @@ pub(crate) fn when_sent(
         then(Ok(()));
         return;
     }
-    tokio::spawn(async move { then(settle(pending).await) });
+    let deadline = send_deadline();
+    tokio::spawn(async move { then(settle(pending, deadline).await) });
 }
 
 /// For a caller with no one to tell: a failure of a send on a task is only logged.
@@ -207,8 +231,9 @@ pub(crate) fn log_pending(pending: Vec<PendingSend>) {
     if pending.is_empty() {
         return;
     }
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        if let Err(error) = settle(pending).await {
+        if let Err(error) = settle(pending, deadline).await {
             tracing::warn!(target: "agent_gossip::a2a", %error, "directed send failed");
         }
     });
@@ -750,6 +775,13 @@ async fn broadcast_directed_frame(
         id: pinned_id,
         app,
     } = frame;
+    if task_id.is_some() {
+        app.admit_own_leg(own_leg_bytes(echo_body.as_str()))?;
+    }
+    if content {
+        // The sealed frames and the shard cache hold the body twice.
+        app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
+    }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
     // the signature covers it.
@@ -1270,6 +1302,9 @@ pub(crate) async fn broadcast_task_artifact(
         file,
         app,
     } = params;
+    // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
+    app.admit_own_leg(own_leg_bytes(text))?;
+    app.admit_unsent_leg(unsent_leg_bytes(text))?;
     let parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1444,6 +1479,7 @@ pub(crate) async fn attach_call_file(
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
+    app.admit_unsent_leg(0)?;
     let opens_task = message.task_id.is_none();
     let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(
@@ -1561,8 +1597,9 @@ fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -
         cache: None,
         sent: sent_rx,
     });
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(vec![pending]).await;
+        let verdict = settle(vec![pending], deadline).await;
         let _ = sent_tx.send(verdict.is_ok());
         let _ = verdict_tx.send(verdict);
     });
@@ -1592,8 +1629,9 @@ fn queue_sharded_leg(
         return pending;
     }
     let (verdict_tx, verdict_rx) = oneshot::channel();
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(pending).await;
+        let verdict = settle(pending, deadline).await;
         let _ = sent_tx.send(verdict.is_ok());
         let _ = verdict_tx.send(verdict);
     });
@@ -1647,8 +1685,9 @@ fn echo_when_sent(
     }
     let out = out.clone();
     let (verdict_tx, verdict_rx) = oneshot::channel();
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(pending).await;
+        let verdict = settle(pending, deadline).await;
         if verdict.is_ok() {
             print_echo(&out, &echo, echo_as);
         }
@@ -1708,8 +1747,9 @@ fn ingest_own_leg_when_sent(
     let (queue_tx, queue_rx) = oneshot::channel();
     let (verdict_tx, verdict_rx) = oneshot::channel();
     app.queue_own_leg(delivered, queue_rx);
+    let deadline = send_deadline();
     tokio::spawn(async move {
-        let verdict = settle(pending).await;
+        let verdict = settle(pending, deadline).await;
         let _ = queue_tx.send(verdict.is_ok());
         let _ = verdict_tx.send(verdict);
     });
@@ -2580,9 +2620,12 @@ mod sharded_leg_tests {
     use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
     use tokio::sync::oneshot;
 
-    use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
+    use super::{
+        OwnLeg, PendingSend, ingest_own_leg_when_sent, queue_sharded_leg, send_deadline, settle,
+        take_sent_legs,
+    };
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
-    use crate::a2a::wire;
+    use crate::a2a::{tuning, wire};
 
     fn shard(text: &str) -> Verified {
         shard_raw(text).sign(&habilis_network::protocol::Identity::generate())
@@ -2613,7 +2656,7 @@ mod sharded_leg_tests {
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
         assert!(
-            settle(handles).await.is_err(),
+            settle(handles, send_deadline()).await.is_err(),
             "one lost shard makes the receiver unable to reassemble the whole payload"
         );
 
@@ -2648,13 +2691,100 @@ mod sharded_leg_tests {
         let pending = vec![None, Some(verdict(Ok(())))];
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(settle(handles).await.is_ok(), "the leg was sent");
+        assert!(
+            settle(handles, send_deadline()).await.is_ok(),
+            "the leg was sent"
+        );
 
         let logged: usize = take_sent_legs(&mut app)
             .iter()
             .map(|leg| leg.frames.len())
             .sum();
         assert_eq!(logged, 2, "two shards are logged");
+    }
+
+    fn verdict_after(delay: std::time::Duration) -> PendingSend {
+        let (verdict_tx, verdict_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = verdict_tx.send(Ok(()));
+        });
+        verdict_rx
+    }
+
+    /// The limit is for the whole leg, not for each send in it: the first shard answers late and
+    /// the second never does.
+    #[tokio::test(start_paused = true)]
+    async fn the_timeout_covers_all_the_shards_of_a_leg_together() {
+        let mut app = A2aApp::new();
+        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
+        let late = verdict_after(std::time::Duration::from_secs(100));
+        let handles = queue_sharded_leg(
+            &mut app,
+            vec![shard("a"), shard("b")],
+            None,
+            vec![Some(late), Some(silent)],
+        );
+        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
+
+        let [verdict] = <[PendingSend; 1]>::try_from(handles).expect("one verdict for the leg");
+        let outcome = tokio::time::timeout(limit, verdict).await;
+
+        assert!(
+            matches!(outcome, Ok(Ok(Err(_)))),
+            "the leg must fail at the limit, not at the limit of each shard"
+        );
+    }
+
+    /// The layers of one leg wrap each other's verdict. When the caller was told that the leg
+    /// failed, the log must not keep it: anti-entropy would send a leg that the user thinks is lost.
+    #[tokio::test(start_paused = true)]
+    async fn a_leg_that_the_caller_was_told_failed_is_not_logged_by_a_late_shard() {
+        let mut app = A2aApp::new();
+        let early = verdict_after(std::time::Duration::from_secs(50));
+        let late = verdict_after(std::time::Duration::from_secs(130));
+        let inner = queue_sharded_leg(
+            &mut app,
+            vec![shard("a"), shard("b")],
+            None,
+            vec![Some(early), Some(late)],
+        );
+        let task = crate::a2a::TaskId::from("550e8400-e29b-41d4-a716-446655440000");
+        let outer = ingest_own_leg_when_sent(
+            &mut app,
+            OwnLeg {
+                echo: shard("echo").authored(),
+                task_id: Some(&task),
+            },
+            inner,
+        );
+        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
+        let [verdict] = <[PendingSend; 1]>::try_from(outer).expect("one verdict for the leg");
+
+        let outcome = tokio::time::timeout(limit, verdict).await;
+        tokio::time::sleep(std::time::Duration::from_secs(100)).await;
+
+        assert!(
+            matches!(outcome, Ok(Ok(Err(_)))),
+            "the caller must hear a failure at the limit"
+        );
+        assert!(
+            take_sent_legs(&mut app).is_empty(),
+            "a leg that the caller was told failed must not enter the log"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_send_that_gives_no_outcome_fails_after_the_timeout() {
+        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
+        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
+
+        let outcome = tokio::time::timeout(limit, settle(vec![silent], send_deadline())).await;
+
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "a send with no outcome must end as a failure, not wait for ever"
+        );
     }
 }
 
@@ -2721,6 +2851,27 @@ mod status_leg_tests {
             status_waiting(&leg).as_deref(),
             Some("asks its user"),
             "the status waiting reason is kept"
+        );
+    }
+}
+
+#[cfg(test)]
+mod leg_bytes_tests {
+    use super::{own_leg_bytes, unsent_leg_bytes};
+
+    #[test]
+    fn an_own_task_leg_holds_its_body() {
+        assert_eq!(own_leg_bytes("abcd"), 4, "the plaintext body");
+        assert_eq!(own_leg_bytes(""), 0, "an empty body holds nothing");
+    }
+
+    #[test]
+    fn an_own_content_leg_holds_its_body_twice() {
+        assert_eq!(unsent_leg_bytes("abcd"), 8, "sealed frames and shard cache");
+        assert_eq!(
+            unsent_leg_bytes(&"x".repeat(16)),
+            32,
+            "the estimate scales with the body"
         );
     }
 }
