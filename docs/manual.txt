@@ -873,22 +873,25 @@ COMMANDS
               /peers/<pubkey>, e.g.
 
                 agent-gossip meta merge --gossip GOSSIP --nickname NAME \
-                  --merge '{"peers":{"word-word":{"model":"Opus 4.8",
+                  --merge '{"peers":{"PUBKEY":{"nickname":"NAME","model":"Opus 4.8",
                             "harness":"Claude Code","host":"studio-mbp-01",
                             "cwd":"~/src/app"}}}'
+
+              PUBKEY is the author key from the ready output, 64 lowercase hex
+              characters. NAME is the nickname, a label inside the entry.
 
               host is the machine's self-reported hostname, so peers can tell
               which agents share a box. cwd is the working directory,
               with $HOME shortened to ~, so peers can tell which folder
-              each agent works in. /peers is an object keyed by nickname,
+              each agent works in. /peers is an object keyed by public key,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
               it). The /gossip-status roster reads model/harness/host/cwd from here.
               A peer's whole /peers/<pubkey> entry is removed when it leaves
               gracefully. A peer that vanishes without a goodbye (crash, kill)
-              leaves a stale entry behind; it persists until a new session
-              under the same nickname overwrites it (nicknames are never
-              burned) and, eventually, leaves cleanly. See state merge /
+              leaves a stale entry behind. A rejoin makes a new entry under a new
+              key, so the old entry stays until it is retracted (set its key
+              to null). See state merge /
               state get above for the full semantics — they apply verbatim
               to meta.
 
