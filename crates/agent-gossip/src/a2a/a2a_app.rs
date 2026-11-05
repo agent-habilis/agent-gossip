@@ -1158,17 +1158,19 @@ mod tests {
     /// opened: the initiator refused the task, so the worker must not run it unseen.
     #[test]
     fn a_refused_adoption_cancels_the_task_on_the_worker() {
+        use crate::a2a::TaskState;
+        use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
         let mut app = super::A2aApp::new();
         let now = Instant::now();
         for index in 0..10 * tuning::TASKS_CAP {
             let filler = TaskId::random();
             let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
-            crate::a2a::task_record::adopt_initiator(
+            adopt_initiator(
                 &mut app.tasks,
-                crate::a2a::task_record::AdoptInitiatorParams {
+                AdoptInitiatorParams {
                     task_id: &filler,
                     peer: &peer,
-                    task_state: crate::a2a::TaskState::Working,
+                    task_state: TaskState::Working,
                     now,
                 },
             );
