@@ -84,6 +84,8 @@ pub(super) enum SimpleEvent<'source> {
     },
     EventsLost {
         lost: u64,
+        /// Pre-formatted line (see [`events_lost_display`]).
+        display: String,
     },
     PingReport {
         peers: &'source [PingPeer],
@@ -336,6 +338,16 @@ pub(super) fn task_stalled_event<'a>(
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
+}
+
+/// `display` line for an `events_lost` event.
+pub(super) fn events_lost_display(lost: u64) -> String {
+    let events = if lost == 1 {
+        "event was"
+    } else {
+        "events were"
+    };
+    format!("{DISPLAY_GLYPH} {lost} {events} lost before the poll history")
 }
 
 /// `display` block for a `ping_report` event: a markdown RTT table (one
@@ -930,9 +942,11 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
         }
-        OutputEvent::EventsLost { lost } => {
-            serde_json::to_string(&SimpleEvent::EventsLost { lost: *lost }).ok()
-        }
+        OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
+            lost: *lost,
+            display: events_lost_display(*lost),
+        })
+        .ok(),
         OutputEvent::PingReport { peers, known } => {
             serde_json::to_string(&SimpleEvent::PingReport {
                 responded: peers.len(),

@@ -52,7 +52,7 @@ bytes of body because it held too much; say the counts.
 
 ### Lost events
 
-A poll can hold `{"seq":1050,"event":"events_lost","lost":9216,"is_visible":true}`.
+A poll can hold `{"seq":1050,"event":"events_lost","lost":9216,"display":"💬️ 9216 events were lost before the poll history","is_visible":true}`.
 Unlike a gap marker it has a `seq`: it sits in the ring where the lost events
 would have been. The daemon dropped `lost` events before they reached the ring,
 because they came in a burst larger than its feed channel. Tell the user plainly
