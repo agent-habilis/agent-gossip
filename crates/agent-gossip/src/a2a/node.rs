@@ -942,6 +942,9 @@ async fn handle_a2a_rpc(
         // responses. The waiter adopts the authoritative `Task` a `SendMessage`
         // returned.
         app.fulfill_a2a_waiter(corr, &message.author, message.body.as_str());
+        // No test drives this call: the event-loop types have no test constructor. The decision
+        // itself, `late_cancels_full`, has a test at 10 times the cap. If this line goes, the
+        // owed cancels wait for the next task sweep and the list can pass its cap.
         if app.late_cancels_full() {
             task_record::send_late_cancels(state, app, context).await;
         }
