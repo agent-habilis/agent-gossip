@@ -139,9 +139,11 @@ pub(crate) struct A2aApp {
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
-    /// Tasks that a late reply opened after the caller was told the call
-    /// timed out. The next task sweep cancels each one at its worker.
-    late_cancels: Vec<(TaskId, Nickname)>,
+    /// Cancels owed to workers: a task a late reply opened after the caller was told the call
+    /// timed out, or a task this node refused. Each push answers one waiter or one orphan,
+    /// both bounded, and the next task sweep drains the whole Vec, so it holds one sweep's
+    /// pushes at most. The reason says which one it is.
+    late_cancels: Vec<(TaskId, Nickname, &'static str)>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -379,14 +381,32 @@ impl A2aApp {
             .position(|waiter| waiter.corr == *corr && waiter.peer == *from)
         {
             let waiter = self.a2a_waiters.swap_remove(index);
-            let adopted = self.adopt_returned_task(from, body);
-            match (waiter.blob_group, adopted) {
-                (Some(group), Some(task_id)) => {
+            let adoption = self.adopt_returned_task(from, body);
+            // The registry refused the task the worker opened for us: no record is kept, so
+            // the worker is told to cancel it rather than run it unseen, and the caller gets
+            // an error instead of a task it would then see cancelled with no output line.
+            let answer = match &adoption {
+                Adoption::Refused(refused) if waiter.opens_task => {
+                    self.late_cancels
+                        .push((refused.clone(), from.clone(), "task-refused"));
+                    // The same code a refused offer gets (node.rs, task_admission_error).
+                    serde_json::json!({
+                        "error": {
+                            "code": -32004,
+                            "message": "the task could not be recorded on this node",
+                        }
+                    })
+                    .to_string()
+                }
+                Adoption::Refused(_) | Adoption::Adopted(_) | Adoption::NoTask => body.to_owned(),
+            };
+            match (waiter.blob_group, adoption) {
+                (Some(group), Adoption::Adopted(task_id)) => {
                     self.call_blobs.entry(task_id).or_default().push(group);
                 }
                 (group, _) => self.orphan_blob(group),
             }
-            waiter.responder.send_response(body);
+            waiter.responder.send_response(&answer);
         } else if let Some(index) = self
             .orphan_blobs
             .iter()
@@ -406,8 +426,7 @@ impl A2aApp {
     /// A followed-up task is then in the registry although the agent was told
     /// the call timed out, and no task event shows it.
     fn adopt_late_reply(&mut self, orphan_index: usize, from: &Nickname, body: &str) {
-        let adopted = self.adopt_returned_task(from, body);
-        let Some(task_id) = adopted else {
+        let Adoption::Adopted(task_id) = self.adopt_returned_task(from, body) else {
             // The reply answers the call once: the next sweep evicts the group
             // and the call awaits nothing more.
             if let Some(orphan) = self.orphan_blobs.get_mut(orphan_index) {
@@ -430,11 +449,12 @@ impl A2aApp {
                 rec.state = crate::a2a::TaskState::Canceled;
                 rec.last_activity = Instant::now();
             }
-            self.late_cancels.push((task_id, from.clone()));
+            self.late_cancels
+                .push((task_id, from.clone(), "call-timed-out"));
         }
     }
 
-    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, Nickname)> {
+    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, Nickname, &'static str)> {
         std::mem::take(&mut self.late_cancels)
     }
 
@@ -486,8 +506,10 @@ impl A2aApp {
     /// `SendMessageResponse` (`{"task":…}`); a `GetTask` returns a bare `Task`.
     /// A non-Task response (a list, an error, a message echo) has no task and is
     /// ignored. Returns the id of the task now in the registry, if any.
-    fn adopt_returned_task(&mut self, peer: &Nickname, body: &str) -> Option<TaskId> {
-        let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    fn adopt_returned_task(&mut self, peer: &Nickname, body: &str) -> Adoption {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return Adoption::NoTask;
+        };
         let result = &value["result"];
         // Unwrap the SendMessageResponse oneof if present, else treat the result
         // as a bare Task (GetTask). A v1.0 Task has no inline `kind`, so a Task
@@ -497,10 +519,15 @@ impl A2aApp {
         } else {
             result
         };
-        let task_id = task["id"].as_str().and_then(TaskId::from_uuid_str)?;
-        let task_state = task["status"]["state"].as_str().and_then(|raw| {
-            serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok()
-        })?;
+        let Some(task_id) = task["id"].as_str().and_then(TaskId::from_uuid_str) else {
+            return Adoption::NoTask;
+        };
+        let Some(task_state) = task["status"]["state"]
+            .as_str()
+            .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())
+        else {
+            return Adoption::NoTask;
+        };
         task_record::adopt_initiator(
             &mut self.tasks,
             task_record::AdoptInitiatorParams {
@@ -512,10 +539,15 @@ impl A2aApp {
         );
         // `adopt_initiator` refuses a snapshot from a peer that is not the
         // task's worker, and only a task in the registry is ever reaped.
-        self.tasks
+        if self
+            .tasks
             .get(&task_id)
             .is_some_and(|rec| rec.peer == *peer)
-            .then_some(task_id)
+        {
+            Adoption::Adopted(task_id)
+        } else {
+            Adoption::Refused(task_id)
+        }
     }
 
     /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
@@ -595,6 +627,16 @@ impl A2aApp {
 /// returns (so an external A2A client's `message/send` to a peer is served
 /// over the same request/response waiter — task creation over the compliant
 /// transport).
+/// What a reply's task did to the initiator registry.
+enum Adoption {
+    /// The task is in the registry, held for this peer.
+    Adopted(TaskId),
+    /// The reply named a task the registry refused, so no record is kept.
+    Refused(TaskId),
+    /// The reply carried no task.
+    NoTask,
+}
+
 pub(crate) enum A2aResponder {
     Ipc(Sender<String>),
     Typed(Sender<serde_json::Value>),
@@ -722,7 +764,8 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
-    use crate::a2a::{TaskId, tuning, wire};
+    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState, tuning, wire};
 
     fn leg(body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(
@@ -1124,13 +1167,146 @@ mod tests {
 
         assert_eq!(
             app.tasks[&task_id].state,
-            crate::a2a::TaskState::Canceled,
+            TaskState::Canceled,
             "the caller already saw the call fail, so the opened task must not keep running unseen"
         );
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, Nickname::from("bob"))],
+            vec![(task_id, Nickname::from("bob"), "call-timed-out")],
             "the cancel reply is ok"
+        );
+    }
+
+    /// A refused adoption leaves no record, and the worker is told to cancel the task it
+    /// opened: the initiator refused the task, so the worker must not run it unseen.
+    #[test]
+    fn a_refused_adoption_cancels_the_task_on_the_worker() {
+        let mut app = super::A2aApp::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "the registry is at the cap"
+        );
+        let task_id = TaskId::random();
+        app.a2a_waiters
+            .push(waiter_with_blob("corr-refused", "group-refused"));
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-refused"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "a refused adoption leaves no record"
+        );
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, Nickname::from("bob"), "task-refused")],
+            "the worker is told to cancel the task it opened"
+        );
+    }
+
+    /// A cancel for a refused task names its reason, not the late-reply reason.
+    #[test]
+    fn a_refused_adoption_cancels_with_the_registry_reason() {
+        let mut app = super::A2aApp::new();
+        let (tx, _rx) = oneshot::channel();
+        let mut waiter = waiter_with_blob("corr-reason", "group-reason");
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+        for index in 0..tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now: Instant::now(),
+                },
+            );
+        }
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-reason"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, Nickname::from("bob"), "task-refused")],
+            "the cancel says the task could not be recorded here"
+        );
+    }
+
+    /// The caller of a refused task gets an error, not the worker's Task: otherwise it
+    /// would see a task that this node then cancels without any output line.
+    #[test]
+    fn a_refused_adoption_answers_the_caller_with_an_error() {
+        let mut app = super::A2aApp::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        let (tx, mut rx) = oneshot::channel();
+        let mut waiter = waiter_with_blob("corr-error", "group-error");
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-error"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+
+        let answer = rx.try_recv().expect("the caller is answered");
+        assert!(
+            answer.get("error").is_some(),
+            "the caller gets an error, not the worker's task: {answer}"
+        );
+        assert!(
+            answer.get("result").is_none(),
+            "no task is returned: {answer}"
         );
     }
 
@@ -1158,7 +1334,7 @@ mod tests {
 
         assert_eq!(
             app.tasks[&task_id].state,
-            crate::a2a::TaskState::Working,
+            TaskState::Working,
             "a late cancel leaves the task working"
         );
         assert!(
