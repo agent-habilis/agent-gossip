@@ -30,7 +30,7 @@ use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
+use crate::a2a::{card, ipc_command, receipt, served, status_update_params, task_record, wire};
 use crate::emission;
 
 /// Retain a just-built outbound message in the local log (pruning the
@@ -860,10 +860,12 @@ async fn broadcast_directed_frame(
     Ok((logical.id.clone(), logical, pending))
 }
 
-/// The one live key that uses `peer`. A shared name has no key, so the send is refused.
+/// The key that a send by nickname goes to: the one live key of `peer`, else the one quiet key.
+/// A shared name has no key, so the send is refused. The caller resolves it once and uses the
+/// same key to seal the body and to address the frame.
 pub(crate) fn peer_key(state: &EventLoopState, peer: &Nickname) -> anyhow::Result<AuthorKey> {
     state
-        .key_of(peer)
+        .addressee_key(peer)
         .map_err(|error| anyhow::anyhow!("cannot address '{peer}': {error}"))
 }
 
@@ -1047,7 +1049,7 @@ pub(crate) async fn emit_task_artifact(
     .map(|(_id, message, pending)| (message, pending))
 }
 
-/// Seal a directed payload `body` to `to`'s published X25519 key. A directed
+/// Seal a directed payload `body` to the published X25519 key of the member `to`. A directed
 /// frame is **never** sent in plaintext — if the recipient's card / seal key has
 /// not replicated yet, this errors rather than leaking the body. The Ed25519
 /// frame signature (added later, over this ciphertext) authenticates the sender.
@@ -1057,11 +1059,13 @@ pub(crate) async fn emit_task_artifact(
 /// seal operation fails.
 pub(crate) fn seal_directed(
     state: &EventLoopState,
-    to: &Nickname,
+    to: &AuthorKey,
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
     let doc = state.doc(Channel::Meta).to_json();
     let key = card::peer_seal_key(&doc, to).ok_or_else(|| {
+        let known: Option<Nickname> = state.known_nickname_of(to);
+        let name: String = known.map_or_else(|| to.to_string(), |nickname| nickname.to_string());
         // A peer whose card did not publish says why in its own entry. Without that, the sender
         // waits for cards that never come.
         match doc
@@ -1069,10 +1073,10 @@ pub(crate) fn seal_directed(
             .and_then(serde_json::Value::as_str)
         {
             Some(cause) => {
-                anyhow::anyhow!("cannot seal to '{to}': its card is not published ({cause})")
+                anyhow::anyhow!("cannot seal to '{name}': its card is not published ({cause})")
             }
             None => anyhow::anyhow!(
-                "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
+                "cannot seal to '{name}': its encryption key is not known yet (cards still propagating)"
             ),
         }
     })?;
@@ -1153,10 +1157,11 @@ pub(crate) async fn broadcast_task_status(
         waiting: leg.waiting(),
     });
     let plain = status_update_params::payload_body(&update)?;
-    let sealed = seal_directed(state, peer, &plain)?;
+    let to = peer_key(state, peer)?;
+    let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::STATUS),
-        to: Some(peer_key(state, peer)?),
+        to: Some(to),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1249,10 +1254,11 @@ pub(crate) async fn send_msg(
     let payload_id = MessageId::try_new(payload.message_id.as_str())
         .expect("an a2a message id is a valid frame id");
     let plain = status_update_params::payload_body(&payload)?;
-    let sealed = seal_directed(state, peer, &plain)?;
+    let to = peer_key(state, peer)?;
+    let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::MSG),
-        to: Some(peer_key(state, peer)?),
+        to: Some(to),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1323,10 +1329,11 @@ pub(crate) async fn broadcast_task_artifact(
     .await?;
     let update = status_update_params::artifact_update_parts(mesh, task_id, parts);
     let plain = status_update_params::payload_body(&update)?;
-    let sealed = seal_directed(state, peer, &plain)?;
+    let to = peer_key(state, peer)?;
+    let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::ARTIFACT),
-        to: Some(peer_key(state, peer)?),
+        to: Some(to),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1805,15 +1812,15 @@ pub(crate) async fn send_shard_repair_requests(
         let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
             continue;
         };
-        let sealed = match seal_directed(state, &ticket.author, &body) {
+        let Ok(author_key) = peer_key(state, &ticket.author) else {
+            continue;
+        };
+        let sealed = match seal_directed(state, &author_key, &body) {
             Ok(sealed) => sealed,
             Err(error) => {
                 tracing::debug!(%error, author = %ticket.author, "cannot seal shard repair request yet");
                 continue;
             }
-        };
-        let Ok(author_key) = peer_key(state, &ticket.author) else {
-            continue;
         };
         let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
         let frame = Message::new_app(
@@ -1907,7 +1914,7 @@ pub(crate) async fn broadcast_a2a_call(
         ));
         return;
     }
-    let Ok(peer_key) = state.key_of(&peer) else {
+    let Ok(peer_key) = peer_key(state, &peer) else {
         responder.send_response(&rpc_error(
             -32602,
             &format!("ambiguous or unknown peer '{peer}'"),
@@ -1942,7 +1949,7 @@ pub(crate) async fn broadcast_a2a_call(
         return;
     };
     // Seal the request to the addressee — a relay forwards it but cannot read it.
-    let body = match seal_directed(state, &peer, &body) {
+    let body = match seal_directed(state, &peer_key, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
             app.orphan_blob(blob_group);
@@ -2391,7 +2398,7 @@ pub(crate) async fn handle_session_request(
             session_merge(SessionMerge(Channel::Meta, merge, response), scope, state).await
         }
         SessionRequest::MetaGet { response } => {
-            let _ = response.send(state.doc(Channel::Meta).to_json());
+            let _ = response.send(ipc_command::meta_view(state));
             false
         }
         SessionRequest::Ping { response } => session_ping(response, state, context).await,

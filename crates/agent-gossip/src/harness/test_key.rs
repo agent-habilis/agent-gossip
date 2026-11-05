@@ -162,9 +162,8 @@ impl<'caller> SealedMsgParams<'caller> {
 /// It is read exactly as the daemon's own send path reads it. Any mesh member holds this
 /// document, which is the point: sealing to a peer needs no secret.
 #[must_use]
-pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicKey> {
-    let peer = Nickname::try_new(peer).ok()?;
-    card::peer_seal_key(meta_doc, &peer)
+pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &AuthorKey) -> Option<PublicKey> {
+    card::peer_seal_key(meta_doc, peer)
 }
 
 /// Builder for a crafted `Msg`.

@@ -65,10 +65,7 @@ async fn send_sealed(
     receipt: &Receipt,
 ) -> anyhow::Result<()> {
     let plain = MessageBody::try_new(&serde_json::to_string(receipt)?)?;
-    let Some(name) = state.nickname_of(to) else {
-        anyhow::bail!("cannot seal a receipt to a key that is not live");
-    };
-    let body = seal_directed(state, &name, &plain)?;
+    let body = seal_directed(state, to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::RECEIPT),
         to: Some(*to),

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use agent_gossip::Channel;
 
-use crate::{MSG_TIMEOUT, POLL, cli_channel_get};
+use crate::{MSG_TIMEOUT, POLL, card_slot_of, cli_channel_get};
 
 /// Block until `target`'s card is present in `nickname`'s `meta` doc.
 ///
@@ -21,12 +21,11 @@ use crate::{MSG_TIMEOUT, POLL, cli_channel_get};
 ///
 /// Panics if the card does not reach the meta doc before `MSG_TIMEOUT`.
 pub fn await_peer_card_cli(mesh: &str, nickname: &str, target: &str) {
-    let pointer = format!("/peers/{target}/card");
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         let raw = cli_channel_get(Channel::Meta, mesh, nickname);
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw)
-            && value["document"].pointer(&pointer).is_some()
+            && card_slot_of(&value["document"], target).is_some()
         {
             return;
         }

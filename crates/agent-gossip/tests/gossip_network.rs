@@ -2906,6 +2906,18 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     let (survivor, mesh) = Node::create_flags("meta-ghost", &SHORT_EVICT);
     let ghost = Node::join_args(&mesh, "meta-ghost-peer", &[], &SHORT_EVICT);
     common::await_peer_card_cli(&mesh, &survivor.nickname, &ghost.nickname);
+    common::await_peer_card_cli(&mesh, &ghost.nickname, &survivor.nickname);
+    // The slot of a member is the hex of its author key; its card names the nickname.
+    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
+        agent_gossip::Channel::Meta,
+        &mesh,
+        &survivor.nickname,
+    ))
+    .expect("the CLI prints the meta channel as one JSON object");
+    let ghost_slot = common::card_slot_of(&meta["document"], &ghost.nickname)
+        .expect("the wait above ended on this card, so the slot exists");
+    let survivor_slot = common::card_slot_of(&meta["document"], &survivor.nickname)
+        .expect("the wait above ended on the card of the other side, so the slot exists");
 
     // The doomed peer publishes an agent-side fact, as the join skill does.
     let mut command = common::test_cmd();
@@ -2915,10 +2927,7 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     let merged: std::process::Output = command
         .args([
             "--merge",
-            &format!(
-                r#"{{"peers":{{"{}":{{"status":"idle"}}}}}}"#,
-                ghost.nickname
-            ),
+            &format!(r#"{{"peers":{{"{ghost_slot}":{{"status":"idle"}}}}}}"#),
         ])
         .output()
         .expect("failed to run meta merge");
@@ -2930,7 +2939,6 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     // The survivor evicts it from the roster within the alive timeout, but the
     // meta entry cannot follow.
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let ghost_nick = ghost.nickname.clone();
     loop {
         let response: serde_json::Value = serde_json::from_str(&ipc_raw(
             &mesh,
@@ -2947,15 +2955,15 @@ fn meta_get_names_entries_whose_peer_is_gone() {
             .filter_map(serde_json::Value::as_str)
             .collect();
 
-        if absent.contains(&ghost_nick.as_str()) {
+        if absent.contains(&ghost_slot.as_str()) {
             // The entry is still in the document — reported, not deleted.
             assert!(
-                response["document"]["peers"][&ghost_nick].is_object(),
+                response["document"]["peers"][&ghost_slot].is_object(),
                 "the entry must be reported, not trimmed: {response}"
             );
             // And the survivor never reports itself.
             assert!(
-                !absent.contains(&survivor.nickname.as_str()),
+                !absent.contains(&survivor_slot.as_str()),
                 "a node must not flag its own entry: {response}"
             );
             break;

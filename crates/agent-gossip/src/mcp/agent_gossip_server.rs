@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::future::Future;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -26,7 +25,7 @@ use super::{
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
     parse_task_state, rejoin_existing, to_mcp_error,
 };
-use crate::a2a::card;
+use crate::a2a::ipc_command::MetaView;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
@@ -531,13 +530,9 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let document = session.meta_get().await.map_err(to_mcp_error)?;
-        // Same rule as the CLI's `meta get`, from the same function, so the two
+        // The loop derives `absent`, with the same function as the CLI's `meta get`, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
-        let roster = session.peers().await.map_err(to_mcp_error)?;
-        let active = roster.peers.iter().filter(|entry| !entry.quiet);
-        let live: HashSet<&str> = active.map(|entry| entry.nickname.as_str()).collect();
-        let absent = card::absent_peers(&document, &live, session.nickname());
+        let MetaView { document, absent } = session.meta_get().await.map_err(to_mcp_error)?;
         ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
 }

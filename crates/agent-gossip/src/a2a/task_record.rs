@@ -966,10 +966,7 @@ async fn broadcast_status(
     // frame (the receive path always unseals a directed body). If the peer's key
     // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
     // a later one retries.
-    let Some(peer) = state.nickname_of(peer_key) else {
-        return false;
-    };
-    let Ok(body) = broadcast_params::seal_directed(state, &peer, &body) else {
+    let Ok(body) = broadcast_params::seal_directed(state, peer_key, &body) else {
         return false;
     };
     let kind = MessageKind::App {

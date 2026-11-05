@@ -341,9 +341,14 @@ pub(crate) async fn handle_op(
             serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
+            // A nickname is a label: the card is the one of the key that the send would go to.
+            let key = state.addressee_key(&peer).map_err(|error| RpcError {
+                code: -32004,
+                message: format!("cannot address '{peer}': {error}"),
+            })?;
             let doc = state.doc(Channel::Meta).to_json();
             // A card that is still arriving, in pieces, is not served.
-            let mut card = super::card::complete_card(&doc, &peer)
+            let mut card = super::card::complete_card(&doc, &key)
                 .and_then(super::card::full_from_minimal)
                 .unwrap_or(Value::Null);
             if card.is_null() {

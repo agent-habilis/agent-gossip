@@ -13,6 +13,7 @@ use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
 use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::ipc_command::MetaView;
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::emission::Output;
@@ -308,7 +309,7 @@ impl InProcessSession {
     }
 
     /// `meta`-channel counterpart of [`state_get`](Self::state_get).
-    pub(crate) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
+    pub(crate) async fn meta_get(&self) -> Result<MetaView, SessionError> {
         self.call(|response| SessionRequest::MetaGet { response })
             .await
     }

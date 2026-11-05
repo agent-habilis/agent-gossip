@@ -300,11 +300,10 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     // document on its own schedule. So wait for the card too, or every directed
     // call in this binary races it — the subprocess twin of
     // `InProcNode::await_peer_card`.
-    let card = format!("/peers/{creator_nick}/card");
     assert!(
-        poll_doc(&mut joiner, probe_id, "get_meta", |doc| doc
-            .pointer(&card)
-            .is_some()),
+        poll_doc(&mut joiner, probe_id, "get_meta", |doc| {
+            common::card_slot_of(doc, &creator_nick).is_some()
+        }),
         "creator's card never reached the joiner's meta doc"
     );
 

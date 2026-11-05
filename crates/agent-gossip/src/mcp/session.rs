@@ -11,6 +11,7 @@ use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
 
 use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::ipc_command::MetaView;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
@@ -204,7 +205,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
+    pub(super) async fn meta_get(&self) -> Result<MetaView, SessionError> {
         self.inner.meta_get().await
     }
 
@@ -377,7 +378,16 @@ mod tests {
         before: &serde_json::Value,
         after: &serde_json::Value,
     ) -> bool {
-        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
+        // The slot of an entry is the hex of its author key, so the card of bob-cursor is the one
+        // that names him.
+        let card = |doc: &serde_json::Value| {
+            let peers = doc.get("peers").and_then(serde_json::Value::as_object);
+            peers.is_some_and(|peers| {
+                peers
+                    .values()
+                    .any(|entry| entry.pointer("/card/name") == Some(&json!("bob-cursor")))
+            })
+        };
         author == "bob-cursor" && !card(before) && card(after)
     }
 
@@ -678,9 +688,10 @@ mod tests {
     fn bob_card_merge_is_the_absent_to_present_transition() {
         // A failed card publish writes `card_error` under bob-cursor's own entry.
         // It has his author but no card, so it must not count as the card merge.
+        let slot = "ab".repeat(32);
         let empty = json!({ "peers": {} });
-        let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
-        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+        let card_error = json!({ "peers": { slot.as_str(): { "card_error": "boom" } } });
+        let card = json!({ "peers": { slot.as_str(): { "card": { "name": "bob-cursor" } } } });
 
         assert!(
             !is_bob_card_merge("bob-cursor", &empty, &card_error),

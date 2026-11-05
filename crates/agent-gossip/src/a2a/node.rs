@@ -72,10 +72,7 @@ impl NodeApp for A2aApp {
         state: &mut EventLoopState,
         context: &HandlerCtx<'_>,
     ) {
-        let Some(nickname) = state.nickname_of(author) else {
-            return;
-        };
-        adopt_meta_endpoint(&nickname, state, context);
+        adopt_meta_endpoint(author, state, context);
     }
 
     async fn on_meshed(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
@@ -293,7 +290,7 @@ impl NodeDriver for A2aApp {
     }
 }
 
-/// Publish this member's `AgentCard` at meta `/peers/<nick>/card` — one of the
+/// Publish this member's `AgentCard` at meta `/peers/<key>/card`, where the slot is the hex of the author key — one of the
 /// daemon's two [`merge_own_meta_entry`] lifecycle merges (the card is the
 /// peer's canonical A2A self-description, architectural rather than app
 /// state). Unmeshed it buffers/backfills like any state event; agent-side
@@ -322,7 +319,7 @@ async fn publish_own_card(
         let doc = state.doc(Channel::Meta);
         let identity = state.identity();
         let actor_seed = *identity.public().as_bytes();
-        card::publish_merges(context.author, &card, |merge| {
+        card::publish_merges(&context.our_pubkey, &card, |merge| {
             let Some(change) = doc.build_change(merge, &actor_seed)? else {
                 return Ok(0);
             };
@@ -340,7 +337,7 @@ async fn publish_own_card(
     Ok(())
 }
 
-/// Delete this member's whole `/peers/<nick>` meta entry on graceful leave —
+/// Delete this member's whole `/peers/<key>` meta entry on graceful leave —
 /// [`publish_own_card`]'s counterpart. Only self-retraction exists: the
 /// card-forgery gate rejects the delete from any other author, so a peer that
 /// dies without a goodbye leaves a stale entry that persists until a new
@@ -349,13 +346,13 @@ async fn publish_own_card(
 /// non-card write racing the delete can survive the merge (add wins), but
 /// peers only ever write their own subtree.
 async fn retract_own_meta_entry(state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-    let merge = card::retract_merge(context.author);
+    let merge = card::retract_merge(&context.our_pubkey);
     // Best effort at leave: the failure is logged by the merge.
     let _ = merge_own_meta_entry(state, context, merge, true).await;
 }
 
 impl A2aApp {
-    /// Publish our card, and keep `card_error` and its `/peers/<nick>/card_error` mirror in step
+    /// Publish our card, and keep `card_error` and its `/peers/<key>/card_error` mirror in step
     /// with the outcome. A failure is retried on the ticks that the backoff allows (see
     /// `on_tick`).
     async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
@@ -372,14 +369,14 @@ impl A2aApp {
             self.card_retry_in = 0;
         }
         if failure != self.card_error {
-            let merge = card::card_error_merge(context.author, failure.as_deref());
+            let merge = card::card_error_merge(&context.our_pubkey, failure.as_deref());
             let _ = merge_own_meta_entry(state, context, merge, false).await;
             self.card_error = failure;
         }
     }
 }
 
-/// The daemon's write path for its own `/peers/<nick>` meta entry. The daemon
+/// The daemon's write path for its own `/peers/<key>` meta entry. The daemon
 /// is an ordinary channel writer bound by the same rule as its agent — author
 /// only your own subtree, as an RFC 7386 merge through the one shared
 /// pipeline (`broadcast_state_merge`). It makes exactly two lifecycle merges:
@@ -1044,7 +1041,7 @@ async fn handle_a2a_req(
         return;
     };
     // Seal the response to the requester — a relay forwards it but cannot read it.
-    let body = match broadcast_params::seal_directed(state, &requester, &body) {
+    let body = match broadcast_params::seal_directed(state, &requester_key, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
             tracing::warn!(%error, "cannot seal a2a rpc response — dropping");
@@ -1231,14 +1228,15 @@ fn ingest_remote_message(
         .ok_or_else(|| RpcError::internal("task record missing after ingest"))
 }
 
-/// Adopt `author`'s published endpoint hint (`/peers/<nick>/card/endpoint`) into
-/// the dial book — the meta-doc counterpart to `handle_peer_info`. Binds
-/// `peer_endpoints[author] = eid` and seeds iroh's address book via
+/// Adopt `author`'s published endpoint hint (`/peers/<key>/card/endpoint`) into
+/// the dial book — the meta-doc counterpart to `handle_peer_info`. Binds the endpoint to the key
+/// by the rule of a `PeerInfo` (`note_key_endpoint`), so a second live key of one nickname cannot
+/// take the hint of the first, and seeds iroh's address book via
 /// [`add_peer_addr`], so a directed unicast can reach a peer we learned about
 /// from the synced meta doc even before its gossiped `PeerInfo` arrives. Both
 /// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
 /// does **not** graft a gossip link — mesh formation stays `PeerInfo`'s job.
-fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
+fn adopt_meta_endpoint(author: &AuthorKey, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
     let doc = state.doc(Channel::Meta).to_json();
     let Some((peer_id, peer_addr)) = card::peer_endpoint(&doc, author) else {
         return;
@@ -1247,7 +1245,7 @@ fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, context: &
     if peer_id == context.endpoint.id() || peer_id == context.rendezvous_id {
         return;
     }
-    state.note_peer_endpoint(author.clone(), peer_addr.clone());
+    state.note_key_endpoint(*author, peer_addr.clone());
     add_peer_addr(state.address_book(), peer_addr);
 }
 
