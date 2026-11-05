@@ -28,6 +28,9 @@ const KIND: u8 = 2;
 /// JSON is read.
 const MAX_TICKET_BYTES: usize = 3840;
 
+/// The most characters a ticket text can have: base58 of one frame is about 5250, with a margin.
+const MAX_TICKET_TEXT: usize = 5300;
+
 /// Bit 0 of the flags byte: the password flag.
 const PASSWORD_BIT: u8 = 0b0000_0001;
 
@@ -66,7 +69,11 @@ impl A2aTicket {
     /// Bad Base58/checksum, the wrong ticket kind, a bad version, or a
     /// malformed payload.
     pub(crate) fn decode(ticket: &str) -> Result<Self> {
-        let framed = base58check_decode(ticket.trim())?;
+        let text = ticket.trim();
+        if text.len() > MAX_TICKET_TEXT {
+            bail!("a2a ticket text is larger than one frame");
+        }
+        let framed = base58check_decode(text)?;
         if framed.len() > MAX_TICKET_BYTES {
             bail!("a2a ticket is larger than one frame");
         }
