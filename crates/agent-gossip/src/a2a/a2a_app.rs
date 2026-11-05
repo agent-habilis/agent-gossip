@@ -381,14 +381,14 @@ impl A2aApp {
             .position(|waiter| waiter.corr == *corr && waiter.peer == *from)
         {
             let waiter = self.a2a_waiters.swap_remove(index);
-            let adopted = self.adopt_returned_task(from, body);
+            let adoption = self.adopt_returned_task(from, body);
             // The registry refused the task the worker opened for us: no record is kept, so
             // the worker is told to cancel it rather than run it unseen, and the caller gets
             // an error instead of a task it would then see cancelled with no output line.
-            let answer = match Self::returned_task_id(body) {
-                Some(refused) if waiter.opens_task && adopted.is_none() => {
+            let answer = match &adoption {
+                Adoption::Refused(refused) if waiter.opens_task => {
                     self.late_cancels
-                        .push((refused, from.clone(), "registry-full"));
+                        .push((refused.clone(), from.clone(), "registry-full"));
                     serde_json::json!({
                         "error": {
                             "code": -32004,
@@ -399,8 +399,8 @@ impl A2aApp {
                 }
                 _ => body.to_owned(),
             };
-            match (waiter.blob_group, adopted) {
-                (Some(group), Some(task_id)) => {
+            match (waiter.blob_group, adoption) {
+                (Some(group), Adoption::Adopted(task_id)) => {
                     self.call_blobs.entry(task_id).or_default().push(group);
                 }
                 (group, _) => self.orphan_blob(group),
@@ -425,8 +425,7 @@ impl A2aApp {
     /// A followed-up task is then in the registry although the agent was told
     /// the call timed out, and no task event shows it.
     fn adopt_late_reply(&mut self, orphan_index: usize, from: &Nickname, body: &str) {
-        let adopted = self.adopt_returned_task(from, body);
-        let Some(task_id) = adopted else {
+        let Adoption::Adopted(task_id) = self.adopt_returned_task(from, body) else {
             // The reply answers the call once: the next sweep evicts the group
             // and the call awaits nothing more.
             if let Some(orphan) = self.orphan_blobs.get_mut(orphan_index) {
@@ -506,8 +505,10 @@ impl A2aApp {
     /// `SendMessageResponse` (`{"task":…}`); a `GetTask` returns a bare `Task`.
     /// A non-Task response (a list, an error, a message echo) has no task and is
     /// ignored. Returns the id of the task now in the registry, if any.
-    fn adopt_returned_task(&mut self, peer: &Nickname, body: &str) -> Option<TaskId> {
-        let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    fn adopt_returned_task(&mut self, peer: &Nickname, body: &str) -> Adoption {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return Adoption::NoTask;
+        };
         let result = &value["result"];
         // Unwrap the SendMessageResponse oneof if present, else treat the result
         // as a bare Task (GetTask). A v1.0 Task has no inline `kind`, so a Task
@@ -517,10 +518,15 @@ impl A2aApp {
         } else {
             result
         };
-        let task_id = task["id"].as_str().and_then(TaskId::from_uuid_str)?;
-        let task_state = task["status"]["state"].as_str().and_then(|raw| {
-            serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok()
-        })?;
+        let Some(task_id) = task["id"].as_str().and_then(TaskId::from_uuid_str) else {
+            return Adoption::NoTask;
+        };
+        let Some(task_state) = task["status"]["state"]
+            .as_str()
+            .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())
+        else {
+            return Adoption::NoTask;
+        };
         task_record::adopt_initiator(
             &mut self.tasks,
             task_record::AdoptInitiatorParams {
@@ -532,10 +538,15 @@ impl A2aApp {
         );
         // `adopt_initiator` refuses a snapshot from a peer that is not the
         // task's worker, and only a task in the registry is ever reaped.
-        self.tasks
+        if self
+            .tasks
             .get(&task_id)
             .is_some_and(|rec| rec.peer == *peer)
-            .then_some(task_id)
+        {
+            Adoption::Adopted(task_id)
+        } else {
+            Adoption::Refused(task_id)
+        }
     }
 
     /// The task id a reply carries, for a reply the registry refused.
@@ -627,6 +638,16 @@ impl A2aApp {
 /// returns (so an external A2A client's `message/send` to a peer is served
 /// over the same request/response waiter — task creation over the compliant
 /// transport).
+/// What a reply's task did to the initiator registry.
+enum Adoption {
+    /// The task is in the registry, held for this peer.
+    Adopted(TaskId),
+    /// The reply named a task the registry refused, so no record is kept.
+    Refused(TaskId),
+    /// The reply carried no task.
+    NoTask,
+}
+
 pub(crate) enum A2aResponder {
     Ipc(Sender<String>),
     Typed(Sender<serde_json::Value>),
