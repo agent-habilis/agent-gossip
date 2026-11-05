@@ -130,7 +130,8 @@ impl SurfacedEvents {
 
     /// The events and bytes that the byte cap dropped with a seq above `after`. `None` when
     /// `after` is older than the oldest mark, because the counts are then unknown. Zero for a
-    /// cursor that the ring still holds.
+    /// cursor that the ring still holds. A cursor of 0 is "before anything": the ring never
+    /// evicts seq 0, so that reader has no gap and never asks.
     pub(crate) fn byte_losses_above(&self, after: u64) -> Option<(u64, u64)> {
         if self.events.front().is_none_or(|oldest| after >= oldest.seq) {
             return Some((0, 0));
