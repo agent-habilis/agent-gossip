@@ -191,13 +191,17 @@ pub(crate) struct UnsentLeg {
     pub(crate) sent: Receiver<bool>,
 }
 
+fn bytes_of(frames: &[WireFrame]) -> usize {
+    frames.iter().map(WireFrame::len).sum()
+}
+
 impl UnsentLeg {
     fn held_bytes(&self) -> usize {
         let frames: usize = self.frames.iter().map(|frame| frame.wire_len()).sum();
         let cache: usize = self
             .cache
             .as_ref()
-            .map_or(0, |(_, cached)| cached.iter().map(WireFrame::len).sum());
+            .map_or(0, |(_, cached)| bytes_of(cached));
         frames + cache
     }
 }
@@ -305,10 +309,11 @@ impl A2aApp {
 
     /// The bytes of body that the own legs in the queue hold.
     pub(crate) fn own_legs_held_bytes(&self) -> usize {
-        self.own_legs
+        let lengths = self
+            .own_legs
             .iter()
-            .map(|queued| queued.leg.echo.body.as_str().len())
-            .sum()
+            .map(|queued| queued.leg.echo.body.as_str().len());
+        lengths.sum()
     }
 
     /// The bytes that the own content legs in the list hold: the sealed frames and the shard cache.
@@ -868,12 +873,12 @@ mod tests {
         assert_eq!(
             app.own_legs.len(),
             tuning::OWN_LEGS_CAP,
-            "the queue stops at the cap"
+            "10 times the cap was offered: the queue must not grow past the cap"
         );
         assert_eq!(
             refused,
             9 * tuning::OWN_LEGS_CAP,
-            "every leg past the cap is refused"
+            "a leg that finds the queue full must be refused, not queued"
         );
     }
 
@@ -899,12 +904,12 @@ mod tests {
         assert_eq!(
             app.unsent_legs.len(),
             tuning::UNSENT_LEGS_CAP,
-            "the list stops at the cap"
+            "10 times the cap was offered: the list must not grow past the cap"
         );
         assert_eq!(
             refused,
             9 * tuning::UNSENT_LEGS_CAP,
-            "every leg past the cap is refused"
+            "a leg that finds the queue full must be refused, not queued"
         );
     }
 
@@ -929,12 +934,12 @@ mod tests {
         assert_eq!(
             app.own_legs_held_bytes(),
             budget,
-            "the held bytes stop at the budget"
+            "10 times the budget was offered: the held bytes must not pass the budget"
         );
         assert_eq!(
             refused,
             9 * budget / MIB,
-            "every leg past the budget is refused"
+            "a leg that would pass the budget must be refused, not queued"
         );
     }
 
@@ -983,9 +988,13 @@ mod tests {
         assert_eq!(
             app.unsent_legs_held_bytes(),
             budget,
-            "the held bytes stop at the budget"
+            "10 times the budget was offered: the held bytes must not pass the budget"
         );
-        assert_eq!(refused, 9 * 64, "every leg past the budget is refused");
+        assert_eq!(
+            refused,
+            9 * 64,
+            "a leg that would pass the budget must be refused, not queued"
+        );
     }
 
     fn bodies(legs: &[DeliveredLeg]) -> Vec<&str> {
