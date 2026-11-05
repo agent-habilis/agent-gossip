@@ -281,6 +281,11 @@ impl A2aApp {
     /// Say whether a new own content leg may wait for its send. Refuses past
     /// [`tuning::UNSENT_LEGS_CAP`].
     pub(crate) fn admit_unsent_leg(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.unsent_legs.len() < tuning::UNSENT_LEGS_CAP,
+            "{} own content legs still wait for their send, so this leg was not sent",
+            tuning::UNSENT_LEGS_CAP
+        );
         Ok(())
     }
 
