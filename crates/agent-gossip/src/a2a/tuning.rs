@@ -122,13 +122,18 @@ pub(crate) const SURFACED_TAP_CAP: usize = 1024;
 /// How many blob groups of calls that produced no task wait for their eviction. Each waits at
 /// most one task timeout, and one waiter makes one entry, so a count above the waiter cap is a
 /// burst of timeouts. Past the cap the entry that is due first leaves the list and its group goes
-/// to the next sweep; the call keeps awaiting its late reply (see `LATE_REPLIES_CAP`).
+/// to the next sweep; the call keeps awaiting its late reply (see `LATE_REPLIES_CAP`). A released
+/// group that the list of released groups forgets waits for the caps of the blob store. The byte
+/// cap (4 GiB) holds at every engine rev. The entry cap and the owner cap hold only from the
+/// engine rev that has the `…-blobcap` commits, so an app built on an older rev has the byte
+/// cap alone.
 pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
 
 /// How many timed-out calls await a late reply without a group in the orphan list: the calls whose
 /// group the orphan cap released. An entry is about 100 bytes and lives at most one task timeout.
 /// Past the cap the entry that is due first is forgotten: a worker that answers that call late
-/// then runs a task that nothing cancels, a gap that this cap accepts.
+/// then runs a task that nothing cancels, a gap that this cap accepts. Each drop is counted in
+/// `late_replies_forgotten` and logged as a warning.
 pub(crate) const LATE_REPLIES_CAP: usize = 1024;
 
 /// How many blob groups of calls one task may hold. A task keeps the groups of its calls until it
