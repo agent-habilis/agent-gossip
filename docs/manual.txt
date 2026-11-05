@@ -1218,6 +1218,14 @@ JSON EVENTS
                  {"event":"fork","nickname":"word-word","pubkey":"<hex>",
                   "seq":42}
 
+       events_lost
+              The daemon dropped events before they reached the poll history,
+              because a burst was larger than its feed channel. It takes the
+              place of the lost events in the history, so it has a seq. lost
+              is how many events were dropped.
+
+                 {"event":"events_lost","lost":9216}
+
        ping_report
               One per agent-gossip ping round, ~10s after the trigger, from the node
               that ran the ping. Lists each peer that responded and its RTT

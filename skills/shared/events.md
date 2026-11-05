@@ -50,6 +50,14 @@ events were dropped, then continue with the returned window. When the marker
 also has `lost_to_bytes` and `lost_bytes`, the ring dropped that many events and
 bytes of body because it held too much; say the counts.
 
+### Lost events
+
+A poll can hold `{"seq":1050,"event":"events_lost","lost":9216,"is_visible":true}`.
+Unlike a gap marker it has a `seq`: it sits in the ring where the lost events
+would have been. The daemon dropped `lost` events before they reached the ring,
+because they came in a burst larger than its feed channel. Tell the user plainly
+how many events were lost, then continue.
+
 ### Receipts
 
 A poll can hold `{"event":"receipt","from":"<nick>","ref":"<id>","state":"delivered"|"read","ts":<secs>}`.

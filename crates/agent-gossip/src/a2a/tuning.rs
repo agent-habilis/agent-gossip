@@ -112,6 +112,13 @@ pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 /// the ring stays, because the ring must not drop the event that just arrived.
 pub(crate) const SURFACED_EVENTS_BYTES_CAP: usize = MAX_LOGICAL_BODY_BYTES;
 
+/// How many surfaced events may wait between the event that made them and the loop turn that moves
+/// them into the ring. The loop drains the channel at each turn, so a full channel means a burst of
+/// more than this many events inside one turn, or a loop that does not turn. An event past the cap
+/// is counted, not queued, and the ring gets one marker for them. Sized to the engine's inbound
+/// queue (`NODE_INBOUND_CAP`).
+pub(crate) const SURFACED_TAP_CAP: usize = 1024;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice

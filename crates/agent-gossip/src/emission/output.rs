@@ -1,8 +1,11 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{MessageKind, Nickname};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::error::TrySendError;
 
 use super::{
     OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent, StateChangedParams,
@@ -35,7 +38,7 @@ pub(crate) enum Output {
     Stream {
         mode: OutputMode,
         filter_self: bool,
-        tap: Option<UnboundedSender<OutputEvent>>,
+        tap: Option<SurfacedTap>,
     },
     /// Push structured events into an in-process channel (the api
     /// facade / tests). Mode-agnostic: every event is captured.
@@ -46,8 +49,39 @@ pub(crate) enum Output {
     Capture {
         tx: UnboundedSender<OutputEvent>,
         filter_self: bool,
-        tap: Option<UnboundedSender<OutputEvent>>,
+        tap: Option<SurfacedTap>,
     },
+}
+
+/// The sender end of the tap that feeds the surfaced ring: a bounded channel, so a loop that does not
+/// turn cannot make it hold events without end. An event that finds it full is dropped and counted,
+/// and the loop turns the count into one marker in the ring (see `A2aApp::drain_surfaced_ring`).
+#[derive(Clone, Debug)]
+pub(crate) struct SurfacedTap {
+    events: mpsc::Sender<OutputEvent>,
+    lost: Arc<AtomicU64>,
+}
+
+impl SurfacedTap {
+    pub(crate) fn channel(capacity: usize) -> (Self, mpsc::Receiver<OutputEvent>) {
+        let (events, receiver) = mpsc::channel(capacity);
+        let tap = Self {
+            events,
+            lost: Arc::new(AtomicU64::new(0)),
+        };
+        (tap, receiver)
+    }
+
+    pub(crate) fn send(&self, event: OutputEvent) {
+        if let Err(TrySendError::Full(_)) = self.events.try_send(event) {
+            self.lost.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// The events dropped since the last call.
+    pub(crate) fn take_lost(&self) -> u64 {
+        self.lost.swap(0, Ordering::Relaxed)
+    }
 }
 
 impl Output {
@@ -67,7 +101,7 @@ impl Output {
     /// subscription does); replaces any existing tap (there is only ever one
     /// attach site). Lets the event loop wrap the sink it was handed without
     /// `EventLoopConfig` carrying a receiver.
-    pub(crate) fn set_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
+    pub(crate) fn set_tap(self, tap: SurfacedTap) -> Self {
         match self {
             Output::Stream {
                 mode, filter_self, ..
@@ -121,7 +155,7 @@ impl Output {
             Output::Stream { mode, tap, .. } => {
                 stream(*mode);
                 if let Some(tap) = tap {
-                    let _ = tap.send(event());
+                    tap.send(event());
                 }
             }
             Output::Capture { tx, tap, .. } => {
@@ -129,7 +163,7 @@ impl Output {
                 // `surfaced_events` ring (tap) each get a copy.
                 let event = event();
                 if let Some(tap) = tap {
-                    let _ = tap.send(event.clone());
+                    tap.send(event.clone());
                 }
                 let _ = tx.send(event);
             }
@@ -361,13 +395,13 @@ impl Output {
                     OutputMode::Silent => {}
                 }
                 if let Some(tap) = tap {
-                    let _ = tap.send(make(ring_keeps_document));
+                    tap.send(make(ring_keeps_document));
                 }
             }
             Output::Capture { tx, tap, .. } => {
                 // Poll/fetch history always sees it.
                 if let Some(tap) = tap {
-                    let _ = tap.send(make(ring_keeps_document));
+                    tap.send(make(ring_keeps_document));
                 }
                 // F5: never wake an agent on its own patch.
                 if !is_self {
@@ -527,7 +561,7 @@ impl Output {
         match self {
             Output::Capture { tx, tap, .. } => {
                 if let Some(tap) = tap {
-                    let _ = tap.send(OutputEvent::PingReport {
+                    tap.send(OutputEvent::PingReport {
                         peers: peers.clone(),
                         known,
                     });
@@ -550,7 +584,7 @@ impl Output {
                 // Mirror into the daemon's surfaced-events ring so `poll`
                 // can return the same `ping_report` the stream just showed.
                 if let Some(tap) = tap {
-                    let _ = tap.send(OutputEvent::PingReport { peers, known });
+                    tap.send(OutputEvent::PingReport { peers, known });
                 }
             }
         }
@@ -563,12 +597,12 @@ mod tests {
 
     use habilis_network::embed::{NodeEvent, NodeSink};
     use habilis_network::protocol::{Channel, Identity, Message, MessageKind};
-    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+    use tokio::sync::mpsc::{Receiver, UnboundedReceiver, unbounded_channel};
 
-    use super::Output;
+    use super::{Output, SurfacedTap};
     use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
     use crate::a2a::surfaced_event::SurfacedEvent;
-    use crate::a2a::tuning::SURFACED_EVENTS_CAP;
+    use crate::a2a::tuning::{SURFACED_EVENTS_CAP, SURFACED_TAP_CAP};
     use crate::emission::OutputEvent;
 
     /// A document of about 4 KB: one agent card, as a peer of the mesh writes it.
@@ -607,15 +641,19 @@ mod tests {
         std::iter::from_fn(|| rx.try_recv().ok()).collect()
     }
 
+    fn drain_ring(rx: &mut Receiver<OutputEvent>) -> Vec<OutputEvent> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
     /// A capturing output with a tap: the live stream is `live`, the ring feed is `ring`.
     fn tapped() -> (
         Output,
         UnboundedReceiver<OutputEvent>,
-        UnboundedReceiver<OutputEvent>,
+        Receiver<OutputEvent>,
     ) {
         let (live_tx, live) = unbounded_channel();
-        let (ring_tx, ring) = unbounded_channel();
-        (Output::capture(live_tx).set_tap(ring_tx), live, ring)
+        let (ring_tap, ring) = SurfacedTap::channel(SURFACED_TAP_CAP);
+        (Output::capture(live_tx).set_tap(ring_tap), live, ring)
     }
 
     /// The bytes of the change body that an event holds: the change itself, a patch.
@@ -631,8 +669,12 @@ mod tests {
     fn ring_after(count: usize, channel: Channel, kind: &MessageKind) -> Vec<SurfacedEvent> {
         let (live_tx, _live) = unbounded_channel();
         let mut app = A2aApp::new_with_io(SurfacedIo::new(Output::capture(live_tx)));
-        for _ in 0..count {
+        for turn in 0..count {
             app.output.emit(change(channel, kind.clone()));
+            // The loop drains the tap at each turn, so a burst never passes the tap cap here.
+            if turn % SURFACED_TAP_CAP == 0 {
+                app.drain_surfaced_ring();
+            }
         }
         app.drain_surfaced_ring();
         app.surfaced.poll_since(None).events
@@ -698,7 +740,7 @@ mod tests {
     fn the_copies_of_a_state_change_share_one_document() {
         let (output, mut live, mut ring) = tapped();
         output.emit(change(Channel::State, MessageKind::State));
-        let (live, ring) = (drain(&mut live), drain(&mut ring));
+        let (live, ring) = (drain(&mut live), drain_ring(&mut ring));
         let (
             [
                 OutputEvent::StateChanged {

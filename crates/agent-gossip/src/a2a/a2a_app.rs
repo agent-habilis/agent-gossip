@@ -13,7 +13,6 @@ use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{DedupKey, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
@@ -23,14 +22,15 @@ use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
 use crate::a2a::{TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
-use crate::emission::{Output, OutputEvent};
+use crate::emission::{Output, OutputEvent, SurfacedTap};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
 /// its base `Output` and handed to [`A2aApp::new_with_io`].
 pub(crate) struct SurfacedIo {
     output: Output,
-    surfaced_rx: UnboundedReceiver<OutputEvent>,
+    surfaced_rx: mpsc::Receiver<OutputEvent>,
+    tap: SurfacedTap,
     /// Startup diagnostics this product announces alongside the engine's bare
     /// `Ready`. Both are ours: a stale skill install, and the port *we* bound.
     startup: Startup,
@@ -80,10 +80,11 @@ impl habilis_network::embed::NodeSink for StartupSink {
 impl SurfacedIo {
     /// Tap `base` so every surfaced event is mirrored into the ring receiver.
     pub(crate) fn new(base: Output) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tap, rx) = SurfacedTap::channel(tuning::SURFACED_TAP_CAP);
         Self {
-            output: base.set_tap(tx),
+            output: base.set_tap(tap.clone()),
             surfaced_rx: rx,
+            tap,
             startup: Startup::default(),
         }
     }
@@ -160,7 +161,9 @@ pub(crate) struct A2aApp {
     pub(crate) surfaced: SurfacedState,
     /// Receiver end of the `Output` tap, drained into [`surfaced`](Self::surfaced)
     /// each loop iteration. `None` for a detached test `A2aApp` (no live loop).
-    pub(crate) surfaced_rx: Option<UnboundedReceiver<OutputEvent>>,
+    pub(crate) surfaced_rx: Option<mpsc::Receiver<OutputEvent>>,
+    /// The sender end of the tap, kept to read how many events it dropped.
+    surfaced_tap: Option<SurfacedTap>,
     /// Our own task legs in the order they were sent, waiting to enter the task record. A leg
     /// enters it when the peer got it, and never before an earlier leg has been settled: the
     /// record then holds only what the peer got, in the order the peer got it.
@@ -232,6 +235,7 @@ impl A2aApp {
         let SurfacedIo {
             output,
             surfaced_rx,
+            tap,
             // Consumed by `sink()`, which the caller already built.
             startup: _,
         } = io;
@@ -249,6 +253,7 @@ impl A2aApp {
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
+            surfaced_tap: Some(tap),
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
@@ -276,6 +281,7 @@ impl A2aApp {
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
+            surfaced_tap: None,
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
@@ -391,6 +397,10 @@ impl A2aApp {
             if node::is_pollable(&event) {
                 self.surfaced.push(event);
             }
+        }
+        let lost = self.surfaced_tap.as_ref().map_or(0, SurfacedTap::take_lost);
+        if lost > 0 {
+            self.surfaced.push(OutputEvent::EventsLost { lost });
         }
         self.surfaced.fulfill_ready_poll_waiters();
     }
@@ -835,6 +845,7 @@ mod tests {
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
     use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
     use crate::a2a::{TaskId, TaskState, tuning, wire};
+    use crate::emission::{Output, OutputEvent};
 
     fn leg(body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(
@@ -853,6 +864,45 @@ mod tests {
                 .authored(),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         }
+    }
+
+    #[test]
+    fn the_tap_holds_at_most_its_cap_of_events() {
+        let mut io = super::SurfacedIo::new(Output::silent());
+        for _ in 0..10 * tuning::SURFACED_TAP_CAP {
+            io.output.peer_return(&Nickname::from("alice"));
+        }
+
+        let mut queued = 0;
+        while io.surfaced_rx.try_recv().is_ok() {
+            queued += 1;
+        }
+
+        assert_eq!(
+            queued,
+            tuning::SURFACED_TAP_CAP,
+            "10 times the cap was offered before one drain: the channel must not grow past the cap"
+        );
+    }
+
+    #[test]
+    fn the_ring_gets_one_marker_that_counts_the_events_the_tap_dropped() {
+        let mut app = super::A2aApp::new_with_io(super::SurfacedIo::new(Output::silent()));
+        for _ in 0..10 * tuning::SURFACED_TAP_CAP {
+            app.output.peer_return(&Nickname::from("alice"));
+        }
+
+        app.drain_surfaced_ring();
+        let batch = app.surfaced.poll_since(None);
+
+        let newest = batch.events.last().map(|item| &item.event);
+        assert!(
+            matches!(
+                newest,
+                Some(OutputEvent::EventsLost { lost }) if *lost == 9 * tuning::SURFACED_TAP_CAP as u64
+            ),
+            "the newest ring entry must say how many events the tap dropped, got {newest:?}"
+        );
     }
 
     #[test]

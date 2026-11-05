@@ -193,6 +193,7 @@ fn event_bytes(event: &OutputEvent) -> usize {
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskStalled { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::Receipt { .. } => 0,
     }
 }
@@ -402,6 +403,7 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskStalled { .. }
@@ -451,6 +453,7 @@ fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskStalled { .. }

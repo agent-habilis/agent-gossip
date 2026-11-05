@@ -304,6 +304,7 @@ mod tests {
             | OutputEvent::MsgPosted { .. }
             | OutputEvent::Info { .. }
             | OutputEvent::Error { .. }
+            | OutputEvent::EventsLost { .. }
             | OutputEvent::PingReport { .. }
             | OutputEvent::StateChanged { .. }
             | OutputEvent::TaskMessage { .. }

@@ -82,6 +82,9 @@ pub(super) enum SimpleEvent<'source> {
     Error {
         message: &'source str,
     },
+    EventsLost {
+        lost: u64,
+    },
     PingReport {
         peers: &'source [PingPeer],
         responded: usize,
@@ -383,6 +386,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::TaskStalled { .. } => true,
         OutputEvent::Presence { message } => matches!(
             &message.kind,
@@ -840,6 +844,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. } => return Formatted::Serialized,
     };
     Formatted::Line(line)
@@ -924,6 +929,9 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }).ok(),
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
+        }
+        OutputEvent::EventsLost { lost } => {
+            serde_json::to_string(&SimpleEvent::EventsLost { lost: *lost }).ok()
         }
         OutputEvent::PingReport { peers, known } => {
             serde_json::to_string(&SimpleEvent::PingReport {
