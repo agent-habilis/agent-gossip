@@ -1,6 +1,3 @@
-//! Two members that share one nickname are two entries in the meta document, one slot for each
-//! author key. The card, the seal key and the route of a send follow the key, never the name.
-
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Instant;
@@ -51,7 +48,9 @@ async fn await_shared_cards(node: &InProcNode, count: usize) -> Vec<(String, Val
 }
 
 /// Two live members use one nickname. A third member holds two entries, one for each key, and
-/// each card carries the endpoint of its own member.
+/// each card carries the endpoint of its own member. Two members that share one nickname are two
+/// entries in the meta document, one slot for each author key: the card, the seal key and the route
+/// of a send follow the key, never the name.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_keys_of_one_nickname_publish_two_cards() {
     let alice = InProcNode::create_with_nick("mbk-cards", SHARED).await;
