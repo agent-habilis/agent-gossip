@@ -50,7 +50,9 @@ events were dropped, then continue with the returned window. When the marker
 also has `lost_to_bytes` and `lost_bytes`, the ring dropped that many of the
 events you missed, and that many bytes of body, because it held too many bytes of
 body; say the counts. The counts come only with the marker, and only for events after
-your cursor.
+your cursor. When the marker has no counts, the daemon dropped no events for bytes, or no
+longer knows how many; do not say that no event was lost, because the marker says that
+events were.
 
 ### Lost events
 

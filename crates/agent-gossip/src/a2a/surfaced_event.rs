@@ -974,9 +974,6 @@ mod tests {
         );
     }
 
-    /// The gap marker is what the agent reads. When the byte cap dropped events, it says how many
-    /// events and how many bytes were lost, counted since the daemon started, so a loss is never
-    /// silent. The marker carries no counts while the byte cap never fired.
     /// A state that byte-evicted the first 16 of 20 events of 1 KiB under a cap of 4 KiB.
     fn state_after_byte_eviction() -> SurfacedState {
         let mut state = SurfacedState::new();
@@ -1059,6 +1056,9 @@ mod tests {
         );
     }
 
+    /// The gap marker is what the agent reads. When the byte cap dropped events, it says how many
+    /// events and how many bytes were lost among the events above the reader's cursor, so a loss
+    /// is never silent. The marker carries no counts while the byte cap dropped none of them.
     #[test]
     fn the_gap_marker_counts_the_events_and_bytes_that_the_byte_cap_dropped() {
         let mut buffer = SurfacedEvents::with_byte_cap(1000, 4 * 1024);
