@@ -493,9 +493,7 @@ impl A2aApp {
                 Adoption::Refused(_) | Adoption::Adopted(_) | Adoption::NoTask => body.to_owned(),
             };
             match (waiter.blob_group, adoption) {
-                (Some(group), Adoption::Adopted(task_id)) => {
-                    self.call_blobs.entry(task_id).or_default().push(group);
-                }
+                (Some(group), Adoption::Adopted(task_id)) => self.hold_call_blob(task_id, group),
                 (group, _) => self.orphan_blob(group),
             }
             waiter.responder.send_response(&answer);
@@ -532,10 +530,7 @@ impl A2aApp {
             .late_reply
             .as_ref()
             .is_some_and(|late| late.opens_task);
-        self.call_blobs
-            .entry(task_id.clone())
-            .or_default()
-            .push(orphan.group);
+        self.hold_call_blob(task_id.clone(), orphan.group);
         if opened {
             if let Some(rec) = self.tasks.get_mut(&task_id) {
                 rec.state = crate::a2a::TaskState::Canceled;
@@ -544,6 +539,20 @@ impl A2aApp {
             self.late_cancels
                 .push((task_id, from.clone(), "call-timed-out"));
         }
+    }
+
+    /// The worker picks the task id of its reply, so the cap of groups per task is checked here,
+    /// where the list grows. A group that finds the task full goes to the next sweep.
+    fn hold_call_blob(&mut self, task_id: TaskId, group: ContentId) {
+        if self.admit_call_blob_group(Some(&task_id)).is_err() {
+            self.push_orphan(Some(OrphanBlob {
+                group,
+                evict_at: Instant::now(),
+                late_reply: None,
+            }));
+            return;
+        }
+        self.call_blobs.entry(task_id).or_default().push(group);
     }
 
     /// Whether the cancels owed to workers reached [`tuning::LATE_CANCELS_CAP`]: the caller sends them at once.
@@ -1377,6 +1386,66 @@ mod tests {
             app.take_call_blobs(&[task_id], Instant::now()),
             vec![ContentId::new("group-1")],
             "the task is created in the submitted state"
+        );
+    }
+
+    /// A worker picks the task id of its reply, so one id can come back for every call. The cap
+    /// holds on that path too: a group past it goes to the next sweep, not into the task's list.
+    #[test]
+    fn replies_that_return_one_task_id_never_grow_its_call_blob_list_past_the_cap() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string();
+        let offered = 10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP;
+        let mut swept = 0;
+        for index in 0..offered {
+            let corr = format!("corr-{index}");
+            let mut waiter = waiter_with_blob(&corr, &format!("group-{index}"));
+            waiter.opens_task = false;
+            app.a2a_waiters.push(waiter);
+            app.fulfill_a2a_waiter(&wire::corr_id(&corr), &Nickname::from("bob"), &reply);
+            swept += app.take_call_blobs(&[], Instant::now()).len();
+        }
+
+        assert_eq!(
+            app.call_blobs[&task_id].len(),
+            tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "the task must not hold more groups than the cap"
+        );
+        assert_eq!(
+            swept,
+            offered - tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "every group past the cap goes to the next sweep"
+        );
+    }
+
+    /// A call that timed out can still be answered late. That reply picks the task id too.
+    #[test]
+    fn late_replies_that_return_one_task_id_never_grow_its_call_blob_list_past_the_cap() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string();
+        let offered = 10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP;
+        for index in 0..offered {
+            let corr = format!("corr-{index}");
+            let mut waiter = waiter_with_blob(&corr, &format!("group-{index}"));
+            waiter.opens_task = false;
+            waiter.deadline = tokio::time::Instant::now();
+            app.a2a_waiters.push(waiter);
+            app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+            app.fulfill_a2a_waiter(&wire::corr_id(&corr), &Nickname::from("bob"), &reply);
+        }
+
+        assert_eq!(
+            app.call_blobs[&task_id].len(),
+            tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "the task must not hold more groups than the cap"
         );
     }
 
