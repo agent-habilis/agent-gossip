@@ -95,8 +95,15 @@ pub(crate) enum A2aOp {
     },
     OwnCard,
     PeerCard {
-        peer: Nickname,
+        peer: PeerRef,
     },
+}
+
+/// The member that a peer-card route names. A nickname is a label that two members can share, so
+/// the route also takes the exact author key.
+pub(crate) enum PeerRef {
+    Nickname(Nickname),
+    Key(AuthorKey),
 }
 
 /// One in-flight request from the HTTP task to the event loop.
@@ -341,11 +348,17 @@ pub(crate) async fn handle_op(
             serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
-            // A nickname is a label: the card is the one of the key that the send would go to.
-            let key = state.addressee_key(&peer).map_err(|error| RpcError {
-                code: -32004,
-                message: format!("cannot address '{peer}': {error}"),
-            })?;
+            // A nickname is a label: the card is the one of the key that a send to it would go to.
+            let (key, label) = match &peer {
+                PeerRef::Key(named) => (*named, named.to_string()),
+                PeerRef::Nickname(nickname) => {
+                    let key = state.addressee_key(nickname).map_err(|error| RpcError {
+                        code: -32004,
+                        message: format!("cannot address '{nickname}': {error}"),
+                    })?;
+                    (key, nickname.to_string())
+                }
+            };
             let doc = state.doc(Channel::Meta).to_json();
             // A card that is still arriving, in pieces, is not served.
             let mut card = super::card::complete_card(&doc, &key)
@@ -354,7 +367,7 @@ pub(crate) async fn handle_op(
             if card.is_null() {
                 return Err(RpcError {
                     code: -32004,
-                    message: format!("no card published for '{peer}'"),
+                    message: format!("no card published for '{label}'"),
                 });
             }
             // The mesh card declares only its gossip interface (the peer has no
@@ -362,12 +375,17 @@ pub(crate) async fn handle_op(
             // *our* binding — we relay JSON-RPC to that peer over gossip at
             // `/peers/<nick>` — so the served peer card is reachable (e.g.
             // `SendMessage` there creates a task on the peer).
-            if let Some(interfaces) = card
-                .pointer_mut("/supportedInterfaces")
-                .and_then(Value::as_array_mut)
-            {
+            let route: Option<Nickname> = match &peer {
+                PeerRef::Nickname(nickname) => Some(nickname.clone()),
+                PeerRef::Key(named) => state.known_nickname_of(named),
+            };
+            if let (Some(route), Some(interfaces)) = (
+                route,
+                card.pointer_mut("/supportedInterfaces")
+                    .and_then(Value::as_array_mut),
+            ) {
                 interfaces.push(serde_json::json!({
-                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{peer}"),
+                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{route}"),
                     "protocolBinding": "JSONRPC",
                     "protocolVersion": super::PROTOCOL_VERSION,
                 }));
