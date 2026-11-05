@@ -140,6 +140,13 @@ pub(crate) struct A2aApp {
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
+    /// Groups that the orphan cap released: the next sweep evicts them. Bounded by
+    /// `ORPHAN_BLOBS_CAP`; past it the oldest is forgotten and the blob store's own caps evict
+    /// its blob.
+    released_groups: Vec<ContentId>,
+    /// Timed-out calls that await a late reply, and no longer have a group in `orphan_blobs`.
+    /// Bounded by `LATE_REPLIES_CAP` and by their due time.
+    late_replies: Vec<LateOnly>,
     /// Cancels owed to workers: a task a late reply opened after the caller was told the call
     /// timed out, or a task this node refused. Each push answers one waiter or one orphan,
     /// both bounded, and the next task sweep drains the whole Vec, so it holds one sweep's
@@ -247,6 +254,8 @@ impl A2aApp {
             blob_server: None,
             call_blobs: HashMap::new(),
             orphan_blobs: Vec::new(),
+            released_groups: Vec::new(),
+            late_replies: Vec::new(),
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
@@ -275,6 +284,8 @@ impl A2aApp {
             blob_server: None,
             call_blobs: HashMap::new(),
             orphan_blobs: Vec::new(),
+            released_groups: Vec::new(),
+            late_replies: Vec::new(),
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
@@ -503,6 +514,15 @@ impl A2aApp {
             .position(|orphan| orphan.awaits_reply(corr, from))
         {
             self.adopt_late_reply(index, from, body);
+        } else if let Some(index) = self
+            .late_replies
+            .iter()
+            .position(|entry| entry.awaits_reply(corr, from))
+        {
+            let entry = self.late_replies.swap_remove(index);
+            if let Adoption::Adopted(task_id) = self.adopt_returned_task(from, body) {
+                self.cancel_task_opened_late(task_id, from, entry.late.opens_task);
+            }
         }
     }
 
@@ -531,14 +551,21 @@ impl A2aApp {
             .as_ref()
             .is_some_and(|late| late.opens_task);
         self.hold_call_blob(task_id.clone(), orphan.group);
-        if opened {
-            if let Some(rec) = self.tasks.get_mut(&task_id) {
-                rec.state = crate::a2a::TaskState::Canceled;
-                rec.last_activity = Instant::now();
-            }
-            self.late_cancels
-                .push((task_id, from.clone(), "call-timed-out"));
+        self.cancel_task_opened_late(task_id, from, opened);
+    }
+
+    /// The caller was told the call timed out. When the call opened the task, the task is
+    /// cancelled and the worker is told.
+    fn cancel_task_opened_late(&mut self, task_id: TaskId, from: &Nickname, opened: bool) {
+        if !opened {
+            return;
         }
+        if let Some(rec) = self.tasks.get_mut(&task_id) {
+            rec.state = crate::a2a::TaskState::Canceled;
+            rec.last_activity = Instant::now();
+        }
+        self.late_cancels
+            .push((task_id, from.clone(), "call-timed-out"));
     }
 
     /// The worker picks the task id of its reply, so the cap of groups per task is checked here,
@@ -577,9 +604,45 @@ impl A2aApp {
             return;
         };
         if self.orphan_blobs.len() >= tuning::ORPHAN_BLOBS_CAP {
-            self.orphan_blobs.remove(0);
+            let due_first = self
+                .orphan_blobs
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, orphan)| orphan.evict_at)
+                .map(|(index, _)| index);
+            if let Some(index) = due_first {
+                let dropped = self.orphan_blobs.remove(index);
+                self.release_orphan(dropped);
+            }
         }
         self.orphan_blobs.push(orphan);
+    }
+
+    /// The orphan cap releases the group, so the next sweep evicts it. The call keeps awaiting its
+    /// late reply, which adopts the task and cancels it as for any timed-out call.
+    fn release_orphan(&mut self, orphan: OrphanBlob) {
+        if self.released_groups.len() >= tuning::ORPHAN_BLOBS_CAP {
+            self.released_groups.remove(0);
+        }
+        self.released_groups.push(orphan.group);
+        let Some(late) = orphan.late_reply else {
+            return;
+        };
+        if self.late_replies.len() >= tuning::LATE_REPLIES_CAP {
+            let due_first = self
+                .late_replies
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, entry)| entry.evict_at)
+                .map(|(index, _)| index);
+            if let Some(index) = due_first {
+                self.late_replies.swap_remove(index);
+            }
+        }
+        self.late_replies.push(LateOnly {
+            late,
+            evict_at: orphan.evict_at,
+        });
     }
 
     /// The blob groups the task sweep must evict at `now`: every group of the
@@ -589,7 +652,9 @@ impl A2aApp {
             .into_iter()
             .partition(|orphan| orphan.evict_at <= now);
         self.orphan_blobs = waiting;
-        let mut groups: Vec<_> = due.into_iter().map(|orphan| orphan.group).collect();
+        self.late_replies.retain(|entry| entry.evict_at > now);
+        let mut groups = std::mem::take(&mut self.released_groups);
+        groups.extend(due.into_iter().map(|orphan| orphan.group));
         let reaped_groups: Vec<Vec<ContentId>> = reaped
             .iter()
             .filter_map(|task_id| self.call_blobs.remove(task_id))
@@ -615,6 +680,10 @@ impl A2aApp {
                 .orphan_blobs
                 .iter()
                 .any(|orphan| orphan.awaits_reply(corr, peer))
+            || self
+                .late_replies
+                .iter()
+                .any(|entry| entry.awaits_reply(corr, peer))
     }
 
     /// Adopt the authoritative `Task` a `SendMessage` returned (from `peer`, the
@@ -842,6 +911,18 @@ struct LateReply {
     opens_task: bool,
 }
 
+/// A timed-out call that awaits a late reply, whose group the orphan cap released.
+struct LateOnly {
+    late: LateReply,
+    evict_at: Instant,
+}
+
+impl LateOnly {
+    fn awaits_reply(&self, corr: &habilis_network::protocol::CorrId, peer: &Nickname) -> bool {
+        self.late.corr == *corr && self.late.peer == *peer
+    }
+}
+
 impl OrphanBlob {
     fn awaits_reply(&self, corr: &habilis_network::protocol::CorrId, peer: &Nickname) -> bool {
         self.late_reply
@@ -933,6 +1014,111 @@ mod tests {
                 Some(OutputEvent::EventsLost { lost }) if *lost == 9 * tuning::SURFACED_TAP_CAP as u64
             ),
             "the newest ring entry must say how many events the tap dropped, got {newest:?}"
+        );
+    }
+
+    /// An orphan that the cap drops must still release its group: the sweep evicts it.
+    #[test]
+    fn a_dropped_orphan_hands_its_group_to_the_sweep() {
+        let mut app = super::A2aApp::new();
+        let offered = 10 * tuning::ORPHAN_BLOBS_CAP;
+        let mut swept = 0;
+        for index in 0..offered {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+            swept += app
+                .take_call_blobs(&[], Instant::now() - std::time::Duration::from_secs(1))
+                .len();
+        }
+
+        assert_eq!(
+            swept,
+            offered - tuning::ORPHAN_BLOBS_CAP,
+            "every group that the cap dropped goes to the sweep"
+        );
+        assert_eq!(
+            app.orphan_blobs.len(),
+            tuning::ORPHAN_BLOBS_CAP,
+            "the list holds the cap and no more"
+        );
+    }
+
+    /// The cap drops the orphan that is due first, not the one that came first.
+    #[test]
+    fn the_cap_drops_the_orphan_that_is_due_first() {
+        let mut app = super::A2aApp::new();
+        let kept = ContentId::new("group-kept");
+        app.push_orphan(Some(super::OrphanBlob {
+            group: kept.clone(),
+            evict_at: Instant::now() + std::time::Duration::from_hours(1),
+            late_reply: None,
+        }));
+        for index in 0..tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+
+        assert!(
+            app.orphan_blobs.iter().any(|orphan| orphan.group == kept),
+            "the orphan with the latest due time stays, though it came first"
+        );
+    }
+
+    /// A timed-out call that the cap dropped can still be answered: the late reply must cancel
+    /// the task it opened, as for an orphan that the cap kept.
+    #[test]
+    fn a_late_reply_for_a_dropped_orphan_still_cancels_the_task_it_opened() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string();
+        let mut waiter = waiter_with_blob("corr-late", "group-late");
+        waiter.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(waiter);
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+        for index in 0..tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+        assert!(
+            app.has_a2a_waiter(&wire::corr_id("corr-late"), &Nickname::from("bob")),
+            "the call still awaits its late reply, though the cap dropped its group"
+        );
+
+        app.fulfill_a2a_waiter(&wire::corr_id("corr-late"), &Nickname::from("bob"), &reply);
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, Nickname::from("bob"), "call-timed-out")],
+            "the worker is told to cancel the task that the caller was told timed out"
+        );
+    }
+
+    /// The two lists that the orphan cap feeds are bounded too: 10 times the cap leaves the cap.
+    #[test]
+    fn the_released_groups_and_the_late_replies_stay_at_their_caps() {
+        let mut app = super::A2aApp::new();
+        let later = Instant::now() + std::time::Duration::from_hours(1);
+        for index in 0..10 * tuning::LATE_REPLIES_CAP {
+            app.push_orphan(Some(super::OrphanBlob {
+                group: ContentId::new(&format!("group-{index}")),
+                evict_at: later,
+                late_reply: Some(super::LateReply {
+                    corr: wire::corr_id(&format!("corr-{index}")),
+                    peer: Nickname::from("bob"),
+                    opens_task: true,
+                }),
+            }));
+        }
+
+        assert_eq!(
+            app.released_groups.len(),
+            tuning::ORPHAN_BLOBS_CAP,
+            "the released groups wait for a sweep, at most the cap"
+        );
+        assert_eq!(
+            app.late_replies.len(),
+            tuning::LATE_REPLIES_CAP,
+            "the calls that await a late reply stop at their cap"
         );
     }
 
