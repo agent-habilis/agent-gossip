@@ -1,3 +1,8 @@
+#![expect(
+    missing_docs,
+    reason = "an integration test crate has no public docs; the module path names it"
+)]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Instant;
