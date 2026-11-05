@@ -190,6 +190,18 @@ async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> an
     Ok(())
 }
 
+/// The bytes that an own task leg holds in the queue while its send waits: the plaintext body.
+fn own_leg_bytes(body: &str) -> usize {
+    body.len()
+}
+
+/// The bytes that an own content leg holds in the list while its send waits: the sealed frames,
+/// and for a split leg a second copy in the shard cache. The size of a file that an artifact
+/// offloads is not known before the offload, so only its text counts.
+fn unsent_leg_bytes(body: &str) -> usize {
+    body.len().saturating_mul(2)
+}
+
 /// The moment by which the sends of one layer must have an outcome. A layer takes it where it is
 /// built, not where its task first runs, so a layer that wraps another one is built later and
 /// never expires before it. Two layers built in the same instant can fire in the same tick, and
@@ -764,11 +776,11 @@ async fn broadcast_directed_frame(
         app,
     } = frame;
     if task_id.is_some() {
-        app.admit_own_leg(echo_body.as_str().len())?;
+        app.admit_own_leg(own_leg_bytes(echo_body.as_str()))?;
     }
     if content {
         // The sealed frames and the shard cache hold the body twice.
-        app.admit_unsent_leg(payload_body.as_str().len().saturating_mul(2))?;
+        app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
     }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
@@ -1291,8 +1303,8 @@ pub(crate) async fn broadcast_task_artifact(
         app,
     } = params;
     // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
-    app.admit_own_leg(text.len())?;
-    app.admit_unsent_leg(text.len().saturating_mul(2))?;
+    app.admit_own_leg(own_leg_bytes(text))?;
+    app.admit_unsent_leg(unsent_leg_bytes(text))?;
     let parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -2839,6 +2851,27 @@ mod status_leg_tests {
             status_waiting(&leg).as_deref(),
             Some("asks its user"),
             "the status waiting reason is kept"
+        );
+    }
+}
+
+#[cfg(test)]
+mod leg_bytes_tests {
+    use super::{own_leg_bytes, unsent_leg_bytes};
+
+    #[test]
+    fn an_own_task_leg_holds_its_body() {
+        assert_eq!(own_leg_bytes("abcd"), 4, "the plaintext body");
+        assert_eq!(own_leg_bytes(""), 0, "an empty body holds nothing");
+    }
+
+    #[test]
+    fn an_own_content_leg_holds_its_body_twice() {
+        assert_eq!(unsent_leg_bytes("abcd"), 8, "sealed frames and shard cache");
+        assert_eq!(
+            unsent_leg_bytes(&"x".repeat(16)),
+            32,
+            "the estimate scales with the body"
         );
     }
 }

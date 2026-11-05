@@ -33,7 +33,8 @@ pub(crate) const UNSENT_LEGS_CAP: usize = 1024;
 /// Bytes of body that the own task legs may hold together: 4 legs of the largest body
 /// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB). The count cap alone allows 1024 legs of 64 MiB. A leg that
 /// would pass the budget is refused with a failed reason, unless the queue is empty: one leg
-/// always fits, so the largest legal body is never refused for its size.
+/// always fits, so the largest legal body is never refused for its size. A leg counts the size of
+/// its text only: the size of a file that an artifact offloads is not known before the offload.
 pub(crate) const OWN_LEGS_BYTES_CAP: usize = 4 * MAX_LOGICAL_BODY_BYTES;
 
 /// Bytes that the own content legs may hold together: 4 legs of the largest body, each held twice
