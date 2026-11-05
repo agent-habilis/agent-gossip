@@ -381,20 +381,28 @@ impl A2aApp {
             let waiter = self.a2a_waiters.swap_remove(index);
             let adopted = self.adopt_returned_task(from, body);
             // The registry refused the task the worker opened for us: no record is kept, so
-            // the worker is told to cancel it rather than run it unseen.
-            if waiter.opens_task
-                && adopted.is_none()
-                && let Some(refused) = Self::returned_task_id(body)
-            {
-                self.late_cancels.push((refused, from.clone()));
-            }
+            // the worker is told to cancel it rather than run it unseen, and the caller gets
+            // an error instead of a task it would then see cancelled with no output line.
+            let answer = match Self::returned_task_id(body) {
+                Some(refused) if waiter.opens_task && adopted.is_none() => {
+                    self.late_cancels.push((refused, from.clone()));
+                    serde_json::json!({
+                        "error": {
+                            "code": -32004,
+                            "message": "the task registry has no room for this task",
+                        }
+                    })
+                    .to_string()
+                }
+                _ => body.to_owned(),
+            };
             match (waiter.blob_group, adopted) {
                 (Some(group), Some(task_id)) => {
                     self.call_blobs.entry(task_id).or_default().push(group);
                 }
                 (group, _) => self.orphan_blob(group),
             }
-            waiter.responder.send_response(body);
+            waiter.responder.send_response(&answer);
         } else if let Some(index) = self
             .orphan_blobs
             .iter()
