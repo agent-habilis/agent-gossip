@@ -31,11 +31,14 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
             ])
             .args(["--task-id", task, "--state", "working"])
             .output()
-            .expect("a2a status command failed to spawn")
+            .expect("the test binary must start, or no refusal can be read")
     };
     let refused = status(&capped, &task_capped);
     let error = String::from_utf8_lossy(&refused.stderr);
-    assert!(!refused.status.success(), "the leg must be refused");
+    assert!(
+        !refused.status.success(),
+        "a cap of 0 leaves no room, so the command must exit with an error"
+    );
     assert!(
         error.contains("own task legs still wait for their send"),
         "the caller must get the reason, got: {error}"
@@ -55,14 +58,23 @@ fn a_content_leg_past_the_unsent_legs_cap_is_refused_with_the_reason() {
     let _serial = common::serial_guard();
     let (alice, mesh) = Node::create_flags("itest-unsent-cap", &[("--unsent-legs-cap", "0")]);
     let bob = Node::join(&mesh, "unsent-cap-bob");
-    assert!(alice.wait_ready(&mesh), "alice must be ready");
-    assert!(bob.wait_ready(&mesh), "bob must be ready");
+    assert!(
+        alice.wait_ready(&mesh),
+        "the refusal comes from a daemon that serves commands"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "the peer must be up, or the refusal could come from a missing peer"
+    );
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
     common::await_peer_card_cli(&mesh, &bob.nickname, &alice.nickname);
 
     let refused = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "hello");
     let error = String::from_utf8_lossy(&refused.stderr);
-    assert!(!refused.status.success(), "the leg must be refused");
+    assert!(
+        !refused.status.success(),
+        "a cap of 0 leaves no room, so the command must exit with an error"
+    );
     assert!(
         error.contains("own content legs still wait for their send"),
         "the caller must get the reason, got: {error}"
