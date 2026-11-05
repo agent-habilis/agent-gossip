@@ -397,7 +397,7 @@ impl A2aApp {
                     })
                     .to_string()
                 }
-                _ => body.to_owned(),
+                Adoption::Refused(_) | Adoption::Adopted(_) | Adoption::NoTask => body.to_owned(),
             };
             match (waiter.blob_group, adoption) {
                 (Some(group), Adoption::Adopted(task_id)) => {
@@ -547,18 +547,6 @@ impl A2aApp {
         } else {
             Adoption::Refused(task_id)
         }
-    }
-
-    /// The task id a reply carries, for a reply the registry refused.
-    fn returned_task_id(body: &str) -> Option<TaskId> {
-        let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
-        let result = &value["result"];
-        let task = if result.get("task").is_some() {
-            &result["task"]
-        } else {
-            result
-        };
-        task["id"].as_str().and_then(TaskId::from_uuid_str)
     }
 
     /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
@@ -1178,7 +1166,7 @@ mod tests {
 
         assert_eq!(
             app.tasks[&task_id].state,
-            crate::a2a::TaskState::Canceled,
+            TaskState::Canceled,
             "the caller already saw the call fail, so the opened task must not keep running unseen"
         );
         assert_eq!(
@@ -1248,9 +1236,9 @@ mod tests {
         for index in 0..tuning::TASKS_CAP {
             let filler = TaskId::random();
             let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
-            crate::a2a::task_record::adopt_initiator(
+            adopt_initiator(
                 &mut app.tasks,
-                crate::a2a::task_record::AdoptInitiatorParams {
+                AdoptInitiatorParams {
                     task_id: &filler,
                     peer: &peer,
                     task_state: TaskState::Working,
