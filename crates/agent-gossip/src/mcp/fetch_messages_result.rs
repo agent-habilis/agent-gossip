@@ -19,4 +19,10 @@ pub(crate) struct FetchMessagesResult {
     /// read — which is the only case in which `messages` is complete.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) missed_before: Option<u64>,
+    /// Events that the ring dropped for its byte cap since the daemon started, and the bytes of
+    /// body they held. Left out while the byte cap never fired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lost_to_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lost_bytes: Option<u64>,
 }

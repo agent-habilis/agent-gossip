@@ -105,6 +105,7 @@ impl SurfacedEvents {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn held_bytes(&self) -> usize {
         self.bytes
     }
@@ -177,8 +178,23 @@ impl SurfacedEvents {
 /// The bytes of body that a surfaced event holds. Only the events that carry a signed message
 /// or text count; the others are small and fixed in size.
 fn event_bytes(event: &OutputEvent) -> usize {
-    let _ = event;
-    0
+    match event {
+        OutputEvent::Message { message, .. }
+        | OutputEvent::Presence { message }
+        | OutputEvent::Task { message, .. } => message.body.as_str().len(),
+        OutputEvent::StateChanged { event, .. } => event.body.as_str().len(),
+        OutputEvent::TaskMessage { text, .. } => text.len(),
+        OutputEvent::Info { message } | OutputEvent::Error { message } => message.len(),
+        OutputEvent::Ready { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::Receipt { .. } => 0,
+    }
 }
 
 /// One poll's answer: the events, plus whether the reader's cursor aged out of
@@ -292,7 +308,10 @@ pub(crate) struct PollWaiter {
 /// uses (`surfaced_event_json` returns `None` for an unrenderable event, which
 /// is dropped, never `unwrap`ped).
 ///
-/// A `gap` marker leads the array when the reader's cursor aged out. It is
+/// A `gap` marker leads the array when the reader's cursor aged out: `missed_before` is the oldest
+/// seq that the ring still holds. When the ring also dropped events for its byte cap, the marker
+/// adds `lost_to_bytes` and `lost_bytes`, the events and the bytes of body dropped since the daemon
+/// started, so the agent can tell the user how much was lost. It is
 /// synthesized *here*, at render time, and never pushed into the ring: the
 /// ring is fed by the user-facing sink, so a real event announcing the loss
 /// would itself become a ring entry (and, on the api path, a live
@@ -302,8 +321,16 @@ pub(crate) struct PollWaiter {
 pub(crate) fn render_poll_array(batch: &PollBatch) -> String {
     let mut lines: Vec<String> = Vec::with_capacity(batch.events.len() + 1);
     if let Some(missed_before) = batch.missed_before {
+        let lost = if batch.lost_to_bytes > 0 {
+            format!(
+                r#","lost_to_bytes":{},"lost_bytes":{}"#,
+                batch.lost_to_bytes, batch.lost_bytes
+            )
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            r#"{{"event":"gap","missed_before":{missed_before}}}"#
+            r#"{{"event":"gap","missed_before":{missed_before}{lost}}}"#
         ));
     }
     lines.extend(

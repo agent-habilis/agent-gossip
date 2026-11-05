@@ -328,6 +328,8 @@ impl AgentGossipServer {
             messages,
             current_seq,
             missed_before: batch.missed_before,
+            lost_to_bytes: (batch.lost_to_bytes > 0).then_some(batch.lost_to_bytes),
+            lost_bytes: (batch.lost_to_bytes > 0).then_some(batch.lost_bytes),
         })
     }
 

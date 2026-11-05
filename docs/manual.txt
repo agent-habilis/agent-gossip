@@ -552,7 +552,11 @@ COMMANDS
                   {"event":"gap","missed_before":SEQ}
 
               — every event below that seq was evicted unread and is gone;
-              the daemon re-baselines automatically.
+              the daemon re-baselines automatically. When the ring also
+              dropped events because it held too many bytes of body, the
+              line adds "lost_to_bytes":EVENTS,"lost_bytes":BYTES: how many
+              events and how many bytes of body the byte cap dropped since
+              the daemon started.
 
               --long
                      The receive bell: block until the daemon holds a WAKING
