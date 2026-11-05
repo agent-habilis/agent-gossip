@@ -13,6 +13,7 @@ use super::{
     peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
     simple_event, task_stalled_event,
 };
+use crate::a2a::node::is_pollable;
 use crate::a2a::task_record::StallNotice;
 use crate::a2a::wire;
 
@@ -72,7 +73,12 @@ impl SurfacedTap {
         (tap, receiver)
     }
 
+    /// An event the ring never keeps is not queued and not counted: a burst of them must not fill
+    /// the channel or inflate the loss count.
     pub(crate) fn send(&self, event: OutputEvent) {
+        if !is_pollable(&event) {
+            return;
+        }
         if let Err(TrySendError::Full(_)) = self.events.try_send(event) {
             self.lost.fetch_add(1, Ordering::Relaxed);
         }
@@ -708,6 +714,26 @@ mod tests {
             SURFACED_EVENTS_CAP * card_patch().len(),
             "the ring still holds one patch per event: the bound of the audit row R12"
         );
+    }
+
+    /// The ring never keeps an `Info` or an `Error`, so they must not take a place in the tap or
+    /// count as lost when the tap is full.
+    #[test]
+    fn a_burst_of_events_the_ring_never_keeps_does_not_fill_the_tap_or_count_as_lost() {
+        let (live_tx, _live) = unbounded_channel();
+        let (ring_tap, mut ring) = SurfacedTap::channel(SURFACED_TAP_CAP);
+        let output = Output::capture(live_tx).set_tap(ring_tap.clone());
+        for index in 0..10 * SURFACED_TAP_CAP {
+            output.info(&format!("beat {index}"));
+            output.error(&format!("error {index}"));
+        }
+
+        assert_eq!(
+            drain_ring(&mut ring).len(),
+            0,
+            "the tap holds nothing the ring would not keep"
+        );
+        assert_eq!(ring_tap.take_lost(), 0, "no loss is counted for them");
     }
 
     /// The live stream is what an in-process reader sees, so it keeps the whole document.
