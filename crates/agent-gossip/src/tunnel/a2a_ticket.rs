@@ -29,8 +29,9 @@ const KIND: u8 = 2;
 /// JSON is read.
 const MAX_TICKET_BYTES: usize = MAX_MESSAGE_SIZE;
 
-/// The most characters a ticket text can have: base58 of one frame is about 5250, with a margin.
-const MAX_TICKET_TEXT: usize = 5300;
+/// The most characters a ticket text can have: base58 expands a byte by about 1.37, so the
+/// framed bytes of one frame (with their 4-byte checksum) fit in 1.4 times the cap.
+const MAX_TICKET_TEXT: usize = MAX_TICKET_BYTES * 14 / 10;
 
 /// Bit 0 of the flags byte: the password flag.
 const PASSWORD_BIT: u8 = 0b0000_0001;
@@ -143,7 +144,9 @@ mod tests {
     use habilis_network::ops::blob::{BlobDigest, BlobTicket};
     use habilis_network::protocol::{LookupOpts, TicketSecret};
 
-    use super::{A2aTicket, KIND, MAX_TICKET_BYTES, SECRET_LEN, VERSION, base58check_encode};
+    use super::{
+        A2aTicket, KIND, MAX_TICKET_BYTES, MAX_TICKET_TEXT, SECRET_LEN, VERSION, base58check_encode,
+    };
 
     fn sample_addr(byte: u8) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[byte; 32]).public();
@@ -162,6 +165,17 @@ mod tests {
         LookupOpts::public_preset().encode_into(&mut framed);
         framed.extend_from_slice(&serde_json::to_vec(&value).expect("json serializes"));
         base58check_encode(&framed)
+    }
+
+    /// The densest frame of the cap, in base58, still fits the text cap.
+    #[test]
+    fn a_full_frame_fits_the_text_cap() {
+        let densest = bs58::encode(vec![0xffu8; MAX_TICKET_BYTES + 4]).into_string();
+        assert!(
+            densest.len() <= MAX_TICKET_TEXT,
+            "{} characters, the cap is {MAX_TICKET_TEXT}",
+            densest.len()
+        );
     }
 
     /// A text longer than a ticket can be is refused before its base58 decode, which is
