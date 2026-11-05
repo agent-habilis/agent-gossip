@@ -45,6 +45,41 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
     );
 }
 
+/// A task line from an RPC `SendMessage` names the key of its sender. A nickname is a label that
+/// two live keys can share, so a reader that tells the senders apart needs the key.
+#[test]
+fn a_task_message_line_names_the_key_of_its_sender_when_two_senders_share_a_name() {
+    let line_from = |key: u8| {
+        let leg = super::TaskMessageLeg {
+            id: "frame-id",
+            mesh: "mesh",
+            author: "twin",
+            author_key: habilis_network::protocol::AuthorKey::from([key; 32]),
+            peer: "calm-otter",
+            task_id: "task-id",
+            state: None,
+            text: "the brief",
+            label: None,
+            message: None,
+            is_self: false,
+        };
+        parse(&simple_event::format_task_message_json(&leg))
+    };
+
+    let first = line_from(7);
+    let second = line_from(8);
+
+    assert_eq!(
+        first["pubkey"],
+        habilis_network::protocol::AuthorKey::from([7; 32]).to_string(),
+        "the line carries the key of its sender: {first}"
+    );
+    assert_ne!(
+        first["pubkey"], second["pubkey"],
+        "two senders with one name give two keys"
+    );
+}
+
 // ── format_msg_json: msg type ──────────────────────────────
 
 fn nick(name: &str) -> habilis_network::protocol::Nickname {

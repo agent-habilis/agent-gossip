@@ -626,7 +626,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             id: leg.id,
             gossip: leg.mesh,
             author: leg.author,
-            pubkey: None,
+            pubkey: Some(leg.author_key.to_string()),
             to_pubkey: None,
             ts: UnixSecs::now().as_secs(),
             to: leg.peer,
