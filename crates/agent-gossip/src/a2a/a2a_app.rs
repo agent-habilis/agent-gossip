@@ -1134,6 +1134,51 @@ mod tests {
         );
     }
 
+    /// A refused adoption leaves no record, and the worker is told to cancel the task it
+    /// opened: the initiator refused the task, so the worker must not run it unseen.
+    #[test]
+    fn a_refused_adoption_cancels_the_task_on_the_worker() {
+        let mut app = super::A2aApp::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            crate::a2a::task_record::adopt_initiator(
+                &mut app.tasks,
+                crate::a2a::task_record::AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer: &peer,
+                    task_state: crate::a2a::TaskState::Working,
+                    now,
+                },
+            );
+        }
+        assert_eq!(app.tasks.len(), tuning::TASKS_CAP, "the registry is at the cap");
+        let task_id = TaskId::random();
+        app.a2a_waiters
+            .push(waiter_with_blob("corr-refused", "group-refused"));
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-refused"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "a refused adoption leaves no record"
+        );
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, Nickname::from("bob"))],
+            "the worker is told to cancel the task it opened"
+        );
+    }
+
     /// A follow-up on a task this node does not hold can still be accepted: the
     /// worker holds the task. Its late reply adopts the task and keeps the blob,
     /// but the call did not open the task, so it is not cancelled.
