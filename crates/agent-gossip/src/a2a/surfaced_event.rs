@@ -52,6 +52,9 @@ pub(crate) struct SurfacedEvents {
     evictions: VecDeque<Eviction>,
     next_seq: u64,
     events: VecDeque<SurfacedEvent>,
+    /// The size of each event in `events`, in the same order: sized once at the push, so a drop
+    /// does not serialize a State document again.
+    sizes: VecDeque<usize>,
     /// The newest seq assigned to a *waking* event (see
     /// [`super::node::wakes`]). State/meta document echoes enter the ring but
     /// never bump this, so a parked bell is not rung by content nobody prints
@@ -77,6 +80,7 @@ impl SurfacedEvents {
             // buffer without a spurious eviction signal.
             next_seq: 1,
             events: VecDeque::with_capacity(capacity.min(64)),
+            sizes: VecDeque::with_capacity(capacity.min(64)),
             latest_waking_seq: 0,
         }
     }
@@ -89,8 +93,10 @@ impl SurfacedEvents {
         if super::node::wakes(&event) {
             self.latest_waking_seq = seq;
         }
-        self.bytes = self.bytes.saturating_add(event_bytes(&event));
+        let size = event_bytes(&event);
+        self.bytes = self.bytes.saturating_add(size);
         self.events.push_back(SurfacedEvent { seq, event });
+        self.sizes.push_back(size);
         while self.events.len() > self.capacity {
             self.drop_oldest(false);
         }
@@ -106,7 +112,7 @@ impl SurfacedEvents {
         let Some(oldest) = self.events.pop_front() else {
             return;
         };
-        let bytes = event_bytes(&oldest.event);
+        let bytes = self.sizes.pop_front().unwrap_or_default();
         self.bytes = self.bytes.saturating_sub(bytes);
         if for_bytes {
             self.lost_to_bytes += 1;
@@ -212,6 +218,19 @@ impl SurfacedEvents {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times a document was sized on this thread: the cost of the byte cap.
+    static DOCUMENT_SIZINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The bytes of a State document, as its JSON text. Sizing serializes the whole document.
+fn document_bytes(document: &serde_json::Value) -> usize {
+    #[cfg(test)]
+    DOCUMENT_SIZINGS.with(|count| count.set(count.get() + 1));
+    serde_json::to_string(document).map_or(0, |text| text.len())
+}
+
 /// What the ring had dropped in total when it dropped the event `seq`, that event included.
 struct Eviction {
     seq: u64,
@@ -231,9 +250,9 @@ fn event_bytes(event: &OutputEvent) -> usize {
         } => {
             // A document that two events share is counted for each of them: the cap then holds
             // fewer events than the memory allows, never more.
-            let document_bytes = document.as_ref().map_or(0, |document| {
-                serde_json::to_string(&**document).map_or(0, |text| text.len())
-            });
+            let document_bytes = document
+                .as_ref()
+                .map_or(0, |document| document_bytes(document));
             event.body.as_str().len() + document_bytes
         }
         OutputEvent::TaskMessage { text, .. } => text.len(),
@@ -876,6 +895,38 @@ mod tests {
             buffer.held_bytes() <= 4 * MIB,
             "the ring holds {} bytes",
             buffer.held_bytes()
+        );
+    }
+
+    /// Sizing a document serializes it, so the ring sizes an event once, when it is pushed, and
+    /// reads the stored size when the event is dropped.
+    #[test]
+    fn the_ring_sizes_a_document_once_per_event_not_again_when_it_drops_the_event() {
+        const MIB: usize = 1024 * 1024;
+        let mut buffer = SurfacedEvents::with_byte_cap(1000, 4 * MIB);
+        super::DOCUMENT_SIZINGS.with(|count| count.set(0));
+        for _ in 0..40 {
+            let document = serde_json::json!({ "notes": "x".repeat(MIB) });
+            buffer.push(OutputEvent::StateChanged {
+                channel: Channel::State,
+                event: Box::new(
+                    Message::fixture(MessageKind::State, "{}")
+                        .sign(&habilis_network::protocol::Identity::generate())
+                        .authored(),
+                ),
+                document: Some(Arc::new(document)),
+                is_self: false,
+            });
+        }
+
+        assert!(
+            buffer.count() <= 4,
+            "the byte cap dropped the oldest events"
+        );
+        assert_eq!(
+            super::DOCUMENT_SIZINGS.with(std::cell::Cell::get),
+            40,
+            "one sizing for each of the 40 pushes, and none for the drops"
         );
     }
 
