@@ -270,6 +270,11 @@ impl A2aApp {
 
     /// Say whether a new own task leg may wait for its send. Refuses past [`tuning::OWN_LEGS_CAP`].
     pub(crate) fn admit_own_leg(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.own_legs.len() < tuning::OWN_LEGS_CAP,
+            "{} own task legs still wait for their send, so this leg was not sent",
+            tuning::OWN_LEGS_CAP
+        );
         Ok(())
     }
 

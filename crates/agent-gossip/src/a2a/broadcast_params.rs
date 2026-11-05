@@ -752,6 +752,9 @@ async fn broadcast_directed_frame(
         id: pinned_id,
         app,
     } = frame;
+    if task_id.is_some() {
+        app.admit_own_leg()?;
+    }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
     // the signature covers it.
