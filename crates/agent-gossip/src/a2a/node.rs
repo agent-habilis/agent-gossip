@@ -942,6 +942,9 @@ async fn handle_a2a_rpc(
         // responses. The waiter adopts the authoritative `Task` a `SendMessage`
         // returned.
         app.fulfill_a2a_waiter(corr, &message.author, message.body.as_str());
+        if app.late_cancels_full() {
+            task_record::send_late_cancels(state, app, context).await;
+        }
     }
 }
 

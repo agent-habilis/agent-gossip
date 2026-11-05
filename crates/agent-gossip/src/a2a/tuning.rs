@@ -130,6 +130,10 @@ pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
 /// failed reason, before its file is offloaded: the user must know that the file was not sent.
 pub(crate) const CALL_BLOB_GROUPS_PER_TASK_CAP: usize = 64;
 
+/// How many cancels owed to workers wait for the next task sweep. A cancel is user work that
+/// the worker needs, so a full list is not dropped: the receive path sends the cancels at once.
+pub(crate) const LATE_CANCELS_CAP: usize = 64;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice

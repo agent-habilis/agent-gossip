@@ -110,7 +110,8 @@ fn a_call_with_a_file_past_the_blob_group_cap_is_refused_with_the_reason() {
     let file = std::env::temp_dir().join(format!("agent-gossip-blob-cap-{}", std::process::id()));
     std::fs::write(&file, b"a file for the call").expect("the call needs a file to refuse");
 
-    let refused = common::test_cmd()
+    let mut command = common::test_cmd();
+    command
         .args([
             "a2a",
             "call",
@@ -119,16 +120,10 @@ fn a_call_with_a_file_past_the_blob_group_cap_is_refused_with_the_reason() {
             "--nickname",
             &alice.nickname,
         ])
-        .args([
-            "--to",
-            &bob.nickname,
-            "--method",
-            "SendMessage",
-            "--text",
-            "see file",
-            "--file",
-        ])
-        .arg(&file)
+        .args(["--to", &bob.nickname, "--method", "SendMessage"])
+        .args(["--text", "see file", "--file"])
+        .arg(&file);
+    let refused: std::process::Output = command
         .output()
         .expect("the test binary must start, or no refusal can be read");
     std::fs::remove_file(&file).ok();

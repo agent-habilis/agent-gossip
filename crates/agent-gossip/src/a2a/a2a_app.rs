@@ -546,21 +546,27 @@ impl A2aApp {
         }
     }
 
+    /// Whether the cancels owed to workers reached [`tuning::LATE_CANCELS_CAP`]: the caller sends them at once.
+    pub(crate) fn late_cancels_full(&self) -> bool {
+        self.late_cancels.len() >= tuning::LATE_CANCELS_CAP
+    }
+
     pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, Nickname, &'static str)> {
         std::mem::take(&mut self.late_cancels)
     }
 
     pub(crate) fn orphan_blob(&mut self, group: Option<ContentId>) {
-        if let Some(group) = group {
-            self.push_orphan(OrphanBlob {
-                group,
-                evict_at: Instant::now(),
-                late_reply: None,
-            });
-        }
+        self.push_orphan(group.map(|group| OrphanBlob {
+            group,
+            evict_at: Instant::now(),
+            late_reply: None,
+        }));
     }
 
-    fn push_orphan(&mut self, orphan: OrphanBlob) {
+    fn push_orphan(&mut self, orphan: Option<OrphanBlob>) {
+        let Some(orphan) = orphan else {
+            return;
+        };
         if self.orphan_blobs.len() >= tuning::ORPHAN_BLOBS_CAP {
             self.orphan_blobs.remove(0);
         }
@@ -672,13 +678,11 @@ impl A2aApp {
                         peer: waiter.peer,
                         opens_task: waiter.opens_task,
                     });
-                    if let Some(group) = waiter.blob_group {
-                        self.push_orphan(OrphanBlob {
-                            group,
-                            evict_at,
-                            late_reply,
-                        });
-                    }
+                    self.push_orphan(waiter.blob_group.map(|group| OrphanBlob {
+                        group,
+                        evict_at,
+                        late_reply,
+                    }));
                     waiter.responder.send_timeout();
                     None
                 } else {
@@ -981,6 +985,35 @@ mod tests {
         assert!(
             app.admit_call_blob_group(None).is_ok(),
             "a call that opens a task holds no group yet, so it must be admitted"
+        );
+    }
+
+    /// The receive path sends the owed cancels at once when the list is full, so the list never
+    /// holds more than the cap, and no cancel is dropped.
+    #[test]
+    fn the_owed_cancels_never_pass_the_cap_and_none_is_lost() {
+        let mut app = super::A2aApp::new();
+        let mut sent = 0;
+        let mut longest = 0;
+        for _ in 0..10 * tuning::LATE_CANCELS_CAP {
+            app.late_cancels
+                .push((TaskId::random(), Nickname::from("bob"), "call-timed-out"));
+            longest = longest.max(app.late_cancels.len());
+            if app.late_cancels_full() {
+                sent += app.take_late_cancels().len();
+            }
+        }
+        sent += app.take_late_cancels().len();
+
+        assert_eq!(
+            longest,
+            tuning::LATE_CANCELS_CAP,
+            "10 times the cap was owed: the list must not hold more than the cap"
+        );
+        assert_eq!(
+            sent,
+            10 * tuning::LATE_CANCELS_CAP,
+            "every owed cancel must be sent, none dropped for want of room"
         );
     }
 
