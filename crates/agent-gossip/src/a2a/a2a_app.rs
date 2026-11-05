@@ -143,7 +143,7 @@ pub(crate) struct A2aApp {
     /// Groups that the orphan cap released: the next sweep evicts them. Bounded by
     /// `ORPHAN_BLOBS_CAP`; past it the oldest is forgotten and the blob store's own caps evict
     /// its blob.
-    released_groups: Vec<ContentId>,
+    released_groups: VecDeque<ContentId>,
     /// Timed-out calls that await a late reply, and no longer have a group in `orphan_blobs`.
     /// Bounded by `LATE_REPLIES_CAP` and by their due time.
     late_replies: Vec<LateOnly>,
@@ -254,7 +254,7 @@ impl A2aApp {
             blob_server: None,
             call_blobs: HashMap::new(),
             orphan_blobs: Vec::new(),
-            released_groups: Vec::new(),
+            released_groups: VecDeque::new(),
             late_replies: Vec::new(),
             late_cancels: Vec::new(),
             a2a_port: None,
@@ -284,7 +284,7 @@ impl A2aApp {
             blob_server: None,
             call_blobs: HashMap::new(),
             orphan_blobs: Vec::new(),
-            released_groups: Vec::new(),
+            released_groups: VecDeque::new(),
             late_replies: Vec::new(),
             late_cancels: Vec::new(),
             a2a_port: None,
@@ -617,9 +617,9 @@ impl A2aApp {
     /// late reply, which adopts the task and cancels it as for any timed-out call.
     fn release_orphan(&mut self, orphan: OrphanBlob) {
         if self.released_groups.len() >= tuning::ORPHAN_BLOBS_CAP {
-            self.released_groups.remove(0);
+            self.released_groups.pop_front();
         }
-        self.released_groups.push(orphan.group);
+        self.released_groups.push_back(orphan.group);
         let Some(late) = orphan.late_reply else {
             return;
         };
@@ -643,7 +643,7 @@ impl A2aApp {
             .partition(|orphan| orphan.evict_at <= now);
         self.orphan_blobs = waiting;
         self.late_replies.retain(|entry| entry.evict_at > now);
-        let mut groups = std::mem::take(&mut self.released_groups);
+        let mut groups = Vec::from(std::mem::take(&mut self.released_groups));
         groups.extend(due.into_iter().map(|orphan| orphan.group));
         let reaped_groups: Vec<Vec<ContentId>> = reaped
             .iter()
