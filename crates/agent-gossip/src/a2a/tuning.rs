@@ -119,6 +119,12 @@ pub(crate) const SURFACED_EVENTS_BYTES_CAP: usize = MAX_LOGICAL_BODY_BYTES;
 /// queue (`NODE_INBOUND_CAP`).
 pub(crate) const SURFACED_TAP_CAP: usize = 1024;
 
+/// How many blob groups of calls that produced no task wait for their eviction. Each waits at
+/// most one task timeout, and one waiter makes one entry, so a count above the waiter cap is a
+/// burst of timeouts. Past the cap the oldest entry is forgotten: its group stays in the blob
+/// store until that store's own cap evicts it.
+pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice

@@ -538,11 +538,20 @@ impl A2aApp {
     }
 
     pub(crate) fn orphan_blob(&mut self, group: Option<ContentId>) {
-        self.orphan_blobs.extend(group.map(|group| OrphanBlob {
-            group,
-            evict_at: Instant::now(),
-            late_reply: None,
-        }));
+        if let Some(group) = group {
+            self.push_orphan(OrphanBlob {
+                group,
+                evict_at: Instant::now(),
+                late_reply: None,
+            });
+        }
+    }
+
+    fn push_orphan(&mut self, orphan: OrphanBlob) {
+        if self.orphan_blobs.len() >= tuning::ORPHAN_BLOBS_CAP {
+            self.orphan_blobs.remove(0);
+        }
+        self.orphan_blobs.push(orphan);
     }
 
     /// The blob groups the task sweep must evict at `now`: every group of the
@@ -650,12 +659,13 @@ impl A2aApp {
                         peer: waiter.peer,
                         opens_task: waiter.opens_task,
                     });
-                    self.orphan_blobs
-                        .extend(waiter.blob_group.map(|group| OrphanBlob {
+                    if let Some(group) = waiter.blob_group {
+                        self.push_orphan(OrphanBlob {
                             group,
                             evict_at,
                             late_reply,
-                        }));
+                        });
+                    }
                     waiter.responder.send_timeout();
                     None
                 } else {
@@ -682,12 +692,7 @@ impl A2aApp {
             .into_iter()
             .filter_map(|waiter| {
                 if waiter.peer == *peer {
-                    self.orphan_blobs
-                        .extend(waiter.blob_group.map(|group| OrphanBlob {
-                            group,
-                            evict_at: Instant::now(),
-                            late_reply: None,
-                        }));
+                    self.orphan_blob(waiter.blob_group);
                     waiter.responder.send_peer_left(peer);
                     None
                 } else {
@@ -902,6 +907,35 @@ mod tests {
                 Some(OutputEvent::EventsLost { lost }) if *lost == 9 * tuning::SURFACED_TAP_CAP as u64
             ),
             "the newest ring entry must say how many events the tap dropped, got {newest:?}"
+        );
+    }
+
+    #[test]
+    fn orphan_blobs_stop_at_the_cap_and_drop_the_oldest() {
+        let mut app = super::A2aApp::new();
+        for index in 0..10 * tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+
+        let kept: Vec<&ContentId> = app
+            .orphan_blobs
+            .iter()
+            .map(|orphan| &orphan.group)
+            .collect();
+        let newest = ContentId::new(&format!("group-{}", 10 * tuning::ORPHAN_BLOBS_CAP - 1));
+        assert_eq!(
+            kept.len(),
+            tuning::ORPHAN_BLOBS_CAP,
+            "10 times the cap was offered: the list must not grow past the cap"
+        );
+        assert_eq!(
+            kept.last().copied(),
+            Some(&newest),
+            "the newest orphan is kept, the oldest are the ones dropped"
+        );
+        assert!(
+            !kept.contains(&&ContentId::new("group-0")),
+            "the oldest orphan must be gone, or the cap drops the new ones"
         );
     }
 
