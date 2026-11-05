@@ -1213,6 +1213,45 @@ mod tests {
         );
     }
 
+    /// A cancel for a refused task names its reason, not the late-reply reason.
+    #[test]
+    fn a_refused_adoption_cancels_with_the_registry_reason() {
+        let mut app = super::A2aApp::new();
+        let (tx, _rx) = oneshot::channel();
+        let mut waiter = waiter_with_blob("corr-reason", "group-reason");
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+        for index in 0..tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            crate::a2a::task_record::adopt_initiator(
+                &mut app.tasks,
+                crate::a2a::task_record::AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer: &peer,
+                    task_state: crate::a2a::TaskState::Working,
+                    now: Instant::now(),
+                },
+            );
+        }
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-reason"),
+            &Nickname::from("bob"),
+            &created.to_string(),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, Nickname::from("bob"), "registry-full")],
+            "the cancel says the registry refused the task"
+        );
+    }
+
     /// The caller of a refused task gets an error, not the worker's Task: otherwise it
     /// would see a task that this node then cancels without any output line.
     #[test]
