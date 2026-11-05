@@ -30,7 +30,7 @@ use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
+use crate::a2a::{card, receipt, served, status_update_params, task_record, tuning, wire};
 use crate::emission;
 
 /// Retain a just-built outbound message in the local log (pruning the
@@ -181,9 +181,11 @@ fn build_msg(
 
 /// Wait for the sends that run on a task of their own. The first failure is the verdict.
 async fn settle(pending: Vec<PendingSend>) -> anyhow::Result<()> {
+    let limit = std::time::Duration::from_secs(tuning::SEND_OUTCOME_TIMEOUT_SECS);
     for handle in pending {
-        handle
+        tokio::time::timeout(limit, handle)
             .await
+            .map_err(|_| anyhow::anyhow!("a send gave no outcome within {limit:?}"))?
             .map_err(|_| anyhow::anyhow!("a send task ended before it gave its outcome"))??;
     }
     Ok(())
@@ -2582,8 +2584,7 @@ mod sharded_leg_tests {
 
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
-    use crate::a2a::tuning;
-    use crate::a2a::wire;
+    use crate::a2a::{tuning, wire};
 
     fn shard(text: &str) -> Verified {
         shard_raw(text).sign(&habilis_network::protocol::Identity::generate())
