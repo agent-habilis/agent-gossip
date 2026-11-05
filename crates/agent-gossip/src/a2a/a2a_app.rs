@@ -279,25 +279,26 @@ impl A2aApp {
         }
     }
 
-    /// Say whether a new own task leg may wait for its send. Refuses past [`tuning::OWN_LEGS_CAP`].
-    pub(crate) fn admit_own_leg(&self) -> anyhow::Result<()> {
+    /// Say whether a new own task leg of `bytes` may wait for its send. Refuses past
+    /// [`tuning::OWN_LEGS_CAP`] legs or [`tuning::OWN_LEGS_BYTES_CAP`] bytes.
+    pub(crate) fn admit_own_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.own_legs.len() < tuning::own_legs_cap(),
             "{} own task legs still wait for their send, so this leg was not sent",
             tuning::own_legs_cap()
         );
-        Ok(())
+        self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
     }
 
-    /// Say whether a new own content leg may wait for its send. Refuses past
-    /// [`tuning::UNSENT_LEGS_CAP`].
-    pub(crate) fn admit_unsent_leg(&self) -> anyhow::Result<()> {
+    /// Say whether a new own content leg of `bytes` may wait for its send. Refuses past
+    /// [`tuning::UNSENT_LEGS_CAP`] legs or [`tuning::UNSENT_LEGS_BYTES_CAP`] bytes.
+    pub(crate) fn admit_unsent_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.unsent_legs.len() < tuning::unsent_legs_cap(),
             "{} own content legs still wait for their send, so this leg was not sent",
             tuning::unsent_legs_cap()
         );
-        Ok(())
+        self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
     }
 
     /// The bytes of body that the own legs in the queue hold.
@@ -313,23 +314,21 @@ impl A2aApp {
         self.unsent_legs.iter().map(UnsentLeg::held_bytes).sum()
     }
 
-    /// Say whether an own task leg of `bytes` fits the byte budget of the queue.
-    pub(crate) fn admit_own_bytes(&self, bytes: usize) -> anyhow::Result<()> {
-        self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
-    }
-
     fn admit_own_bytes_within(&self, bytes: usize, budget: usize) -> anyhow::Result<()> {
-        let _ = (bytes, budget);
+        let held = self.own_legs_held_bytes();
+        anyhow::ensure!(
+            self.own_legs.is_empty() || held.saturating_add(bytes) <= budget,
+            "{held} bytes of own task legs still wait for their send, the budget is {budget}, so this leg of {bytes} bytes was not sent"
+        );
         Ok(())
     }
 
-    /// Say whether an own content leg of `bytes` fits the byte budget of the list.
-    pub(crate) fn admit_unsent_bytes(&self, bytes: usize) -> anyhow::Result<()> {
-        self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
-    }
-
     fn admit_unsent_bytes_within(&self, bytes: usize, budget: usize) -> anyhow::Result<()> {
-        let _ = (bytes, budget);
+        let held = self.unsent_legs_held_bytes();
+        anyhow::ensure!(
+            self.unsent_legs.is_empty() || held.saturating_add(bytes) <= budget,
+            "{held} bytes of own content legs still wait for their send, the budget is {budget}, so this leg of {bytes} bytes was not sent"
+        );
         Ok(())
     }
 
@@ -814,7 +813,7 @@ mod tests {
         let mut held = Vec::new();
         let mut refused = 0;
         for _ in 0..10 * tuning::OWN_LEGS_CAP {
-            if app.admit_own_leg().is_err() {
+            if app.admit_own_leg(0).is_err() {
                 refused += 1;
                 continue;
             }
@@ -841,7 +840,7 @@ mod tests {
         let mut held = Vec::new();
         let mut refused = 0;
         for _ in 0..10 * tuning::UNSENT_LEGS_CAP {
-            if app.admit_unsent_leg().is_err() {
+            if app.admit_unsent_leg(0).is_err() {
                 refused += 1;
                 continue;
             }

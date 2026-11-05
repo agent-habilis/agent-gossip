@@ -10,6 +10,7 @@
 
 use std::sync::OnceLock;
 
+use habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
 use habilis_network::util::tuning;
 
 /// How long one A2A task may go with no leg or keepalive from the other party
@@ -33,13 +34,11 @@ pub(crate) const UNSENT_LEGS_CAP: usize = 1024;
 /// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB). The count cap alone allows 1024 legs of 64 MiB. A leg that
 /// would pass the budget is refused with a failed reason, unless the queue is empty: one leg
 /// always fits, so the largest legal body is never refused for its size.
-pub(crate) const OWN_LEGS_BYTES_CAP: usize =
-    4 * habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
+pub(crate) const OWN_LEGS_BYTES_CAP: usize = 4 * MAX_LOGICAL_BODY_BYTES;
 
 /// Bytes that the own content legs may hold together: 4 legs of the largest body, each held twice
 /// (sealed frames, and a copy in the shard cache). The same rule as [`OWN_LEGS_BYTES_CAP`].
-pub(crate) const UNSENT_LEGS_BYTES_CAP: usize =
-    2 * 4 * habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
+pub(crate) const UNSENT_LEGS_BYTES_CAP: usize = 2 * 4 * MAX_LOGICAL_BODY_BYTES;
 
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;

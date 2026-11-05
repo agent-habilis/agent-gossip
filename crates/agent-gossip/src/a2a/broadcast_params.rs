@@ -764,10 +764,11 @@ async fn broadcast_directed_frame(
         app,
     } = frame;
     if task_id.is_some() {
-        app.admit_own_leg()?;
+        app.admit_own_leg(echo_body.as_str().len())?;
     }
     if content {
-        app.admit_unsent_leg()?;
+        // The sealed frames and the shard cache hold the body twice.
+        app.admit_unsent_leg(payload_body.as_str().len().saturating_mul(2))?;
     }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
@@ -1290,8 +1291,8 @@ pub(crate) async fn broadcast_task_artifact(
         app,
     } = params;
     // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
-    app.admit_own_leg()?;
-    app.admit_unsent_leg()?;
+    app.admit_own_leg(text.len())?;
+    app.admit_unsent_leg(text.len().saturating_mul(2))?;
     let parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1466,7 +1467,7 @@ pub(crate) async fn attach_call_file(
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
-    app.admit_unsent_leg()?;
+    app.admit_unsent_leg(0)?;
     let opens_task = message.task_id.is_none();
     let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
     let mut parts = build_offload_parts(
