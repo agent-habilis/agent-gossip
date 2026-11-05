@@ -147,6 +147,9 @@ pub(crate) struct A2aApp {
     /// Timed-out calls that await a late reply, and no longer have a group in `orphan_blobs`.
     /// Bounded by `LATE_REPLIES_CAP` and by their due time.
     late_replies: Vec<LateOnly>,
+    /// How many late-reply entries were forgotten past `LATE_REPLIES_CAP`: each is a worker task
+    /// that can run uncancelled. Counted since the daemon started, and logged at each drop.
+    late_replies_forgotten: u64,
     /// Cancels owed to workers: a task a late reply opened after the caller was told the call
     /// timed out, or a task this node refused. Each push answers one waiter or one orphan,
     /// both bounded, and the next task sweep drains the whole Vec, so it holds one sweep's
@@ -256,6 +259,7 @@ impl A2aApp {
             orphan_blobs: Vec::new(),
             released_groups: VecDeque::new(),
             late_replies: Vec::new(),
+            late_replies_forgotten: 0,
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
@@ -286,6 +290,7 @@ impl A2aApp {
             orphan_blobs: Vec::new(),
             released_groups: VecDeque::new(),
             late_replies: Vec::new(),
+            late_replies_forgotten: 0,
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
@@ -618,6 +623,9 @@ impl A2aApp {
     fn release_orphan(&mut self, orphan: OrphanBlob) {
         if self.released_groups.len() >= tuning::ORPHAN_BLOBS_CAP {
             self.released_groups.pop_front();
+            tracing::warn!(
+                "a released blob group was forgotten: its blob waits for the blob store caps"
+            );
         }
         self.released_groups.push_back(orphan.group);
         let Some(late) = orphan.late_reply else {
@@ -627,6 +635,11 @@ impl A2aApp {
             let due = self.late_replies.iter().map(|waiting| waiting.evict_at);
             if let Some(index) = due_first(due) {
                 self.late_replies.swap_remove(index);
+                self.late_replies_forgotten += 1;
+                tracing::warn!(
+                    forgotten = self.late_replies_forgotten,
+                    "a late-reply entry was forgotten: the worker task of that call can run uncancelled"
+                );
             }
         }
         self.late_replies.push(LateOnly {
@@ -1099,7 +1112,8 @@ mod tests {
     fn the_released_groups_and_the_late_replies_stay_at_their_caps() {
         let mut app = super::A2aApp::new();
         let later = Instant::now() + std::time::Duration::from_hours(1);
-        for index in 0..10 * tuning::LATE_REPLIES_CAP {
+        let offered = 10 * tuning::LATE_REPLIES_CAP;
+        for index in 0..offered {
             app.push_orphan(Some(super::OrphanBlob {
                 group: ContentId::new(&format!("group-{index}")),
                 evict_at: later,
@@ -1120,6 +1134,11 @@ mod tests {
             app.late_replies.len(),
             tuning::LATE_REPLIES_CAP,
             "the calls that await a late reply stop at their cap"
+        );
+        assert_eq!(
+            app.late_replies_forgotten,
+            (offered - tuning::ORPHAN_BLOBS_CAP - tuning::LATE_REPLIES_CAP) as u64,
+            "each entry past the cap is counted, so a worker task that runs uncancelled is not silent"
         );
     }
 
