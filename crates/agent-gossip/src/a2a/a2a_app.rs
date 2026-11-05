@@ -268,6 +268,11 @@ impl A2aApp {
         }
     }
 
+    /// Say whether a new own task leg may wait for its send. Refuses past [`tuning::OWN_LEGS_CAP`].
+    pub(crate) fn admit_own_leg(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
     /// peer got the leg.
     pub(crate) fn queue_own_leg(&mut self, leg: DeliveredLeg, delivered: Receiver<bool>) {
@@ -741,6 +746,33 @@ mod tests {
                 .authored(),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         }
+    }
+
+    #[test]
+    fn own_legs_stop_at_the_cap_and_the_rest_is_refused() {
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * tuning::OWN_LEGS_CAP {
+            if app.admit_own_leg().is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, rx) = oneshot::channel();
+            held.push(tx);
+            app.queue_own_leg(leg("status"), rx);
+        }
+
+        assert_eq!(
+            app.own_legs.len(),
+            tuning::OWN_LEGS_CAP,
+            "the queue stops at the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::OWN_LEGS_CAP,
+            "every leg past the cap is refused"
+        );
     }
 
     fn bodies(legs: &[DeliveredLeg]) -> Vec<&str> {

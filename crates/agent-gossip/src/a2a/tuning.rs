@@ -22,6 +22,11 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 /// leg in memory.
 pub(crate) const SEND_OUTCOME_TIMEOUT_SECS: u64 = TASK_TIMEOUT_SECS;
 
+/// How many own task legs may wait for the outcome of their send. Each leg holds its body, up to
+/// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
+/// is refused with a failed reason: the caller must know that nothing was sent.
+pub(crate) const OWN_LEGS_CAP: usize = 1024;
+
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
 
