@@ -26,7 +26,7 @@ const KIND: u8 = 2;
 
 /// The most bytes a ticket decodes to: one wire frame. A bigger ticket is refused before its
 /// JSON is read.
-const MAX_TICKET_BYTES: usize = 3840;
+const MAX_TICKET_BYTES: usize = habilis_network::util::consts::MAX_MESSAGE_SIZE;
 
 /// The most characters a ticket text can have: base58 of one frame is about 5250, with a margin.
 const MAX_TICKET_TEXT: usize = 5300;
