@@ -156,6 +156,23 @@ mod tests {
         base58check_encode(&framed)
     }
 
+    /// A text longer than a ticket can be is refused before its base58 decode, which is
+    /// quadratic: a long text must cost nothing to refuse.
+    #[test]
+    fn a_text_past_the_cap_is_refused_before_decoding() {
+        let text = "z".repeat(52_659);
+        let started = std::time::Instant::now();
+        assert!(
+            A2aTicket::decode(&text).is_err(),
+            "an oversized text is refused"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(100),
+            "refusing took {:?}",
+            started.elapsed()
+        );
+    }
+
     /// A ticket is one frame at most: 10 times the cap is refused.
     #[test]
     fn a_ticket_past_the_cap_is_refused() {
