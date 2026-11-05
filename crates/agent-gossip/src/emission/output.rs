@@ -13,9 +13,8 @@ use super::{
     peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
     simple_event, task_stalled_event,
 };
-use crate::a2a::node::is_pollable;
 use crate::a2a::task_record::StallNotice;
-use crate::a2a::wire;
+use crate::a2a::{node, wire};
 
 /// Per-event-loop output destination. Replaces the former
 /// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
@@ -76,7 +75,7 @@ impl SurfacedTap {
     /// An event the ring never keeps is not queued and not counted: a burst of them must not fill
     /// the channel or inflate the loss count.
     pub(crate) fn send(&self, event: OutputEvent) {
-        if !is_pollable(&event) {
+        if !node::is_pollable(&event) {
             return;
         }
         if let Err(TrySendError::Full(_)) = self.events.try_send(event) {

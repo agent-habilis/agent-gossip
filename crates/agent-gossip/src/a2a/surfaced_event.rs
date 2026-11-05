@@ -946,7 +946,7 @@ mod tests {
 
         assert_eq!(batch.missed_before, Some(17), "the reader missed seq 16");
         assert_eq!(batch.lost_to_bytes, 1, "one event above the cursor");
-        assert_eq!(batch.lost_bytes, 1024, "its bytes");
+        assert_eq!(batch.lost_bytes, 1024, "the body of seq 16 was 1 KiB");
         assert_eq!(
             batch.byte_losses(),
             Some((1, 1024)),
@@ -963,7 +963,11 @@ mod tests {
 
         assert_eq!(batch.missed_before, None, "the reader missed nothing");
         assert_eq!(batch.lost_to_bytes, 0, "no event lost above the cursor");
-        assert_eq!(batch.byte_losses(), None, "no counts are sent");
+        assert_eq!(
+            batch.byte_losses(),
+            None,
+            "a reader that lost nothing is told nothing about losses"
+        );
     }
 
     /// The CLI marker for a reader with a gap carries the counts above its cursor.

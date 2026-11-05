@@ -604,13 +604,8 @@ impl A2aApp {
             return;
         };
         if self.orphan_blobs.len() >= tuning::ORPHAN_BLOBS_CAP {
-            let due_first = self
-                .orphan_blobs
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, orphan)| orphan.evict_at)
-                .map(|(index, _)| index);
-            if let Some(index) = due_first {
+            let due = self.orphan_blobs.iter().map(|waiting| waiting.evict_at);
+            if let Some(index) = due_first(due) {
                 let dropped = self.orphan_blobs.remove(index);
                 self.release_orphan(dropped);
             }
@@ -629,13 +624,8 @@ impl A2aApp {
             return;
         };
         if self.late_replies.len() >= tuning::LATE_REPLIES_CAP {
-            let due_first = self
-                .late_replies
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, entry)| entry.evict_at)
-                .map(|(index, _)| index);
-            if let Some(index) = due_first {
+            let due = self.late_replies.iter().map(|waiting| waiting.evict_at);
+            if let Some(index) = due_first(due) {
                 self.late_replies.swap_remove(index);
             }
         }
@@ -675,15 +665,15 @@ impl A2aApp {
             .a2a_waiters
             .iter()
             .any(|waiter| waiter.corr == *corr && waiter.peer == *peer);
-        waiting
-            || self
-                .orphan_blobs
-                .iter()
-                .any(|orphan| orphan.awaits_reply(corr, peer))
-            || self
-                .late_replies
-                .iter()
-                .any(|entry| entry.awaits_reply(corr, peer))
+        let orphaned = self
+            .orphan_blobs
+            .iter()
+            .any(|orphan| orphan.awaits_reply(corr, peer));
+        let released = self
+            .late_replies
+            .iter()
+            .any(|entry| entry.awaits_reply(corr, peer));
+        waiting || orphaned || released
     }
 
     /// Adopt the authoritative `Task` a `SendMessage` returned (from `peer`, the
@@ -911,6 +901,12 @@ struct LateReply {
     opens_task: bool,
 }
 
+/// The index of the entry that is due first.
+fn due_first(due: impl Iterator<Item = Instant>) -> Option<usize> {
+    let indexed = due.enumerate();
+    indexed.min_by_key(|(_, at)| *at).map(|(index, _)| index)
+}
+
 /// A timed-out call that awaits a late reply, whose group the orphan cap released.
 struct LateOnly {
     late: LateReply,
@@ -1026,7 +1022,12 @@ mod tests {
         for index in 0..offered {
             app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
             swept += app
-                .take_call_blobs(&[], Instant::now() - std::time::Duration::from_secs(1))
+                .take_call_blobs(
+                    &[],
+                    Instant::now()
+                        .checked_sub(std::time::Duration::from_secs(1))
+                        .expect("the clock is older than 1 second"),
+                )
                 .len();
         }
 
