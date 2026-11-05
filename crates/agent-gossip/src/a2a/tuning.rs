@@ -125,6 +125,11 @@ pub(crate) const SURFACED_TAP_CAP: usize = 1024;
 /// store until that store's own cap evicts it.
 pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
 
+/// How many blob groups of calls one task may hold. A task keeps the groups of its calls until it
+/// is reaped, and a follow-up that carries a file adds one. A call past the cap is refused with a
+/// failed reason, before its file is offloaded: the user must know that the file was not sent.
+pub(crate) const CALL_BLOB_GROUPS_PER_TASK_CAP: usize = 64;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice
@@ -186,6 +191,7 @@ pub(crate) struct Tuning {
     pub(crate) unsent_legs_cap: usize,
     pub(crate) own_legs_bytes_cap: usize,
     pub(crate) unsent_legs_bytes_cap: usize,
+    pub(crate) call_blob_groups_per_task_cap: usize,
 }
 
 impl Tuning {
@@ -199,6 +205,7 @@ impl Tuning {
         unsent_legs_cap: UNSENT_LEGS_CAP,
         own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
         unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
+        call_blob_groups_per_task_cap: CALL_BLOB_GROUPS_PER_TASK_CAP,
     };
 }
 
@@ -256,6 +263,10 @@ pub(crate) fn own_legs_bytes_cap() -> usize {
 
 pub(crate) fn unsent_legs_bytes_cap() -> usize {
     current().unsent_legs_bytes_cap
+}
+
+pub(crate) fn call_blob_groups_per_task_cap() -> usize {
+    current().call_blob_groups_per_task_cap
 }
 
 #[cfg(test)]

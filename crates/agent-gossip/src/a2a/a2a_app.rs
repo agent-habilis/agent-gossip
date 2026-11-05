@@ -313,6 +313,19 @@ impl A2aApp {
         self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
     }
 
+    /// Say whether a call with a file may add a blob group to `task`: a task holds at most
+    /// [`tuning::CALL_BLOB_GROUPS_PER_TASK_CAP`] groups. A call that opens no task yet has none.
+    pub(crate) fn admit_call_blob_group(&self, task: Option<&TaskId>) -> anyhow::Result<()> {
+        let held = task
+            .and_then(|task_id| self.call_blobs.get(task_id))
+            .map_or(0, Vec::len);
+        anyhow::ensure!(
+            held < tuning::call_blob_groups_per_task_cap(),
+            "this task already holds {held} call files, so this call was not sent"
+        );
+        Ok(())
+    }
+
     /// The bytes of body that the own legs in the queue hold.
     pub(crate) fn own_legs_held_bytes(&self) -> usize {
         let lengths = self
@@ -936,6 +949,38 @@ mod tests {
         assert!(
             !kept.contains(&&ContentId::new("group-0")),
             "the oldest orphan must be gone, or the cap drops the new ones"
+        );
+    }
+
+    #[test]
+    fn a_task_holds_at_most_the_cap_of_call_blob_groups() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let mut refused = 0;
+        for index in 0..10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP {
+            if app.admit_call_blob_group(Some(&task_id)).is_err() {
+                refused += 1;
+                continue;
+            }
+            app.call_blobs
+                .entry(task_id.clone())
+                .or_default()
+                .push(ContentId::new(&format!("group-{index}")));
+        }
+
+        assert_eq!(
+            app.call_blobs[&task_id].len(),
+            tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "10 times the cap was offered: the task must not hold more groups than the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "a call that finds the task full must be refused, not queued"
+        );
+        assert!(
+            app.admit_call_blob_group(None).is_ok(),
+            "a call that opens a task holds no group yet, so it must be admitted"
         );
     }
 
