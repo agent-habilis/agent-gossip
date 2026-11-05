@@ -1181,6 +1181,45 @@ fn test_ready_gate_emits_identity_json_on_success() {
     let _ = fs::remove_file(&state_file);
 }
 
+#[test]
+fn test_ready_gate_prints_the_author_pubkey() {
+    let pubkey = "ab".repeat(32);
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-ready-pubkey-{}.json",
+        std::process::id()
+    ));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the system clock is after the Unix epoch")
+        .as_secs();
+    fs::write(
+        &state_file,
+        format!(
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"pubkey":"{pubkey}","ready":true,"gossip":"deadbeef"}}"#
+        ),
+    )
+    .expect("the temp directory is writable");
+
+    let mut command = common::test_cmd();
+    command
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "5"]);
+    let output: std::process::Output = command.output().expect("failed to run agent-gossip ready");
+    assert!(
+        output.status.success(),
+        "a fresh ready:true file should pass the gate"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
+    assert_eq!(
+        parsed["pubkey"], pubkey,
+        "ready prints the author pubkey, the key the meta slot is keyed by"
+    );
+    let _ = fs::remove_file(&state_file);
+}
+
 /// The poll command retrieves buffered events from a running mesh process,
 /// each carrying its surfacing `seq`. Calling poll with `--after <seq>` returns
 /// only events surfaced after that seq. The records are the same shape the live
