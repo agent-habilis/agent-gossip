@@ -344,3 +344,59 @@ fn no_skill_joins_the_meta_document_by_nickname() {
         );
     }
 }
+
+/// The text of a skill file with each `<!-- include path="..." -->` line replaced by the file it
+/// names, relative to the including file.
+fn expanded(file: &std::path::Path) -> String {
+    let text = std::fs::read_to_string(file)
+        .unwrap_or_else(|error| panic!("{} is not readable text: {error}", file.display()));
+    let directory = file.parent().expect("a skill file has a directory");
+    let mut out = String::new();
+    for line in text.lines() {
+        let after_tag = line.trim().strip_prefix("<!-- include path=\"");
+        let included = after_tag.and_then(|rest| rest.split('"').next());
+        match included {
+            Some(path) => out.push_str(&expanded(&directory.join(path))),
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// A skill that reads `$PUBKEY` must hold it after a context clear. The ready gate sets it for the
+/// skills that start a session. Every other skill gets it from the Reattach procedure, so that
+/// procedure must restore it, and the skill must include that procedure.
+#[test]
+fn a_skill_that_uses_pubkey_can_recover_it_after_a_reattach() {
+    let skills = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+    let reattach = expanded(&skills.join("shared/reattach.md"));
+    let mut users = 0;
+    for entry in std::fs::read_dir(&skills).expect("the skills directory is readable") {
+        let skill = entry
+            .expect("a directory entry is readable")
+            .path()
+            .join("SKILL.md");
+        if !skill.is_file() {
+            continue;
+        }
+        let text = expanded(&skill);
+        let own_text: String = text.split(reattach.as_str()).collect();
+        if !own_text.contains("$PUBKEY") {
+            continue;
+        }
+        users += 1;
+        let sets_from_ready = text.contains("`$PUBKEY` = `pubkey`");
+        let includes_reattach = text.contains(&reattach);
+        assert!(
+            sets_from_ready || includes_reattach,
+            "{} uses $PUBKEY and neither the ready gate nor the Reattach procedure sets it",
+            skill.display()
+        );
+    }
+    assert!(users > 0, "no skill uses $PUBKEY, so the check is vacuous");
+    assert!(
+        reattach.contains("`$PUBKEY`"),
+        "the Reattach procedure does not restore $PUBKEY"
+    );
+}

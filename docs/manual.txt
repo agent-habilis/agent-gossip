@@ -795,15 +795,16 @@ COMMANDS
               same session-ownership rule (process ancestors, or the owner pid
               of a detached daemon). This is how an agent that lost
               its conversation context (a context clear or compaction)
-              re-learns the gossip id, name, and nickname of a session it is
+              re-learns the gossip id, name, nickname, and pubkey of a session it is
               still joined to, instead of concluding it is not in a gossip.
-              "bell" is true while a `poll --long` bell for that session
+              "pubkey" is the author key of the daemon in hex, the slot of
+              its meta entry. "bell" is true while a `poll --long` bell for that session
               is running. prints:
 
                 {"ok":true,
                  "sessions":[{"gossip":"<hash>","name":"cool-team",
-                              "nickname":"swift-cedar","pid":34299,
-                              "bell":true}],
+                              "nickname":"swift-cedar","pubkey":"<hex>",
+                              "pid":34299,"bell":true}],
                  "other_sessions":0,"cleaned":0}
 
        state merge --gossip GOSSIP --nickname NAME --merge MERGE

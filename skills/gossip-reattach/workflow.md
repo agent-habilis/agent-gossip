@@ -2,7 +2,7 @@
 
 Run the **Reattach** procedure unconditionally — even when `$GOSSIP`, `$NAME`,
 or `$NICKNAME` appear to be set, a cleared or compacted context may hold stale
-values. Adopt the recovered `gossip`, `name`, and `nickname`; when the chosen
+values. Adopt the recovered `gossip`, `name`, `nickname`, and `pubkey` (as `$PUBKEY`); when the chosen
 session carries `topic`, hold that too.
 
 If no session is found, print:
