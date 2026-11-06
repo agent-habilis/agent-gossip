@@ -11,9 +11,25 @@ use agent_gossip::{
     PresenceSubtype, TaskId, TaskState,
 };
 use habilis_network::protocol::messages::Authored;
+use habilis_network::runtime::{SendError, StateRefusal};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
+
+/// How long a state write waits for the first sync of the node: just above the 30 s deadline of
+/// the engine, which is the longest that the engine itself can refuse with `not_synced`.
+const FIRST_SYNC_WAIT: Duration = Duration::from_secs(35);
+
+/// True when the session refused a write because the node has not synced its state yet.
+fn is_not_synced(error: &SessionError) -> bool {
+    let SessionError::Loop(cause) = error else {
+        return false;
+    };
+    matches!(
+        cause.downcast_ref::<SendError>(),
+        Some(SendError::State(StateRefusal::NotSynced))
+    )
+}
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
 ///
@@ -244,16 +260,25 @@ impl InProcNode {
             .await
     }
 
-    /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
-    /// rejected (not a JSON object / loop stopped).
+    /// Apply an RFC 7386 merge to the shared state. A joining node refuses state writes with
+    /// `not_synced` until a peer answers its first request, as a user is told to retry: this
+    /// waits for that answer, for [`FIRST_SYNC_WAIT`] at most. Any other refusal fails at once.
     ///
     /// # Panics
     ///
-    /// Panics if the merge is rejected.
+    /// Panics if the merge is rejected (not a JSON object, full, too deep, too large, loop
+    /// stopped), or if the node has not synced within [`FIRST_SYNC_WAIT`].
     pub async fn state_merge(&self, merge: serde_json::Value) {
-        self.try_state_merge(merge)
-            .await
-            .expect("in-process state_merge failed");
+        let deadline = Instant::now() + FIRST_SYNC_WAIT;
+        loop {
+            match self.try_state_merge(merge.clone()).await {
+                Ok(()) => return,
+                Err(error) if is_not_synced(&error) && Instant::now() < deadline => {
+                    tokio::time::sleep(POLL).await;
+                }
+                Err(error) => panic!("in-process state_merge failed: {error:?}"),
+            }
+        }
     }
 
     /// Like [`Self::state_merge`] but returns the raw result.
