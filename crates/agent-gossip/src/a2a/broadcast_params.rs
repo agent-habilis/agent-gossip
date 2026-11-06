@@ -1820,9 +1820,7 @@ pub(crate) async fn send_shard_repair_requests(
         let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
             continue;
         };
-        let Ok(author_key) = peer_key(state, &ticket.author) else {
-            continue;
-        };
+        let author_key = ticket.author;
         let sealed = match seal_directed(state, &author_key, &body) {
             Ok(sealed) => sealed,
             Err(error) => {
