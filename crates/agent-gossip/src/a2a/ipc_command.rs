@@ -768,12 +768,9 @@ pub(crate) struct MetaView {
 
 pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
     let document = state.doc(Channel::Meta).to_json();
-    let snapshot = state.roster_snapshot();
-    // Active members only. The roster snapshot chains the *quiet* peers onto
-    // the live ones, and a peer that died ungracefully lands exactly there —
-    // counting it as live is what made this report empty in the first place.
-    let active = snapshot.peers.iter().filter(|entry| !entry.quiet);
-    let live: HashSet<AuthorKey> = active.map(|entry| entry.key).collect();
+    // Every live key, shown or not: the roster snapshot lists shown peers only, and a live peer
+    // whose arrival is not shown yet must not read as absent. A quiet peer is not in the set.
+    let live: HashSet<AuthorKey> = state.live_keys().copied().collect();
     let own: AuthorKey = state.identity().author_key();
     let slots: Vec<&str> = card::absent_peers(&document, &live, &own);
     let absent: Vec<String> = slots.into_iter().map(str::to_owned).collect();
