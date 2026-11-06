@@ -1453,13 +1453,14 @@ MCP SERVER
               lookup makes a loopback-only gossip, or one with all three
               lookups when advertise is true. An unknown param is
               rejected. The name, lookup and transport choices are baked into the
-              identifier. Returns the gossip id, name, and your nickname.
+              identifier. Returns the gossip id, name, your nickname, and your
+              pubkey (your author key in hex, the slot of your meta entry).
               Advertised gossips are found with discover_gossips.
 
        join_gossip
               Join an existing gossip by its identifier. An optional
               nickname applies; all other config decodes from the id. Returns
-              the gossip id, name, and your nickname. (A shared string derives
+              the gossip id, name, your nickname, and your pubkey. (A shared string derives
               its own public gossip — see topic_gossip — and is not a join
               target.)
 

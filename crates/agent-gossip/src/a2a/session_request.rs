@@ -1,7 +1,7 @@
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MessageBody, Nickname};
+use habilis_network::protocol::{AuthorKey, MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
@@ -48,6 +48,10 @@ pub(crate) enum SessionRequest {
         text: String,
         file: Option<FileRef>,
         response: oneshot::Sender<Result<Authored>>,
+    },
+    /// The author key of this member. The slot of its meta entry is the hex of that key.
+    OwnKey {
+        response: oneshot::Sender<AuthorKey>,
     },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).
     Peers {

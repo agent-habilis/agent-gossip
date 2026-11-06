@@ -2433,6 +2433,10 @@ pub(crate) async fn handle_session_request(
         SessionRequest::MetaMerge { merge, response } => {
             session_merge(SessionMerge(Channel::Meta, merge, response), scope, state).await
         }
+        SessionRequest::OwnKey { response } => {
+            let _ = response.send(state.identity().author_key());
+            false
+        }
         SessionRequest::MetaGet { response } => {
             let _ = response.send(ipc_command::meta_view(state));
             false

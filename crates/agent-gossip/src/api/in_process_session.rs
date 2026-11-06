@@ -1,6 +1,6 @@
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageBody, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::{EventLoopConfig, Node, SignalHandling};
 use tokio::sync::{broadcast, oneshot};
 
@@ -305,6 +305,12 @@ impl InProcessSession {
     /// `meta`-channel counterpart of [`state_merge`](Self::state_merge).
     pub(crate) async fn meta_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.call_loop(|response| SessionRequest::MetaMerge { merge, response })
+            .await
+    }
+
+    /// The author key of this member.
+    pub(crate) async fn own_key(&self) -> Result<AuthorKey, SessionError> {
+        self.call(|response| SessionRequest::OwnKey { response })
             .await
     }
 

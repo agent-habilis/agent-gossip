@@ -1402,6 +1402,41 @@ fn a_mesh_info_row_names_the_pubkey_of_its_meta_slot() {
     drop(joiner);
 }
 
+/// An MCP client has no `ready` output to read its own key from, and the meta tools need it: the
+/// slot of its entry is the hex of that key. The create result names it, and the key is the slot
+/// of the card that carries the client's nickname.
+#[test]
+fn the_create_result_names_the_pubkey_of_the_own_meta_slot() {
+    let mut creator = McpClient::spawn();
+    let created = tool_result_json(&creator.tool_call(
+        770,
+        "create_gossip",
+        &serde_json::json!({ "name": "mcptest" }),
+    ))
+    .expect("create_gossip must succeed");
+    let pubkey = created["pubkey"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the create result names no pubkey: {created}"));
+    assert_eq!(pubkey.len(), 64, "a pubkey is 64 hex digits: {created}");
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut probe = 771;
+    loop {
+        let meta = tool_result_json(&creator.tool_call(probe, "get_meta", &serde_json::json!({})))
+            .expect("creator get_meta");
+        let name = &meta["document"]["peers"][pubkey]["card"]["name"];
+        if *name == created["nickname"] {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the pubkey is no slot of the own card: {meta}"
+        );
+        probe += 1;
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Loopback timings so the advertise→discover round runs in seconds: short
 /// co-host grace (the advertiser becomes the directory beacon fast) and
 /// frequent re-ads (so the discoverer's collection window catches one).

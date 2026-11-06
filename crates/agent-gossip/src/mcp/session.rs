@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, MessageId, Nickname};
 
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::ipc_command::MetaView;
@@ -23,6 +23,7 @@ use crate::api::{
 /// Dropping it winds the loop down via the core's own `Drop`.
 pub(crate) struct Session {
     inner: InProcessSession,
+    own_key: Option<AuthorKey>,
     /// Implicit `after` seq cursor for [`Session::fetch_messages`].
     last_delivered_seq: Mutex<Option<u64>>,
 }
@@ -34,7 +35,7 @@ impl Session {
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
     pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        Ok(Self::wrap(InProcessSession::create_poll(config).await?))
+        Ok(Self::wrap(InProcessSession::create_poll(config).await?).await)
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -43,7 +44,7 @@ impl Session {
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::join_poll(config).await?))
+        Ok(Self::wrap(InProcessSession::join_poll(config).await?).await)
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -52,14 +53,22 @@ impl Session {
     /// # Errors
     /// [`JoinError`] on setup failure.
     pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::topic_poll(config).await?))
+        Ok(Self::wrap(InProcessSession::topic_poll(config).await?).await)
     }
 
-    fn wrap(inner: InProcessSession) -> Self {
+    async fn wrap(inner: InProcessSession) -> Self {
+        // `None` only if the loop stopped before it answered; the session is then unusable anyway.
+        let own_key = inner.own_key().await.ok();
         Self {
             inner,
+            own_key,
             last_delivered_seq: Mutex::new(None),
         }
+    }
+
+    /// Our author key: the slot of our meta entry is its hex.
+    pub(super) fn own_key(&self) -> Option<AuthorKey> {
+        self.own_key
     }
 
     /// The resolved mesh id.
