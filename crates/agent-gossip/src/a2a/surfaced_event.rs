@@ -693,6 +693,7 @@ mod tests {
     fn peer_return(name: &str) -> OutputEvent {
         OutputEvent::PeerReturn {
             nickname: nick(name),
+            key: key_of(name),
         }
     }
 

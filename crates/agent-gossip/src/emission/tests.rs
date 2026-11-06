@@ -623,6 +623,7 @@ fn task_stalled_event_json_shape() {
 fn peer_timeout_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
         nickname: "ball-blue",
+        pubkey: "ab".repeat(32).as_str(),
         last_seen_secs_ago: 94,
         display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
@@ -646,10 +647,37 @@ fn peer_timeout_json_shape() {
     );
 }
 
+/// A silent or returning peer is named by its key: two peers can share a nickname, and the line
+/// must say which of them went quiet.
+#[test]
+fn the_timeout_and_return_lines_name_the_key_of_the_peer() {
+    let (out, mut events) = capture_events();
+    let peer = test_key("quiet-twin");
+
+    out.peer_timeout(&nick("twin"), &peer, 94);
+    out.peer_return(&nick("twin"), &peer);
+
+    for event_name in ["peer_timeout", "peer_return"] {
+        let event = events.try_recv().expect("the event reaches the sink");
+        let line = simple_event::event_json(&event).expect("the event has a JSON line");
+        let parsed = parse(&line);
+        assert_eq!(
+            parsed["event"], event_name,
+            "the lines come in order: {line}"
+        );
+        assert_eq!(
+            parsed["pubkey"],
+            peer.to_string(),
+            "the line names the peer by its key: {line}"
+        );
+    }
+}
+
 #[test]
 fn peer_return_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerReturn {
         nickname: "ball-blue",
+        pubkey: "ab".repeat(32).as_str(),
         display: "💬️ `<ball-blue>` came back".to_owned(),
     })
     .expect("a test value serializes to JSON");

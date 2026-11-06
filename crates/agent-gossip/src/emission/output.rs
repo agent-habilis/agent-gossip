@@ -404,16 +404,23 @@ impl Output {
     /// Emit a peer-timeout event. Distinct from `presence left` (a
     /// voluntary departure): this fires when the local heartbeat
     /// sweeper evicts a peer silent past `ALIVE_TIMEOUT_SECS`.
-    pub(crate) fn peer_timeout(&self, nickname: &Nickname, last_seen_secs_ago: u64) {
+    pub(crate) fn peer_timeout(
+        &self,
+        nickname: &Nickname,
+        key: &AuthorKey,
+        last_seen_secs_ago: u64,
+    ) {
         self.dispatch(
             || OutputEvent::PeerTimeout {
                 nickname: nickname.clone(),
+                key: *key,
                 last_seen_secs_ago,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
                     &SimpleEvent::PeerTimeout {
                         nickname: nickname.as_str(),
+                        pubkey: key.to_string().as_str(),
                         last_seen_secs_ago,
                         display: peer_timeout_display(nickname.as_str()),
                     },
@@ -452,15 +459,17 @@ impl Output {
     /// Symmetric counterpart to `peer_timeout`: fires when a peer we
     /// previously evicted for silence resumes sending (any message,
     /// including an `Alive` keepalive).
-    pub(crate) fn peer_return(&self, nickname: &Nickname) {
+    pub(crate) fn peer_return(&self, nickname: &Nickname, key: &AuthorKey) {
         self.dispatch(
             || OutputEvent::PeerReturn {
                 nickname: nickname.clone(),
+                key: *key,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
                     &SimpleEvent::PeerReturn {
                         nickname: nickname.as_str(),
+                        pubkey: key.to_string().as_str(),
                         display: peer_return_display(nickname.as_str()),
                     },
                     true,

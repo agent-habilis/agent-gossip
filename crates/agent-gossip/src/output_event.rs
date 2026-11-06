@@ -43,6 +43,8 @@ pub enum OutputEvent {
     PeerTimeout {
         /// The silent peer.
         nickname: Nickname,
+        /// The author key of the silent peer.
+        key: AuthorKey,
         /// Whole seconds since the peer was last heard.
         last_seen_secs_ago: u64,
     },
@@ -50,6 +52,8 @@ pub enum OutputEvent {
     PeerReturn {
         /// The returning peer.
         nickname: Nickname,
+        /// The author key of the returning peer.
+        key: AuthorKey,
     },
     /// An author signed two different messages at the same `seq`: proof of a fork.
     Fork {

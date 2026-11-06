@@ -1224,8 +1224,12 @@ JSON EVENTS
               eviction (peer_return).
 
                  {"event":"peer_timeout","nickname":"word-word",
-                  "last_seen_secs_ago":94}
-                 {"event":"peer_return","nickname":"word-word"}
+                  "pubkey":"<hex>","last_seen_secs_ago":94}
+                 {"event":"peer_return","nickname":"word-word",
+                  "pubkey":"<hex>"}
+
+              pubkey is the author key of the peer, in hex. Two peers can
+              share a nickname, so it tells which of them went quiet.
 
        fork   Equivocation alert: one signing key (pubkey) produced two
               different messages at the same sequence number, which proves a

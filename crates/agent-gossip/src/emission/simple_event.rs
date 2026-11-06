@@ -42,6 +42,8 @@ pub(super) enum SimpleEvent<'source> {
     },
     PeerTimeout {
         nickname: &'source str,
+        /// The author key of the peer, hex: two peers can share a nickname.
+        pubkey: &'source str,
         last_seen_secs_ago: u64,
         /// Pre-formatted, markdown-safe line the `/mesh` skill echoes
         /// verbatim. See [`peer_timeout_display`].
@@ -49,6 +51,8 @@ pub(super) enum SimpleEvent<'source> {
     },
     PeerReturn {
         nickname: &'source str,
+        /// The author key of the peer, hex.
+        pubkey: &'source str,
         /// Pre-formatted, markdown-safe line (see [`peer_return_display`]).
         display: String,
     },
@@ -951,18 +955,23 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         .ok(),
         OutputEvent::PeerTimeout {
             nickname,
+            key,
             last_seen_secs_ago,
         } => serde_json::to_string(&SimpleEvent::PeerTimeout {
             nickname: nickname.as_str(),
+            pubkey: key.to_string().as_str(),
             last_seen_secs_ago: *last_seen_secs_ago,
             display: peer_timeout_display(nickname.as_str()),
         })
         .ok(),
-        OutputEvent::PeerReturn { nickname } => serde_json::to_string(&SimpleEvent::PeerReturn {
-            nickname: nickname.as_str(),
-            display: peer_return_display(nickname.as_str()),
-        })
-        .ok(),
+        OutputEvent::PeerReturn { nickname, key } => {
+            serde_json::to_string(&SimpleEvent::PeerReturn {
+                nickname: nickname.as_str(),
+                pubkey: key.to_string().as_str(),
+                display: peer_return_display(nickname.as_str()),
+            })
+            .ok()
+        }
         OutputEvent::Fork {
             nickname,
             pubkey,
