@@ -262,12 +262,12 @@ impl InProcNode {
 
     /// Apply an RFC 7386 merge to the shared state. A joining node refuses state writes with
     /// `not_synced` until a peer answers its first request, as a user is told to retry: this
-    /// waits for that answer, for [`FIRST_SYNC_WAIT`] at most. Any other refusal fails at once.
+    /// waits for that answer, for `FIRST_SYNC_WAIT` at most. Any other refusal fails at once.
     ///
     /// # Panics
     ///
     /// Panics if the merge is rejected (not a JSON object, full, too deep, too large, loop
-    /// stopped), or if the node has not synced within [`FIRST_SYNC_WAIT`].
+    /// stopped), or if the node has not synced within `FIRST_SYNC_WAIT`.
     pub async fn state_merge(&self, merge: serde_json::Value) {
         let deadline = Instant::now() + FIRST_SYNC_WAIT;
         loop {
