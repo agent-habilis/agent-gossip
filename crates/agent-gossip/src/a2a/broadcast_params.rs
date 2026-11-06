@@ -869,6 +869,14 @@ pub(crate) fn peer_key(state: &EventLoopState, peer: &Nickname) -> anyhow::Resul
         .map_err(|error| anyhow::anyhow!("cannot address '{peer}': {error}"))
 }
 
+/// Whether `tasks` holds a live task with the member `key`. The key is the identity: a name that
+/// another key holds now is not the counterparty of a task that the first key opened.
+fn holds_open_task_with(tasks: &HashMap<crate::a2a::TaskId, TaskRecord>, key: &AuthorKey) -> bool {
+    tasks
+        .values()
+        .any(|rec| rec.peer_key == *key && !rec.state.is_terminal())
+}
+
 /// The addressee's name for a directed line, read from the roster at print time. `None` for a
 /// broadcast, or when the addressee is not live.
 pub(crate) fn addressee_name(state: &EventLoopState, message: &Authored) -> Option<Nickname> {
@@ -1898,10 +1906,8 @@ pub(crate) async fn broadcast_a2a_call(
     // task with the peer yet) and any read/cancel to a peer we share no task
     // with still require the peer present — method-agnostic, so
     // `SendStreamingMessage` creates gate the same as `SendMessage`.
-    let party_to_a_task = app
-        .tasks
-        .values()
-        .any(|rec| rec.peer == peer && !rec.state.is_terminal());
+    let party_to_a_task =
+        peer_key(state, &peer).is_ok_and(|key| holds_open_task_with(&app.tasks, &key));
     if !party_to_a_task && !state.is_peer(peer.as_str()) {
         responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
         return;
@@ -2837,6 +2843,45 @@ mod live_holder_tests {
             super::live_holders(live.into_iter(), &shared),
             2,
             "two live keys under one name are two holders"
+        );
+    }
+}
+
+#[cfg(test)]
+mod open_task_gate_tests {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    use habilis_network::protocol::{AuthorKey, Nickname};
+
+    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState};
+
+    /// A call by the name of a gone task peer must reach the unknown-peer check. The task belongs
+    /// to the key that opened it, and a key that holds the name now is another member.
+    #[test]
+    fn a_call_by_the_name_of_a_gone_task_peer_is_refused_as_unknown() {
+        let mut tasks = HashMap::new();
+        let gone = AuthorKey::from([0xb0; 32]);
+        let holder_now = AuthorKey::from([0xb1; 32]);
+        adopt_initiator(
+            &mut tasks,
+            AdoptInitiatorParams {
+                task_id: &TaskId::random(),
+                peer_key: &gone,
+                peer: &Nickname::from("bob"),
+                task_state: TaskState::Working,
+                now: Instant::now(),
+            },
+        );
+
+        assert!(
+            super::holds_open_task_with(&tasks, &gone),
+            "the key that opened the task is its party"
+        );
+        assert!(
+            !super::holds_open_task_with(&tasks, &holder_now),
+            "a key that only shares the name is not a party to the task"
         );
     }
 }
