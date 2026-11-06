@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use habilis_network::embed::EventLoopState;
+use habilis_network::embed::{EventLoopState, RosterEntry};
 use habilis_network::iroh::{Endpoint, TransportAddr};
 use habilis_network::net::{
     GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID, active_transport_addrs,
@@ -46,6 +46,26 @@ fn kind_of(address: &TransportAddr) -> Option<&'static str> {
     }
 }
 
+/// The rows of a roster as the CLI and the MCP tool print them. The engine serializes the author
+/// key of a member as `key`; the surfaces print it as `pubkey`, the name of the same value in
+/// every event line. A reader joins a row to its meta slot, which is the hex of that key.
+pub(crate) fn roster_rows(peers: &[RosterEntry]) -> Vec<serde_json::Value> {
+    let rows = peers.iter().map(|entry| {
+        let mut row = serde_json::to_value(entry).expect("a roster entry is plain data");
+        rename_key_to_pubkey(&mut row);
+        row
+    });
+    rows.collect()
+}
+
+fn rename_key_to_pubkey(row: &mut serde_json::Value) {
+    if let Some(fields) = row.as_object_mut()
+        && let Some(key) = fields.remove("key")
+    {
+        fields.insert("pubkey".to_owned(), key);
+    }
+}
+
 /// The `agent-gossip peers` response: the roster snapshot with a `path` added
 /// to each row. `peer_count` is the *active* peers plus self, while the array
 /// chains the quiet peers on after them so a peer that may still return stays
@@ -74,17 +94,7 @@ pub(crate) fn respond_with_paths(
                 .and_then(|id| row_endpoint(holders, Some(id)))
         })
         .collect();
-    let mut rows = match serde_json::to_value(&snapshot.peers) {
-        Ok(serde_json::Value::Array(rows)) => rows,
-        _ => Vec::new(),
-    };
-    // The roster entry keeps its key out of the serialized row, but a reader joins the row to its
-    // meta slot, which is the hex of that key.
-    for (row, entry) in rows.iter_mut().zip(&snapshot.peers) {
-        if let Some(fields) = row.as_object_mut() {
-            fields.insert("pubkey".to_owned(), entry.key.to_string().into());
-        }
-    }
+    let mut rows = roster_rows(&snapshot.peers);
     let endpoint = endpoint.clone();
     tokio::spawn(async move {
         for (row, peer) in rows.iter_mut().zip(endpoints) {
@@ -244,8 +254,21 @@ mod tests {
 
     use super::{
         GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID, path_label,
-        reader_from_reply,
+        reader_from_reply, rename_key_to_pubkey,
     };
+
+    /// The engine names the key `key`; every surface of the app prints it as `pubkey`, and the row
+    /// keeps no second copy under the old name.
+    #[test]
+    fn a_roster_row_prints_the_engine_key_as_pubkey() {
+        let mut row = serde_json::json!({ "nickname": "twin", "key": "ab".repeat(32) });
+
+        rename_key_to_pubkey(&mut row);
+
+        assert_eq!(row["pubkey"], "ab".repeat(32), "the key moves to pubkey");
+        assert!(row.get("key").is_none(), "the old name does not stay");
+        assert_eq!(row["nickname"], "twin", "the other fields stay");
+    }
 
     fn ip() -> TransportAddr {
         TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], 4433)))

@@ -26,6 +26,7 @@ use super::{
     parse_task_state, rejoin_existing, to_mcp_error,
 };
 use crate::a2a::ipc_command::MetaView;
+use crate::a2a::reader_asks;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
@@ -344,7 +345,7 @@ impl AgentGossipServer {
         ok_json(MeshInfoResult {
             mesh,
             peer_count: roster.count,
-            peers: roster.peers,
+            peers: reader_asks::roster_rows(&roster.peers),
         })
     }
 
