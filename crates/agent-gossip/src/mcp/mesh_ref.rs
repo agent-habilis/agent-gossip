@@ -19,7 +19,7 @@ impl From<&Session> for MeshRef {
         // `MeshRef` is the serialized tool output; the wire shape
         // keeps `name` a plain string.
         let name: String = session.name().as_str().to_owned();
-        let pubkey: Option<String> = session.own_key().map(|key| key.to_string());
+        let pubkey: Option<String> = Some(session.own_key().to_string());
         MeshRef {
             gossip: session.mesh().clone(),
             name,

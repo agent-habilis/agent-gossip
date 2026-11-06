@@ -23,9 +23,15 @@ use crate::api::{
 /// Dropping it winds the loop down via the core's own `Drop`.
 pub(crate) struct Session {
     inner: InProcessSession,
-    own_key: Option<AuthorKey>,
+    own_key: AuthorKey,
     /// Implicit `after` seq cursor for [`Session::fetch_messages`].
     last_delivered_seq: Mutex<Option<u64>>,
+}
+
+/// Our author key, or the setup failure that a stopped event loop leaves behind. A session
+/// without its key cannot address its meta entry, so there is no session without it.
+fn require_own_key(own_key: Result<AuthorKey, SessionError>) -> Result<AuthorKey> {
+    own_key.map_err(|error| anyhow::anyhow!("the mesh session has no author key: {error}"))
 }
 
 impl Session {
@@ -35,7 +41,9 @@ impl Session {
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
     pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        Ok(Self::wrap(InProcessSession::create_poll(config).await?).await)
+        let inner = InProcessSession::create_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(CreateError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -44,7 +52,9 @@ impl Session {
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::join_poll(config).await?).await)
+        let inner = InProcessSession::join_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -53,12 +63,12 @@ impl Session {
     /// # Errors
     /// [`JoinError`] on setup failure.
     pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::topic_poll(config).await?).await)
+        let inner = InProcessSession::topic_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
-    async fn wrap(inner: InProcessSession) -> Self {
-        // `None` only if the loop stopped before it answered; the session is then unusable anyway.
-        let own_key = inner.own_key().await.ok();
+    fn wrap(inner: InProcessSession, own_key: AuthorKey) -> Self {
         Self {
             inner,
             own_key,
@@ -67,7 +77,7 @@ impl Session {
     }
 
     /// Our author key: the slot of our meta entry is its hex.
-    pub(super) fn own_key(&self) -> Option<AuthorKey> {
+    pub(super) fn own_key(&self) -> AuthorKey {
         self.own_key
     }
 
@@ -882,5 +892,24 @@ mod tests {
         );
 
         session.leave().await;
+    }
+
+    #[test]
+    fn a_failed_own_key_lookup_is_a_setup_error_not_a_session_without_a_key() {
+        let error = super::require_own_key(Err(crate::api::SessionError::Stopped));
+        assert!(
+            error.is_err(),
+            "a session whose key lookup failed must not be built without its key"
+        );
+    }
+
+    #[test]
+    fn an_own_key_that_resolved_passes_through() {
+        let key = habilis_network::protocol::AuthorKey::from_bytes([7; 32]);
+        assert_eq!(
+            super::require_own_key(Ok(key)).ok(),
+            Some(key),
+            "a resolved key is handed back unchanged"
+        );
     }
 }
