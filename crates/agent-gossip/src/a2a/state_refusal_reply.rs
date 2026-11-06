@@ -23,7 +23,7 @@ impl StateRefusalReply {
             ),
             StateRefusal::Full { .. } => (
                 "state_full",
-                "delete keys with a null merge, or wait for the next cut of the state, then write again",
+                "delete keys with a null merge, or wait for the next cut of the state; at the memory limit the state refuses deletes too, so wait for the cut; then write again",
             ),
             StateRefusal::TooDeep { .. } => (
                 "too_deep",
@@ -33,7 +33,7 @@ impl StateRefusalReply {
                 "too_large",
                 "split the value into smaller values under their own keys",
             ),
-            _ => ("refused", "write a smaller value, or write again later"),
+            _ => ("refused", "write again later"),
         };
         Some(Self {
             text: refusal.to_string(),
@@ -51,6 +51,11 @@ impl StateRefusalReply {
             "hint": self.hint,
         })
         .to_string()
+    }
+
+    /// The message of an A2A error, which has no data field: the text, the reason and the hint.
+    pub(crate) fn to_rpc_message(&self) -> String {
+        format!("{} (reason: {}); {}", self.text, self.reason, self.hint)
     }
 
     /// The `data` of an MCP error: the stable reason and the way out.
