@@ -869,6 +869,52 @@ pub(crate) fn peer_key(state: &EventLoopState, peer: &Nickname) -> anyhow::Resul
         .map_err(|error| anyhow::anyhow!("cannot address '{peer}': {error}"))
 }
 
+/// The key that holds the task a call names, when the record of that task has `peer` as its
+/// counterparty. A follow-up, a read and a cancel go to that key. The name can be shared with
+/// another live key, or can now belong to a key that holds no task.
+fn recorded_counterparty(
+    tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
+    params: &serde_json::Value,
+    peer: &Nickname,
+) -> Option<AuthorKey> {
+    let named: Option<&str> = params["message"]["taskId"]
+        .as_str()
+        .or_else(|| params["id"].as_str());
+    let task_id = named.and_then(crate::a2a::TaskId::from_uuid_str)?;
+    tasks
+        .get(&task_id)
+        .filter(|rec| rec.peer == *peer)
+        .map(|rec| rec.peer_key)
+}
+
+/// The key a call goes to, or why the call is refused. A call on a task that we hold goes to the
+/// key of the task record. Any other call resolves the name: it needs one live key under it,
+/// except that an open task with the resolved key lets the call through a brief roster flap.
+fn call_target(
+    state: &EventLoopState,
+    tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
+    params: &serde_json::Value,
+    peer: &Nickname,
+) -> Result<AuthorKey, String> {
+    let recorded = recorded_counterparty(tasks, params, peer);
+    let resolved: Option<AuthorKey> = recorded.or_else(|| peer_key(state, peer).ok());
+    let party_to_a_task = resolved.is_some_and(|key| holds_open_task_with(tasks, &key));
+    let is_present = match recorded {
+        Some(key) => state.known_nickname_of(&key).is_some(),
+        None => state.is_peer(peer.as_str()),
+    };
+    if !party_to_a_task && !is_present {
+        return Err(format!("unknown peer '{peer}'"));
+    }
+    let live_with_name = live_holders(state.live_nicknames(), peer);
+    if recorded.is_none() && live_with_name > 1 {
+        return Err(format!(
+            "ambiguous peer '{peer}': {live_with_name} live members use this name"
+        ));
+    }
+    resolved.ok_or_else(|| format!("ambiguous or unknown peer '{peer}'"))
+}
+
 /// Whether `tasks` holds a live task with the member `key`. The key is the identity: a name that
 /// another key holds now is not the counterparty of a task that the first key opened.
 fn holds_open_task_with(tasks: &HashMap<crate::a2a::TaskId, TaskRecord>, key: &AuthorKey) -> bool {
@@ -1904,26 +1950,12 @@ pub(crate) async fn broadcast_a2a_call(
     // task with the peer yet) and any read/cancel to a peer we share no task
     // with still require the peer present — method-agnostic, so
     // `SendStreamingMessage` creates gate the same as `SendMessage`.
-    let party_to_a_task =
-        peer_key(state, &peer).is_ok_and(|key| holds_open_task_with(&app.tasks, &key));
-    if !party_to_a_task && !state.is_peer(peer.as_str()) {
-        responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
-        return;
-    }
-    let live_with_name = live_holders(state.live_nicknames(), &peer);
-    if live_with_name > 1 {
-        responder.send_response(&rpc_error(
-            -32602,
-            &format!("ambiguous peer '{peer}': {live_with_name} live members use this name"),
-        ));
-        return;
-    }
-    let Ok(peer_key) = peer_key(state, &peer) else {
-        responder.send_response(&rpc_error(
-            -32602,
-            &format!("ambiguous or unknown peer '{peer}'"),
-        ));
-        return;
+    let peer_key = match call_target(state, &app.tasks, &params, &peer) {
+        Ok(key) => key,
+        Err(refusal) => {
+            responder.send_response(&rpc_error(-32602, &refusal));
+            return;
+        }
     };
     let blob = match file {
         None => None,
@@ -2880,6 +2912,38 @@ mod open_task_gate_tests {
         assert!(
             !super::holds_open_task_with(&tasks, &holder_now),
             "a key that only shares the name is not a party to the task"
+        );
+    }
+
+    /// The key of the record, not the key that the name resolves to now, is the counterparty of
+    /// the task. A name that another key holds, or that two keys share, does not move the task.
+    #[test]
+    fn a_call_on_a_task_goes_to_the_key_of_its_record() {
+        let mut tasks = HashMap::new();
+        let task_id = TaskId::random();
+        let holder = AuthorKey::from([0xb0; 32]);
+        adopt_initiator(
+            &mut tasks,
+            AdoptInitiatorParams {
+                task_id: &task_id,
+                peer_key: &holder,
+                peer: &Nickname::from("bob"),
+                task_state: TaskState::Working,
+                now: Instant::now(),
+            },
+        );
+        let follow_up = serde_json::json!({ "message": { "taskId": task_id.as_str() } });
+        let read = serde_json::json!({ "id": task_id.as_str() });
+
+        let by_message = super::recorded_counterparty(&tasks, &follow_up, &Nickname::from("bob"));
+        let by_id = super::recorded_counterparty(&tasks, &read, &Nickname::from("bob"));
+        let other_name = super::recorded_counterparty(&tasks, &read, &Nickname::from("carol"));
+
+        assert_eq!(by_message, Some(holder), "a follow-up goes to the holder");
+        assert_eq!(by_id, Some(holder), "a read goes to the holder");
+        assert_eq!(
+            other_name, None,
+            "a call that names another peer is not redirected"
         );
     }
 }
