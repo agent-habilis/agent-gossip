@@ -278,8 +278,9 @@ fn markdown_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 /// The index of every `peers[...]` in `text` that a nickname fills: `peers[$NICKNAME]`,
-/// `peers["$NICKNAME"]`, `peers[$NICK]`, `peers[nickname]`, `peers[<nick>]`, and the like. A slot
-/// is the hex of an author key, so an index that starts with "nick" or "name" is a nickname.
+/// `peers["$NICKNAME"]`, `peers[$NICK]`, `peers[nickname]`, `peers[$PEER_NAME]`, `peers[$ALIAS]`,
+/// and the like. A slot is the hex of an author key, so an index that names a nickname, a name, an
+/// alias or a label is a join by name, unless it also names a key or a slot.
 fn nickname_indexes(text: &str) -> Vec<String> {
     let mut found = Vec::new();
     for (start, _) in text.match_indices("peers[") {
@@ -290,7 +291,11 @@ fn nickname_indexes(text: &str) -> Vec<String> {
         let inner = &rest[..end];
         let bare = inner.trim_matches(|ch: char| !ch.is_alphanumeric());
         let lower = bare.to_lowercase();
-        if lower.starts_with("nick") || lower.starts_with("name") {
+        let says_key = ["key", "slot"].iter().any(|word| lower.contains(word));
+        let says_name = ["nick", "name", "alias", "label"]
+            .iter()
+            .any(|word| lower.contains(word));
+        if says_name && !says_key {
             found.push(format!("peers[{inner}]"));
         }
     }
@@ -308,6 +313,9 @@ fn the_nickname_index_finder_catches_every_spelling() {
         "peers[<nickname>]",
         "peers[ ${NICKNAME} ]",
         "peers['name']",
+        "document.peers[$PEER_NAME]",
+        "document.peers[$ALIAS]",
+        "document.peers[$NICKNAME_OF_PEER]",
     ];
     for line in bad {
         assert!(
@@ -320,6 +328,9 @@ fn the_nickname_index_finder_catches_every_spelling() {
         "document.peers[<pubkey>]",
         "document.peers[<slot>].nickname",
         "document.peers[slot]",
+        "document.peers[$PEER_KEY]",
+        "document.peers[$SLOT]",
+        "document.peers[$PUBKEY_OF_NAME]",
     ];
     for line in good {
         assert!(
