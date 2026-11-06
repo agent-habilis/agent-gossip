@@ -67,7 +67,7 @@ mod tests {
 
     fn reply_of(refusal: StateRefusal) -> StateRefusalReply {
         let error = anyhow::Error::from(SendError::State(refusal));
-        StateRefusalReply::of(&error).expect("a refusal of the state")
+        StateRefusalReply::of(&error).expect("the error was built from a SendError::State")
     }
 
     #[test]
@@ -114,8 +114,8 @@ mod tests {
                 "the hint names the way out `{way_out}`: {}",
                 reply.hint
             );
-            let response: serde_json::Value =
-                serde_json::from_str(&reply.to_response()).expect("a JSON response");
+            let response: serde_json::Value = serde_json::from_str(&reply.to_response())
+                .expect("the response is built with json!, so it parses");
             assert_eq!(response["ok"], false, "the CLI reports ok:false");
             assert_eq!(response["error"], text, "and the exact text");
         }

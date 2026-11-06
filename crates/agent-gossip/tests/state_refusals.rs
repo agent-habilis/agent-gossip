@@ -17,7 +17,8 @@ fn refusal_of(output: &Output) -> Value {
         "a refused merge exits non-zero: {}",
         String::from_utf8_lossy(&output.stdout)
     );
-    let response: Value = serde_json::from_slice(&output.stdout).expect("the refusal is JSON");
+    let response: Value =
+        serde_json::from_slice(&output.stdout).expect("the CLI prints one JSON value on stdout");
     assert_eq!(response["ok"], false, "a refusal says ok:false: {response}");
     response
 }
@@ -57,7 +58,7 @@ fn a_value_nested_too_deep_is_refused_with_its_reason_and_the_way_out() {
         response["hint"]
             .as_str()
             .is_some_and(|hint| hint.contains("fewer levels")),
-        "the way out: {response}"
+        "an agent acts on the hint, so it names the next step: {response}"
     );
 }
 
@@ -70,7 +71,9 @@ fn a_value_too_large_for_a_frame_of_a_seed_is_refused() {
         &mesh,
         &json!({ "note": "x".repeat(4_000) }),
     ));
-    let error = response["error"].as_str().expect("an error text");
+    let error = response["error"]
+        .as_str()
+        .expect("error is a string in every refusal");
     assert!(
         error.starts_with("a value of the write is too large for the shared state: ")
             && error.ends_with(" bytes with its keys; a value and its keys must fit one frame"),
@@ -100,9 +103,11 @@ fn a_full_state_refuses_a_write_that_adds_and_a_null_merge_is_the_way_out() {
             break;
         }
     }
-    let output = refused.expect("the leaves fill the state");
+    let output = refused.expect("600 merges pass the line of 20 000 paths");
     let response = refusal_of(&output);
-    let error = response["error"].as_str().expect("an error text");
+    let error = response["error"]
+        .as_str()
+        .expect("error is a string in every refusal");
     assert!(
         error.starts_with("the shared state is full: ")
             && error.ends_with(

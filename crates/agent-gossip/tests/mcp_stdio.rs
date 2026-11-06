@@ -1523,7 +1523,7 @@ fn a_refused_state_write_carries_its_reason_and_the_way_out_over_mcp() {
     );
     let error = response
         .get("error")
-        .expect("a refusal is a JSON-RPC error");
+        .expect("rmcp answers an invalid-params error with an error object, not a result");
     assert_eq!(
         error["message"], "the value is nested 13 levels deep and the shared state allows 12",
         "the exact text: {response}"
@@ -1536,7 +1536,7 @@ fn a_refused_state_write_carries_its_reason_and_the_way_out_over_mcp() {
         error["data"]["hint"]
             .as_str()
             .is_some_and(|hint| hint.contains("fewer levels")),
-        "the way out: {response}"
+        "an agent acts on the hint, so it names the next step: {response}"
     );
 }
 
