@@ -293,7 +293,7 @@ mod tests {
         use crate::emission::OutputEvent;
         match event {
             OutputEvent::Message { message, .. }
-            | OutputEvent::Presence { message }
+            | OutputEvent::Presence { message, .. }
             | OutputEvent::Task { message, .. } => Some(message),
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }

@@ -35,6 +35,9 @@ pub enum OutputEvent {
     Presence {
         /// The signed presence frame.
         message: Box<Authored>,
+        /// The key of the member that the presence is about. A synthetic presence is signed by
+        /// this node, so the key of `message` is not the key of the peer.
+        peer: AuthorKey,
     },
     /// A peer went silent past the liveness window.
     PeerTimeout {

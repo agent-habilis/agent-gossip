@@ -1,5 +1,5 @@
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MessageKind, Nickname};
+use habilis_network::protocol::{AuthorKey, MessageKind, Nickname};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::{
@@ -383,16 +383,19 @@ impl Output {
         }
     }
 
-    pub(crate) fn print_presence(&self, message: &Authored) {
+    /// `peer` is the key of the member that the presence is about. A synthetic presence is signed by
+    /// this node, so the key of its frame is ours and says nothing about the peer.
+    pub(crate) fn print_presence(&self, message: &Authored, peer: &AuthorKey) {
         let MessageKind::Presence { subtype } = &message.kind else {
             return;
         };
         self.dispatch(
             || OutputEvent::Presence {
                 message: Box::new(message.clone()),
+                peer: *peer,
             },
             |mode| match mode {
-                OutputMode::Json => emit(&format_presence_json(message, *subtype)),
+                OutputMode::Json => emit(&format_presence_json(message, *subtype, peer)),
                 OutputMode::Silent => {}
             },
         );

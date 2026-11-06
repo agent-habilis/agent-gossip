@@ -7,6 +7,7 @@ use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
 use crate::a2a::{node, status_update_params, wire};
+use crate::emission::capture_events::capture_events;
 use crate::emission::simple_event;
 
 fn parse(text: &str) -> serde_json::Value {
@@ -263,7 +264,11 @@ fn json_body_escapes_backslashes() {
 #[test]
 fn json_presence_joined() {
     let message = view(Message::new_joined(&sid(), &nick("alice")));
-    let parsed = parse(&format_presence_json(&message, PresenceSubtype::Joined));
+    let parsed = parse(&format_presence_json(
+        &message,
+        PresenceSubtype::Joined,
+        &test_key("x"),
+    ));
     assert_eq!(parsed["event"], "message", "the event field is message");
     assert_eq!(parsed["type"], "presence", "the type field is presence");
     assert_eq!(parsed["subtype"], "joined", "the subtype field is joined");
@@ -279,10 +284,35 @@ fn json_presence_joined() {
     );
 }
 
+/// A synthetic presence is minted by this node, so the key of its frame is ours. The line names
+/// the peer that the presence is about, and two peers that share a nickname get two keys.
+#[test]
+fn a_synthetic_joined_prints_the_key_of_the_peer() {
+    let (out, mut events) = capture_events();
+    let minted_here = Message::new_joined(&sid(), &nick("twin"))
+        .sign(&habilis_network::protocol::Identity::generate())
+        .authored();
+    let peer = test_key("peer");
+
+    out.print_presence(&minted_here, &peer);
+
+    let event = events.try_recv().expect("the presence reaches the sink");
+    let line = simple_event::event_json(&event).expect("a presence has a JSON line");
+    assert_eq!(
+        parse(&line)["pubkey"],
+        peer.to_string(),
+        "the line names the peer and not the node that minted the frame: {line}"
+    );
+}
+
 #[test]
 fn json_presence_left() {
     let message = view(Message::new_left(&sid(), &nick("bob")));
-    let parsed = parse(&format_presence_json(&message, PresenceSubtype::Left));
+    let parsed = parse(&format_presence_json(
+        &message,
+        PresenceSubtype::Left,
+        &test_key("x"),
+    ));
     assert_eq!(parsed["subtype"], "left", "the subtype field is left");
     assert_eq!(parsed["author"], "bob", "the author field is bob");
 }
@@ -684,10 +714,12 @@ fn json_output_is_single_line() {
         format_presence_json(
             &view(Message::new_joined(&sid(), &nick("charlie"))),
             PresenceSubtype::Joined,
+            &test_key("charlie"),
         ),
         format_presence_json(
             &view(Message::new_left(&sid(), &nick("dave"))),
             PresenceSubtype::Left,
+            &test_key("dave"),
         ),
     ];
     for json in msgs {
@@ -848,7 +880,12 @@ mod snapshots {
             },
             "",
         ));
-        insta::assert_snapshot!(format_presence_json(&message, PresenceSubtype::Joined));
+        let key_of_the_frame = habilis_network::protocol::AuthorKey::from([0; 32]);
+        insta::assert_snapshot!(format_presence_json(
+            &message,
+            PresenceSubtype::Joined,
+            &key_of_the_frame
+        ));
     }
 
     #[test]
@@ -859,7 +896,12 @@ mod snapshots {
             },
             "",
         ));
-        insta::assert_snapshot!(format_presence_json(&message, PresenceSubtype::Left));
+        let key_of_the_frame = habilis_network::protocol::AuthorKey::from([0; 32]);
+        insta::assert_snapshot!(format_presence_json(
+            &message,
+            PresenceSubtype::Left,
+            &key_of_the_frame
+        ));
     }
 
     /// The `{"event":"state",…}` line a shared-state change emits on the
@@ -1004,7 +1046,7 @@ mod prop {
     use proptest::strategy::Strategy;
     use proptest::{prop_assert, prop_assert_eq, proptest};
 
-    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, view};
+    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, test_key, view};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7eu8, 0..200)
@@ -1045,7 +1087,7 @@ mod prop {
             } else {
                 (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
             };
-            let json = format_presence_json(&message, subtype);
+            let json = format_presence_json(&message, subtype, &test_key("x"));
             let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(&parsed["type"], "presence");
         }

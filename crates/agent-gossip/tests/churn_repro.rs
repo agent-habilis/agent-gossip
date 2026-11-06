@@ -165,7 +165,7 @@ async fn burst_start_counts_each_peer_once() {
         .events()
         .iter()
         .filter_map(|event| {
-            let OutputEvent::Presence { message } = event else {
+            let OutputEvent::Presence { message, .. } = event else {
                 return None;
             };
             let is_joined = matches!(

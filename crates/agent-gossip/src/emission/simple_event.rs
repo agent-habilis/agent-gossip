@@ -397,7 +397,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskStalled { .. } => true,
-        OutputEvent::Presence { message } => matches!(
+        OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined | PresenceSubtype::Left
@@ -433,10 +433,17 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Serializes the struct directly because the documented wire format
 /// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
-pub(super) fn format_presence_json(message: &Authored, subtype: PresenceSubtype) -> String {
+pub(super) fn format_presence_json(
+    message: &Authored,
+    subtype: PresenceSubtype,
+    peer: &AuthorKey,
+) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
-        header: message_header(message, "presence"),
+        header: MessageHeader {
+            pubkey: Some(peer.to_string()),
+            ..message_header(message, "presence")
+        },
         subtype,
         display: presence_display(message.author.as_str(), subtype),
     })
@@ -866,11 +873,11 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             message: message.as_deref(),
             is_self: *is_self,
         }),
-        OutputEvent::Presence { message } => {
+        OutputEvent::Presence { message, peer } => {
             let MessageKind::Presence { subtype } = &message.kind else {
                 return Formatted::Silent;
             };
-            format_presence_json(message, *subtype)
+            format_presence_json(message, *subtype, peer)
         }
         OutputEvent::StateChanged {
             channel,

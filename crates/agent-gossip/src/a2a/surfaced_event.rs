@@ -314,7 +314,7 @@ pub(crate) struct SurfacedState {
 fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
     match event {
         OutputEvent::Message { message, .. }
-        | OutputEvent::Presence { message }
+        | OutputEvent::Presence { message, .. }
         | OutputEvent::Task { message, .. } => Some(message.dedup_key()),
         OutputEvent::TaskMessage { .. }
         | OutputEvent::Ready { .. }
@@ -1457,6 +1457,7 @@ mod tests {
                     .sign(&Identity::generate())
                     .authored(),
             ),
+            peer: AuthorKey::from([7; 32]),
         }
     }
 
@@ -1466,11 +1467,12 @@ mod tests {
     fn the_same_frame_is_served_once() {
         let mut state = SurfacedState::new();
         let event = joined_event("swift-cedar");
-        let OutputEvent::Presence { message } = &event else {
+        let OutputEvent::Presence { message, peer } = &event else {
             unreachable!()
         };
         let copy = OutputEvent::Presence {
             message: message.clone(),
+            peer: *peer,
         };
         state.push(event);
         state.push(copy);

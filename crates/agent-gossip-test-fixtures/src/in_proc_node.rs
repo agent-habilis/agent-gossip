@@ -845,7 +845,7 @@ impl InProcNode {
             .filter(|event| {
                 matches!(
                     event,
-                    OutputEvent::Presence { message }
+                    OutputEvent::Presence { message, .. }
                         if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                 )
             })
@@ -863,7 +863,7 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Presence { message }
+                    OutputEvent::Presence { message, .. }
                         if message.author.to_string() == nick
                             && matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                 )
@@ -886,7 +886,7 @@ impl InProcNode {
                 .filter(|event| {
                     matches!(
                         event,
-                        OutputEvent::Presence { message }
+                        OutputEvent::Presence { message, .. }
                             if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                     )
                 })
