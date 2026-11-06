@@ -9,6 +9,9 @@ pub(crate) struct Target {
     pub(super) mesh: String,
     pub(super) name: Option<String>,
     pub(super) nickname: Option<String>,
+    /// The author key of the daemon, hex: the slot of its meta entry. A skill that lost its
+    /// context recovers it from the session report.
+    pub(super) pubkey: Option<String>,
     /// The raw topic string (topic gossips only) — what the leave report
     /// echoes instead of the lossy derived `name`.
     pub(super) topic: Option<String>,

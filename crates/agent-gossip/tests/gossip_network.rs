@@ -3633,6 +3633,15 @@ fn leave_session_scope_via_decoy_parent() {
         nickname.as_str(),
         "the session report names the nickname"
     );
+    // A reattached skill holds no key from the ready gate, and the meta slot of its entry is the
+    // hex of that key, so the session report names it.
+    let pubkey: &str = sessions[0]["pubkey"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the session report names no pubkey: {report}"));
+    assert!(
+        pubkey.len() == 64 && pubkey.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "the pubkey is 64 hex digits: {pubkey}"
+    );
     assert!(
         default_state_file(&mesh, &nickname).exists(),
         "session (read-only) stopped the daemon"
