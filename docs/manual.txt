@@ -694,11 +694,16 @@ COMMANDS
 
                 {"ok":true,
                  "peers":[{"nickname":"word-word",
+                                  "pubkey":"<hex>",
                                   "last_seen_secs_ago":12,
                                   "quiet":false,
                                   "reach":"direct",
                                   "path":"ip"}, …],
                  "peer_count":3}
+
+              pubkey is the author key of the peer in hex. It is the slot of
+              the peer in the meta document, so join a row to its meta entry
+              by pubkey: two peers can share a nickname.
 
               peers are sorted most-recently-seen first. quiet is true for a
               peer the heartbeat sweep evicted after it went silent past the

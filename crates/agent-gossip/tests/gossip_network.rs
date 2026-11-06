@@ -3015,6 +3015,46 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     }
 }
 
+/// A row of `peers` names the member by its author key, which is the slot of the member in the
+/// meta document. Two members can share a nickname, so a reader that joins the roster to the meta
+/// document joins by the key and never by the name.
+#[test]
+fn the_peers_row_names_the_pubkey_of_its_meta_slot() {
+    let (host, mesh) = Node::create_named("peers-key");
+    let member = Node::join(&mesh, "peers-key-m");
+    common::await_peer_card_cli(&mesh, &host.nickname, &member.nickname);
+    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
+        agent_gossip::Channel::Meta,
+        &mesh,
+        &host.nickname,
+    ))
+    .expect("the CLI prints the meta channel as one JSON object");
+    let slot = common::card_slot_of(&meta["document"], &member.nickname)
+        .expect("the wait above ended on this card, so the slot exists");
+
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    loop {
+        let roster: serde_json::Value = serde_json::from_str(&cli_peers(&mesh, &host.nickname))
+            .expect("peers prints one JSON object");
+        let rows: &[serde_json::Value] = roster["peers"].as_array().map_or(&[], Vec::as_slice);
+        let row = rows
+            .iter()
+            .find(|row| row["nickname"] == member.nickname.as_str());
+        if let Some(row) = row {
+            assert_eq!(
+                row["pubkey"], slot,
+                "the row does not name the key of the meta slot: {row}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the member never reached the roster: {roster}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 // ── starvation watchdog (the roster-collapse fix) ─────────────────────────────
 
 // `SHORT_EVICT` plus a 6s starvation threshold. The threshold is its own

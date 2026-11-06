@@ -78,6 +78,13 @@ pub(crate) fn respond_with_paths(
         Ok(serde_json::Value::Array(rows)) => rows,
         _ => Vec::new(),
     };
+    // The roster entry keeps its key out of the serialized row, but a reader joins the row to its
+    // meta slot, which is the hex of that key.
+    for (row, entry) in rows.iter_mut().zip(&snapshot.peers) {
+        if let Some(fields) = row.as_object_mut() {
+            fields.insert("pubkey".to_owned(), entry.key.to_string().into());
+        }
+    }
     let endpoint = endpoint.clone();
     tokio::spawn(async move {
         for (row, peer) in rows.iter_mut().zip(endpoints) {

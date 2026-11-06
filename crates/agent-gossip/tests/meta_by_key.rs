@@ -261,3 +261,36 @@ fn a_graph_slot_named_by_the_nickname_of_a_live_member_is_not_absent() {
     }
     drop((host, member));
 }
+
+/// The `.md` files under `dir`, found by walking the tree.
+fn markdown_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).expect("the skills directory is readable");
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry.expect("a directory entry is readable").path();
+        if path.is_dir() {
+            files.extend(markdown_files(&path));
+        } else if path.extension().is_some_and(|extension| extension == "md") {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// A meta slot is the hex of an author key, and two members can share a nickname. A skill that
+/// reads the entry of a member as `document.peers[<nickname>]` reads the wrong entry, or none.
+#[test]
+fn no_skill_joins_the_meta_document_by_nickname() {
+    let skills = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+    let by_nickname = ["document.peers[$NICKNAME]", "document.peers[nickname]"];
+    for file in markdown_files(&skills) {
+        let text = std::fs::read_to_string(&file).expect("a skill file is UTF-8 text");
+        for pattern in by_nickname {
+            assert!(
+                !text.contains(pattern),
+                "{} joins the meta document by nickname with {pattern}",
+                file.display()
+            );
+        }
+    }
+}
