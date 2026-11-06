@@ -173,9 +173,13 @@ fn the_manual_documents_to_pubkey_where_a_line_has_an_addressee() {
 /// The gossip wire version in the manual is the version of the engine that the app pins.
 #[test]
 fn the_manual_names_wire_version_13() {
-    let manual = manual_text();
+    // Whitespace is normalized, so a line wrap in the manual does not break the phrase.
+    let manual = manual_text()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        manual.contains("wire version\n              13.0)"),
+        manual.contains("wire version 13.0)"),
         "the iroh-gossip paragraph does not name wire version 13.0"
     );
 }
