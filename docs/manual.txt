@@ -861,23 +861,32 @@ COMMANDS
               moment to backfill before the first state get.
 
               SIZE LIMITS AND REFUSALS. The shared state has a size limit, so
-              that a gossip can run for months. The limit counts paths. A path
-              is one value at the end of a chain of keys.
-                - The state is rebuilt when it reaches about 3 MiB of changes
-                  or 20000 paths (see "THE CUT").
-                - A write that adds a value is refused at about 22600 paths. A
-                  write of the same value counts as an add.
-                - A delete (a null merge) is never refused at this limit.
-                - A write can nest 12 levels of keys at most.
-                - One value, with its keys, must be under about 2 KB, and one
-                  write must fit one message of 3840 bytes. Split a larger
-                  value into smaller values under their own keys.
+              that a gossip can run for months. Two counts decide: the bytes of
+              the changes, and the operations of the history. A delete is one
+              operation too.
+                - The members rebuild the state from a seed (see "THE CUT")
+                  at about 3 MiB or about 20000 operations.
+                - The state refuses a write that adds a value at about 3.4 MiB
+                  or about 22700 operations, the first that comes. A write of
+                  the same value counts as an add. Large values reach the byte
+                  limit first: strings of 100 bytes reach the cut at about
+                  14000 paths.
+                - The state does not refuse a delete (a null merge) at this
+                  limit. At the memory limit (about 4 MiB or 26700
+                  operations) it refuses every write, deletes too. Then wait
+                  for the next cut.
+                - A write nests 12 levels of keys at most.
+                - One value, with its keys, must be under about 2 KB. One write
+                  must fit one message of 3840 bytes. Split a larger value into
+                  smaller values under their own keys.
               A refused write changes nothing. state merge prints
               {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
               non-zero. TEXT is for a person. REASON is stable, for a script.
               HINT is the way out. apply_state_merge returns the same TEXT as
               the message of an invalid-params error, with reason and hint in
-              its data.
+              its data. The a2a method mesh/state.merge returns an
+              invalid-params error with TEXT, the reason and the hint in its
+              message.
 
                 reason       TEXT starts with, and the way out
                 not_synced   "the shared state has not synced yet; retry in a
@@ -894,22 +903,22 @@ COMMANDS
 
               FIRST SYNC. A member that joins a gossip holds its own writes
               until it has synced, so that its clock cannot put a write below
-              an earlier write. Until then every write is refused with
+              an earlier write. Until then the member refuses every write with
               not_synced. The wait ends when a peer answers the first request
               of the member, which takes a few seconds. It ends after 30
               seconds at the latest, with one warning in the log. The member
-              that created the gossip never waits. A state get is never held.
+              that created the gossip never waits. A state get never waits.
 
               THE CUT. When the state grows, one member rebuilds it from a
               seed: a short chain of changes that holds the live document and
               no history. The other members take the seed after about 5
               minutes. Under load this can happen every few minutes. You can
-              see three effects. The size of the state falls after a cut. A
-              write that you made while the cut ran is written again by your
-              member after the switch, so it is not lost. A key that you
-              deleted can come back from a member that was away for the whole
-              cut, so delete it again when you see it. A browser member never
-              builds a seed.
+              see three effects. The size of the state falls after a cut. Your
+              member sends again a write that you made while the cut ran, so
+              the cut does not lose it. A key that you deleted comes back in
+              two cases only: more than 1024 later deletes pushed its mark out
+              of the seed, or its path is longer than 256 bytes. In both cases,
+              delete the key again. A browser member never builds a seed.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME
