@@ -11,7 +11,7 @@
 //! `tasks/cancel`, and a `message/send` **directed at the serving peer** (the
 //! caller asks the peer to take work; the peer ingests it and answers).
 
-use habilis_network::protocol::{Channel, Nickname};
+use habilis_network::protocol::{AuthorKey, Channel};
 use habilis_network::util::consts;
 use serde_json::Value;
 
@@ -49,7 +49,12 @@ pub(crate) enum Served {
 /// Classify one gossip A2A request (`method` + `params`, from `requester`)
 /// into the safe action to run. Pure — reads `state` only for the
 /// `tasks/cancel` party check.
-pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: &A2aApp) -> Served {
+pub(crate) fn classify(
+    method: &str,
+    params: &Value,
+    requester: &AuthorKey,
+    app: &A2aApp,
+) -> Served {
     let task_id = || {
         params["id"]
             .as_str()
@@ -62,8 +67,8 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
     // task-plane attack needs. `CancelTask` has always made this check; the
     // reads did not, which left the reconnaissance step open.
     let party_only: Box<dyn Fn(TaskId, A2aOp) -> Served + '_> = Box::new(|wanted, op| {
-        let owner: Option<&Nickname> = app.tasks.get(&wanted).map(|rec| &rec.peer);
-        let owner = owner.or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer));
+        let owner: Option<&AuthorKey> = app.tasks.get(&wanted).map(|rec| &rec.peer_key);
+        let owner = owner.or_else(|| app.closed_tasks.get(&wanted).map(|closed| &closed.peer_key));
         let is_peer: bool = owner.is_some_and(|peer| peer == requester);
         if is_peer {
             Served::Op(op)
@@ -85,7 +90,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
         // Scoped to the caller's own tasks — the local binding, whose caller
         // owns the daemon, is the one that lists everything.
         "ListTasks" => Served::Op(A2aOp::ListTasks {
-            peer: Some(requester.clone()),
+            peer: Some(*requester),
         }),
         "mesh/state.get" => Served::Op(A2aOp::ChannelGet {
             channel: Channel::State,
@@ -100,7 +105,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
                 let is_party = app
                     .tasks
                     .get(&task_id)
-                    .is_some_and(|rec| rec.peer == *requester);
+                    .is_some_and(|rec| rec.peer_key == *requester);
                 if is_party {
                     Served::Op(A2aOp::CancelTask { task_id })
                 } else {
@@ -173,7 +178,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{AuthorKey, Nickname};
     use serde_json::json;
 
     use super::{Served, classify};
@@ -181,6 +186,15 @@ mod tests {
     use crate::a2a::rpc_error::A2aOp;
     use crate::a2a::task_record::LegKind::Offer;
     use crate::a2a::{rpc_error, task_record};
+
+    /// The key of the test peer called `name`: a label picks the key, and two names give two keys.
+    fn key(name: &str) -> AuthorKey {
+        let mut bytes = [0_u8; 32];
+        for (slot, byte) in bytes.iter_mut().zip(name.bytes().cycle()) {
+            *slot = byte;
+        }
+        AuthorKey::from(bytes)
+    }
 
     fn state() -> A2aApp {
         A2aApp::new()
@@ -197,7 +211,8 @@ mod tests {
             &mut app.tasks,
             &task_record::LegInfo {
                 task_id: &crate::a2a::TaskId::from(task_id),
-                peer: &Nickname::from(peer),
+                peer_key: &key(peer),
+                peer: Some(&Nickname::from(peer)),
                 kind: Offer,
                 mine: false,
                 fraction: None,
@@ -211,7 +226,7 @@ mod tests {
 
     #[test]
     fn reads_are_served() {
-        let caller = Nickname::from("alice");
+        let caller = key("alice");
         let mut st = state();
         seed_task(&mut st, TASK_A, "alice");
         assert!(
@@ -268,7 +283,7 @@ mod tests {
         for caller in ["alice", "bob"] {
             assert!(
                 matches!(
-                    classify("mesh/reader.get", &json!({}), &Nickname::from(caller), &st),
+                    classify("mesh/reader.get", &json!({}), &key(caller), &st),
                     Served::ReaderGet
                 ),
                 "a reader ask is served to every member"
@@ -283,7 +298,7 @@ mod tests {
 
     #[test]
     fn merges_and_broadcast_send_are_rejected() {
-        let caller = Nickname::from("alice");
+        let caller = key("alice");
         let st = state();
         assert!(
             is_reject(&classify(
@@ -319,7 +334,7 @@ mod tests {
 
     #[test]
     fn directed_send_is_ingested() {
-        let caller = Nickname::from("alice");
+        let caller = key("alice");
         let st = state();
         let directed = json!({"message": {
             "messageId": "550e8400-e29b-41d4-a716-446655440000",
@@ -343,7 +358,7 @@ mod tests {
     fn task_reads_require_being_the_task_peer() {
         let mut st = state();
         seed_task(&mut st, TASK_A, "alice");
-        let outsider = Nickname::from("wire-thistle");
+        let outsider = key("wire-thistle");
 
         for method in ["GetTask", "SubscribeToTask"] {
             assert!(
@@ -352,12 +367,7 @@ mod tests {
             );
             assert!(
                 matches!(
-                    classify(
-                        method,
-                        &json!({"id": TASK_A}),
-                        &Nickname::from("alice"),
-                        &st
-                    ),
+                    classify(method, &json!({"id": TASK_A}), &key("alice"), &st),
                     Served::Op(_)
                 ),
                 "{method} on your own task is still served"
@@ -397,13 +407,13 @@ mod tests {
         seed_task(&mut st, TASK_B, "bob");
 
         let Served::Op(A2aOp::ListTasks { peer: over_gossip }) =
-            classify("ListTasks", &json!({}), &Nickname::from("alice"), &st)
+            classify("ListTasks", &json!({}), &key("alice"), &st)
         else {
             panic!("ListTasks is served");
         };
         assert_eq!(
             over_gossip,
-            Some(Nickname::from("alice")),
+            Some(key("alice")),
             "a gossip caller only ever lists its own tasks"
         );
 
@@ -418,7 +428,7 @@ mod tests {
 
     #[test]
     fn cancel_requires_being_the_task_peer() {
-        let caller = Nickname::from("alice");
+        let caller = key("alice");
         let st = state();
         // No such task → rejected (not a party).
         assert!(
@@ -434,7 +444,7 @@ mod tests {
 
     #[test]
     fn shard_repair_is_classified_and_validated() {
-        let caller = Nickname::from("alice");
+        let caller = key("alice");
         let st = state();
         assert!(
             matches!(
@@ -471,11 +481,42 @@ mod tests {
 
     #[test]
     fn unknown_method_is_rejected() {
-        let caller = Nickname::from("alice");
+        let caller = key("alice");
         let st = state();
         assert!(
             is_reject(&classify("message/stream", &json!({}), &caller, &st)),
             "a mesh control request is rejected"
+        );
+    }
+
+    /// Two keys can use one nickname. The twin of a task's peer is not the task's peer.
+    #[test]
+    fn a_key_that_shares_the_name_of_the_task_peer_cannot_read_or_cancel_the_task() {
+        let mut st = state();
+        seed_task(&mut st, TASK_A, "alice");
+        let twin = key("alice-twin");
+
+        for method in ["GetTask", "SubscribeToTask", "CancelTask"] {
+            assert!(
+                is_reject(&classify(method, &json!({"id": TASK_A}), &twin, &st)),
+                "{method} from a twin key of the peer must be refused"
+            );
+        }
+        assert!(
+            matches!(
+                classify("GetTask", &json!({"id": TASK_A}), &key("alice"), &st),
+                Served::Op(_)
+            ),
+            "the peer itself is still served"
+        );
+        let Served::Op(A2aOp::ListTasks { peer }) = classify("ListTasks", &json!({}), &twin, &st)
+        else {
+            panic!("ListTasks is served");
+        };
+        assert_eq!(
+            peer,
+            Some(twin),
+            "the list of the twin is scoped to the twin key, so it holds no task of alice"
         );
     }
 }

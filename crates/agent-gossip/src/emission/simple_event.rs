@@ -7,7 +7,7 @@
 //! stdout forms stay byte-identical.
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MessageKind, Nickname, PresenceSubtype, UnixSecs};
+use habilis_network::protocol::{AuthorKey, MessageKind, Nickname, PresenceSubtype, UnixSecs};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
@@ -42,6 +42,8 @@ pub(super) enum SimpleEvent<'source> {
     },
     PeerTimeout {
         nickname: &'source str,
+        /// The author key of the peer, hex: two peers can share a nickname.
+        pubkey: &'source str,
         last_seen_secs_ago: u64,
         /// Pre-formatted, markdown-safe line the `/mesh` skill echoes
         /// verbatim. See [`peer_timeout_display`].
@@ -49,6 +51,8 @@ pub(super) enum SimpleEvent<'source> {
     },
     PeerReturn {
         nickname: &'source str,
+        /// The author key of the peer, hex.
+        pubkey: &'source str,
         /// Pre-formatted, markdown-safe line (see [`peer_return_display`]).
         display: String,
     },
@@ -118,6 +122,9 @@ struct MsgLine<'source> {
     /// the convenience field agents read without unpacking `message`.
     pub body: String,
     pub to: Option<&'source str>,
+    /// The addressee's key, always present with `to`: the machine-readable identity of `to`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_pubkey: Option<&'source str>,
     /// The embedded A2A `Message` object the frame carried — the full
     /// payload (parts, contextId, extensions, metadata) for A2A-aware
     /// consumers. `None` only for an unparseable payload, which the receive
@@ -158,6 +165,10 @@ struct TaskLine<'source> {
     pub pubkey: Option<String>,
     pub ts: i64,
     pub to: &'source str,
+    /// The addressee's key. Absent on a leg that arrived over the request/response binding,
+    /// which carries the addressee's name only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_pubkey: Option<&'source str>,
     pub task_id: String,
     pub kind: &'static str,
     /// The friendly kebab state (`working`/`input-required`/…) — our agent API,
@@ -193,6 +204,7 @@ struct TaskProgressLine<'source> {
     pub author: &'source str,
     pub ts: i64,
     pub to: &'source str,
+    pub to_pubkey: &'source str,
     pub task_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub done: Option<u64>,
@@ -255,6 +267,11 @@ fn msg_display(author: &str, body: &str, to: Option<&str>) -> String {
         Some(target) => format!("{DISPLAY_GLYPH} `<{author}>` → `<{target}>`: {body}"),
         None => format!("{DISPLAY_GLYPH} `<{author}>`: {body}"),
     }
+}
+
+/// The `to` text of a directed line: the addressee's name while it is live, else its key hex.
+fn to_label(key: &AuthorKey, name: Option<&Nickname>) -> String {
+    name.map_or_else(|| key.to_string(), |name| name.as_str().to_owned())
 }
 
 /// The value cluster for [`task_display`]: the author/target nicks, the
@@ -384,7 +401,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskStalled { .. } => true,
-        OutputEvent::Presence { message } => matches!(
+        OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined | PresenceSubtype::Left
@@ -420,10 +437,17 @@ fn stamp_visibility(line: String, is_visible: bool) -> String {
 /// Serializes the struct directly because the documented wire format
 /// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
-pub(super) fn format_presence_json(message: &Authored, subtype: PresenceSubtype) -> String {
+pub(super) fn format_presence_json(
+    message: &Authored,
+    subtype: PresenceSubtype,
+    peer: &AuthorKey,
+) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     let line = serde_json::to_string(&PresenceLine {
-        header: message_header(message, "presence"),
+        header: MessageHeader {
+            pubkey: Some(peer.to_string()),
+            ..message_header(message, "presence")
+        },
         subtype,
         display: presence_display(message.author.as_str(), subtype),
     })
@@ -441,7 +465,11 @@ pub(super) fn format_presence_json(message: &Authored, subtype: PresenceSubtype)
 /// consumer tells a private line from a public one: `type` (`"broadcast"` vs
 /// `"msg"`) and `to` (`null` vs the addressee, which also turns on the `→` in
 /// `display`).
-pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
+pub(super) fn format_msg_json(
+    message: &Authored,
+    is_self: bool,
+    addressee_name: Option<&Nickname>,
+) -> String {
     let MessageKind::App { tag, to, .. } = &message.kind else {
         unreachable!("format_msg_json only handles chat frames")
     };
@@ -459,13 +487,22 @@ pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
         || message.body.as_str().to_owned(),
         status_update_params::display_text,
     );
-    let to = to.map(Nickname::as_str);
+    let to_text = to.map(|key| to_label(key, addressee_name));
+    let to_pubkey = to.map(ToString::to_string);
     stamp_visibility(
         serde_json::to_string(&MsgLine {
-            header: message_header(message, if to.is_some() { "msg" } else { "broadcast" }),
-            display: msg_display(message.author.as_str(), &body, to),
+            header: message_header(
+                message,
+                if to_text.is_some() {
+                    "msg"
+                } else {
+                    "broadcast"
+                },
+            ),
+            display: msg_display(message.author.as_str(), &body, to_text.as_deref()),
             body,
-            to,
+            to: to_text.as_deref(),
+            to_pubkey: to_pubkey.as_deref(),
             message: payload,
             is_self,
         })
@@ -474,15 +511,23 @@ pub(super) fn format_msg_json(message: &Authored, is_self: bool) -> String {
     )
 }
 
-pub(super) fn print_message_json(message: &Authored, is_self: bool) {
-    emit(&format_msg_json(message, is_self));
+pub(super) fn print_message_json(
+    message: &Authored,
+    is_self: bool,
+    addressee_name: Option<&Nickname>,
+) {
+    emit(&format_msg_json(message, is_self, addressee_name));
 }
 
 /// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
 /// its JSON line. A beat renders as a `task_progress` event; every other leg
 /// as a `task` event carrying the native A2A `kind` + `state`, the text
 /// projection as `body`, and the whole A2A payload.
-pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
+pub(super) fn format_task_json(
+    message: &Authored,
+    is_self: bool,
+    addressee_name: Option<&Nickname>,
+) -> String {
     let MessageKind::App { tag, to, .. } = &message.kind else {
         unreachable!("format_task_json only handles status/artifact frames")
     };
@@ -503,8 +548,9 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
         let (done, total) = status_update_params::beat_fraction(&payload)
             .map_or((None, None), |(done, total)| (Some(done), Some(total)));
         let author = message.author.as_str();
-        let to_name = to.as_str();
-        let display = task_progress_display(author, to_name, done, total);
+        let to_text = to_label(to, addressee_name);
+        let to_pubkey = to.to_string();
+        let display = task_progress_display(author, &to_text, done, total);
         return stamp_visibility(
             serde_json::to_string(&TaskProgressLine {
                 event: "task_progress",
@@ -512,7 +558,8 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
                 gossip: message.mesh.as_str(),
                 author,
                 ts: message.timestamp.as_secs(),
-                to: to_name,
+                to: &to_text,
+                to_pubkey: &to_pubkey,
                 task_id,
                 done,
                 total,
@@ -527,7 +574,8 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
     let state = status_update_params::frame_task_state(message);
     let body = status_update_params::task_text(message);
     let author = message.author.as_str();
-    let to_name = to.as_str();
+    let to_text = to_label(to, addressee_name);
+    let to_pubkey = to.to_string();
     let pubkey = Some(message.key().to_string());
     // Only a `working` leg carries the reason, as in the record.
     let waiting = status_update_params::status_payload(message)
@@ -536,7 +584,7 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
         .and_then(|payload| status_update_params::status_waiting(&payload));
     let display = task_display(TaskDisplayParams {
         author,
-        to: to_name,
+        to: &to_text,
         kind,
         state,
         body: &body,
@@ -550,7 +598,8 @@ pub(super) fn format_task_json(message: &Authored, is_self: bool) -> String {
             author,
             pubkey,
             ts: message.timestamp.as_secs(),
-            to: to_name,
+            to: &to_text,
+            to_pubkey: Some(&to_pubkey),
             task_id,
             kind,
             state: state.map(crate::a2a::TaskState::friendly_name),
@@ -588,7 +637,8 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
             id: leg.id,
             gossip: leg.mesh,
             author: leg.author,
-            pubkey: None,
+            pubkey: Some(leg.author_key.to_string()),
+            to_pubkey: None,
             ts: UnixSecs::now().as_secs(),
             to: leg.peer,
             task_id: leg.task_id.to_owned(),
@@ -612,8 +662,12 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     )
 }
 
-pub(super) fn print_task_json(message: &Authored, is_self: bool) {
-    emit(&format_task_json(message, is_self));
+pub(super) fn print_task_json(
+    message: &Authored,
+    is_self: bool,
+    addressee_name: Option<&Nickname>,
+) {
+    emit(&format_task_json(message, is_self, addressee_name));
 }
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
@@ -788,12 +842,21 @@ enum Formatted {
 /// The events whose line a formatter builds.
 fn formatted_json(event: &OutputEvent) -> Formatted {
     let line = match event {
-        OutputEvent::Message { message, is_self } => format_msg_json(message, *is_self),
-        OutputEvent::Task { message, is_self } => format_task_json(message, *is_self),
+        OutputEvent::Message {
+            message,
+            is_self,
+            to_name,
+        } => format_msg_json(message, *is_self, to_name.as_ref()),
+        OutputEvent::Task {
+            message,
+            is_self,
+            to_name,
+        } => format_task_json(message, *is_self, to_name.as_ref()),
         OutputEvent::TaskMessage {
             id,
             mesh,
             author,
+            author_key,
             peer,
             task_id,
             state,
@@ -805,6 +868,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             id,
             mesh,
             author,
+            author_key: *author_key,
             peer,
             task_id,
             state: *state,
@@ -813,11 +877,11 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             message: message.as_deref(),
             is_self: *is_self,
         }),
-        OutputEvent::Presence { message } => {
+        OutputEvent::Presence { message, peer } => {
             let MessageKind::Presence { subtype } = &message.kind else {
                 return Formatted::Silent;
             };
-            format_presence_json(message, *subtype)
+            format_presence_json(message, *subtype, peer)
         }
         OutputEvent::StateChanged {
             channel,
@@ -891,18 +955,23 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         .ok(),
         OutputEvent::PeerTimeout {
             nickname,
+            key,
             last_seen_secs_ago,
         } => serde_json::to_string(&SimpleEvent::PeerTimeout {
             nickname: nickname.as_str(),
+            pubkey: key.to_string().as_str(),
             last_seen_secs_ago: *last_seen_secs_ago,
             display: peer_timeout_display(nickname.as_str()),
         })
         .ok(),
-        OutputEvent::PeerReturn { nickname } => serde_json::to_string(&SimpleEvent::PeerReturn {
-            nickname: nickname.as_str(),
-            display: peer_return_display(nickname.as_str()),
-        })
-        .ok(),
+        OutputEvent::PeerReturn { nickname, key } => {
+            serde_json::to_string(&SimpleEvent::PeerReturn {
+                nickname: nickname.as_str(),
+                pubkey: key.to_string().as_str(),
+                display: peer_return_display(nickname.as_str()),
+            })
+            .ok()
+        }
         OutputEvent::Fork {
             nickname,
             pubkey,

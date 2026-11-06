@@ -16,7 +16,8 @@ under.
 Result handling:
 
 - Exactly one session: adopt its `gossip`, `name`, and `nickname` as `$GOSSIP`,
-  `$NAME`, and `$NICKNAME`; when it carries `topic`, hold that too — the bell
+  `$NAME`, and `$NICKNAME`, and its `pubkey` as `$PUBKEY` (the author key, the
+  slot of your meta entry); when it carries `topic`, hold that too — the bell
   guard's re-arm needs it.
 - No sessions: report that this session is not in a gossip. If
   `/tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr` is not empty, a daemon

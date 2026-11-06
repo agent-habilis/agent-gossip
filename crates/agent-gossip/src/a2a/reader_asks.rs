@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
-use habilis_network::embed::EventLoopState;
+use habilis_network::embed::{EventLoopState, RosterEntry};
 use habilis_network::iroh::{Endpoint, TransportAddr};
 use habilis_network::net::{
     GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID, active_transport_addrs,
@@ -45,6 +46,26 @@ fn kind_of(address: &TransportAddr) -> Option<&'static str> {
     }
 }
 
+/// The rows of a roster as the CLI and the MCP tool print them. The engine serializes the author
+/// key of a member as `key`; the surfaces print it as `pubkey`, the name of the same value in
+/// every event line. A reader joins a row to its meta slot, which is the hex of that key.
+pub(crate) fn roster_rows(peers: &[RosterEntry]) -> Vec<serde_json::Value> {
+    let rows = peers.iter().map(|entry| {
+        let mut row = serde_json::to_value(entry).expect("a roster entry is plain data");
+        rename_key_to_pubkey(&mut row);
+        row
+    });
+    rows.collect()
+}
+
+fn rename_key_to_pubkey(row: &mut serde_json::Value) {
+    if let Some(fields) = row.as_object_mut()
+        && let Some(key) = fields.remove("key")
+    {
+        fields.insert("pubkey".to_owned(), key);
+    }
+}
+
 /// The `agent-gossip peers` response: the roster snapshot with a `path` added
 /// to each row. `peer_count` is the *active* peers plus self, while the array
 /// chains the quiet peers on after them so a peer that may still return stays
@@ -60,19 +81,20 @@ pub(crate) fn respond_with_paths(
     resp_tx: oneshot::Sender<String>,
 ) {
     let snapshot = state.roster_snapshot();
+    let live: Vec<&Nickname> = state.live_nicknames().collect();
     let endpoints: Vec<_> = snapshot
         .peers
         .iter()
         .map(|entry| {
+            let holders =
+                super::broadcast_params::live_holders(live.iter().copied(), &entry.nickname);
             (!entry.quiet)
                 .then(|| state.peer_endpoint(&entry.nickname))
                 .flatten()
+                .and_then(|id| row_endpoint(holders, Some(id)))
         })
         .collect();
-    let mut rows = match serde_json::to_value(&snapshot.peers) {
-        Ok(serde_json::Value::Array(rows)) => rows,
-        _ => Vec::new(),
-    };
+    let mut rows = roster_rows(&snapshot.peers);
     let endpoint = endpoint.clone();
     tokio::spawn(async move {
         for (row, peer) in rows.iter_mut().zip(endpoints) {
@@ -112,6 +134,30 @@ pub(crate) struct ReaderAskParams<'caller> {
     pub(crate) sender: &'caller MeshSender,
 }
 
+/// The names to ask: a name held by two or more live members is not asked, because the ask
+/// would reach one of its holders by a name that is not unique. Holders are counted once per
+/// pass, and the walk stops as soon as `room` names are chosen.
+fn askable_names(candidates: &[&Nickname], live: &[&Nickname], room: usize) -> Vec<Nickname> {
+    if room == 0 {
+        return Vec::new();
+    }
+    let mut holders: HashMap<&Nickname, usize> = HashMap::new();
+    for nick in live {
+        *holders.entry(nick).or_insert(0) += 1;
+    }
+    let unique = candidates
+        .iter()
+        .filter(|name| holders.get(*name) == Some(&1));
+    let chosen = unique.take(room);
+    chosen.map(|name| (*name).clone()).collect()
+}
+
+/// The endpoint that a `peers` row may report: a name held by two or more live members has no
+/// single endpoint, so the row reports none rather than the endpoint of one holder.
+fn row_endpoint<T>(holders: usize, endpoint: Option<T>) -> Option<T> {
+    if holders == 1 { endpoint } else { None }
+}
+
 /// Send `mesh/reader.get` to each live peer that has a known endpoint.
 ///
 /// Real `a2a call`s share the waiter registry, so `peers` stops at half of it.
@@ -127,15 +173,17 @@ pub(crate) async fn ask_readers(
     } = params;
     let room = (POLL_WAITERS_CAP / 2).saturating_sub(app.a2a_waiters.len());
     let snapshot = state.roster_snapshot();
-    let fresh = snapshot
-        .peers
-        .iter()
-        .filter(|entry| !entry.quiet && entry.nickname != *author);
-    let reachable = fresh.filter(|entry| state.peer_endpoint(&entry.nickname).is_some());
-    let askable: Vec<Nickname> = reachable
-        .take(room)
-        .map(|entry| entry.nickname.clone())
-        .collect();
+    let mut reachable: Vec<&Nickname> = Vec::new();
+    for entry in &snapshot.peers {
+        if !entry.quiet
+            && entry.nickname != *author
+            && state.peer_endpoint(&entry.nickname).is_some()
+        {
+            reachable.push(&entry.nickname);
+        }
+    }
+    let live: Vec<&Nickname> = state.live_nicknames().collect();
+    let askable: Vec<Nickname> = askable_names(&reachable, &live, room);
     let deadline = TokioInstant::now() + READER_ASK_TIMEOUT;
     let mut pending = Vec::with_capacity(askable.len());
     for peer in askable {
@@ -206,8 +254,21 @@ mod tests {
 
     use super::{
         GOSSIP_TRANSPORT_ID, MULTIHOP_TRANSPORT_ID, WEBRTC_TRANSPORT_ID, path_label,
-        reader_from_reply,
+        reader_from_reply, rename_key_to_pubkey,
     };
+
+    /// The engine names the key `key`; every surface of the app prints it as `pubkey`, and the row
+    /// keeps no second copy under the old name.
+    #[test]
+    fn a_roster_row_prints_the_engine_key_as_pubkey() {
+        let mut row = serde_json::json!({ "nickname": "twin", "key": "ab".repeat(32) });
+
+        rename_key_to_pubkey(&mut row);
+
+        assert_eq!(row["pubkey"], "ab".repeat(32), "the key moves to pubkey");
+        assert!(row.get("key").is_none(), "the old name does not stay");
+        assert_eq!(row["nickname"], "twin", "the other fields stay");
+    }
 
     fn ip() -> TransportAddr {
         TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], 4433)))
@@ -302,6 +363,62 @@ mod tests {
             path_label(&[]),
             "unknown",
             "no path gives the unknown label"
+        );
+    }
+}
+
+#[cfg(test)]
+mod askable_tests {
+    use habilis_network::protocol::Nickname;
+
+    #[test]
+    fn a_name_held_by_two_live_keys_is_not_asked() {
+        let shared = Nickname::from("shared-name");
+        let single = Nickname::from("single-name");
+        let live = [&shared, &single, &shared];
+        let asked = super::askable_names(&[&shared, &single], &live, 2);
+        assert_eq!(
+            asked,
+            vec![single.clone()],
+            "only the name with one live holder is asked"
+        );
+    }
+}
+
+#[cfg(test)]
+mod askable_room_tests {
+    use habilis_network::protocol::Nickname;
+
+    #[test]
+    fn no_room_asks_no_one_and_a_full_room_takes_the_first_names() {
+        let first = Nickname::from("first-name");
+        let second = Nickname::from("second-name");
+        let live = [&first, &second];
+        assert!(
+            super::askable_names(&[&first, &second], &live, 0).is_empty(),
+            "a pass with no room asks nobody"
+        );
+        assert_eq!(
+            super::askable_names(&[&first, &second], &live, 1),
+            vec![first.clone()],
+            "a room of one takes the first unique name only"
+        );
+    }
+}
+
+#[cfg(test)]
+mod row_endpoint_tests {
+    #[test]
+    fn a_name_held_by_two_live_keys_reports_no_endpoint() {
+        assert_eq!(
+            super::row_endpoint(2, Some("holder-a")),
+            None,
+            "a shared name has no single endpoint to report"
+        );
+        assert_eq!(
+            super::row_endpoint(1, Some("holder-a")),
+            Some("holder-a"),
+            "a name with one live holder reports that holder's endpoint"
         );
     }
 }

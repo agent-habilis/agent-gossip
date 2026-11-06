@@ -8,7 +8,8 @@ use habilis_network::embed::{
 };
 use habilis_network::ops::{Delivered, deliver};
 use habilis_network::protocol::{
-    AppFrameParams, AppTag, Message, MessageBody, MessageId, Nickname,
+    AppFrameParams, AppTag, AuthorKey, Message, MessageBody, MessageId, MessageKind, Nickname,
+    sole_addressee,
 };
 use serde::Serialize;
 
@@ -156,6 +157,19 @@ struct A2aPart<'source> {
     text: &'source str,
 }
 
+/// Whether a frame is directed at a member other than `ours`. The engine can hand the app a
+/// directed frame that a relay holds for another key, and that frame is not ours to keep.
+fn is_for_another_key(kind: &MessageKind, ours: &AuthorKey) -> bool {
+    sole_addressee(kind).is_some_and(|to| to != ours)
+}
+
+/// Whether a live key still holds `nickname`. A nickname is a label that two live keys can share,
+/// so the departure of one key does not free the name.
+fn held_by_a_live_key<'a>(live: impl Iterator<Item = &'a Nickname>, nickname: &Nickname) -> bool {
+    let mut live = live;
+    live.any(|name| name == nickname)
+}
+
 pub(crate) struct GossipDriver {
     inbox: Inbox,
 }
@@ -186,12 +200,15 @@ impl NodeApp for GossipDriver {
         &mut self,
         frame: InboundApp<'_>,
         _state: &mut EventLoopState,
-        _ctx: &HandlerCtx<'_>,
+        context: &HandlerCtx<'_>,
     ) -> bool {
         let message = frame.message;
+        if is_for_another_key(&message.kind, &context.our_pubkey) {
+            return false;
+        }
         if message.kind.app_tag().map(AppTag::as_str) != Some(wire::BROADCAST) {
-            // Not chat. Leave it to the engine's retain/index, and do not put
-            // it in front of a person as if it were a message.
+            // Not chat, but addressed to this key: `true` lets the engine go on. The
+            // class does not log a non-chat frame, so it is not kept as a message.
             return true;
         }
         let author = message.author.as_str().to_owned();
@@ -204,11 +221,14 @@ impl NodeApp for GossipDriver {
 
     async fn on_peer_left(
         &mut self,
+        _key: &AuthorKey,
         nickname: &Nickname,
-        _state: &mut EventLoopState,
+        state: &mut EventLoopState,
         _ctx: &HandlerCtx<'_>,
     ) {
-        self.inbox.drop_peer(nickname.as_str());
+        if !held_by_a_live_key(state.live_nicknames(), nickname) {
+            self.inbox.drop_peer(nickname.as_str());
+        }
     }
 }
 
@@ -313,4 +333,55 @@ fn broadcast_text(body: &str) -> Option<String> {
     let pieces: Vec<&str> = texts.collect();
     let text = pieces.join("");
     if text.is_empty() { None } else { Some(text) }
+}
+
+#[cfg(test)]
+mod tests {
+    use habilis_network::protocol::{AppTag, AuthorKey, MessageKind, Nickname};
+
+    use super::{held_by_a_live_key, is_for_another_key};
+
+    fn app_to(key: AuthorKey) -> MessageKind {
+        MessageKind::App {
+            tag: AppTag::try_new("a2a_msg")
+                .expect("a short lowercase word is within the tag rules"),
+            to: Some(key),
+            corr: None,
+        }
+    }
+
+    #[test]
+    fn a_directed_frame_of_another_key_is_not_ours_to_keep() {
+        let ours = AuthorKey::from([1; 32]);
+
+        assert!(
+            is_for_another_key(&app_to(AuthorKey::from([2; 32])), &ours),
+            "a relay holds this frame for another member, so we do not keep it"
+        );
+        assert!(
+            !is_for_another_key(&app_to(ours), &ours),
+            "a frame addressed to us is ours"
+        );
+        assert!(
+            !is_for_another_key(&MessageKind::Meta, &ours),
+            "a frame with no single addressee is ours to see"
+        );
+    }
+
+    #[test]
+    fn a_name_stays_in_the_inbox_while_a_live_key_holds_it() {
+        let twin =
+            Nickname::try_new("twin").expect("a short lowercase word is within the nickname rules");
+        let other = Nickname::try_new("other")
+            .expect("a short lowercase word is within the nickname rules");
+
+        assert!(
+            held_by_a_live_key([&twin, &other].into_iter(), &twin),
+            "the twin of a departed key still uses the name, so the entry stays"
+        );
+        assert!(
+            !held_by_a_live_key([&other].into_iter(), &twin),
+            "when the last user of the name left, the entry goes"
+        );
+    }
 }

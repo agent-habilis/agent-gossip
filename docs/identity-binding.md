@@ -31,9 +31,10 @@ The app then builds authorization on top of the label:
 - `task.rs` — `TaskRecord.peer` is a `Nickname`, and every party check compares
   against it (`node.rs`'s `handle_task_leg` and `ingest_remote_message`,
   `gossip_rpc.rs`'s `classify`, `task.rs`'s `apply` and `adopt_initiator`).
-- `card.rs` — the seal key and the endpoint hint are looked up at
-  `/peers/<nick>/card`, so a nickname decides both who can read a directed
-  frame and where its bytes are dialed.
+- `card.rs` — before the fix, the seal key and the endpoint hint were looked up
+  at `/peers/<nick>/card`, so a nickname decided both who could read a directed
+  frame and where its bytes were dialed. The slot is now keyed by the author's
+  public key, `/peers/<pubkey>/card`; the nickname is a label in the entry.
 - `node.rs` — `handle_msg` gates on `to == self_author`.
 
 Nothing pins `message.author` to `message.pubkey`. The two layers are each

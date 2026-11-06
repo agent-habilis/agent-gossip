@@ -11,8 +11,8 @@
 use habilis_network::ops::doc;
 use habilis_network::ops::doc::MeshDoc;
 use habilis_network::protocol::{
-    AppFrameParams, ContentHash, Identity, MeshId, Message, MessageBody, MessageKind, Nickname,
-    PresenceSubtype, UnixSecs, encode_pubkey,
+    AppFrameParams, AuthorKey, ContentHash, Identity, MeshId, Message, MessageBody, MessageKind,
+    Nickname, PresenceSubtype, UnixSecs, encode_pubkey,
 };
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
@@ -51,8 +51,8 @@ pub fn pubkey_hex(key: &TestKey) -> String {
 pub struct StatusFrameParams<'caller> {
     /// Nickname of the message author.
     pub author: &'caller str,
-    /// Nickname of the addressee.
-    pub to: &'caller str,
+    /// Key of the addressee: a nickname is a label that two members can share.
+    pub to: AuthorKey,
     /// Task id in the frame header.
     pub frame_task_id: &'caller str,
     /// Task id inside the signed payload.
@@ -67,8 +67,8 @@ pub struct StatusFrameParams<'caller> {
 pub struct SealedTaskStatusParams<'caller> {
     /// Nickname of the message author.
     pub author: &'caller str,
-    /// Nickname of the addressee.
-    pub to: &'caller str,
+    /// Key of the addressee: a nickname is a label that two members can share.
+    pub to: AuthorKey,
     /// Id of the task that the leg updates.
     pub task_id: &'caller str,
     /// Task state that the leg reports.
@@ -86,8 +86,8 @@ pub struct SealedTaskStatusParams<'caller> {
 pub struct SealedMsgParams<'caller> {
     /// Nickname of the message author.
     pub author: &'caller str,
-    /// Nickname of the addressee.
-    pub to: &'caller str,
+    /// Key of the addressee: a nickname is a label that two members can share.
+    pub to: AuthorKey,
     /// Message text before sealing.
     pub text: &'caller str,
     /// The addressee's public mesh-seal key.
@@ -99,7 +99,7 @@ impl<'caller> StatusFrameParams<'caller> {
     #[must_use]
     pub fn new(
         author: &'caller str,
-        to: &'caller str,
+        to: AuthorKey,
         frame_task_id: &'caller str,
         payload_task_id: &'caller str,
     ) -> Self {
@@ -117,7 +117,7 @@ impl<'caller> SealedTaskStatusParams<'caller> {
     #[must_use]
     pub fn new(
         author: &'caller str,
-        to: &'caller str,
+        to: AuthorKey,
         task_id: &'caller str,
         seal_key: PublicKey,
     ) -> Self {
@@ -144,7 +144,7 @@ impl<'caller> SealedMsgParams<'caller> {
     #[must_use]
     pub fn new(
         author: &'caller str,
-        to: &'caller str,
+        to: AuthorKey,
         text: &'caller str,
         seal_key: PublicKey,
     ) -> Self {
@@ -162,9 +162,8 @@ impl<'caller> SealedMsgParams<'caller> {
 /// It is read exactly as the daemon's own send path reads it. Any mesh member holds this
 /// document, which is the point: sealing to a peer needs no secret.
 #[must_use]
-pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &str) -> Option<PublicKey> {
-    let peer = Nickname::try_new(peer).ok()?;
-    card::peer_seal_key(meta_doc, &peer)
+pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &AuthorKey) -> Option<PublicKey> {
+    card::peer_seal_key(meta_doc, peer)
 }
 
 /// Builder for a crafted `Msg`.
@@ -214,16 +213,12 @@ impl CraftedMsg {
     ///
     /// # Panics
     ///
-    /// Panics unless the addressee is a valid nickname.
-    pub fn address_to(mut self, to: Option<&str>) -> Self {
+    /// Panics unless the frame is an app frame.
+    pub fn address_to(mut self, to: Option<AuthorKey>) -> Self {
         let MessageKind::App { tag, corr, .. } = self.message.kind else {
             panic!("address_to takes an app frame");
         };
-        self.message.kind = MessageKind::App {
-            tag,
-            to: to.map(|nick| Nickname::try_new(nick).expect("test addressee is a valid nickname")),
-            corr,
-        };
+        self.message.kind = MessageKind::App { tag, to, corr };
         self
     }
 
@@ -343,7 +338,6 @@ impl CraftedMsg {
             payload_task_id,
         } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to).expect("valid target");
         let frame_tid =
             crate::a2a::TaskId::from_uuid_str(frame_task_id).expect("valid frame task id");
         let payload_tid =
@@ -390,7 +384,6 @@ impl CraftedMsg {
             seal_key,
         } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to).expect("valid target");
         let task_id = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
         let update = status_update_params::status_update(
             mesh,
@@ -426,7 +419,6 @@ impl CraftedMsg {
             seal_key,
         } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to).expect("valid target");
         let mut frame = Message::new_app(
             mesh,
             &author,
@@ -461,7 +453,6 @@ impl CraftedMsg {
             seal_key,
         } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let to = Nickname::try_new(to).expect("valid target");
         let receipt = Receipt {
             ref_id: ref_id.to_owned(),
             state: Read,
@@ -627,7 +618,7 @@ impl CraftedMsg {
         }
         // An unsigned frame carries no key and no signature on the wire. The engine has no public
         // unsigned encoding, so the serialized frame has its two key fields removed here.
-        let zero_key = habilis_network::protocol::AuthorKey::from([0; 32]);
+        let zero_key = AuthorKey::from([0; 32]);
         let frame = Verified::fixture_unchecked(self.message.clone(), zero_key);
         let mut wire: serde_json::Value = serde_json::from_slice(
             frame

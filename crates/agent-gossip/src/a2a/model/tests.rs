@@ -142,7 +142,7 @@ mod snapshots {
             habilis_network::protocol::Message::fixture(
                 habilis_network::protocol::MessageKind::app_to(
                     wire::REQ,
-                    habilis_network::protocol::Nickname::from("addressed-nick"),
+                    habilis_network::protocol::AuthorKey::from([0xad; 32]),
                     Some(wire::corr_id("00000000-0000-0000-0000-0000000000aa")),
                 ),
                 r#"{"method":"tasks/list","params":{}}"#,
@@ -164,7 +164,7 @@ mod snapshots {
             habilis_network::protocol::Message::fixture(
                 habilis_network::protocol::MessageKind::app_to(
                     wire::RESP,
-                    habilis_network::protocol::Nickname::from("addressed-nick"),
+                    habilis_network::protocol::AuthorKey::from([0xad; 32]),
                     Some(wire::corr_id("00000000-0000-0000-0000-0000000000aa")),
                 ),
                 r#"{"result":{"tasks":[]}}"#,

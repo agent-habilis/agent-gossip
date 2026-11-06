@@ -8,9 +8,10 @@ use std::sync::Mutex;
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, MessageId, Nickname};
 
 use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::ipc_command::MetaView;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
@@ -22,8 +23,15 @@ use crate::api::{
 /// Dropping it winds the loop down via the core's own `Drop`.
 pub(crate) struct Session {
     inner: InProcessSession,
+    own_key: AuthorKey,
     /// Implicit `after` seq cursor for [`Session::fetch_messages`].
     last_delivered_seq: Mutex<Option<u64>>,
+}
+
+/// Our author key, or the setup failure that a stopped event loop leaves behind. A session
+/// without its key cannot address its meta entry, so there is no session without it.
+fn require_own_key(own_key: Result<AuthorKey, SessionError>) -> Result<AuthorKey> {
+    own_key.map_err(|error| anyhow::anyhow!("the mesh session has no author key: {error}"))
 }
 
 impl Session {
@@ -33,7 +41,9 @@ impl Session {
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
     pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        Ok(Self::wrap(InProcessSession::create_poll(config).await?))
+        let inner = InProcessSession::create_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(CreateError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -42,7 +52,9 @@ impl Session {
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::join_poll(config).await?))
+        let inner = InProcessSession::join_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -51,14 +63,22 @@ impl Session {
     /// # Errors
     /// [`JoinError`] on setup failure.
     pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::topic_poll(config).await?))
+        let inner = InProcessSession::topic_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
-    fn wrap(inner: InProcessSession) -> Self {
+    fn wrap(inner: InProcessSession, own_key: AuthorKey) -> Self {
         Self {
             inner,
+            own_key,
             last_delivered_seq: Mutex::new(None),
         }
+    }
+
+    /// Our author key: the slot of our meta entry is its hex.
+    pub(super) fn own_key(&self) -> AuthorKey {
+        self.own_key
     }
 
     /// The resolved mesh id.
@@ -204,7 +224,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
+    pub(super) async fn meta_get(&self) -> Result<MetaView, SessionError> {
         self.inner.meta_get().await
     }
 
@@ -292,7 +312,7 @@ mod tests {
         use crate::emission::OutputEvent;
         match event {
             OutputEvent::Message { message, .. }
-            | OutputEvent::Presence { message }
+            | OutputEvent::Presence { message, .. }
             | OutputEvent::Task { message, .. } => Some(message),
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }
@@ -315,7 +335,7 @@ mod tests {
     fn is_self_echo(event: &crate::emission::OutputEvent, sent: &MessageId) -> bool {
         matches!(
             event,
-            crate::emission::OutputEvent::Message { message, is_self }
+            crate::emission::OutputEvent::Message { message, is_self, .. }
                 if *is_self && message.id == *sent
         )
     }
@@ -377,7 +397,16 @@ mod tests {
         before: &serde_json::Value,
         after: &serde_json::Value,
     ) -> bool {
-        let card = |doc: &serde_json::Value| doc.pointer("/peers/bob-cursor/card").is_some();
+        // The slot of an entry is the hex of its author key, so the card of bob-cursor is the one
+        // that names him.
+        let card = |doc: &serde_json::Value| {
+            let peers = doc.get("peers").and_then(serde_json::Value::as_object);
+            peers.is_some_and(|peers| {
+                peers
+                    .values()
+                    .any(|entry| entry.pointer("/card/name") == Some(&json!("bob-cursor")))
+            })
+        };
         author == "bob-cursor" && !card(before) && card(after)
     }
 
@@ -678,9 +707,10 @@ mod tests {
     fn bob_card_merge_is_the_absent_to_present_transition() {
         // A failed card publish writes `card_error` under bob-cursor's own entry.
         // It has his author but no card, so it must not count as the card merge.
+        let slot = "ab".repeat(32);
         let empty = json!({ "peers": {} });
-        let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
-        let card = json!({ "peers": { "bob-cursor": { "card": { "name": "bob-cursor" } } } });
+        let card_error = json!({ "peers": { slot.as_str(): { "card_error": "boom" } } });
+        let card = json!({ "peers": { slot.as_str(): { "card": { "name": "bob-cursor" } } } });
 
         assert!(
             !is_bob_card_merge("bob-cursor", &empty, &card_error),
@@ -862,5 +892,24 @@ mod tests {
         );
 
         session.leave().await;
+    }
+
+    #[test]
+    fn a_failed_own_key_lookup_is_a_setup_error_not_a_session_without_a_key() {
+        let error = super::require_own_key(Err(crate::api::SessionError::Stopped));
+        assert!(
+            error.is_err(),
+            "a session whose key lookup failed must not be built without its key"
+        );
+    }
+
+    #[test]
+    fn an_own_key_that_resolved_passes_through() {
+        let key = habilis_network::protocol::AuthorKey::from_bytes([7; 32]);
+        assert_eq!(
+            super::require_own_key(Ok(key)).ok(),
+            Some(key),
+            "a resolved key is handed back unchanged"
+        );
     }
 }

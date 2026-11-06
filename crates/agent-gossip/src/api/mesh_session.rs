@@ -247,7 +247,7 @@ impl MeshSession {
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
     pub async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
-        self.core.meta_get().await
+        self.core.meta_get().await.map(|view| view.document)
     }
 
     /// Poll the surfaced-event history after the `after` seq cursor (`None`
