@@ -862,7 +862,10 @@ COMMANDS
 
               meta get answers {"ok":true,"document":{...},"absent":[...]}.
               absent names the /peers entries with no active member behind
-              them. Only a peer can retract its own entry, so one that died
+              them. A slot is the hex of an author key, or the nickname of a
+              live member (the graph skills write that form); a slot of
+              either form with a live member behind it is not listed. Only a
+              peer can retract its own entry, so one that died
               without leaving gracefully stays in the document indefinitely,
               still reporting whatever status it last set. The document is
               never trimmed — a returning peer merges into its own entry —

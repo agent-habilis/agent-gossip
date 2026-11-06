@@ -220,3 +220,44 @@ fn the_peer_card_route_refuses_a_shared_nickname_and_serves_a_key() {
     drop((first, second, host));
     let _ = std::fs::remove_file(&state_file);
 }
+
+/// The graph skills write the slot of a member by its nickname: `{"peers":{"<nick>":{...}}}`.
+/// That slot is no key, but its nickname names a live member, so `absent` must not list it. An
+/// entry in `absent` is dropped by the graph tools, and the graph would vanish.
+#[test]
+fn a_graph_slot_named_by_the_nickname_of_a_live_member_is_not_absent() {
+    let (host, mesh) = Node::create_named("mbk-graph");
+    let member = Node::join(&mesh, "mbk-graph-m");
+    common::await_peer_card_cli(&mesh, &host.nickname, &member.nickname);
+    common::await_peer_card_cli(&mesh, &member.nickname, &host.nickname);
+
+    let slot = member.nickname.clone();
+    let merge = format!(r#"{{"peers":{{"{slot}":{{"instance":"g"}}}}}}"#);
+    let mut command = common::test_cmd();
+    command
+        .args(["meta", "merge", "--gossip", &mesh])
+        .args(["--nickname", &member.nickname])
+        .args(["--merge", &merge]);
+    let merged: std::process::Output = command.output().expect("failed to run meta merge");
+    assert!(merged.status.success(), "meta merge failed: {merged:?}");
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let raw = common::cli_channel_get(Channel::Meta, &mesh, &host.nickname);
+        let view: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        if view["document"]["peers"][&slot]["instance"] == "g" {
+            let absent = view["absent"].as_array().expect("meta get carries absent");
+            assert!(
+                !absent.iter().any(|entry| entry == slot.as_str()),
+                "the slot of a live member is listed as absent: {view}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the host never saw the graph slot: {raw}"
+        );
+        std::thread::sleep(POLL);
+    }
+    drop((host, member));
+}

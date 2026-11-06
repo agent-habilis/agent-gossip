@@ -398,20 +398,32 @@ pub(crate) fn card_error_merge(key: &AuthorKey, error: Option<&str>) -> serde_js
 /// `own` is excluded because the roster lists peers, not self: without
 /// it every node would report its own card as absent. An entry is named by its slot, the hex of
 /// the author key, because two members can share a nickname.
+///
+/// A slot that is the nickname of a live member is no ghost either. The graph skills write
+/// `{"peers":{"<nickname>":{...}}}`, and a graph tool drops every slot that `absent` lists. The
+/// nickname of this member is read from its own card.
 #[must_use]
 pub(crate) fn absent_peers<'doc>(
     document: &'doc serde_json::Value,
     live: &HashSet<AuthorKey>,
+    live_names: &HashSet<&str>,
     own: &AuthorKey,
 ) -> Vec<&'doc str> {
     let peers: Option<&serde_json::Map<String, serde_json::Value>> =
         document.get("peers").and_then(serde_json::Value::as_object);
+    let own_entry: Option<&serde_json::Value> = peers.and_then(|peers| peers.get(&own.to_string()));
+    let own_card_name: Option<&serde_json::Value> =
+        own_entry.and_then(|entry| entry.pointer("/card/name"));
+    let own_name: Option<&str> = own_card_name.and_then(serde_json::Value::as_str);
     peers
         .map(|peers| {
             let is_absent = |slot: &&str| {
-                !own.matches_hex(slot) && !live.iter().any(|key| key.matches_hex(slot))
+                let is_live_key = live.iter().any(|key| key.matches_hex(slot));
+                let is_live_name = live_names.contains(slot) || own_name == Some(slot);
+                !own.matches_hex(slot) && !is_live_key && !is_live_name
             };
-            peers.keys().map(String::as_str).filter(is_absent).collect()
+            let slots = peers.keys().map(String::as_str);
+            slots.filter(is_absent).collect()
         })
         .unwrap_or_default()
 }
@@ -733,7 +745,7 @@ mod tests {
         });
         let live = HashSet::from([live_key]);
 
-        let absent = super::absent_peers(&document, &live, &own_key);
+        let absent = super::absent_peers(&document, &live, &HashSet::new(), &own_key);
 
         assert_eq!(
             absent,
@@ -749,8 +761,32 @@ mod tests {
         let document = serde_json::json!({ "peers": { slot(): { "status": "idle" } } });
         let live = HashSet::new();
         assert!(
-            super::absent_peers(&document, &live, &key()).is_empty(),
+            super::absent_peers(&document, &live, &HashSet::new(), &key()).is_empty(),
             "a live peer is not reported absent"
+        );
+    }
+
+    /// A slot named by the nickname of a live member, or of this member, is a graph slot and not a
+    /// ghost; the same slot with no live member behind the name is absent.
+    #[test]
+    fn a_slot_named_by_a_live_nickname_is_not_absent() {
+        let own_key = AuthorKey::from([3; 32]);
+        let document = serde_json::json!({
+            "peers": {
+                own_key.to_string(): { "card": { "name": "me" } },
+                "me": { "instance": "g" },
+                "bob": { "instance": "g" },
+                "gone": { "instance": "g" },
+            }
+        });
+        let live_names = HashSet::from(["bob"]);
+
+        let absent = super::absent_peers(&document, &HashSet::new(), &live_names, &own_key);
+
+        assert_eq!(
+            absent,
+            vec!["gone"],
+            "only the slot of a name that no live member holds"
         );
     }
 
@@ -759,7 +795,7 @@ mod tests {
     fn absent_peers_tolerates_a_document_without_peers() {
         let live = HashSet::new();
         assert!(
-            super::absent_peers(&serde_json::json!({}), &live, &key()).is_empty(),
+            super::absent_peers(&serde_json::json!({}), &live, &HashSet::new(), &key()).is_empty(),
             "a document without peers has no absent peers"
         );
     }
