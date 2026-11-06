@@ -277,20 +277,70 @@ fn markdown_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     files
 }
 
+/// The index of every `peers[...]` in `text` that a nickname fills: `peers[$NICKNAME]`,
+/// `peers["$NICKNAME"]`, `peers[$NICK]`, `peers[nickname]`, `peers[<nick>]`, and the like. A slot
+/// is the hex of an author key, so an index that starts with "nick" or "name" is a nickname.
+fn nickname_indexes(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (start, _) in text.match_indices("peers[") {
+        let rest = &text[start + "peers[".len()..];
+        let Some(end) = rest.find(']') else {
+            continue;
+        };
+        let inner = &rest[..end];
+        let bare = inner.trim_matches(|ch: char| !ch.is_alphanumeric());
+        let lower = bare.to_lowercase();
+        if lower.starts_with("nick") || lower.starts_with("name") {
+            found.push(format!("peers[{inner}]"));
+        }
+    }
+    found
+}
+
+/// The indexer must catch each spelling of a join by nickname, and let a join by key pass.
+#[test]
+fn the_nickname_index_finder_catches_every_spelling() {
+    let bad = [
+        "document.peers[$NICKNAME]",
+        "document.peers[\"$NICKNAME\"]",
+        "document.peers[$NICK]",
+        "document.peers[nickname]",
+        "peers[<nickname>]",
+        "peers[ ${NICKNAME} ]",
+        "peers['name']",
+    ];
+    for line in bad {
+        assert!(
+            !nickname_indexes(line).is_empty(),
+            "the finder missed a join by nickname: {line}"
+        );
+    }
+    let good = [
+        "document.peers[$PUBKEY]",
+        "document.peers[<pubkey>]",
+        "document.peers[<slot>].nickname",
+        "document.peers[slot]",
+    ];
+    for line in good {
+        assert!(
+            nickname_indexes(line).is_empty(),
+            "the finder flagged a join by key: {line}"
+        );
+    }
+}
+
 /// A meta slot is the hex of an author key, and two members can share a nickname. A skill that
 /// reads the entry of a member as `document.peers[<nickname>]` reads the wrong entry, or none.
 #[test]
 fn no_skill_joins_the_meta_document_by_nickname() {
     let skills = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
-    let by_nickname = ["document.peers[$NICKNAME]", "document.peers[nickname]"];
     for file in markdown_files(&skills) {
         let text = std::fs::read_to_string(&file).expect("a skill file is UTF-8 text");
-        for pattern in by_nickname {
-            assert!(
-                !text.contains(pattern),
-                "{} joins the meta document by nickname with {pattern}",
-                file.display()
-            );
-        }
+        let found = nickname_indexes(&text);
+        assert!(
+            found.is_empty(),
+            "{} joins the meta document by nickname: {found:?}",
+            file.display()
+        );
     }
 }
