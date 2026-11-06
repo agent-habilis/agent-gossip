@@ -1097,7 +1097,7 @@ A2A
 
               iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
               all members inside the signed wire frame (gossip wire version
-              12.0). The frame — signing, dedup, anti-entropy, presence,
+              13.0). The frame — signing, dedup, anti-entropy, presence,
               sharding — is replication machinery below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
               bindings. Chat rides two tags that differ only in addressing:
@@ -1181,7 +1181,8 @@ JSON EVENTS
 
                  {"event":"message","id":"uuid","type":"msg","gossip":"3Cyr...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
-                  "body":"psst","to":"other-nick","message":{…A2A Message…},
+                  "body":"psst","to":"other-nick","to_pubkey":"<hex>",
+                  "message":{…A2A Message…},
                   "display":"💬️ `<nick>` → `<other-nick>`: psst","self":false}
 
               id        Unique message id — also the A2A messageId. (poll's
@@ -1196,6 +1197,13 @@ JSON EVENTS
                         the A2A payload's parts.
               to        The recipient's nickname on a "msg"; null on a
                         "broadcast". Also what turns on the → in display.
+              to_pubkey The recipient's author key (64 lowercase hex), the
+                        machine-readable identity of "to": two members can
+                        share a nickname, so match on the key. Present on
+                        every line that has an addressee (msg, task,
+                        task_progress) and absent on a broadcast. A task
+                        line that came from an RPC message leg has no
+                        to_pubkey: that binding carries the name only.
               message   The full A2A Message object the wire carried (role,
                         parts, contextId, extensions). Read body/display
                         unless you are A2A-aware tooling.
@@ -1288,7 +1296,7 @@ JSON EVENTS
 
                  {"event":"task","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "to":"word-word","task_id":"<uuid>",
+                  "to":"word-word","to_pubkey":"<hex>","task_id":"<uuid>",
                   "kind":"status-update","state":"working","body":"on it",
                   "payload":{…the A2A object the wire carried…},
                   "display":"💬️ task status-update working `<from>` → `<to>`: …",
@@ -1327,7 +1335,7 @@ JSON EVENTS
 
                  {"event":"task_progress","id":"<uuid>","gossip":"<hash>",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "task_id":"<uuid>","done":35,"total":100,
+                  "to_pubkey":"<hex>","task_id":"<uuid>","done":35,"total":100,
                   "display":"💬️ task progress `<from>` → `<to>`: 35/100",
                   "self":false}
 
