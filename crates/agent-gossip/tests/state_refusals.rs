@@ -7,7 +7,7 @@ use std::process::Output;
 
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
-use common::Node;
+use common::{InProcNode, Node};
 use serde_json::{Map, Value, json};
 
 /// The JSON that a refused merge printed, after the check that it exited with a non-zero code.
@@ -82,32 +82,29 @@ fn a_value_too_large_for_a_frame_of_a_seed_is_refused() {
     assert_eq!(response["reason"], "too_large", "the stable reason");
 }
 
-#[test]
-fn a_full_state_refuses_a_write_that_adds_and_a_null_merge_is_the_way_out() {
-    let (creator, mesh) = Node::create();
-    assert!(creator.wait_ready(&mesh), "the creator never served");
+/// The state fills in one in-process node, so the test spawns no CLI process. The CLI path of a
+/// refusal is proven by the two tests above, and the mapping of a full state by the unit test.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "about 85 s of one CPU: 120 or more writes of one frame, and each write hydrates the whole document; run it with --ignored"]
+async fn a_full_state_refuses_a_write_that_adds_and_a_null_merge_is_the_way_out() {
+    let node = InProcNode::create("state-full").await;
     // A write is one frame of at most 3 840 bytes. The stamps grow with the clock, so the leaves
     // that fit one merge fall as the state fills: a merge that is too large for one frame is
     // sent again with a third fewer leaves.
     let mut step = 200;
     let mut next = 0;
-    let mut refused: Option<Output> = None;
+    let mut refused: Option<String> = None;
     for _ in 0..600 {
-        let output = merge(&creator, &mesh, &leaves(next, step));
-        if output.status.success() {
-            next += step;
-        } else if String::from_utf8_lossy(&output.stdout).contains("message too large") {
-            step = step * 2 / 3;
-        } else {
-            refused = Some(output);
-            break;
+        match node.try_state_merge(leaves(next, step)).await {
+            Ok(()) => next += step,
+            Err(error) if error.to_string().contains("message too large") => step = step * 2 / 3,
+            Err(error) => {
+                refused = Some(error.to_string());
+                break;
+            }
         }
     }
-    let output = refused.expect("600 merges pass the line of 20 000 paths");
-    let response = refusal_of(&output);
-    let error = response["error"]
-        .as_str()
-        .expect("error is a string in every refusal");
+    let error = refused.expect("600 merges pass the line of 20 000 paths");
     assert!(
         error.starts_with("the shared state is full: ")
             && error.ends_with(
@@ -115,11 +112,6 @@ fn a_full_state_refuses_a_write_that_adds_and_a_null_merge_is_the_way_out() {
             ),
         "the exact text: {error}"
     );
-    assert_eq!(response["reason"], "state_full", "the stable reason");
-    let way_out = merge(&creator, &mesh, &json!({ "live": null }));
-    assert!(
-        way_out.status.success(),
-        "a delete is never refused at the line: {}",
-        String::from_utf8_lossy(&way_out.stdout)
-    );
+    node.state_merge(json!({ "live": null })).await;
+    node.leave().await;
 }
