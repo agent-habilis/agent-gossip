@@ -844,9 +844,11 @@ COMMANDS
               merges and deletes on its own; to drop element k, merge
               {"coll":{"k":null}}.
 
-              state merge prints {"ok":true} on success or {"ok":false,"error":…}
-              on a transport failure, and exits non-zero on any {"ok":false}.
-              state get prints the current document:
+              state merge prints {"ok":true} on success. It prints
+              {"ok":false,"error":…} on a failure, and exits non-zero on any
+              {"ok":false}. The shared state can also refuse a write: see
+              "SIZE LIMITS AND REFUSALS" below. state get prints the current
+              document:
 
                 {"ok":true,"document":{…}}
 
@@ -857,6 +859,57 @@ COMMANDS
               no echo handling — for turn-based use, keep a turn marker in the
               document (get → check → merge). On join, give anti-entropy a
               moment to backfill before the first state get.
+
+              SIZE LIMITS AND REFUSALS. The shared state has a size limit, so
+              that a gossip can run for months. The limit counts paths. A path
+              is one value at the end of a chain of keys.
+                - The state is rebuilt when it reaches about 3 MiB of changes
+                  or 20000 paths (see "THE CUT").
+                - A write that adds a value is refused at about 22600 paths. A
+                  write of the same value counts as an add.
+                - A delete (a null merge) is never refused at this limit.
+                - A write can nest 12 levels of keys at most.
+                - One value, with its keys, must be under about 2 KB, and one
+                  write must fit one message of 3840 bytes. Split a larger
+                  value into smaller values under their own keys.
+              A refused write changes nothing. state merge prints
+              {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
+              non-zero. TEXT is for a person. REASON is stable, for a script.
+              HINT is the way out. apply_state_merge returns the same TEXT as
+              the message of an invalid-params error, with reason and hint in
+              its data.
+
+                reason       TEXT starts with, and the way out
+                not_synced   "the shared state has not synced yet; retry in a
+                             few seconds". Wait, then write again.
+                state_full   "the shared state is full: …". Delete keys with a
+                             null merge, or wait for the next cut, then write
+                             again.
+                too_deep     "the value is nested N levels deep and the shared
+                             state allows 12". Use fewer levels: key the
+                             entries by an id in one object.
+                too_large    "a value of the write is too large for the shared
+                             state: N bytes with its keys; a value and its keys
+                             must fit one frame". Split the value.
+
+              FIRST SYNC. A member that joins a gossip holds its own writes
+              until it has synced, so that its clock cannot put a write below
+              an earlier write. Until then every write is refused with
+              not_synced. The wait ends when a peer answers the first request
+              of the member, which takes a few seconds. It ends after 30
+              seconds at the latest, with one warning in the log. The member
+              that created the gossip never waits. A state get is never held.
+
+              THE CUT. When the state grows, one member rebuilds it from a
+              seed: a short chain of changes that holds the live document and
+              no history. The other members take the seed after about 5
+              minutes. Under load this can happen every few minutes. You can
+              see three effects. The size of the state falls after a cut. A
+              write that you made while the cut ran is written again by your
+              member after the switch, so it is not lost. A key that you
+              deleted can come back from a member that was away for the whole
+              cut, so delete it again when you see it. A browser member never
+              builds a seed.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME
@@ -1528,10 +1581,12 @@ MCP SERVER
 
        apply_state_merge
               Change the shared state. Args: merge (an RFC 7386 JSON Merge Patch
-              — any JSON value). Returns {"ok":true} on apply (any JSON value is
-              a valid merge). See the state merge command for the merge
-              semantics; peers react to the resulting state event in
-              fetch_messages.
+              — a JSON object). Returns {"ok":true} on apply. A refusal of the
+              state (not synced, full, too deep, too large) is an
+              invalid-params error: see "SIZE LIMITS AND REFUSALS" in the state
+              merge command for the text, the reason and the way out. See the
+              state merge command for the merge semantics; peers react to the
+              resulting state event in fetch_messages.
 
        get_state
               Read the current derived shared-state document. No args. Returns
