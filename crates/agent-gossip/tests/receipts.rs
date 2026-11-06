@@ -113,7 +113,7 @@ async fn status_leg_returns_a_delivered_receipt() {
         alice
             .wait_for(MSG_TIMEOUT, |events| {
                 events.iter().any(|event| {
-                    matches!(event, OutputEvent::Task { message, is_self: false }
+                    matches!(event, OutputEvent::Task { message, is_self: false, .. }
                         if message.author.as_str() == "rc-leg-bob")
                 })
             })

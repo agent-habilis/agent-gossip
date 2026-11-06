@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::future::Future;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -26,7 +25,8 @@ use super::{
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
     parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
 };
-use crate::a2a::card;
+use crate::a2a::ipc_command::MetaView;
+use crate::a2a::reader_asks;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, TaskArtifactParams,
     TaskStatusParams, TopicConfig,
@@ -347,7 +347,7 @@ impl AgentGossipServer {
         ok_json(MeshInfoResult {
             mesh,
             peer_count: roster.count,
-            peers: roster.peers,
+            peers: reader_asks::roster_rows(&roster.peers),
         })
     }
 
@@ -509,7 +509,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\"}}} (`host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<pubkey>`, where `<pubkey>` is your author key: the `pubkey` field of the `create_gossip`, `join_gossip` and `gossip_info` results (64 lowercase hex), e.g. {\"peers\":{\"<pubkey>\":{\"nickname\":\"swift-cedar\",\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\"}}} (`nickname` is a label inside your entry; `host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
     async fn apply_meta_merge(
         &self,
@@ -525,7 +525,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host, cwd}`. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers` entries with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
+        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<pubkey> = {nickname, model, harness, host, cwd}`, where `<pubkey>` is the 64-digit hex of the author key of the member: a nickname is a label that two members can share. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers/<pubkey>` slots with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
     )]
     async fn get_meta(
         &self,
@@ -533,13 +533,9 @@ impl AgentGossipServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let document = session.meta_get().await.map_err(to_mcp_error)?;
-        // Same rule as the CLI's `meta get`, from the same function, so the two
+        // The loop derives `absent`, with the same function as the CLI's `meta get`, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
-        let roster = session.peers().await.map_err(to_mcp_error)?;
-        let active = roster.peers.iter().filter(|entry| !entry.quiet);
-        let live: HashSet<&str> = active.map(|entry| entry.nickname.as_str()).collect();
-        let absent = card::absent_peers(&document, &live, session.nickname());
+        let MetaView { document, absent } = session.meta_get().await.map_err(to_mcp_error)?;
         ok_json(serde_json::json!({ "document": document, "absent": absent }))
     }
 }

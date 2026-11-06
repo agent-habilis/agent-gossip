@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MessageKind, Nickname};
+use habilis_network::protocol::{AuthorKey, MessageKind, Nickname};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::error::TrySendError;
@@ -209,14 +209,19 @@ impl Output {
         );
     }
 
-    pub(crate) fn print_message(&self, message: &Authored) {
-        self.print_message_ex(message, false);
+    pub(crate) fn print_message(&self, message: &Authored, addressee_name: Option<&Nickname>) {
+        self.print_message_ex(message, false, addressee_name);
     }
 
     /// Print a message with an optional self flag (for echo-back).
     /// When `filter_self` is enabled, self-authored messages are
     /// suppressed. Presence events should use `print_presence` instead.
-    pub(crate) fn print_message_ex(&self, message: &Authored, is_self: bool) {
+    pub(crate) fn print_message_ex(
+        &self,
+        message: &Authored,
+        is_self: bool,
+        addressee_name: Option<&Nickname>,
+    ) {
         if matches!(
             message.kind,
             MessageKind::PeerInfo
@@ -235,9 +240,10 @@ impl Output {
             || OutputEvent::Message {
                 message: Box::new(message.clone()),
                 is_self,
+                to_name: addressee_name.cloned(),
             },
             |mode| match mode {
-                OutputMode::Json => print_message_json(message, is_self),
+                OutputMode::Json => print_message_json(message, is_self, addressee_name),
                 OutputMode::Silent => {}
             },
         );
@@ -247,7 +253,12 @@ impl Output {
     /// Distinct top-level `task` event (not the `message` family) so skills
     /// branch on `event`. When `filter_self` is enabled, self-authored legs are
     /// suppressed.
-    pub(crate) fn print_task(&self, message: &Authored, is_self: bool) {
+    pub(crate) fn print_task(
+        &self,
+        message: &Authored,
+        is_self: bool,
+        addressee_name: Option<&Nickname>,
+    ) {
         // Only worker-pushed status/artifact frames surface as a `task` event.
         let MessageKind::App {
             tag, to: Some(_), ..
@@ -265,9 +276,10 @@ impl Output {
             || OutputEvent::Task {
                 message: Box::new(message.clone()),
                 is_self,
+                to_name: addressee_name.cloned(),
             },
             |mode| match mode {
-                OutputMode::Json => simple_event::print_task_json(message, is_self),
+                OutputMode::Json => simple_event::print_task_json(message, is_self, addressee_name),
                 OutputMode::Silent => {}
             },
         );
@@ -286,6 +298,7 @@ impl Output {
         let id = leg.id.to_owned();
         let mesh = leg.mesh.to_owned();
         let author = leg.author.to_owned();
+        let author_key = leg.author_key;
         let peer = leg.peer.to_owned();
         let task_id = leg.task_id.to_owned();
         let text = leg.text.to_owned();
@@ -296,6 +309,7 @@ impl Output {
                 id,
                 mesh,
                 author,
+                author_key,
                 peer,
                 task_id,
                 state,
@@ -416,16 +430,19 @@ impl Output {
         }
     }
 
-    pub(crate) fn print_presence(&self, message: &Authored) {
+    /// `peer` is the key of the member that the presence is about. A synthetic presence is signed by
+    /// this node, so the key of its frame is ours and says nothing about the peer.
+    pub(crate) fn print_presence(&self, message: &Authored, peer: &AuthorKey) {
         let MessageKind::Presence { subtype } = &message.kind else {
             return;
         };
         self.dispatch(
             || OutputEvent::Presence {
                 message: Box::new(message.clone()),
+                peer: *peer,
             },
             |mode| match mode {
-                OutputMode::Json => emit(&format_presence_json(message, *subtype)),
+                OutputMode::Json => emit(&format_presence_json(message, *subtype, peer)),
                 OutputMode::Silent => {}
             },
         );
@@ -434,16 +451,23 @@ impl Output {
     /// Emit a peer-timeout event. Distinct from `presence left` (a
     /// voluntary departure): this fires when the local heartbeat
     /// sweeper evicts a peer silent past `ALIVE_TIMEOUT_SECS`.
-    pub(crate) fn peer_timeout(&self, nickname: &Nickname, last_seen_secs_ago: u64) {
+    pub(crate) fn peer_timeout(
+        &self,
+        nickname: &Nickname,
+        key: &AuthorKey,
+        last_seen_secs_ago: u64,
+    ) {
         self.dispatch(
             || OutputEvent::PeerTimeout {
                 nickname: nickname.clone(),
+                key: *key,
                 last_seen_secs_ago,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
                     &SimpleEvent::PeerTimeout {
                         nickname: nickname.as_str(),
+                        pubkey: key.to_string().as_str(),
                         last_seen_secs_ago,
                         display: peer_timeout_display(nickname.as_str()),
                     },
@@ -482,15 +506,17 @@ impl Output {
     /// Symmetric counterpart to `peer_timeout`: fires when a peer we
     /// previously evicted for silence resumes sending (any message,
     /// including an `Alive` keepalive).
-    pub(crate) fn peer_return(&self, nickname: &Nickname) {
+    pub(crate) fn peer_return(&self, nickname: &Nickname, key: &AuthorKey) {
         self.dispatch(
             || OutputEvent::PeerReturn {
                 nickname: nickname.clone(),
+                key: *key,
             },
             |mode| match mode {
                 OutputMode::Json => emit_json(
                     &SimpleEvent::PeerReturn {
                         nickname: nickname.as_str(),
+                        pubkey: key.to_string().as_str(),
                         display: peer_return_display(nickname.as_str()),
                     },
                     true,

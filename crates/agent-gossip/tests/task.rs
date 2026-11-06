@@ -389,6 +389,89 @@ async fn not_surfaced_to_third_party() {
     gamma.leave().await;
 }
 
+/// A task leg goes to the key that opened the task. A nickname is a label that two live keys can
+/// share, so a worker that sent by name would fail with two keys under the name, or seal the leg
+/// to the wrong one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shares_its_name() {
+    let mut alice = InProcNode::create("t-twin").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-twin-bob").await;
+    alice.broadcast("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    let task_id = task_id_of(&alice.create_task("t-twin-bob", "port the parser").await);
+    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+
+    let mut twin = InProcNode::join(&alice.mesh, alice.nickname.as_str()).await;
+    twin.broadcast("twin warmup").await;
+    assert!(
+        bob.wait_body("twin warmup", MSG_TIMEOUT).await,
+        "bob sees the second key of the name"
+    );
+
+    bob.task_status(&task_id, TaskState::Working, Some("on it"))
+        .await;
+
+    assert!(
+        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        "the key that opened the task never saw the leg"
+    );
+    bob.task_artifact(&task_id, "here is the port").await;
+    assert!(
+        alice
+            .wait_task_state(TaskState::InputRequired, TASK_WAIT)
+            .await,
+        "the key that opened the task never saw the result"
+    );
+    assert!(
+        twin.tasks().next().is_none(),
+        "the key that shares the name must not surface a leg"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+    twin.leave().await;
+}
+
+/// A follow-up on a task goes to the key that holds the task, not to whatever key the worker's
+/// name resolves to. With a second live key under the name, a send by name is ambiguous and would
+/// refuse; and a reply to the wrong key would leak the text to a key that holds no task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares_the_worker_name() {
+    let mut alice = InProcNode::create("t-fu").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-fu-bob").await;
+    alice.broadcast("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    let task_id = task_id_of(&alice.create_task("t-fu-bob", "port the parser").await);
+    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    bob.task_status(&task_id, TaskState::Working, None).await;
+    assert!(
+        alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
+        "the task is running"
+    );
+
+    let mut twin = InProcNode::join(&alice.mesh, "t-fu-bob").await;
+    twin.broadcast("twin warmup").await;
+    assert!(
+        alice.wait_body("twin warmup", MSG_TIMEOUT).await,
+        "alice sees the second key of the name"
+    );
+
+    let approve = alice.task_message("t-fu-bob", &task_id, "approved").await;
+
+    assert!(
+        approve["result"]["task"].is_object(),
+        "the follow-up never reached the key that holds the task: {approve}"
+    );
+    assert!(
+        twin.tasks().next().is_none() && !twin.saw_task_message(),
+        "the key that shares the name must not surface the follow-up"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+    twin.leave().await;
+}
+
 /// The registry a peer can mint into is bounded, and the refusal reaches the
 /// caller as a JSON-RPC error rather than a silent drop.
 ///

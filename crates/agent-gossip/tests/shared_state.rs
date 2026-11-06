@@ -55,7 +55,7 @@ fn one(key: String, value: Value) -> Value {
 }
 
 /// The application's view of a channel document: the daemon-published
-/// `AgentCard`s (meta `/peers/<nick>/card`, written once per member at join)
+/// `AgentCard`s (meta `/peers/<key>/card`, written once per member at join)
 /// removed, since these tests pin app-driven merges. The card publication has
 /// its own test (`agent_cards_publish_to_meta_on_join`).
 fn app_view(doc: &Value) -> Value {
@@ -109,12 +109,14 @@ async fn meta_and_state_channels_are_independent() {
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     // A meta write propagates to bob's meta doc; both state docs stay empty.
+    // The slot of a member is the hex of its author key.
+    let alice_slot = alice.key_seen_by(&bob).await.to_string();
     alice
-        .meta_merge(json!({"peers": {"alice": {"model": "Opus 4.8"}}}))
+        .meta_merge(json!({"peers": {alice_slot.as_str(): {"model": "Opus 4.8"}}}))
         .await;
     assert!(
         wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/alice/model") == Some(&json!("Opus 4.8"))
+            doc.pointer(&format!("/peers/{alice_slot}/model")) == Some(&json!("Opus 4.8"))
         })
         .await,
         "bob never saw the meta write: {}",
@@ -145,7 +147,7 @@ async fn meta_and_state_channels_are_independent() {
     // cards, masked by `app_view`).
     assert_eq!(
         app_view(&alice.meta_get().await),
-        json!({"peers": {"alice": {"model": "Opus 4.8"}}}),
+        json!({"peers": {alice_slot.as_str(): {"model": "Opus 4.8"}}}),
         "state write must not touch meta"
     );
 
@@ -402,7 +404,7 @@ async fn meta_two_agents_ping_pong_via_shared_state() {
 }
 
 /// A member may only write its OWN card: a signed meta merge forging another
-/// peer's `/peers/<nick>/card` (here, a fake gossip-interface identity url) is
+/// peer's `/peers/<key>/card` (here, a fake gossip-interface identity url) is
 /// dropped by every recipient before it folds, so the victim's genuine card —
 /// and the identity in it — survives. Without the gate the forgery would win the
 /// last-writer-wins fold and spoof the victim to `agent-gossip card` and `--a2a-serve`.
@@ -414,8 +416,10 @@ async fn foreign_card_forgery_is_rejected() {
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     // Both cards publish on join; wait until alice sees bob's genuine card.
-    let bob_nick = bob.nickname.clone();
-    let identity_ptr = format!("/peers/{bob_nick}/card/supportedInterfaces/0/url");
+    // The slot of a member is the hex of its author key.
+    let bob_slot = bob.key_seen_by(&alice).await.to_string();
+    let alice_slot = alice.key_seen_by(&bob).await.to_string();
+    let identity_ptr = format!("/peers/{bob_slot}/card/supportedInterfaces/0/url");
     assert!(
         wait_doc(&alice, Channel::Meta, RECOVERY_TIMEOUT, |doc| doc
             .pointer(&identity_ptr)
@@ -438,7 +442,7 @@ async fn foreign_card_forgery_is_rejected() {
     let fake_url = "ff".repeat(32);
     let forged = alice
         .try_meta_merge(
-            json!({"peers": {&bob_nick: {"card": {"supportedInterfaces": [
+            json!({"peers": {bob_slot.as_str(): {"card": {"supportedInterfaces": [
                 {"url": fake_url, "protocolBinding": "x", "protocolVersion": "1.0"}
             ]}}}}),
         )
@@ -448,11 +452,11 @@ async fn foreign_card_forgery_is_rejected() {
         "forging another peer's card must be rejected at the source"
     );
     alice
-        .meta_merge(json!({"peers": {alice.nickname.as_str(): {"note": "barrier"}}}))
+        .meta_merge(json!({"peers": {alice_slot.as_str(): {"note": "barrier"}}}))
         .await;
     assert!(
         wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| doc
-            .pointer(&format!("/peers/{}/note", alice.nickname))
+            .pointer(&format!("/peers/{alice_slot}/note"))
             == Some(&json!("barrier")))
         .await,
         "barrier merge never derived on bob"
@@ -473,7 +477,7 @@ async fn foreign_card_forgery_is_rejected() {
     bob.leave().await;
 }
 
-/// Every member's daemon publishes its `AgentCard` at meta `/peers/<nick>/card`
+/// Every member's daemon publishes its `AgentCard` at meta `/peers/<key>/card`
 /// on join — the mesh-native discovery path (no HTTP anywhere). Both sides
 /// derive each other's card from the meta document, and the card carries the
 /// A2A protocol version, the declared mesh extensions, and the member's
@@ -485,8 +489,9 @@ async fn agent_cards_publish_to_meta_on_join() {
     alice.broadcast("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
-    let has_card = |doc: &Value, nick: &str| {
-        let card = doc.pointer(&format!("/peers/{nick}/card"));
+    // The slot of a member is the hex of its author key; the card names the nickname.
+    let has_card = |doc: &Value, slot: &str, nick: &str| {
+        let card = doc.pointer(&format!("/peers/{slot}/card"));
         card.is_some_and(|card| {
             let has_extensions = card["capabilities"]["extensions"]
                 .as_array()
@@ -506,9 +511,12 @@ async fn agent_cards_publish_to_meta_on_join() {
     };
 
     let alice_nick = alice.nickname.clone();
+    let alice_slot = alice.key_seen_by(&bob).await.to_string();
+    let bob_slot = bob.key_seen_by(&alice).await.to_string();
     assert!(
         wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| has_card(
             doc,
+            &alice_slot,
             &alice_nick
         ))
         .await,
@@ -518,6 +526,7 @@ async fn agent_cards_publish_to_meta_on_join() {
     assert!(
         wait_doc(&alice, Channel::Meta, RECOVERY_TIMEOUT, |doc| has_card(
             doc,
+            &bob_slot,
             "cards-bob"
         ))
         .await,
@@ -529,7 +538,7 @@ async fn agent_cards_publish_to_meta_on_join() {
     bob.leave().await;
 }
 
-/// A graceful leave retracts the leaver's whole `/peers/<nick>` meta entry —
+/// A graceful leave retracts the leaver's whole `/peers/<key>` meta entry —
 /// daemon card and self-reported agent facts alike — on the remaining
 /// replicas, and a later joiner backfills the deletion, not the ghost entry.
 /// The leaver is a joiner, not the creator: a departed creator also takes the
@@ -546,15 +555,19 @@ async fn graceful_leave_retracts_meta_entry() {
     host.broadcast("link").await;
     assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "leaver meshed");
 
+    // The slot of a member is the hex of its author key.
+    let leaver_slot = leaver.key_seen_by(&host).await.to_string();
+    let host_slot = host.key_seen_by(&leaver).await.to_string();
+
     // Before the leave the entry holds both writers' data: the daemon's card
     // and an agent fact.
     leaver
-        .meta_merge(json!({"peers": {"retract-leaver": {"model": "test-model"}}}))
+        .meta_merge(json!({"peers": {leaver_slot.as_str(): {"model": "test-model"}}}))
         .await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/retract-leaver/card").is_some()
-                && doc.pointer("/peers/retract-leaver/model") == Some(&json!("test-model"))
+            doc.pointer(&format!("/peers/{leaver_slot}/card")).is_some()
+                && doc.pointer(&format!("/peers/{leaver_slot}/model")) == Some(&json!("test-model"))
         })
         .await,
         "the host never derived the leaver's full entry: {}",
@@ -576,7 +589,7 @@ async fn graceful_leave_retracts_meta_entry() {
     // a silently-linkless overlay at leave time.
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/retract-leaver").is_none()
+            doc.pointer(&format!("/peers/{leaver_slot}")).is_none()
         })
         .await,
         "the leaver's meta entry survived its graceful leave: {}",
@@ -603,8 +616,8 @@ async fn graceful_leave_retracts_meta_entry() {
     assert!(meshed, "late joiner never meshed");
     assert!(
         wait_doc(&late, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/retract-host/card").is_some()
-                && doc.pointer("/peers/retract-leaver").is_none()
+            doc.pointer(&format!("/peers/{host_slot}/card")).is_some()
+                && doc.pointer(&format!("/peers/{leaver_slot}")).is_none()
         })
         .await,
         "the late joiner backfilled the ghost entry instead of the deletion: {}",
@@ -625,9 +638,11 @@ async fn meta_entry_returns_after_rejoin() {
     host.broadcast("link").await;
     assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "peer meshed");
 
+    // The slot of a member is the hex of its author key.
+    let first_slot = leaver.key_seen_by(&host).await.to_string();
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/rejoin-peer/card").is_some()
+            doc.pointer(&format!("/peers/{first_slot}/card")).is_some()
         })
         .await,
         "the host never derived the peer's card"
@@ -641,14 +656,15 @@ async fn meta_entry_returns_after_rejoin() {
     leaver.leave().await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/rejoin-peer").is_none()
+            doc.pointer(&format!("/peers/{first_slot}")).is_none()
         })
         .await,
         "the retraction never reached the host: {}",
         host.meta_get().await
     );
 
-    // Same nickname, fresh identity/replica — the delete-then-republish case.
+    // Same nickname, fresh identity/replica — the delete-then-republish case. The new key has
+    // a new slot, so the card to wait for is the one under it.
     // The rejoin can land while the host's gossip still holds the dead
     // session's stale link (the retraction mirror makes the leave→rejoin gap
     // sub-second), so the joiner may only integrate on the next heal tick —
@@ -668,7 +684,7 @@ async fn meta_entry_returns_after_rejoin() {
     assert!(meshed, "the returned peer never meshed");
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer("/peers/rejoin-peer/card").is_some()
+            common::card_slot_of(doc, "rejoin-peer").is_some_and(|slot| slot != first_slot)
         })
         .await,
         "the rejoined peer's card never re-appeared: {}",

@@ -300,11 +300,10 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     // document on its own schedule. So wait for the card too, or every directed
     // call in this binary races it — the subprocess twin of
     // `InProcNode::await_peer_card`.
-    let card = format!("/peers/{creator_nick}/card");
     assert!(
-        poll_doc(&mut joiner, probe_id, "get_meta", |doc| doc
-            .pointer(&card)
-            .is_some()),
+        poll_doc(&mut joiner, probe_id, "get_meta", |doc| {
+            common::card_slot_of(doc, &creator_nick).is_some()
+        }),
         "creator's card never reached the joiner's meta doc"
     );
 
@@ -1368,6 +1367,73 @@ fn mesh_info_reports_peer_roster() {
             reach == "direct" || reach == "gossip",
             "unexpected reach: {reach}"
         );
+    }
+}
+
+/// A `gossip_info` row names the member by its author key, which is the slot of that member in
+/// the meta document. A reader joins the roster to the meta document by it.
+#[test]
+fn a_mesh_info_row_names_the_pubkey_of_its_meta_slot() {
+    let (mut creator, joiner, _mesh, _creator_nick) = create_pair(760);
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut probe = 761;
+    loop {
+        let info =
+            tool_result_json(&creator.tool_call(probe, "gossip_info", &serde_json::json!({})))
+                .expect("creator gossip_info");
+        let meta =
+            tool_result_json(&creator.tool_call(probe + 1, "get_meta", &serde_json::json!({})))
+                .expect("creator get_meta");
+        let rows: &[serde_json::Value] = info["peers"].as_array().map_or(&[], Vec::as_slice);
+        let slots = &meta["document"]["peers"];
+        if let Some(row) = rows.first()
+            && let Some(pubkey) = row["pubkey"].as_str()
+            && slots.get(pubkey).is_some()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no roster row names a meta slot by its pubkey: {info} / {meta}"
+        );
+        probe += 2;
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(joiner);
+}
+
+/// An MCP client has no `ready` output to read its own key from, and the meta tools need it: the
+/// slot of its entry is the hex of that key. The create result names it, and the key is the slot
+/// of the card that carries the client's nickname.
+#[test]
+fn the_create_result_names_the_pubkey_of_the_own_meta_slot() {
+    let mut creator = McpClient::spawn();
+    let created = tool_result_json(&creator.tool_call(
+        770,
+        "create_gossip",
+        &serde_json::json!({ "name": "mcptest" }),
+    ))
+    .expect("create_gossip must succeed");
+    let pubkey = created["pubkey"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the create result names no pubkey: {created}"));
+    assert_eq!(pubkey.len(), 64, "a pubkey is 64 hex digits: {created}");
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut probe = 771;
+    loop {
+        let meta = tool_result_json(&creator.tool_call(probe, "get_meta", &serde_json::json!({})))
+            .expect("creator get_meta");
+        let name = &meta["document"]["peers"][pubkey]["card"]["name"];
+        if *name == created["nickname"] {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the pubkey is no slot of the own card: {meta}"
+        );
+        probe += 1;
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 

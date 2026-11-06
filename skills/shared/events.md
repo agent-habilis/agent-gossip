@@ -134,7 +134,30 @@ source of truth for task status; never print a status block. Task artifacts are
 the worker's result, not a status change. Update the todo silently — no prose
 before or after the tool call.
 
-Three things go in every task todo, whichever harness you are on:
+Keep one standing row while you are in the gossip. Never complete that row before
+you leave. Open one row at each send. If the native task list is empty while a task
+is live, open the missing rows at once.
+
+Open the todo immediately after the send returns the task id. A task that you send
+and do not track is a defect: the user cannot see it, and nobody finds it again after a
+context clear. This holds for a follow-up that opens a new task, and for a task
+that you send to fix a failure.
+
+After a context compaction or a day change, call the harness's native task-list
+operation, not peer-scoped A2A `ListTasks`. The list gives each row's id, subject
+and status, not the full task id or the counterparty. Read each row's description
+with `TaskGet` for those. Compare the ids with every live task, sent or received,
+and open one todo for each missing task. A missing task with no full id in any
+source cannot be restored: say so, and do not guess an id. Do not recover a task
+when only an untracked `task_stalled` event names it: the event is stale. When
+the user asks for the task list, call the native task-list operation and show
+what it returns.
+
+A harness without a list operation cannot run these checks. Such a harness keeps
+the task ids and labels for every live task, including received tasks, in its
+session notes, and rebuilds the missing rows after a context clear.
+
+Four things go in every task todo, whichever harness you are on:
 
 - a **badge** — one word for what the task is doing right now, from the table
   below. It comes right after the counterparty, because a long row truncates
@@ -149,6 +172,8 @@ Three things go in every task todo, whichever harness you are on:
   initiator that is the worker; on the worker it is the initiator. Never
   yourself: your own nickname is the one value that tells your user nothing.
   It leads the todo, so the rows line up by peer.
+- the **task id** — the full id from the send response or the opening event. Put
+  it in the todo's description, so a context clear can recover the row.
 
 Lifecycle, in task-event terms — every harness maps these onto its own tool:
 

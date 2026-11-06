@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageId, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageId, Nickname};
 
 use crate::a2a::{TaskId, TaskState};
 
@@ -29,16 +29,24 @@ pub enum OutputEvent {
         message: Box<Authored>,
         /// `true` when the local node wrote it.
         is_self: bool,
+        /// The addressee's name, read from the roster when the line printed. `None` for a
+        /// broadcast, or when the addressee is not live.
+        to_name: Option<Nickname>,
     },
     /// A presence frame (a peer's join, leave, or other status change).
     Presence {
         /// The signed presence frame.
         message: Box<Authored>,
+        /// The key of the member that the presence is about. A synthetic presence is signed by
+        /// this node, so the key of `message` is not the key of the peer.
+        peer: AuthorKey,
     },
     /// A peer went silent past the liveness window.
     PeerTimeout {
         /// The silent peer.
         nickname: Nickname,
+        /// The author key of the silent peer.
+        key: AuthorKey,
         /// Whole seconds since the peer was last heard.
         last_seen_secs_ago: u64,
     },
@@ -46,6 +54,8 @@ pub enum OutputEvent {
     PeerReturn {
         /// The returning peer.
         nickname: Nickname,
+        /// The author key of the returning peer.
+        key: AuthorKey,
     },
     /// An author signed two different messages at the same `seq`: proof of a fork.
     Fork {
@@ -90,6 +100,9 @@ pub enum OutputEvent {
         message: Box<Authored>,
         /// `true` when the local node sent it.
         is_self: bool,
+        /// The addressee's name, read from the roster when the line printed. `None` when the
+        /// addressee is not live.
+        to_name: Option<Nickname>,
     },
     /// A task leg that arrived over the request/response binding, so no frame backs it.
     TaskMessage {
@@ -99,6 +112,8 @@ pub enum OutputEvent {
         mesh: String,
         /// The nickname of the sender of the leg.
         author: String,
+        /// The key of the sender of the leg: a nickname is a label that two keys can share.
+        author_key: AuthorKey,
         /// The nickname of the peer the leg goes to (`to` in the JSON line).
         peer: String,
         /// The id of the task the leg belongs to.

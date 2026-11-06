@@ -13,6 +13,7 @@ pub(super) fn print_ready_identity(ready: &ReadyStateFile) {
         ("name", identity.name),
         ("nickname", identity.nickname),
         ("topic", identity.topic),
+        ("pubkey", identity.pubkey),
         // The skills tell an agent to print `drift` from *this* output. The
         // daemon computes it too, but only onto its own `--output json` stdout
         // — the stream the session-start script sends to /dev/null — so the

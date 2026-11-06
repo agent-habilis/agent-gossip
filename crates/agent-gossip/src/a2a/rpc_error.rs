@@ -81,7 +81,7 @@ pub(crate) enum A2aOp {
     /// `peer` — what a remote caller over gossip may see. `None` is the local
     /// binding, where the caller owns the daemon and sees every task.
     ListTasks {
-        peer: Option<Nickname>,
+        peer: Option<AuthorKey>,
     },
     CancelTask {
         task_id: TaskId,
@@ -96,8 +96,15 @@ pub(crate) enum A2aOp {
     },
     OwnCard,
     PeerCard {
-        peer: Nickname,
+        peer: PeerRef,
     },
+}
+
+/// The member that a peer-card route names. A nickname is a label that two members can share, so
+/// the route also takes the exact author key.
+pub(crate) enum PeerRef {
+    Nickname(Nickname),
+    Key(AuthorKey),
 }
 
 /// One in-flight request from the HTTP task to the event loop.
@@ -187,13 +194,13 @@ pub(crate) fn parse_op(
 /// The `ListTasks` payload. `peer` scopes the listing to that counterparty's
 /// tasks — what a remote caller may see; `None` lists everything, for the
 /// local binding whose caller owns the daemon.
-fn list_tasks(app: &A2aApp, peer: Option<&Nickname>, mesh: &MeshId) -> Value {
+fn list_tasks(app: &A2aApp, peer: Option<&AuthorKey>, mesh: &MeshId) -> Value {
     // Sort by task id so the response order is stable across calls
     // (`app.tasks` is a HashMap with unspecified iteration order).
     let mut entries: Vec<(&TaskId, &TaskRecord)> = app
         .tasks
         .iter()
-        .filter(|(_, rec)| peer.is_none_or(|peer| rec.peer == *peer))
+        .filter(|(_, rec)| peer.is_none_or(|peer| rec.peer_key == *peer))
         .collect();
     entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
     let tasks: Vec<Value> = entries
@@ -336,7 +343,7 @@ pub(crate) async fn handle_op(
         }
         A2aOp::OwnCard => {
             let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-            let mut card = super::card::own_card(author, our_pubkey, &seal_b58);
+            let mut card = super::card::full_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
             card.supported_interfaces.push(super::AgentInterface {
@@ -348,15 +355,26 @@ pub(crate) async fn handle_op(
             serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
+            // A nickname is a label: the card is the one of the key that a send to it would go to.
+            let (key, label) = match &peer {
+                PeerRef::Key(named) => (*named, named.to_string()),
+                PeerRef::Nickname(nickname) => {
+                    let key = state.addressee_key(nickname).map_err(|error| RpcError {
+                        code: -32004,
+                        message: format!("cannot address '{nickname}': {error}"),
+                    })?;
+                    (key, nickname.to_string())
+                }
+            };
             let doc = state.doc(Channel::Meta).to_json();
             // A card that is still arriving, in pieces, is not served.
-            let mut card = super::card::complete_card(&doc, &peer)
-                .cloned()
+            let mut card = super::card::complete_card(&doc, &key)
+                .and_then(super::card::full_from_minimal)
                 .unwrap_or(Value::Null);
             if card.is_null() {
                 return Err(RpcError {
                     code: -32004,
-                    message: format!("no card published for '{peer}'"),
+                    message: format!("no card published for '{label}'"),
                 });
             }
             // The mesh card declares only its gossip interface (the peer has no
@@ -364,12 +382,17 @@ pub(crate) async fn handle_op(
             // *our* binding — we relay JSON-RPC to that peer over gossip at
             // `/peers/<nick>` — so the served peer card is reachable (e.g.
             // `SendMessage` there creates a task on the peer).
-            if let Some(interfaces) = card
-                .pointer_mut("/supportedInterfaces")
-                .and_then(Value::as_array_mut)
-            {
+            let route: Option<Nickname> = match &peer {
+                PeerRef::Nickname(nickname) => Some(nickname.clone()),
+                PeerRef::Key(named) => state.known_nickname_of(named),
+            };
+            if let (Some(route), Some(interfaces)) = (
+                route,
+                card.pointer_mut("/supportedInterfaces")
+                    .and_then(Value::as_array_mut),
+            ) {
                 interfaces.push(serde_json::json!({
-                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{peer}"),
+                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{route}"),
                     "protocolBinding": "JSONRPC",
                     "protocolVersion": super::PROTOCOL_VERSION,
                 }));

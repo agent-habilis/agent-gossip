@@ -1,4 +1,3 @@
-use habilis_network::embed::RosterEntry;
 use serde::Serialize;
 
 use super::MeshRef;
@@ -11,5 +10,5 @@ pub(crate) struct MeshInfoResult {
     #[serde(flatten)]
     pub(crate) mesh: MeshRef,
     pub(crate) peer_count: usize,
-    pub(crate) peers: Vec<RosterEntry>,
+    pub(crate) peers: Vec<serde_json::Value>,
 }

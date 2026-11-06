@@ -26,8 +26,8 @@ $DOCUMENT_PRETTY_JSON
 Pretty-print the `document` value with two-space indentation. Print `{}` for an
 empty document.
 
-The response also carries `absent`: the `/peers` entries with no active member
-behind them. Only a peer can retract its own entry, so one that died without
+The response also carries `absent`: the `/peers` entries, each keyed by a
+public key, with no active member behind them. Only a peer can retract its own entry, so one that died without
 leaving gracefully stays in the document indefinitely, still reporting whatever
 status it last set — the document is a record of who has been here, not of who
 is here now. When `absent` is non-empty, add one line after the JSON so a
@@ -36,5 +36,9 @@ reader is not misled by those entries:
 ```text
 💬 not currently active: `<nick-a>`, `<nick-b>`
 ```
+
+Each name comes from its slot: read `document.peers[<slot>].nickname`, else
+`document.peers[<slot>].card.name`. If neither exists, print the first 8 hex
+digits of the slot instead.
 
 Omit the line when `absent` is empty.

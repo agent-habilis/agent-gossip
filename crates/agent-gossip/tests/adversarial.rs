@@ -25,6 +25,7 @@ use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
 use agent_gossip::harness::test_key::{self, CraftedMsg};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
+use habilis_network::protocol::AuthorKey;
 use habilis_network::util::tuning;
 use serde_json::{Value, json};
 
@@ -47,6 +48,31 @@ async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
         "victim/attacker never meshed"
     );
     (victim, attacker)
+}
+
+/// The key of the peer called `nickname`, as `observer` knows it. A nickname is a label: a frame
+/// names its addressee by key.
+async fn key_of_peer(observer: &InProcNode, nickname: &str) -> AuthorKey {
+    let deadline = Instant::now() + T;
+    loop {
+        let roster = observer
+            .session
+            .peers()
+            .await
+            .expect("the session stays up for the whole test");
+        if let Some(entry) = roster
+            .peers
+            .iter()
+            .find(|entry| entry.nickname.as_str() == nickname)
+        {
+            return entry.key;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{nickname} never joined the roster of the observer"
+        );
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 /// True if the victim ever surfaced a peer `msg` with this body.
@@ -443,12 +469,12 @@ async fn status_task_id_mismatch_is_dropped() {
     // gate must drop it before it can touch the task machine or surface.
     let (mut victim, attacker) = meshed_pair("status-mismatch").await;
     let key = test_key::new_key();
-    let victim_nick = victim.nickname.clone();
+    let victim_key = key_of_peer(&attacker, &victim.nickname).await;
     let evil = CraftedMsg::status_frame(
         attacker.session.mesh_id(),
         test_key::StatusFrameParams::new(
             "ghost",
-            &victim_nick,
+            victim_key,
             "550e8400-e29b-41d4-a716-446655440000", // frame correlation
             "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
         ),
@@ -485,6 +511,7 @@ async fn status_task_id_mismatch_is_dropped() {
 async fn directed_broadcast_is_dropped() {
     let (mut victim, attacker) = meshed_pair("dirbcast").await;
     let key = test_key::new_key();
+    let victim_key = key_of_peer(&attacker, &victim.nickname).await;
     // `a2a_broadcast` addressed to the victim: a private line wearing the
     // gossip-wide tag. Were it surfaced, a peer could make a 1:1 remark look
     // like something the whole gossip had seen.
@@ -494,10 +521,7 @@ async fn directed_broadcast_is_dropped() {
         "evil-directed-broadcast",
     )
     .wrap_a2a();
-    let evil: bytes::Bytes = wrapped
-        .address_to(Some(victim.nickname.as_str()))
-        .sign(&key)
-        .bytes();
+    let evil: bytes::Bytes = wrapped.address_to(Some(victim_key)).sign(&key).bytes();
     attacker
         .session
         .inject_raw(evil)
@@ -550,16 +574,14 @@ async fn broadcast_shaped_msg_is_dropped() {
 async fn msg_declaring_the_broadcast_extension_is_dropped() {
     let (mut victim, attacker) = meshed_pair("msgext").await;
     let key = test_key::new_key();
+    let victim_key = key_of_peer(&attacker, &victim.nickname).await;
     // A msg carrying a broadcast payload: correctly addressed, but its A2A
     // body declares `mesh-broadcast`. `wrap_a2a` composes the broadcast
     // payload; retagging afterwards leaves the extension in place.
     let retagged: CraftedMsg = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
         .wrap_a2a()
         .into_msg();
-    let evil: bytes::Bytes = retagged
-        .address_to(Some(victim.nickname.as_str()))
-        .sign(&key)
-        .bytes();
+    let evil: bytes::Bytes = retagged.address_to(Some(victim_key)).sign(&key).bytes();
     attacker
         .session
         .inject_raw(evil)
@@ -587,7 +609,10 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
         CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
             .into_msg()
             .wrap_msg();
-    let evil: bytes::Bytes = crafted.address_to(Some("someone-else")).sign(&key).bytes();
+    let evil: bytes::Bytes = crafted
+        .address_to(Some(AuthorKey::from([0x5e; 32])))
+        .sign(&key)
+        .bytes();
     attacker
         .session
         .inject_raw(evil)
@@ -631,7 +656,10 @@ async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
     )
     .into_msg()
     .wrap_msg();
-    let evil: bytes::Bytes = crafted.address_to(Some("someone-else")).sign(&key).bytes();
+    let evil: bytes::Bytes = crafted
+        .address_to(Some(AuthorKey::from([0x5e; 32])))
+        .sign(&key)
+        .bytes();
     attacker
         .session
         .inject_raw(evil)
@@ -697,14 +725,17 @@ async fn a_bystanders_task_status_is_dropped() {
     // the initiator's to land rather than racing it — under load it has not
     // necessarily arrived by the time the task is established.
     attacker.await_peer_card(&initiator.nickname).await;
-    let seal_key = test_key::peer_seal_key(&attacker.meta_get().await, &initiator.nickname)
-        .expect("the initiator's seal key is published in the meta doc");
+    let seal_key = test_key::peer_seal_key(
+        &attacker.meta_get().await,
+        &key_of_peer(&attacker, &initiator.nickname).await,
+    )
+    .expect("the initiator's seal key is published in the meta doc");
     let key = test_key::new_key();
     let evil = CraftedMsg::sealed_task_status(
         attacker.session.mesh_id(),
         test_key::SealedTaskStatusParams::new(
             "wire-thistle",
-            &initiator.nickname,
+            key_of_peer(&attacker, &initiator.nickname).await,
             &task_id,
             seal_key,
         )
@@ -759,14 +790,17 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
     let (mut victim, mut attacker) = meshed_pair("prejoin-receipt").await;
     attacker.await_peer_card(&victim.nickname).await;
     victim.await_peer_card(&attacker.nickname).await;
-    let seal_key = test_key::peer_seal_key(&attacker.meta_get().await, &victim.nickname)
-        .expect("the victim's seal key is published in the meta doc");
+    let seal_key = test_key::peer_seal_key(
+        &attacker.meta_get().await,
+        &key_of_peer(&attacker, &victim.nickname).await,
+    )
+    .expect("the victim's seal key is published in the meta doc");
 
     let old = CraftedMsg::sealed_msg(
         attacker.session.mesh_id(),
         test_key::SealedMsgParams::new(
             &attacker.nickname,
-            &victim.nickname,
+            key_of_peer(&attacker, &victim.nickname).await,
             "from before the join",
             seal_key,
         ),
@@ -828,11 +862,19 @@ async fn a_bystanders_forged_receipt_is_dropped() {
         "the real delivered receipt never came"
     );
 
-    let seal_key = test_key::peer_seal_key(&attacker.meta_get().await, &sender.nickname)
-        .expect("the sender's seal key is published in the meta doc");
+    let seal_key = test_key::peer_seal_key(
+        &attacker.meta_get().await,
+        &key_of_peer(&attacker, &sender.nickname).await,
+    )
+    .expect("the sender's seal key is published in the meta doc");
     let forged = CraftedMsg::sealed_receipt(
         attacker.session.mesh_id(),
-        test_key::SealedMsgParams::new(&attacker.nickname, &sender.nickname, id.as_str(), seal_key),
+        test_key::SealedMsgParams::new(
+            &attacker.nickname,
+            key_of_peer(&attacker, &sender.nickname).await,
+            id.as_str(),
+            seal_key,
+        ),
     )
     .sign(&test_key::new_key())
     .bytes();
@@ -929,7 +971,7 @@ async fn gap_nickname_impersonation_is_accepted() {
 fn is_flood_message(event: &OutputEvent, body: &str) -> bool {
     matches!(
         event,
-        OutputEvent::Message { message, is_self: false }
+        OutputEvent::Message { message, is_self: false, .. }
             if status_update_params::chat_text(message).as_deref() == Some(body)
     )
 }
@@ -1071,19 +1113,21 @@ async fn unsigned_state_merge_is_never_folded() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
     // A malicious peer that bypasses its own author-side gate can still SIGN and
-    // inject a meta change forging another member's `/peers/<nick>/card` — the
+    // inject a meta change forging another member's `/peers/<key>/card` — the
     // card carries that member's cryptographic identity. Every honest receiver
     // must reject it before it folds, so the forgery converges nowhere.
     let (victim, injector) = meshed_pair("card-forge").await;
     let attacker_key = test_key::new_key();
     let mesh = injector.session.mesh_id();
-    let victim_nick = victim.nickname.as_str().to_owned();
+    // The slot of a member is the hex of its author key.
+    let victim_slot = victim.key_seen_by(&injector).await.to_string();
+    let injector_slot = injector.key_seen_by(&victim).await.to_string();
     let fake = "ff00beefff00beef"; // distinctive marker for the forged identity
 
     let forged = CraftedMsg::meta_forge_card(
         mesh,
         "attacker",
-        &victim_nick,
+        &victim_slot,
         &json!({"metadata": {"pubkey": fake}}),
     )
     .sign(&attacker_key)
@@ -1098,9 +1142,9 @@ async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
     // so ungated). Once the victim derives it, the forged frame — sent first on
     // the same link — has had its turn.
     injector
-        .meta_merge(json!({"peers": {injector.nickname.as_str(): {"barrier": true}}}))
+        .meta_merge(json!({"peers": {injector_slot.as_str(): {"barrier": true}}}))
         .await;
-    let barrier_ptr = format!("/peers/{}/barrier", injector.nickname);
+    let barrier_ptr = format!("/peers/{injector_slot}/barrier");
     let deadline = Instant::now() + T;
     while victim.meta_get().await.pointer(&barrier_ptr) != Some(&json!(true)) {
         assert!(

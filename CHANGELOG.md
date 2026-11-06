@@ -1,3 +1,9 @@
+## 0.13.0 (2026-11-06)
+
+### Breaking Changes
+
+- Wire 13.0: the meta slot is the author key, and the JSON lines carry to and to_pubkey
+
 ## 0.12.10 (2026-10-28)
 
 ### Fixes

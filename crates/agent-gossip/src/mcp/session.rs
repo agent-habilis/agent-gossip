@@ -8,9 +8,10 @@ use std::sync::Mutex;
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, MessageId, Nickname};
 
 use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::ipc_command::MetaView;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
@@ -22,8 +23,15 @@ use crate::api::{
 /// Dropping it winds the loop down via the core's own `Drop`.
 pub(crate) struct Session {
     inner: InProcessSession,
+    own_key: AuthorKey,
     /// Implicit `after` seq cursor for [`Session::fetch_messages`].
     last_delivered_seq: Mutex<Option<u64>>,
+}
+
+/// Our author key, or the setup failure that a stopped event loop leaves behind. A session
+/// without its key cannot address its meta entry, so there is no session without it.
+fn require_own_key(own_key: Result<AuthorKey, SessionError>) -> Result<AuthorKey> {
+    own_key.map_err(|error| anyhow::anyhow!("the mesh session has no author key: {error}"))
 }
 
 impl Session {
@@ -33,7 +41,9 @@ impl Session {
     /// Propagates [`CreateError`] so the tool layer can classify
     /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
     pub(super) async fn create(config: CreateConfig) -> Result<Self, CreateError> {
-        Ok(Self::wrap(InProcessSession::create_poll(config).await?))
+        let inner = InProcessSession::create_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(CreateError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
     /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
@@ -42,7 +52,9 @@ impl Session {
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(config: JoinConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::join_poll(config).await?))
+        let inner = InProcessSession::join_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
@@ -51,14 +63,22 @@ impl Session {
     /// # Errors
     /// [`JoinError`] on setup failure.
     pub(super) async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::topic_poll(config).await?))
+        let inner = InProcessSession::topic_poll(config).await?;
+        let own_key = require_own_key(inner.own_key().await).map_err(JoinError::Setup)?;
+        Ok(Self::wrap(inner, own_key))
     }
 
-    fn wrap(inner: InProcessSession) -> Self {
+    fn wrap(inner: InProcessSession, own_key: AuthorKey) -> Self {
         Self {
             inner,
+            own_key,
             last_delivered_seq: Mutex::new(None),
         }
+    }
+
+    /// Our author key: the slot of our meta entry is its hex.
+    pub(super) fn own_key(&self) -> AuthorKey {
+        self.own_key
     }
 
     /// The resolved mesh id.
@@ -204,7 +224,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
+    pub(super) async fn meta_get(&self) -> Result<MetaView, SessionError> {
         self.inner.meta_get().await
     }
 
@@ -295,7 +315,7 @@ mod tests {
         use crate::emission::OutputEvent;
         match event {
             OutputEvent::Message { message, .. }
-            | OutputEvent::Presence { message }
+            | OutputEvent::Presence { message, .. }
             | OutputEvent::Task { message, .. } => Some(message),
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }
@@ -319,7 +339,7 @@ mod tests {
     fn is_self_echo(event: &crate::emission::OutputEvent, sent: &MessageId) -> bool {
         matches!(
             event,
-            crate::emission::OutputEvent::Message { message, is_self }
+            crate::emission::OutputEvent::Message { message, is_self, .. }
                 if *is_self && message.id == *sent
         )
     }
@@ -340,7 +360,7 @@ mod tests {
     /// One cursor-less fetch of the baseline wait: remember the seq before
     /// bob-cursor's join and whether his card merge has been seen. `Some` once
     /// both have, across all the fetches so far.
-    async fn baseline_step(alice: &Session, baseline: &Baseline) -> Option<()> {
+    async fn baseline_step(alice: &Session, baseline: &Baseline, bob: &AuthorKey) -> Option<()> {
         let Baseline {
             replay_from,
             saw_card,
@@ -356,10 +376,10 @@ mod tests {
         // (`event_loop.rs`, `lp.app.drain_surfaced()`), and the two requests are later steps.
         // Both flags are sticky, so the order in which the event and the document reach this loop
         // does not matter.
-        let after = alice
-            .meta_get()
-            .await
-            .expect("the card written by the merge reads back from the document");
+        let meta = alice.meta_get().await;
+        let after = meta
+            .expect("the card written by the merge reads back from the document")
+            .document;
         let events = alice
             .fetch_messages(None, false)
             .await
@@ -374,7 +394,7 @@ mod tests {
             .filter_map(|item| meta_change_author(&item.event))
             .any(|author| author == "bob-cursor");
         bob_wrote.set(bob_wrote.get() || bob_authored);
-        saw_card.set(saw_card.get() || is_bob_card_merge(&before, &after));
+        saw_card.set(saw_card.get() || is_bob_card_merge(bob, &before, &after));
         let ready = replay_from.get().is_some() && saw_card.get() && bob_wrote.get();
         ready.then_some(())
     }
@@ -396,9 +416,12 @@ mod tests {
     /// is whole in `after` and was not in `before`. The first merge of a card in several merges
     /// does not complete it. Who wrote the change is not asked here: the wait asks it of the ring
     /// event (`bob_wrote`).
-    fn is_bob_card_merge(before: &serde_json::Value, after: &serde_json::Value) -> bool {
-        let bob = Nickname::from("bob-cursor");
-        let whole = |doc: &serde_json::Value| complete_card(doc, &bob).is_some();
+    fn is_bob_card_merge(
+        bob: &AuthorKey,
+        before: &serde_json::Value,
+        after: &serde_json::Value,
+    ) -> bool {
+        let whole = |doc: &serde_json::Value| complete_card(doc, bob).is_some();
         !whole(before) && whole(after)
     }
 
@@ -722,20 +745,22 @@ mod tests {
     fn bob_card_merge_is_the_absent_to_present_transition() {
         // A failed card publish writes `card_error` under bob-cursor's own entry.
         // It adds no card, so it must not count as the card merge.
+        let bob = AuthorKey::from([0xab; 32]);
+        let slot = bob.to_string();
         let empty = json!({ "peers": {} });
-        let card_error = json!({ "peers": { "bob-cursor": { "card_error": "boom" } } });
-        let card = json!({ "peers": { "bob-cursor": { "card": bob_card() } } });
+        let card_error = json!({ "peers": { slot.as_str(): { "card_error": "boom" } } });
+        let card = json!({ "peers": { slot.as_str(): { "card": bob_card() } } });
 
         assert!(
-            !is_bob_card_merge(&empty, &card_error),
+            !is_bob_card_merge(&bob, &empty, &card_error),
             "a card_error merge by bob-cursor is not his card merge"
         );
         assert!(
-            is_bob_card_merge(&empty, &card),
+            is_bob_card_merge(&bob, &empty, &card),
             "the merge that adds bob-cursor's card is the card merge"
         );
         assert!(
-            !is_bob_card_merge(&card, &card),
+            !is_bob_card_merge(&bob, &card, &card),
             "a later meta change with the card already present is not the card merge"
         );
     }
@@ -744,27 +769,31 @@ mod tests {
     /// the card whole, so the baseline wait must not close on the first.
     #[test]
     fn a_card_in_two_merges_is_complete_only_after_the_last_merge() {
-        let nickname = Nickname::from("bob-cursor");
-        // A model of the frame that a merge becomes: its JSON text and 2000 bytes of envelope,
-        // signature and sealing. It cuts this card into 2 merges.
-        let merges = publish_merges(&nickname, &bob_card(), |merge| {
-            Ok(merge.to_string().len() + 2000)
-        })
+        let bob = AuthorKey::from([0xab; 32]);
+        let slot = bob.to_string();
+        // A model of the frame that a merge becomes: its JSON text and 3000 bytes of envelope,
+        // signature and sealing. The card is small now (826 bytes), so the envelope is made
+        // large enough to cut it into 2 merges.
+        let merges = publish_merges(
+            &bob,
+            &bob_card(),
+            |merge| Ok(merge.to_string().len() + 3000),
+        )
         .expect("every field fits a frame");
         assert_eq!(merges.len(), 2, "the premise: the card is in 2 merges");
 
         let mut arrived = serde_json::Map::new();
         let mut before = json!({ "peers": {} });
         for (index, merge) in merges.iter().enumerate() {
+            let part = &merge["peers"][slot.as_str()]["card"];
             arrived.extend(
-                merge["peers"]["bob-cursor"]["card"]
-                    .as_object()
+                part.as_object()
                     .expect("the card is an object by its schema, so its fields extend arrived")
                     .clone(),
             );
-            let after = json!({ "peers": { "bob-cursor": { "card": arrived } } });
+            let after = json!({ "peers": { slot.as_str(): { "card": arrived } } });
             assert_eq!(
-                is_bob_card_merge(&before, &after),
+                is_bob_card_merge(&bob, &before, &after),
                 index + 1 == merges.len(),
                 "after merge {} of {}",
                 index + 1,
@@ -798,9 +827,10 @@ mod tests {
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
         let baseline = Baseline::default();
+        let bob_key = bob.own_key();
         let deadline = tokio::time::Instant::now() + DELIVER;
         poll_until(deadline, Duration::from_millis(150), || {
-            baseline_step(&alice, &baseline)
+            baseline_step(&alice, &baseline, &bob_key)
         })
         .await
         .expect("first fetches should see bob's join presence and his card merge");
@@ -938,5 +968,24 @@ mod tests {
         );
 
         session.leave().await;
+    }
+
+    #[test]
+    fn a_failed_own_key_lookup_is_a_setup_error_not_a_session_without_a_key() {
+        let error = super::require_own_key(Err(crate::api::SessionError::Stopped));
+        assert!(
+            error.is_err(),
+            "a session whose key lookup failed must not be built without its key"
+        );
+    }
+
+    #[test]
+    fn an_own_key_that_resolved_passes_through() {
+        let key = AuthorKey::from_bytes([7; 32]);
+        assert_eq!(
+            super::require_own_key(Ok(key)).ok(),
+            Some(key),
+            "a resolved key is handed back unchanged"
+        );
     }
 }

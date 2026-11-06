@@ -7,6 +7,7 @@ use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
 use super::simple_event::{SimpleEvent, format_msg_json, format_presence_json};
 use crate::a2a::{node, status_update_params, wire};
+use crate::emission::capture_events::capture_events;
 use crate::emission::simple_event;
 
 fn parse(text: &str) -> serde_json::Value {
@@ -24,6 +25,7 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
         id: "frame-id",
         mesh: "mesh",
         author: "alice-bot",
+        author_key: habilis_network::protocol::AuthorKey::from([7; 32]),
         peer: "calm-otter",
         task_id: "task-id",
         state: None,
@@ -44,6 +46,41 @@ fn a_task_message_payload_keeps_its_non_text_parts_and_drops_the_text_parts() {
     );
 }
 
+/// A task line from an RPC `SendMessage` names the key of its sender. A nickname is a label that
+/// two live keys can share, so a reader that tells the senders apart needs the key.
+#[test]
+fn a_task_message_line_names_the_key_of_its_sender_when_two_senders_share_a_name() {
+    let line_from = |key: u8| {
+        let leg = super::TaskMessageLeg {
+            id: "frame-id",
+            mesh: "mesh",
+            author: "twin",
+            author_key: habilis_network::protocol::AuthorKey::from([key; 32]),
+            peer: "calm-otter",
+            task_id: "task-id",
+            state: None,
+            text: "the brief",
+            label: None,
+            message: None,
+            is_self: false,
+        };
+        parse(&simple_event::format_task_message_json(&leg))
+    };
+
+    let first = line_from(7);
+    let second = line_from(8);
+
+    assert_eq!(
+        first["pubkey"],
+        habilis_network::protocol::AuthorKey::from([7; 32]).to_string(),
+        "the line carries the key of its sender: {first}"
+    );
+    assert_ne!(
+        first["pubkey"], second["pubkey"],
+        "two senders with one name give two keys"
+    );
+}
+
 // ── format_msg_json: msg type ──────────────────────────────
 
 fn nick(name: &str) -> habilis_network::protocol::Nickname {
@@ -56,6 +93,15 @@ fn sid() -> habilis_network::protocol::MeshId {
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
+/// The key of the test peer called `name`: a label picks the key, and two names give two keys.
+fn test_key(name: &str) -> habilis_network::protocol::AuthorKey {
+    let mut bytes = [0_u8; 32];
+    for (slot, byte) in bytes.iter_mut().zip(name.bytes().cycle()) {
+        *slot = byte;
+    }
+    habilis_network::protocol::AuthorKey::from(bytes)
+}
+
 fn view(message: Message) -> Authored {
     Verified::fixture_unchecked(message, habilis_network::protocol::AuthorKey::from([0; 32]))
         .authored()
@@ -86,7 +132,7 @@ fn chat_frame(author: &str, text: &str) -> Authored {
 #[test]
 fn json_message_has_all_fields() {
     let message = chat_frame("alice", "hello");
-    let json = format_msg_json(&message, false);
+    let json = format_msg_json(&message, false, None);
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message", "the event field is message");
     assert_eq!(parsed["type"], "broadcast", "the type field is broadcast");
@@ -129,7 +175,7 @@ fn json_signed_message_exposes_full_pubkey() {
     // (hex) in the JSON event — the identity behind the display nickname.
     let identity = habilis_network::protocol::Identity::generate();
     let message = chat_frame_raw("alice", "hi").sign(&identity).authored();
-    let parsed = parse(&format_msg_json(&message, false));
+    let parsed = parse(&format_msg_json(&message, false, None));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
     assert_eq!(
         pubkey,
@@ -187,14 +233,14 @@ fn fork_event_json_shape() {
 #[test]
 fn json_self_flag_true() {
     let message = chat_frame("alice", "hi");
-    let parsed = parse(&format_msg_json(&message, true));
+    let parsed = parse(&format_msg_json(&message, true, None));
     assert_eq!(parsed["self"], true, "the self field is true");
 }
 
 #[test]
 fn json_body_escapes_quotes() {
     let message = chat_frame("alice", r#"say "hello""#);
-    let json = format_msg_json(&message, false);
+    let json = format_msg_json(&message, false, None);
     let parsed = parse(&json);
     assert_eq!(
         parsed["body"], r#"say "hello""#,
@@ -205,7 +251,7 @@ fn json_body_escapes_quotes() {
 #[test]
 fn json_body_escapes_backslashes() {
     let message = chat_frame("alice", r"path\to\file");
-    let json = format_msg_json(&message, false);
+    let json = format_msg_json(&message, false, None);
     let parsed = parse(&json);
     assert_eq!(
         parsed["body"], r"path\to\file",
@@ -218,7 +264,11 @@ fn json_body_escapes_backslashes() {
 #[test]
 fn json_presence_joined() {
     let message = view(Message::new_joined(&sid(), &nick("alice")));
-    let parsed = parse(&format_presence_json(&message, PresenceSubtype::Joined));
+    let parsed = parse(&format_presence_json(
+        &message,
+        PresenceSubtype::Joined,
+        &test_key("x"),
+    ));
     assert_eq!(parsed["event"], "message", "the event field is message");
     assert_eq!(parsed["type"], "presence", "the type field is presence");
     assert_eq!(parsed["subtype"], "joined", "the subtype field is joined");
@@ -234,10 +284,35 @@ fn json_presence_joined() {
     );
 }
 
+/// A synthetic presence is minted by this node, so the key of its frame is ours. The line names
+/// the peer that the presence is about, and two peers that share a nickname get two keys.
+#[test]
+fn a_synthetic_joined_prints_the_key_of_the_peer() {
+    let (out, mut events) = capture_events();
+    let minted_here = Message::new_joined(&sid(), &nick("twin"))
+        .sign(&habilis_network::protocol::Identity::generate())
+        .authored();
+    let peer = test_key("peer");
+
+    out.print_presence(&minted_here, &peer);
+
+    let event = events.try_recv().expect("the presence reaches the sink");
+    let line = simple_event::event_json(&event).expect("a presence has a JSON line");
+    assert_eq!(
+        parse(&line)["pubkey"],
+        peer.to_string(),
+        "the line names the peer and not the node that minted the frame: {line}"
+    );
+}
+
 #[test]
 fn json_presence_left() {
     let message = view(Message::new_left(&sid(), &nick("bob")));
-    let parsed = parse(&format_presence_json(&message, PresenceSubtype::Left));
+    let parsed = parse(&format_presence_json(
+        &message,
+        PresenceSubtype::Left,
+        &test_key("x"),
+    ));
     assert_eq!(parsed["subtype"], "left", "the subtype field is left");
     assert_eq!(parsed["author"], "bob", "the author field is bob");
 }
@@ -272,7 +347,7 @@ fn status_frame_raw(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Messag
         },
     );
     let body = status_update_params::payload_body(&update).expect("payload serializes");
-    let kind = MessageKind::app_to(wire::STATUS, nick(to), None);
+    let kind = MessageKind::app_to(wire::STATUS, test_key(to), None);
     Message::new_frame(&sid(), &nick(author), kind, body)
 }
 
@@ -298,6 +373,7 @@ fn task_event_json_shape() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
+        to_name: Some(nick("calm-otter")),
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -346,6 +422,7 @@ fn task_self_echo_flag() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: true,
+        to_name: Some(nick("calm-otter")),
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -378,6 +455,7 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
         let json = simple_event::event_json(&OutputEvent::Task {
             message: Box::new(message),
             is_self: false,
+            to_name: Some(nick("drift-oak")),
         })
         .expect("task event produces a JSON line");
         parse(&json)
@@ -413,6 +491,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
+        to_name: Some(nick("drift-oak")),
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -439,6 +518,7 @@ fn task_progress_event_json_shape() {
     let json = simple_event::event_json(&OutputEvent::Task {
         message: Box::new(message),
         is_self: false,
+        to_name: Some(nick("drift-oak")),
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);
@@ -543,6 +623,7 @@ fn task_stalled_event_json_shape() {
 fn peer_timeout_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
         nickname: "ball-blue",
+        pubkey: "ab".repeat(32).as_str(),
         last_seen_secs_ago: 94,
         display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
@@ -566,10 +647,37 @@ fn peer_timeout_json_shape() {
     );
 }
 
+/// A silent or returning peer is named by its key: two peers can share a nickname, and the line
+/// must say which of them went quiet.
+#[test]
+fn the_timeout_and_return_lines_name_the_key_of_the_peer() {
+    let (out, mut events) = capture_events();
+    let peer = test_key("quiet-twin");
+
+    out.peer_timeout(&nick("twin"), &peer, 94);
+    out.peer_return(&nick("twin"), &peer);
+
+    for event_name in ["peer_timeout", "peer_return"] {
+        let event = events.try_recv().expect("the event reaches the sink");
+        let line = simple_event::event_json(&event).expect("the event has a JSON line");
+        let parsed = parse(&line);
+        assert_eq!(
+            parsed["event"], event_name,
+            "the lines come in order: {line}"
+        );
+        assert_eq!(
+            parsed["pubkey"],
+            peer.to_string(),
+            "the line names the peer by its key: {line}"
+        );
+    }
+}
+
 #[test]
 fn peer_return_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerReturn {
         nickname: "ball-blue",
+        pubkey: "ab".repeat(32).as_str(),
         display: "💬️ `<ball-blue>` came back".to_owned(),
     })
     .expect("a test value serializes to JSON");
@@ -645,14 +753,16 @@ fn receipt_event_is_invisible_and_stamped_so() {
 #[test]
 fn json_output_is_single_line() {
     let msgs: Vec<String> = vec![
-        format_msg_json(&chat_frame("alice", "hello world"), false),
+        format_msg_json(&chat_frame("alice", "hello world"), false, None),
         format_presence_json(
             &view(Message::new_joined(&sid(), &nick("charlie"))),
             PresenceSubtype::Joined,
+            &test_key("charlie"),
         ),
         format_presence_json(
             &view(Message::new_left(&sid(), &nick("dave"))),
             PresenceSubtype::Left,
+            &test_key("dave"),
         ),
     ];
     for json in msgs {
@@ -668,7 +778,7 @@ mod snapshots {
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{Message, MessageKind, PresenceSubtype};
 
-    use super::{format_msg_json, format_presence_json, view};
+    use super::{format_msg_json, format_presence_json, nick, test_key, view};
     use crate::a2a::{status_update_params, wire};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
@@ -705,14 +815,10 @@ mod snapshots {
         }
         let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
-            MessageKind::app_to(
-                wire::STATUS,
-                habilis_network::protocol::Nickname::from("calm-otter"),
-                None,
-            ),
+            MessageKind::app_to(wire::STATUS, test_key("calm-otter"), None),
             body.as_str(),
         );
-        super::super::simple_event::format_task_json(&frame, false)
+        super::super::simple_event::format_task_json(&frame, false, Some(&nick("calm-otter")))
     }
 
     #[test]
@@ -744,14 +850,14 @@ mod snapshots {
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
         let body = status_update_params::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
-            MessageKind::app_to(
-                wire::ARTIFACT,
-                habilis_network::protocol::Nickname::from("calm-otter"),
-                None,
-            ),
+            MessageKind::app_to(wire::ARTIFACT, test_key("calm-otter"), None),
             body.as_str(),
         );
-        insta::assert_snapshot!(super::super::simple_event::format_task_json(&frame, false));
+        insta::assert_snapshot!(super::super::simple_event::format_task_json(
+            &frame,
+            false,
+            Some(&nick("calm-otter"))
+        ));
     }
 
     /// A deterministic chat frame for snapshots: the payload's random
@@ -780,11 +886,7 @@ mod snapshots {
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = status_update_params::payload_body(&payload).expect("payload serializes");
         Message::fixture(
-            MessageKind::app_to(
-                wire::MSG,
-                habilis_network::protocol::Nickname::from("addressed-nick"),
-                None,
-            ),
+            MessageKind::app_to(wire::MSG, test_key("addressed-nick"), None),
             body.as_str(),
         )
     }
@@ -795,7 +897,11 @@ mod snapshots {
 
     #[test]
     fn snap_broadcast_message() {
-        insta::assert_snapshot!(format_msg_json(&snap_chat_frame("What is Rust?"), false));
+        insta::assert_snapshot!(format_msg_json(
+            &snap_chat_frame("What is Rust?"),
+            false,
+            None
+        ));
     }
 
     /// Pins the two fields that separate a private line from a public one:
@@ -804,7 +910,8 @@ mod snapshots {
     fn snap_msg_message() {
         insta::assert_snapshot!(format_msg_json(
             &snap_msg_frame("Rust is a systems language."),
-            false
+            false,
+            Some(&nick("addressed-nick"))
         ));
     }
 
@@ -816,7 +923,12 @@ mod snapshots {
             },
             "",
         ));
-        insta::assert_snapshot!(format_presence_json(&message, PresenceSubtype::Joined));
+        let key_of_the_frame = habilis_network::protocol::AuthorKey::from([0; 32]);
+        insta::assert_snapshot!(format_presence_json(
+            &message,
+            PresenceSubtype::Joined,
+            &key_of_the_frame
+        ));
     }
 
     #[test]
@@ -827,7 +939,12 @@ mod snapshots {
             },
             "",
         ));
-        insta::assert_snapshot!(format_presence_json(&message, PresenceSubtype::Left));
+        let key_of_the_frame = habilis_network::protocol::AuthorKey::from([0; 32]);
+        insta::assert_snapshot!(format_presence_json(
+            &message,
+            PresenceSubtype::Left,
+            &key_of_the_frame
+        ));
     }
 
     /// The `{"event":"state",…}` line a shared-state change emits on the
@@ -972,7 +1089,7 @@ mod prop {
     use proptest::strategy::Strategy;
     use proptest::{prop_assert, prop_assert_eq, proptest};
 
-    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, view};
+    use super::{PresenceSubtype, format_msg_json, format_presence_json, sid, test_key, view};
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7eu8, 0..200)
@@ -995,7 +1112,7 @@ mod prop {
         ) {
             let expected = body_text.clone();
             let message = super::chat_frame(author.as_str(), &body_text);
-            let json = format_msg_json(&message, is_self);
+            let json = format_msg_json(&message, is_self, None);
             let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(parsed["body"].as_str().expect("the JSON field is a string in this test"), expected.as_str());
             prop_assert_eq!(
@@ -1013,7 +1130,7 @@ mod prop {
             } else {
                 (view(Message::new_left(&sid(), &test_nick)), PresenceSubtype::Left)
             };
-            let json = format_presence_json(&message, subtype);
+            let json = format_presence_json(&message, subtype, &test_key("x"));
             let parsed: serde_json::Value = serde_json::from_str(&json).expect("the JSON text comes from the test itself");
             prop_assert_eq!(&parsed["type"], "presence");
         }

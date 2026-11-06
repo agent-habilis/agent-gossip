@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
-use habilis_network::protocol::{DedupKey, Message, MessageKind, Nickname};
+use habilis_network::protocol::messages::Authored;
+use habilis_network::protocol::{AuthorKey, DedupKey, MessageKind};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::oneshot::Sender;
 use tokio::time::Instant as TokioInstant;
@@ -244,7 +245,7 @@ struct Eviction {
 fn event_bytes(event: &OutputEvent) -> usize {
     match event {
         OutputEvent::Message { message, .. }
-        | OutputEvent::Presence { message }
+        | OutputEvent::Presence { message, .. }
         | OutputEvent::Task { message, .. } => message.body.as_str().len(),
         OutputEvent::StateChanged {
             event, document, ..
@@ -473,7 +474,7 @@ pub(crate) struct SurfacedState {
 fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
     match event {
         OutputEvent::Message { message, .. }
-        | OutputEvent::Presence { message }
+        | OutputEvent::Presence { message, .. }
         | OutputEvent::Task { message, .. } => Some(message.dedup_key()),
         OutputEvent::TaskMessage { .. }
         | OutputEvent::Ready { .. }
@@ -493,35 +494,37 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
 }
 
 /// The author and frame id a `read` receipt goes back to.
-pub(crate) type ReadTarget = (Nickname, String);
+pub(crate) type ReadTarget = (AuthorKey, String);
 
-fn directed_to_us(message: &Message, tags: &[&str], me: &Nickname) -> Option<ReadTarget> {
+fn directed_to_us(message: &Authored, tags: &[&str], me: &AuthorKey) -> Option<ReadTarget> {
     let directed = matches!(
         &message.kind,
         MessageKind::App { tag, to: Some(to), .. }
             if tags.contains(&tag.as_str()) && to == me
     );
-    directed.then(|| (message.author.clone(), message.id.as_str().to_owned()))
+    directed.then(|| (message.key(), message.id.as_str().to_owned()))
 }
 
 /// A task brief comes by request/response and has no frame id, so its target
 /// names the A2A messageId instead.
-fn read_target(event: &OutputEvent, me: &Nickname) -> Option<ReadTarget> {
+fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
     match event {
         OutputEvent::Message {
             message,
             is_self: false,
+            ..
         } => directed_to_us(message, &[wire::MSG], me),
         OutputEvent::Task {
             message,
             is_self: false,
+            ..
         } => directed_to_us(message, &[wire::STATUS, wire::ARTIFACT], me),
         OutputEvent::TaskMessage {
             id,
-            author,
+            author_key,
             is_self: false,
             ..
-        } => Some((Nickname::try_new(author).ok()?, id.clone())),
+        } => Some((*author_key, id.clone())),
         OutputEvent::Message { .. }
         | OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
@@ -638,7 +641,7 @@ impl SurfacedState {
     /// are owed a `read` receipt, each reported once. Call it before
     /// [`poll_or_register`](Self::poll_or_register), never for a long poll:
     /// the bell is not a reader.
-    pub(crate) fn read_targets(&mut self, after: Option<u64>, me: &Nickname) -> Vec<ReadTarget> {
+    pub(crate) fn read_targets(&mut self, after: Option<u64>, me: &AuthorKey) -> Vec<ReadTarget> {
         let batch = self.poll_since(Some(after.unwrap_or(self.last_served)));
         let mut targets = Vec::new();
         for item in &batch.events {
@@ -816,12 +819,13 @@ impl SurfacedState {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::collections::HashMap;
+    use std::sync::{Arc, LazyLock, Mutex};
     use std::time::Duration;
 
     use habilis_network::protocol::messages::Authored;
     use habilis_network::protocol::{
-        AppFrameParams, Channel, MeshId, Message, MessageKind, Nickname,
+        AppFrameParams, AuthorKey, Channel, Identity, MeshId, Message, MessageKind, Nickname,
     };
     use tokio::sync::oneshot;
     use tokio::time::Instant as TokioInstant;
@@ -837,12 +841,28 @@ mod tests {
         Nickname::try_new(name).expect("valid test nickname")
     }
 
+    /// The identity of the test peer called `name`. A name is a label: the identity is the peer.
+    fn identity_of(name: &str) -> &'static Identity {
+        static IDENTITIES: LazyLock<Mutex<HashMap<String, &'static Identity>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let mut identities = IDENTITIES
+            .lock()
+            .expect("a panic in another test poisons this table, and that test fails first");
+        identities
+            .entry(name.to_owned())
+            .or_insert_with(|| Box::leak(Box::new(Identity::generate())))
+    }
+
+    fn key_of(name: &str) -> AuthorKey {
+        identity_of(name).author_key()
+    }
+
     fn sized_event(bytes: usize) -> OutputEvent {
         OutputEvent::StateChanged {
             channel: Channel::Meta,
             event: Box::new(
                 Message::fixture(MessageKind::Meta, &"x".repeat(bytes))
-                    .sign(&habilis_network::protocol::Identity::generate())
+                    .sign(&Identity::generate())
                     .authored(),
             ),
             document: None,
@@ -879,7 +899,7 @@ mod tests {
                 channel: Channel::State,
                 event: Box::new(
                     Message::fixture(MessageKind::State, "{}")
-                        .sign(&habilis_network::protocol::Identity::generate())
+                        .sign(&Identity::generate())
                         .authored(),
                 ),
                 document: Some(Arc::new(document)),
@@ -912,7 +932,7 @@ mod tests {
                 channel: Channel::State,
                 event: Box::new(
                     Message::fixture(MessageKind::State, "{}")
-                        .sign(&habilis_network::protocol::Identity::generate())
+                        .sign(&Identity::generate())
                         .authored(),
                 ),
                 document: Some(Arc::new(document)),
@@ -1086,6 +1106,7 @@ mod tests {
     fn peer_return(name: &str) -> OutputEvent {
         OutputEvent::PeerReturn {
             nickname: nick(name),
+            key: key_of(name),
         }
     }
 
@@ -1095,7 +1116,7 @@ mod tests {
             channel: Channel::Meta,
             event: Box::new(
                 Message::fixture(MessageKind::Meta, "{}")
-                    .sign(&habilis_network::protocol::Identity::generate())
+                    .sign(&Identity::generate())
                     .authored(),
             ),
             document: Some(Arc::new(serde_json::json!({}))),
@@ -1107,21 +1128,25 @@ mod tests {
         let message = status_update_params::test_status_frame(
             &MeshId::from("test"),
             TaskState::Working,
-            Some(nick("initiator")),
+            Some(key_of("initiator")),
         );
         OutputEvent::Task {
-            message: Box::new(
-                message
-                    .sign(&habilis_network::protocol::Identity::generate())
-                    .authored(),
-            ),
+            message: Box::new(message.sign(&Identity::generate()).authored()),
             is_self: true,
+            to_name: None,
         }
     }
 
     fn directed_frame(tag: &str, author: &str, to: &str) -> Authored {
         directed_frame_raw(tag, author, to)
-            .sign(&habilis_network::protocol::Identity::generate())
+            .sign(identity_of(author))
+            .authored()
+    }
+
+    /// A directed frame whose author is called `author`, signed by the peer called `signer`.
+    fn directed_frame_named(tag: &str, author: &str, signer: &str, to: &str) -> Authored {
+        directed_frame_raw(tag, author, to)
+            .sign(identity_of(signer))
             .authored()
     }
 
@@ -1129,7 +1154,7 @@ mod tests {
         Message::new_app(
             &MeshId::from("test"),
             &nick(author),
-            AppFrameParams::new(wire::app_tag(tag), Some(nick(to)), None, "{}".into()),
+            AppFrameParams::new(wire::app_tag(tag), Some(key_of(to)), None, "{}".into()),
         )
     }
 
@@ -1137,6 +1162,7 @@ mod tests {
         OutputEvent::Message {
             message: Box::new(directed_frame(wire::MSG, author, to)),
             is_self,
+            to_name: None,
         }
     }
 
@@ -1147,16 +1173,16 @@ mod tests {
         let OutputEvent::Message { message, .. } = &event else {
             unreachable!()
         };
-        let expected = (nick("alice"), message.id.as_str().to_owned());
+        let expected = (key_of("alice"), message.id.as_str().to_owned());
         state.push(event);
 
-        let first = state.read_targets(None, &nick("me"));
+        let first = state.read_targets(None, &key_of("me"));
         assert_eq!(
             first,
             vec![expected],
             "the first batch is the expected event"
         );
-        let again = state.read_targets(Some(0), &nick("me"));
+        let again = state.read_targets(Some(0), &key_of("me"));
         assert!(again.is_empty(), "a re-read must not receipt twice");
     }
 
@@ -1166,14 +1192,38 @@ mod tests {
         state.push(directed_msg_event("alice", "me", false));
         state.push(directed_msg_event("bob", "me", false));
 
-        let jumped = state.read_targets(Some(1), &nick("me"));
+        let jumped = state.read_targets(Some(1), &key_of("me"));
         assert_eq!(jumped.len(), 1, "only the frame after the cursor is read");
-        let skipped = state.read_targets(Some(0), &nick("me"));
-        let skipped_to: Vec<&str> = skipped.iter().map(|(to, _)| to.as_str()).collect();
+        let skipped = state.read_targets(Some(0), &key_of("me"));
+        let skipped_from: Vec<AuthorKey> = skipped.iter().map(|(from, _)| *from).collect();
         assert_eq!(
-            skipped_to,
-            vec!["alice"],
+            skipped_from,
+            vec![key_of("alice")],
             "the frame the jump skipped is read now"
+        );
+    }
+
+    /// Two keys can use one nickname, so the receipt goes to the key that signed the message and
+    /// never to "the peer called bob".
+    #[test]
+    fn read_targets_name_the_key_of_each_sender_when_two_senders_share_a_name() {
+        let mut state = SurfacedState::new();
+        let first = directed_frame_named(wire::MSG, "bob", "bob", "me");
+        let second = directed_frame_named(wire::MSG, "bob", "bob-twin", "me");
+        for message in [first, second] {
+            state.push(OutputEvent::Message {
+                message: Box::new(message),
+                is_self: false,
+                to_name: None,
+            });
+        }
+
+        let targets = state.read_targets(None, &key_of("me"));
+        let senders: Vec<AuthorKey> = targets.iter().map(|(from, _)| *from).collect();
+        assert_eq!(
+            senders,
+            vec![key_of("bob"), key_of("bob-twin")],
+            "each message is acknowledged to the key that sent it"
         );
     }
 
@@ -1185,11 +1235,12 @@ mod tests {
         state.push(OutputEvent::Message {
             message: Box::new(directed_frame(wire::BROADCAST, "alice", "me")),
             is_self: false,
+            to_name: None,
         });
         state.push(peer_return("alice"));
 
         assert!(
-            state.read_targets(None, &nick("me")).is_empty(),
+            state.read_targets(None, &key_of("me")).is_empty(),
             "a fresh state has no read targets"
         );
     }
@@ -1201,10 +1252,11 @@ mod tests {
             state.push(OutputEvent::Task {
                 message: Box::new(directed_frame(tag, "worker", "me")),
                 is_self: false,
+                to_name: None,
             });
         }
         assert_eq!(
-            state.read_targets(None, &nick("me")).len(),
+            state.read_targets(None, &key_of("me")).len(),
             2,
             "two read targets are recorded"
         );
@@ -1816,9 +1868,10 @@ mod tests {
         OutputEvent::Presence {
             message: Box::new(
                 Message::new_joined(&MeshId::from("test"), &nick(name))
-                    .sign(&habilis_network::protocol::Identity::generate())
+                    .sign(&Identity::generate())
                     .authored(),
             ),
+            peer: AuthorKey::from([7; 32]),
         }
     }
 
@@ -1828,11 +1881,12 @@ mod tests {
     fn the_same_frame_is_served_once() {
         let mut state = SurfacedState::new();
         let event = joined_event("swift-cedar");
-        let OutputEvent::Presence { message } = &event else {
+        let OutputEvent::Presence { message, peer } = &event else {
             unreachable!()
         };
         let copy = OutputEvent::Presence {
             message: message.clone(),
+            peer: *peer,
         };
         state.push(event);
         state.push(copy);

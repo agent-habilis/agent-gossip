@@ -8,7 +8,9 @@ use habilis_network::ops::{
     start_ping_round,
 };
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{Channel, MeshId, MeshName, MessageBody, MessageId, Nickname};
+use habilis_network::protocol::{
+    AuthorKey, Channel, MeshId, MeshName, MessageBody, MessageId, Nickname,
+};
 use habilis_network::runtime::ipc::{Addressed, json_ack, json_error};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -508,9 +510,7 @@ impl IpcRequest<'_> {
     }
 
     fn meta_get(self) -> bool {
-        let _ = self
-            .resp_tx
-            .send(meta_get_response(self.state, self.author));
+        let _ = self.resp_tx.send(meta_get_response(self.state));
         false
     }
 
@@ -756,18 +756,31 @@ fn state_get_response(state: &EventLoopState, channel: Channel) -> String {
 /// into) and, worse, invites a `get` → edit → `merge` round-trip to write the
 /// trimmed view back as if it were truth. `absent` is derived, so it cannot
 /// travel that path.
-fn meta_get_response(state: &EventLoopState, author: &Nickname) -> String {
-    let document = state.doc(Channel::Meta).to_json();
-    let snapshot = state.roster_snapshot();
-    // Active members only. The roster snapshot chains the *quiet* peers onto
-    // the live ones, and a peer that died ungracefully lands exactly there —
-    // counting it as live is what made this report empty in the first place.
-    let active = snapshot.peers.iter().filter(|entry| !entry.quiet);
-    let live: HashSet<&str> = active.map(|entry| entry.nickname.as_str()).collect();
-    let absent = card::absent_peers(&document, &live, author);
+fn meta_get_response(state: &EventLoopState) -> String {
+    let MetaView { document, absent } = meta_view(state);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     let absent_json = serde_json::to_string(&absent).unwrap_or_else(|_| "[]".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json},"absent":{absent_json}}}"#)
+}
+
+/// The meta document and the slots of its `absent` entries, for the CLI and the MCP surface
+/// alike, so the two cannot drift apart on what "absent" means.
+pub(crate) struct MetaView {
+    pub(crate) document: serde_json::Value,
+    /// The slots, each the hex of an author key.
+    pub(crate) absent: Vec<String>,
+}
+
+pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
+    let document = state.doc(Channel::Meta).to_json();
+    // Every live key, shown or not: the roster snapshot lists shown peers only, and a live peer
+    // whose arrival is not shown yet must not read as absent. A quiet peer is not in the set.
+    let live: HashSet<AuthorKey> = state.live_keys().copied().collect();
+    let own: AuthorKey = state.identity().author_key();
+    let live_names: HashSet<&str> = state.live_nicknames().map(Nickname::as_str).collect();
+    let slots: Vec<&str> = card::absent_peers(&document, &live, &live_names, &own);
+    let absent: Vec<String> = slots.into_iter().map(str::to_owned).collect();
+    MetaView { document, absent }
 }
 
 /// The record of a message as the IPC and MCP surfaces report it: the wire form, with the
