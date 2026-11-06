@@ -24,7 +24,7 @@ use super::{
     LeaveResult, MCP_INSTRUCTIONS, MeshInfoResult, MeshRef, NoArgs, PingResult, SendBroadcastArgs,
     SendMsgArgs, SendResult, TaskArtifactArgs, TaskStatusArgs, TopicMeshArgs, VersionResult,
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
-    parse_task_state, rejoin_existing, to_mcp_error,
+    parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
 };
 use crate::a2a::card;
 use crate::api::{
@@ -491,7 +491,7 @@ impl AgentGossipServer {
         session
             .apply_state_merge(args.merge)
             .await
-            .map_err(to_mcp_error)?;
+            .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
     }
 
