@@ -207,8 +207,8 @@ impl NodeApp for GossipDriver {
             return false;
         }
         if message.kind.app_tag().map(AppTag::as_str) != Some(wire::BROADCAST) {
-            // Not chat. Leave it to the engine's retain/index, and do not put
-            // it in front of a person as if it were a message.
+            // Not chat, but addressed to this key: `true` lets the engine keep it
+            // for us. Do not put it in front of a person as if it were a message.
             return true;
         }
         let author = message.author.as_str().to_owned();
