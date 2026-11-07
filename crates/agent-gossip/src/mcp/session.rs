@@ -771,15 +771,13 @@ mod tests {
     fn a_card_in_two_merges_is_complete_only_after_the_last_merge() {
         let bob = AuthorKey::from([0xab; 32]);
         let slot = bob.to_string();
-        // A model of the frame that a merge becomes: its JSON text and 3000 bytes of envelope,
-        // signature and sealing. The card is small now (826 bytes), so the envelope is made
-        // large enough to cut it into 2 merges.
-        let merges = publish_merges(
-            &bob,
-            &bob_card(),
-            |merge| Ok(merge.to_string().len() + 3000),
-        )
-        .expect("every field fits a frame");
+        // The card of a daemon is small. A long description makes it too big for one frame.
+        let mut card = bob_card();
+        card["description"] = json!("x".repeat(1200));
+        // A model of the frame that a merge becomes: its JSON text and 2000 bytes of envelope,
+        // signature and sealing. It cuts this card into 2 merges.
+        let merges = publish_merges(&bob, &card, |merge| Ok(merge.to_string().len() + 2000))
+            .expect("every field fits a frame");
         assert_eq!(merges.len(), 2, "the premise: the card is in 2 merges");
 
         let mut arrived = serde_json::Map::new();
