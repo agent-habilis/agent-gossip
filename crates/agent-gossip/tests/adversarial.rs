@@ -957,7 +957,7 @@ async fn a_message_that_impersonates_a_held_nickname_is_refused() {
     let seen = victim.wait_body("i-am-you", T).await;
     assert!(
         !seen,
-        "a message that impersonates a held nickname is surfaced: the gate does not refuse it"
+        "the frame of a key that has no proof of the nickname reached the victim, so the gate admitted it"
     );
     victim.leave().await;
     attacker.leave().await;
@@ -1331,7 +1331,11 @@ async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch()
     let honest = InProcNode::create("adv-far-root").await;
     let card_deadline = Instant::now() + T;
     let (slot, card) = loop {
-        let meta = honest.session.meta_get().await.expect("the session is up");
+        let meta = honest
+            .session
+            .meta_get()
+            .await
+            .expect("the session answers until the test ends");
         if let Some(slot) = common::card_slot_of(&meta, &honest.nickname) {
             let card = meta["peers"][&slot]["card"].clone();
             break (slot, card);
@@ -1362,13 +1366,17 @@ async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch()
     // marker), and not only its old card of epoch 0.
     let marker_deadline = Instant::now() + T;
     loop {
-        let meta = joiner.session.meta_get().await.expect("the session is up");
+        let meta = joiner
+            .session
+            .meta_get()
+            .await
+            .expect("the session answers until the test ends");
         if meta.pointer(&format!("/peers/{slot}/{FAR_MARKER}")) == Some(&json!(true)) {
             break;
         }
         assert!(
             Instant::now() < marker_deadline,
-            "the joiner never got the far epoch of the honest node; its meta is {meta}"
+            "the joiner never adopted the far epoch of the honest node before the deadline; its meta is {meta}"
         );
         tokio::time::sleep(POLL).await;
     }
@@ -1376,7 +1384,11 @@ async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch()
     // it back), and the honest node holds it.
     let joiner_card_deadline = Instant::now() + T;
     loop {
-        let meta = honest.session.meta_get().await.expect("the session is up");
+        let meta = honest
+            .session
+            .meta_get()
+            .await
+            .expect("the session answers until the test ends");
         if common::card_slot_of(&meta, &joiner.nickname).is_some() {
             break;
         }
@@ -1418,7 +1430,11 @@ async fn a_far_root_by_gossip_does_not_capture_a_joiner() {
         "barrier lost"
     );
 
-    let meta = joiner.session.meta_get().await.expect("the session is up");
+    let meta = joiner
+        .session
+        .meta_get()
+        .await
+        .expect("the session answers until the test ends");
     assert!(
         common::card_slot_of(&meta, &honest.nickname).is_some(),
         "the joiner kept the meta of the mesh"
