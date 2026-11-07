@@ -38,6 +38,31 @@ impl<T> EventSink<T> {
 mod tests {
     use super::{EVENT_FEED_CAP, event_feed};
 
+    #[derive(Debug, PartialEq)]
+    enum Feed {
+        Found(usize),
+        Lost(usize),
+    }
+
+    /// A `Lost` published into a full feed still reaches the consumer: a consumer that misses it
+    /// keeps a mesh that is gone.
+    #[test]
+    fn a_lost_event_survives_a_full_feed() {
+        let (sink, mut rx) = event_feed::<Feed>();
+        for index in 0..EVENT_FEED_CAP {
+            sink.publish(Feed::Found(index));
+        }
+        sink.publish(Feed::Lost(7));
+        let mut delivered = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            delivered.push(event);
+        }
+        assert!(
+            delivered.contains(&Feed::Lost(7)),
+            "the Lost of a full feed is delivered"
+        );
+    }
+
     #[test]
     fn a_full_feed_drops_the_new_event_and_counts_it() {
         let (sink, rx) = event_feed::<usize>();
