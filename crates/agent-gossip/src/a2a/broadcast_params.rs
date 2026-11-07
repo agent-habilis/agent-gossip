@@ -2513,6 +2513,12 @@ pub(crate) async fn handle_session_request(
             tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
             false
         }
+        // A channel document put in an epoch at once (adversarial only).
+        #[cfg(feature = "adversarial")]
+        SessionRequest::ForceEpoch { channel, epoch } => {
+            state.force_epoch(channel, epoch);
+            false
+        }
         // Reassembly accounting snapshot (adversarial only) for the
         // shard-budget tripwires.
         #[cfg(feature = "adversarial")]

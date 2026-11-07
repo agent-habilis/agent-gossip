@@ -344,6 +344,22 @@ impl InProcessSession {
             .map_err(|_| SessionError::Stopped)
     }
 
+    /// Put the document of `channel` in `epoch` at once. Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn force_epoch(
+        &self,
+        channel: habilis_network::protocol::Channel,
+        epoch: u64,
+    ) -> Result<(), SessionError> {
+        self.node
+            .send(SessionRequest::ForceEpoch { channel, epoch })
+            .await
+            .map_err(|_| SessionError::Stopped)
+    }
+
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]
