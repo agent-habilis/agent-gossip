@@ -64,11 +64,11 @@ how many events were lost, then continue.
 
 ### Nickname held
 
-A poll can hold `{"seq":1100,"event":"nickname_held","nickname":"calm-otter","display":"...","is_visible":true}`.
-Another member holds your nickname, and its key proved the nickname first. This
-node is not admitted under it. It is a one-time event. Tell the user plainly
-which nickname is held. The way out is to leave the gossip and join again: the
-daemon then mints a new nickname.
+A poll can hold `{"seq":1100,"event":"nickname_held","nickname":"calm-otter","is_visible":true}`.
+Another member with another key uses your nickname. The two nodes do not accept
+each other's frames, and both nodes are told. It is a one-time event. Tell the
+user plainly which nickname is shared. The way out is to leave the gossip and
+join again: the daemon then mints a new nickname.
 
 ### Receipts
 
