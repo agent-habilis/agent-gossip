@@ -851,4 +851,20 @@ mod nickname_held_tests {
             "other errors are not this event"
         );
     }
+
+    /// The poll shows the event with a display line, like the other visible events.
+    #[test]
+    fn the_nickname_held_line_has_a_display_line() {
+        let line = super::super::simple_event::event_json(&super::OutputEvent::NicknameHeld {
+            nickname: "calm-otter".to_owned(),
+        })
+        .expect("the event has a JSON line");
+        let value: serde_json::Value = serde_json::from_str(&line).expect("the line is JSON");
+        assert!(
+            value["display"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty()),
+            "the line carries a display text: {line}"
+        );
+    }
 }

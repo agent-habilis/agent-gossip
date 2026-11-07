@@ -1,8 +1,3 @@
-//! Two members claim one nickname with two different member keys. Both nodes get the `nickname_held`
-//! event, and neither accepts the frames of the other. The rule is symmetric on purpose: a tie-break
-//! needs an input that the claimant chooses (an older proof time, a lower key), so a forger would win it.
-//! The event is visible and rings the bell (the unit test `a_nickname_held_event_is_pollable_and_wakes_the_bell`).
-
 use std::time::Instant;
 
 use agent_gossip_test_fixtures::{InProcNode, MSG_TIMEOUT, POLL};
@@ -34,6 +29,8 @@ async fn await_held(node: &mut InProcNode) -> Vec<Value> {
     }
 }
 
+/// The rule is symmetric on purpose: a tie-break needs an input that the claimant chooses (an older
+/// proof time, a lower key), so a forger would win it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn both_members_of_one_nickname_get_one_visible_nickname_held_event() {
     let mut first = InProcNode::create_with_nick("nickname-held", SHARED).await;
