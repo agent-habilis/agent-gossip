@@ -573,12 +573,15 @@ impl Output {
     /// Print an error line.
     pub(crate) fn error(&self, message: &str) {
         if let Some(nickname) = nickname_held_key(message) {
-            let nickname = nickname.to_owned();
+            let held = OutputEvent::NicknameHeld {
+                nickname: nickname.to_owned(),
+            };
             self.dispatch(
-                || OutputEvent::NicknameHeld {
-                    nickname: nickname.clone(),
+                || held.clone(),
+                |mode| match mode {
+                    OutputMode::Json => print_json_line(&held),
+                    OutputMode::Silent => {}
                 },
-                |_| {},
             );
         }
         self.dispatch(
@@ -825,6 +828,13 @@ mod tests {
     }
 }
 
+/// The line that the poll path gives for `event`, on stdout: the stream shows the same JSON as the poll.
+fn print_json_line(event: &OutputEvent) {
+    if let Some(line) = simple_event::event_json(event) {
+        emit(&line);
+    }
+}
+
 /// The nickname that the gate's error names as held by another member, if `line` is that error.
 /// A caller matches the event on the stable key `nickname_held`, not on these words.
 pub(crate) fn nickname_held_key(line: &str) -> Option<&str> {
@@ -859,7 +869,8 @@ mod nickname_held_tests {
             nickname: "calm-otter".to_owned(),
         })
         .expect("the event has a JSON line");
-        let value: serde_json::Value = serde_json::from_str(&line).expect("the line is JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("the poll line of the event is a JSON object");
         assert!(
             value["display"]
                 .as_str()
