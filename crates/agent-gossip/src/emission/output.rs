@@ -816,6 +816,18 @@ mod tests {
     }
 }
 
+/// The nickname that the gate's error names as held by another member, if `line` is that error.
+/// A caller matches the event on the stable key `nickname_held`, not on these words.
+#[expect(
+    dead_code,
+    reason = "the nickname_held ring event that calls it lands in the next commit"
+)]
+pub(crate) fn nickname_held_key(line: &str) -> Option<&str> {
+    line.strip_prefix("The nickname ")?
+        .split_once(" is held by another member")
+        .map(|(nickname, _)| nickname)
+}
+
 #[cfg(test)]
 mod nickname_held_tests {
     use super::nickname_held_key;
