@@ -525,8 +525,14 @@ impl A2aApp {
             .position(|entry| entry.awaits_reply(corr, from_key))
         {
             let entry = self.late_replies.swap_remove(index);
-            if let Adoption::Adopted(task_id) = self.adopt_returned_task((from_key, from), body) {
-                self.cancel_task_opened_late(task_id, from_key, entry.late.opens_task);
+            match self.adopt_returned_task((from_key, from), body) {
+                Adoption::Adopted(task_id) => {
+                    self.cancel_task_opened_late(task_id, from_key, entry.late.opens_task);
+                }
+                Adoption::Refused(refused) => {
+                    self.cancel_task_refused_late(refused, from_key, entry.late.opens_task);
+                }
+                Adoption::NoTask => {}
             }
         }
     }
@@ -546,7 +552,16 @@ impl A2aApp {
         (from_key, from): (&AuthorKey, &Nickname),
         body: &str,
     ) {
-        let Adoption::Adopted(task_id) = self.adopt_returned_task((from_key, from), body) else {
+        let adoption = self.adopt_returned_task((from_key, from), body);
+        let Adoption::Adopted(task_id) = adoption else {
+            if let Adoption::Refused(refused) = adoption {
+                let opened = self
+                    .orphan_blobs
+                    .get(orphan_index)
+                    .and_then(|orphan| orphan.late_reply.as_ref())
+                    .is_some_and(|late| late.opens_task);
+                self.cancel_task_refused_late(refused, from_key, opened);
+            }
             // The reply answers the call once: the next sweep evicts the group
             // and the call awaits nothing more.
             if let Some(orphan) = self.orphan_blobs.get_mut(orphan_index) {
@@ -576,6 +591,14 @@ impl A2aApp {
         }
         self.late_cancels
             .push((task_id, *from_key, "call-timed-out"));
+    }
+
+    /// The caller was told the call timed out, and the registry refused the task that the call
+    /// opened. No record is kept, so only the worker can stop it: it is told to cancel.
+    fn cancel_task_refused_late(&mut self, refused: TaskId, from_key: &AuthorKey, opened: bool) {
+        if opened {
+            self.late_cancels.push((refused, *from_key, "task-refused"));
+        }
     }
 
     /// The worker picks the task id of its reply, so the cap of groups per task is checked here,
@@ -1944,6 +1967,87 @@ mod tests {
             app.take_late_cancels(),
             vec![(task_id, bob_key(), "call-timed-out")],
             "the cancel reply is ok"
+        );
+    }
+
+    /// A registry at its cap, with every record of another task.
+    fn app_with_full_task_registry() -> super::A2aApp {
+        let mut app = super::A2aApp::new();
+        for index in 0..tuning::TASKS_CAP {
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &TaskId::random(),
+                    peer_key: &filler_key(index),
+                    peer: &Nickname::from("filler"),
+                    task_state: TaskState::Working,
+                    now: Instant::now(),
+                },
+            );
+        }
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "each filler key stays under its own quota, so only the global cap is full"
+        );
+        app
+    }
+
+    /// The reply of a worker that opened the task `task_id`.
+    fn created_reply(task_id: &TaskId) -> String {
+        serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string()
+    }
+
+    /// A call that timed out, whose orphan the cap kept, gets its reply when the registry is
+    /// full. The registry refuses the task, so the worker is told to cancel it.
+    #[test]
+    fn a_refused_late_reply_for_a_kept_orphan_cancels_the_task_on_the_worker() {
+        let mut app = app_with_full_task_registry();
+        let task_id = TaskId::random();
+        let mut waiter = waiter_with_blob("corr-late", "group-late");
+        waiter.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(waiter);
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-late"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created_reply(&task_id),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the worker runs a task that nobody tracks, unless it is told to cancel"
+        );
+    }
+
+    /// The same for a call whose orphan the cap dropped: only its late reply is left.
+    #[test]
+    fn a_refused_late_reply_for_a_dropped_orphan_cancels_the_task_on_the_worker() {
+        let mut app = app_with_full_task_registry();
+        let task_id = TaskId::random();
+        let mut waiter = waiter_with_blob("corr-late", "group-late");
+        waiter.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(waiter);
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+        for index in 0..tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-late"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created_reply(&task_id),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the worker runs a task that nobody tracks, unless it is told to cancel"
         );
     }
 
