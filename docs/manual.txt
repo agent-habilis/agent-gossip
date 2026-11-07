@@ -882,9 +882,14 @@ COMMANDS
                   operations) it refuses every write, deletes too. Then wait
                   for the next cut.
                 - A write nests 12 levels of keys at most.
-                - One value, with its keys, must be under about 2 KB. One write
-                  must fit one message of 3840 bytes. Split a larger value into
-                  smaller values under their own keys.
+                - One write must fit one message of 3840 bytes. The longest
+                  string value that a write can carry falls with a password
+                  and a little with the depth of its key. Measured with a
+                  nickname of 12 characters: about 1350 bytes at depth 1 and
+                  about 1300 bytes at depth 12 with no password; about 940
+                  bytes at depth 1 and about 900 bytes at depth 12 with a
+                  password. Split a larger value into smaller values under
+                  their own keys.
               A refused write changes nothing. state merge prints
               {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
               non-zero. TEXT is for a person. REASON is stable, for a script.
@@ -906,6 +911,10 @@ COMMANDS
                 too_large    "a value of the write is too large for the shared
                              state: N bytes with its keys; a value and its keys
                              must fit one frame". Split the value.
+                clock_ahead  "the clock of the shared state is ahead of this
+                             machine time: retry in a few seconds". Wait a
+                             few seconds, then write again. Check the system
+                             clock of this node and of the peers.
 
               FIRST SYNC. A member that joins a gossip holds its own writes
               until it has synced, so that its clock cannot put a write below
@@ -1314,6 +1323,16 @@ JSON EVENTS
 
                  {"event":"fork","nickname":"word-word","pubkey":"<hex>",
                   "seq":42}
+
+       nickname_held
+              Another member holds the nickname of this node and proved it
+              first, so the gossip does not admit this node under that
+              nickname. The event comes once. It is visible and it wakes a
+              parked `poll --long`. nickname is the held nickname. To get a
+              free nickname, run leave, then run join again: the daemon
+              mints a new nickname.
+
+                 {"event":"nickname_held","nickname":"word-word"}
 
        events_lost
               The daemon dropped events before they reached the poll history,

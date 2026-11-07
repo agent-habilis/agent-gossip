@@ -33,6 +33,10 @@ impl StateRefusalReply {
                 "too_large",
                 "split the value into smaller values under their own keys",
             ),
+            StateRefusal::ClockAhead => (
+                "clock_ahead",
+                "wait a few seconds and write again; check the system clock of this node and of the peers",
+            ),
             _ => ("refused", "write again later"),
         };
         Some(Self {
@@ -108,6 +112,12 @@ mod tests {
                 "a value of the write is too large for the shared state: 3000 bytes with its keys; a value and its keys must fit one frame",
                 "too_large",
                 "smaller values",
+            ),
+            (
+                StateRefusal::ClockAhead,
+                "the clock of the shared state is ahead of this machine time: retry in a few seconds",
+                "clock_ahead",
+                "system clock",
             ),
         ];
         for (refusal, text, reason, way_out) in cases {
