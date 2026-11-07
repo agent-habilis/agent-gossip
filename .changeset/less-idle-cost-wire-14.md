@@ -10,6 +10,8 @@ The shared state document is bounded too. Every write carries a wall clock time 
 
 A member can prove its identity. The `Joined` frame carries a proof signed by the persisted member key, and a peer can ask for it. A calm mesh sends no extra bytes for it.
 
+The member key is kept next to the state file, as `<state>.key` with mode 0600. A second daemon on one state path now fails at start, because two live daemons cannot be one member.
+
 A peer on frame version 13.0 cannot read frames of version 14.0. Every consumer of the engine must move to frame version 14.0; all peers of a mesh must update together.
 
 For a user, a refused state write names its reason and a way out.

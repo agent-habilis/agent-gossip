@@ -785,8 +785,11 @@ COMMANDS
               narrow to one member with --nickname when several run on this
               machine. Daemons started with a --state-file outside
               /tmp/agent-gossip (and in-process sessions, which write
-              none) are not discoverable. Exits 0 whether or not anything
-              matched; prints:
+              none) are not discoverable. Two daemons on one state path
+              cannot run: the second fails at start with "another daemon
+              holds the member key {path}: two live daemons cannot be one
+              member; use another nickname or another --state-file".
+              Exits 0 whether or not anything matched; prints:
 
                 {"ok":true,
                  "left":[{"gossip":"<hash>","name":"cool-team",
