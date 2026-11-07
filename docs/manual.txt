@@ -882,9 +882,14 @@ COMMANDS
                   operations) it refuses every write, deletes too. Then wait
                   for the next cut.
                 - A write nests 12 levels of keys at most.
-                - One value, with its keys, must be under about 2 KB. One write
-                  must fit one message of 3840 bytes. Split a larger value into
-                  smaller values under their own keys.
+                - One write must fit one message of 3840 bytes. The longest
+                  string value that a write can carry falls with a password
+                  and a little with the depth of its key. Measured with a
+                  nickname of 12 characters: about 1350 bytes at depth 1 and
+                  about 1300 bytes at depth 12 with no password; about 940
+                  bytes at depth 1 and about 900 bytes at depth 12 with a
+                  password. Split a larger value into smaller values under
+                  their own keys.
               A refused write changes nothing. state merge prints
               {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
               non-zero. TEXT is for a person. REASON is stable, for a script.
