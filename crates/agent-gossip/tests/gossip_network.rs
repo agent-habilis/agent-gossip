@@ -3343,6 +3343,49 @@ fn a_daemon_with_no_state_file_keeps_its_member_key_in_the_default_state_path() 
     );
 }
 
+/// A member key file that others can read is not loaded: the daemon stops, and the user is told which file it is
+/// and how to go on (remove it), on the text of the process and not only in a log.
+#[test]
+fn a_member_key_file_that_others_can_read_stops_the_daemon_and_names_the_file() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (creator, mesh) = Node::create_named("keytrust");
+    let dir = std::env::temp_dir().join(format!("agent-gossip-keytrust-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("a temp folder");
+    let state = dir.join("session.json");
+    let key = state.with_extension("key");
+    fs::write(&key, [3u8; 40]).expect("the folder of the test is writable");
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o644))
+        .expect("the owner can widen the mode, so that others can read the file");
+
+    let out = common::test_cmd()
+        .args([
+            "join",
+            &mesh,
+            "--nickname",
+            "keytrust-joiner",
+            "--state-file",
+        ])
+        .arg(&state)
+        .output()
+        .expect("agent-gossip join runs");
+
+    creator.kill();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success(),
+        "the daemon started with a key file that others can read: {text}"
+    );
+    assert!(
+        text.contains(&key.display().to_string()) && text.contains("remove it"),
+        "the user is not told which key file is refused and how to go on: {text}"
+    );
+}
+
 /// `agent-gossip leave <id>` (explicit target) stops exactly that mesh's local
 /// daemon — the state file disappears (proof of the graceful shutdown path)
 /// — and leaves an unrelated daemon untouched.
