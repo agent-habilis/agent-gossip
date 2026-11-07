@@ -20,7 +20,7 @@ use habilis_network::runtime::tuning::{
     advertise_interval, directory_expiry, directory_private_for_test,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
@@ -276,8 +276,8 @@ impl TicketDirectory {
                         }
                         // A slow consumer dropped inbound — listings self-heal on
                         // the next re-ad, so skip and continue.
-                        Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(RecvError::Lagged(_)) => {}
+                        Err(RecvError::Closed) => break,
                     },
                     _ = expiry.tick() => {
                         let now = Instant::now();

@@ -51,7 +51,7 @@ impl<T: Evictable> EventSink<T> {
             .shared
             .queue
             .lock()
-            .expect("the feed lock is never held across a panic");
+            .expect("a panic while the feed lock is held would poison it, so the lock is never taken across one");
         if queue.len() >= EVENT_FEED_CAP {
             let evicted = queue
                 .iter()
@@ -89,7 +89,7 @@ impl<T> EventReceiver<T> {
         self.shared
             .queue
             .lock()
-            .expect("the feed lock is never held across a panic")
+            .expect("a panic while the feed lock is held would poison it, so the lock is never taken across one")
             .pop_front()
     }
 
@@ -154,7 +154,7 @@ mod tests {
         }
         assert!(
             delivered.contains(&Feed::Lost(7)),
-            "the Lost of a full feed is delivered"
+            "a consumer that misses a Lost keeps a mesh that is gone"
         );
     }
 
@@ -170,14 +170,11 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             held.push(event);
         }
-        assert_eq!(
-            held,
-            (9 * EVENT_FEED_CAP..10 * EVENT_FEED_CAP).collect::<Vec<_>>(),
-            "the feed holds the newest events, in order"
-        );
+        let newest: Vec<usize> = (9 * EVENT_FEED_CAP..10 * EVENT_FEED_CAP).collect();
+        assert_eq!(held, newest, "the feed holds the newest events, in order");
         assert_eq!(
             sink.dropped(),
-            u64::try_from(9 * EVENT_FEED_CAP).expect("the cap fits in u64"),
+            u64::try_from(9 * EVENT_FEED_CAP).expect("9 times the cap fits in u64"),
             "every event past the cap is evicted and counted"
         );
     }
@@ -189,7 +186,9 @@ mod tests {
         for index in 0..=EVENT_FEED_CAP {
             sink.publish(Feed::Lost(index));
         }
-        let first = rx.try_recv().expect("the feed holds events");
+        let first = rx
+            .try_recv()
+            .expect("publishing past the cap leaves at least one event to receive");
         assert_eq!(first, Feed::Lost(1), "the oldest Lost is the one evicted");
     }
 }
