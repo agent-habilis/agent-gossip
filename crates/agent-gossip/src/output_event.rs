@@ -10,8 +10,8 @@ use crate::a2a::{TaskId, TaskState};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum OutputEvent {
-    /// Another member holds our nickname, and its key proved the nickname first: this node is not
-    /// admitted under it. The stable key is `nickname_held`.
+    /// Another member with another key uses our nickname: the two nodes do not accept each other's
+    /// frames, and both get this event. The stable key is `nickname_held`.
     NicknameHeld {
         /// The nickname that another member holds.
         nickname: String,

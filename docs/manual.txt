@@ -1325,12 +1325,12 @@ JSON EVENTS
                   "seq":42}
 
        nickname_held
-              Another member holds the nickname of this node and proved it
-              first, so the gossip does not admit this node under that
-              nickname. The event comes once. It is visible and it wakes a
-              parked `poll --long`. nickname is the held nickname. To get a
-              free nickname, run leave, then run join again: the daemon
-              mints a new nickname.
+              Another member with another key uses the nickname of this
+              node. The two nodes do not accept each other frames. Both
+              nodes get this event. The event comes once. It is visible and
+              it wakes a parked `poll --long`. nickname is the shared
+              nickname. The way out: leave and join again. The daemon mints
+              a new nickname.
 
                  {"event":"nickname_held","nickname":"word-word"}
 
