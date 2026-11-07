@@ -111,6 +111,13 @@ pub(crate) enum SessionRequest {
     /// without needing to kill the gossip actor from outside.
     #[cfg(feature = "adversarial")]
     SeverGossip,
+    /// Put the document of a channel in an epoch at once, as an adoption does after its wait.
+    /// Adversarial-suite only: it puts an honest node in a far epoch without 10 minutes of ticks.
+    #[cfg(feature = "adversarial")]
+    ForceEpoch {
+        channel: habilis_network::protocol::Channel,
+        epoch: u64,
+    },
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]

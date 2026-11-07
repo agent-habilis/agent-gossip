@@ -322,6 +322,40 @@ impl CraftedMsg {
         }
     }
 
+    /// A ROOT of `epoch` that a forger broadcasts: the card of the signer's OWN slot on the genesis of
+    /// that epoch, with the actor of the signer. The gate passes it, so only the rule of the far
+    /// jump (and the bound) can refuse it. Sign it with the same `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the author is a valid nickname.
+    pub fn meta_far_root(
+        mesh: &MeshId,
+        author: &str,
+        key: &TestKey,
+        epoch: u64,
+        card: &serde_json::Value,
+    ) -> Self {
+        let author = Nickname::try_new(author).expect("test author is a valid nickname");
+        let slot = encode_pubkey(&key.0.public());
+        let merge = serde_json::json!({ "peers": { slot: { "card": card } } });
+        let body = MeshDoc::forged_root_body(
+            crate::a2a::card_gate(),
+            epoch,
+            &merge,
+            key.0.public().as_bytes(),
+        )
+        .expect("a forged root builds");
+        Self {
+            message: Message::new_channel_event(
+                mesh,
+                &author,
+                body,
+                habilis_network::protocol::Channel::Meta,
+            ),
+        }
+    }
+
     /// A crafted `a2a_status` frame whose FRAME correlation field (`corr`)
     /// carries `frame_task_id` while the PAYLOAD claims `payload_task_id` — the
     /// cross-validation attack shape a correct client never produces. Both

@@ -1303,3 +1303,102 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
     victim.leave().await;
     attacker.leave().await;
 }
+
+// ── The far root: a joiner can always join ──────────────────────────────
+//
+// Two forged roots, 10 minutes apart, put a mesh above twice the bound of a jump
+// (`DOC_EPOCH_JUMP_MAX`, 131072 epochs). A node at epoch 0 (a joiner, or a node that restarted)
+// then refused every root above the bound and got NO meta for good: no roster, no cards. The
+// engine takes such a root now only as the point-to-point answer to the first request of a node
+// that awaits it, within 5 s. An honest node reaches a far epoch by two adoptions (5 minutes of
+// ticks each), so the test puts it there at once with `force_epoch` (adversarial hook).
+//
+// Not covered here, on purpose: a valid frame of epoch 0 that comes by gossip BEFORE the answer
+// (the answer comes a few milliseconds after the first request, so no test can order the two
+// without a race; the doc-crate test `a_meta_document_that_holds_a_frame_of_another_author_takes_
+// the_far_root_as_the_answer` proves the property), and the state channel (an honest node reaches
+// a far state epoch by a cut, which no hook forces).
+
+/// A far epoch, above twice the bound of a jump.
+const FAR_EPOCH: u64 = 262_144;
+
+/// A joiner at epoch 0 meets an honest node in a far epoch and gets its meta: the cards of both
+/// nodes are in both documents. Against the engine that refused far roots, the joiner never saw
+/// the card of the honest node.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch() {
+    let honest = InProcNode::create("adv-far-root").await;
+    let deadline = Instant::now() + T;
+    let (slot, card) = loop {
+        let meta = honest.session.meta_get().await.expect("the session is up");
+        if let Some(slot) = common::card_slot_of(&meta, &honest.nickname) {
+            let card = meta["peers"][&slot]["card"].clone();
+            break (slot, card);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the honest node never published its card"
+        );
+        tokio::time::sleep(POLL).await;
+    };
+    honest
+        .session
+        .force_epoch(habilis_network::protocol::Channel::Meta, FAR_EPOCH)
+        .await
+        .expect("the honest node stays up");
+    honest
+        .session
+        .meta_merge(json!({ "peers": { slot: { "card": card } } }))
+        .await
+        .expect("the honest node writes its card in the far epoch");
+
+    let joiner = InProcNode::join(&honest.mesh, "adv-far-root-joiner").await;
+
+    common::await_mutual_cards(&honest, &joiner).await;
+    honest.leave().await;
+    joiner.leave().await;
+}
+
+/// A far root that comes by gossip is not taken: a joiner in a mesh at epoch 0 keeps the meta of
+/// the mesh, and holds no card of the forger. The root is valid (the card of the forger's own slot,
+/// the actor of its key), so only the rule of the far jump refuses it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_far_root_by_gossip_does_not_capture_a_joiner() {
+    let (honest, attacker) = meshed_pair("far-gossip").await;
+    let mut joiner = InProcNode::join(&honest.mesh, "adv-far-gossip-joiner").await;
+    common::await_mutual_cards(&honest, &joiner).await;
+    let key = test_key::new_key();
+    let forged = CraftedMsg::meta_far_root(
+        attacker.session.mesh_id(),
+        "adv-far-gossip-forger",
+        &key,
+        3 * 131_072,
+        &json!({ "name": "forger" }),
+    )
+    .sign(&key)
+    .bytes();
+
+    attacker
+        .session
+        .inject_raw(forged)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    attacker.broadcast("barrier-far-gossip").await;
+    assert!(
+        joiner.wait_body("barrier-far-gossip", T).await,
+        "barrier lost"
+    );
+
+    let meta = joiner.session.meta_get().await.expect("the session is up");
+    assert!(
+        common::card_slot_of(&meta, &honest.nickname).is_some(),
+        "the joiner kept the meta of the mesh"
+    );
+    assert!(
+        common::card_slot_of(&meta, "forger").is_none(),
+        "a far root that came by gossip must not be taken"
+    );
+    honest.leave().await;
+    attacker.leave().await;
+    joiner.leave().await;
+}
