@@ -125,18 +125,59 @@ mod tests {
         fn is_lost(&self) -> bool {
             false
         }
+
+        fn events_lost(count: u64) -> Self {
+            usize::try_from(count).expect("a test count fits in usize")
+        }
     }
 
     #[derive(Debug, PartialEq)]
     enum Feed {
         Found(usize),
         Lost(usize),
+        EventsLost(u64),
     }
 
     impl Evictable for Feed {
         fn is_lost(&self) -> bool {
             matches!(self, Feed::Lost(_))
         }
+
+        fn events_lost(count: u64) -> Self {
+            Feed::EventsLost(count)
+        }
+    }
+
+    /// A consumer that lost events is told how many, before the next event, so it can list again.
+    #[test]
+    fn a_full_feed_tells_the_consumer_how_many_it_lost() {
+        let (sink, mut rx) = event_feed::<Feed>();
+        for index in 0..EVENT_FEED_CAP {
+            sink.publish(Feed::Lost(index));
+        }
+        sink.publish(Feed::Found(9999));
+        assert_eq!(
+            rx.try_recv().expect("the marker comes first"),
+            Feed::EventsLost(1),
+            "one event was lost, and the marker says so before the next event"
+        );
+        assert_eq!(
+            rx.try_recv()
+                .expect("the next real event follows the marker"),
+            Feed::Lost(1),
+            "the event after the marker is the oldest that was kept"
+        );
+    }
+
+    /// Without a drop, the stream carries no marker: the stream a consumer reads does not change.
+    #[test]
+    fn a_feed_with_no_drop_sends_no_marker() {
+        let (sink, mut rx) = event_feed::<Feed>();
+        sink.publish(Feed::Found(1));
+        sink.publish(Feed::Found(2));
+        assert_eq!(rx.try_recv().expect("the first event"), Feed::Found(1));
+        assert_eq!(rx.try_recv().expect("the second event"), Feed::Found(2));
+        assert!(rx.try_recv().is_err(), "no marker when nothing was dropped");
     }
 
     /// A `Lost` published into a full feed still reaches the consumer: a consumer that misses it
