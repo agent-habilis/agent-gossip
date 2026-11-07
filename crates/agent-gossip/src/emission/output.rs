@@ -815,3 +815,25 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod nickname_held_tests {
+    use super::nickname_held_key;
+
+    /// The gate's error names the held nickname with a stable key, so an agent can match the
+    /// event on the key and not on the words.
+    #[test]
+    fn the_gate_error_maps_to_the_nickname_held_key() {
+        let line = "The nickname calm-otter is held by another member, whose key proved it first";
+        assert_eq!(
+            nickname_held_key(line),
+            Some("calm-otter"),
+            "the held nickname is read from the engine's gate error"
+        );
+        assert_eq!(
+            nickname_held_key("some other error"),
+            None,
+            "other errors are not this event"
+        );
+    }
+}
