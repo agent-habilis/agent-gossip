@@ -324,6 +324,7 @@ mod tests {
             | OutputEvent::MsgPosted { .. }
             | OutputEvent::Info { .. }
             | OutputEvent::Error { .. }
+            | OutputEvent::NicknameHeld { .. }
             | OutputEvent::EventsLost { .. }
             | OutputEvent::PingReport { .. }
             | OutputEvent::StateChanged { .. }

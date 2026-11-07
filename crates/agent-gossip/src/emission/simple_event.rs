@@ -418,6 +418,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::EventsLost { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::TaskStalled { .. } => true,
         OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
@@ -922,6 +923,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. } => return Formatted::Serialized,
     };
@@ -1013,6 +1015,11 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
         }
+        OutputEvent::NicknameHeld { nickname } => serde_json::to_string(&serde_json::json!({
+            "event": "nickname_held",
+            "nickname": nickname,
+        }))
+        .ok(),
         OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
             lost: *lost,
             display: events_lost_display(*lost),

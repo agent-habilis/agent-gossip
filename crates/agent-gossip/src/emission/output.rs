@@ -572,6 +572,15 @@ impl Output {
 
     /// Print an error line.
     pub(crate) fn error(&self, message: &str) {
+        if let Some(nickname) = nickname_held_key(message) {
+            let nickname = nickname.to_owned();
+            self.dispatch(
+                || OutputEvent::NicknameHeld {
+                    nickname: nickname.clone(),
+                },
+                |_| {},
+            );
+        }
         self.dispatch(
             || OutputEvent::Error {
                 message: message.to_owned(),
@@ -818,10 +827,6 @@ mod tests {
 
 /// The nickname that the gate's error names as held by another member, if `line` is that error.
 /// A caller matches the event on the stable key `nickname_held`, not on these words.
-#[expect(
-    dead_code,
-    reason = "the nickname_held ring event that calls it lands in the next commit"
-)]
 pub(crate) fn nickname_held_key(line: &str) -> Option<&str> {
     line.strip_prefix("The nickname ")?
         .split_once(" is held by another member")
@@ -830,20 +835,18 @@ pub(crate) fn nickname_held_key(line: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod nickname_held_tests {
-    use super::nickname_held_key;
-
     /// The gate's error names the held nickname with a stable key, so an agent can match the
     /// event on the key and not on the words.
     #[test]
     fn the_gate_error_maps_to_the_nickname_held_key() {
         let line = "The nickname calm-otter is held by another member, whose key proved it first";
         assert_eq!(
-            nickname_held_key(line),
+            super::nickname_held_key(line),
             Some("calm-otter"),
             "the held nickname is read from the engine's gate error"
         );
         assert_eq!(
-            nickname_held_key("some other error"),
+            super::nickname_held_key("some other error"),
             None,
             "other errors are not this event"
         );

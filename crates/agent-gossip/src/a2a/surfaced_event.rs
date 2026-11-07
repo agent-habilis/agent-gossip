@@ -259,6 +259,7 @@ fn event_bytes(event: &OutputEvent) -> usize {
         }
         OutputEvent::TaskMessage { text, .. } => text.len(),
         OutputEvent::Info { message } | OutputEvent::Error { message } => message.len(),
+        OutputEvent::NicknameHeld { nickname } => nickname.len(),
         OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
@@ -484,6 +485,7 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
@@ -536,6 +538,7 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }

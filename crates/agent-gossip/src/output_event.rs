@@ -10,6 +10,12 @@ use crate::a2a::{TaskId, TaskState};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum OutputEvent {
+    /// Another member holds our nickname, and its key proved the nickname first: this node is not
+    /// admitted under it. The stable key is `nickname_held`.
+    NicknameHeld {
+        /// The nickname that another member holds.
+        nickname: String,
+    },
     /// The daemon joined the mesh and is ready. First event of a session.
     Ready {
         /// The mesh the daemon joined.

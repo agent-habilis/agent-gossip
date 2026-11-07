@@ -508,6 +508,7 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         OutputEvent::Task { message, .. } => !classify(message).beat(),
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => false,
     }
