@@ -392,6 +392,11 @@ async fn not_surfaced_to_third_party() {
 /// A task leg goes to the key that opened the task. A nickname is a label that two live keys can
 /// share, so a worker that sent by name would fail with two keys under the name, or seal the leg
 /// to the wrong one.
+///
+/// BEFORE: the test waited until the worker saw the second key of the name. AFTER: the nickname gate
+/// admits one key for a nickname (the other tests of the key-keyed roster of main, #47, changed the same
+/// way), so the test checks that the worker does not accept the twin, and the routing assertions stay: the
+/// leg and the result reach the key that opened the task, and the twin surfaces nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shares_its_name() {
     let mut alice = InProcNode::create("t-twin").await;
@@ -404,8 +409,8 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
     let mut twin = InProcNode::join(&alice.mesh, alice.nickname.as_str()).await;
     twin.broadcast("twin warmup").await;
     assert!(
-        bob.wait_body("twin warmup", MSG_TIMEOUT).await,
-        "bob sees the second key of the name"
+        !bob.wait_body("twin warmup", Duration::from_secs(5)).await,
+        "bob accepted the second key of the name: the gate admits one key for a nickname"
     );
 
     bob.task_status(&task_id, TaskState::Working, Some("on it"))
@@ -435,6 +440,10 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
 /// A follow-up on a task goes to the key that holds the task, not to whatever key the worker's
 /// name resolves to. With a second live key under the name, a send by name is ambiguous and would
 /// refuse; and a reply to the wrong key would leak the text to a key that holds no task.
+///
+/// BEFORE: the test waited until alice saw the second key of the worker name. AFTER: the nickname gate
+/// admits one key for a nickname, so the test checks that alice does not accept the twin; the routing
+/// assertions stay: the follow-up reaches the key that holds the task, and the twin surfaces nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares_the_worker_name() {
     let mut alice = InProcNode::create("t-fu").await;
@@ -452,8 +461,8 @@ async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares
     let mut twin = InProcNode::join(&alice.mesh, "t-fu-bob").await;
     twin.broadcast("twin warmup").await;
     assert!(
-        alice.wait_body("twin warmup", MSG_TIMEOUT).await,
-        "alice sees the second key of the name"
+        !alice.wait_body("twin warmup", Duration::from_secs(5)).await,
+        "alice accepted the second key of the name: the gate admits one key for a nickname"
     );
 
     let approve = alice.task_message("t-fu-bob", &task_id, "approved").await;
