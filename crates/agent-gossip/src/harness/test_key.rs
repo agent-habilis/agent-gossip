@@ -59,6 +59,39 @@ pub struct StatusFrameParams<'caller> {
     pub payload_task_id: &'caller str,
 }
 
+/// The value cluster for [`CraftedMsg::meta_far_root`]: the forger, its key, the epoch of the root
+/// and the card that it writes in its own slot.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct MetaFarRootParams<'caller> {
+    /// Nickname of the message author.
+    pub author: &'caller str,
+    /// The key of the forger: the slot and the actor of the change are its own.
+    pub key: &'caller TestKey,
+    /// The epoch of the root.
+    pub epoch: u64,
+    /// The card in the slot of the forger.
+    pub card: &'caller serde_json::Value,
+}
+
+impl<'caller> MetaFarRootParams<'caller> {
+    /// The parameters of a forged root of `epoch` by `author` under `key`.
+    #[must_use]
+    pub fn new(
+        author: &'caller str,
+        key: &'caller TestKey,
+        epoch: u64,
+        card: &'caller serde_json::Value,
+    ) -> Self {
+        Self {
+            author,
+            key,
+            epoch,
+            card,
+        }
+    }
+}
+
 /// The value cluster for [`CraftedMsg::sealed_task_status`]: a *well-formed*
 /// status leg for an existing task, from an author who is not that task's
 /// counterparty.
@@ -329,13 +362,13 @@ impl CraftedMsg {
     /// # Panics
     ///
     /// Panics unless the author is a valid nickname.
-    pub fn meta_far_root(
-        mesh: &MeshId,
-        author: &str,
-        key: &TestKey,
-        epoch: u64,
-        card: &serde_json::Value,
-    ) -> Self {
+    pub fn meta_far_root(mesh: &MeshId, params: MetaFarRootParams<'_>) -> Self {
+        let MetaFarRootParams {
+            author,
+            key,
+            epoch,
+            card,
+        } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
         let slot = encode_pubkey(&key.0.public());
         let merge = serde_json::json!({ "peers": { slot: { "card": card } } });

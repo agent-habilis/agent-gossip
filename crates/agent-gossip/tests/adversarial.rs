@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use agent_gossip::OutputEvent;
 use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
-use agent_gossip::harness::test_key::{self, CraftedMsg};
+use agent_gossip::harness::test_key::{self, CraftedMsg, MetaFarRootParams};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use habilis_network::protocol::AuthorKey;
@@ -1322,13 +1322,16 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
 /// A far epoch, above twice the bound of a jump.
 const FAR_EPOCH: u64 = 262_144;
 
+/// The field of the slot of the honest node that exists only in the far epoch.
+const FAR_MARKER: &str = "far_epoch_marker";
+
 /// A joiner at epoch 0 meets an honest node in a far epoch and gets its meta: the cards of both
 /// nodes are in both documents. Against the engine that refused far roots, the joiner never saw
 /// the card of the honest node.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch() {
     let honest = InProcNode::create("adv-far-root").await;
-    let deadline = Instant::now() + T;
+    let card_deadline = Instant::now() + T;
     let (slot, card) = loop {
         let meta = honest.session.meta_get().await.expect("the session is up");
         if let Some(slot) = common::card_slot_of(&meta, &honest.nickname) {
@@ -1336,7 +1339,7 @@ async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch()
             break (slot, card);
         }
         assert!(
-            Instant::now() < deadline,
+            Instant::now() < card_deadline,
             "the honest node never published its card"
         );
         tokio::time::sleep(POLL).await;
@@ -1346,15 +1349,45 @@ async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch()
         .force_epoch(habilis_network::protocol::Channel::Meta, FAR_EPOCH)
         .await
         .expect("the honest node stays up");
+    // The slot of the honest node carries a marker in the far epoch, so that the old card of epoch
+    // 0 (the log of the honest node can send it again by gossip) is not taken for it. The marker is
+    // not in the card: the app writes its card again and would lose it. The card is written too.
     honest
         .session
-        .meta_merge(json!({ "peers": { slot: { "card": card } } }))
+        .meta_merge(json!({ "peers": { &slot: { "card": card, FAR_MARKER: true } } }))
         .await
-        .expect("the honest node writes its card in the far epoch");
+        .expect("the honest node writes its slot in the far epoch");
 
     let joiner = InProcNode::join(&honest.mesh, "adv-far-root-joiner").await;
 
-    common::await_mutual_cards(&honest, &joiner).await;
+    // First the property itself: the joiner gets what the honest node wrote in the far epoch (the
+    // marker), and not only its old card of epoch 0.
+    let marker_deadline = Instant::now() + T;
+    loop {
+        let meta = joiner.session.meta_get().await.expect("the session is up");
+        if meta.pointer(&format!("/peers/{slot}/{FAR_MARKER}")) == Some(&json!(true)) {
+            break;
+        }
+        assert!(
+            Instant::now() < marker_deadline,
+            "the joiner never got the far epoch of the honest node; its meta is {meta}"
+        );
+        tokio::time::sleep(POLL).await;
+    }
+    // Then the other direction: the joiner writes its card again in the far epoch (the switch hands
+    // it back), and the honest node holds it.
+    let joiner_card_deadline = Instant::now() + T;
+    loop {
+        let meta = honest.session.meta_get().await.expect("the session is up");
+        if common::card_slot_of(&meta, &joiner.nickname).is_some() {
+            break;
+        }
+        assert!(
+            Instant::now() < joiner_card_deadline,
+            "the card of the joiner never reached the honest node; its meta is {meta}"
+        );
+        tokio::time::sleep(POLL).await;
+    }
     honest.leave().await;
     joiner.leave().await;
 }
@@ -1368,12 +1401,10 @@ async fn a_far_root_by_gossip_does_not_capture_a_joiner() {
     let mut joiner = InProcNode::join(&honest.mesh, "adv-far-gossip-joiner").await;
     common::await_mutual_cards(&honest, &joiner).await;
     let key = test_key::new_key();
+    let forged_card = json!({ "name": "forger" });
     let forged = CraftedMsg::meta_far_root(
         attacker.session.mesh_id(),
-        "adv-far-gossip-forger",
-        &key,
-        3 * 131_072,
-        &json!({ "name": "forger" }),
+        MetaFarRootParams::new("adv-far-gossip-forger", &key, 3 * 131_072, &forged_card),
     )
     .sign(&key)
     .bytes();
