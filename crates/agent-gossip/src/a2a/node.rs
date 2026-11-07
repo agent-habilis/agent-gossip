@@ -502,13 +502,13 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::EventsLost { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::Fork { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
         OutputEvent::Task { message, .. } => !classify(message).beat(),
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
-        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => false,
     }
