@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use habilis_network::protocol::messages::Authored;
 
 /// The value cluster for `Output::state_changed`: the channel, the patch
@@ -6,6 +8,6 @@ use habilis_network::protocol::messages::Authored;
 pub(crate) struct StateChangedParams<'caller> {
     pub channel: habilis_network::protocol::Channel,
     pub event: &'caller Authored,
-    pub document: &'caller serde_json::Value,
+    pub document: &'caller Arc<serde_json::Value>,
     pub is_self: bool,
 }

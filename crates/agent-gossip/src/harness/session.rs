@@ -29,6 +29,19 @@ impl MeshSession {
         self.core.sever_gossip().await
     }
 
+    /// Put the document of `channel` in `epoch` at once, as an adoption does after its wait: an
+    /// honest node in a far epoch without 10 minutes of ticks. Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub async fn force_epoch(
+        &self,
+        channel: habilis_network::protocol::Channel,
+        epoch: u64,
+    ) -> Result<(), crate::api::SessionError> {
+        self.core.force_epoch(channel, epoch).await
+    }
+
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only —
     /// lets it assert crafted shard streams stay inside the byte budgets.

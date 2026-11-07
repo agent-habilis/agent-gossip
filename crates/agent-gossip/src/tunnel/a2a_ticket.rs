@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use habilis_network::iroh::EndpointAddr;
 use habilis_network::net::{endpoint_addr_from_json, endpoint_addr_to_json};
 use habilis_network::protocol::{LookupOpts, TicketSecret};
+use habilis_network::util::consts::MAX_MESSAGE_SIZE;
 use sha2::{Digest, Sha256};
 
 use super::SECRET_LEN;
@@ -23,6 +24,14 @@ const VERSION: u8 = 1;
 /// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from blob (`1`)
 /// and invite (`3`) tickets so a wrong-kind token is rejected on decode.
 const KIND: u8 = 2;
+
+/// The most bytes a ticket decodes to: one wire frame. A bigger ticket is refused before its
+/// JSON is read.
+const MAX_TICKET_BYTES: usize = MAX_MESSAGE_SIZE;
+
+/// The most characters a ticket text can have: base58 expands a byte by about 1.37, so the
+/// framed bytes of one frame (with their 4-byte checksum) fit in 1.4 times the cap.
+const MAX_TICKET_TEXT: usize = MAX_TICKET_BYTES * 14 / 10;
 
 /// Bit 0 of the flags byte: the password flag.
 const PASSWORD_BIT: u8 = 0b0000_0001;
@@ -62,7 +71,14 @@ impl A2aTicket {
     /// Bad Base58/checksum, the wrong ticket kind, a bad version, or a
     /// malformed payload.
     pub(crate) fn decode(ticket: &str) -> Result<Self> {
-        let framed = base58check_decode(ticket.trim())?;
+        let text = ticket.trim();
+        if text.len() > MAX_TICKET_TEXT {
+            bail!("a2a ticket text is larger than one frame");
+        }
+        let framed = base58check_decode(text)?;
+        if framed.len() > MAX_TICKET_BYTES {
+            bail!("a2a ticket is larger than one frame");
+        }
         let version = *framed.first().context("ticket too short")?;
         if version != VERSION {
             bail!("unsupported a2a ticket version: {version}");
@@ -123,16 +139,70 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use habilis_network::iroh::{EndpointAddr, SecretKey};
+    use habilis_network::net::endpoint_addr_to_json;
     use habilis_network::ops::blob;
     use habilis_network::ops::blob::{BlobDigest, BlobTicket};
     use habilis_network::protocol::{LookupOpts, TicketSecret};
 
-    use super::{A2aTicket, SECRET_LEN};
+    use super::{
+        A2aTicket, KIND, MAX_TICKET_BYTES, MAX_TICKET_TEXT, SECRET_LEN, VERSION, base58check_encode,
+    };
 
     fn sample_addr(byte: u8) -> EndpointAddr {
         let id = SecretKey::from_bytes(&[byte; 32]).public();
         EndpointAddr::new(id)
             .with_ip_addr("127.0.0.1:4242".parse().expect("the test literal parses"))
+    }
+
+    /// A ticket whose address JSON carries `pad` bytes of an extra field, encoded the way
+    /// [`A2aTicket::encode`] does.
+    fn padded_ticket(pad: usize) -> String {
+        let mut value = endpoint_addr_to_json(&sample_addr(3));
+        value["pad"] = serde_json::Value::String("x".repeat(pad));
+        let mut framed = vec![VERSION, KIND];
+        framed.extend_from_slice(&[9u8; SECRET_LEN]);
+        framed.push(0);
+        LookupOpts::public_preset().encode_into(&mut framed);
+        framed.extend_from_slice(&serde_json::to_vec(&value).expect("json serializes"));
+        base58check_encode(&framed)
+    }
+
+    /// The densest frame of the cap, in base58, still fits the text cap.
+    #[test]
+    fn a_full_frame_fits_the_text_cap() {
+        let densest = bs58::encode(vec![0xffu8; MAX_TICKET_BYTES + 4]).into_string();
+        assert!(
+            densest.len() <= MAX_TICKET_TEXT,
+            "{} characters, the cap is {MAX_TICKET_TEXT}",
+            densest.len()
+        );
+    }
+
+    /// A text longer than a ticket can be is refused before its base58 decode, which is
+    /// quadratic: a long text must cost nothing to refuse.
+    #[test]
+    fn a_text_past_the_cap_is_refused_before_decoding() {
+        let text = "z".repeat(52_659);
+        let started = std::time::Instant::now();
+        assert!(
+            A2aTicket::decode(&text).is_err(),
+            "an oversized text is refused"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(100),
+            "refusing took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A ticket is one frame at most: 10 times the cap is refused.
+    #[test]
+    fn a_ticket_past_the_cap_is_refused() {
+        let ticket = padded_ticket(10 * MAX_TICKET_BYTES);
+        assert!(
+            A2aTicket::decode(&ticket).is_err(),
+            "a ticket of 10 times the cap is refused"
+        );
     }
 
     #[test]

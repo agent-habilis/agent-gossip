@@ -552,7 +552,12 @@ COMMANDS
                   {"event":"gap","missed_before":SEQ}
 
               — every event below that seq was evicted unread and is gone;
-              the daemon re-baselines automatically.
+              the daemon re-baselines automatically. When the ring also
+              dropped events because it held too many bytes of body, the
+              line adds "lost_to_bytes":EVENTS,"lost_bytes":BYTES: how many
+              events and how many bytes of body the byte cap dropped among the
+              events above the cursor of this reader. The counts are left out
+              when the daemon no longer knows them.
 
               --long
                      The receive bell: block until the daemon holds a WAKING
@@ -845,9 +850,11 @@ COMMANDS
               merges and deletes on its own; to drop element k, merge
               {"coll":{"k":null}}.
 
-              state merge prints {"ok":true} on success or {"ok":false,"error":…}
-              on a transport failure, and exits non-zero on any {"ok":false}.
-              state get prints the current document:
+              state merge prints {"ok":true} on success. It prints
+              {"ok":false,"error":…} on a failure, and exits non-zero on any
+              {"ok":false}. The shared state can also refuse a write: see
+              "SIZE LIMITS AND REFUSALS" below. state get prints the current
+              document:
 
                 {"ok":true,"document":{…}}
 
@@ -858,6 +865,75 @@ COMMANDS
               no echo handling — for turn-based use, keep a turn marker in the
               document (get → check → merge). On join, give anti-entropy a
               moment to backfill before the first state get.
+
+              SIZE LIMITS AND REFUSALS. The shared state has a size limit, so
+              that a gossip can run for months. Two counts decide: the bytes of
+              the changes, and the operations of the history. A delete is one
+              operation too.
+                - The members rebuild the state from a seed (see "THE CUT")
+                  at about 3 MiB or about 20000 operations.
+                - The state refuses a write that adds a value at about 3.4 MiB
+                  or about 22700 operations, the first that comes. A write of
+                  the same value counts as an add. Large values reach the byte
+                  limit first: strings of 100 bytes reach the cut at about
+                  14000 paths.
+                - The state does not refuse a delete (a null merge) at this
+                  limit. At the memory limit (about 4 MiB or 26700
+                  operations) it refuses every write, deletes too. Then wait
+                  for the next cut.
+                - A write nests 12 levels of keys at most.
+                - One write must fit one message of 3840 bytes. The longest
+                  string value that a write can carry falls with a password
+                  and a little with the depth of its key. Measured with a
+                  nickname of 12 characters: about 1350 bytes at depth 1 and
+                  about 1300 bytes at depth 12 with no password; about 940
+                  bytes at depth 1 and about 900 bytes at depth 12 with a
+                  password. Split a larger value into smaller values under
+                  their own keys.
+              A refused write changes nothing. state merge prints
+              {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
+              non-zero. TEXT is for a person. REASON is stable, for a script.
+              HINT is the way out. apply_state_merge returns the same TEXT as
+              the message of an invalid-params error, with reason and hint in
+              its data. The a2a method mesh/state.merge returns an
+              invalid-params error with TEXT, the reason and the hint in its
+              message.
+
+                reason       TEXT starts with, and the way out
+                not_synced   "the shared state has not synced yet; retry in a
+                             few seconds". Wait, then write again.
+                state_full   "the shared state is full: …". Delete keys with a
+                             null merge, or wait for the next cut, then write
+                             again.
+                too_deep     "the value is nested N levels deep and the shared
+                             state allows 12". Use fewer levels: key the
+                             entries by an id in one object.
+                too_large    "a value of the write is too large for the shared
+                             state: N bytes with its keys; a value and its keys
+                             must fit one frame". Split the value.
+                clock_ahead  "the clock of the shared state is ahead of this
+                             machine time: retry in a few seconds". Wait a
+                             few seconds, then write again. Check the system
+                             clock of this node and of the peers.
+
+              FIRST SYNC. A member that joins a gossip holds its own writes
+              until it has synced, so that its clock cannot put a write below
+              an earlier write. Until then the member refuses every write with
+              not_synced. The wait ends when a peer answers the first request
+              of the member, which takes a few seconds. It ends after 30
+              seconds at the latest, with one warning in the log. The member
+              that created the gossip never waits. A state get never waits.
+
+              THE CUT. When the state grows, one member rebuilds it from a
+              seed: a short chain of changes that holds the live document and
+              no history. The other members take the seed after about 5
+              minutes. Under load this can happen every few minutes. You can
+              see three effects. The size of the state falls after a cut. Your
+              member sends again a write that you made while the cut ran, so
+              the cut does not lose it. A key that you deleted comes back in
+              two cases only: more than 1024 later deletes pushed its mark out
+              of the seed, or its path is longer than 256 bytes. In both cases,
+              delete the key again. A browser member never builds a seed.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME
@@ -1098,7 +1174,7 @@ A2A
 
               iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
               all members inside the signed wire frame (gossip wire version
-              13.0). The frame — signing, dedup, anti-entropy, presence,
+              14.0). The frame — signing, dedup, anti-entropy, presence,
               sharding — is replication machinery below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
               bindings. Chat rides two tags that differ only in addressing:
@@ -1247,6 +1323,25 @@ JSON EVENTS
 
                  {"event":"fork","nickname":"word-word","pubkey":"<hex>",
                   "seq":42}
+
+       nickname_held
+              Another member with another key uses the nickname of this
+              node. The two nodes do not accept each other frames. Both
+              nodes get this event. The event comes once. It is visible and
+              it wakes a parked `poll --long`. nickname is the shared
+              nickname. The way out: leave and join again. The daemon mints
+              a new nickname.
+
+                 {"event":"nickname_held","nickname":"word-word"}
+
+       events_lost
+              The daemon dropped events before they reached the poll history,
+              because a burst was larger than its feed channel. It takes the
+              place of the lost events in the history, so it has a seq. lost
+              is how many events were dropped. display is the line to show.
+
+                 {"event":"events_lost","lost":9216,
+                  "display":"💬️ 9216 events were lost before the poll history"}
 
        ping_report
               One per agent-gossip ping round, ~10s after the trigger, from the node
@@ -1407,6 +1502,15 @@ JSON EVENTS
                   "mode":"public","peers":4}
                  {"event":"gossip_lost","gossip":"3Cyr..."}
 
+       events_lost
+              From agent-gossip discover, when the stream dropped events because its
+              buffer was full. count is the number of events dropped since the
+              previous events_lost line. The listing can be stale: run discover
+              again to list every gossip. This line is not the poll marker of the
+              same name, which uses the key lost.
+
+                 {"event":"events_lost","count":3}
+
        info / error
               Operational notices.
 
@@ -1549,10 +1653,12 @@ MCP SERVER
 
        apply_state_merge
               Change the shared state. Args: merge (an RFC 7386 JSON Merge Patch
-              — any JSON value). Returns {"ok":true} on apply (any JSON value is
-              a valid merge). See the state merge command for the merge
-              semantics; peers react to the resulting state event in
-              fetch_messages.
+              — a JSON object). Returns {"ok":true} on apply. A refusal of the
+              state (not synced, full, too deep, too large) is an
+              invalid-params error: see "SIZE LIMITS AND REFUSALS" in the state
+              merge command for the text, the reason and the way out. See the
+              state merge command for the merge semantics; peers react to the
+              resulting state event in fetch_messages.
 
        get_state
               Read the current derived shared-state document. No args. Returns

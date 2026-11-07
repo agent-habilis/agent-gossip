@@ -13,7 +13,6 @@ use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{AuthorKey, DedupKey, Nickname, ShardGroup};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
@@ -23,14 +22,15 @@ use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
 use crate::a2a::{TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
-use crate::emission::{Output, OutputEvent};
+use crate::emission::{Output, OutputEvent, SurfacedTap};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
 /// its base `Output` and handed to [`A2aApp::new_with_io`].
 pub(crate) struct SurfacedIo {
     output: Output,
-    surfaced_rx: UnboundedReceiver<OutputEvent>,
+    surfaced_rx: mpsc::Receiver<OutputEvent>,
+    tap: SurfacedTap,
     /// Startup diagnostics this product announces alongside the engine's bare
     /// `Ready`. Both are ours: a stale skill install, and the port *we* bound.
     startup: Startup,
@@ -80,10 +80,11 @@ impl habilis_network::embed::NodeSink for StartupSink {
 impl SurfacedIo {
     /// Tap `base` so every surfaced event is mirrored into the ring receiver.
     pub(crate) fn new(base: Output) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tap, rx) = SurfacedTap::channel(tuning::SURFACED_TAP_CAP);
         Self {
-            output: base.set_tap(tx),
+            output: base.set_tap(tap.clone()),
             surfaced_rx: rx,
+            tap,
             startup: Startup::default(),
         }
     }
@@ -139,9 +140,21 @@ pub(crate) struct A2aApp {
     /// Blob groups whose call produced no task (an error, a timeout, a peer
     /// that left), each with the time the sweep may evict it.
     orphan_blobs: Vec<OrphanBlob>,
-    /// Tasks that a late reply opened after the caller was told the call
-    /// timed out. The next task sweep cancels each one at its worker.
-    late_cancels: Vec<(TaskId, AuthorKey)>,
+    /// Groups that the orphan cap released: the next sweep evicts them. Bounded by
+    /// `ORPHAN_BLOBS_CAP`; past it the oldest is forgotten and the blob store's own caps evict
+    /// its blob.
+    released_groups: VecDeque<ContentId>,
+    /// Timed-out calls that await a late reply, and no longer have a group in `orphan_blobs`.
+    /// Bounded by `LATE_REPLIES_CAP` and by their due time.
+    late_replies: Vec<LateOnly>,
+    /// How many late-reply entries were forgotten past `LATE_REPLIES_CAP`: each is a worker task
+    /// that can run uncancelled. Counted since the daemon started, and logged at each drop.
+    late_replies_forgotten: u64,
+    /// Cancels owed to workers: a task a late reply opened after the caller was told the call
+    /// timed out, or a task this node refused. Each push answers one waiter or one orphan,
+    /// both bounded, and the next task sweep drains the whole Vec, so it holds one sweep's
+    /// pushes at most. The reason says which one it is.
+    late_cancels: Vec<(TaskId, AuthorKey, &'static str)>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -158,7 +171,9 @@ pub(crate) struct A2aApp {
     pub(crate) surfaced: SurfacedState,
     /// Receiver end of the `Output` tap, drained into [`surfaced`](Self::surfaced)
     /// each loop iteration. `None` for a detached test `A2aApp` (no live loop).
-    pub(crate) surfaced_rx: Option<UnboundedReceiver<OutputEvent>>,
+    pub(crate) surfaced_rx: Option<mpsc::Receiver<OutputEvent>>,
+    /// The sender end of the tap, kept to read how many events it dropped.
+    surfaced_tap: Option<SurfacedTap>,
     /// Our own task legs in the order they were sent, waiting to enter the task record. A leg
     /// enters it when the peer got it, and never before an earlier leg has been settled: the
     /// record then holds only what the peer got, in the order the peer got it.
@@ -189,6 +204,21 @@ pub(crate) struct UnsentLeg {
     pub(crate) sent: Receiver<bool>,
 }
 
+fn bytes_of(frames: &[WireFrame]) -> usize {
+    frames.iter().map(WireFrame::len).sum()
+}
+
+impl UnsentLeg {
+    fn held_bytes(&self) -> usize {
+        let frames: usize = self.frames.iter().map(|frame| frame.wire_len()).sum();
+        let cache: usize = self
+            .cache
+            .as_ref()
+            .map_or(0, |(_, cached)| bytes_of(cached));
+        frames + cache
+    }
+}
+
 /// An own task leg to ingest into the task record once the peer got it.
 pub(crate) struct DeliveredLeg {
     pub(crate) echo: Authored,
@@ -215,6 +245,7 @@ impl A2aApp {
         let SurfacedIo {
             output,
             surfaced_rx,
+            tap,
             // Consumed by `sink()`, which the caller already built.
             startup: _,
         } = io;
@@ -226,12 +257,16 @@ impl A2aApp {
             blob_server: None,
             call_blobs: HashMap::new(),
             orphan_blobs: Vec::new(),
+            released_groups: VecDeque::new(),
+            late_replies: Vec::new(),
+            late_replies_forgotten: 0,
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
+            surfaced_tap: Some(tap),
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
@@ -253,12 +288,16 @@ impl A2aApp {
             blob_server: None,
             call_blobs: HashMap::new(),
             orphan_blobs: Vec::new(),
+            released_groups: VecDeque::new(),
+            late_replies: Vec::new(),
+            late_replies_forgotten: 0,
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
+            surfaced_tap: None,
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
@@ -266,6 +305,73 @@ impl A2aApp {
             card_retry_in: 0,
             card_retry_wait: 0,
         }
+    }
+
+    /// Say whether a new own task leg of `bytes` may wait for its send. Refuses past
+    /// [`tuning::OWN_LEGS_CAP`] legs or [`tuning::OWN_LEGS_BYTES_CAP`] bytes.
+    pub(crate) fn admit_own_leg(&self, bytes: usize) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.own_legs.len() < tuning::own_legs_cap(),
+            "{} own task legs still wait for their send, so this leg was not sent",
+            tuning::own_legs_cap()
+        );
+        self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
+    }
+
+    /// Say whether a new own content leg of `bytes` may wait for its send. Refuses past
+    /// [`tuning::UNSENT_LEGS_CAP`] legs or [`tuning::UNSENT_LEGS_BYTES_CAP`] bytes.
+    pub(crate) fn admit_unsent_leg(&self, bytes: usize) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.unsent_legs.len() < tuning::unsent_legs_cap(),
+            "{} own content legs still wait for their send, so this leg was not sent",
+            tuning::unsent_legs_cap()
+        );
+        self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
+    }
+
+    /// Say whether a call with a file may add a blob group to `task`: a task holds at most
+    /// [`tuning::CALL_BLOB_GROUPS_PER_TASK_CAP`] groups. A call that opens no task yet has none.
+    pub(crate) fn admit_call_blob_group(&self, task: Option<&TaskId>) -> anyhow::Result<()> {
+        let held = task
+            .and_then(|task_id| self.call_blobs.get(task_id))
+            .map_or(0, Vec::len);
+        anyhow::ensure!(
+            held < tuning::call_blob_groups_per_task_cap(),
+            "this task already holds {held} call files, so this call was not sent"
+        );
+        Ok(())
+    }
+
+    /// The bytes of body that the own legs in the queue hold.
+    pub(crate) fn own_legs_held_bytes(&self) -> usize {
+        let lengths = self
+            .own_legs
+            .iter()
+            .map(|queued| queued.leg.echo.body.as_str().len());
+        lengths.sum()
+    }
+
+    /// The bytes that the own content legs in the list hold: the sealed frames and the shard cache.
+    pub(crate) fn unsent_legs_held_bytes(&self) -> usize {
+        self.unsent_legs.iter().map(UnsentLeg::held_bytes).sum()
+    }
+
+    fn admit_own_bytes_within(&self, bytes: usize, budget: usize) -> anyhow::Result<()> {
+        let held = self.own_legs_held_bytes();
+        anyhow::ensure!(
+            self.own_legs.is_empty() || held.saturating_add(bytes) <= budget,
+            "{held} bytes of own task legs still wait for their send, the budget is {budget}, so this leg of {bytes} bytes was not sent"
+        );
+        Ok(())
+    }
+
+    fn admit_unsent_bytes_within(&self, bytes: usize, budget: usize) -> anyhow::Result<()> {
+        let held = self.unsent_legs_held_bytes();
+        anyhow::ensure!(
+            self.unsent_legs.is_empty() || held.saturating_add(bytes) <= budget,
+            "{held} bytes of own content legs still wait for their send, the budget is {budget}, so this leg of {bytes} bytes was not sent"
+        );
+        Ok(())
     }
 
     /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
@@ -320,6 +426,10 @@ impl A2aApp {
             if node::is_pollable(&event) {
                 self.surfaced.push(event);
             }
+        }
+        let lost = self.surfaced_tap.as_ref().map_or(0, SurfacedTap::take_lost);
+        if lost > 0 {
+            self.surfaced.push(OutputEvent::EventsLost { lost });
         }
         self.surfaced.fulfill_ready_poll_waiters();
     }
@@ -379,20 +489,51 @@ impl A2aApp {
             .position(|waiter| waiter.corr == *corr && waiter.peer_key == *from_key)
         {
             let waiter = self.a2a_waiters.swap_remove(index);
-            let adopted = self.adopt_returned_task((from_key, from), body);
-            match (waiter.blob_group, adopted) {
-                (Some(group), Some(task_id)) => {
-                    self.call_blobs.entry(task_id).or_default().push(group);
+            let adoption = self.adopt_returned_task((from_key, from), body);
+            // The registry refused the task the worker opened for us: no record is kept, so
+            // the worker is told to cancel it rather than run it unseen, and the caller gets
+            // an error instead of a task it would then see cancelled with no output line.
+            let answer = match &adoption {
+                Adoption::Refused(refused) if waiter.opens_task => {
+                    self.late_cancels
+                        .push((refused.clone(), *from_key, "task-refused"));
+                    // The same code a refused offer gets (node.rs, task_admission_error).
+                    serde_json::json!({
+                        "error": {
+                            "code": -32004,
+                            "message": "the task could not be recorded on this node",
+                        }
+                    })
+                    .to_string()
                 }
+                Adoption::Refused(_) | Adoption::Adopted(_) | Adoption::NoTask => body.to_owned(),
+            };
+            match (waiter.blob_group, adoption) {
+                (Some(group), Adoption::Adopted(task_id)) => self.hold_call_blob(task_id, group),
                 (group, _) => self.orphan_blob(group),
             }
-            waiter.responder.send_response(body);
+            waiter.responder.send_response(&answer);
         } else if let Some(index) = self
             .orphan_blobs
             .iter()
             .position(|orphan| orphan.awaits_reply(corr, from_key))
         {
             self.adopt_late_reply(index, (from_key, from), body);
+        } else if let Some(index) = self
+            .late_replies
+            .iter()
+            .position(|entry| entry.awaits_reply(corr, from_key))
+        {
+            let entry = self.late_replies.swap_remove(index);
+            match self.adopt_returned_task((from_key, from), body) {
+                Adoption::Adopted(task_id) => {
+                    self.cancel_task_opened_late(task_id, from_key, entry.late.opens_task);
+                }
+                Adoption::Refused(refused) => {
+                    self.cancel_task_refused_late(refused, from_key, entry.late.opens_task);
+                }
+                Adoption::NoTask => {}
+            }
         }
     }
 
@@ -411,8 +552,16 @@ impl A2aApp {
         (from_key, from): (&AuthorKey, &Nickname),
         body: &str,
     ) {
-        let adopted = self.adopt_returned_task((from_key, from), body);
-        let Some(task_id) = adopted else {
+        let adoption = self.adopt_returned_task((from_key, from), body);
+        let Adoption::Adopted(task_id) = adoption else {
+            if let Adoption::Refused(refused) = adoption {
+                let opened = self
+                    .orphan_blobs
+                    .get(orphan_index)
+                    .and_then(|orphan| orphan.late_reply.as_ref())
+                    .is_some_and(|late| late.opens_task);
+                self.cancel_task_refused_late(refused, from_key, opened);
+            }
             // The reply answers the call once: the next sweep evicts the group
             // and the call awaits nothing more.
             if let Some(orphan) = self.orphan_blobs.get_mut(orphan_index) {
@@ -426,29 +575,105 @@ impl A2aApp {
             .late_reply
             .as_ref()
             .is_some_and(|late| late.opens_task);
-        self.call_blobs
-            .entry(task_id.clone())
-            .or_default()
-            .push(orphan.group);
+        self.hold_call_blob(task_id.clone(), orphan.group);
+        self.cancel_task_opened_late(task_id, from_key, opened);
+    }
+
+    /// The caller was told the call timed out. When the call opened the task, the task is
+    /// cancelled and the worker is told.
+    fn cancel_task_opened_late(&mut self, task_id: TaskId, from_key: &AuthorKey, opened: bool) {
+        if !opened {
+            return;
+        }
+        if let Some(rec) = self.tasks.get_mut(&task_id) {
+            rec.state = crate::a2a::TaskState::Canceled;
+            rec.last_activity = Instant::now();
+        }
+        self.late_cancels
+            .push((task_id, *from_key, "call-timed-out"));
+    }
+
+    /// The caller was told the call timed out, and the registry refused the task that the call
+    /// opened. No record is kept, so only the worker can stop it: it is told to cancel.
+    fn cancel_task_refused_late(&mut self, refused: TaskId, from_key: &AuthorKey, opened: bool) {
         if opened {
-            if let Some(rec) = self.tasks.get_mut(&task_id) {
-                rec.state = crate::a2a::TaskState::Canceled;
-                rec.last_activity = Instant::now();
-            }
-            self.late_cancels.push((task_id, *from_key));
+            self.late_cancels.push((refused, *from_key, "task-refused"));
         }
     }
 
-    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, AuthorKey)> {
+    /// The worker picks the task id of its reply, so the cap of groups per task is checked here,
+    /// where the list grows. A group that finds the task full goes to the next sweep.
+    fn hold_call_blob(&mut self, task_id: TaskId, group: ContentId) {
+        if self.admit_call_blob_group(Some(&task_id)).is_err() {
+            self.push_orphan(Some(OrphanBlob {
+                group,
+                evict_at: Instant::now(),
+                late_reply: None,
+            }));
+            return;
+        }
+        self.call_blobs.entry(task_id).or_default().push(group);
+    }
+
+    /// Whether the cancels owed to workers reached [`tuning::LATE_CANCELS_CAP`]: the caller sends them at once.
+    pub(crate) fn late_cancels_full(&self) -> bool {
+        self.late_cancels.len() >= tuning::LATE_CANCELS_CAP
+    }
+
+    pub(crate) fn take_late_cancels(&mut self) -> Vec<(TaskId, AuthorKey, &'static str)> {
         std::mem::take(&mut self.late_cancels)
     }
 
     pub(crate) fn orphan_blob(&mut self, group: Option<ContentId>) {
-        self.orphan_blobs.extend(group.map(|group| OrphanBlob {
+        self.push_orphan(group.map(|group| OrphanBlob {
             group,
             evict_at: Instant::now(),
             late_reply: None,
         }));
+    }
+
+    fn push_orphan(&mut self, orphan: Option<OrphanBlob>) {
+        let Some(orphan) = orphan else {
+            return;
+        };
+        if self.orphan_blobs.len() >= tuning::ORPHAN_BLOBS_CAP {
+            let due = self.orphan_blobs.iter().map(|waiting| waiting.evict_at);
+            if let Some(index) = due_first(due) {
+                let dropped = self.orphan_blobs.remove(index);
+                self.release_orphan(dropped);
+            }
+        }
+        self.orphan_blobs.push(orphan);
+    }
+
+    /// The orphan cap releases the group, so the next sweep evicts it. The call keeps awaiting its
+    /// late reply, which adopts the task and cancels it as for any timed-out call.
+    fn release_orphan(&mut self, orphan: OrphanBlob) {
+        if self.released_groups.len() >= tuning::ORPHAN_BLOBS_CAP {
+            self.released_groups.pop_front();
+            tracing::warn!(
+                "a released blob group was forgotten: its blob waits for the blob store caps"
+            );
+        }
+        self.released_groups.push_back(orphan.group);
+        let Some(late) = orphan.late_reply else {
+            return;
+        };
+        if self.late_replies.len() >= tuning::LATE_REPLIES_CAP {
+            let due = self.late_replies.iter().map(|waiting| waiting.evict_at);
+            if let Some(index) = due_first(due) {
+                self.late_replies.swap_remove(index);
+                self.late_replies_forgotten += 1;
+                tracing::warn!(
+                    forgotten = self.late_replies_forgotten,
+                    "a late-reply entry was forgotten: the worker task of that call can run uncancelled"
+                );
+            }
+        }
+        self.late_replies.push(LateOnly {
+            late,
+            evict_at: orphan.evict_at,
+        });
     }
 
     /// The blob groups the task sweep must evict at `now`: every group of the
@@ -458,7 +683,9 @@ impl A2aApp {
             .into_iter()
             .partition(|orphan| orphan.evict_at <= now);
         self.orphan_blobs = waiting;
-        let mut groups: Vec<_> = due.into_iter().map(|orphan| orphan.group).collect();
+        self.late_replies.retain(|entry| entry.evict_at > now);
+        let mut groups = Vec::from(std::mem::take(&mut self.released_groups));
+        groups.extend(due.into_iter().map(|orphan| orphan.group));
         let reaped_groups: Vec<Vec<ContentId>> = reaped
             .iter()
             .filter_map(|task_id| self.call_blobs.remove(task_id))
@@ -479,11 +706,15 @@ impl A2aApp {
             .a2a_waiters
             .iter()
             .any(|waiter| waiter.corr == *corr && waiter.peer_key == *peer_key);
-        waiting
-            || self
-                .orphan_blobs
-                .iter()
-                .any(|orphan| orphan.awaits_reply(corr, peer_key))
+        let orphaned = self
+            .orphan_blobs
+            .iter()
+            .any(|orphan| orphan.awaits_reply(corr, peer_key));
+        let released = self
+            .late_replies
+            .iter()
+            .any(|entry| entry.awaits_reply(corr, peer_key));
+        waiting || orphaned || released
     }
 
     /// Adopt the authoritative `Task` a `SendMessage` returned (from `peer`, the
@@ -495,8 +726,10 @@ impl A2aApp {
         &mut self,
         (peer_key, peer): (&AuthorKey, &Nickname),
         body: &str,
-    ) -> Option<TaskId> {
-        let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    ) -> Adoption {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return Adoption::NoTask;
+        };
         let result = &value["result"];
         // Unwrap the SendMessageResponse oneof if present, else treat the result
         // as a bare Task (GetTask). A v1.0 Task has no inline `kind`, so a Task
@@ -506,10 +739,15 @@ impl A2aApp {
         } else {
             result
         };
-        let task_id = task["id"].as_str().and_then(TaskId::from_uuid_str)?;
-        let task_state = task["status"]["state"].as_str().and_then(|raw| {
-            serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok()
-        })?;
+        let Some(task_id) = task["id"].as_str().and_then(TaskId::from_uuid_str) else {
+            return Adoption::NoTask;
+        };
+        let Some(task_state) = task["status"]["state"]
+            .as_str()
+            .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())
+        else {
+            return Adoption::NoTask;
+        };
         task_record::adopt_initiator(
             &mut self.tasks,
             task_record::AdoptInitiatorParams {
@@ -522,10 +760,15 @@ impl A2aApp {
         );
         // `adopt_initiator` refuses a snapshot from a peer that is not the
         // task's worker, and only a task in the registry is ever reaped.
-        self.tasks
+        if self
+            .tasks
             .get(&task_id)
             .is_some_and(|rec| rec.peer_key == *peer_key)
-            .then_some(task_id)
+        {
+            Adoption::Adopted(task_id)
+        } else {
+            Adoption::Refused(task_id)
+        }
     }
 
     /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
@@ -549,12 +792,11 @@ impl A2aApp {
                         peer_key: waiter.peer_key,
                         opens_task: waiter.opens_task,
                     });
-                    self.orphan_blobs
-                        .extend(waiter.blob_group.map(|group| OrphanBlob {
-                            group,
-                            evict_at,
-                            late_reply,
-                        }));
+                    self.push_orphan(waiter.blob_group.map(|group| OrphanBlob {
+                        group,
+                        evict_at,
+                        late_reply,
+                    }));
                     waiter.responder.send_timeout();
                     None
                 } else {
@@ -581,12 +823,7 @@ impl A2aApp {
             .into_iter()
             .filter_map(|waiter| {
                 if waiter.peer_key == *peer_key {
-                    self.orphan_blobs
-                        .extend(waiter.blob_group.map(|group| OrphanBlob {
-                            group,
-                            evict_at: Instant::now(),
-                            late_reply: None,
-                        }));
+                    self.orphan_blob(waiter.blob_group);
                     waiter.responder.send_peer_left(peer);
                     None
                 } else {
@@ -605,6 +842,16 @@ impl A2aApp {
 /// returns (so an external A2A client's `message/send` to a peer is served
 /// over the same request/response waiter — task creation over the compliant
 /// transport).
+/// What a reply's task did to the initiator registry.
+enum Adoption {
+    /// The task is in the registry, held for this peer.
+    Adopted(TaskId),
+    /// The reply named a task the registry refused, so no record is kept.
+    Refused(TaskId),
+    /// The reply carried no task.
+    NoTask,
+}
+
 pub(crate) enum A2aResponder {
     Ipc(Sender<String>),
     Typed(Sender<serde_json::Value>),
@@ -700,6 +947,24 @@ struct LateReply {
     opens_task: bool,
 }
 
+/// The index of the entry that is due first.
+fn due_first(due: impl Iterator<Item = Instant>) -> Option<usize> {
+    let indexed = due.enumerate();
+    indexed.min_by_key(|(_, at)| *at).map(|(index, _)| index)
+}
+
+/// A timed-out call that awaits a late reply, whose group the orphan cap released.
+struct LateOnly {
+    late: LateReply,
+    evict_at: Instant,
+}
+
+impl LateOnly {
+    fn awaits_reply(&self, corr: &habilis_network::protocol::CorrId, peer_key: &AuthorKey) -> bool {
+        self.late.corr == *corr && self.late.peer_key == *peer_key
+    }
+}
+
 impl OrphanBlob {
     fn awaits_reply(&self, corr: &habilis_network::protocol::CorrId, peer_key: &AuthorKey) -> bool {
         self.late_reply
@@ -736,7 +1001,9 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::{A2aResponder, DeliveredLeg, rpc_result_from_body};
-    use crate::a2a::{TaskId, tuning, wire};
+    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState, tuning, wire};
+    use crate::emission::{Output, OutputEvent};
 
     fn leg(body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(
@@ -755,6 +1022,397 @@ mod tests {
                 .authored(),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         }
+    }
+
+    #[test]
+    fn the_tap_holds_at_most_its_cap_of_events() {
+        let mut io = super::SurfacedIo::new(Output::silent());
+        for _ in 0..10 * tuning::SURFACED_TAP_CAP {
+            io.output.peer_return(&Nickname::from("alice"), &bob_key());
+        }
+
+        let mut queued = 0;
+        while io.surfaced_rx.try_recv().is_ok() {
+            queued += 1;
+        }
+
+        assert_eq!(
+            queued,
+            tuning::SURFACED_TAP_CAP,
+            "10 times the cap was offered before one drain: the channel must not grow past the cap"
+        );
+    }
+
+    #[test]
+    fn the_ring_gets_one_marker_that_counts_the_events_the_tap_dropped() {
+        let mut app = super::A2aApp::new_with_io(super::SurfacedIo::new(Output::silent()));
+        for _ in 0..10 * tuning::SURFACED_TAP_CAP {
+            app.output.peer_return(&Nickname::from("alice"), &bob_key());
+        }
+
+        app.drain_surfaced_ring();
+        let batch = app.surfaced.poll_since(None);
+
+        let newest = batch.events.last().map(|item| &item.event);
+        assert!(
+            matches!(
+                newest,
+                Some(OutputEvent::EventsLost { lost }) if *lost == 9 * tuning::SURFACED_TAP_CAP as u64
+            ),
+            "the newest ring entry must say how many events the tap dropped, got {newest:?}"
+        );
+    }
+
+    /// An orphan that the cap drops must still release its group: the sweep evicts it.
+    #[test]
+    fn a_dropped_orphan_hands_its_group_to_the_sweep() {
+        let mut app = super::A2aApp::new();
+        let offered = 10 * tuning::ORPHAN_BLOBS_CAP;
+        let mut swept = 0;
+        for index in 0..offered {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+            swept += app
+                .take_call_blobs(
+                    &[],
+                    Instant::now()
+                        .checked_sub(std::time::Duration::from_secs(1))
+                        .expect("the clock is older than 1 second"),
+                )
+                .len();
+        }
+
+        assert_eq!(
+            swept,
+            offered - tuning::ORPHAN_BLOBS_CAP,
+            "every group that the cap dropped goes to the sweep"
+        );
+        assert_eq!(
+            app.orphan_blobs.len(),
+            tuning::ORPHAN_BLOBS_CAP,
+            "the list holds the cap and no more"
+        );
+    }
+
+    /// The cap drops the orphan that is due first, not the one that came first.
+    #[test]
+    fn the_cap_drops_the_orphan_that_is_due_first() {
+        let mut app = super::A2aApp::new();
+        let kept = ContentId::new("group-kept");
+        app.push_orphan(Some(super::OrphanBlob {
+            group: kept.clone(),
+            evict_at: Instant::now() + std::time::Duration::from_hours(1),
+            late_reply: None,
+        }));
+        for index in 0..tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+
+        assert!(
+            app.orphan_blobs.iter().any(|orphan| orphan.group == kept),
+            "the orphan with the latest due time stays, though it came first"
+        );
+    }
+
+    /// A timed-out call that the cap dropped can still be answered: the late reply must cancel
+    /// the task it opened, as for an orphan that the cap kept.
+    #[test]
+    fn a_late_reply_for_a_dropped_orphan_still_cancels_the_task_it_opened() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string();
+        let mut waiter = waiter_with_blob("corr-late", "group-late");
+        waiter.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(waiter);
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+        for index in 0..tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+        assert!(
+            app.has_a2a_waiter(&wire::corr_id("corr-late"), &bob_key()),
+            "the call still awaits its late reply, though the cap dropped its group"
+        );
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-late"),
+            (&bob_key(), &Nickname::from("bob")),
+            &reply,
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "call-timed-out")],
+            "the worker is told to cancel the task that the caller was told timed out"
+        );
+    }
+
+    /// The two lists that the orphan cap feeds are bounded too: 10 times the cap leaves the cap.
+    #[test]
+    fn the_released_groups_and_the_late_replies_stay_at_their_caps() {
+        let mut app = super::A2aApp::new();
+        let later = Instant::now() + std::time::Duration::from_hours(1);
+        let offered = 10 * tuning::LATE_REPLIES_CAP;
+        for index in 0..offered {
+            app.push_orphan(Some(super::OrphanBlob {
+                group: ContentId::new(&format!("group-{index}")),
+                evict_at: later,
+                late_reply: Some(super::LateReply {
+                    corr: wire::corr_id(&format!("corr-{index}")),
+                    peer_key: bob_key(),
+                    opens_task: true,
+                }),
+            }));
+        }
+
+        assert_eq!(
+            app.released_groups.len(),
+            tuning::ORPHAN_BLOBS_CAP,
+            "the released groups wait for a sweep, at most the cap"
+        );
+        assert_eq!(
+            app.late_replies.len(),
+            tuning::LATE_REPLIES_CAP,
+            "the calls that await a late reply stop at their cap"
+        );
+        assert_eq!(
+            app.late_replies_forgotten,
+            (offered - tuning::ORPHAN_BLOBS_CAP - tuning::LATE_REPLIES_CAP) as u64,
+            "each entry past the cap is counted, so a worker task that runs uncancelled is not silent"
+        );
+    }
+
+    #[test]
+    fn orphan_blobs_stop_at_the_cap_and_drop_the_oldest() {
+        let mut app = super::A2aApp::new();
+        for index in 0..10 * tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+
+        let kept: Vec<&ContentId> = app
+            .orphan_blobs
+            .iter()
+            .map(|orphan| &orphan.group)
+            .collect();
+        let newest = ContentId::new(&format!("group-{}", 10 * tuning::ORPHAN_BLOBS_CAP - 1));
+        assert_eq!(
+            kept.len(),
+            tuning::ORPHAN_BLOBS_CAP,
+            "10 times the cap was offered: the list must not grow past the cap"
+        );
+        assert_eq!(
+            kept.last().copied(),
+            Some(&newest),
+            "the newest orphan is kept, the oldest are the ones dropped"
+        );
+        assert!(
+            !kept.contains(&&ContentId::new("group-0")),
+            "the oldest orphan must be gone, or the cap drops the new ones"
+        );
+    }
+
+    #[test]
+    fn a_task_holds_at_most_the_cap_of_call_blob_groups() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let mut refused = 0;
+        for index in 0..10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP {
+            if app.admit_call_blob_group(Some(&task_id)).is_err() {
+                refused += 1;
+                continue;
+            }
+            app.call_blobs
+                .entry(task_id.clone())
+                .or_default()
+                .push(ContentId::new(&format!("group-{index}")));
+        }
+
+        assert_eq!(
+            app.call_blobs[&task_id].len(),
+            tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "10 times the cap was offered: the task must not hold more groups than the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "a call that finds the task full must be refused, not queued"
+        );
+        assert!(
+            app.admit_call_blob_group(None).is_ok(),
+            "a call that opens a task holds no group yet, so it must be admitted"
+        );
+    }
+
+    /// The receive path sends the owed cancels at once when the list is full, so the list never
+    /// holds more than the cap, and no cancel is dropped.
+    #[test]
+    fn the_owed_cancels_never_pass_the_cap_and_none_is_lost() {
+        let mut app = super::A2aApp::new();
+        let mut sent = 0;
+        let mut longest = 0;
+        for _ in 0..10 * tuning::LATE_CANCELS_CAP {
+            app.late_cancels
+                .push((TaskId::random(), bob_key(), "call-timed-out"));
+            longest = longest.max(app.late_cancels.len());
+            if app.late_cancels_full() {
+                sent += app.take_late_cancels().len();
+            }
+        }
+        sent += app.take_late_cancels().len();
+
+        assert_eq!(
+            longest,
+            tuning::LATE_CANCELS_CAP,
+            "10 times the cap was owed: the list must not hold more than the cap"
+        );
+        assert_eq!(
+            sent,
+            10 * tuning::LATE_CANCELS_CAP,
+            "every owed cancel must be sent, none dropped for want of room"
+        );
+    }
+
+    #[test]
+    fn own_legs_stop_at_the_cap_and_the_rest_is_refused() {
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * tuning::OWN_LEGS_CAP {
+            if app.admit_own_leg(0).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, rx) = oneshot::channel();
+            held.push(tx);
+            app.queue_own_leg(leg("status"), rx);
+        }
+
+        assert_eq!(
+            app.own_legs.len(),
+            tuning::OWN_LEGS_CAP,
+            "10 times the cap was offered: the queue must not grow past the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::OWN_LEGS_CAP,
+            "a leg that finds the queue full must be refused, not queued"
+        );
+    }
+
+    #[test]
+    fn unsent_legs_stop_at_the_cap_and_the_rest_is_refused() {
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * tuning::UNSENT_LEGS_CAP {
+            if app.admit_unsent_leg(0).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, sent) = oneshot::channel();
+            held.push(tx);
+            app.unsent_legs.push(super::UnsentLeg {
+                frames: Vec::new(),
+                cache: None,
+                sent,
+            });
+        }
+
+        assert_eq!(
+            app.unsent_legs.len(),
+            tuning::UNSENT_LEGS_CAP,
+            "10 times the cap was offered: the list must not grow past the cap"
+        );
+        assert_eq!(
+            refused,
+            9 * tuning::UNSENT_LEGS_CAP,
+            "a leg that finds the queue full must be refused, not queued"
+        );
+    }
+
+    const MIB: usize = 1024 * 1024;
+
+    #[test]
+    fn own_legs_stop_at_the_byte_budget_and_the_rest_is_refused() {
+        let budget = 16 * MIB;
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * budget / MIB {
+            if app.admit_own_bytes_within(MIB, budget).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, rx) = oneshot::channel();
+            held.push(tx);
+            app.queue_own_leg(leg(&"x".repeat(MIB)), rx);
+        }
+
+        assert_eq!(
+            app.own_legs_held_bytes(),
+            budget,
+            "10 times the budget was offered: the held bytes must not pass the budget"
+        );
+        assert_eq!(
+            refused,
+            9 * budget / MIB,
+            "a leg that would pass the budget must be refused, not queued"
+        );
+    }
+
+    #[test]
+    fn one_own_leg_always_fits_even_past_the_budget() {
+        let app = super::A2aApp::new();
+
+        assert!(
+            app.admit_own_bytes_within(2 * MIB, MIB).is_ok(),
+            "the largest legal body must not be refused for its size when nothing waits"
+        );
+    }
+
+    #[test]
+    fn unsent_legs_stop_at_the_byte_budget_and_the_rest_is_refused() {
+        let frame = Message::new_frame(
+            &MeshId::from("test"),
+            &Nickname::from("alice"),
+            MessageKind::App {
+                tag: wire::app_tag("status"),
+                to: None,
+                corr: None,
+            },
+            MessageBody::from("x"),
+        )
+        .sign(&habilis_network::protocol::Identity::generate());
+        let size = frame.wire_len();
+        let budget = 64 * size;
+        let mut app = super::A2aApp::new();
+        let mut held = Vec::new();
+        let mut refused = 0;
+        for _ in 0..10 * 64 {
+            if app.admit_unsent_bytes_within(size, budget).is_err() {
+                refused += 1;
+                continue;
+            }
+            let (tx, sent) = oneshot::channel();
+            held.push(tx);
+            app.unsent_legs.push(super::UnsentLeg {
+                frames: vec![frame.clone()],
+                cache: None,
+                sent,
+            });
+        }
+
+        assert_eq!(
+            app.unsent_legs_held_bytes(),
+            budget,
+            "10 times the budget was offered: the held bytes must not pass the budget"
+        );
+        assert_eq!(
+            refused,
+            9 * 64,
+            "a leg that would pass the budget must be refused, not queued"
+        );
     }
 
     fn bodies(legs: &[DeliveredLeg]) -> Vec<&str> {
@@ -1012,6 +1670,11 @@ mod tests {
         AuthorKey::from([0xca; 32])
     }
 
+    /// One of 64 keys, matching the 64 names of the filler peers: no key reaches its own quota.
+    fn filler_key(index: usize) -> AuthorKey {
+        AuthorKey::from([u8::try_from(index % 64).expect("below 64"); 32])
+    }
+
     fn bob_key() -> AuthorKey {
         AuthorKey::from([0xb0; 32])
     }
@@ -1058,6 +1721,74 @@ mod tests {
             app.take_call_blobs(&[task_id], Instant::now()),
             vec![ContentId::new("group-1")],
             "the task is created in the submitted state"
+        );
+    }
+
+    /// A worker picks the task id of its reply, so one id can come back for every call. The cap
+    /// holds on that path too: a group past it goes to the next sweep, not into the task's list.
+    #[test]
+    fn replies_that_return_one_task_id_never_grow_its_call_blob_list_past_the_cap() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string();
+        let offered = 10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP;
+        let mut swept = 0;
+        for index in 0..offered {
+            let corr = format!("corr-{index}");
+            let mut waiter = waiter_with_blob(&corr, &format!("group-{index}"));
+            waiter.opens_task = false;
+            app.a2a_waiters.push(waiter);
+            app.fulfill_a2a_waiter(
+                &wire::corr_id(&corr),
+                (&bob_key(), &Nickname::from("bob")),
+                &reply,
+            );
+            swept += app.take_call_blobs(&[], Instant::now()).len();
+        }
+
+        assert_eq!(
+            app.call_blobs[&task_id].len(),
+            tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "the task must not hold more groups than the cap"
+        );
+        assert_eq!(
+            swept,
+            offered - tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "every group past the cap goes to the next sweep"
+        );
+    }
+
+    /// A call that timed out can still be answered late. That reply picks the task id too.
+    #[test]
+    fn late_replies_that_return_one_task_id_never_grow_its_call_blob_list_past_the_cap() {
+        let mut app = super::A2aApp::new();
+        let task_id = TaskId::random();
+        let reply = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string();
+        let offered = 10 * tuning::CALL_BLOB_GROUPS_PER_TASK_CAP;
+        for index in 0..offered {
+            let corr = format!("corr-{index}");
+            let mut waiter = waiter_with_blob(&corr, &format!("group-{index}"));
+            waiter.opens_task = false;
+            waiter.deadline = tokio::time::Instant::now();
+            app.a2a_waiters.push(waiter);
+            app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+            app.fulfill_a2a_waiter(
+                &wire::corr_id(&corr),
+                (&bob_key(), &Nickname::from("bob")),
+                &reply,
+            );
+        }
+
+        assert_eq!(
+            app.call_blobs[&task_id].len(),
+            tuning::CALL_BLOB_GROUPS_PER_TASK_CAP,
+            "the task must not hold more groups than the cap"
         );
     }
 
@@ -1229,13 +1960,230 @@ mod tests {
 
         assert_eq!(
             app.tasks[&task_id].state,
-            crate::a2a::TaskState::Canceled,
+            TaskState::Canceled,
             "the caller already saw the call fail, so the opened task must not keep running unseen"
         );
         assert_eq!(
             app.take_late_cancels(),
-            vec![(task_id, bob_key())],
+            vec![(task_id, bob_key(), "call-timed-out")],
             "the cancel reply is ok"
+        );
+    }
+
+    /// A registry at its cap, with every record of another task.
+    fn app_with_full_task_registry() -> super::A2aApp {
+        let mut app = super::A2aApp::new();
+        for index in 0..tuning::TASKS_CAP {
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &TaskId::random(),
+                    peer_key: &filler_key(index),
+                    peer: &Nickname::from("filler"),
+                    task_state: TaskState::Working,
+                    now: Instant::now(),
+                },
+            );
+        }
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "each filler key stays under its own quota, so only the global cap is full"
+        );
+        app
+    }
+
+    /// The reply of a worker that opened the task `task_id`.
+    fn created_reply(task_id: &TaskId) -> String {
+        serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        })
+        .to_string()
+    }
+
+    /// A call that timed out, whose orphan the cap kept, gets its reply when the registry is
+    /// full. The registry refuses the task, so the worker is told to cancel it.
+    #[test]
+    fn a_refused_late_reply_for_a_kept_orphan_cancels_the_task_on_the_worker() {
+        let mut app = app_with_full_task_registry();
+        let task_id = TaskId::random();
+        let mut waiter = waiter_with_blob("corr-late", "group-late");
+        waiter.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(waiter);
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-late"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created_reply(&task_id),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the worker runs a task that nobody tracks, unless it is told to cancel"
+        );
+    }
+
+    /// The same for a call whose orphan the cap dropped: only its late reply is left.
+    #[test]
+    fn a_refused_late_reply_for_a_dropped_orphan_cancels_the_task_on_the_worker() {
+        let mut app = app_with_full_task_registry();
+        let task_id = TaskId::random();
+        let mut waiter = waiter_with_blob("corr-late", "group-late");
+        waiter.deadline = tokio::time::Instant::now();
+        app.a2a_waiters.push(waiter);
+        app.expire_a2a_waiters(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+        for index in 0..tuning::ORPHAN_BLOBS_CAP {
+            app.orphan_blob(Some(ContentId::new(&format!("group-{index}"))));
+        }
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-late"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created_reply(&task_id),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the worker runs a task that nobody tracks, unless it is told to cancel"
+        );
+    }
+
+    /// A refused adoption leaves no record, and the worker is told to cancel the task it
+    /// opened: the initiator refused the task, so the worker must not run it unseen.
+    #[test]
+    fn a_refused_adoption_cancels_the_task_on_the_worker() {
+        let mut app = super::A2aApp::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer_key: &filler_key(index),
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "the registry is at the cap"
+        );
+        let task_id = TaskId::random();
+        app.a2a_waiters
+            .push(waiter_with_blob("corr-refused", "group-refused"));
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-refused"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created.to_string(),
+        );
+
+        assert_eq!(
+            app.tasks.len(),
+            tuning::TASKS_CAP,
+            "a refused adoption leaves no record"
+        );
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the worker is told to cancel the task it opened"
+        );
+    }
+
+    /// A cancel for a refused task names its reason, not the late-reply reason.
+    #[test]
+    fn a_refused_adoption_cancels_with_the_registry_reason() {
+        let mut app = super::A2aApp::new();
+        let (tx, _rx) = oneshot::channel();
+        let mut waiter = waiter_with_blob("corr-reason", "group-reason");
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+        for index in 0..tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer_key: &filler_key(index),
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now: Instant::now(),
+                },
+            );
+        }
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-reason"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created.to_string(),
+        );
+
+        assert_eq!(
+            app.take_late_cancels(),
+            vec![(task_id, bob_key(), "task-refused")],
+            "the cancel says the task could not be recorded here"
+        );
+    }
+
+    /// The caller of a refused task gets an error, not the worker's Task: otherwise it
+    /// would see a task that this node then cancels without any output line.
+    #[test]
+    fn a_refused_adoption_answers_the_caller_with_an_error() {
+        let mut app = super::A2aApp::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let filler = TaskId::random();
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            adopt_initiator(
+                &mut app.tasks,
+                AdoptInitiatorParams {
+                    task_id: &filler,
+                    peer_key: &filler_key(index),
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        let (tx, mut rx) = oneshot::channel();
+        let mut waiter = waiter_with_blob("corr-error", "group-error");
+        waiter.responder = A2aResponder::Typed(tx);
+        app.a2a_waiters.push(waiter);
+        let task_id = TaskId::random();
+        let created = serde_json::json!({
+            "result": { "task": { "id": task_id, "status": { "state": "TASK_STATE_SUBMITTED" } } }
+        });
+
+        app.fulfill_a2a_waiter(
+            &wire::corr_id("corr-error"),
+            (&bob_key(), &Nickname::from("bob")),
+            &created.to_string(),
+        );
+
+        let answer = rx.try_recv().expect("the caller is answered");
+        assert!(
+            answer.get("error").is_some(),
+            "the caller gets an error, not the worker's task: {answer}"
+        );
+        assert!(
+            answer.get("result").is_none(),
+            "no task is returned: {answer}"
         );
     }
 
@@ -1263,7 +2211,7 @@ mod tests {
 
         assert_eq!(
             app.tasks[&task_id].state,
-            crate::a2a::TaskState::Working,
+            TaskState::Working,
             "a late cancel leaves the task working"
         );
         assert!(

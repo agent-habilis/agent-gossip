@@ -5,7 +5,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
@@ -83,45 +83,64 @@ async fn two_keys_of_one_nickname_publish_two_cards() {
     observer.leave().await;
 }
 
-/// A send by a nickname that two live keys use is refused with a clear error. When one of the
-/// keys leaves, the same send reaches the other key, which opens it: the body is sealed to the
-/// key that the frame is addressed to.
+/// BEFORE (`a_send_by_a_shared_nickname_is_refused_and_then_reaches_the_remaining_key`, the key-keyed
+/// roster of main, #47): a send by a nickname that two live keys use was refused as ambiguous, and after one
+/// key left it reached the other. AFTER: the nickname gate admits one key for a nickname, so the observer's
+/// roster names one member and the send is not ambiguous: it reaches exactly one of the two keys, the one
+/// that the observer admitted, which opens it. The body is sealed to that key, so the other key cannot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_send_by_a_shared_nickname_is_refused_and_then_reaches_the_remaining_key() {
+async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_admitted() {
     let mut alice = InProcNode::create_with_nick("mbk-send", SHARED).await;
-    let beta = InProcNode::join(&alice.mesh, SHARED).await;
+    let mut beta = InProcNode::join(&alice.mesh, SHARED).await;
     let observer = InProcNode::join(&alice.mesh, "mbk-sender").await;
     let _ = await_shared_cards(&observer, 2).await;
 
-    let refused = observer
-        .try_msg(SHARED, "to-one-of-two")
-        .await
-        .expect_err("a nickname of two live keys names no member");
-    let text = refused.to_string();
-    assert!(
-        text.contains(SHARED) && (text.contains("two or more") || text.contains("ambiguous")),
-        "the refusal does not say why: {text}"
-    );
-
-    beta.leave().await;
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
     loop {
-        let sent = observer.try_msg(SHARED, "to-the-remaining-key").await;
+        let sent = observer.try_msg(SHARED, "to-the-one-holder").await;
         if sent.is_ok() {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "the send never reached the remaining key: {sent:?}"
+            "a send to a nickname that has one admitted holder never went out: {sent:?}"
         );
         tokio::time::sleep(POLL).await;
     }
-    assert!(
-        alice.wait_body("to-the-remaining-key", MSG_TIMEOUT).await,
-        "the remaining key never opened the message"
+
+    let open_deadline = Instant::now() + MSG_TIMEOUT;
+    let (alice_opened, beta_opened) = loop {
+        let alice_opened = alice
+            .wait_body("to-the-one-holder", Duration::from_secs(1))
+            .await;
+        let beta_opened = beta
+            .wait_body("to-the-one-holder", Duration::from_secs(1))
+            .await;
+        if alice_opened || beta_opened {
+            break (alice_opened, beta_opened);
+        }
+        assert!(
+            Instant::now() < open_deadline,
+            "neither key opened the message of the observer"
+        );
+    };
+    let late_alice = alice
+        .wait_body("to-the-one-holder", Duration::from_secs(3))
+        .await;
+    let late_beta = beta
+        .wait_body("to-the-one-holder", Duration::from_secs(3))
+        .await;
+    assert_eq!(
+        [alice_opened || late_alice, beta_opened || late_beta]
+            .iter()
+            .filter(|opened| **opened)
+            .count(),
+        1,
+        "the message must be sealed to one key, and only that key opens it"
     );
 
     alice.leave().await;
+    beta.leave().await;
     observer.leave().await;
 }
 

@@ -155,6 +155,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     advertises_peer_relay(&pair);
     creates_and_lists_task(&pair);
     mirrors_mesh_state(&pair);
+    refuses_a_state_that_nests_too_deep(&pair);
     serves_extended_card(&pair);
     refuses_push_config(&pair, &card);
 
@@ -336,6 +337,40 @@ fn mirrors_mesh_state(pair: &BindingPair) {
         params: &serde_json::json!({}),
     });
     assert_eq!(doc["turn"], "a2a", "the document keeps the a2a turn");
+}
+
+/// A refusal of the shared state is the fault of the caller: invalid params, with the text, the
+/// reason and the way out in the message.
+fn refuses_a_state_that_nests_too_deep(pair: &BindingPair) {
+    let deep = (0..13).fold(
+        serde_json::json!(1),
+        |inner, _| serde_json::json!({ "a": inner }),
+    );
+    let (status, response) = post(
+        pair.port,
+        "/mesh",
+        &pair.token,
+        &serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "mesh/state.merge", "params": { "merge": deep }
+        }),
+    );
+    assert_eq!(
+        status, 200,
+        "a JSON-RPC error rides a 200 answer: {response}"
+    );
+    assert_eq!(
+        response["error"]["code"], -32602,
+        "the caller can fix a refusal, so it is not internal: {response}"
+    );
+    let message = response["error"]["message"]
+        .as_str()
+        .expect("a JSON-RPC error always has a message string");
+    assert!(
+        message.starts_with("the value is nested 13 levels deep and the shared state allows 12")
+            && message.contains("reason: too_deep")
+            && message.contains("fewer levels"),
+        "the message carries the text, the reason and the way out: {message}"
+    );
 }
 
 /// `GetExtendedAgentCard` (authenticated) returns the full v1.0 card.

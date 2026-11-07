@@ -16,7 +16,8 @@ gossip. It only returns advertised gossip ids.
 
 ## Selection
 
-Track `gossip_found` and `gossip_lost` events by full `gossip` id. Present the
+Track `gossip_found` and `gossip_lost` events by full `gossip` id. On an
+`events_lost` line the stream dropped events: run discover again and use its list. Present the
 live set to the user **as soon as the first `gossip_found` arrives** — never
 idle-wait while the set is non-empty. Prefer entries with more peers. Anything
 that arrives while the user is deciding is already collected; they can pick

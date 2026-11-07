@@ -5,11 +5,11 @@ use habilis_network::protocol::{
     DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
 };
 use habilis_network::runtime::{CoHostPolicy, tuning};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
-use super::MeshSession;
 use super::directory_error::DirectoryError;
+use super::{MeshSession, event_sink};
 use crate::a2a::status_update_params;
 
 // ── Directory (directory consumer) ─────────────────────────────────────
@@ -45,6 +45,19 @@ pub enum DirectoryEvent {
     Updated(MeshListing),
     /// A mesh's ads stopped and its listing aged out.
     Lost(MeshId),
+    /// The feed dropped this many events since the last one it sent, so the listing may be stale:
+    /// list again.
+    EventsLost(u64),
+}
+
+impl event_sink::Evictable for DirectoryEvent {
+    fn is_lost(&self) -> bool {
+        matches!(self, DirectoryEvent::Lost(_))
+    }
+
+    fn events_lost(count: u64) -> Self {
+        DirectoryEvent::EventsLost(count)
+    }
 }
 
 fn public_listing(listing: &Listing) -> MeshListing {
@@ -92,7 +105,7 @@ fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Li
 pub struct Directory {
     session: Option<MeshSession>,
     snapshot_rx: watch::Receiver<Vec<MeshListing>>,
-    events_rx: Option<mpsc::UnboundedReceiver<DirectoryEvent>>,
+    events_rx: Option<event_sink::EventReceiver<DirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -137,7 +150,7 @@ impl Directory {
         let mut inbound = session.messages();
         let mut listings = Listings::new();
         let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = event_sink::event_feed();
 
         let task = tokio::spawn(async move {
             let ttl = tuning::directory_expiry();
@@ -165,7 +178,7 @@ impl Directory {
                             };
                             publish_snapshot(&snapshot_tx, &listings);
                             if let Some(event) = event {
-                                let _ = events_tx.send(event);
+                                events_tx.publish(event);
                             }
                         }
                         // Slow consumer dropped some inbound — listings
@@ -178,7 +191,7 @@ impl Directory {
                         let lost: Vec<_> = listings.expire(ttl, now).collect();
                         publish_snapshot(&snapshot_tx, &listings);
                         for id in lost {
-                            let _ = events_tx.send(DirectoryEvent::Lost(id));
+                            events_tx.publish(DirectoryEvent::Lost(id));
                         }
                     }
                 }
@@ -201,7 +214,7 @@ impl Directory {
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).
     /// Single-consumer, so this returns the receiver **once**;
     /// subsequent calls return `None`.
-    pub fn events(&mut self) -> Option<mpsc::UnboundedReceiver<DirectoryEvent>> {
+    pub fn events(&mut self) -> Option<event_sink::EventReceiver<DirectoryEvent>> {
         self.events_rx.take()
     }
 

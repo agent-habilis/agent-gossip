@@ -10,12 +10,36 @@
 
 use std::sync::OnceLock;
 
+use habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
 use habilis_network::util::tuning;
 
 /// How long one A2A task may go with no leg or keepalive from the other party
 /// before the daemon fails it (seconds). Both daemons beat every live task, so
 /// only a gone peer daemon trips it, never a silent skill.
 pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
+
+/// How many own task legs may wait for the outcome of their send. Each leg holds its body, up to
+/// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
+/// is refused with a failed reason: the caller must know that nothing was sent. The queue is one for
+/// all peers, so a leg to a dead peer holds the legs behind it until its send times out (see
+/// [`send_outcome_timeout_secs`]); at the default 120 s the cap is reached at 8.5 legs per second.
+pub(crate) const OWN_LEGS_CAP: usize = 1024;
+
+/// How many own content legs may wait for the outcome of their send. Each holds its sealed frames,
+/// and a split leg holds a second copy for the shard cache. Same size as [`OWN_LEGS_CAP`]. A new
+/// leg past the cap is refused with a failed reason.
+pub(crate) const UNSENT_LEGS_CAP: usize = 1024;
+
+/// Bytes of body that the own task legs may hold together: 4 legs of the largest body
+/// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB). The count cap alone allows 1024 legs of 64 MiB. A leg that
+/// would pass the budget is refused with a failed reason, unless the queue is empty: one leg
+/// always fits, so the largest legal body is never refused for its size. A leg counts the size of
+/// its text only: the size of a file that an artifact offloads is not known before the offload.
+pub(crate) const OWN_LEGS_BYTES_CAP: usize = 4 * MAX_LOGICAL_BODY_BYTES;
+
+/// Bytes that the own content legs may hold together: 4 legs of the largest body, each held twice
+/// (sealed frames, and a copy in the shard cache). The same rule as [`OWN_LEGS_BYTES_CAP`].
+pub(crate) const UNSENT_LEGS_BYTES_CAP: usize = 2 * 4 * MAX_LOGICAL_BODY_BYTES;
 
 /// How often each party's daemon emits a task keepalive (seconds).
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 30;
@@ -81,6 +105,45 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// with the client's cursor advancing past them).
 pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 
+/// Bytes of event bodies that the surfaced ring holds: one body of the largest legal size
+/// (`MAX_LOGICAL_BODY_BYTES`, 64 MiB), so one legal body always fits. The count cap alone allows
+/// 1000 bodies of 64 MiB. Past the cap the oldest events leave the ring, and a reader whose cursor
+/// pointed at one of them gets a gap marker. There is no cap on one body: a body that is alone in
+/// the ring stays, because the ring must not drop the event that just arrived.
+pub(crate) const SURFACED_EVENTS_BYTES_CAP: usize = MAX_LOGICAL_BODY_BYTES;
+
+/// How many surfaced events may wait between the event that made them and the loop turn that moves
+/// them into the ring. The loop drains the channel at each turn, so a full channel means a burst of
+/// more than this many events inside one turn, or a loop that does not turn. An event past the cap
+/// is counted, not queued, and the ring gets one marker for them. Sized to the engine's inbound
+/// queue (`NODE_INBOUND_CAP`).
+pub(crate) const SURFACED_TAP_CAP: usize = 1024;
+
+/// How many blob groups of calls that produced no task wait for their eviction. Each waits at
+/// most one task timeout, and one waiter makes one entry, so a count above the waiter cap is a
+/// burst of timeouts. Past the cap the entry that is due first leaves the list and its group goes
+/// to the next sweep; the call keeps awaiting its late reply (see `LATE_REPLIES_CAP`). A released
+/// group that the list of released groups forgets waits for the caps of the blob store. The store of
+/// the pinned engine has all three caps: bytes (4 GiB), entries (`MAX_BLOB_STORE_ENTRIES`, 4096)
+/// and owners of one blob (`MAX_BLOB_OWNERS`, 64).
+pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
+
+/// How many timed-out calls await a late reply without a group in the orphan list: the calls whose
+/// group the orphan cap released. An entry is about 100 bytes and lives at most one task timeout.
+/// Past the cap the entry that is due first is forgotten: a worker that answers that call late
+/// then runs a task that nothing cancels, a gap that this cap accepts. Each drop is counted in
+/// `late_replies_forgotten` and logged as a warning.
+pub(crate) const LATE_REPLIES_CAP: usize = 1024;
+
+/// How many blob groups of calls one task may hold. A task keeps the groups of its calls until it
+/// is reaped, and a follow-up that carries a file adds one. A call past the cap is refused with a
+/// failed reason, before its file is offloaded: the user must know that the file was not sent.
+pub(crate) const CALL_BLOB_GROUPS_PER_TASK_CAP: usize = 64;
+
+/// How many cancels owed to workers wait for the next task sweep. A cancel is user work that
+/// the worker needs, so a full list is not dropped: the receive path sends the cancels at once.
+pub(crate) const LATE_CANCELS_CAP: usize = 64;
+
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
 /// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice
@@ -138,6 +201,11 @@ pub(crate) struct Tuning {
     pub(crate) task_skill_silence_max_secs: u64,
     pub(crate) task_stall_check_secs: u64,
     pub(crate) longpoll_max_ms: u64,
+    pub(crate) own_legs_cap: usize,
+    pub(crate) unsent_legs_cap: usize,
+    pub(crate) own_legs_bytes_cap: usize,
+    pub(crate) unsent_legs_bytes_cap: usize,
+    pub(crate) call_blob_groups_per_task_cap: usize,
 }
 
 impl Tuning {
@@ -147,6 +215,11 @@ impl Tuning {
         task_skill_silence_max_secs: TASK_SKILL_SILENCE_MAX_SECS,
         task_stall_check_secs: TASK_STALL_CHECK_SECS,
         longpoll_max_ms: LONGPOLL_MAX_MS,
+        own_legs_cap: OWN_LEGS_CAP,
+        unsent_legs_cap: UNSENT_LEGS_CAP,
+        own_legs_bytes_cap: OWN_LEGS_BYTES_CAP,
+        unsent_legs_bytes_cap: UNSENT_LEGS_BYTES_CAP,
+        call_blob_groups_per_task_cap: CALL_BLOB_GROUPS_PER_TASK_CAP,
     };
 }
 
@@ -166,6 +239,14 @@ pub(crate) fn task_timeout_secs() -> u64 {
     current().task_timeout_secs
 }
 
+/// How long a send may wait for its outcome before it counts as failed (seconds). A peer that
+/// stays silent as long as a task may be quiet has failed its tasks too, so a longer wait only
+/// keeps the body of the leg in memory. Read from the run-time task timeout, so the hidden flag
+/// moves both.
+pub(crate) fn send_outcome_timeout_secs() -> u64 {
+    task_timeout_secs()
+}
+
 pub(crate) fn task_keepalive_secs() -> u64 {
     current().task_keepalive_secs
 }
@@ -180,6 +261,26 @@ pub(crate) fn task_stall_check_secs() -> u64 {
 
 pub(crate) fn longpoll_max_ms() -> u64 {
     current().longpoll_max_ms
+}
+
+pub(crate) fn own_legs_cap() -> usize {
+    current().own_legs_cap
+}
+
+pub(crate) fn unsent_legs_cap() -> usize {
+    current().unsent_legs_cap
+}
+
+pub(crate) fn own_legs_bytes_cap() -> usize {
+    current().own_legs_bytes_cap
+}
+
+pub(crate) fn unsent_legs_bytes_cap() -> usize {
+    current().unsent_legs_bytes_cap
+}
+
+pub(crate) fn call_blob_groups_per_task_cap() -> usize {
+    current().call_blob_groups_per_task_cap
 }
 
 #[cfg(test)]

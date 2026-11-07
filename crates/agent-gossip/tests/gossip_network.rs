@@ -2839,38 +2839,38 @@ fn test_multi_round_throttled_backfill() {
 
 // ── Key-identity model (Tier 1) ─────────────────────────────────────────
 
-/// Two members deliberately share a display nickname. Identity is the
-/// signing **key**, not the name, and self-echo is keyed on the pubkey — so
-/// each must still see the *other's* same-named messages. Regression guard
-/// for the nickname→pubkey self-echo fix (a nickname-keyed self-echo would
-/// have each node silently drop the other as its own echo).
+/// BEFORE (`same_nickname_peers_communicate`, from the key-identity work in main, #47): two members share
+/// a display nickname, and each must still see the other's messages, because self-echo is keyed on the key
+/// and not on the name. AFTER: the nickname gate admits one key for a nickname, and the two nodes do not
+/// accept each other's frames. Neither holder sees the message of the other; an observer with its own
+/// nickname still sees the mesh work. The key still decides who is the author: the echo rule is pinned by
+/// `message_event_carries_full_pubkey` and the tests of the key-keyed roster.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn same_nickname_peers_communicate() {
+async fn two_members_of_one_nickname_do_not_see_each_others_messages() {
     let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
     let mut beta = InProcNode::join(&alpha.mesh, "dup").await;
+    let observer = InProcNode::join(&alpha.mesh, "samenick-obs").await;
 
     alpha.broadcast("from-alpha").await;
-    assert!(
-        beta.wait_body("from-alpha", MSG_TIMEOUT).await,
-        "beta never saw alpha's message despite the shared nickname"
-    );
     beta.broadcast("from-beta").await;
+    observer.broadcast("from-observer").await;
     assert!(
-        alpha.wait_body("from-beta", MSG_TIMEOUT).await,
-        "alpha never saw beta's message despite the shared nickname"
+        alpha.wait_body("from-observer", MSG_TIMEOUT).await
+            && beta.wait_body("from-observer", MSG_TIMEOUT).await,
+        "the observer's message did not reach a holder: the mesh does not work at all"
     );
-
-    // The surfaced message carries the author's full Ed25519 key — the real,
-    // distinguishing identity behind the shared cosmetic nickname.
-    let from_alpha = beta
-        .inbound()
-        .into_iter()
-        .find(|message| chat_text(message) == "from-alpha")
-        .expect("alpha's message is present");
-    let _: habilis_network::protocol::AuthorKey = from_alpha.key();
+    assert!(
+        !beta.wait_body("from-alpha", Duration::from_secs(5)).await,
+        "beta saw the message of alpha: the gate admitted a second key under the nickname"
+    );
+    assert!(
+        !alpha.wait_body("from-beta", Duration::from_secs(5)).await,
+        "alpha saw the message of beta: the gate admitted a second key under the nickname"
+    );
 
     alpha.leave().await;
     beta.leave().await;
+    observer.leave().await;
 }
 
 /// The `--output json` `message` event exposes the author's full public key,

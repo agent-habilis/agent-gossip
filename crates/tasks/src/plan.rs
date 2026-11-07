@@ -13,16 +13,22 @@ use crate::util::Invocation;
 /// to it (`logging::log_filter` takes `try_from_default_env` first), so naming
 /// `netwatch=debug` alone would silence every one of our own pinned subsystems
 /// and measure a daemon that logs less than a shipped one does. This restates
-/// the release-build default and appends to it: `netwatch=debug` for the
+/// the release-build default and appends to it (one literal for each directive: a line continuation can
+/// turn into a space under rustfmt, and `EnvFilter` drops a directive with a space): `netwatch=debug` for the
 /// enumeration counter, `lookup=info` for the endpoint counter.
-const RUST_LOG: &str = "error,noq_proto::connection=off,mainline::rpc=off,\
-    habilis_network::gossip=info,\
-    habilis_network::lookup=info,\
-    habilis_network::beacon=info,\
-    habilis_network::lifecycle=info,\
-    habilis_network::directory=info,\
-    habilis_network::messages=info,\
-    netwatch=debug";
+const RUST_LOG: &str = concat!(
+    "error,",
+    "noq_proto::connection=off,",
+    "mainline::rpc=off,",
+    "habilis_network::gossip=info,",
+    "habilis_network::lookup=info,",
+    "habilis_network::beacon=info,",
+    "habilis_network::lifecycle=info,",
+    "habilis_network::directory=info,",
+    "habilis_network::messages=info,",
+    "habilis_network::blob=info,",
+    "netwatch=debug",
+);
 
 /// CPU charged to one process, split by where it went. The split is the
 /// cheapest attribution there is: a daemon whose cost is `system` is paying
@@ -864,4 +870,38 @@ fn find_log(dir: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RUST_LOG;
+
+    /// The list restates the shipped default of the engine, so a subsystem that the engine pins and the
+    /// list lacks makes the measured daemon log less than a shipped one does.
+    #[test]
+    fn the_log_list_pins_every_subsystem_of_the_shipped_default_with_clean_directives() {
+        let directives: Vec<&str> = RUST_LOG.split(',').collect();
+        for directive in &directives {
+            assert_eq!(
+                directive.trim(),
+                *directive,
+                "EnvFilter drops a directive with white space around it: {directive:?}"
+            );
+        }
+        for subsystem in [
+            "gossip",
+            "lookup",
+            "beacon",
+            "lifecycle",
+            "directory",
+            "messages",
+            "blob",
+        ] {
+            let pin = format!("habilis_network::{subsystem}=info");
+            assert!(
+                directives.contains(&pin.as_str()),
+                "the list lacks the pin {pin} of the shipped default"
+            );
+        }
+    }
 }

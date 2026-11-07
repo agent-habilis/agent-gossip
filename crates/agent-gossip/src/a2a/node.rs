@@ -501,6 +501,8 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
+        | OutputEvent::EventsLost { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::Fork { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
@@ -952,6 +954,12 @@ async fn handle_a2a_rpc(
             (&message.key(), &message.author),
             message.body.as_str(),
         );
+        // No test drives this call: the event-loop types have no test constructor. The decision
+        // itself, `late_cancels_full`, has a test at 10 times the cap. If this line goes, the
+        // owed cancels wait for the next task sweep and the list can pass its cap.
+        if app.late_cancels_full() {
+            task_record::send_late_cancels(state, app, context).await;
+        }
     }
 }
 
@@ -1425,6 +1433,18 @@ mod classify_tests {
             "a poll must still report delivery state to the sender, even though it never wakes the agent"
         );
         assert!(!wakes(&receipt_event()), "a receipt does not wake the bell");
+    }
+
+    #[test]
+    fn a_nickname_held_event_is_pollable_and_wakes_the_bell() {
+        let held = OutputEvent::NicknameHeld {
+            nickname: "dup".to_owned(),
+        };
+        assert!(
+            super::is_pollable(&held),
+            "the member that is refused its nickname must find the event in its poll ring"
+        );
+        assert!(wakes(&held), "the event rings the bell");
     }
 
     fn receipt_frame_raw(to: Option<AuthorKey>, body: &str) -> Message {

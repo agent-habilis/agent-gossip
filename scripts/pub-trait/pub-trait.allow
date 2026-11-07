@@ -1,0 +1,2 @@
+# Evictable: a generic bound on the event feed (T: Evictable), so the feed knows which event it may evict and which marker to make.
+crates/agent-gossip/src/api/event_sink.rs|1

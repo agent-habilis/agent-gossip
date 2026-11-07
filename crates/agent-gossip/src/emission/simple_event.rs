@@ -7,7 +7,9 @@
 //! stdout forms stay byte-identical.
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{AuthorKey, MessageKind, Nickname, PresenceSubtype, UnixSecs};
+use habilis_network::protocol::{
+    AuthorKey, Channel, MessageKind, Nickname, PresenceSubtype, UnixSecs,
+};
 use serde::Serialize;
 
 use super::{OutputEvent, PingPeer, TaskGoneReason, TaskMessageLeg};
@@ -85,6 +87,11 @@ pub(super) enum SimpleEvent<'source> {
     },
     Error {
         message: &'source str,
+    },
+    EventsLost {
+        lost: u64,
+        /// Pre-formatted line (see [`events_lost_display`]).
+        display: String,
     },
     PingReport {
         peers: &'source [PingPeer],
@@ -352,6 +359,16 @@ pub(super) fn peer_return_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` came back")
 }
 
+/// `display` line for an `events_lost` event.
+pub(super) fn events_lost_display(lost: u64) -> String {
+    let events = if lost == 1 {
+        "event was"
+    } else {
+        "events were"
+    };
+    format!("{DISPLAY_GLYPH} {lost} {events} lost before the poll history")
+}
+
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
 pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
@@ -400,6 +417,8 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
+        | OutputEvent::EventsLost { .. }
+        | OutputEvent::NicknameHeld { .. }
         | OutputEvent::TaskStalled { .. } => true,
         OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
@@ -753,13 +772,22 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
     }
 }
 
+/// Whether a poll reader gets the document of a change on `channel`: in the JSON line, and in the
+/// ring copy of the event that the JSON line is made from. The Meta document is every peer's agent
+/// card, ~4k tokens with four peers, repeated on each change; readers take it on demand with
+/// `meta get`. The live copy of a change (the capture stream) keeps the document for in-process readers.
+/// This is the one place that holds the rule.
+pub(super) fn poll_carries_document(channel: Channel) -> bool {
+    channel != Channel::Meta
+}
+
 /// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
-    channel: habilis_network::protocol::Channel,
+    channel: Channel,
     event: &Authored,
-    document: &serde_json::Value,
+    document: Option<&serde_json::Value>,
     is_self: bool,
 ) -> String {
     // The surfaced delta feeds both the `merge` field and the touched-paths
@@ -781,11 +809,7 @@ pub(super) fn format_state_json(
             pubkey,
             ts: event.timestamp.as_secs(),
             merge: merge_value,
-            // The meta document is every peer's agent card, ~4k tokens with
-            // four peers, repeated on each change; readers take it on demand
-            // with `meta get`. Only this JSON form drops it: the typed
-            // `OutputEvent::StateChanged` keeps it for in-process readers.
-            document: (channel != habilis_network::protocol::Channel::Meta).then_some(document),
+            document: document.filter(|_| poll_carries_document(channel)),
             display: state_display(author, is_self, &what),
             is_self,
         })
@@ -888,7 +912,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             event,
             document,
             is_self,
-        } => format_state_json(*channel, event, document, *is_self),
+        } => format_state_json(*channel, event, document.as_deref(), *is_self),
         OutputEvent::Ready { .. }
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::TaskStalled { .. }
@@ -899,6 +923,8 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
+        | OutputEvent::NicknameHeld { .. }
+        | OutputEvent::EventsLost { .. }
         | OutputEvent::PingReport { .. } => return Formatted::Serialized,
     };
     Formatted::Line(line)
@@ -989,6 +1015,16 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::Error { message } => {
             serde_json::to_string(&SimpleEvent::Error { message }).ok()
         }
+        OutputEvent::NicknameHeld { nickname } => serde_json::to_string(&serde_json::json!({
+            "event": "nickname_held",
+            "nickname": nickname,
+        }))
+        .ok(),
+        OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
+            lost: *lost,
+            display: events_lost_display(*lost),
+        })
+        .ok(),
         OutputEvent::PingReport { peers, known } => {
             serde_json::to_string(&SimpleEvent::PingReport {
                 responded: peers.len(),

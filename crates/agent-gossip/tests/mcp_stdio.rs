@@ -1573,6 +1573,39 @@ fn poll_doc(
     }
 }
 
+/// A write that the shared state refuses is an invalid request over MCP, with the exact text of
+/// the engine, a stable `reason` and the way out in `data`: the agent can act on it.
+#[test]
+fn a_refused_state_write_carries_its_reason_and_the_way_out_over_mcp() {
+    let (mut creator, _joiner, _mesh, _nick) = create_pair(940);
+    let deep = (0..13).fold(
+        serde_json::json!(1),
+        |inner, _| serde_json::json!({ "a": inner }),
+    );
+    let response = creator.tool_call(
+        950,
+        "apply_state_merge",
+        &serde_json::json!({ "merge": deep }),
+    );
+    let error = response
+        .get("error")
+        .expect("rmcp answers an invalid-params error with an error object, not a result");
+    assert_eq!(
+        error["message"], "the value is nested 13 levels deep and the shared state allows 12",
+        "the exact text: {response}"
+    );
+    assert_eq!(
+        error["data"]["reason"], "too_deep",
+        "the stable reason: {response}"
+    );
+    assert!(
+        error["data"]["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("fewer levels")),
+        "an agent acts on the hint, so it names the next step: {response}"
+    );
+}
+
 /// Both shared-state channels round-trip over MCP: an `apply_*_patch` on one
 /// client is reflected by the other client's `get_*`, and the two channels stay
 /// isolated (a `state` key never appears in `get_meta`, nor vice versa). Proves

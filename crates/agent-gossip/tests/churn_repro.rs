@@ -355,34 +355,47 @@ fn doctor_members(out: &str, nick: &str) -> Option<u64> {
     after_dot.split_whitespace().next()?.parse().ok()
 }
 
-/// Two daemons under one nickname: a message to that nickname is refused, not sent to one of them.
+/// How many peers named `nickname` the roster of `observer` holds.
+fn rows_named(mesh: &str, observer: &str, nickname: &str) -> usize {
+    let raw: serde_json::Value =
+        serde_json::from_str(&cli_peers(mesh, observer)).expect("peers prints JSON");
+    let rows: &Vec<serde_json::Value> = raw["peers"].as_array().expect("peers carries a list");
+    rows.iter()
+        .filter(|row| row["nickname"] == nickname)
+        .count()
+}
+
+/// Wait until `observer` sees the holder of `nickname`, and check that it sees one, not two: a
+/// second key under a held nickname is not admitted, so the roster never holds the name twice.
+fn await_the_single_holder(mesh: &str, observer: &str, nickname: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    while rows_named(mesh, observer, nickname) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the observer never saw the holder of {nickname}"
+        );
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    assert_eq!(
+        rows_named(mesh, observer, nickname),
+        1,
+        "the observer sees a second member under {nickname}: the gate admitted a second key"
+    );
+}
+
+/// BEFORE: two daemons under one nickname were both in the roster, and a message to the nickname was
+/// refused as ambiguous. The nickname gate now admits one key for a nickname, so the roster holds the
+/// name once. AFTER: the observer sees one holder and a message to the nickname reaches it. (The test
+/// belongs to the churn work merged in main, #76.)
 #[test]
-fn message_to_an_ambiguous_nickname_is_refused() {
+fn a_message_to_a_nickname_of_two_daemons_reaches_the_one_holder() {
     let (_creator, mesh) = Node::create_named("churn-amb");
     let _leave = LeaveOnDrop(mesh.clone());
     let _first = Node::join(&mesh, "churn-amb-dup");
     let _second = Node::join(&mesh, "churn-amb-dup");
     let observer = Node::join(&mesh, "churn-amb-obs");
     std::thread::sleep(Duration::from_secs(10));
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(90);
-    loop {
-        let raw: serde_json::Value =
-            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers prints JSON");
-        let rows: &Vec<serde_json::Value> = raw["peers"].as_array().expect("peers carries a list");
-        let rows_named_dup = rows
-            .iter()
-            .filter(|row| row["nickname"] == "churn-amb-dup")
-            .count();
-        if rows_named_dup == 2 {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the observer never saw two peers named churn-amb-dup ({rows_named_dup} seen)"
-        );
-        std::thread::sleep(Duration::from_secs(1));
-    }
+    await_the_single_holder(&mesh, &observer.nickname, "churn-amb-dup");
 
     let sent = test_cmd()
         .args([
@@ -393,7 +406,7 @@ fn message_to_an_ambiguous_nickname_is_refused() {
             "--nickname",
             &observer.nickname,
         ])
-        .args(["--to", "churn-amb-dup", "--text", "to-the-ambiguous-name"])
+        .args(["--to", "churn-amb-dup", "--text", "to-the-one-holder"])
         .output()
         .expect("a2a msg runs");
     let reply = format!(
@@ -402,39 +415,22 @@ fn message_to_an_ambiguous_nickname_is_refused() {
         String::from_utf8_lossy(&sent.stderr)
     );
     assert!(
-        !sent.status.success() && reply.contains("ambiguous peer"),
-        "the message reached a holder of an ambiguous name instead of being refused: {reply}"
+        sent.status.success() && !reply.contains("ambiguous"),
+        "a message to a nickname with one holder was refused: {reply}"
     );
 }
 
-/// A task sent to an ambiguous nickname is refused, not parked on one of its holders.
+/// BEFORE: a task to an ambiguous nickname was refused, not parked on one of its holders. AFTER: the
+/// nickname has one holder, and the task goes to it.
 #[test]
-fn task_to_an_ambiguous_nickname_is_refused() {
+fn a_task_to_a_nickname_of_two_daemons_reaches_the_one_holder() {
     let (_creator, mesh) = Node::create_named("churn-task");
     let _leave = LeaveOnDrop(mesh.clone());
     let _first = Node::join(&mesh, "churn-task-dup");
     let _second = Node::join(&mesh, "churn-task-dup");
     let observer = Node::join(&mesh, "churn-task-obs");
     std::thread::sleep(Duration::from_secs(10));
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(90);
-    loop {
-        let raw: serde_json::Value =
-            serde_json::from_str(&cli_peers(&mesh, &observer.nickname)).expect("peers prints JSON");
-        let rows: &Vec<serde_json::Value> = raw["peers"].as_array().expect("peers carries a list");
-        let rows_named_dup = rows
-            .iter()
-            .filter(|row| row["nickname"] == "churn-task-dup")
-            .count();
-        if rows_named_dup == 2 {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the observer never saw two peers named churn-task-dup ({rows_named_dup} seen)"
-        );
-        std::thread::sleep(Duration::from_secs(1));
-    }
+    await_the_single_holder(&mesh, &observer.nickname, "churn-task-dup");
 
     let created = common::cli_task_create_raw(&mesh, &observer.nickname, "churn-task-dup", "t");
     let reply = format!(
@@ -443,7 +439,7 @@ fn task_to_an_ambiguous_nickname_is_refused() {
         String::from_utf8_lossy(&created.stderr)
     );
     assert!(
-        !created.status.success() && reply.contains("ambiguous"),
-        "the task reached a holder of an ambiguous name instead of being refused: {reply}"
+        created.status.success() && !reply.contains("ambiguous"),
+        "a task to a nickname with one holder was refused: {reply}"
     );
 }

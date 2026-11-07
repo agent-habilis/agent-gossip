@@ -87,6 +87,10 @@ fn discover_event_json(event: &DirectoryEvent) -> String {
             "event": "gossip_lost",
             "gossip": mesh.as_str(),
         }),
+        DirectoryEvent::EventsLost(count) => serde_json::json!({
+            "event": "events_lost",
+            "count": count,
+        }),
     };
     value.to_string()
 }

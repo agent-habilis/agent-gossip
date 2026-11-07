@@ -11,6 +11,7 @@ use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
     BroadcastParams, emit_task_status, log_pending, send_broadcast,
 };
+use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::emission;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
@@ -331,7 +332,13 @@ pub(crate) async fn handle_op(
                 StateMergeParams::new(MergeCtx::new(mesh, author, sender, output), channel, merge),
             )
             .await
-            .map_err(|error| RpcError::internal(&error.to_string()))?;
+            .map_err(|error| {
+                let error = anyhow::Error::from(error);
+                StateRefusalReply::of(&error).map_or_else(
+                    || RpcError::internal(&error.to_string()),
+                    |reply| RpcError::invalid_params(&reply.to_rpc_message()),
+                )
+            })?;
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {

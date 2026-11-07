@@ -25,6 +25,7 @@ mod advertiser;
 mod create_error;
 pub(crate) mod directory;
 mod directory_error;
+pub(crate) mod event_sink;
 mod in_process_session;
 mod join_config;
 mod mesh_session;

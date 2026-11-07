@@ -73,6 +73,7 @@ mod send_msg_args;
 mod send_result;
 mod serialize_message_view;
 mod session;
+mod state_merge_error;
 mod task_artifact_args;
 mod task_status_args;
 #[cfg(test)]
@@ -111,6 +112,7 @@ pub(crate) use self::send_broadcast_args::SendBroadcastArgs;
 pub(crate) use self::send_msg_args::SendMsgArgs;
 pub(crate) use self::send_result::SendResult;
 pub(crate) use self::serialize_message_view::serialize_message_view;
+pub(crate) use self::state_merge_error::state_merge_error;
 pub(crate) use self::task_artifact_args::TaskArtifactArgs;
 pub(crate) use self::task_status_args::TaskStatusArgs;
 pub(crate) use self::to_mcp_error::to_mcp_error;

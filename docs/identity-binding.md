@@ -147,12 +147,13 @@ Two app-side patches reduce the blast radius without closing the gap:
   in `apply` and `handle_task_leg`, and the RPC reads are party-checked.
 
 Neither touches the card. An attacker who overwrites `peers/<victim>/card`
-still redirects that victim's sealed traffic, and the
-`gap_nickname_impersonation_is_accepted` tripwire in `adversarial.rs` still
-describes a live gap. The task-plane checks above are worth having — they close
+still redirects that victim's sealed traffic. The tripwire
+`gap_nickname_impersonation_is_accepted` of `adversarial.rs` went red when the engine nickname gate
+closed the gap for a frame under a held nickname; it is now the test
+`a_message_that_impersonates_a_held_nickname_is_refused`. The card route is not covered by that test. The task-plane checks above are worth having — they close
 the paths that need no impersonation at all — but a determined attacker who
 takes over a nickname's card satisfies them too, because they are also
 nickname comparisons.
 
-Treat `gap_nickname_impersonation_is_accepted` going red as the signal that
-this note is obsolete. Until then it is not.
+The tripwire went red for the frame under a held nickname. Check the card route the same way before
+you treat this note as obsolete.
