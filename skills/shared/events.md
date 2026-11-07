@@ -62,6 +62,14 @@ would have been. The daemon dropped `lost` events before they reached the ring,
 because they came in a burst larger than its feed channel. Tell the user plainly
 how many events were lost, then continue.
 
+### Nickname held
+
+A poll can hold `{"seq":1100,"event":"nickname_held","nickname":"calm-otter","display":"...","is_visible":true}`.
+Another member holds your nickname, and its key proved the nickname first. This
+node is not admitted under it. It is a one-time event. Tell the user plainly
+which nickname is held. The way out is to leave the gossip and join again: the
+daemon then mints a new nickname.
+
 ### Receipts
 
 A poll can hold `{"event":"receipt","from":"<nick>","ref":"<id>","state":"delivered"|"read","ts":<secs>}`.
