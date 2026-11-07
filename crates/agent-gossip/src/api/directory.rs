@@ -5,7 +5,7 @@ use habilis_network::protocol::{
     DEFAULT_DIRECTORY, LookupOpts, LookupSet, MeshId, MeshName, Nickname, resolve_lookups,
 };
 use habilis_network::runtime::{CoHostPolicy, tuning};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use super::directory_error::DirectoryError;
@@ -45,6 +45,12 @@ pub enum DirectoryEvent {
     Updated(MeshListing),
     /// A mesh's ads stopped and its listing aged out.
     Lost(MeshId),
+}
+
+impl event_sink::Evictable for DirectoryEvent {
+    fn is_lost(&self) -> bool {
+        matches!(self, DirectoryEvent::Lost(_))
+    }
 }
 
 fn public_listing(listing: &Listing) -> MeshListing {
@@ -92,7 +98,7 @@ fn publish_snapshot(snapshot_tx: &watch::Sender<Vec<MeshListing>>, listings: &Li
 pub struct Directory {
     session: Option<MeshSession>,
     snapshot_rx: watch::Receiver<Vec<MeshListing>>,
-    events_rx: Option<mpsc::Receiver<DirectoryEvent>>,
+    events_rx: Option<event_sink::EventReceiver<DirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -201,7 +207,7 @@ impl Directory {
     /// Take the directory event stream (`Found` / `Updated` / `Lost`).
     /// Single-consumer, so this returns the receiver **once**;
     /// subsequent calls return `None`.
-    pub fn events(&mut self) -> Option<mpsc::Receiver<DirectoryEvent>> {
+    pub fn events(&mut self) -> Option<event_sink::EventReceiver<DirectoryEvent>> {
         self.events_rx.take()
     }
 

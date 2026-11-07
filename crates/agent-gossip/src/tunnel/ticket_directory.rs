@@ -20,7 +20,7 @@ use habilis_network::runtime::tuning::{
     advertise_interval, directory_expiry, directory_private_for_test,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
@@ -216,13 +216,19 @@ pub(crate) enum TicketDirectoryEvent {
     Lost(String),
 }
 
+impl event_sink::Evictable for TicketDirectoryEvent {
+    fn is_lost(&self) -> bool {
+        matches!(self, TicketDirectoryEvent::Lost(_))
+    }
+}
+
 /// A live view of a directory's a2a ticket ads — the consumer side of
 /// [`spawn_ticket_advertiser`]. Joins as a pure consumer, collects in the
 /// background, and ages out silent publishers.
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
     session: Option<MeshSession>,
-    events_rx: Option<mpsc::Receiver<TicketDirectoryEvent>>,
+    events_rx: Option<event_sink::EventReceiver<TicketDirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -293,7 +299,7 @@ impl TicketDirectory {
 
     /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
     /// returns the receiver once, then `None`.
-    pub(crate) fn events(&mut self) -> Option<mpsc::Receiver<TicketDirectoryEvent>> {
+    pub(crate) fn events(&mut self) -> Option<event_sink::EventReceiver<TicketDirectoryEvent>> {
         self.events_rx.take()
     }
 
