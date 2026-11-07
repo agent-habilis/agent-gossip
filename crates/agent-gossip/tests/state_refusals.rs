@@ -6,8 +6,11 @@
 use std::process::Output;
 
 use agent_gossip::Channel;
+use agent_gossip::api::SessionError;
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, Node};
+use habilis_network::protocol::messages::MessageError;
+use habilis_network::runtime::SendError;
 use serde_json::{Map, Value, json};
 
 /// The JSON that a refused merge printed, after the check that it exited with a non-zero code.
@@ -40,6 +43,34 @@ fn leaves(first: usize, count: usize) -> Value {
         under.insert(format!("{leaf:x}"), json!(leaf % 10));
     }
     json!({ "live": Value::Object(under) })
+}
+
+/// Whether the session refused a merge because it is larger than one frame carries.
+fn is_oversize_frame(error: &SessionError) -> bool {
+    let SessionError::Loop(cause) = error else {
+        return false;
+    };
+    let Some(SendError::Internal(source)) = cause.downcast_ref::<SendError>() else {
+        return false;
+    };
+    matches!(
+        source.downcast_ref::<MessageError>(),
+        Some(MessageError::Oversize { .. })
+    )
+}
+
+/// The type of the error is the contract, not its text: the full-state test sends a merge again
+/// with fewer leaves on this error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_merge_larger_than_one_frame_is_an_oversize_error_by_type() {
+    let node = InProcNode::create("oversize").await;
+
+    let error = node
+        .try_state_merge(leaves(0, 2000))
+        .await
+        .expect_err("2000 leaves do not fit one frame of 3 840 bytes");
+
+    assert!(is_oversize_frame(&error), "the error: {error:?}");
 }
 
 #[test]
@@ -97,7 +128,7 @@ async fn a_full_state_refuses_a_write_that_adds_and_a_null_merge_is_the_way_out(
     for _ in 0..600 {
         match node.try_state_merge(leaves(next, step)).await {
             Ok(()) => next += step,
-            Err(error) if error.to_string().contains("message too large") => step = step * 2 / 3,
+            Err(error) if is_oversize_frame(&error) => step = step * 2 / 3,
             Err(error) => {
                 refused = Some(error.to_string());
                 break;
