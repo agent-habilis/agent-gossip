@@ -2,9 +2,28 @@
 
 This file lists each collection in `crates/agent-gossip/src` that lives as long as the process, with its bound, its worst-case bytes, and its proposed drop rule.
 
+## Status at the head of the PR
+
+The sections below were written at engine `f7cd9bb`, before the fixes of this PR, and they describe the tree as it was: the columns "Current bound" and "Proof" of the table, the section "NONE rows ranked by worst-case bytes", "Main findings" and "FIX ORDER" are the state before the fix. At the head of the app PR (`c7b6ab78`, engine pin `f021911d`) every row that had no bound is fixed. The ledger `SAVINGS.md` has the numbers of each fix. Each commit below was checked with `git cat-file`, each constant with `grep`.
+
+| Row | At the head | Constant | Commits | Tests |
+|---|---|---|---|---|
+| R1 `tasks` | the initiator path runs the registry cap; a refused task is cancelled on its worker and the caller gets `-32004` | `TASKS_CAP` 1024 | `3e4106c7`, `25fb5d45` | `an_initiator_adoption_past_the_cap_is_refused`, `a_refused_adoption_cancels_the_task_on_the_worker`, `a_refused_late_reply_for_a_kept_orphan_cancels_the_task_on_the_worker`, `a_refused_late_reply_for_a_dropped_orphan_cancels_the_task_on_the_worker` |
+| R6 `call_blobs` | at most 64 groups for one task | `CALL_BLOB_GROUPS_PER_TASK_CAP` 64 | `d969e71f`, `65f6dbbc` | `a_task_holds_at_most_the_cap_of_call_blob_groups` |
+| R7 `orphan_blobs` | count cap; the group of a dropped orphan goes to the sweep | `ORPHAN_BLOBS_CAP` 64 | `9cc928d9`, `ed88338f`, `6e0a9725` | `orphan_blobs_stop_at_the_cap_and_drop_the_oldest` |
+| R8 `late_cancels` | count cap; a full list is sent at once | `LATE_CANCELS_CAP` 64 | `64c0d322` | `the_owed_cancels_never_pass_the_cap_and_none_is_lost` |
+| R9 `own_legs`, R10 `unsent_legs` | count and byte caps, a refusal with the reason, one deadline for a leg | `OWN_LEGS_CAP`, `UNSENT_LEGS_CAP` 1024; `OWN_LEGS_BYTES_CAP`, `UNSENT_LEGS_BYTES_CAP` | `b5725640`, `1aaa5480`, `dbf32178`, `addd6c27`, `caf3be53` | `own_legs_stop_at_the_cap_and_the_rest_is_refused`, `unsent_legs_stop_at_the_cap_and_the_rest_is_refused`, `own_legs_stop_at_the_byte_budget_and_the_rest_is_refused`, `unsent_legs_stop_at_the_byte_budget_and_the_rest_is_refused` |
+| R11 surfaced tap | a bounded channel; a lost event is counted and marked in the ring | `SURFACED_TAP_CAP` 1024 | `0d5d791f`, `179579d7`, `4690f2c6` | `the_tap_holds_at_most_its_cap_of_events` |
+| R12 surfaced ring | a byte cap of 64 MiB of bodies and State documents, with the loss counted above the cursor of a reader | `SURFACED_EVENTS_BYTES_CAP` | `3e4d6ce3`, `a90e9fde`, `b79c7aa8`, `59eeaffe` | `the_ring_holds_at_most_the_byte_cap_of_bodies` |
+| R17 `events_rx` | a directory, advertiser and ticket session holds no event channel | none needed | `25864570` | `directory_session_holds_no_event_stream` |
+| R18 directory feed | bounded at 256, a full feed drops the new event and counts it | `EVENT_FEED_CAP` 256 | `3bad3fbe` | `a_full_feed_drops_the_new_event_and_counts_it` |
+| R19 `TicketDirectory.events_rx`, R20 `TicketListings` | a ticket longer than one frame is refused before its decode | `MAX_TICKET_BYTES` = `MAX_MESSAGE_SIZE` | `238771cd`, `9999025b`, `fb020f9e` | `a_ticket_past_the_cap_is_refused` |
+
+FIX ORDER at the head: steps 0 to 5 are done (R17, R12, R1, R9 and R10, R19 and R20, as above). Step 6 (engine topology vectors and `graft_backoff`) is open on the engine side. Step 7 (`MeshDoc` frames): the meta channel resets its epoch when its frames reach the threshold and the state channel cuts a seed (PR 48 of the engine); the growth per year is proven by tests, not measured. The line cites of the sections below drifted with the fixes: read the names, not the numbers.
+
 ## Facts checked
 
-Engine paths refer to the pinned checkout `~/.cargo/git/checkouts/habilis-network-d7689bcdcb2fc477/f7cd9bb` (rev in `Cargo.lock:1808`). Engine files are `habilis-network-util/src/...` unless noted.
+Engine paths refer to the pinned checkout `~/.cargo/git/checkouts/habilis-network-d7689bcdcb2fc477/f7cd9bb`, the pin when this audit was written (the pin at the head is `f021911d`, in `Cargo.toml`). Engine files are `habilis-network-util/src/...` unless noted.
 
 - Frame cap `MAX_MESSAGE_SIZE` = 3840 B: **holds**. `consts.rs:45`.
 - Logical body cap `MAX_LOGICAL_BODY_BYTES` = 64 MiB: **holds**. `consts.rs:71`. The app refuses larger text at `broadcast_params.rs:647` and `broadcast_params.rs:1202`. Sealed ceiling 96 MiB at `consts.rs:78` and `broadcast_params.rs:1970`.
