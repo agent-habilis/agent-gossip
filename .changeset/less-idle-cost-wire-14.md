@@ -13,7 +13,8 @@ A member can prove its identity. The `Joined` frame carries a proof signed by th
 A peer on frame version 13.0 cannot read frames of version 14.0. Every consumer of the engine must move to frame version 14.0; all peers of a mesh must update together.
 
 For a user, a refused state write names its reason and a way out.
+At the memory limit, the state also refuses null merges: wait for the next cut, then write again.
 The longest value that a write can carry is about 1.3 KB, and about 0.9 KB with a password.
 A joiner takes a far epoch only as the answer to its first request.
-A nickname that another member holds with another key prints `nickname_held`. Leave the gossip and join again to get a new nickname.
+A nickname that another member holds with another key prints `nickname_held`. Join again without `--nickname`, or choose a different one: a rejoin with the same explicit `--nickname` keeps the conflict.
 The discover stream prints `events_lost` with a count when it drops events. List the gossips again.
