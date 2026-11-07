@@ -839,7 +839,7 @@ mod nickname_held_tests {
     /// event on the key and not on the words.
     #[test]
     fn the_gate_error_maps_to_the_nickname_held_key() {
-        let line = "The nickname calm-otter is held by another member, whose key proved it first";
+        let line = "The nickname calm-otter is held by another member with another key. The two nodes do not accept the frames of each other";
         assert_eq!(
             super::nickname_held_key(line),
             Some("calm-otter"),
