@@ -906,6 +906,10 @@ COMMANDS
                 too_large    "a value of the write is too large for the shared
                              state: N bytes with its keys; a value and its keys
                              must fit one frame". Split the value.
+                clock_ahead  "the clock of the shared state is ahead of this
+                             machine time: retry in a few seconds". Wait a
+                             few seconds, then write again. Check the system
+                             clock of this node and of the peers.
 
               FIRST SYNC. A member that joins a gossip holds its own writes
               until it has synced, so that its clock cannot put a write below
