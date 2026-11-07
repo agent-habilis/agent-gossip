@@ -1,4 +1,4 @@
-use habilis_network::embed::EventLoopState;
+use habilis_network::embed::{EventLoopState, KeyOfError};
 use habilis_network::ops::{MergeCtx, MeshSender, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::{AuthorKey, Channel, MeshId, MessageBody, Nickname};
 use serde_json::Value;
@@ -263,6 +263,15 @@ pub(crate) struct HandleOpParams<'caller> {
     pub(crate) app: &'caller mut A2aApp,
 }
 
+/// The error of a card route whose nickname names no one key of the roster: no live key uses it, or
+/// two or more do.
+pub(crate) fn address_error(nickname: &Nickname, error: KeyOfError) -> RpcError {
+    RpcError {
+        code: -32004,
+        message: format!("cannot address '{nickname}': {error}"),
+    }
+}
+
 /// Execute one op against the live loop state — the JSON-RPC binding's
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
@@ -359,10 +368,9 @@ pub(crate) async fn handle_op(
             let (key, label) = match &peer {
                 PeerRef::Key(named) => (*named, named.to_string()),
                 PeerRef::Nickname(nickname) => {
-                    let key = state.addressee_key(nickname).map_err(|error| RpcError {
-                        code: -32004,
-                        message: format!("cannot address '{nickname}': {error}"),
-                    })?;
+                    let key = state
+                        .addressee_key(nickname)
+                        .map_err(|error| address_error(nickname, error))?;
                     (key, nickname.to_string())
                 }
             };
