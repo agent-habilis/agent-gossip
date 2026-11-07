@@ -1483,6 +1483,15 @@ JSON EVENTS
                   "mode":"public","peers":4}
                  {"event":"gossip_lost","gossip":"3Cyr..."}
 
+       events_lost
+              From agent-gossip discover, when the stream dropped events because its
+              buffer was full. count is the number of events dropped since the
+              previous events_lost line. The listing can be stale: run discover
+              again to list every gossip. This line is not the poll marker of the
+              same name, which uses the key lost.
+
+                 {"event":"events_lost","count":3}
+
        info / error
               Operational notices.
 
