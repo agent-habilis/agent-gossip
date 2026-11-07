@@ -3314,6 +3314,35 @@ fn state_file_carries_daemon_pid() {
     let _ = fs::remove_file(&log);
 }
 
+/// A CLI daemon started with no `--state-file` keeps its member key and its run counter beside the default
+/// state file, so a restart after a crash is the same member and counts its run on: an ephemeral key would
+/// show the peers a new member under the nickname that the old session still holds.
+#[test]
+fn a_daemon_with_no_state_file_keeps_its_member_key_in_the_default_state_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("keys-default");
+    let key_file = default_state_file(&mesh, &nickname).with_extension("key");
+
+    let held = fs::read(&key_file);
+    let mode = fs::metadata(&key_file).map(|meta| meta.permissions().mode() & 0o777);
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+    let bytes = held.expect("the daemon kept no member key beside its default state file");
+    assert!(
+        bytes.len() >= 40,
+        "the key file holds the seed and the owner start"
+    );
+    assert_eq!(
+        mode.ok(),
+        Some(0o600),
+        "the key file is private to the user"
+    );
+}
+
 /// `agent-gossip leave <id>` (explicit target) stops exactly that mesh's local
 /// daemon — the state file disappears (proof of the graceful shutdown path)
 /// — and leaves an unrelated daemon untouched.

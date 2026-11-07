@@ -84,6 +84,9 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     let mut setup_params = SetupParams::new(author, sink)
         .max_peers(shared.max_peers)
         .runtime_base(crate::runtime_base())
+        // The CLI daemon writes its status file to the default state path, and keeps its member key and its
+        // run counter there too: a restart after a crash is the same member. The in-process sessions do not.
+        .keys_in_default_state(true)
         .per_peer_gate(crate::a2a::card_gate());
     setup_params.state_file = shared.state_file;
     setup_params.live_count = live_count.clone();
