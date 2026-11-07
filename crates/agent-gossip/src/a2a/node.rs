@@ -1437,7 +1437,7 @@ mod classify_tests {
 
     #[test]
     fn a_nickname_held_event_is_pollable_and_wakes_the_bell() {
-        let held = crate::emission::OutputEvent::NicknameHeld {
+        let held = OutputEvent::NicknameHeld {
             nickname: "dup".to_owned(),
         };
         assert!(
