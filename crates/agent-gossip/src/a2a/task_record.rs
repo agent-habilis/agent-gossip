@@ -2180,11 +2180,17 @@ mod tests {
                 },
             );
         }
-        assert!(
-            tasks.len() <= tuning::TASKS_CAP,
-            "held {} tasks, cap is {}",
+        assert_eq!(
             tasks.len(),
-            tuning::TASKS_CAP
+            tuning::TASKS_CAP,
+            "10 times the cap was offered: the registry holds the cap, no more and no less"
+        );
+        let last = TaskId::from(
+            format!("550e8400-e29b-41d4-a716-{:012}", 10 * tuning::TASKS_CAP - 1).as_str(),
+        );
+        assert!(
+            !tasks.contains_key(&last),
+            "the last offered task was refused, not kept"
         );
     }
 

@@ -123,10 +123,9 @@ pub(crate) const SURFACED_TAP_CAP: usize = 1024;
 /// most one task timeout, and one waiter makes one entry, so a count above the waiter cap is a
 /// burst of timeouts. Past the cap the entry that is due first leaves the list and its group goes
 /// to the next sweep; the call keeps awaiting its late reply (see `LATE_REPLIES_CAP`). A released
-/// group that the list of released groups forgets waits for the caps of the blob store. The byte
-/// cap (4 GiB) holds at every engine rev. The entry cap and the owner cap hold only from the
-/// engine rev that has the `…-blobcap` commits, so an app built on an older rev has the byte
-/// cap alone.
+/// group that the list of released groups forgets waits for the caps of the blob store. The store of
+/// the pinned engine has all three caps: bytes (4 GiB), entries (`MAX_BLOB_STORE_ENTRIES`, 4096)
+/// and owners of one blob (`MAX_BLOB_OWNERS`, 64).
 pub(crate) const ORPHAN_BLOBS_CAP: usize = 64;
 
 /// How many timed-out calls await a late reply without a group in the orphan list: the calls whose
