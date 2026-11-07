@@ -2849,7 +2849,7 @@ fn test_multi_round_throttled_backfill() {
 async fn two_members_of_one_nickname_do_not_see_each_others_messages() {
     let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
     let mut beta = InProcNode::join(&alpha.mesh, "dup").await;
-    let mut observer = InProcNode::join(&alpha.mesh, "samenick-obs").await;
+    let observer = InProcNode::join(&alpha.mesh, "samenick-obs").await;
 
     alpha.broadcast("from-alpha").await;
     beta.broadcast("from-beta").await;

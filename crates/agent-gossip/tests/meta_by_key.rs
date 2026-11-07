@@ -108,7 +108,7 @@ async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_a
         tokio::time::sleep(POLL).await;
     }
 
-    let deadline = Instant::now() + MSG_TIMEOUT;
+    let open_deadline = Instant::now() + MSG_TIMEOUT;
     let (alice_opened, beta_opened) = loop {
         let alice_opened = alice
             .wait_body("to-the-one-holder", Duration::from_secs(1))
@@ -120,7 +120,7 @@ async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_a
             break (alice_opened, beta_opened);
         }
         assert!(
-            Instant::now() < deadline,
+            Instant::now() < open_deadline,
             "neither key opened the message of the observer"
         );
     };
