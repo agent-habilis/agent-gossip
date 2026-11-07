@@ -937,13 +937,11 @@ async fn gap_future_timestamp_is_accepted() {
     attacker.leave().await;
 }
 
+/// The gap that this test guarded was open until the engine nickname gate: the attacker posted under
+/// the victim's nickname with its own key, and the message was delivered. The gate (engine `b28124e2`)
+/// refuses the frames of a key that has no proof of the nickname, so the message is not surfaced.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "OPEN GAP")]
-async fn gap_nickname_impersonation_is_accepted() {
-    // The attacker posts under the *victim's* display nickname but with its
-    // own key. Names are cosmetic (not authenticated), so the message is
-    // delivered & surfaced — a consumer trusting the name is fooled; only the
-    // pubkey distinguishes them.
+async fn a_message_that_impersonates_a_held_nickname_is_refused() {
     let (mut victim, attacker) = meshed_pair("imposter").await;
     let victim_nick = victim.nickname.clone();
     let key = test_key::new_key(); // NOT the victim's key
@@ -959,7 +957,7 @@ async fn gap_nickname_impersonation_is_accepted() {
     let seen = victim.wait_body("i-am-you", T).await;
     assert!(
         !seen,
-        "OPEN GAP: a message impersonating an existing nickname is accepted (names are not authenticated)"
+        "a message that impersonates a held nickname is surfaced: the gate does not refuse it"
     );
     victim.leave().await;
     attacker.leave().await;
