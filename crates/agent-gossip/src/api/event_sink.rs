@@ -9,8 +9,11 @@ pub(crate) const EVENT_FEED_CAP: usize = 256;
 
 /// An event that a full feed may evict. A `Lost` stays: a consumer that misses it keeps a mesh
 /// that is gone, and no later event tells it so.
-pub(crate) trait Evictable {
+pub trait Evictable: Sized {
     fn is_lost(&self) -> bool;
+
+    /// The marker a consumer gets when the feed dropped `count` events since its last read.
+    fn events_lost(count: u64) -> Self;
 }
 
 struct Shared<T> {
@@ -18,6 +21,7 @@ struct Shared<T> {
     ready: Notify,
     closed: AtomicBool,
     dropped: AtomicU64,
+    reported: AtomicU64,
 }
 
 pub(crate) struct EventSink<T> {
@@ -36,6 +40,7 @@ pub(crate) fn event_feed<T>() -> (EventSink<T>, EventReceiver<T>) {
         ready: Notify::new(),
         closed: AtomicBool::new(false),
         dropped: AtomicU64::new(0),
+        reported: AtomicU64::new(0),
     });
     (
         EventSink {
@@ -58,7 +63,12 @@ impl<T: Evictable> EventSink<T> {
                 .position(|queued| !queued.is_lost())
                 .unwrap_or(0);
             queue.remove(evicted);
-            self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+            let _ =
+                self.shared
+                    .dropped
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+                        Some(total.saturating_add(1))
+                    });
         }
         queue.push_back(event);
         drop(queue);
@@ -93,8 +103,25 @@ impl<T> EventReceiver<T> {
             .pop_front()
     }
 
-    pub async fn recv(&mut self) -> Option<T> {
+    /// The drops since the last marker, once, as the marker event. The marker takes no queue slot,
+    /// so a full feed never evicts it.
+    fn marker(&self) -> Option<u64> {
+        let dropped = self.shared.dropped.load(Ordering::Acquire);
+        let reported = self.shared.reported.load(Ordering::Acquire);
+        (dropped > reported).then(|| {
+            self.shared.reported.store(dropped, Ordering::Release);
+            dropped - reported
+        })
+    }
+
+    pub async fn recv(&mut self) -> Option<T>
+    where
+        T: Evictable,
+    {
         loop {
+            if let Some(count) = self.marker() {
+                return Some(T::events_lost(count));
+            }
             if let Some(event) = self.pop() {
                 return Some(event);
             }
@@ -105,7 +132,13 @@ impl<T> EventReceiver<T> {
         }
     }
 
-    pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
+    pub fn try_recv(&mut self) -> Result<T, TryRecvError>
+    where
+        T: Evictable,
+    {
+        if let Some(count) = self.marker() {
+            return Ok(T::events_lost(count));
+        }
         if let Some(event) = self.pop() {
             return Ok(event);
         }
@@ -175,8 +208,16 @@ mod tests {
         let (sink, mut rx) = event_feed::<Feed>();
         sink.publish(Feed::Found(1));
         sink.publish(Feed::Found(2));
-        assert_eq!(rx.try_recv().expect("the first event"), Feed::Found(1));
-        assert_eq!(rx.try_recv().expect("the second event"), Feed::Found(2));
+        assert_eq!(
+            rx.try_recv().expect("the first event"),
+            Feed::Found(1),
+            "the first event is delivered as sent"
+        );
+        assert_eq!(
+            rx.try_recv().expect("the second event"),
+            Feed::Found(2),
+            "the second event follows the first"
+        );
         assert!(rx.try_recv().is_err(), "no marker when nothing was dropped");
     }
 
@@ -211,8 +252,13 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             held.push(event);
         }
-        let newest: Vec<usize> = (9 * EVENT_FEED_CAP..10 * EVENT_FEED_CAP).collect();
-        assert_eq!(held, newest, "the feed holds the newest events, in order");
+        let marker = 9 * EVENT_FEED_CAP;
+        let mut expected: Vec<usize> = vec![marker];
+        expected.extend(9 * EVENT_FEED_CAP..10 * EVENT_FEED_CAP);
+        assert_eq!(
+            held, expected,
+            "the marker counts the evicted events, then the feed holds the newest, in order"
+        );
         assert_eq!(
             sink.dropped(),
             u64::try_from(9 * EVENT_FEED_CAP).expect("9 times the cap fits in u64"),
@@ -227,9 +273,15 @@ mod tests {
         for index in 0..=EVENT_FEED_CAP {
             sink.publish(Feed::Lost(index));
         }
-        let first = rx
+        let marker = rx
             .try_recv()
             .expect("publishing past the cap leaves at least one event to receive");
+        assert_eq!(
+            marker,
+            Feed::EventsLost(1),
+            "the marker counts the one Lost evicted"
+        );
+        let first = rx.try_recv().expect("the kept events follow the marker");
         assert_eq!(first, Feed::Lost(1), "the oldest Lost is the one evicted");
     }
 }

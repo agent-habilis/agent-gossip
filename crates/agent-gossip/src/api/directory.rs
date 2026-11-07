@@ -45,11 +45,18 @@ pub enum DirectoryEvent {
     Updated(MeshListing),
     /// A mesh's ads stopped and its listing aged out.
     Lost(MeshId),
+    /// The feed dropped this many events since the last one it sent, so the listing may be stale:
+    /// list again.
+    EventsLost(u64),
 }
 
 impl event_sink::Evictable for DirectoryEvent {
     fn is_lost(&self) -> bool {
         matches!(self, DirectoryEvent::Lost(_))
+    }
+
+    fn events_lost(count: u64) -> Self {
+        DirectoryEvent::EventsLost(count)
     }
 }
 

@@ -214,11 +214,17 @@ pub(crate) enum TicketDirectoryEvent {
     Found(TicketListing),
     Updated(TicketListing),
     Lost(String),
+    /// The feed dropped this many events since the last one it sent, so the listing may be stale.
+    EventsLost(u64),
 }
 
 impl event_sink::Evictable for TicketDirectoryEvent {
     fn is_lost(&self) -> bool {
         matches!(self, TicketDirectoryEvent::Lost(_))
+    }
+
+    fn events_lost(count: u64) -> Self {
+        TicketDirectoryEvent::EventsLost(count)
     }
 }
 
