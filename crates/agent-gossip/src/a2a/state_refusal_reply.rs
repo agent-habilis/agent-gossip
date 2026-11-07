@@ -33,6 +33,10 @@ impl StateRefusalReply {
                 "too_large",
                 "split the value into smaller values under their own keys",
             ),
+            StateRefusal::ClockAhead => (
+                "clock_ahead",
+                "retry in a few seconds; if it stays, the clock of a member or of this machine is wrong by more than 1 hour",
+            ),
             _ => ("refused", "write again later"),
         };
         Some(Self {
@@ -102,6 +106,12 @@ mod tests {
                 "the value is nested 13 levels deep and the shared state allows 12",
                 "too_deep",
                 "fewer levels",
+            ),
+            (
+                StateRefusal::ClockAhead,
+                "the clock of the shared state is ahead of this machine time: retry in a few seconds",
+                "clock_ahead",
+                "wrong by more than 1 hour",
             ),
             (
                 StateRefusal::TooLarge { bytes: 3_000 },
