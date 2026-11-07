@@ -189,11 +189,11 @@ impl Session {
         self.inner.ping().await
     }
 
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
-    /// valid merge.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state.
     ///
     /// # Errors
-    /// Fails if the event loop has stopped.
+    /// Fails if the event loop has stopped, if the merge is not a JSON object, or if the state
+    /// refuses the write: not synced yet, full, nested too deep, or too large.
     pub(super) async fn apply_state_merge(
         &self,
         merge: serde_json::Value,
