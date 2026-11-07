@@ -1324,6 +1324,17 @@ JSON EVENTS
                  {"event":"fork","nickname":"word-word","pubkey":"<hex>",
                   "seq":42}
 
+       nickname_held
+              Another member holds the nickname of this node and proved it
+              first, so the gossip does not admit this node under that
+              nickname. The event comes once. It is visible and it wakes a
+              parked `poll --long`. nickname is the held nickname. display is
+              the line to show. To get a free nickname, run leave, then run
+              join again: the daemon mints a new nickname.
+
+                 {"event":"nickname_held","nickname":"word-word",
+                  "display":"..."}
+
        events_lost
               The daemon dropped events before they reached the poll history,
               because a burst was larger than its feed channel. It takes the
