@@ -1435,6 +1435,18 @@ mod classify_tests {
         assert!(!wakes(&receipt_event()), "a receipt does not wake the bell");
     }
 
+    #[test]
+    fn a_nickname_held_event_is_pollable_and_wakes_the_bell() {
+        let held = crate::emission::OutputEvent::NicknameHeld {
+            nickname: "dup".to_owned(),
+        };
+        assert!(
+            super::is_pollable(&held),
+            "the member that is refused its nickname must find the event in its poll ring"
+        );
+        assert!(wakes(&held), "the event rings the bell");
+    }
+
     fn receipt_frame_raw(to: Option<AuthorKey>, body: &str) -> Message {
         Message::new_app(
             &mesh(),
