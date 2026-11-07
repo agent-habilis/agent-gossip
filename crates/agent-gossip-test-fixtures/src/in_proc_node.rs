@@ -23,7 +23,6 @@ use crate::{
 /// the engine, which is the longest that the engine itself can refuse with `not_synced`.
 const FIRST_SYNC_WAIT: Duration = Duration::from_secs(35);
 
-/// True when the session refused a write because the node has not synced its state yet.
 fn is_not_synced(error: &SessionError) -> bool {
     let SessionError::Loop(cause) = error else {
         return false;
