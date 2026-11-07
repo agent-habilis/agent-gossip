@@ -26,7 +26,7 @@ pub(crate) struct EventSink<T> {
 
 /// The consumer side of a feed. Its own type, not a channel receiver, so a full feed can evict
 /// the oldest event that is not a `Lost`, which a channel cannot do.
-pub(crate) struct EventReceiver<T> {
+pub struct EventReceiver<T> {
     shared: Arc<Shared<T>>,
 }
 
@@ -93,7 +93,7 @@ impl<T> EventReceiver<T> {
             .pop_front()
     }
 
-    pub(crate) async fn recv(&mut self) -> Option<T> {
+    pub async fn recv(&mut self) -> Option<T> {
         loop {
             if let Some(event) = self.pop() {
                 return Some(event);
@@ -105,7 +105,7 @@ impl<T> EventReceiver<T> {
         }
     }
 
-    pub(crate) fn try_recv(&mut self) -> Result<T, TryRecvError> {
+    pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         if let Some(event) = self.pop() {
             return Ok(event);
         }
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn a_feed_of_lost_events_evicts_the_oldest() {
         let (sink, mut rx) = event_feed::<Feed>();
-        for index in 0..EVENT_FEED_CAP + 1 {
+        for index in 0..=EVENT_FEED_CAP {
             sink.publish(Feed::Lost(index));
         }
         let first = rx.try_recv().expect("the feed holds events");
