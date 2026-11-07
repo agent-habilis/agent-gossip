@@ -1332,7 +1332,7 @@ JSON EVENTS
               nickname. The way out: leave and join again. The daemon mints
               a new nickname.
 
-                 {"event":"nickname_held","nickname":"word-word"}
+                 {"event":"nickname_held","nickname":"word-word","display":"`word-word` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"}
 
        events_lost
               The daemon dropped events before they reached the poll history,

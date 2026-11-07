@@ -1018,6 +1018,9 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::NicknameHeld { nickname } => serde_json::to_string(&serde_json::json!({
             "event": "nickname_held",
             "nickname": nickname,
+            "display": format!(
+                "`{nickname}` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one"
+            ),
         }))
         .ok(),
         OutputEvent::EventsLost { lost } => serde_json::to_string(&SimpleEvent::EventsLost {
