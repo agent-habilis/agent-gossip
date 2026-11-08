@@ -215,9 +215,10 @@ impl MeshSession {
         self.core.message(to, body).await
     }
 
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges
-    /// into the document (a `null` member deletes its key; nested objects merge
-    /// recursively), and a non-object value replaces the target.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state: the top-level
+    /// merge must be an object, which merges into the document (a `null` member
+    /// deletes its key; nested objects merge recursively), and a non-object
+    /// value under a key replaces that key.
     ///
     /// # Errors
     /// Fails if the event loop has stopped (a merge always applies).

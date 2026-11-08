@@ -97,8 +97,9 @@ pub(crate) enum IpcCommand {
     #[serde(rename = "peers")]
     Peers { mesh: MeshId },
     /// Apply an RFC 7386 JSON Merge Patch to the mesh's shared state. `merge` is
-    /// any JSON value merged into the document (an object deep-merges, `null`
-    /// deletes a key, a non-object replaces the target); the daemon signs +
+    /// a JSON object merged into the document (a scalar, an array or `null` at
+    /// the top level is refused; an object deep-merges, `null` deletes a key,
+    /// a non-object value under a key replaces that key); the daemon signs +
     /// gossips it.
     #[serde(rename = "state_merge")]
     StateMerge {

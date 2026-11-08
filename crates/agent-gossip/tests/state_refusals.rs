@@ -93,6 +93,30 @@ fn a_value_nested_too_deep_is_refused_with_its_reason_and_the_way_out() {
     );
 }
 
+/// The help of `state merge` and `meta merge` must not promise what the CLI refuses: a top-level merge that
+/// is not an object is refused (the document root is a map), so the help says that the top level is an
+/// object, and not that a non-object value replaces the document.
+#[test]
+fn the_help_of_a_merge_says_that_the_top_level_is_an_object() {
+    for channel in ["state", "meta"] {
+        let output = common::test_cmd()
+            .args([channel, "merge", "--help"])
+            .output()
+            .expect("the help of a merge prints");
+        let text = String::from_utf8_lossy(&output.stdout);
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let help = words.join(" ");
+        assert!(
+            !help.contains("replaces the document"),
+            "the help of {channel} merge still says that a non-object value replaces the document: {help}"
+        );
+        assert!(
+            help.contains("top-level merge must be an object"),
+            "the help of {channel} merge must say that the top-level merge must be an object: {help}"
+        );
+    }
+}
+
 #[test]
 fn a_value_too_large_for_a_frame_of_a_seed_is_refused() {
     let (creator, mesh) = Node::create();
