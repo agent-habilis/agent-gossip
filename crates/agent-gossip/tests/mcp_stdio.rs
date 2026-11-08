@@ -415,6 +415,34 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     );
 }
 
+/// The `merge` field of `apply_state_merge` must not promise what the tool refuses: a top-level merge
+/// that is not an object is refused (the document root is a map), so the field text says that the top
+/// level is an object, and that a non-object value replaces the key that it sits under.
+#[test]
+fn the_merge_field_text_says_that_the_top_level_is_an_object() {
+    let mut client = McpClient::spawn();
+    client.send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+    let response = client.recv_until_response(2);
+    let tools = response["result"]["tools"]
+        .as_array()
+        .expect("tools/list answers with a list of tools");
+    let tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "apply_state_merge")
+        .expect("the tool list holds apply_state_merge");
+    let field = tool["inputSchema"]["properties"]["merge"]["description"]
+        .as_str()
+        .expect("the merge field has a description");
+    assert!(
+        !field.contains("replaces the target"),
+        "the field text still says that a non-object value replaces the target: {field}"
+    );
+    assert!(
+        field.contains("top-level") && field.contains("must be an object"),
+        "the field text must say that the top-level merge must be an object: {field}"
+    );
+}
+
 // ─── idempotency + error paths ───────────────────────────────────
 
 #[test]
