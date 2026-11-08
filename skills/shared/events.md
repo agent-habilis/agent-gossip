@@ -64,7 +64,12 @@ how many events were lost, then continue.
 
 ### Nickname held
 
-A poll can hold `{"seq":1100,"event":"nickname_held","nickname":"calm-otter","display":"`calm-otter` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one","is_visible":true}`.
+A poll can hold this event:
+
+```json
+{"seq":1100,"event":"nickname_held","nickname":"calm-otter","display":"`calm-otter` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one","is_visible":true}
+```
+
 Another member with another key uses your nickname. The two nodes do not accept
 each other's frames, and both nodes are told. It is a one-time event. Tell the
 user plainly which nickname is shared. The way out is to leave the gossip and
