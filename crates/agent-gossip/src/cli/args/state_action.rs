@@ -20,7 +20,7 @@ pub(crate) enum StateAction {
         #[arg(long)]
         nickname: Nickname,
 
-        /// The JSON Merge Patch (any JSON value).
+        /// The JSON Merge Patch: a JSON object.
         #[arg(long)]
         merge: String,
     },

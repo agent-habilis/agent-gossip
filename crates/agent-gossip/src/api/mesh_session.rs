@@ -221,7 +221,9 @@ impl MeshSession {
     /// value under a key replaces that key.
     ///
     /// # Errors
-    /// Fails if the event loop has stopped (a merge always applies).
+    /// Fails if the event loop has stopped. It also fails when the state refuses the write: a top
+    /// level that is not an object, a value too large for one frame, too deep, a full state, a state
+    /// not yet synced, or a clock ahead of this machine.
     pub async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.core.state_merge(merge).await
     }
