@@ -20,11 +20,11 @@ fn the_merge_field_help_says_the_top_level_is_an_object() {
             .unwrap_or_default();
         assert!(
             help.contains("JSON object"),
-            "the --merge help of `{group} {subcommand}` says the top level is an object: {help}"
+            "the --merge help of `{group} {subcommand}` must name the object rule, because a scalar write is refused: {help}"
         );
         assert!(
             !help.contains("any JSON value"),
-            "the --merge help of `{group} {subcommand}` no longer allows any value: {help}"
+            "the --merge help of `{group} {subcommand}` must not promise any value, because the state refuses a scalar: {help}"
         );
     }
 }
