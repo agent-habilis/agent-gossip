@@ -105,7 +105,6 @@ impl MeshSession {
             SetupParams::new(author, sink)
                 .max_peers(GOSSIP_ACTIVE_VIEW_CAPACITY)
                 .runtime_base(crate::runtime_base())
-                .per_peer_gate(crate::a2a::card_gate())
                 .cohost(cohost),
         )
         .await?;
