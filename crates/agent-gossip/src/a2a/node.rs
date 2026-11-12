@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use habilis_network::embed::{
@@ -839,8 +840,9 @@ async fn handle_a2a_req(
                         ingest_remote_message(&payload, (&requester_key, &requester), app, context)
                     }
                     Served::ShardRepair { group, missing } => {
-                        // One small ask makes this node send a whole group again, so the asks
-                        // have a budget. The requester asks again on its next tick.
+                        // The ask has no reply: the requester parks no waiter and asks again on
+                        // its next tick, and a reply is a sealed, signed, directed frame that
+                        // costs this node as much as the ask costs the requester.
                         if app.repair_budget.admit(requester_key, Instant::now()) {
                             resend_cached_shards(
                                 ShardRepairParams {
@@ -851,13 +853,15 @@ async fn handle_a2a_req(
                                 state,
                                 context,
                             )
-                            .await
+                            .await;
                         } else {
-                            Err(RpcError {
-                                code: -32005,
-                                message: "shard repair budget spent: ask again later".to_owned(),
-                            })
+                            tracing::debug!(
+                                target: "agent_gossip::a2a",
+                                %group,
+                                "shard repair budget spent: the ask is dropped"
+                            );
                         }
+                        return;
                     }
                     Served::ReaderGet => {
                         let (bell, last_poll_secs_ago) = reader_liveness(app, context);
@@ -930,14 +934,14 @@ async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
+) {
     let ShardRepairParams {
         group,
         missing,
         requester,
     } = params;
     // A repeated index would send one frame several times for one ask.
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let unique: Vec<u32> = missing
         .iter()
         .copied()
@@ -970,7 +974,6 @@ async fn resend_cached_shards(
         resent,
         "served a shard repair request"
     );
-    Ok(serde_json::json!({ "resent": resent }))
 }
 
 /// A `message/send` directed at us over gossip-RPC — we are the task's A2A
