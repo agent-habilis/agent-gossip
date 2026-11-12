@@ -13,8 +13,11 @@ mod a2a_call_sugar;
 mod advertised_file_name;
 pub(crate) mod agent;
 pub(crate) mod args;
+#[cfg(windows)]
+mod auto;
 pub(crate) mod bell;
 mod create;
+mod daemon_endpoint;
 mod detach_if_owned;
 mod detached_stdio;
 mod discover;
@@ -27,6 +30,8 @@ mod finish_send;
 mod install_tuning;
 mod invite;
 mod join;
+#[cfg(windows)]
+mod keep_from_child;
 mod meta;
 mod msg_response;
 mod parse_ttl;
@@ -42,7 +47,10 @@ mod run_session;
 mod send;
 mod session;
 mod signal;
+mod spawn_detached;
 mod state;
+#[cfg(windows)]
+mod stderr_to_session_file;
 mod target;
 #[cfg(test)]
 mod tests;

@@ -2,6 +2,8 @@ use crate::cli;
 use crate::cli::Cli;
 use crate::cli_command::cli_command;
 use crate::cli_error::CliError;
+#[cfg(windows)]
+use crate::exit_on_parse_error::exit_on_parse_error;
 use crate::register_build_version::register_build_version;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
@@ -18,7 +20,12 @@ pub async fn run_cli() -> Result<(), CliError> {
     register_build_version();
     // Parse through `cli_command()` (not `Cli::parse()`) so the `help`
     // subcommand blurb override in that builder applies at runtime too.
+    #[cfg(unix)]
     let matches = cli_command().get_matches();
+    #[cfg(windows)]
+    let matches = cli_command()
+        .try_get_matches()
+        .unwrap_or_else(|error| exit_on_parse_error(&error));
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
         .unwrap_or_else(|error| error.exit());
     // Box the single large await so it lives on the heap, not this frame —

@@ -185,8 +185,10 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
     std::fs::create_dir_all(home.join(".claude")).expect("seeding a fake claude-code");
     std::fs::create_dir_all(home.join(".codex")).expect("seeding a fake codex");
 
-    let plug = common::test_cmd()
-        .env("HOME", &home)
+    let mut plug_command = common::test_cmd();
+    // Windows reads the home from USERPROFILE first.
+    plug_command.env("HOME", &home).env("USERPROFILE", &home);
+    let plug = plug_command
         .arg("plug")
         .output()
         .expect("failed to run `agent-gossip plug`");
@@ -241,8 +243,10 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
     );
 
     // Step 4: the doc tells the agent to read this and expect `up to date`.
-    let doctor = common::test_cmd()
-        .env("HOME", &home)
+    let mut doctor_command = common::test_cmd();
+    // Windows reads the home from USERPROFILE first.
+    doctor_command.env("HOME", &home).env("USERPROFILE", &home);
+    let doctor = doctor_command
         .args(["doctor", "--no-probe", "--output", "json"])
         .output()
         .expect("failed to run `agent-gossip doctor`");
@@ -273,8 +277,10 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
         state("cursor")
     );
 
-    let unplug = common::test_cmd()
-        .env("HOME", &home)
+    let mut unplug_command = common::test_cmd();
+    // Windows reads the home from USERPROFILE first.
+    unplug_command.env("HOME", &home).env("USERPROFILE", &home);
+    let unplug = unplug_command
         .arg("unplug")
         .output()
         .expect("failed to run `agent-gossip unplug`");

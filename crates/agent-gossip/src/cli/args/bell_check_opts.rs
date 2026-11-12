@@ -6,6 +6,7 @@ pub(crate) struct BellCheckOpts {
     /// session's when this pid is among its process ancestors. Defaults to
     /// this command's parent process.
     #[arg(long)]
+    #[cfg_attr(windows, arg(value_parser = crate::cli::auto::pid))]
     pub session_pid: Option<u32>,
 
     /// How long a missing bell may take to appear before the check fails

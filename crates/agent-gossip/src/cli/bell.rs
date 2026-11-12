@@ -20,10 +20,15 @@ fn lock_path(mesh: &str, nickname: &str) -> PathBuf {
 /// is never unlinked: removing it while another bell holds it would split the
 /// lock across two inodes.
 pub(crate) async fn acquire(mesh: &str, nickname: &str) -> Option<File> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt as _;
 
     let mut options: OpenOptions = OpenOptions::new();
-    options.create(true).truncate(false).write(true).mode(0o600);
+    options.create(true).truncate(false).write(true);
+    // On Windows the file inherits the ACL of the user profile through the
+    // mesh folder, which keeps other users out.
+    #[cfg(unix)]
+    options.mode(0o600);
     let file: File = options.open(lock_path(mesh, nickname)).ok()?;
     // Retry to ride out a probe's momentary shared lock.
     let deadline = tokio::time::Instant::now() + ACQUIRE_RETRY_FOR;

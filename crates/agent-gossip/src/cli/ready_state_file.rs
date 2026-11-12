@@ -94,7 +94,22 @@ pub(super) async fn ready(options: ReadyOpts) -> Result<()> {
         timeout_secs,
         legacy_output: _,
     } = options;
+    #[cfg(unix)]
     let ready = wait_for_ready(&state_file, timeout_secs).await?;
+    // On Windows the skill cannot build the path of the `.stderr` file, so a
+    // failed `ready` prints it: the errors of a launch that did not serve.
+    #[cfg(windows)]
+    let ready = match wait_for_ready(&state_file, timeout_secs).await {
+        Ok(ready) => ready,
+        Err(error) => {
+            let stderr = std::fs::read_to_string(super::auto::stderr_beside(&state_file))
+                .unwrap_or_default();
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
+            return Err(error);
+        }
+    };
     print_ready_identity(&ready);
     Ok(())
 }

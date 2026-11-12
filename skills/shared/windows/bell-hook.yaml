@@ -1,0 +1,7 @@
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: agent-gossip
+          args: ["bell-check", "--session-pid", "auto"]
+          timeout: 15
