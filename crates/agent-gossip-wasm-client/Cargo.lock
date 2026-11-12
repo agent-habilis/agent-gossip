@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "adler2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
-
-[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -216,30 +210,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "automerge"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09b78abcbba93428b9465b26cb2816a5b4654cce507f099a84a8c1b311cb3633"
-dependencies = [
- "cfg-if",
- "flate2",
- "getrandom 0.4.3",
- "hex",
- "hexane",
- "itertools",
- "leb128",
- "rand 0.10.2",
- "rustc-hash",
- "serde",
- "sha2",
- "smol_str",
- "thiserror 2.0.20",
- "tinyvec",
- "tracing",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "aws-lc-rs"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -352,16 +322,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
 dependencies = [
  "objc2",
-]
-
-[[package]]
-name = "borsh"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88b7ea17d208c4193f2c1e6de3c35fe71f98c96982d5ced308bdcc749ff6e1f"
-dependencies = [
- "bytes",
- "cfg_aliases",
 ]
 
 [[package]]
@@ -633,15 +593,6 @@ name = "crc-catalog"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
-
-[[package]]
-name = "crc32fast"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
-dependencies = [
- "cfg-if",
-]
 
 [[package]]
 name = "critical-section"
@@ -1097,16 +1048,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
-name = "flate2"
-version = "1.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
-dependencies = [
- "crc32fast",
- "miniz_oxide",
-]
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1370,12 +1311,11 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
- "base64",
  "bs58",
  "bytes",
  "chacha20poly1305",
@@ -1407,10 +1347,8 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
- "anyhow",
- "automerge",
  "bs58",
  "chacha20poly1305",
  "habilis-network-protocol",
@@ -1423,7 +1361,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1441,7 +1379,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "iroh",
 ]
@@ -1449,7 +1387,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1476,7 +1414,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -1488,7 +1426,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1513,7 +1451,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=94f77a773398b276e86468366b28d0f639f9e649#94f77a773398b276e86468366b28d0f639f9e649"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=3e8776a2868da3f8225bffe67f847e45a735b179#3e8776a2868da3f8225bffe67f847e45a735b179"
 dependencies = [
  "tokio",
  "tracing",
@@ -1543,16 +1481,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hexane"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f4ecba0bb4e14df997df7cab6d1b584c6432d8865cf2adfced814706d715a7b"
-dependencies = [
- "leb128",
- "thiserror 2.0.20",
-]
 
 [[package]]
 name = "hickory-net"
@@ -2185,15 +2113,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2301,12 +2220,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "leb128"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c83bff1d572d6b9aeef67ddfc8448e4a3737909cb28e81f97c791b9018703e52"
-
-[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2403,16 +2316,6 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
-name = "miniz_oxide"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
-dependencies = [
- "adler2",
- "simd-adler32",
-]
 
 [[package]]
 name = "mio"
@@ -3719,12 +3622,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simd-adler32"
-version = "0.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
-
-[[package]]
 name = "simd_cesu8"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3760,16 +3657,6 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
-
-[[package]]
-name = "smol_str"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
-dependencies = [
- "borsh",
- "serde_core",
-]
 
 [[package]]
 name = "socket2"
