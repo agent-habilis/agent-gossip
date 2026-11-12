@@ -23,7 +23,7 @@ use super::{
     LeaveResult, MCP_INSTRUCTIONS, MeshInfoResult, MeshRef, NoArgs, PingResult, SendBroadcastArgs,
     SendMsgArgs, SendResult, TaskArtifactArgs, TaskStatusArgs, TopicMeshArgs, VersionResult,
     already_in_mesh_error, join_error_to_mcp, not_in_mesh_error, ok_json, parse_task_id,
-    parse_task_state, rejoin_existing, to_mcp_error,
+    parse_task_state, rejoin_existing, state_merge_error, to_mcp_error,
 };
 use crate::a2a::ipc_command::MetaView;
 use crate::a2a::reader_asks;
@@ -328,6 +328,8 @@ impl AgentGossipServer {
             messages,
             current_seq,
             missed_before: batch.missed_before,
+            lost_to_bytes: batch.byte_losses().map(|(events, _)| events),
+            lost_bytes: batch.byte_losses().map(|(_, bytes)| bytes),
         })
     }
 
@@ -478,7 +480,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value replaces the target. Returns `{ok:true}` on apply (any JSON value is a valid merge). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value under a key replaces that key (the top-level merge must be an object). Returns `{ok:true}` on apply. The state is bounded, so a write can be refused with an invalid-params error whose `data.reason` is `not_synced` (a joining member waits for its first sync, 30 s at most: retry), `state_full` (delete keys with a null merge, or wait for the next cut: at the memory limit deletes are refused too), `too_deep` (more than 12 levels), `too_large` (a string value of about 1350 bytes or more, about 940 bytes or more on a gossip with a password: split it) or `clock_ahead` (the clock of the state is ahead of this node: wait and retry, and check the system clock of this node and of the peers); `data.hint` names the way out. Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
     )]
     async fn apply_state_merge(
         &self,
@@ -489,7 +491,7 @@ impl AgentGossipServer {
         session
             .apply_state_merge(args.merge)
             .await
-            .map_err(to_mcp_error)?;
+            .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
     }
 

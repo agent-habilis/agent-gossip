@@ -46,7 +46,34 @@ A poll response may lead with:
 
 This is not an event. It says every event below that `seq` aged out of the
 daemon's ring before you read it, and is gone. Tell the user plainly that
-events were dropped, then continue with the returned window.
+events were dropped, then continue with the returned window. When the marker
+also has `lost_to_bytes` and `lost_bytes`, the ring dropped that many of the
+events you missed, and that many bytes of body, because it held too many bytes of
+body; say the counts. The counts come only with the marker, and only for events after
+your cursor. When the marker has no counts, the daemon dropped no events for bytes, or no
+longer knows how many; do not say that no event was lost, because the marker says that
+events were.
+
+### Lost events
+
+A poll can hold `{"seq":1050,"event":"events_lost","lost":9216,"display":"💬️ 9216 events were lost before the poll history","is_visible":true}`.
+Unlike a gap marker it has a `seq`: it sits in the ring where the lost events
+would have been. The daemon dropped `lost` events before they reached the ring,
+because they came in a burst larger than its feed channel. Tell the user plainly
+how many events were lost, then continue.
+
+### Nickname held
+
+A poll can hold this event:
+
+```json
+{"seq":1100,"event":"nickname_held","nickname":"calm-otter","display":"`calm-otter` is held by another member: this node is not admitted under it; join again without --nickname, or choose another one","is_visible":true}
+```
+
+Another member with another key uses your nickname. The two nodes do not accept
+each other's frames, and both nodes are told. It is a one-time event. Tell the
+user plainly which nickname is shared. The way out is to leave the gossip and
+join again: the daemon then mints a new nickname.
 
 ### Receipts
 

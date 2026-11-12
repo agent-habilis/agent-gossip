@@ -20,11 +20,13 @@ use habilis_network::runtime::tuning::{
     advertise_interval, directory_expiry, directory_private_for_test,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use super::a2a_ticket::A2aTicket;
-use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory};
+use crate::api::{
+    DIRECTORY_ADVERTISER_COHOST, MeshSession, directory as api_directory, event_sink,
+};
 
 /// Upper bound on live listings — the directory is an open public mesh, so a
 /// flood of hostile ads must not grow the picker without bound.
@@ -212,6 +214,18 @@ pub(crate) enum TicketDirectoryEvent {
     Found(TicketListing),
     Updated(TicketListing),
     Lost(String),
+    /// The feed dropped this many events since the last one it sent, so the listing may be stale.
+    EventsLost(u64),
+}
+
+impl event_sink::Evictable for TicketDirectoryEvent {
+    fn is_lost(&self) -> bool {
+        matches!(self, TicketDirectoryEvent::Lost(_))
+    }
+
+    fn events_lost(count: u64) -> Self {
+        TicketDirectoryEvent::EventsLost(count)
+    }
 }
 
 /// A live view of a directory's a2a ticket ads — the consumer side of
@@ -220,7 +234,7 @@ pub(crate) enum TicketDirectoryEvent {
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
     session: Option<MeshSession>,
-    events_rx: Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>>,
+    events_rx: Option<event_sink::EventReceiver<TicketDirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -238,7 +252,7 @@ impl TicketDirectory {
         let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let mut listings = TicketListings::new();
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = event_sink::event_feed();
 
         let task = tokio::spawn(async move {
             let ttl = directory_expiry();
@@ -263,19 +277,19 @@ impl TicketDirectory {
                                 }
                             };
                             if let Some(event) = event {
-                                let _ = events_tx.send(event);
+                                events_tx.publish(event);
                             }
                         }
                         // A slow consumer dropped inbound — listings self-heal on
                         // the next re-ad, so skip and continue.
-                        Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(RecvError::Lagged(_)) => {}
+                        Err(RecvError::Closed) => break,
                     },
                     _ = expiry.tick() => {
                         let now = Instant::now();
                         let lost = listings.expire(ttl, now);
                         for ticket in lost {
-                            let _ = events_tx.send(TicketDirectoryEvent::Lost(ticket));
+                            events_tx.publish(TicketDirectoryEvent::Lost(ticket));
                         }
                     }
                 }
@@ -291,7 +305,7 @@ impl TicketDirectory {
 
     /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
     /// returns the receiver once, then `None`.
-    pub(crate) fn events(&mut self) -> Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>> {
+    pub(crate) fn events(&mut self) -> Option<event_sink::EventReceiver<TicketDirectoryEvent>> {
         self.events_rx.take()
     }
 

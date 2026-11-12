@@ -5,9 +5,10 @@ use habilis_network::protocol::{MeshId, Nickname};
 pub(crate) enum MetaAction {
     /// Apply an RFC 7386 JSON Merge Patch to the `meta` channel.
     ///
-    /// Same merge semantics as `state merge`: an object deep-merges (a `null`
-    /// value deletes that key, nested objects merge) and a non-object value
-    /// replaces the document. By convention agents self-report under
+    /// Same merge semantics as `state merge`: the top-level merge must be an
+    /// object, which deep-merges (a `null` value deletes that key, nested
+    /// objects merge), and a non-object value under a key replaces that key.
+    /// By convention agents self-report under
     /// `/peers/<nickname>`, e.g.
     /// `'{"peers":{"word-word":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01","cwd":"~/src/app"}}}'`
     /// — merge means your entry never clobbers another peer's. The `meta` and
@@ -21,7 +22,7 @@ pub(crate) enum MetaAction {
         #[arg(long)]
         nickname: Nickname,
 
-        /// The JSON Merge Patch (any JSON value).
+        /// The JSON Merge Patch: a JSON object.
         #[arg(long)]
         merge: String,
     },

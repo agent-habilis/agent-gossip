@@ -1,4 +1,4 @@
-use habilis_network::embed::EventLoopState;
+use habilis_network::embed::{EventLoopState, KeyOfError};
 use habilis_network::ops::{MergeCtx, MeshSender, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::{AuthorKey, Channel, MeshId, MessageBody, Nickname};
 use serde_json::Value;
@@ -11,6 +11,7 @@ use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
     BroadcastParams, emit_task_status, log_pending, send_broadcast,
 };
+use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::emission;
 
 /// A JSON-RPC error (code + message), mapped to the A2A error space.
@@ -262,6 +263,15 @@ pub(crate) struct HandleOpParams<'caller> {
     pub(crate) app: &'caller mut A2aApp,
 }
 
+/// The error of a card route whose nickname names no one key of the roster: no live key uses it, or
+/// two or more do.
+pub(crate) fn address_error(nickname: &Nickname, error: KeyOfError) -> RpcError {
+    RpcError {
+        code: -32004,
+        message: format!("cannot address '{nickname}': {error}"),
+    }
+}
+
 /// Execute one op against the live loop state — the JSON-RPC binding's
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
@@ -331,7 +341,13 @@ pub(crate) async fn handle_op(
                 StateMergeParams::new(MergeCtx::new(mesh, author, sender, output), channel, merge),
             )
             .await
-            .map_err(|error| RpcError::internal(&error.to_string()))?;
+            .map_err(|error| {
+                let error = anyhow::Error::from(error);
+                StateRefusalReply::of(&error).map_or_else(
+                    || RpcError::internal(&error.to_string()),
+                    |reply| RpcError::invalid_params(&reply.to_rpc_message()),
+                )
+            })?;
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
@@ -352,10 +368,9 @@ pub(crate) async fn handle_op(
             let (key, label) = match &peer {
                 PeerRef::Key(named) => (*named, named.to_string()),
                 PeerRef::Nickname(nickname) => {
-                    let key = state.addressee_key(nickname).map_err(|error| RpcError {
-                        code: -32004,
-                        message: format!("cannot address '{nickname}': {error}"),
-                    })?;
+                    let key = state
+                        .addressee_key(nickname)
+                        .map_err(|error| address_error(nickname, error))?;
                     (key, nickname.to_string())
                 }
             };

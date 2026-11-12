@@ -1,4 +1,4 @@
-pub(crate) use self::output::Output;
+pub(crate) use self::output::{Output, SurfacedTap};
 pub(crate) use self::output_mode::OutputMode;
 pub(crate) use self::ready_params::ReadyParams;
 pub(crate) use self::receipt_params::ReceiptParams;

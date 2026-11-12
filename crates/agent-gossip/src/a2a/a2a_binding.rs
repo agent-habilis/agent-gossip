@@ -265,3 +265,45 @@ async fn execute(
         })
     })
 }
+
+#[cfg(test)]
+mod peer_card_error_tests {
+    use habilis_network::embed::KeyOfError;
+    use habilis_network::protocol::Nickname;
+    use http_body_util::BodyExt as _;
+    use hyper::StatusCode;
+
+    use crate::a2a::rpc_error;
+
+    /// The roster of a host holds two live keys of one nickname only for a moment: the gate admits
+    /// one key, and a refused one ages out. While the two are live, the route does not pick one of
+    /// them, and its answer names the nickname.
+    #[tokio::test]
+    async fn a_nickname_of_two_live_keys_gets_a_404_that_names_the_nickname_and_the_two_members() {
+        let nickname = Nickname::from("dup");
+
+        let error = rpc_error::address_error(&nickname, KeyOfError::Ambiguous);
+        let response = super::card_error_response(&error);
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "a nickname of two live keys is served"
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("a response built from one buffer has no read error")
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("two or more"),
+            "the error does not say that the nickname names two members: {text}"
+        );
+        assert!(
+            text.contains("'dup'"),
+            "the error does not name the nickname that is refused: {text}"
+        );
+    }
+}

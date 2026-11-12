@@ -2,7 +2,7 @@
 
 agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
-A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 12.0) carried over
+A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 14.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
 `src/cli/mod.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
@@ -404,6 +404,24 @@ Pushing a `v*` tag by hand still runs `release.yml` directly, as a fallback.
   later read a method on that value (`ReadyStateFile` in `cli/ready.rs`, which
   `wait_for_ready` returns).
 
+## Bounded memory
+
+A mesh must run for 1 year or more with no restart. Every data structure
+that lives as long as the process has a bound. Only memory counts. Log files
+on disk are out of scope.
+
+- Give each collection a cap, a time limit, or both. This covers every map,
+  set, queue, log, cache, document, table of dead peers and list of pending
+  items. Growth with time, peers, messages or tasks is never free.
+- State the bound where you declare the collection: use a bounded type
+  (`BoundedFifoSet`, `BoundedQueue`) or write one comment with the cap and the
+  reason for its size.
+- Write down what happens when the bound is full: drop the oldest item, or
+  refuse the new one. Do not leave the case open.
+- A new collection with no bound fails review.
+- A bound has proof: a test that feeds the collection 10 times its cap, or a
+  size gauge in the census line.
+
 ## Rust style
 
 `scripts/style-check` and `scripts/module-layout` scan every Rust file, tests, benches, examples and
@@ -421,6 +439,7 @@ This file wins over the guide. If the two conflict, follow this file.
 - Imports in three groups: std, then external crates, then `self`/`super`/`crate`.
 - No single-character identifiers, except the names in `allowed-idents-below-min-chars`.
 - `unwrap_used` is on, in tests as well: `clippy.toml` has no `allow-unwrap-in-tests`. Use `.expect("reason")` in production code, in test helpers, and in tests. The reason states why the call cannot fail.
+- Avoid `unsafe`. Use safe code if it exists, even if it costs a new line or a small loss of detail. If no safe way exists, use `unsafe` and give the reason as a `///` doc comment on the item that holds it. The doc says why no safe way exists. The `#[expect(unsafe_code, reason = "...")]` and the `// SAFETY:` comment stay as well.
 - `undocumented_unsafe_blocks` is on. Put the `// SAFETY:` comment directly above the `unsafe` block, below any attribute.
 - U4 (a technical reason for every `unsafe`) has two gates. `unsafe_code = "deny"` rejects each `unsafe` block, `unsafe fn` and `unsafe impl`, so the only way in is an `#[expect(unsafe_code, reason = "...")]`, and `allow_attributes_without_reason` demands the reason. `undocumented_unsafe_blocks` rejects an `unsafe` block or `unsafe impl` with no `// SAFETY:` comment. (Checked on 2026-10-30 with a planted block, fn and impl: all three failed clippy.) No `unsafe` exists today. A human still reads the reason when a new one appears, and asks for a benchmark if the reason is speed: no tool can judge that.
 - `string_add` is on. Use `format!` or `push_str`, not `+` on a `String`.

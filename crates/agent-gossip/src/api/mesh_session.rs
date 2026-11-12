@@ -18,7 +18,7 @@ use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::a2a_app::SurfacedIo;
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::surfaced_event::PollBatch;
-use crate::emission::{OutputEvent, PingPeer, capture_events};
+use crate::emission::{Output, OutputEvent, PingPeer, capture_events};
 
 /// A live mesh membership (the public api): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
@@ -88,8 +88,9 @@ impl MeshSession {
     ) -> anyhow::Result<Self> {
         crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
-        let (output, events_rx) = capture_events::capture_events();
-        let io = SurfacedIo::new(output);
+        // Directory sessions never read events: a capture would hold every one
+        // for the process lifetime.
+        let io = SurfacedIo::new(Output::silent());
         let sink = io.sink();
         let elc = setup_mesh(
             // Directory sessions (advertise/discover) never offload blobs, so no
@@ -115,7 +116,7 @@ impl MeshSession {
                 advertiser: None,
                 handle_signals: SignalHandling::Leave,
             },
-            events_rx,
+            None,
         ))
     }
 
@@ -136,7 +137,7 @@ impl MeshSession {
                 advertiser,
                 handle_signals: SignalHandling::Handle,
             },
-            events_rx,
+            Some(events_rx),
         )
     }
 
@@ -146,14 +147,14 @@ impl MeshSession {
         elc: EventLoopConfig,
         io: SurfacedIo,
         env: SpawnEnv,
-        events_rx: mpsc::UnboundedReceiver<OutputEvent>,
+        events_rx: Option<mpsc::UnboundedReceiver<OutputEvent>>,
     ) -> Self {
         let (msg_tx, _initial_rx) = broadcast::channel::<Authored>(NODE_INBOUND_CAP);
         let core = InProcessSession::spawn(elc, io, env, Some(msg_tx.clone()));
         Self {
             core,
             msg_tx,
-            events_rx: Some(events_rx),
+            events_rx,
         }
     }
 
@@ -214,12 +215,15 @@ impl MeshSession {
         self.core.message(to, body).await
     }
 
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges
-    /// into the document (a `null` member deletes its key; nested objects merge
-    /// recursively), and a non-object value replaces the target.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state: the top-level
+    /// merge must be an object, which merges into the document (a `null` member
+    /// deletes its key; nested objects merge recursively), and a non-object
+    /// value under a key replaces that key.
     ///
     /// # Errors
-    /// Fails if the event loop has stopped (a merge always applies).
+    /// Fails if the event loop has stopped. It also fails when the state refuses the write: a top
+    /// level that is not an object, a value too large for one frame, too deep, a full state, a state
+    /// not yet synced, or a clock ahead of this machine.
     pub async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.core.state_merge(merge).await
     }

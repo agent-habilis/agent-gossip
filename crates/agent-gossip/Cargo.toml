@@ -116,8 +116,9 @@ proptest.workspace = true
 insta.workspace = true
 # The in-process harness (`agent_gossip_test_fixtures::InProcNode`) drives
 # `api::MeshSession` async, so the test crates need a runtime + the
-# `#[tokio::test]` macro. Same major as the lib dep — no new dup version.
-tokio.workspace = true
+# `#[tokio::test]` macro. Same major as the lib dep — no new dup version. `test-util` is for
+# the tests that wait on a timer with a paused clock.
+tokio = { workspace = true, features = ["test-util"] }
 # Offline microbenchmarks (`benches/hot_paths.rs`). No html/plotting deps;
 # prints a summary table to stdout.
 divan.workspace = true

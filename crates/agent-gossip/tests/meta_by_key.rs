@@ -5,7 +5,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
@@ -83,45 +83,64 @@ async fn two_keys_of_one_nickname_publish_two_cards() {
     observer.leave().await;
 }
 
-/// A send by a nickname that two live keys use is refused with a clear error. When one of the
-/// keys leaves, the same send reaches the other key, which opens it: the body is sealed to the
-/// key that the frame is addressed to.
+/// BEFORE (`a_send_by_a_shared_nickname_is_refused_and_then_reaches_the_remaining_key`, the key-keyed
+/// roster of main, #47): a send by a nickname that two live keys use was refused as ambiguous, and after one
+/// key left it reached the other. AFTER: the nickname gate admits one key for a nickname, so the observer's
+/// roster names one member and the send is not ambiguous: it reaches exactly one of the two keys, the one
+/// that the observer admitted, which opens it. The body is sealed to that key, so the other key cannot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_send_by_a_shared_nickname_is_refused_and_then_reaches_the_remaining_key() {
+async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_admitted() {
     let mut alice = InProcNode::create_with_nick("mbk-send", SHARED).await;
-    let beta = InProcNode::join(&alice.mesh, SHARED).await;
+    let mut beta = InProcNode::join(&alice.mesh, SHARED).await;
     let observer = InProcNode::join(&alice.mesh, "mbk-sender").await;
     let _ = await_shared_cards(&observer, 2).await;
 
-    let refused = observer
-        .try_msg(SHARED, "to-one-of-two")
-        .await
-        .expect_err("a nickname of two live keys names no member");
-    let text = refused.to_string();
-    assert!(
-        text.contains(SHARED) && (text.contains("two or more") || text.contains("ambiguous")),
-        "the refusal does not say why: {text}"
-    );
-
-    beta.leave().await;
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
     loop {
-        let sent = observer.try_msg(SHARED, "to-the-remaining-key").await;
+        let sent = observer.try_msg(SHARED, "to-the-one-holder").await;
         if sent.is_ok() {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "the send never reached the remaining key: {sent:?}"
+            "a send to a nickname that has one admitted holder never went out: {sent:?}"
         );
         tokio::time::sleep(POLL).await;
     }
-    assert!(
-        alice.wait_body("to-the-remaining-key", MSG_TIMEOUT).await,
-        "the remaining key never opened the message"
+
+    let open_deadline = Instant::now() + MSG_TIMEOUT;
+    let (alice_opened, beta_opened) = loop {
+        let alice_opened = alice
+            .wait_body("to-the-one-holder", Duration::from_secs(1))
+            .await;
+        let beta_opened = beta
+            .wait_body("to-the-one-holder", Duration::from_secs(1))
+            .await;
+        if alice_opened || beta_opened {
+            break (alice_opened, beta_opened);
+        }
+        assert!(
+            Instant::now() < open_deadline,
+            "neither key opened the message of the observer"
+        );
+    };
+    let late_alice = alice
+        .wait_body("to-the-one-holder", Duration::from_secs(3))
+        .await;
+    let late_beta = beta
+        .wait_body("to-the-one-holder", Duration::from_secs(3))
+        .await;
+    assert_eq!(
+        [alice_opened || late_alice, beta_opened || late_beta]
+            .iter()
+            .filter(|opened| **opened)
+            .count(),
+        1,
+        "the message must be sealed to one key, and only that key opens it"
     );
 
     alice.leave().await;
+    beta.leave().await;
     observer.leave().await;
 }
 
@@ -159,66 +178,126 @@ fn wait_port(state_file: &std::path::Path) -> u16 {
     panic!("the daemon never reported a bound a2a port");
 }
 
-/// The peer-card route takes a nickname or the key in hex. A nickname of two live keys gives a
-/// clear error, and the key in hex gives the card of that key.
+/// The card that the route serves for `path`, once it answers 200.
+fn await_served_card(port: u16, path: &str) -> Value {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let (status, body) = get(port, path);
+        if status == 200 {
+            return serde_json::from_str(&body).expect("the route answers 200 with a JSON card");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the route never served {path}: {status} {body}"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Wait until the meta document of the host holds `count` complete cards of `SHARED`: a card that is
+/// still arriving has no endpoint yet.
+fn await_host_cards(mesh: &str, host: &Node, count: usize) -> Vec<(String, Value)> {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let raw = common::cli_channel_get(Channel::Meta, mesh, &host.nickname);
+        let doc: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        let cards = shared_cards(&doc["document"]);
+        let has_endpoint = |(_, card): &(String, Value)| card.get("endpoint").is_some();
+        if cards.len() == count && cards.iter().all(has_endpoint) {
+            return cards;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the host never held {count} complete cards of '{SHARED}': {raw}"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+fn endpoint_id(card: &Value) -> Option<&str> {
+    card.pointer("/endpoint/id").and_then(Value::as_str)
+}
+
+/// The peer-card route takes a nickname or the key in hex. A host admits one key for a nickname, the
+/// first that proved it, so the nickname gives the card of that key and stays with it when a second key
+/// claims the same nickname. The key in hex gives the card of each key, the refused one too.
+///
+/// BEFORE: `the_peer_card_route_refuses_a_shared_nickname_and_serves_a_key` started both keys at once and
+/// expected two live keys at the host. That state lasts at most one `ALIVE_TIMEOUT`, and only when both
+/// keys got in before either proof, so the test failed in 3 of 5 runs. The two-live-keys answer is
+/// tested without a roster in `a_nickname_of_two_live_keys_gets_a_404_that_names_the_nickname_and_the_two_members`.
 #[test]
-fn the_peer_card_route_refuses_a_shared_nickname_and_serves_a_key() {
-    let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-meta-by-key-{}.state.json",
-        std::process::id()
-    ));
+fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_each_key_by_its_hex() {
+    let folder =
+        std::env::temp_dir().join(format!("agent-gossip-meta-by-key-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).expect("the temp folder is writable");
+    let state_of = |name: &str| folder.join(format!("{name}.state.json"));
+    let state_file = state_of("host");
     let state_path = state_file.to_string_lossy().to_string();
     let (host, mesh) = Node::create_args(
         "mbk-route",
         &["--a2a-serve", "--state-file", &state_path],
         &[],
     );
-    let first = Node::join(&mesh, SHARED);
-    let second = Node::join(&mesh, SHARED);
+    // Two daemons of one mesh and one nickname with no state file of their own share one member key,
+    // so they are one member and the newer run replaces the older. A state file for each makes two
+    // members that claim one nickname.
+    let join_as_member = |name: &str| {
+        let state = state_of(name).to_string_lossy().to_string();
+        Node::join_args(&mesh, SHARED, &["--state-file", &state], &[])
+    };
+    let first = join_as_member("first");
     assert!(host.wait_ready(&mesh), "the host socket never appeared");
     let port = wait_port(&state_file);
+    let route = format!("/peers/{SHARED}/.well-known/agent-card.json");
 
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let slots = loop {
-        let raw = common::cli_channel_get(Channel::Meta, &mesh, &host.nickname);
-        let doc: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-        let cards = shared_cards(&doc["document"]);
-        if cards.len() == 2 {
-            break cards;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the host never held two cards of '{SHARED}': {raw}"
+    // The host holds the complete card of the first key, and serves it by the nickname, before a second
+    // key claims the nickname: the host holds the proof of the first key when the second one comes.
+    let first_cards = await_host_cards(&mesh, &host, 1);
+    let first_endpoint = endpoint_id(&first_cards[0].1).expect("a complete card has an endpoint");
+    let served_first = await_served_card(port, &route);
+    assert_eq!(
+        endpoint_id(&served_first),
+        Some(first_endpoint),
+        "the host serves the first nickname holder with the card of another key"
+    );
+    let second = join_as_member("second");
+    let slots = await_host_cards(&mesh, &host, 2);
+
+    let (status, body) = get(port, &route);
+    assert_eq!(
+        status, 200,
+        "a nickname with one admitted holder is not served: {body}"
+    );
+    let served_now: Value =
+        serde_json::from_str(&body).expect("the route answers 200 with a JSON card");
+    assert_eq!(
+        endpoint_id(&served_now),
+        Some(first_endpoint),
+        "the nickname moved to the key that the gate refused"
+    );
+
+    for (slot, doc_card) in &slots {
+        let (key_status, key_body) =
+            get(port, &format!("/peers/{slot}/.well-known/agent-card.json"));
+        assert_eq!(
+            key_status, 200,
+            "the card of a key in hex is not served: {key_body}"
         );
-        std::thread::sleep(POLL);
-    };
-
-    let (status, body) = get(
-        port,
-        &format!("/peers/{SHARED}/.well-known/agent-card.json"),
-    );
-    assert_eq!(status, 404, "a nickname of two live keys is served: {body}");
-    assert!(
-        body.contains("two or more"),
-        "the error does not say that the nickname names two members: {body}"
-    );
-
-    let (key_status, key_body) = get(
-        port,
-        &format!("/peers/{}/.well-known/agent-card.json", slots[0].0),
-    );
-    assert_eq!(
-        key_status, 200,
-        "the card of a key in hex is not served: {key_body}"
-    );
-    let card: Value = serde_json::from_str(&key_body).expect("a served card is JSON");
-    assert_eq!(
-        card["name"], SHARED,
-        "the served card is not the card of the key"
-    );
+        let card: Value = serde_json::from_str(&key_body).expect("a served card is JSON");
+        assert_eq!(
+            card["name"], SHARED,
+            "the served card is not the card of the key"
+        );
+        assert_eq!(
+            endpoint_id(&card),
+            endpoint_id(doc_card),
+            "the card of a key in hex is the card of another key"
+        );
+    }
 
     drop((first, second, host));
-    let _ = std::fs::remove_file(&state_file);
+    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// The graph skills write the slot of a member by its nickname: `{"peers":{"<nick>":{...}}}`.

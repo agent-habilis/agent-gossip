@@ -12,7 +12,8 @@
 //! What each behavior pins:
 //! - convergence: the fold is a deterministic function of the event *set* (for
 //!   disjoint keys merge is order-independent);
-//! - RFC 7386 semantics: a non-object merge replaces the whole document;
+//! - RFC 7386 semantics: a top-level merge that is not an object is refused, and a non-object value
+//!   under a key replaces that key;
 //! - the reaction hook (F8) and the self-wake guard (F5): a peer's change wakes
 //!   an agent with the derived document, its own change does not;
 //! - the unbounded log + windowed anti-entropy: a late joiner reconciles a log

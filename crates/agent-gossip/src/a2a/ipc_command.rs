@@ -22,6 +22,7 @@ use crate::a2a::broadcast_params::{
     emit_task_artifact, emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
 use crate::emission;
@@ -96,8 +97,9 @@ pub(crate) enum IpcCommand {
     #[serde(rename = "peers")]
     Peers { mesh: MeshId },
     /// Apply an RFC 7386 JSON Merge Patch to the mesh's shared state. `merge` is
-    /// any JSON value merged into the document (an object deep-merges, `null`
-    /// deletes a key, a non-object replaces the target); the daemon signs +
+    /// a JSON object merged into the document (a scalar, an array or `null` at
+    /// the top level is refused; an object deep-merges, `null` deletes a key,
+    /// a non-object value under a key replaces that key); the daemon signs +
     /// gossips it.
     #[serde(rename = "state_merge")]
     StateMerge {
@@ -709,12 +711,16 @@ fn info_response(
 }
 
 /// Map a state-merge outcome to its IPC response JSON and whether anything was
-/// broadcast (so the caller can refresh the heartbeat clock). A merge always
-/// applies, so `Ok` is the broadcast/ack and `Err` is a transport failure.
+/// broadcast (so the caller can refresh the heartbeat clock). `Ok` is the
+/// broadcast/ack. `Err` is a refusal of the shared state (with its reason and
+/// the way out) or a transport failure.
 fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     match outcome {
         Ok(()) => (json_ack(), true),
-        Err(error) => (json_error(&error.to_string()), false),
+        Err(error) => match StateRefusalReply::of(&error) {
+            Some(reply) => (reply.to_response(), false),
+            None => (json_error(&error.to_string()), false),
+        },
     }
 }
 

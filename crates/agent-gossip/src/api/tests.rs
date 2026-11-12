@@ -101,6 +101,28 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
     alice.leave().await.ok();
 }
 
+/// A directory session never takes its event stream, so it must not hold one:
+/// every event it captured would sit in memory for the life of the process.
+#[tokio::test]
+async fn directory_session_holds_no_event_stream() {
+    let mesh = Mesh::for_topic("directory-no-capture", MeshConfig::loopback())
+        .expect("the test topic derives a valid mesh id");
+    let mut session = MeshSession::join_decoded(
+        mesh,
+        Some(Nickname::try_new("dir-quiet").expect("the test nickname is valid")),
+        CoHostPolicy::Never,
+    )
+    .await
+    .expect("a loopback directory session joins alone");
+
+    assert!(
+        session.events().is_none(),
+        "a directory session must not capture events"
+    );
+
+    session.leave().await.ok();
+}
+
 /// The app default carries no multihop: a mesh that wants it names it.
 #[test]
 fn create_config_default_transport_is_udp_webrtc_gossip() {

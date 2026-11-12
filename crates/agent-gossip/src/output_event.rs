@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageId, Nickname};
 
@@ -8,6 +10,12 @@ use crate::a2a::{TaskId, TaskState};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum OutputEvent {
+    /// Another member with another key uses our nickname: the two nodes do not accept each other's
+    /// frames, and both get this event. The stable key is `nickname_held`.
+    NicknameHeld {
+        /// The nickname that another member holds.
+        nickname: String,
+    },
     /// The daemon joined the mesh and is ready. First event of a session.
     Ready {
         /// The mesh the daemon joined.
@@ -73,6 +81,12 @@ pub enum OutputEvent {
     Info {
         /// The notice text.
         message: String,
+    },
+    /// Surfaced events that never reached the poll history because the channel that feeds it was
+    /// full. It takes the place of the lost events in the ring, so a reader sees where they were.
+    EventsLost {
+        /// How many events were dropped.
+        lost: u64,
     },
     /// An error the operator must see. The daemon keeps running.
     Error {
@@ -159,8 +173,11 @@ pub enum OutputEvent {
         channel: habilis_network::protocol::Channel,
         /// The signed event that caused the change.
         event: Box<Authored>,
-        /// The whole document after the change.
-        document: serde_json::Value,
+        /// The whole document after the change, shared by the copies of this event. `None` in the
+        /// copy that feeds the surfaced-events ring when `channel` is `Meta`: the poll JSON drops
+        /// the Meta document, and the ring holds up to `SURFACED_EVENTS_CAP` events, so a Meta
+        /// document per event would be the agent card of every peer, many times over.
+        document: Option<Arc<serde_json::Value>>,
         /// `true` when the local node made the change.
         is_self: bool,
     },

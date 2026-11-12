@@ -2839,38 +2839,38 @@ fn test_multi_round_throttled_backfill() {
 
 // ── Key-identity model (Tier 1) ─────────────────────────────────────────
 
-/// Two members deliberately share a display nickname. Identity is the
-/// signing **key**, not the name, and self-echo is keyed on the pubkey — so
-/// each must still see the *other's* same-named messages. Regression guard
-/// for the nickname→pubkey self-echo fix (a nickname-keyed self-echo would
-/// have each node silently drop the other as its own echo).
+/// BEFORE (`same_nickname_peers_communicate`, from the key-identity work in main, #47): two members share
+/// a display nickname, and each must still see the other's messages, because self-echo is keyed on the key
+/// and not on the name. AFTER: the nickname gate admits one key for a nickname, and the two nodes do not
+/// accept each other's frames. Neither holder sees the message of the other; an observer with its own
+/// nickname still sees the mesh work. The key still decides who is the author: the echo rule is pinned by
+/// `message_event_carries_full_pubkey` and the tests of the key-keyed roster.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn same_nickname_peers_communicate() {
+async fn two_members_of_one_nickname_do_not_see_each_others_messages() {
     let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
     let mut beta = InProcNode::join(&alpha.mesh, "dup").await;
+    let observer = InProcNode::join(&alpha.mesh, "samenick-obs").await;
 
     alpha.broadcast("from-alpha").await;
-    assert!(
-        beta.wait_body("from-alpha", MSG_TIMEOUT).await,
-        "beta never saw alpha's message despite the shared nickname"
-    );
     beta.broadcast("from-beta").await;
+    observer.broadcast("from-observer").await;
     assert!(
-        alpha.wait_body("from-beta", MSG_TIMEOUT).await,
-        "alpha never saw beta's message despite the shared nickname"
+        alpha.wait_body("from-observer", MSG_TIMEOUT).await
+            && beta.wait_body("from-observer", MSG_TIMEOUT).await,
+        "the observer's message did not reach a holder: the mesh does not work at all"
     );
-
-    // The surfaced message carries the author's full Ed25519 key — the real,
-    // distinguishing identity behind the shared cosmetic nickname.
-    let from_alpha = beta
-        .inbound()
-        .into_iter()
-        .find(|message| chat_text(message) == "from-alpha")
-        .expect("alpha's message is present");
-    let _: habilis_network::protocol::AuthorKey = from_alpha.key();
+    assert!(
+        !beta.wait_body("from-alpha", Duration::from_secs(5)).await,
+        "beta saw the message of alpha: the gate admitted a second key under the nickname"
+    );
+    assert!(
+        !alpha.wait_body("from-beta", Duration::from_secs(5)).await,
+        "alpha saw the message of beta: the gate admitted a second key under the nickname"
+    );
 
     alpha.leave().await;
     beta.leave().await;
+    observer.leave().await;
 }
 
 /// The `--output json` `message` event exposes the author's full public key,
@@ -3312,6 +3312,78 @@ fn state_file_carries_daemon_pid() {
         .status();
     let _ = child.wait();
     let _ = fs::remove_file(&log);
+}
+
+/// A CLI daemon started with no `--state-file` keeps its member key and its run counter beside the default
+/// state file, so a restart after a crash is the same member and counts its run on: an ephemeral key would
+/// show the peers a new member under the nickname that the old session still holds.
+#[test]
+fn a_daemon_with_no_state_file_keeps_its_member_key_in_the_default_state_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("keys-default");
+    let key_file = default_state_file(&mesh, &nickname).with_extension("key");
+
+    let held = fs::read(&key_file);
+    let mode = fs::metadata(&key_file).map(|meta| meta.permissions().mode() & 0o777);
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+    let bytes = held.expect("the daemon kept no member key beside its default state file");
+    assert!(
+        bytes.len() >= 40,
+        "the key file holds the seed and the owner start"
+    );
+    assert_eq!(
+        mode.ok(),
+        Some(0o600),
+        "the key file is private to the user"
+    );
+}
+
+/// A member key file that others can read is not loaded: the daemon stops, and the user is told which file it is
+/// and how to go on (remove it), on the text of the process and not only in a log.
+#[test]
+fn a_member_key_file_that_others_can_read_stops_the_daemon_and_names_the_file() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (creator, mesh) = Node::create_named("keytrust");
+    let dir = std::env::temp_dir().join(format!("agent-gossip-keytrust-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("a temp folder");
+    let state = dir.join("session.json");
+    let key = state.with_extension("key");
+    fs::write(&key, [3u8; 40]).expect("the folder of the test is writable");
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o644))
+        .expect("the owner can widen the mode, so that others can read the file");
+
+    let out = common::test_cmd()
+        .args([
+            "join",
+            &mesh,
+            "--nickname",
+            "keytrust-joiner",
+            "--state-file",
+        ])
+        .arg(&state)
+        .output()
+        .expect("agent-gossip join runs");
+
+    creator.kill();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success(),
+        "the daemon started with a key file that others can read: {text}"
+    );
+    assert!(
+        text.contains(&key.display().to_string()) && text.contains("remove it"),
+        "the user is not told which key file is refused and how to go on: {text}"
+    );
 }
 
 /// `agent-gossip leave <id>` (explicit target) stops exactly that mesh's local

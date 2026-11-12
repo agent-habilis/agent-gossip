@@ -1,6 +1,11 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, MessageKind, Nickname};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::error::TrySendError;
 
 use super::{
     OutputEvent, OutputMode, PingPeer, ReadyParams, ReceiptParams, SimpleEvent, StateChangedParams,
@@ -9,7 +14,7 @@ use super::{
     simple_event, task_stalled_event,
 };
 use crate::a2a::task_record::StallNotice;
-use crate::a2a::wire;
+use crate::a2a::{node, wire};
 
 /// Per-event-loop output destination. Replaces the former
 /// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
@@ -33,7 +38,7 @@ pub(crate) enum Output {
     Stream {
         mode: OutputMode,
         filter_self: bool,
-        tap: Option<UnboundedSender<OutputEvent>>,
+        tap: Option<SurfacedTap>,
     },
     /// Push structured events into an in-process channel (the api
     /// facade / tests). Mode-agnostic: every event is captured.
@@ -44,8 +49,44 @@ pub(crate) enum Output {
     Capture {
         tx: UnboundedSender<OutputEvent>,
         filter_self: bool,
-        tap: Option<UnboundedSender<OutputEvent>>,
+        tap: Option<SurfacedTap>,
     },
+}
+
+/// The sender end of the tap that feeds the surfaced ring: a bounded channel, so a loop that does not
+/// turn cannot make it hold events without end. An event that finds it full is dropped and counted,
+/// and the loop turns the count into one marker in the ring (see `A2aApp::drain_surfaced_ring`).
+#[derive(Clone, Debug)]
+pub(crate) struct SurfacedTap {
+    events: mpsc::Sender<OutputEvent>,
+    lost: Arc<AtomicU64>,
+}
+
+impl SurfacedTap {
+    pub(crate) fn channel(capacity: usize) -> (Self, mpsc::Receiver<OutputEvent>) {
+        let (events, receiver) = mpsc::channel(capacity);
+        let tap = Self {
+            events,
+            lost: Arc::new(AtomicU64::new(0)),
+        };
+        (tap, receiver)
+    }
+
+    /// An event the ring never keeps is not queued and not counted: a burst of them must not fill
+    /// the channel or inflate the loss count.
+    pub(crate) fn send(&self, event: OutputEvent) {
+        if !node::is_pollable(&event) {
+            return;
+        }
+        if let Err(TrySendError::Full(_)) = self.events.try_send(event) {
+            self.lost.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// The events dropped since the last call.
+    pub(crate) fn take_lost(&self) -> u64 {
+        self.lost.swap(0, Ordering::Relaxed)
+    }
 }
 
 impl Output {
@@ -65,7 +106,7 @@ impl Output {
     /// subscription does); replaces any existing tap (there is only ever one
     /// attach site). Lets the event loop wrap the sink it was handed without
     /// `EventLoopConfig` carrying a receiver.
-    pub(crate) fn set_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
+    pub(crate) fn set_tap(self, tap: SurfacedTap) -> Self {
         match self {
             Output::Stream {
                 mode, filter_self, ..
@@ -119,7 +160,7 @@ impl Output {
             Output::Stream { mode, tap, .. } => {
                 stream(*mode);
                 if let Some(tap) = tap {
-                    let _ = tap.send(event());
+                    tap.send(event());
                 }
             }
             Output::Capture { tx, tap, .. } => {
@@ -127,7 +168,7 @@ impl Output {
                 // `surfaced_events` ring (tap) each get a copy.
                 let event = event();
                 if let Some(tap) = tap {
-                    let _ = tap.send(event.clone());
+                    tap.send(event.clone());
                 }
                 let _ = tx.send(event);
             }
@@ -349,35 +390,41 @@ impl Output {
             document,
             is_self,
         } = params;
-        let make = || OutputEvent::StateChanged {
+        let make = |keep_document: bool| OutputEvent::StateChanged {
             channel,
             event: Box::new(event.clone()),
-            document: document.clone(),
+            document: keep_document.then(|| Arc::clone(document)),
             is_self,
         };
+        // The ring keeps what a poll reader gets (see `poll_carries_document`). The live stream
+        // keeps the document of every change, for in-process readers. Every copy keeps the event
+        // with its body, the change itself.
+        let ring_keeps_document = simple_event::poll_carries_document(channel);
         match self {
             Output::Stream { mode, tap, .. } => {
                 match mode {
                     OutputMode::Json => {
                         emit(&simple_event::format_state_json(
-                            channel, event, document, is_self,
+                            channel,
+                            event,
+                            Some(document),
+                            is_self,
                         ));
                     }
                     OutputMode::Silent => {}
                 }
                 if let Some(tap) = tap {
-                    let _ = tap.send(make());
+                    tap.send(make(ring_keeps_document));
                 }
             }
             Output::Capture { tx, tap, .. } => {
-                let evt = make();
                 // Poll/fetch history always sees it.
                 if let Some(tap) = tap {
-                    let _ = tap.send(evt.clone());
+                    tap.send(make(ring_keeps_document));
                 }
                 // F5: never wake an agent on its own patch.
                 if !is_self {
-                    let _ = tx.send(evt);
+                    let _ = tx.send(make(true));
                 }
             }
         }
@@ -525,6 +572,18 @@ impl Output {
 
     /// Print an error line.
     pub(crate) fn error(&self, message: &str) {
+        if let Some(nickname) = nickname_held_key(message) {
+            let held = OutputEvent::NicknameHeld {
+                nickname: nickname.to_owned(),
+            };
+            self.dispatch(
+                || held.clone(),
+                |mode| match mode {
+                    OutputMode::Json => print_json_line(&held),
+                    OutputMode::Silent => {}
+                },
+            );
+        }
         self.dispatch(
             || OutputEvent::Error {
                 message: message.to_owned(),
@@ -545,7 +604,7 @@ impl Output {
         match self {
             Output::Capture { tx, tap, .. } => {
                 if let Some(tap) = tap {
-                    let _ = tap.send(OutputEvent::PingReport {
+                    tap.send(OutputEvent::PingReport {
                         peers: peers.clone(),
                         known,
                     });
@@ -568,9 +627,255 @@ impl Output {
                 // Mirror into the daemon's surfaced-events ring so `poll`
                 // can return the same `ping_report` the stream just showed.
                 if let Some(tap) = tap {
-                    let _ = tap.send(OutputEvent::PingReport { peers, known });
+                    tap.send(OutputEvent::PingReport { peers, known });
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use habilis_network::embed::{NodeEvent, NodeSink};
+    use habilis_network::protocol::{Channel, Identity, Message, MessageKind};
+    use tokio::sync::mpsc::{Receiver, UnboundedReceiver, unbounded_channel};
+
+    use super::{Output, SurfacedTap};
+    use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
+    use crate::a2a::surfaced_event::SurfacedEvent;
+    use crate::a2a::tuning::{SURFACED_EVENTS_CAP, SURFACED_TAP_CAP};
+    use crate::emission::OutputEvent;
+
+    /// A document of about 4 KB: one agent card, as a peer of the mesh writes it.
+    fn card_document() -> serde_json::Value {
+        serde_json::json!({ "peers": { "bob": { "card": "x".repeat(4096) } } })
+    }
+
+    /// The body of a Meta change that writes that card: the change of the document, about 4 KB.
+    fn card_patch() -> String {
+        serde_json::json!({ "k": "change", "c": "x".repeat(4096) }).to_string()
+    }
+
+    fn change(channel: Channel, kind: MessageKind) -> NodeEvent {
+        NodeEvent::StateChanged {
+            channel,
+            event: Box::new(
+                Message::fixture(kind, &card_patch())
+                    .sign(&Identity::generate())
+                    .authored(),
+            ),
+            document: card_document(),
+            is_self: false,
+        }
+    }
+
+    /// The bytes of the document that an event holds, as text. `Debug` reads the same through any
+    /// wrapper of the document, and prints `None` for a document that the event does not hold.
+    fn held_document_bytes(event: &OutputEvent) -> usize {
+        let OutputEvent::StateChanged { document, .. } = event else {
+            return 0;
+        };
+        format!("{document:?}").len()
+    }
+
+    fn drain(rx: &mut UnboundedReceiver<OutputEvent>) -> Vec<OutputEvent> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    fn drain_ring(rx: &mut Receiver<OutputEvent>) -> Vec<OutputEvent> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    /// A capturing output with a tap: the live stream is `live`, the ring feed is `ring`.
+    fn tapped() -> (
+        Output,
+        UnboundedReceiver<OutputEvent>,
+        Receiver<OutputEvent>,
+    ) {
+        let (live_tx, live) = unbounded_channel();
+        let (ring_tap, ring) = SurfacedTap::channel(SURFACED_TAP_CAP);
+        (Output::capture(live_tx).set_tap(ring_tap), live, ring)
+    }
+
+    /// The bytes of the change body that an event holds: the change itself, a patch.
+    fn held_body_bytes(event: &OutputEvent) -> usize {
+        let OutputEvent::StateChanged { event, .. } = event else {
+            return 0;
+        };
+        event.body.as_str().len()
+    }
+
+    /// What the real surfaced ring holds after `count` changes went through the tap and
+    /// `A2aApp::drain_surfaced_ring`, as the event loop does it.
+    fn ring_after(count: usize, channel: Channel, kind: &MessageKind) -> Vec<SurfacedEvent> {
+        let (live_tx, _live) = unbounded_channel();
+        let mut app = A2aApp::new_with_io(SurfacedIo::new(Output::capture(live_tx)));
+        for turn in 0..count {
+            app.output.emit(change(channel, kind.clone()));
+            // The loop drains the tap at each turn, so a burst never passes the tap cap here.
+            if turn % SURFACED_TAP_CAP == 0 {
+                app.drain_surfaced_ring();
+            }
+        }
+        app.drain_surfaced_ring();
+        app.surfaced.poll_since(None).events
+    }
+
+    /// The ring keeps up to `SURFACED_EVENTS_CAP` events. A Meta document is the agent card of
+    /// every peer, and the poll JSON drops it, so the ring copy of a Meta change holds none: the
+    /// document bytes that the ring holds for Meta changes are 0 per event. The event still holds
+    /// its body, the change with the card (about 4 KB), so the ring holds `SURFACED_EVENTS_CAP`
+    /// bodies. That bound is in the audit file, row R12.
+    #[test]
+    fn the_ring_holds_no_meta_document_after_ten_times_its_cap() {
+        let events = ring_after(10 * SURFACED_EVENTS_CAP, Channel::Meta, &MessageKind::Meta);
+        assert_eq!(
+            events.len(),
+            SURFACED_EVENTS_CAP,
+            "the ring is full and capped"
+        );
+        let documents: usize = events
+            .iter()
+            .map(|item| held_document_bytes(&item.event))
+            .sum();
+        assert!(
+            documents <= SURFACED_EVENTS_CAP * "None".len(),
+            "the ring holds {documents} document bytes for {} Meta changes",
+            events.len()
+        );
+        let bodies: usize = events.iter().map(|item| held_body_bytes(&item.event)).sum();
+        assert_eq!(
+            bodies,
+            SURFACED_EVENTS_CAP * card_patch().len(),
+            "the ring still holds one patch per event: the bound of the audit row R12"
+        );
+    }
+
+    /// The ring never keeps an `Info` or an `Error`, so they must not take a place in the tap or
+    /// count as lost when the tap is full.
+    #[test]
+    fn a_burst_of_events_the_ring_never_keeps_does_not_fill_the_tap_or_count_as_lost() {
+        let (live_tx, _live) = unbounded_channel();
+        let (ring_tap, mut ring) = SurfacedTap::channel(SURFACED_TAP_CAP);
+        let output = Output::capture(live_tx).set_tap(ring_tap.clone());
+        for index in 0..10 * SURFACED_TAP_CAP {
+            output.info(&format!("beat {index}"));
+            output.error(&format!("error {index}"));
+        }
+
+        assert_eq!(
+            drain_ring(&mut ring).len(),
+            0,
+            "the tap holds nothing the ring would not keep"
+        );
+        assert_eq!(ring_tap.take_lost(), 0, "no loss is counted for them");
+    }
+
+    /// The live stream is what an in-process reader sees, so it keeps the whole document.
+    #[test]
+    fn the_live_copy_of_a_meta_change_still_carries_the_document() {
+        let (output, mut live, _ring) = tapped();
+        output.emit(change(Channel::Meta, MessageKind::Meta));
+        let events = drain(&mut live);
+        assert_eq!(events.len(), 1, "one live event");
+        assert!(
+            held_document_bytes(&events[0]) > 4096,
+            "the live copy holds the card"
+        );
+    }
+
+    /// A State document is part of the poll JSON, so its ring copy keeps the document.
+    #[test]
+    fn the_ring_keeps_the_document_of_a_state_change() {
+        let events = ring_after(1, Channel::State, &MessageKind::State);
+        assert_eq!(events.len(), 1, "one ring event");
+        assert!(
+            held_document_bytes(&events[0].event) > 4096,
+            "the ring copy holds the document"
+        );
+    }
+
+    /// The live copy and the ring copy of one State change share one document: no deep copy per
+    /// copy of the event.
+    #[test]
+    fn the_copies_of_a_state_change_share_one_document() {
+        let (output, mut live, mut ring) = tapped();
+        output.emit(change(Channel::State, MessageKind::State));
+        let (live, ring) = (drain(&mut live), drain_ring(&mut ring));
+        let (
+            [
+                OutputEvent::StateChanged {
+                    document: Some(live_document),
+                    ..
+                },
+            ],
+            [
+                OutputEvent::StateChanged {
+                    document: Some(ring_document),
+                    ..
+                },
+            ],
+        ) = (live.as_slice(), ring.as_slice())
+        else {
+            panic!("one live event and one ring event, both with a document");
+        };
+        assert!(
+            Arc::ptr_eq(live_document, ring_document),
+            "the live copy and the ring copy hold two documents, not one"
+        );
+    }
+}
+
+/// The line that the poll path gives for `event`, on stdout: the stream shows the same JSON as the poll.
+fn print_json_line(event: &OutputEvent) {
+    if let Some(line) = simple_event::event_json(event) {
+        emit(&line);
+    }
+}
+
+/// The nickname that the gate's error names as held by another member, if `line` is that error.
+/// A caller matches the event on the stable key `nickname_held`, not on these words.
+pub(crate) fn nickname_held_key(line: &str) -> Option<&str> {
+    line.strip_prefix("The nickname ")?
+        .split_once(" is held by another member")
+        .map(|(nickname, _)| nickname)
+}
+
+#[cfg(test)]
+mod nickname_held_tests {
+    /// The gate's error names the held nickname with a stable key, so an agent can match the
+    /// event on the key and not on the words.
+    #[test]
+    fn the_gate_error_maps_to_the_nickname_held_key() {
+        let line = "The nickname calm-otter is held by another member with another key. The two nodes do not accept the frames of each other";
+        assert_eq!(
+            super::nickname_held_key(line),
+            Some("calm-otter"),
+            "the held nickname is read from the engine's gate error"
+        );
+        assert_eq!(
+            super::nickname_held_key("some other error"),
+            None,
+            "other errors are not this event"
+        );
+    }
+
+    /// The poll shows the event with a display line, like the other visible events.
+    #[test]
+    fn the_nickname_held_line_has_a_display_line() {
+        let line = super::super::simple_event::event_json(&super::OutputEvent::NicknameHeld {
+            nickname: "calm-otter".to_owned(),
+        })
+        .expect("the event has a JSON line");
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("the poll line of the event is a JSON object");
+        assert!(
+            value["display"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty()),
+            "the line carries a display text: {line}"
+        );
     }
 }

@@ -66,6 +66,10 @@ fn ticket_event_json(event: &TicketDirectoryEvent) -> String {
             "event": "ticket_lost",
             "ticket": ticket,
         }),
+        TicketDirectoryEvent::EventsLost(count) => serde_json::json!({
+            "event": "events_lost",
+            "count": count,
+        }),
     };
     value.to_string()
 }

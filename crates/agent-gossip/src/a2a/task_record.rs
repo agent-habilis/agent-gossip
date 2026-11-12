@@ -492,6 +492,10 @@ pub(crate) fn adopt_initiator(
         task_state,
         now,
     } = params;
+    // A refused adoption leaves no record here; the worker still holds its own.
+    if !tasks.contains_key(task_id) && admit_new_task(tasks, peer_key) != Admission::Ok {
+        return;
+    }
     match tasks.entry(task_id.clone()) {
         Entry::Vacant(slot) => {
             // First adoption (task creation): open the initiator-side record at
@@ -726,6 +730,46 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
     }
 }
 
+/// Tell each worker in `cancels` that its task is cancelled, and why.
+async fn send_cancels(
+    state: &EventLoopState,
+    context: &HandlerCtx<'_>,
+    cancels: Vec<(&TaskId, &AuthorKey, &str)>,
+) {
+    for (task_id, peer_key, reason) in cancels {
+        let update = status_update_params::status_update(
+            context.mesh,
+            status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
+                .with_metadata(serde_json::json!({ META_REASON: reason })),
+        );
+        broadcast_status(
+            state,
+            context,
+            BroadcastStatusParams {
+                peer_key,
+                task_id,
+                update: &update,
+            },
+        )
+        .await;
+    }
+}
+
+/// Send the cancels that the app owes now, without waiting for the task sweep. The receive path
+/// calls it when the list reached its cap, so a cancel is never dropped for want of room.
+pub(crate) async fn send_late_cancels(
+    state: &EventLoopState,
+    app: &mut A2aApp,
+    context: &HandlerCtx<'_>,
+) {
+    let owed = app.take_late_cancels();
+    let cancels: Vec<(&TaskId, &AuthorKey, &str)> = owed
+        .iter()
+        .map(|(task_id, peer_key, reason)| (task_id, peer_key, *reason))
+        .collect();
+    send_cancels(state, context, cancels).await;
+}
+
 /// Sweep the registry for tasks idle past the debounce timeout, then
 /// **garbage-collect** records that have been terminal longer than the
 /// timeout. Each eviction freezes the record, emits a `task_timeout` event,
@@ -757,26 +801,10 @@ pub(crate) async fn tick_task_sweep(
         .collect();
     let late: Vec<(&TaskId, &AuthorKey, &str)> = late_cancels
         .iter()
-        .map(|(task_id, peer_key)| (task_id, peer_key, "call-timed-out"))
+        .map(|(task_id, peer_key, reason)| (task_id, peer_key, *reason))
         .collect();
     cancels.extend(late);
-    for (task_id, peer_key, reason) in cancels {
-        let update = status_update_params::status_update(
-            context.mesh,
-            status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
-                .with_metadata(serde_json::json!({ META_REASON: reason })),
-        );
-        broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key,
-                task_id,
-                update: &update,
-            },
-        )
-        .await;
-    }
+    send_cancels(state, context, cancels).await;
 
     // A reaped task's offloaded blobs go with it — unlink their spool files
     // (the review window has long closed).
@@ -2127,6 +2155,42 @@ mod tests {
             admit_new_task(&tasks, &flooder),
             Admission::Ok,
             "a new task is admitted under the cap"
+        );
+    }
+
+    /// An initiator-side adoption respects the registry cap, as a remote offer does.
+    ///
+    /// Pre-fix `adopt_initiator` inserted with no admission check, so the registry
+    /// grew past `TASKS_CAP` and every remote offer was refused after.
+    #[test]
+    fn an_initiator_adoption_past_the_cap_is_refused() {
+        let mut tasks = HashMap::new();
+        let now = Instant::now();
+        for index in 0..10 * tuning::TASKS_CAP {
+            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
+            let peer = Nickname::from(format!("peer-{}", index % 64).as_str());
+            super::adopt_initiator(
+                &mut tasks,
+                super::AdoptInitiatorParams {
+                    task_id: &task_id,
+                    peer_key: &AuthorKey::from([u8::try_from(index % 64).expect("below 64"); 32]),
+                    peer: &peer,
+                    task_state: TaskState::Working,
+                    now,
+                },
+            );
+        }
+        assert_eq!(
+            tasks.len(),
+            tuning::TASKS_CAP,
+            "10 times the cap was offered: the registry holds the cap, no more and no less"
+        );
+        let last = TaskId::from(
+            format!("550e8400-e29b-41d4-a716-{:012}", 10 * tuning::TASKS_CAP - 1).as_str(),
+        );
+        assert!(
+            !tasks.contains_key(&last),
+            "the last offered task was refused, not kept"
         );
     }
 
