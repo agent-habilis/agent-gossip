@@ -13,12 +13,11 @@ use habilis_network::ops::{
 };
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
-    AppFrameParams, AuthorKey, Channel, Identity, MeshId, Message, MessageBody,
-    MessageId, MessageKind, Nickname, Shard, ShardGroup, reassembly,
+    AppFrameParams, AuthorKey, Channel, Identity, MeshId, Message, MessageBody, MessageId,
+    MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
 use habilis_network::util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
-    MAX_SHARD_TOTAL,
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES, MAX_SHARD_TOTAL,
 };
 use habilis_network::util::logging;
 use tokio::sync::oneshot;
@@ -133,11 +132,7 @@ struct ChatFrameParams<'caller> {
 /// id: the payload's A2A `messageId` for a single-frame body (`None` keeps the
 /// minted id — shards of a split body keep their own ids; the *group* carries
 /// the A2A id there).
-fn build_msg(
-    frame: ChatFrameParams<'_>,
-    shard: Option<Shard>,
-    signer: &Identity,
-) -> Verified {
+fn build_msg(frame: ChatFrameParams<'_>, shard: Option<Shard>, signer: &Identity) -> Verified {
     let ChatFrameParams {
         mesh,
         author,

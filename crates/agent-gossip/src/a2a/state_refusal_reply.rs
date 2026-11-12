@@ -46,10 +46,7 @@ impl StateRefusalReply {
                 "write again; if it repeats, report it as a bug",
             ),
             SliceError::StaleDraft => ("stale_draft", "write again: another write came first"),
-            SliceError::Seal => (
-                "seal",
-                "write again; if it repeats, report a bug",
-            ),
+            SliceError::Seal => ("seal", "write again; if it repeats, report a bug"),
             _ => ("refused", "write again later"),
         };
         Some(Self {
@@ -111,7 +108,11 @@ mod tests {
             ),
             (SliceError::GoneKey, "gone_key", "join again"),
             (SliceError::Malformed, "malformed", "report a bug"),
-            (SliceError::WrongChannel, "wrong_channel", "`state` or `meta`"),
+            (
+                SliceError::WrongChannel,
+                "wrong_channel",
+                "`state` or `meta`",
+            ),
             (SliceError::DraftMismatch, "draft_mismatch", "report it"),
             (SliceError::StaleDraft, "stale_draft", "came first"),
             (SliceError::Seal, "seal", "report a bug"),

@@ -224,9 +224,7 @@ impl Output {
     ) {
         if matches!(
             message.kind,
-            MessageKind::PeerInfo
-                | MessageKind::Ping
-                | MessageKind::Pong { .. }
+            MessageKind::PeerInfo | MessageKind::Ping | MessageKind::Pong { .. }
         ) {
             return;
         }
