@@ -868,7 +868,11 @@ COMMANDS
 
               To read the value of a member, read the entry of its author key.
               The author key is the pubkey of the member in a message or in
-              the roster.
+              the roster. The author key changes on each start of the daemon,
+              so the entry of a member moves to a new hex key when it restarts.
+
+              A merge whose top level is not an object prints
+              {"ok":false,"error":TEXT} with no reason.
 
               ORDERING. A newer slice of an author replaces its older slice.
               Two slices of one version keep the one with the lower hash. A
@@ -908,19 +912,19 @@ COMMANDS
                 too_many_authors  The channel holds 1024 members already. Wait
                                   until a member that left drops out, then
                                   write again.
-                gone_key          The key of this node is marked gone, for 2
-                                  hours at most. Wait, then write again.
-                malformed         The write is not an object at the top level.
-                                  Write a JSON object.
+                gone_key          The key of this run is gone, because this
+                                  run already left or was replaced. Leave the
+                                  gossip and join again.
+                malformed         The engine could not build the slice body.
+                                  Report a bug.
                 wrong_channel     The write is for another channel. Use state
                                   merge for state and meta merge for meta.
                 draft_mismatch    The write is not the frame that it claims.
                                   Write again. If it repeats, report a bug.
                 stale_draft       Another write of this member came first.
                                   Write again.
-                seal              The engine could not seal the write with the
-                                  password. Write again. If it repeats, check
-                                  that the password is the same on all nodes.
+                seal              The engine could not seal the write. Write
+                                  again. If it repeats, report a bug.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME

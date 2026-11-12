@@ -31,11 +31,11 @@ impl StateRefusalReply {
             ),
             SliceError::GoneKey => (
                 "gone_key",
-                "the key of this node is marked gone, for 2 hours at most: wait, then write again",
+                "the key of this run is gone, because this run already left or was replaced: leave the gossip and join again",
             ),
             SliceError::Malformed => (
                 "malformed",
-                "the write is not an object at the top level: write a JSON object",
+                "the engine could not build the slice body: report a bug",
             ),
             SliceError::WrongChannel => (
                 "wrong_channel",
@@ -48,7 +48,7 @@ impl StateRefusalReply {
             SliceError::StaleDraft => ("stale_draft", "write again: another write came first"),
             SliceError::Seal => (
                 "seal",
-                "write again; if it repeats, check that the gossip password is the same on both nodes",
+                "write again; if it repeats, report a bug",
             ),
             _ => ("refused", "write again later"),
         };
@@ -109,12 +109,12 @@ mod tests {
                 "too_many_authors",
                 "drops out",
             ),
-            (SliceError::GoneKey, "gone_key", "2 hours"),
-            (SliceError::Malformed, "malformed", "JSON object"),
+            (SliceError::GoneKey, "gone_key", "join again"),
+            (SliceError::Malformed, "malformed", "report a bug"),
             (SliceError::WrongChannel, "wrong_channel", "`state` or `meta`"),
             (SliceError::DraftMismatch, "draft_mismatch", "report it"),
             (SliceError::StaleDraft, "stale_draft", "came first"),
-            (SliceError::Seal, "seal", "password"),
+            (SliceError::Seal, "seal", "report a bug"),
         ];
         for (refusal, reason, way_out) in cases {
             let text = refusal.to_string();
