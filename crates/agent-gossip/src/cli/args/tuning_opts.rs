@@ -102,13 +102,9 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = secs(defaults::DIRECTORY_EXPIRY))]
     pub directory_expiry_secs: u64,
 
-    /// How often a member broadcasts its anti-entropy digest (seconds).
-    #[arg(long, hide = true, default_value_t = secs(defaults::ANTIENTROPY_INTERVAL))]
-    pub antientropy_interval_secs: u64,
-
-    /// Max messages re-sent in response to one anti-entropy digest.
-    #[arg(long, hide = true, default_value_t = defaults::ANTIENTROPY_MAX_RESEND)]
-    pub antientropy_max_resend: usize,
+    /// How often a member runs its backfill round (seconds).
+    #[arg(long, hide = true, default_value_t = secs(defaults::BACKFILL_INTERVAL))]
+    pub backfill_interval_secs: u64,
 
     /// Use the loopback (private) directory + relax the advertise→public guard.
     #[arg(long, hide = true, default_value_t = false)]
@@ -158,8 +154,7 @@ impl TuningOpts {
         tuning.starvation_threshold = Duration::from_secs(self.starvation_threshold_secs);
         tuning.advertise_interval = Duration::from_secs(self.advertise_interval_secs);
         tuning.directory_expiry = Duration::from_secs(self.directory_expiry_secs);
-        tuning.antientropy_interval = Duration::from_secs(self.antientropy_interval_secs);
-        tuning.antientropy_max_resend = self.antientropy_max_resend;
+        tuning.backfill_interval = Duration::from_secs(self.backfill_interval_secs);
         tuning.directory_private = self.directory_private;
         tuning.rival_recheck_first = Duration::from_secs(self.rival_recheck_first_secs);
         tuning.rival_recheck = Duration::from_secs(self.rival_recheck_secs);

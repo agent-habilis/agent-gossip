@@ -31,7 +31,7 @@ use serde_json::json;
 const TEST_HEAL_SECS: u64 = 3;
 
 /// Anti-entropy cadence injected into the backfill tests via the hidden
-/// `--antientropy-interval-secs` flag (production default 10s).
+/// `--backfill-interval-secs` flag (production default 10s).
 const TEST_AE_SECS: u64 = 2;
 
 /// Freeze window that guarantees a `SIGSTOP`ped peer's QUIC link dies:
@@ -1428,7 +1428,7 @@ fn drain_until_quiet(mesh: &str, nickname: &str) {
 #[test]
 fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
     let ae = TEST_AE_SECS.to_string();
-    let flags = [("--antientropy-interval-secs", ae.as_str())];
+    let flags = [("--backfill-interval-secs", ae.as_str())];
     let (alice, mesh) = Node::create_flags("bell-priv", &flags);
     let bob = Node::join_flags(&mesh, "bellpriv-bob", &flags);
     let carol = Node::join_flags(&mesh, "bellpriv-carol", &flags);
@@ -1946,7 +1946,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 ///
 /// Subprocess (not `InProcNode`): the negative wait must span several
 /// anti-entropy cycles, and only a spawned daemon can take the hidden
-/// `--antientropy-interval-secs` flag (the api path runs production
+/// `--backfill-interval-secs` flag (the api path runs production
 /// defaults).
 #[test]
 fn test_join_horizon_hides_pre_join_history() {
@@ -2029,7 +2029,7 @@ const EVICT_ONLY: [(&str, &str); 2] = [
 // STAY a member (no `SHORT_EVICT`) while recovery converges quickly.
 const FAST_AE: [(&str, &str); 2] = [
     ("--heal-interval-secs", "3"),
-    ("--antientropy-interval-secs", "2"),
+    ("--backfill-interval-secs", "2"),
 ];
 
 /// Assert `receiver` records `body` from `sender` within `within`,
@@ -2561,9 +2561,8 @@ fn test_large_gap_reconnect_replication() {
     // while frozen; a faster max-resend so the deep backfill converges
     // inside the window, plus the fast reconcile cadences.
     let envs = [
-        ("--antientropy-max-resend", "128"),
         ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
 
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
@@ -2645,9 +2644,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("--antientropy-max-resend", "128"),
         ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
 
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
@@ -2729,7 +2727,7 @@ fn test_steady_state_no_resend_churn() {
     let envs = [
         ("RUST_LOG", "habilis_network::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
 
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
@@ -2794,9 +2792,8 @@ fn test_multi_round_throttled_backfill() {
     let _serial = serial_guard();
     // Tiny budget ⇒ many rounds, at the fast reconcile cadences.
     let envs = [
-        ("--antientropy-max-resend", "5"),
         ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
 
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
@@ -4341,7 +4338,7 @@ fn test_mass_leave_leaves_no_ghosts() {
     let _serial = serial_guard();
     let envs = [
         ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
     let survivor = Node::join_flags(&mesh, "ml-survivor", &envs);

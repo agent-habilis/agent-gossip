@@ -194,7 +194,7 @@ orphans every running daemon.
 
 `cargo task test` / `cargo task ci` run the suite. **Always run tests in the
 background**: most reliability tests inject short cadences via the hidden
-tuning flags (`--heal-interval-secs`, `--antientropy-interval-secs`) and poll
+tuning flags (`--heal-interval-secs`, `--backfill-interval-secs`) and poll
 observable markers instead of sleeping fixed floors, but the suite still
 takes minutes end to end. The remaining floors are iroh-bound, not ours:
 the 15s direct-path idle timeout floors the freeze-window tests, the two

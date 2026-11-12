@@ -94,7 +94,7 @@ fn a_msg_whose_send_failed_never_arrives_later() {
     let _serial = common::serial_guard();
     let flags = [
         ("--alive-timeout-secs", "60"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
     let (alice, mesh) = Node::create_flags("echo-late", &flags);
     let bob = Node::join_flags(&mesh, "echo-late-bob", &flags);
