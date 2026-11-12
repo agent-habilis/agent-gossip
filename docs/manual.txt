@@ -872,7 +872,8 @@ COMMANDS
               so the entry of a member moves to a new hex key when it restarts.
 
               A merge whose top level is not an object prints
-              {"ok":false,"error":TEXT} with no reason.
+              {"ok":false,"error":"the merge must be a JSON object"} and
+              exits 1. It has no reason and no hint.
 
               ORDERING. A newer slice of an author replaces its older slice.
               Two slices of one version keep the one with the lower hash. A
