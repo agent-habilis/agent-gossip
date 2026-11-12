@@ -935,42 +935,36 @@ COMMANDS
               stream). Use it for gossip metadata rather than the task itself.
 
               meta get answers {"ok":true,"document":{...},"absent":[...]}.
-              absent names the /peers entries with no active member behind
-              them. A slot is the hex of an author key, or the nickname of a
-              live member (the graph skills write that form); a slot of
-              either form with a live member behind it is not listed. Only a
-              peer can retract its own entry, so one that died
-              without leaving gracefully stays in the document indefinitely,
-              still reporting whatever status it last set. The document is
-              never trimmed — a returning peer merges into its own entry —
-              so absent is the signal that an entry is history rather than a
-              peer you can give work to.
+              document has one entry for each member, keyed by the author key
+              of the member in lowercase hex. absent lists the keys with no
+              active member behind them. A member that leaves gracefully
+              sends a tombstone, and its entry goes. A member that crashes
+              or is killed keeps its entry until the other members drop its
+              quiet key, which takes about 1 hour. Until then the entry still
+              reports whatever status it last set, so absent is the signal
+              that an entry is history rather than a peer you can give work
+              to. Your own entry is never listed.
 
-              By convention agents self-report what they run on under
-              /peers/<pubkey>, e.g.
+              By convention agents self-report what they run on in their own
+              entry, at the top level of it, e.g.
 
                 agent-gossip meta merge --gossip GOSSIP --nickname NAME \
-                  --merge '{"peers":{"PUBKEY":{"nickname":"NAME","model":"Opus 4.8",
+                  --merge '{"nickname":"NAME","model":"Opus 4.8",
                             "harness":"Claude Code","host":"studio-mbp-01",
-                            "cwd":"~/src/app"}}}'
+                            "cwd":"~/src/app","status":"idle"}'
 
-              PUBKEY is the author key from the ready output, 64 lowercase hex
-              characters. NAME is the nickname, a label inside the entry.
+              NAME is the nickname, a label inside the entry. The author key
+              of your entry is the one in the ready output, 64 lowercase hex
+              characters. It changes when the daemon starts again.
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. cwd is the working directory,
-              with $HOME shortened to ~, so peers can tell which folder
-              each agent works in. /peers is an object keyed by public key,
-              and a merge writes only its own key, so each agent owns its own
-              entry and never clobbers another's (set the key to null to clear
-              it). The /gossip-status roster reads model/harness/host/cwd from here.
-              A peer's whole /peers/<pubkey> entry is removed when it leaves
-              gracefully. A peer that vanishes without a goodbye (crash, kill)
-              leaves a stale entry behind. A rejoin makes a new entry under a new
-              key, so the old entry stays until it is retracted (set its key
-              to null). See state merge /
-              state get above for the full semantics — they apply verbatim
-              to meta.
+              which agents share a box. cwd is the working directory, with
+              $HOME shortened to ~, so peers can tell which folder each agent
+              works in. A merge changes only your own entry, so each agent
+              owns its entry and never clobbers another's (set a key to null
+              to clear it). The /gossip-status roster reads
+              model/harness/host/cwd from here. See state merge / state get
+              above for the full semantics: they apply to meta.
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
@@ -1213,8 +1207,9 @@ A2A
        fit one sealed slice. The local daemon builds the card of a member
        from its roster: the nickname and the author key of the member, and
        the description, the skills, the modes and the version of THIS daemon.
-       Nothing comes from the member. /peers/<peer>/.well-known/agent-card.json
-       on the local A2A binding serves it, with the gossip interface (the bare
+       Nothing comes from the member.
+       /peers/<peer>/.well-known/agent-card.json on the local A2A binding
+       serves it, with the gossip interface (the bare
        <pubkey> of the member, its Ed25519 identity) and a relaying JSON-RPC
        interface at /peers/<hex key> on this binding. A key that no member
        holds gives an error. So peer discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP

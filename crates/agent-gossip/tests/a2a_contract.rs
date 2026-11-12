@@ -153,6 +153,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     refuses_wrong_token(&pair);
     echoes_and_delivers(&pair);
     advertises_peer_relay(&pair);
+    creates_a_task_at_the_relay_address_of_the_card(&pair);
     creates_and_lists_task(&pair);
     mirrors_mesh_state(&pair);
     refuses_a_state_that_nests_too_deep(&pair);
@@ -251,11 +252,16 @@ fn advertises_peer_relay(pair: &BindingPair) {
     assert_eq!(peer_card_status, 200, "peer card must be served");
     let peer_card: Value = serde_json::from_str(&peer_card)
         .expect("a relayed peer card keeps the JSON form it was published in");
+    // The relay interface names the exact key of the member, the url of the gossip interface.
+    let member_key = peer_card["supportedInterfaces"][0]["url"]
+        .as_str()
+        .expect("the first interface of a peer card is the gossip interface")
+        .to_owned();
     let is_relay_interface = |iface: &Value| {
         iface["protocolBinding"] == "JSONRPC"
             && iface["url"]
                 .as_str()
-                .is_some_and(|url| url.contains("/peers/a2a-peer"))
+                .is_some_and(|url| url.ends_with(&format!("/peers/{member_key}")))
     };
     let advertises_relay = peer_card["supportedInterfaces"]
         .as_array()
@@ -263,6 +269,39 @@ fn advertises_peer_relay(pair: &BindingPair) {
     assert!(
         advertises_relay,
         "peer card advertises the relaying JSONRPC interface: {peer_card}"
+    );
+}
+
+/// The relay address in a peer card works: a `SendMessage` posted to it creates a task on the
+/// member that the card names.
+fn creates_a_task_at_the_relay_address_of_the_card(pair: &BindingPair) {
+    let (_status, card) = get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
+    let card: Value = serde_json::from_str(&card).expect("a peer card is JSON");
+    let relay_path = card["supportedInterfaces"]
+        .as_array()
+        .and_then(|interfaces| {
+            interfaces
+                .iter()
+                .find(|iface| iface["protocolBinding"] == "JSONRPC")
+        })
+        .and_then(|iface| iface["url"].as_str())
+        .and_then(|url| url.split_once(&format!("127.0.0.1:{}", pair.port)))
+        .map(|(_, path)| path.to_owned())
+        .expect("the card advertises a relay interface at the local binding");
+    let task = rpc(RpcCall {
+        port: pair.port,
+        path: &relay_path,
+        token: &pair.token,
+        method: "SendMessage",
+        params: &serde_json::json!({ "message": {
+            "messageId": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+            "role": "ROLE_USER",
+            "parts": [{ "text": "reach the member by its relay address" }],
+        }}),
+    });
+    assert_eq!(
+        task["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
+        "the relay address of the card creates a task: {task}"
     );
 }
 

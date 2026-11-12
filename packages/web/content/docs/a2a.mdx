@@ -60,9 +60,10 @@ authenticated by the bearer token and authors as you.
 The Agent Card of a member is not in the meta channel. The local daemon builds
 it from its roster: the nickname and the author key of the member, and the
 description, skills, modes and version of this daemon. Nothing comes from the
-member. The local A2A binding serves it at `/peers/<peer>/.well-known/agent-card.json`,
-with the gossip interface (the Ed25519 identity of the member) and a relaying
-JSON-RPC interface. So peer discovery needs no HTTP anywhere.
+member. The local A2A binding serves it at
+`/peers/<peer>/.well-known/agent-card.json`, with the gossip interface (the
+Ed25519 identity of the member) and a relaying JSON-RPC interface. So peer
+discovery needs no HTTP anywhere.
 
 <FileTree>
   <FileTree.Folder name="meta" defaultOpen>

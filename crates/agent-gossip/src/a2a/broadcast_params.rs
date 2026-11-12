@@ -25,6 +25,7 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
+use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
@@ -847,8 +848,20 @@ fn call_target(
     state: &EventLoopState,
     tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
     params: &serde_json::Value,
-    peer: &Nickname,
+    peer: &PeerRef,
 ) -> Result<AuthorKey, String> {
+    let peer = match peer {
+        PeerRef::Nickname(nickname) => nickname,
+        // A key names exactly one member: no name to resolve and none to share.
+        PeerRef::Key(key) => {
+            let is_present = state.known_nickname_of(key).is_some();
+            return if is_present || holds_open_task_with(tasks, key) {
+                Ok(*key)
+            } else {
+                Err(format!("unknown peer '{key}'"))
+            };
+        }
+    };
     let recorded = recorded_counterparty(tasks, params, peer);
     let resolved: Option<AuthorKey> = recorded.or_else(|| peer_key(state, peer).ok());
     let party_to_a_task = resolved.is_some_and(|key| holds_open_task_with(tasks, &key));
@@ -1870,7 +1883,7 @@ pub(crate) async fn send_shard_repair_requests(
 pub(crate) struct BroadcastA2aCallParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
-    pub(crate) peer: Nickname,
+    pub(crate) peer: PeerRef,
     pub(crate) method: &'caller str,
     pub(crate) params: serde_json::Value,
     pub(crate) timeout: std::time::Duration,
@@ -2266,7 +2279,7 @@ async fn session_a2a_call(
         BroadcastA2aCallParams {
             mesh: scope.mesh,
             author: scope.author,
-            peer,
+            peer: PeerRef::Nickname(peer),
             method: &method,
             params,
             timeout,

@@ -162,7 +162,8 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &AuthorKey) -> O
 ///
 /// The view maps the hex of each author key to its slice. A member that leaves gracefully sends a
 /// tombstone, and the engine drops its slice. A member that dies without a goodbye keeps its slice
-/// until the gone mark ends, still reporting whatever status its agent last set. Such a slice is
+/// until the other members drop its quiet key, about 1 hour, still reporting whatever status its
+/// agent last set. Such a slice is
 /// history, not a peer to give work to.
 ///
 /// `live` must hold only the *active* peers. A peer that dies ungracefully is moved to the

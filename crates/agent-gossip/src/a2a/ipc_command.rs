@@ -22,6 +22,7 @@ use crate::a2a::broadcast_params::{
     emit_task_artifact, emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
@@ -468,7 +469,7 @@ impl IpcRequest<'_> {
             broadcast_params::BroadcastA2aCallParams {
                 mesh,
                 author,
-                peer: to,
+                peer: PeerRef::Nickname(to),
                 method: &method,
                 params,
                 timeout: Duration::from_secs(timeout_secs),

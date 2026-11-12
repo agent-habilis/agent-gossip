@@ -71,7 +71,7 @@ impl RpcError {
 /// identifies the agent.
 pub(crate) enum A2aOp {
     SendMessage {
-        to: Option<Nickname>,
+        to: Option<PeerRef>,
         message: super::Message,
     },
     GetTask {
@@ -100,11 +100,22 @@ pub(crate) enum A2aOp {
     },
 }
 
-/// The member that a peer-card route names. A nickname is a label that two members can share, so
-/// the route also takes the exact author key.
+/// The member that a peer route names. A nickname is a label that two members can share, so the
+/// route also takes the exact author key.
 pub(crate) enum PeerRef {
     Nickname(Nickname),
     Key(AuthorKey),
+}
+
+impl PeerRef {
+    /// The member that the last segment of a peer route names: the hex of an author key first,
+    /// else a nickname. `None` if it is neither.
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match AuthorKey::decode_hex(text) {
+            Some(key) => Some(Self::Key(key)),
+            None => Nickname::try_new(text).ok().map(Self::Nickname),
+        }
+    }
 }
 
 /// One in-flight request from the HTTP task to the event loop.
@@ -120,7 +131,7 @@ pub(crate) struct A2aRequest {
 pub(crate) fn parse_op(
     method: &str,
     params: &Value,
-    target: Option<Nickname>,
+    target: Option<PeerRef>,
 ) -> Result<A2aOp, RpcError> {
     let task_id_param = || {
         params["id"]
@@ -396,7 +407,7 @@ pub(crate) async fn handle_op(
 /// `message/send` RPC op — grouped so `send_message` stays within the
 /// argument budget alongside its state/sender/output handles.
 struct SendMessageParams<'caller> {
-    to: Option<Nickname>,
+    to: Option<PeerRef>,
     message: super::Message,
     mesh: &'caller MeshId,
     author: &'caller Nickname,
