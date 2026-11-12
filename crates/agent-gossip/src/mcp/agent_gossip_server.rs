@@ -509,7 +509,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the gossip's `meta` channel — a second shared state beside `state`, with the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on under `/peers/<pubkey>`, where `<pubkey>` is your author key: the `pubkey` field of the `create_gossip`, `join_gossip` and `gossip_info` results (64 lowercase hex), e.g. {\"peers\":{\"<pubkey>\":{\"nickname\":\"swift-cedar\",\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\"}}} (`nickname` is a label inside your entry; `host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to your own entry of the gossip's `meta` channel — a second shared state beside `state`, with the same machinery, used for gossip metadata rather than the task. By convention agents self-report what they run on at the top level of their own entry, e.g. {\"nickname\":\"swift-cedar\",\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\",\"cwd\":\"~/src/app\",\"status\":\"idle\"} (`nickname` is a label inside your entry; `host` is the machine's hostname, `cwd` your working directory with $HOME shortened to `~`). The author key from the `pubkey` field of the `create_gossip`, `join_gossip` and `gossip_info` results (64 lowercase hex) names your entry; it changes when the daemon starts again. A merge changes only your own entry, so it never clobbers another peer; set a key to null to clear it. Same merge semantics and the same refusals as `apply_state_merge`. Peers react to the resulting `meta` event; read the new state with `get_meta`."
     )]
     async fn apply_meta_merge(
         &self,
@@ -520,12 +520,12 @@ impl AgentGossipServer {
         session
             .apply_meta_merge(args.merge)
             .await
-            .map_err(to_mcp_error)?;
+            .map_err(state_merge_error)?;
         ok_json(serde_json::json!({ "ok": true }))
     }
 
     #[tool(
-        description = "Return the gossip's current `meta`-channel document (the gossip-metadata counterpart of `get_state`) — one entry for each member, keyed by the author key of the member in lowercase hex. Starts as {} before any write. By convention holds `/peers/<pubkey> = {nickname, model, harness, host, cwd}`, where `<pubkey>` is the 64-digit hex of the author key of the member: a nickname is a label that two members can share. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the `/peers/<pubkey>` slots with no active member behind them: only a peer can retract its own entry, so one that died without leaving gracefully stays in the document forever, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
+        description = "Return the gossip's current `meta` channel (the gossip-metadata counterpart of `get_state`) — one entry for each member, keyed by the author key of the member in lowercase hex, each entry the value of that member's slice. Starts as {} before any write. By convention each entry holds {nickname, model, harness, host, cwd, status}: a nickname is a label that two members can share. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the author keys with no active member behind them: a member that leaves gracefully removes its entry, but one that died without leaving stays for about 1 hour, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
     )]
     async fn get_meta(
         &self,
