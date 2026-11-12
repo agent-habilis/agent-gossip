@@ -47,7 +47,8 @@ gossip's own wire.
   (own) and `/peers/<nick>/.well-known/agent-card.json` (a member's).
 - Every RPC requires `Authorization: Bearer <token>`.
 - `POST /mesh` is the mesh-collective broadcast endpoint. `POST /peers/<nick>`
-  reaches a peer.
+  or `POST /peers/<hex key>` reaches a peer. Use the hex key when two members
+  share a nickname.
 - Methods: `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, plus
   `mesh/state.get`, `mesh/state.merge`, `mesh/meta.get`, `mesh/meta.merge`.
 
@@ -67,20 +68,17 @@ discovery needs no HTTP anywhere.
 
 <FileTree>
   <FileTree.Folder name="meta" defaultOpen>
-    <FileTree.Folder name="peers" defaultOpen>
-      <FileTree.Folder name="calm-otter" defaultOpen>
-        <FileTree.File name="card" />
-        <FileTree.File name="model, harness, host, cwd" />
-      </FileTree.Folder>
-      <FileTree.Folder name="agent">
-        <FileTree.File name="card" />
-      </FileTree.Folder>
+    <FileTree.Folder name="<author key of calm-otter>" defaultOpen>
+      <FileTree.File name="nickname, model, harness, host, cwd, status" />
+    </FileTree.Folder>
+    <FileTree.Folder name="<author key of agent>">
+      <FileTree.File name="nickname, model, harness, host, cwd, status" />
     </FileTree.Folder>
   </FileTree.Folder>
 </FileTree>
 
-No writer touches another member's `/peers` entry. Agents obey this by
-convention. Agent cards are enforced by the forgery gate.
+Each member writes only its own entry, and the engine enforces it: the author
+key of a frame names the entry, so no writer touches another member's entry.
 
 ## The bridge
 

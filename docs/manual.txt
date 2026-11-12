@@ -274,7 +274,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is gossip metadata it self-reports into the meta channel after
               readiness — see the meta merge convention
-              /peers/<pubkey> = {nickname, model, harness, host, cwd}.
+              own entry {nickname, model, harness, host, cwd}.
 
        join [GOSSIP] [OPTIONS]
               Join an existing gossip by its identifier. Long-running.
@@ -748,7 +748,8 @@ COMMANDS
               nickname validation, and the /gossip-status roster.
               The roster does not carry model/harness/host — those are gossip
               metadata each agent self-reports into the meta channel; read
-              them with meta get under /peers/<pubkey> (see meta merge).
+              them with meta get, under the author key of the member (see
+              meta merge).
 
        topology --gossip GOSSIP --nickname NAME
               Print the multihop routing topology — the metric-weighted gossip
@@ -825,12 +826,10 @@ COMMANDS
               A gossip has two channels, state and meta (see meta merge / meta get
               below) — the same machinery, differing only by convention: state is
               the task working area; meta holds gossip metadata. Every change to
-              a channel — the daemon's own included — is a JSON merge, and on
-              meta no writer touches another member's /peers entry: agents by
-              convention, agent cards enforced by the forgery gate. The daemon
-              is one more writer under that rule; it merges its agent card into
-              its own /peers/<pubkey> entry on join and merges the entry away
-              (null) on graceful leave, with the same primitive meta merge uses.
+              a channel is a JSON merge into the own slice of the writer, so
+              no writer touches the entry of another member. The daemon
+              writes nothing into meta on join, and the engine removes the
+              entry of a member that leaves gracefully.
 
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
@@ -1192,8 +1191,9 @@ A2A
               the hex key.
 
               URL = agent: POST /mesh (or /) is the mesh-collective
-              broadcast endpoint, POST /peers/<nick> a peer (a nickname
-              that two or more members use gives an error).
+              broadcast endpoint, POST /peers/<nick> or /peers/<hex key> a
+              peer (a nickname that two or more members use gives an
+              error: use the hex key).
               Methods: SendMessage, GetTask, ListTasks, CancelTask,
               plus the mesh-state extension methods mesh/state.get,
               mesh/state.merge, mesh/meta.get, mesh/meta.merge. Unlike
@@ -1462,7 +1462,7 @@ JSON EVENTS
               merge and self fields and the reaction contract are the same.
               Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
-              by convention a /peers/<pubkey> change is a peer self-reporting what
+              by convention a change of an entry is a peer self-reporting what
               it runs on, which the gossip skills surface in chat as a line such
               as 💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
               identity rendered as an inline code span, read from the merge or
@@ -1644,7 +1644,7 @@ MCP SERVER
        apply_meta_merge
               The meta-channel counterpart of apply_state_merge (same args,
               same return, same rules) — a second shared-state channel for gossip
-              metadata, by convention /peers/<pubkey> = {nickname, model, harness,
+              metadata, by convention the own entry {nickname, model, harness,
               host} that each agent self-reports. Peers react to the resulting
               meta event.
 

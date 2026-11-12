@@ -29,8 +29,8 @@ empty document.
 The response also carries `absent`: the entries, each keyed by an author key,
 with no active member behind them. A peer that leaves gracefully removes its
 entry. One that died without leaving stays in the document for about 1 hour,
-still reporting whatever status it last set — until then the document is a record of who has been here, not of who
-is here now. When `absent` is non-empty, add one line after the JSON so a
+still reporting whatever status it last set. Until then the document is a
+record of who has been here, not of who is here now. When `absent` is non-empty, add one line after the JSON so a
 reader is not misled by those entries:
 
 ```text

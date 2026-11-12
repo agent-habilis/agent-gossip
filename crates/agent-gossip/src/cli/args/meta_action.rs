@@ -8,10 +8,9 @@ pub(crate) enum MetaAction {
     /// Same merge semantics as `state merge`: the top-level merge must be an
     /// object, which deep-merges (a `null` value deletes that key, nested
     /// objects merge), and a non-object value under a key replaces that key.
-    /// By convention agents self-report under
-    /// `/peers/<nickname>`, e.g.
-    /// `'{"peers":{"word-word":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01","cwd":"~/src/app"}}}'`
-    /// — merge means your entry never clobbers another peer's. The `meta` and
+    /// By convention agents self-report at the top level of their own entry, e.g.
+    /// `'{"nickname":"word-word","model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01","cwd":"~/src/app"}'`
+    /// — a merge changes only your own entry, so it never clobbers another peer's. The `meta` and
     /// `state` channels are fully independent.
     Merge {
         /// Gossip identifier
