@@ -225,9 +225,6 @@ impl Output {
         if matches!(
             message.kind,
             MessageKind::PeerInfo
-                | MessageKind::Digest
-                | MessageKind::StateDigest
-                | MessageKind::MetaDigest
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
         ) {
@@ -472,31 +469,6 @@ impl Output {
                         display: peer_timeout_display(nickname.as_str()),
                     },
                     true,
-                ),
-                OutputMode::Silent => {}
-            },
-        );
-    }
-
-    /// Equivocation / fork alert (Phase 2): an author's signing key produced
-    /// two different messages at the same `seq` — cryptographic proof of a
-    /// fork. Surfaced once per offending key. JSON mode emits a `fork` event
-    /// for agents.
-    pub(crate) fn fork(&self, nickname: &Nickname, pubkey: &str, seq: u64) {
-        self.dispatch(
-            || OutputEvent::Fork {
-                nickname: nickname.clone(),
-                pubkey: pubkey.to_owned(),
-                seq,
-            },
-            |mode| match mode {
-                OutputMode::Json => emit_json(
-                    &SimpleEvent::Fork {
-                        nickname: nickname.as_str(),
-                        pubkey,
-                        seq,
-                    },
-                    false,
                 ),
                 OutputMode::Silent => {}
             },

@@ -263,7 +263,6 @@ fn event_bytes(event: &OutputEvent) -> usize {
         OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
@@ -481,7 +480,6 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
@@ -534,7 +532,6 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::Presence { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }

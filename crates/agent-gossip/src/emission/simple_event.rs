@@ -58,11 +58,6 @@ pub(super) enum SimpleEvent<'source> {
         /// Pre-formatted, markdown-safe line (see [`peer_return_display`]).
         display: String,
     },
-    Fork {
-        nickname: &'source str,
-        pubkey: &'source str,
-        seq: u64,
-    },
     TaskTimeout {
         task_id: &'source str,
         reason: TaskGoneReason,
@@ -408,9 +403,7 @@ pub(super) fn emit_json<T: Serialize>(value: &T, is_visible: bool) {
 /// no skill re-derives a skip-list. Everything else in a poll batch is
 /// context, not output: state/meta document echoes (documents are on-demand
 /// via `state get`/`meta get`), task legs (interactions the task flow
-/// drives), `fork` (a security alert kept for the log/ring, `tracing::warn!`
-/// covers debugging), presence `alive` beats, and the operational
-/// stream-only events.
+/// drives), presence `alive` beats, and the operational stream-only events.
 pub(crate) fn is_visible(event: &OutputEvent) -> bool {
     match event {
         OutputEvent::Message { .. }
@@ -431,7 +424,6 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::TaskTimeout { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
@@ -919,7 +911,6 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
@@ -998,16 +989,6 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             })
             .ok()
         }
-        OutputEvent::Fork {
-            nickname,
-            pubkey,
-            seq,
-        } => serde_json::to_string(&SimpleEvent::Fork {
-            nickname: nickname.as_str(),
-            pubkey,
-            seq: *seq,
-        })
-        .ok(),
         OutputEvent::MsgPosted { id } => {
             serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() }).ok()
         }

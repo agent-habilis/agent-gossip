@@ -502,8 +502,7 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::EventsLost { .. }
-        | OutputEvent::NicknameHeld { .. }
-        | OutputEvent::Fork { .. } => true,
+        | OutputEvent::NicknameHeld { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
         OutputEvent::Task { message, .. } => !classify(message).beat(),
@@ -519,11 +518,11 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
 /// from hardcoded tag checks.
 fn classify(message: &Authored) -> AppClass {
     let tag = message.kind.app_tag().map(AppTag::as_str);
-    // App payloads log (chat/status/artifact) only. RPC request/response frames
+    // App payloads push (chat/status/artifact) only. RPC request/response frames
     // are plumbing: the result reaches the requester via its parked waiter,
-    // never the chat log / poll-fetch buffer. A tag outside the a2a taxonomy is
-    // not loggable (see `valid` — it never surfaces at all).
-    let loggable = matches!(
+    // never the inbound channel. A tag outside the a2a taxonomy is not pushed
+    // (see `valid` — it never surfaces at all).
+    let pushed = matches!(
         tag,
         Some(wire::BROADCAST | wire::MSG | wire::STATUS | wire::ARTIFACT)
     );
@@ -556,13 +555,6 @@ fn classify(message: &Authored) -> AppClass {
         None => true,
         Some(_) => false,
     };
-    // Only broadcast chat carries `seq`/parents and so participates in
-    // fork-detection + the cross-author DAG. A msg must NOT be chained, and not
-    // merely because the chain is for broadcast: a directed frame reaches only
-    // its addressee, so a chain carried on msgs is unobservable to everyone else
-    // and every non-addressee would see permanent gaps in that author's chain —
-    // which is precisely what fork detection reads as a fork.
-    let chained = message.kind.is_app(wire::BROADCAST);
     // Every directed tag — msg, worker status/artifact push, RPC
     // request/response — arrives sealed (encrypted) to its addressee, so a
     // directed frame addressed to us must unseal-or-drop. Sealing is what keeps
@@ -572,12 +564,10 @@ fn classify(message: &Authored) -> AppClass {
         tag,
         Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
     );
-    let content = AppClass::NONE
-        .plus_if(AppClass::LOGGABLE, loggable)
+    AppClass::NONE
+        .plus_if(AppClass::PUSH, pushed)
         .plus_if(AppClass::BEAT, beat)
-        .plus_if(AppClass::VALID, valid);
-    content
-        .plus_if(AppClass::CHAINED, chained)
+        .plus_if(AppClass::VALID, valid)
         .plus_if(AppClass::SEALED, sealed)
 }
 

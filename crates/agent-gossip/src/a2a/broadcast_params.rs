@@ -13,11 +13,11 @@ use habilis_network::ops::{
 };
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
-    AppFrameParams, AuthorKey, Channel, ContentHash, Identity, MeshId, Message, MessageBody,
+    AppFrameParams, AuthorKey, Channel, Identity, MeshId, Message, MessageBody,
     MessageId, MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
 use habilis_network::util::consts::{
-    LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
 use habilis_network::util::logging;
@@ -35,40 +35,27 @@ use crate::a2a::{
 };
 use crate::emission;
 
-/// Retain a just-built outbound message in the local log (pruning the
-/// fork/DAG indexes on any eviction) and write the dev log. The operator
-/// echo is the caller's responsibility — it differs by kind
-/// (`print_message_ex` for `Msg`, `print_task` for `Task`).
-fn retain_outbound(state: &mut EventLoopState, message: &Verified) {
-    if let Some(evicted) = state.message_log_mut().push(message.clone()) {
-        let evicted_hash = evicted.content_hash();
-        state.forget_hash(&evicted_hash);
-        if let Some(seq) = evicted.seq {
-            state.forget_msg_seq(&evicted.key(), seq, &evicted_hash);
-        }
-    }
+/// Write the dev log of a just-built outbound message. The operator echo is
+/// the caller's responsibility — it differs by kind (`print_message_ex` for
+/// `Msg`, `print_task` for `Task`).
+fn log_outbound(message: &Verified) {
     logging::log_out(message);
 }
 
-/// Commit a just-built outbound `Msg` into local state: advance the per-author
-/// hash chain (`seq`/`prev`) and the DAG tips, retain it in the message log
-/// (pruning the fork/DAG indexes on eviction), write the dev log, and — when
-/// `echo` — print the operator line. The raw shards of a split body commit
-/// silently (`echo == false`); only the reassembled logical message is echoed.
+/// Write the dev log of a just-built outbound `Msg` and — when `echo` — print
+/// the operator line. The raw shards of a split body commit silently
+/// (`echo == false`); only the reassembled logical message is echoed.
 fn commit_outbound_part(
-    state: &mut EventLoopState,
+    state: &EventLoopState,
     message: &Verified,
     out: &emission::Output,
     echo: bool,
 ) {
-    let hash = message.content_hash();
-    state.advance_chain(hash);
-    state.note_dag(hash, &message.parents, message.timestamp);
     if echo {
         let authored = message.authored();
         out.print_message_ex(&authored, true, addressee_name(state, &authored).as_ref());
     }
-    retain_outbound(state, message);
+    log_outbound(message);
 }
 
 /// Headroom subtracted from a shard's body budget so the first shard's measured
@@ -131,18 +118,9 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     Some(chunks)
 }
 
-/// One outbound frame's position in the per-author hash chain + DAG: the
-/// `seq`, the `prev` hash link, and the current DAG tips. Bundled so
-/// [`build_msg`] stays within the argument budget.
-struct ChainStamp {
-    seq: u64,
-    previous: Option<ContentHash>,
-    parents: Vec<ContentHash>,
-}
-
 /// The identity + payload of one outbound chat frame — the fields `build_msg`
-/// shares with `synthesize_logical_msg`, grouped so the chain-stamp/shard/
-/// signer args stay their own params.
+/// shares with `synthesize_logical_msg`, grouped so the shard/signer args stay
+/// their own params.
 struct ChatFrameParams<'caller> {
     mesh: &'caller MeshId,
     author: &'caller Nickname,
@@ -150,14 +128,13 @@ struct ChatFrameParams<'caller> {
     id: Option<MessageId>,
 }
 
-/// Build, chain-stamp, shard-tag and sign one outbound chat frame (without
+/// Build, shard-tag and sign one outbound chat frame (without
 /// serializing — the caller measures or serializes). `frame.id` pins the frame
 /// id: the payload's A2A `messageId` for a single-frame body (`None` keeps the
 /// minted id — shards of a split body keep their own ids; the *group* carries
 /// the A2A id there).
 fn build_msg(
     frame: ChatFrameParams<'_>,
-    stamp: ChainStamp,
     shard: Option<Shard>,
     signer: &Identity,
 ) -> Verified {
@@ -175,11 +152,7 @@ fn build_msg(
     if let Some(id) = id {
         message = message.id(id);
     }
-    message
-        .chain(stamp.seq, stamp.previous)
-        .parents(stamp.parents)
-        .shard(shard)
-        .sign(signer)
+    message.shard(shard).sign(signer)
 }
 
 /// Wait for the sends that run on a task of their own. The first failure is the verdict.
@@ -330,9 +303,9 @@ struct BroadcastBody {
 
 impl BroadcastBody {
     /// On a passworded mesh, seal the chat body so a relay or a captured frame
-    /// can't read it. Everything downstream (dedup, the per-author chain, the
-    /// message log, anti-entropy) operates on the sealed frame; only the local
-    /// echo + the returned Message carry plaintext.
+    /// can't read it. Everything downstream (dedup, shard reassembly) operates
+    /// on the sealed frame; only the local echo + the returned Message carry
+    /// plaintext.
     fn seal(state: &EventLoopState, plain: MessageBody) -> anyhow::Result<Self> {
         let key = state.broadcast_key();
         let wire = match key {
@@ -347,27 +320,20 @@ impl BroadcastBody {
     }
 }
 
-/// The frames of one broadcast. The chain position is read once, because every
-/// frame this call emits — the single frame, the probe, and each shard — stamps
-/// the *same* position, and only the commit of a frame advances it afterwards.
+/// The frames of one broadcast: the single frame, the probe, and each shard.
 struct BroadcastFrames<'caller> {
     mesh: &'caller MeshId,
     author: &'caller Nickname,
     signer: Identity,
-    chain_seq: u64,
-    chain_prev: Option<ContentHash>,
 }
 
 impl<'caller> BroadcastFrames<'caller> {
     fn new(mesh: &'caller MeshId, author: &'caller Nickname, state: &EventLoopState) -> Self {
-        let (chain_seq, chain_prev) = state.chain_head();
         Self {
             mesh,
             author,
             // A clone, not a borrow: the shard loop signs after it borrows the state mutably.
             signer: state.identity().clone(),
-            chain_seq,
-            chain_prev,
         }
     }
 
@@ -380,50 +346,21 @@ impl<'caller> BroadcastFrames<'caller> {
         }
     }
 
-    fn stamp(&self, state: &EventLoopState) -> ChainStamp {
-        ChainStamp {
-            seq: self.chain_seq,
-            previous: self.chain_prev,
-            parents: state.dag_parents().collect(),
-        }
-    }
-
     /// The whole payload in one frame, its id the A2A messageId.
-    fn single(&self, state: &EventLoopState, body: MessageBody, id: MessageId) -> Verified {
-        build_msg(
-            self.frame(body, Some(id)),
-            self.stamp(state),
-            None,
-            &self.signer,
-        )
+    fn single(&self, body: MessageBody, id: MessageId) -> Verified {
+        build_msg(self.frame(body, Some(id)), None, &self.signer)
     }
 
-    /// One shard: an ordinary chained frame with its own minted id.
-    fn shard(&self, state: &EventLoopState, chunk: MessageBody, shard: Shard) -> Verified {
-        build_msg(
-            self.frame(chunk, None),
-            self.stamp(state),
-            Some(shard),
-            &self.signer,
-        )
+    /// One shard: an ordinary frame with its own minted id.
+    fn shard(&self, chunk: MessageBody, shard: Shard) -> Verified {
+        build_msg(self.frame(chunk, None), Some(shard), &self.signer)
     }
 
-    /// An empty-body frame sized against the *largest* shard's envelope, not the
-    /// first's. Each later shard chains off the prior, so even from genesis
-    /// (empty `prev`/`parents`) every shard after the first carries a 64-char
-    /// `prev` and one parent hash. Worst-case both: a full-length `prev` and as
-    /// many parent hashes as the first shard could hold (its current tips, never
-    /// fewer than the one-hash link later shards carry). The all-zero hash
-    /// stands in for any content hash.
-    fn probe(&self, state: &EventLoopState, group: &ShardGroup) -> Verified {
-        let hash_stub = ContentHash::from([0; 32]);
+    /// An empty-body frame sized against the *largest* shard's envelope, whose
+    /// index and total have the most digits.
+    fn probe(&self, group: &ShardGroup) -> Verified {
         build_msg(
             self.frame(MessageBody::try_new("").expect("empty body is valid"), None),
-            ChainStamp {
-                seq: self.chain_seq,
-                previous: Some(hash_stub),
-                parents: vec![hash_stub; state.dag_parents().count().max(1)],
-            },
             Some(probe_shard(group)),
             &self.signer,
         )
@@ -454,11 +391,10 @@ impl ShardSeries {
             .index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"))
     }
 
-    /// A big group's shards skip the message log, so peers can only heal a lost
-    /// shard via the `shard/repair` RPC, served from the sender-side frame
-    /// cache. Small groups heal through anti-entropy instead.
+    /// The engine keeps no message log, so peers can only heal a lost shard via
+    /// the `shard/repair` RPC, served from the sender-side frame cache.
     fn is_cached(&self) -> bool {
-        self.total > LOGGED_SHARD_GROUP_MAX_TOTAL
+        true
     }
 }
 
@@ -518,7 +454,7 @@ impl<'run> BroadcastShards<'run> {
         body: &'run BroadcastBody,
         group: ShardGroup,
     ) -> anyhow::Result<Self> {
-        let budget = shard_body_budget(&frames.probe(state, &group));
+        let budget = shard_body_budget(&frames.probe(&group));
         // Split the *wire* (sealed, when encrypted) body — shards carry chunks of
         // the ciphertext envelope that reassemble into it; the receiver decrypts the
         // reassembled body. The echoed/returned logical still carries plaintext.
@@ -557,9 +493,7 @@ impl<'run> BroadcastShards<'run> {
         for (index, chunk) in self.chunks.iter().enumerate() {
             let chunk_body =
                 MessageBody::try_new(chunk).expect("a substring of a valid body is valid");
-            let message = self
-                .frames
-                .shard(state, chunk_body, self.series.shard(index));
+            let message = self.frames.shard(chunk_body, self.series.shard(index));
             if index == 0 {
                 header = Some(message.clone());
             }
@@ -684,7 +618,7 @@ pub(crate) async fn send_broadcast(
         .expect("an a2a message id is a valid frame id");
     let body = BroadcastBody::seal(state, status_update_params::payload_body(&payload)?)?;
     let frames = BroadcastFrames::new(mesh, author, state);
-    let single = frames.single(state, body.wire.clone(), payload_id);
+    let single = frames.single(body.wire.clone(), payload_id);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         return send_single_broadcast(
             SingleBroadcast {
@@ -1150,7 +1084,7 @@ pub(crate) fn seal_directed(
     to: &AuthorKey,
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
-    let doc = state.doc(Channel::Meta).to_json();
+    let doc = state.view(Channel::Meta);
     let key = card::peer_seal_key(&doc, to).ok_or_else(|| {
         let known: Option<Nickname> = state.known_nickname_of(to);
         let name: String = known.map_or_else(|| to.to_string(), |nickname| nickname.to_string());
@@ -1647,7 +1581,7 @@ async fn send_directed_leg(
         // gossip (see `transport::deliver`).
         return match habilis_network::ops::deliver(message, bytes, state, sender).await? {
             Delivered::Done => {
-                retain_leg(state, message, content);
+                retain_leg(message, content);
                 if let Some(echo) = echo {
                     print_echo(out, echo, echo_as, addressee_name(state, echo).as_ref());
                 }
@@ -1677,7 +1611,7 @@ async fn send_directed_leg(
         };
     } else if state.pending_outbound_mut().push((message.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
-        retain_leg(state, message, content);
+        retain_leg(message, content);
         if let Some(echo) = echo {
             print_echo(out, echo, echo_as, addressee_name(state, echo).as_ref());
         }
@@ -1690,11 +1624,11 @@ async fn send_directed_leg(
     Ok(None)
 }
 
-/// Retain a task leg locally. Content legs retain; the beat doesn't. The echo
+/// Write the dev log of a task leg. Content legs log; the beat doesn't. The echo
 /// is the caller's, and it waits for the delivery verdict.
-fn retain_leg(state: &mut EventLoopState, message: &Verified, content: bool) {
+fn retain_leg(message: &Verified, content: bool) {
     if content {
-        retain_outbound(state, message);
+        log_outbound(message);
     }
 }
 
@@ -1772,7 +1706,7 @@ fn take_sent_legs(app: &mut A2aApp) -> Vec<UnsentLeg> {
 pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
     for leg in take_sent_legs(app) {
         for frame in &leg.frames {
-            retain_outbound(state, frame);
+            log_outbound(frame);
         }
         if let Some((group, frames)) = leg.cache {
             state.shard_cache_mut().insert(group, frames);
@@ -2470,7 +2404,7 @@ pub(crate) async fn handle_session_request(
             session_merge(SessionMerge(Channel::State, merge, response), scope, state).await
         }
         SessionRequest::StateGet { response } => {
-            let _ = response.send(state.doc(Channel::State).to_json());
+            let _ = response.send(state.view(Channel::State));
             false
         }
         SessionRequest::MetaMerge { merge, response } => {

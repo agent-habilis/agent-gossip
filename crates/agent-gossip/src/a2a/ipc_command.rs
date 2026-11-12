@@ -738,7 +738,7 @@ fn topology_response(state: &EventLoopState) -> String {
 
 /// The `agent-gossip state get` response: the derived document.
 fn state_get_response(state: &EventLoopState, channel: Channel) -> String {
-    let document = state.doc(channel).to_json();
+    let document = state.view(channel);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
@@ -773,7 +773,7 @@ pub(crate) struct MetaView {
 }
 
 pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
-    let document = state.doc(Channel::Meta).to_json();
+    let document = state.view(Channel::Meta);
     // Every live key, shown or not: the roster snapshot lists shown peers only, and a live peer
     // whose arrival is not shown yet must not read as absent. A quiet peer is not in the set.
     let live: HashSet<AuthorKey> = state.live_keys().copied().collect();
@@ -814,21 +814,6 @@ pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
     );
     let pubkey: String = message.key().to_string();
     record.insert("pubkey".into(), pubkey.into());
-    if let Some(seq) = message.seq {
-        record.insert("seq".into(), seq.into());
-    }
-    if let Some(previous) = &message.previous {
-        record.insert(
-            "prev".into(),
-            serde_json::to_value(previous).expect("a hash serializes"),
-        );
-    }
-    if !message.parents.is_empty() {
-        record.insert(
-            "parents".into(),
-            serde_json::to_value(&message.parents).expect("hashes serialize"),
-        );
-    }
     if let Some(shard) = &message.shard {
         record.insert(
             "shard".into(),
