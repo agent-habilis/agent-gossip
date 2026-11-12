@@ -1459,8 +1459,8 @@ mod classify_tests {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
         let directed = classify(&receipt_frame(Some(key("peer")), body));
         assert!(
-            directed.valid() && directed.sealed() && !directed.loggable(),
-            "a directed chat is valid, sealed and not loggable"
+            directed.valid() && directed.sealed() && !directed.pushable(),
+            "a directed receipt is valid, sealed and not pushed"
         );
         assert!(!classify(&receipt_frame(None, body)).valid(), "broadcast");
         assert!(
@@ -1639,48 +1639,32 @@ mod classify_tests {
         );
     }
 
-    // These assertions are deliberately worded "broadcast"/"directed" rather
-    // than "chat": both tags are chat, so a `chained` that silently followed the
-    // wrong one would still satisfy a test phrased in terms of chat.
     #[test]
-    fn msg_is_loggable_but_rpc_is_not() {
+    fn broadcast_chat_is_pushed_but_an_rpc_request_is_not() {
         let message = classify(&app_frame(wire::BROADCAST));
-        assert!(message.loggable(), "broadcast chat is loggable");
-        assert!(
-            message.chained(),
-            "broadcast chat carries the per-author chain"
-        );
+        assert!(message.pushable(), "broadcast chat is pushed");
         let request = classify(&app_frame(wire::REQ));
         assert!(
-            !request.loggable(),
-            "an RPC request is plumbing, not logged"
+            !request.pushable(),
+            "an RPC request is plumbing, not pushed"
         );
-        assert!(!request.chained(), "only broadcast chat is chained");
     }
 
-    // A msg is retained like broadcast chat but must stay out of the hash chain:
-    // it reaches only its addressee, so every other peer would see permanent
-    // gaps in the author's chain — which fork detection reads as a fork.
     #[test]
-    fn dm_is_loggable_and_sealed_but_never_chained() {
+    fn dm_is_pushed_and_sealed() {
         let dm = classify(&msg_frame(Some(key("bob"))));
-        assert!(dm.loggable(), "a msg is retained");
+        assert!(dm.pushable(), "a msg is pushed");
         assert!(dm.sealed(), "a msg is sealed to its addressee");
-        assert!(!dm.chained(), "a msg must not join the cross-author chain");
     }
 
     #[test]
-    fn unknown_tag_is_invalid_and_not_loggable() {
+    fn unknown_tag_is_invalid_and_not_pushed() {
         let cls = classify(&app_frame("admin"));
         assert!(!cls.valid(), "an unknown tag fails the boundary gate");
-        assert!(!cls.loggable(), "an unknown tag is not logged");
+        assert!(!cls.pushable(), "an unknown tag is not pushed");
         assert!(
             !cls.beat(),
             "a frame that fails the gate must not count as proof that its author is alive"
-        );
-        assert!(
-            !cls.chained(),
-            "a dropped frame must leave no gap in the author's hash chain"
         );
     }
 
@@ -1692,8 +1676,8 @@ mod classify_tests {
             MessageBody::from("{}"),
         )));
         assert!(
-            !peer_info.loggable(),
-            "the engine owns peer info, so the app must not retain it in its log"
+            !peer_info.pushable(),
+            "the engine owns peer info, so the app must not push it"
         );
         let _ = MessageKind::PeerInfo;
     }

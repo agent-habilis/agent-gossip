@@ -390,12 +390,6 @@ impl ShardSeries {
         Shard::new(self.group.clone(), self.total)
             .index(u32::try_from(index).expect("idx is bounded by MAX_SHARD_TOTAL"))
     }
-
-    /// The engine keeps no message log, so peers can only heal a lost shard via
-    /// the `shard/repair` RPC, served from the sender-side frame cache.
-    fn is_cached(&self) -> bool {
-        true
-    }
 }
 
 /// Atomic admission while unmeshed: all shards or none, so a half-buffered body
@@ -498,9 +492,7 @@ impl<'run> BroadcastShards<'run> {
                 header = Some(message.clone());
             }
             let bytes = message.serialize()?;
-            if self.series.is_cached() {
-                cache_frames.push(bytes.clone());
-            }
+            cache_frames.push(bytes.clone());
             send_msg_part(
                 state,
                 sender,
@@ -789,9 +781,7 @@ async fn broadcast_directed_frame(
         let chunk_body = MessageBody::try_new(chunk).expect("a substring of a valid body is valid");
         let message = shard_frames.shard(chunk_body, series.shard(index));
         let bytes = message.serialize()?;
-        if series.is_cached() {
-            cache_frames.push(bytes.clone());
-        }
+        cache_frames.push(bytes.clone());
         // The shards enter the log as one group below, not one by one.
         shard_pending.push(
             send_directed_leg(
@@ -2090,9 +2080,7 @@ pub(crate) async fn send_directed_rpc(
         let message = shard_frames.shard(chunk_body, series.shard(index));
         logging::log_out(&message);
         let bytes = message.serialize()?;
-        if series.is_cached() {
-            cache_frames.push(bytes.clone());
-        }
+        cache_frames.push(bytes.clone());
         log_unless_done(habilis_network::ops::deliver(&message, bytes, state, sender).await?);
     }
     if !cache_frames.is_empty() {

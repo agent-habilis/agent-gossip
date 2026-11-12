@@ -222,7 +222,7 @@ Three layers:
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
   `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT
-  heal recovery, anti-entropy backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
+  heal recovery, backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
 - **Adversarial (`--features adversarial`, `crates/agent-gossip/tests/adversarial.rs`):** an
   in-process attacker injects crafted wire bytes a correct client never
   produces; defended cases pass, open-gap `#[should_panic]` tripwires go red

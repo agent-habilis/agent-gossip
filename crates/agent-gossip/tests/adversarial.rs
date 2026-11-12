@@ -6,7 +6,7 @@
 //!
 //! Two kinds of test:
 //! - **Defended** (`must pass`): the properties Phase 1–3 actually enforce —
-//!   unsigned/tampered messages are dropped, equivocation surfaces a `fork`.
+//!   unsigned/tampered messages are dropped.
 //! - **Open-gap tripwires** (`#[should_panic(expected = "OPEN GAP")]`):
 //!   adversarial scenarios we do **not** yet defend against. Each asserts the
 //!   defense we *lack*; that assert currently fails (panics), which
@@ -213,44 +213,6 @@ async fn kind_flipped_after_signing_is_dropped() {
     assert!(
         !surfaced(&mut victim, "flip-me"),
         "a kind-flipped message must be dropped (signature mismatch)"
-    );
-    victim.leave().await;
-    attacker.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn equivocation_surfaces_a_fork() {
-    let (mut victim, attacker) = meshed_pair("fork").await;
-    let key = test_key::new_key();
-    let mesh = attacker.session.mesh_id();
-    // Same key, same seq, two different bodies → two valid but conflicting
-    // signed messages: cryptographic proof of equivocation.
-    let first = CraftedMsg::new(mesh, "two-face", "fork-a")
-        .wrap_a2a()
-        .chain(7, None)
-        .sign(&key)
-        .bytes();
-    let second = CraftedMsg::new(mesh, "two-face", "fork-b")
-        .wrap_a2a()
-        .chain(7, None)
-        .sign(&key)
-        .bytes();
-    attacker
-        .session
-        .inject_raw(first)
-        .await
-        .expect("the first fork leg must reach the victim before the second can conflict with it");
-    attacker.session.inject_raw(second).await.expect("inject b");
-    let forked = victim
-        .wait_for(T, |events| {
-            events
-                .iter()
-                .any(|event| matches!(event, OutputEvent::Fork { seq, .. } if *seq == 7))
-        })
-        .await;
-    assert!(
-        forked,
-        "two signed messages at the same seq must surface a fork event"
     );
     victim.leave().await;
     attacker.leave().await;

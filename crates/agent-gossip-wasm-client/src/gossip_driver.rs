@@ -187,13 +187,11 @@ impl NodeApp for GossipDriver {
         let is_broadcast = tag == Some(wire::BROADCAST);
         // Anything outside the taxonomy this client speaks is dropped whole
         // rather than surfaced: a signed frame with an arbitrary tag must
-        // not reach the page. Only broadcast chat carries seq/parents and joins
-        // the DAG. Broadcast chat is public by definition: directed tags are
-        // sealed, and this client does not send them yet — see `Request`.
+        // not reach the page. Broadcast chat is public by definition: directed
+        // tags are sealed, and this client does not send them yet — see `Request`.
         AppClass::NONE
-            .plus_if(AppClass::LOGGABLE, is_broadcast)
+            .plus_if(AppClass::PUSH, is_broadcast)
             .plus_if(AppClass::VALID, is_broadcast || tag.is_none())
-            .plus_if(AppClass::CHAINED, is_broadcast)
     }
 
     async fn on_app_frame(

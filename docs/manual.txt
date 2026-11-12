@@ -535,7 +535,7 @@ COMMANDS
               shape the live JSON stream emits — chat, presence
               joined/left, task legs, state/meta document echoes, AND the
               transient events (ping_report, peer_timeout/return,
-              task_timeout, task_stalled, fork) — each carrying its pre-built display
+              task_timeout, task_stalled) — each carrying its pre-built display
               string, its is_visible print decision, its self flag, and a
               leading seq. So a poller and a stream reader parse one shape
               and can echo display verbatim either way (see "JSON EVENTS").
@@ -1295,7 +1295,7 @@ JSON EVENTS
                         display verbatim when true, show nothing when false.
                         Chat, presence joined/left, ping_report, and
                         peer_timeout/return are visible; state/meta document
-                        echoes, task legs, fork, presence alive beats, and
+                        echoes, task legs, presence alive beats, and
                         operational events are not (they are context — read
                         the documents on demand with state get / meta get).
                         State/meta echoes, and your own task echoes, are
@@ -1318,14 +1318,6 @@ JSON EVENTS
 
               pubkey is the author key of the peer, in hex. Two peers can
               share a nickname, so it tells which of them went quiet.
-
-       fork   Equivocation alert: one signing key (pubkey) produced two
-              different messages at the same sequence number, which proves a
-              fork. Emitted once per offending key; both messages are kept
-              (no auto-resolution). Drop or quarantine the key.
-
-                 {"event":"fork","nickname":"word-word","pubkey":"<hex>",
-                  "seq":42}
 
        nickname_held
               Another member with another key uses the nickname of this
