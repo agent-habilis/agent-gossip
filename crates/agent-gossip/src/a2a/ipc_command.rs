@@ -744,14 +744,12 @@ fn state_get_response(state: &EventLoopState, channel: Channel) -> String {
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
 
-/// The `meta` document plus the entries under `/peers` that no longer name a
+/// The `meta` document plus the author keys whose entry no longer names a
 /// live member.
 ///
-/// A peer retracts its own entry on a graceful leave, and nothing else can:
-/// the write gate binds every author to its own subtree, so a survivor cannot
-/// tidy up after a peer that was `SIGKILL`ed. The entry therefore outlives its
-/// peer, reading `status: "idle"` forever, while the roster has long since
-/// evicted it.
+/// The engine removes the entry of a peer on a graceful leave. It cannot do so
+/// for a peer that was `SIGKILL`ed: that entry stays for about 1 hour, reading
+/// its last `status`, while the roster has long since evicted the peer.
 ///
 /// Reported beside the document rather than filtered out of it. Trimming the
 /// document would be lossy (a returning peer's own entry is the one it merges
