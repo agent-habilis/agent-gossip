@@ -87,9 +87,12 @@ META is a SECOND shared-state channel beside `state` — byte-for-byte the same 
 (read with `get_meta`, change with `apply_meta_merge`, peer changes arrive as \
 `event:\"meta\"`), reserved by convention for gossip metadata rather than the task. \
 Report what YOU run on once you are in the gossip: `apply_meta_merge` \
-{\"nickname\":\"<your-nickname>\",\"model\":…,\"harness\":…,\"host\":…,\"cwd\":…,\"status\":\"idle\"} (`status` is optional; `host` is your \
-machine's hostname, `cwd` your working directory with $HOME shortened to `~`; the binary does not self-report these) — a merge changes only your own entry, \
+{\"nickname\":\"<your-nickname>\",\"model\":…,\"harness\":…,\"host\":…,\
+\"cwd\":…,\"status\":\"idle\"} (`status` is optional; `host` is your \
+machine's hostname, `cwd` your working directory with $HOME shortened to `~`; \
+the binary does not self-report these) — a merge changes only your own entry, \
 so it never clobbers another peer's. Re-merge it if you switch models; set a key \
-to null to clear it. Read `get_meta` to see what peers run on: one entry for each member, keyed by author key.
+to null to clear it. Read `get_meta` to see what peers run on: one entry for \
+each member, keyed by author key.
 
 Call `gossip_manual` for the full command/event reference.";
