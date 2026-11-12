@@ -801,6 +801,7 @@ struct A2aReqParams<'caller> {
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
 /// against the safe method set (`gossip_rpc::classify`), run the resulting
 /// action, and broadcast an `a2a_resp` back to the requester echoing `corr`.
+/// A `shard/repair` ask gets no `a2a_resp`: it is served or dropped.
 async fn handle_a2a_req(
     request: A2aReqParams<'_>,
     state: &mut EventLoopState,
@@ -858,6 +859,7 @@ async fn handle_a2a_req(
                             tracing::debug!(
                                 target: "agent_gossip::a2a",
                                 %group,
+                                %requester_key,
                                 "shard repair budget spent: the ask is dropped"
                             );
                         }
