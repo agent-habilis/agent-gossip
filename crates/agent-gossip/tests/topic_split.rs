@@ -50,11 +50,12 @@ fn init_short_tuning() {
 /// fixed `MSG_TIMEOUT` — split-merge convergence spans several shed rounds.
 async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Duration) {
     let until = Instant::now() + deadline;
-    let left_sees = format!("/peers/{}/card", right.nickname);
-    let right_sees = format!("/peers/{}/card", left.nickname);
     loop {
-        let left_crossed = left.meta_get().await.pointer(&left_sees).is_some();
-        let crossed: bool = left_crossed && right.meta_get().await.pointer(&right_sees).is_some();
+        let left_doc = left.meta_get().await;
+        let left_crossed = common::card_slot_of(&left_doc, &right.nickname).is_some();
+        let right_doc = right.meta_get().await;
+        let crossed: bool =
+            left_crossed && common::card_slot_of(&right_doc, &left.nickname).is_some();
         if crossed {
             return;
         }

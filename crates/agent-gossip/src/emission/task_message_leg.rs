@@ -5,6 +5,8 @@ pub(crate) struct TaskMessageLeg<'source> {
     pub id: &'source str,
     pub mesh: &'source str,
     pub author: &'source str,
+    /// The key of the sender: a nickname is a label that two keys can share.
+    pub author_key: habilis_network::protocol::AuthorKey,
     pub peer: &'source str,
     pub task_id: &'source str,
     pub state: Option<crate::a2a::TaskState>,

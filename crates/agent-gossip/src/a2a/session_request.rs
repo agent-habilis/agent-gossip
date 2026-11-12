@@ -1,11 +1,12 @@
 use anyhow::Result;
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MessageBody, Nickname};
+use habilis_network::protocol::{AuthorKey, MessageBody, Nickname};
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
 use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::ipc_command::MetaView;
 use crate::a2a::surfaced_event::PollBatch;
 
 /// A typed in-process request from an in-process session to the event
@@ -48,6 +49,10 @@ pub(crate) enum SessionRequest {
         file: Option<FileRef>,
         response: oneshot::Sender<Result<Authored>>,
     },
+    /// The author key of this member. The slot of its meta entry is the hex of that key.
+    OwnKey {
+        response: oneshot::Sender<AuthorKey>,
+    },
     /// Snapshot the live peer roster (active + quiet, recency-sorted).
     Peers {
         response: oneshot::Sender<RosterSnapshot>,
@@ -75,9 +80,7 @@ pub(crate) enum SessionRequest {
         response: oneshot::Sender<Result<()>>,
     },
     /// `meta`-channel counterpart of [`StateGet`](SessionRequest::StateGet).
-    MetaGet {
-        response: oneshot::Sender<serde_json::Value>,
-    },
+    MetaGet { response: oneshot::Sender<MetaView> },
     /// A **gossip A2A call**: send a directed A2A JSON-RPC request to `peer`
     /// (which serves the safe method set) and await its response. The reply
     /// arrives only when the peer answers or `timeout` elapses — the response

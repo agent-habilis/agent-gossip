@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::blob::ContentId;
-use habilis_network::protocol::{Message, MessageId, MessageKind, Nickname, UnixSecs};
+use habilis_network::protocol::messages::Authored;
+use habilis_network::protocol::{AuthorKey, Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
 use super::status_update_params::ReaderBeat;
@@ -70,7 +71,10 @@ impl WaitingMark {
 /// One in-flight task this node is a party to.
 #[derive(Debug)]
 pub(crate) struct TaskRecord {
-    /// The other party.
+    /// The other party's key. It is the identity: a nickname is a label that two live keys can
+    /// share, so a leg is judged by its key.
+    pub peer_key: AuthorKey,
+    /// The other party's name when the record opened, to show.
     pub peer: Nickname,
     pub role: TaskRole,
     /// The A2A lifecycle state, as derived from the legs seen so far.
@@ -211,8 +215,10 @@ pub(crate) enum LegKind {
 /// The fields of an applied leg the state machine needs.
 pub(crate) struct LegInfo<'source> {
     pub task_id: &'source TaskId,
-    /// The other party (inbound: the author; outbound: the `to`).
-    pub peer: &'source Nickname,
+    /// The other party's key (inbound: the author; outbound: the `to`).
+    pub peer_key: &'source AuthorKey,
+    /// The other party's name. Only an `Offer` reads it, to open the record.
+    pub peer: Option<&'source Nickname>,
     pub kind: LegKind,
     /// `true` if we sent this leg (outbound echo), `false` if it arrived.
     pub mine: bool,
@@ -223,7 +229,7 @@ pub(crate) struct LegInfo<'source> {
 /// The value cluster [`ingest`] needs beyond its `tasks` registry handle.
 #[derive(Clone, Copy)]
 pub(crate) struct IngestLegParams<'caller> {
-    pub(crate) frame: &'caller Message,
+    pub(crate) frame: &'caller Authored,
     pub(crate) task_id: &'caller TaskId,
     pub(crate) mine: bool,
     pub(crate) now: Instant,
@@ -288,12 +294,14 @@ pub(crate) fn ingest(
     if kind == LegKind::Beat && !mine && is_stale(frame) {
         return None;
     }
-    let peer = if mine { to } else { &frame.author };
+    let author_key = frame.key();
+    let peer_key = if mine { to } else { &author_key };
     apply(
         tasks,
         &LegInfo {
             task_id,
-            peer,
+            peer_key,
+            peer: None,
             kind,
             mine,
             fraction,
@@ -347,6 +355,7 @@ fn is_stale(frame: &Message) -> bool {
 /// What a reaped task keeps: enough to answer its own peer's `GetTask`, not
 /// the full record.
 pub(crate) struct ClosedTask {
+    pub peer_key: AuthorKey,
     pub peer: Nickname,
     pub state: TaskState,
 }
@@ -440,13 +449,16 @@ pub(crate) enum Admission {
 /// turns a leak into a denial of service. The global cap is the memory
 /// backstop behind it, since nothing stops an attacker minting fresh
 /// identities.
-pub(crate) fn admit_new_task(tasks: &HashMap<TaskId, TaskRecord>, peer: &Nickname) -> Admission {
+pub(crate) fn admit_new_task(
+    tasks: &HashMap<TaskId, TaskRecord>,
+    peer_key: &AuthorKey,
+) -> Admission {
     if tasks.len() >= tuning::TASKS_CAP {
         return Admission::RegistryFull;
     }
     let live_with_peer = tasks
         .values()
-        .filter(|rec| rec.peer == *peer && !rec.state.is_terminal())
+        .filter(|rec| rec.peer_key == *peer_key && !rec.state.is_terminal())
         .count();
     if live_with_peer >= tuning::TASKS_PER_PEER_CAP {
         return Admission::PeerAtCap;
@@ -459,6 +471,7 @@ pub(crate) fn admit_new_task(tasks: &HashMap<TaskId, TaskRecord>, peer: &Nicknam
 #[derive(Clone, Copy)]
 pub(crate) struct AdoptInitiatorParams<'caller> {
     pub(crate) task_id: &'caller TaskId,
+    pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) peer: &'caller Nickname,
     pub(crate) task_state: TaskState,
     pub(crate) now: Instant,
@@ -474,6 +487,7 @@ pub(crate) fn adopt_initiator(
 ) {
     let AdoptInitiatorParams {
         task_id,
+        peer_key,
         peer,
         task_state,
         now,
@@ -483,6 +497,7 @@ pub(crate) fn adopt_initiator(
             // First adoption (task creation): open the initiator-side record at
             // the server-minted state.
             slot.insert(TaskRecord {
+                peer_key: *peer_key,
                 peer: peer.clone(),
                 role: TaskRole::Initiator,
                 state: task_state,
@@ -521,7 +536,7 @@ pub(crate) fn adopt_initiator(
             // call once could otherwise return a Task id belonging to a
             // different peer and drive it terminal, or keep refreshing it past
             // the reaper. The record's own counterparty is the authority.
-            if rec.peer != *peer {
+            if rec.peer_key != *peer_key {
                 return;
             }
             if rec.state.is_terminal() {
@@ -550,12 +565,15 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
         return;
     }
 
-    if matches!(leg.kind, LegKind::Offer) {
+    if matches!(leg.kind, LegKind::Offer)
+        && let Some(peer) = leg.peer
+    {
         // The opening leg mints the record; a duplicate offer just touches it.
         tasks
             .entry(leg.task_id.clone())
             .or_insert_with(|| TaskRecord {
-                peer: leg.peer.clone(),
+                peer_key: *leg.peer_key,
+                peer: peer.clone(),
                 role: if leg.mine {
                     TaskRole::Initiator
                 } else {
@@ -590,7 +608,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     // could close, park, or beat a task they are not in. The RPC leg path makes
     // the same check by hand (`node.rs`'s `ingest_remote_message`); this is the
     // push plane's, where nearly every transition happens.
-    if rec.peer != *leg.peer {
+    if rec.peer_key != *leg.peer_key {
         return;
     }
 
@@ -726,23 +744,23 @@ pub(crate) async fn tick_task_sweep(
     let timeout = Duration::from_secs(task_timeout_secs());
     let (expired, reaped) = sweep_registry(&mut app.tasks, &mut app.closed_tasks, now, timeout);
 
-    for (task_id, peer) in &expired {
+    for (task_id, peer_key) in &expired {
         out.task_timeout(task_id, emission::TaskGoneReason::Timeout);
-        tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
+        tracing::debug!(%task_id, peer = %peer_key, "task evicted (idle-debounce timeout)");
     }
     // A task a late reply opened is unknown to the caller's agent, so it gets
     // no `task_timeout` line — only the worker is told.
     let late_cancels = app.take_late_cancels();
-    let mut cancels: Vec<(&TaskId, &Nickname, &str)> = expired
+    let mut cancels: Vec<(&TaskId, &AuthorKey, &str)> = expired
         .iter()
-        .map(|(task_id, peer)| (task_id, peer, "timeout"))
+        .map(|(task_id, peer_key)| (task_id, peer_key, "timeout"))
         .collect();
-    let late: Vec<(&TaskId, &Nickname, &str)> = late_cancels
+    let late: Vec<(&TaskId, &AuthorKey, &str)> = late_cancels
         .iter()
-        .map(|(task_id, peer)| (task_id, peer, "call-timed-out"))
+        .map(|(task_id, peer_key)| (task_id, peer_key, "call-timed-out"))
         .collect();
     cancels.extend(late);
-    for (task_id, peer, reason) in cancels {
+    for (task_id, peer_key, reason) in cancels {
         let update = status_update_params::status_update(
             context.mesh,
             status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
@@ -752,7 +770,7 @@ pub(crate) async fn tick_task_sweep(
             state,
             context,
             BroadcastStatusParams {
-                peer,
+                peer_key,
                 task_id,
                 update: &update,
             },
@@ -799,7 +817,7 @@ fn sweep_registry(
     closed: &mut ClosedTasks,
     now: Instant,
     timeout: Duration,
-) -> (Vec<(TaskId, Nickname)>, Vec<TaskId>) {
+) -> (Vec<(TaskId, AuthorKey)>, Vec<TaskId>) {
     let mut expired = Vec::new();
     for (task_id, rec) in tasks.iter_mut() {
         let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
@@ -807,7 +825,7 @@ fn sweep_registry(
         if !rec.state.is_terminal() && peer_silent && peer_gone {
             rec.state = TaskState::Canceled;
             rec.last_activity = now;
-            expired.push((task_id.clone(), rec.peer.clone()));
+            expired.push((task_id.clone(), rec.peer_key));
         }
     }
 
@@ -826,6 +844,7 @@ fn sweep_registry(
             closed.insert(
                 task_id.clone(),
                 ClosedTask {
+                    peer_key: rec.peer_key,
                     peer: rec.peer,
                     state: rec.state,
                 },
@@ -844,12 +863,12 @@ fn sweep_registry(
 /// and the frozen record ages into [`tick_task_sweep`]'s GC as usual.
 pub(crate) fn fail_tasks_for_departed_peer(
     tasks: &mut HashMap<TaskId, TaskRecord>,
-    peer: &Nickname,
+    peer_key: &AuthorKey,
     out: &emission::Output,
 ) {
     let now = Instant::now();
     for (task_id, rec) in tasks.iter_mut() {
-        if rec.peer == *peer && !rec.state.is_terminal() {
+        if rec.peer_key == *peer_key && !rec.state.is_terminal() {
             rec.state = TaskState::Canceled;
             // Start the terminal clock, so "ages into the GC" is true here as
             // well: a task already idle when its peer left would otherwise be
@@ -858,7 +877,7 @@ pub(crate) fn fail_tasks_for_departed_peer(
             // unknown task.
             rec.last_activity = now;
             out.task_timeout(task_id, emission::TaskGoneReason::PeerLeft);
-            tracing::debug!(%task_id, %peer, "task canceled (peer left)");
+            tracing::debug!(%task_id, peer = %peer_key, "task canceled (peer left)");
         }
     }
 }
@@ -872,7 +891,7 @@ pub(crate) async fn tick_task_keepalive(
     context: &HandlerCtx<'_>,
 ) {
     /// `(task_id, peer, state, last_fraction)` for one keepalive-due task.
-    type KeepaliveDue = (TaskId, Nickname, TaskState, Option<(u64, u64)>);
+    type KeepaliveDue = (TaskId, AuthorKey, TaskState, Option<(u64, u64)>);
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
@@ -881,21 +900,15 @@ pub(crate) async fn tick_task_keepalive(
         bell,
         last_poll_secs,
     });
-    let due: Vec<KeepaliveDue> = app
+    let quiet = app
         .tasks
         .iter()
-        .filter(|(_, rec)| rec.should_keepalive(now, cadence))
-        .map(|(task_id, rec)| {
-            (
-                task_id.clone(),
-                rec.peer.clone(),
-                rec.state,
-                rec.last_fraction,
-            )
-        })
+        .filter(|(_, rec)| rec.should_keepalive(now, cadence));
+    let due: Vec<KeepaliveDue> = quiet
+        .map(|(task_id, rec)| (task_id.clone(), rec.peer_key, rec.state, rec.last_fraction))
         .collect();
 
-    for (task_id, peer, task_state, fraction) in due {
+    for (task_id, peer_key, task_state, fraction) in due {
         let update = status_update_params::status_update(
             context.mesh,
             status_update_params::StatusUpdateParams::new(&task_id, task_state).with_metadata(
@@ -906,7 +919,7 @@ pub(crate) async fn tick_task_keepalive(
             state,
             context,
             BroadcastStatusParams {
-                peer: &peer,
+                peer_key: &peer_key,
                 task_id: &task_id,
                 update: &update,
             },
@@ -923,7 +936,7 @@ pub(crate) async fn tick_task_keepalive(
 /// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
 /// handles.
 struct BroadcastStatusParams<'caller> {
-    peer: &'caller Nickname,
+    peer_key: &'caller AuthorKey,
     /// The task id rides inside the status payload body (8.0); the envelope no
     /// longer carries it, so this is unused here beyond documenting the leg.
     task_id: &'caller TaskId,
@@ -942,7 +955,7 @@ async fn broadcast_status(
     params: BroadcastStatusParams<'_>,
 ) -> bool {
     let BroadcastStatusParams {
-        peer,
+        peer_key,
         task_id: _task_id,
         update,
     } = params;
@@ -953,12 +966,12 @@ async fn broadcast_status(
     // frame (the receive path always unseals a directed body). If the peer's key
     // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
     // a later one retries.
-    let Ok(body) = broadcast_params::seal_directed(state, peer, &body) else {
+    let Ok(body) = broadcast_params::seal_directed(state, peer_key, &body) else {
         return false;
     };
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::STATUS),
-        to: Some(peer.clone()),
+        to: Some(*peer_key),
         corr: None,
     };
     let message =
@@ -980,9 +993,11 @@ async fn broadcast_status(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
     use std::time::{Duration, Instant};
 
-    use habilis_network::protocol::{Nickname, UnixSecs};
+    use habilis_network::protocol::messages::Authored;
+    use habilis_network::protocol::{AuthorKey, Identity, Message, Nickname, UnixSecs};
     use tokio::sync::oneshot;
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
@@ -1000,6 +1015,27 @@ mod tests {
     /// minutes, so every test that steps back from its `now` starts here.
     fn a_day_ahead() -> Instant {
         Instant::now() + Duration::from_hours(25)
+    }
+
+    /// The identity of the test peer called `name`. A name is a label: the identity is the peer.
+    fn identity_of(name: &str) -> &'static Identity {
+        static IDENTITIES: LazyLock<Mutex<HashMap<String, &'static Identity>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let mut identities = IDENTITIES
+            .lock()
+            .expect("a panic in another test poisons this table, and that test fails first");
+        identities
+            .entry(name.to_owned())
+            .or_insert_with(|| Box::leak(Box::new(Identity::generate())))
+    }
+
+    fn peer_key(name: &str) -> AuthorKey {
+        identity_of(name).author_key()
+    }
+
+    /// `frame` as the receiver of the peer called `name` sees it: signed by that peer.
+    fn authored_by(name: &str, frame: &Message) -> Authored {
+        frame.clone().sign(identity_of(name)).authored()
     }
 
     /// Every live task is beaten once quiet past the cadence — on either side,
@@ -1163,7 +1199,7 @@ mod tests {
             &Nickname::from("calm-otter"),
             AppFrameParams::new(
                 wire::app_tag(wire::STATUS),
-                Some(Nickname::from("worker-bot")),
+                Some(peer_key("worker-bot")),
                 None,
                 MessageBody::try_new(
                     &serde_json::to_string(&payload).expect("a test value serializes to JSON"),
@@ -1179,7 +1215,7 @@ mod tests {
         super::ingest(
             &mut tasks,
             IngestLegParams {
-                frame: &beat,
+                frame: &authored_by("calm-otter", &beat),
                 task_id: &tid(),
                 mine: false,
                 now: later,
@@ -1197,7 +1233,7 @@ mod tests {
     }
 
     /// An inbound status frame for `tid()`; a beat when `beat` is true.
-    fn status_leg(beat: bool) -> habilis_network::protocol::Message {
+    fn status_leg(beat: bool) -> Message {
         status_frame(
             TaskState::Working,
             beat.then(|| status_update_params::beat_metadata(None)),
@@ -1205,10 +1241,7 @@ mod tests {
     }
 
     /// An inbound status frame for `tid()` in `state`, carrying `metadata`.
-    fn status_frame(
-        state: TaskState,
-        metadata: Option<serde_json::Value>,
-    ) -> habilis_network::protocol::Message {
+    fn status_frame(state: TaskState, metadata: Option<serde_json::Value>) -> Message {
         use habilis_network::protocol::{AppFrameParams, MeshId, Message, MessageBody};
 
         let mesh = MeshId::from("test");
@@ -1226,7 +1259,7 @@ mod tests {
             &Nickname::from("calm-otter"),
             AppFrameParams::new(
                 wire::app_tag(wire::STATUS),
-                Some(Nickname::from("worker-bot")),
+                Some(peer_key("worker-bot")),
                 None,
                 MessageBody::try_new(
                     &serde_json::to_string(&payload).expect("a test value serializes to JSON"),
@@ -1262,7 +1295,7 @@ mod tests {
         }
     }
 
-    fn beat_from_worker(reader: Option<ReaderBeat>) -> habilis_network::protocol::Message {
+    fn beat_from_worker(reader: Option<ReaderBeat>) -> Message {
         status_frame(
             TaskState::Working,
             Some(status_update_params::beat_metadata_with_reader(
@@ -1275,13 +1308,13 @@ mod tests {
     /// and `stall_notice` checks them.
     fn notice_for(
         tasks: &mut HashMap<TaskId, TaskRecord>,
-        beat: &habilis_network::protocol::Message,
+        beat: &Message,
         now: Instant,
     ) -> Option<super::StallNotice> {
         let reader = super::ingest(
             tasks,
             IngestLegParams {
-                frame: beat,
+                frame: &authored_by("calm-otter", beat),
                 task_id: &tid(),
                 mine: false,
                 now,
@@ -1395,7 +1428,7 @@ mod tests {
 
     /// A working status leg for `tid()` at wire time `at`, with a waiting reason
     /// when one is given.
-    fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> habilis_network::protocol::Message {
+    fn waiting_leg(reason: Option<&str>, at: UnixSecs) -> Message {
         let mut frame = status_frame(
             TaskState::Working,
             status_update_params::waiting_metadata(reason),
@@ -1404,14 +1437,11 @@ mod tests {
         frame
     }
 
-    fn ingest_inbound(
-        registry: &mut HashMap<TaskId, TaskRecord>,
-        frame: &habilis_network::protocol::Message,
-    ) {
+    fn ingest_inbound(registry: &mut HashMap<TaskId, TaskRecord>, frame: &Message) {
         super::ingest(
             registry,
             IngestLegParams {
-                frame,
+                frame: &authored_by("calm-otter", frame),
                 task_id: &tid(),
                 mine: false,
                 now: Instant::now(),
@@ -1544,11 +1574,7 @@ mod tests {
 
     /// A working status leg for `tid()` at wire time `at`, with the worker's
     /// order value and a waiting reason when one is given.
-    fn ordered_leg(
-        reason: Option<&str>,
-        at: UnixSecs,
-        order_ms: u64,
-    ) -> habilis_network::protocol::Message {
+    fn ordered_leg(reason: Option<&str>, at: UnixSecs, order_ms: u64) -> Message {
         let mut metadata = serde_json::json!({ "mesh:order_ms": order_ms });
         if let Some(reason) = reason {
             metadata["mesh:waiting"] = reason.into();
@@ -1720,7 +1746,7 @@ mod tests {
             super::ingest(
                 registry,
                 IngestLegParams {
-                    frame: &frame,
+                    frame: &authored_by("calm-otter", &frame),
                     task_id: &tid(),
                     mine: false,
                     now,
@@ -1821,14 +1847,14 @@ mod tests {
         let params = json!({"id": tid().as_str()});
         assert!(
             matches!(
-                classify("GetTask", &params, &Nickname::from("calm-otter"), &app),
+                classify("GetTask", &params, &peer_key("calm-otter"), &app),
                 Served::Op(A2aOp::GetTask { .. })
             ),
             "the task's own peer must still be served"
         );
         assert!(
             matches!(
-                classify("GetTask", &params, &Nickname::from("wire-thistle"), &app),
+                classify("GetTask", &params, &peer_key("wire-thistle"), &app),
                 Served::Reject(_)
             ),
             "another peer must still get task not found"
@@ -1864,6 +1890,7 @@ mod tests {
             closed.insert(
                 id.clone(),
                 super::ClosedTask {
+                    peer_key: peer_key("calm-otter"),
                     peer: Nickname::from("calm-otter"),
                     state: TaskState::Failed,
                 },
@@ -1939,7 +1966,8 @@ mod tests {
         // Leak a fixed peer/task_id for 'static convenience in tests.
         LegInfo {
             task_id: Box::leak(Box::new(tid())),
-            peer: Box::leak(Box::new(Nickname::from("calm-otter"))),
+            peer_key: Box::leak(Box::new(peer_key("calm-otter"))),
+            peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
             kind,
             mine,
             fraction: None,
@@ -1957,9 +1985,11 @@ mod tests {
     fn a_leg_from_a_non_party_is_dropped() {
         let now = Instant::now();
         let outsider = Box::leak(Box::new(Nickname::from("wire-thistle")));
+        let outsider_key = Box::leak(Box::new(peer_key("wire-thistle")));
         let from_outsider = |kind: LegKind| LegInfo {
             task_id: Box::leak(Box::new(tid())),
-            peer: outsider,
+            peer_key: outsider_key,
+            peer: Some(outsider),
             kind,
             mine: false,
             fraction: None,
@@ -2055,18 +2085,19 @@ mod tests {
     #[test]
     fn a_peer_cannot_mint_tasks_without_bound() {
         use super::{Admission, admit_new_task};
-        let flooder = Nickname::from("wire-thistle");
-        let honest = Nickname::from("calm-otter");
+        let flooder = peer_key("wire-thistle");
+        let honest = peer_key("calm-otter");
         let mut tasks = HashMap::new();
         let now = Instant::now();
 
-        let mut open = |peer: &Nickname, index: usize| {
+        let mut open = |peer_key: &AuthorKey, index: usize| {
             let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
             apply(
                 &mut tasks,
                 &LegInfo {
                     task_id: &task_id,
-                    peer,
+                    peer_key,
+                    peer: Some(&Nickname::from("a-peer")),
                     kind: LegKind::Offer,
                     mine: false,
                     fraction: None,
@@ -2212,6 +2243,7 @@ mod tests {
                 registry,
                 super::AdoptInitiatorParams {
                     task_id: &tid(),
+                    peer_key: &peer_key(peer),
                     peer: &Nickname::from(peer),
                     task_state: state,
                     now: when,
@@ -2261,7 +2293,8 @@ mod tests {
             &mut tasks,
             &LegInfo {
                 task_id: Box::leak(Box::new(tid())),
-                peer: Box::leak(Box::new(Nickname::from("wire-thistle"))),
+                peer_key: Box::leak(Box::new(peer_key("wire-thistle"))),
+                peer: Some(Box::leak(Box::new(Nickname::from("wire-thistle")))),
                 kind: LegKind::Offer,
                 mine: false,
                 fraction: None,
@@ -2282,10 +2315,11 @@ mod tests {
     #[test]
     fn peer_left_cancels_only_that_peers_live_tasks() {
         let now = Instant::now();
-        let departed = Nickname::from("calm-otter");
+        let departed = peer_key("calm-otter");
         let offer = |task_id: &'static str, peer: &'static str| LegInfo {
             task_id: Box::leak(Box::new(TaskId::from(task_id))),
-            peer: Box::leak(Box::new(Nickname::from(peer))),
+            peer_key: Box::leak(Box::new(peer_key(peer))),
+            peer: Some(Box::leak(Box::new(Nickname::from(peer)))),
             kind: LegKind::Offer,
             mine: false,
             fraction: None,
@@ -2363,7 +2397,7 @@ mod tests {
             &Nickname::from("worker-bot"),
             AppFrameParams::new(
                 wire::app_tag(wire::ARTIFACT),
-                Some(Nickname::from("calm-otter")),
+                Some(peer_key("calm-otter")),
                 None,
                 MessageBody::try_new("sealed-ciphertext-stand-in").expect("valid body"),
             ),
@@ -2377,7 +2411,7 @@ mod tests {
         super::ingest(
             &mut tasks,
             IngestLegParams {
-                frame: &sealed,
+                frame: &authored_by("worker-bot", &sealed),
                 task_id: &task_id,
                 mine: true,
                 now,
@@ -2399,19 +2433,16 @@ mod tests {
             &Nickname::from("worker-bot"),
             AppFrameParams::new(
                 wire::app_tag(wire::ARTIFACT),
-                Some(Nickname::from("calm-otter")),
+                Some(peer_key("calm-otter")),
                 None,
                 MessageBody::try_new(&serde_json::to_string(&payload).expect("payload serializes"))
                     .expect("valid body"),
             ),
         );
         let line = crate::emission::event_json(&crate::emission::OutputEvent::Task {
-            message: Box::new(
-                plaintext
-                    .sign(&habilis_network::protocol::Identity::generate())
-                    .authored(),
-            ),
+            message: Box::new(plaintext.sign(&Identity::generate()).authored()),
             is_self: true,
+            to_name: None,
         })
         .expect("a task event renders a JSON line");
         let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
@@ -2467,7 +2498,7 @@ mod tests {
                 &Nickname::from("worker-bot"),
                 AppFrameParams::new(
                     wire::app_tag(wire::STATUS),
-                    Some(Nickname::from("calm-otter")),
+                    Some(peer_key("calm-otter")),
                     None,
                     MessageBody::try_new(&body).expect("valid body"),
                 ),
@@ -2477,7 +2508,7 @@ mod tests {
             super::ingest(
                 tasks,
                 IngestLegParams {
-                    frame,
+                    frame: &authored_by("worker-bot", frame),
                     task_id: &task_id,
                     mine: true,
                     now,
@@ -2835,5 +2866,140 @@ mod tests {
             "the task waits for input"
         );
         assert!(tasks[&tid()].review, "the review flag is set");
+    }
+
+    /// A nickname is a label, so a second key can use the name of the counterparty. The frame
+    /// names `calm-otter` as its author, but another key signed it: it is a non-party leg.
+    #[test]
+    fn a_leg_from_another_key_with_the_name_of_the_counterparty_is_dropped() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        let peer_clock = tasks[&tid()].last_peer_activity;
+        let completed = status_frame(TaskState::Completed, None);
+
+        let from_twin = authored_by("calm-otter-twin", &completed);
+        super::ingest(
+            &mut tasks,
+            IngestLegParams {
+                frame: &from_twin,
+                task_id: &tid(),
+                mine: false,
+                now: now + Duration::from_secs(5),
+            },
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a key that only shares the name cannot close the task"
+        );
+        assert_eq!(
+            tasks[&tid()].last_peer_activity,
+            peer_clock,
+            "nor refresh the clock that the reaper reads"
+        );
+
+        let from_peer = authored_by("calm-otter", &completed);
+        super::ingest(
+            &mut tasks,
+            IngestLegParams {
+                frame: &from_peer,
+                task_id: &tid(),
+                mine: false,
+                now,
+            },
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Completed,
+            "the key of the counterparty still closes the task"
+        );
+    }
+
+    /// The same rule for the snapshot that an RPC reply returns.
+    #[test]
+    fn a_returned_task_is_not_adopted_from_a_key_that_shares_the_worker_name() {
+        let now = Instant::now();
+        let mut tasks = working_task_we_opened(now);
+        super::adopt_initiator(
+            &mut tasks,
+            super::AdoptInitiatorParams {
+                task_id: &tid(),
+                peer_key: &peer_key("calm-otter-twin"),
+                peer: &Nickname::from("calm-otter"),
+                task_state: TaskState::Failed,
+                now: now + Duration::from_mins(5),
+            },
+        );
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a twin of the worker cannot drive our task terminal"
+        );
+    }
+
+    /// The quota counts keys, not names: a key that shares the name of a flooder is another peer.
+    #[test]
+    fn the_task_quota_counts_keys_and_not_names() {
+        use super::{Admission, admit_new_task};
+        let flooder = peer_key("wire-thistle");
+        let twin = peer_key("wire-thistle-twin");
+        let mut tasks = HashMap::new();
+        for index in 0..tuning::TASKS_PER_PEER_CAP {
+            let task_id = TaskId::from(format!("550e8400-e29b-41d4-a716-{index:012}").as_str());
+            apply(
+                &mut tasks,
+                &LegInfo {
+                    task_id: &task_id,
+                    peer_key: &flooder,
+                    peer: Some(&Nickname::from("wire-thistle")),
+                    kind: LegKind::Offer,
+                    mine: false,
+                    fraction: None,
+                },
+                Instant::now(),
+            );
+        }
+        assert_eq!(
+            admit_new_task(&tasks, &flooder),
+            Admission::PeerAtCap,
+            "the live tasks of one key fill its quota"
+        );
+        assert_eq!(
+            admit_new_task(&tasks, &twin),
+            Admission::Ok,
+            "a key with the same name has its own quota"
+        );
+    }
+
+    /// Two keys can use one nickname. When one of them leaves, only its tasks end.
+    #[test]
+    fn peer_left_cancels_only_the_tasks_of_the_key_that_left() {
+        let now = Instant::now();
+        let offer = |task_id: &'static str, key_name: &'static str| LegInfo {
+            task_id: Box::leak(Box::new(TaskId::from(task_id))),
+            peer_key: Box::leak(Box::new(peer_key(key_name))),
+            peer: Some(Box::leak(Box::new(Nickname::from("calm-otter")))),
+            kind: LegKind::Offer,
+            mine: false,
+            fraction: None,
+        };
+        let left_id = "550e8400-e29b-41d4-a716-446655440001";
+        let twin_id = "550e8400-e29b-41d4-a716-446655440002";
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &offer(left_id, "calm-otter"), now);
+        apply(&mut tasks, &offer(twin_id, "calm-otter-twin"), now);
+
+        let out = crate::emission::Output::silent();
+        super::fail_tasks_for_departed_peer(&mut tasks, &peer_key("calm-otter"), &out);
+
+        assert_eq!(
+            tasks[&TaskId::from(left_id)].state,
+            TaskState::Canceled,
+            "the departed key loses its live task at once"
+        );
+        assert!(
+            !tasks[&TaskId::from(twin_id)].state.is_terminal(),
+            "the task of the key that stays is untouched, though it shares the name"
+        );
     }
 }

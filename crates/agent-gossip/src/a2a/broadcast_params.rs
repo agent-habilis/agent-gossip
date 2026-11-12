@@ -13,8 +13,8 @@ use habilis_network::ops::{
 };
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
-    AppFrameParams, Channel, ContentHash, Identity, MeshId, Message, MessageBody, MessageId,
-    MessageKind, Nickname, Shard, ShardGroup, reassembly,
+    AppFrameParams, AuthorKey, Channel, ContentHash, Identity, MeshId, Message, MessageBody,
+    MessageId, MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
 use habilis_network::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
@@ -30,7 +30,7 @@ use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{card, receipt, served, status_update_params, task_record, wire};
+use crate::a2a::{card, ipc_command, receipt, served, status_update_params, task_record, wire};
 use crate::emission;
 
 /// Retain a just-built outbound message in the local log (pruning the
@@ -63,7 +63,8 @@ fn commit_outbound_part(
     state.advance_chain(hash);
     state.note_dag(hash, &message.parents, message.timestamp);
     if echo {
-        out.print_message_ex(&message.authored(), true);
+        let authored = message.authored();
+        out.print_message_ex(&authored, true, addressee_name(state, &authored).as_ref());
     }
     retain_outbound(state, message);
 }
@@ -598,7 +599,7 @@ async fn send_single_broadcast(
             .ok_or_else(|| {
                 anyhow::anyhow!("a sealed frame opens to the body it was sealed from")
             })?;
-        out.print_message_ex(&plain, true);
+        out.print_message_ex(&plain, true, addressee_name(state, &plain).as_ref());
         return Ok((id, plain));
     }
     send_msg_part(
@@ -682,7 +683,7 @@ pub(crate) async fn send_broadcast(
     )?;
     let (header, group) = shards.send(state, sender, out).await?;
     let logical = reassembly::synthesize_from(&header, body.plain, &group);
-    out.print_message_ex(&logical, true);
+    out.print_message_ex(&logical, true, addressee_name(state, &logical).as_ref());
     Ok((logical.id.clone(), logical))
 }
 
@@ -848,16 +849,99 @@ async fn broadcast_directed_frame(
     let pending = queue_sharded_leg(app, frames, cache, shard_pending);
     // Echo + ingest the logical leg once; the echo is the plaintext twin
     // (the logical body is sealed).
-    let pending = echo_when_sent(out, echo.clone(), echo_as, pending);
+    let addressee = addressee_name(state, &echo);
+    let own_echo = OwnEcho {
+        message: echo.clone(),
+        echo_as,
+        addressee,
+    };
+    let pending = echo_when_sent(out, own_echo, pending);
     let pending = ingest_own_leg_when_sent(app, OwnLeg { echo, task_id }, pending);
     Ok((logical.id.clone(), logical, pending))
 }
 
+/// The key that a send by nickname goes to: the one live key of `peer`, else the one quiet key.
+/// A shared name has no key, so the send is refused. The caller resolves it once and uses the
+/// same key to seal the body and to address the frame.
+pub(crate) fn peer_key(state: &EventLoopState, peer: &Nickname) -> anyhow::Result<AuthorKey> {
+    state
+        .addressee_key(peer)
+        .map_err(|error| anyhow::anyhow!("cannot address '{peer}': {error}"))
+}
+
+/// The key that holds the task a call names, when the record of that task has `peer` as its
+/// counterparty. A follow-up, a read and a cancel go to that key. The name can be shared with
+/// another live key, or can now belong to a key that holds no task.
+fn recorded_counterparty(
+    tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
+    params: &serde_json::Value,
+    peer: &Nickname,
+) -> Option<AuthorKey> {
+    let named: Option<&str> = params["message"]["taskId"]
+        .as_str()
+        .or_else(|| params["id"].as_str());
+    let task_id = named.and_then(crate::a2a::TaskId::from_uuid_str)?;
+    tasks
+        .get(&task_id)
+        .filter(|rec| rec.peer == *peer)
+        .map(|rec| rec.peer_key)
+}
+
+/// The key a call goes to, or why the call is refused. A call on a task that we hold goes to the
+/// key of the task record. Any other call resolves the name: it needs one live key under it,
+/// except that an open task with the resolved key lets the call through a brief roster flap.
+fn call_target(
+    state: &EventLoopState,
+    tasks: &HashMap<crate::a2a::TaskId, TaskRecord>,
+    params: &serde_json::Value,
+    peer: &Nickname,
+) -> Result<AuthorKey, String> {
+    let recorded = recorded_counterparty(tasks, params, peer);
+    let resolved: Option<AuthorKey> = recorded.or_else(|| peer_key(state, peer).ok());
+    let party_to_a_task = resolved.is_some_and(|key| holds_open_task_with(tasks, &key));
+    let is_present = match recorded {
+        Some(key) => state.known_nickname_of(&key).is_some(),
+        None => state.is_peer(peer.as_str()),
+    };
+    if !party_to_a_task && !is_present {
+        return Err(format!("unknown peer '{peer}'"));
+    }
+    let live_with_name = live_holders(state.live_nicknames(), peer);
+    if recorded.is_none() && live_with_name > 1 {
+        return Err(format!(
+            "ambiguous peer '{peer}': {live_with_name} live members use this name"
+        ));
+    }
+    resolved.ok_or_else(|| format!("ambiguous or unknown peer '{peer}'"))
+}
+
+/// Whether `tasks` holds a live task with the member `key`. The key is the identity: a name that
+/// another key holds now is not the counterparty of a task that the first key opened.
+fn holds_open_task_with(tasks: &HashMap<crate::a2a::TaskId, TaskRecord>, key: &AuthorKey) -> bool {
+    tasks
+        .values()
+        .any(|rec| rec.peer_key == *key && !rec.state.is_terminal())
+}
+
+/// The addressee's name for a directed line, read from the roster at print time. `None` for a
+/// broadcast, or when the addressee is not live.
+pub(crate) fn addressee_name(state: &EventLoopState, message: &Authored) -> Option<Nickname> {
+    let MessageKind::App { to: Some(key), .. } = &message.kind else {
+        return None;
+    };
+    state.nickname_of(key)
+}
+
 /// Print a directed leg's self-echo down the surface its kind belongs to.
-fn print_echo(out: &emission::Output, echo: &Authored, echo_as: EchoAs) {
+fn print_echo(
+    out: &emission::Output,
+    echo: &Authored,
+    echo_as: EchoAs,
+    addressee: Option<&Nickname>,
+) {
     match echo_as {
-        EchoAs::Task => out.print_task(echo, true),
-        EchoAs::Chat => out.print_message_ex(echo, true),
+        EchoAs::Task => out.print_task(echo, true, addressee),
+        EchoAs::Chat => out.print_message_ex(echo, true, addressee),
     }
 }
 
@@ -909,14 +993,14 @@ pub(crate) async fn emit_task_status(
         app,
     } = params;
     let leg = WorkerLeg::parse(task_state, waiting)?;
-    let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
+    let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_status(
         BroadcastTaskStatusParams {
             mesh,
             author,
-            peer: &peer,
+            peer_key: &peer_key,
             task_id,
             leg,
             note,
@@ -998,14 +1082,14 @@ pub(crate) async fn emit_task_artifact(
         file,
         app,
     } = params;
-    let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
+    let Some(peer_key) = app.tasks.get(task_id).map(|rec| rec.peer_key) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_artifact(
         BroadcastTaskArtifactParams {
             mesh,
             author,
-            peer: &peer,
+            peer_key: &peer_key,
             task_id,
             text,
             file,
@@ -1019,7 +1103,7 @@ pub(crate) async fn emit_task_artifact(
     .map(|(_id, message, pending)| (message, pending))
 }
 
-/// Seal a directed payload `body` to `to`'s published X25519 key. A directed
+/// Seal a directed payload `body` to the published X25519 key of the member `to`. A directed
 /// frame is **never** sent in plaintext — if the recipient's card / seal key has
 /// not replicated yet, this errors rather than leaking the body. The Ed25519
 /// frame signature (added later, over this ciphertext) authenticates the sender.
@@ -1029,11 +1113,13 @@ pub(crate) async fn emit_task_artifact(
 /// seal operation fails.
 pub(crate) fn seal_directed(
     state: &EventLoopState,
-    to: &Nickname,
+    to: &AuthorKey,
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
     let doc = state.doc(Channel::Meta).to_json();
     let key = card::peer_seal_key(&doc, to).ok_or_else(|| {
+        let known: Option<Nickname> = state.known_nickname_of(to);
+        let name: String = known.map_or_else(|| to.to_string(), |nickname| nickname.to_string());
         // A peer whose card did not publish says why in its own entry. Without that, the sender
         // waits for cards that never come.
         match doc
@@ -1041,10 +1127,10 @@ pub(crate) fn seal_directed(
             .and_then(serde_json::Value::as_str)
         {
             Some(cause) => {
-                anyhow::anyhow!("cannot seal to '{to}': its card is not published ({cause})")
+                anyhow::anyhow!("cannot seal to '{name}': its card is not published ({cause})")
             }
             None => anyhow::anyhow!(
-                "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
+                "cannot seal to '{name}': its encryption key is not known yet (cards still propagating)"
             ),
         }
     })?;
@@ -1058,7 +1144,7 @@ pub(crate) fn seal_directed(
 pub(crate) struct BroadcastTaskStatusParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
-    pub(crate) peer: &'caller Nickname,
+    pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
     pub(crate) leg: WorkerLeg<'caller>,
     pub(crate) note: Option<&'caller str>,
@@ -1098,7 +1184,7 @@ struct StatusLegParams<'caller> {
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
-/// payload and push it to `peer` fire-and-forget.
+/// payload and push it to the key `peer_key` fire-and-forget.
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
@@ -1111,7 +1197,7 @@ pub(crate) async fn broadcast_task_status(
     let BroadcastTaskStatusParams {
         mesh,
         author,
-        peer,
+        peer_key,
         task_id,
         leg,
         note,
@@ -1125,10 +1211,11 @@ pub(crate) async fn broadcast_task_status(
         waiting: leg.waiting(),
     });
     let plain = status_update_params::payload_body(&update)?;
-    let sealed = seal_directed(state, peer, &plain)?;
+    let to = *peer_key;
+    let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::STATUS),
-        to: Some(peer.clone()),
+        to: Some(to),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1184,6 +1271,11 @@ pub(crate) struct MsgParams<'caller> {
 /// the addressee's seal key has not replicated yet (rather than sending in
 /// plaintext), and propagates a serialize/deliver failure or a full unmeshed
 /// pending-outbound buffer.
+/// The live members that use `peer`'s name. Two live keys under one name make the name ambiguous.
+pub(crate) fn live_holders<'a>(live: impl Iterator<Item = &'a Nickname>, peer: &Nickname) -> usize {
+    live.filter(|nick| *nick == peer).count()
+}
+
 pub(crate) async fn send_msg(
     params: MsgParams<'_>,
     state: &mut EventLoopState,
@@ -1206,14 +1298,21 @@ pub(crate) async fn send_msg(
             text.as_str().len()
         ));
     }
+    let live_with_name = live_holders(state.live_nicknames(), peer);
+    if live_with_name > 1 {
+        return Err(anyhow::anyhow!(
+            "ambiguous peer '{peer}': {live_with_name} live members use this name"
+        ));
+    }
     let payload = status_update_params::compose_msg(mesh, text.as_str());
     let payload_id = MessageId::try_new(payload.message_id.as_str())
         .expect("an a2a message id is a valid frame id");
     let plain = status_update_params::payload_body(&payload)?;
-    let sealed = seal_directed(state, peer, &plain)?;
+    let to = peer_key(state, peer)?;
+    let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::MSG),
-        to: Some(peer.clone()),
+        to: Some(to),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1243,7 +1342,7 @@ pub(crate) async fn send_msg(
 pub(crate) struct BroadcastTaskArtifactParams<'caller> {
     pub(crate) mesh: &'caller MeshId,
     pub(crate) author: &'caller Nickname,
-    pub(crate) peer: &'caller Nickname,
+    pub(crate) peer_key: &'caller AuthorKey,
     pub(crate) task_id: &'caller crate::a2a::TaskId,
     pub(crate) text: &'caller str,
     pub(crate) file: Option<FileRef>,
@@ -1251,7 +1350,7 @@ pub(crate) struct BroadcastTaskArtifactParams<'caller> {
 }
 
 /// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
-/// artifact payload and push it to `peer` fire-and-forget.
+/// artifact payload and push it to the key `peer_key` fire-and-forget.
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
@@ -1264,7 +1363,7 @@ pub(crate) async fn broadcast_task_artifact(
     let BroadcastTaskArtifactParams {
         mesh,
         author,
-        peer,
+        peer_key,
         task_id,
         text,
         file,
@@ -1284,10 +1383,11 @@ pub(crate) async fn broadcast_task_artifact(
     .await?;
     let update = status_update_params::artifact_update_parts(mesh, task_id, parts);
     let plain = status_update_params::payload_body(&update)?;
-    let sealed = seal_directed(state, peer, &plain)?;
+    let to = *peer_key;
+    let sealed = seal_directed(state, &to, &plain)?;
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::ARTIFACT),
-        to: Some(peer.clone()),
+        to: Some(to),
         corr: None,
     };
     broadcast_directed_frame(
@@ -1510,7 +1610,7 @@ async fn send_directed_leg(
             Delivered::Done => {
                 retain_leg(state, message, content);
                 if let Some(echo) = echo {
-                    print_echo(out, echo, echo_as);
+                    print_echo(out, echo, echo_as, addressee_name(state, echo).as_ref());
                 }
                 Ok(None)
             }
@@ -1521,7 +1621,15 @@ async fn send_directed_leg(
                     pending
                 };
                 let pending = match echo {
-                    Some(echo) => echo_when_sent(out, echo.clone(), echo_as, vec![pending]),
+                    Some(echo) => {
+                        let addressee = addressee_name(state, echo);
+                        let own_echo = OwnEcho {
+                            message: echo.clone(),
+                            echo_as,
+                            addressee,
+                        };
+                        echo_when_sent(out, own_echo, vec![pending])
+                    }
                     None => vec![pending],
                 };
                 Ok(pending.into_iter().next())
@@ -1532,7 +1640,7 @@ async fn send_directed_leg(
         // Buffered until the meshed edge flushes it through the send decision.
         retain_leg(state, message, content);
         if let Some(echo) = echo {
-            print_echo(out, echo, echo_as);
+            print_echo(out, echo, echo_as, addressee_name(state, echo).as_ref());
         }
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
@@ -1631,18 +1739,30 @@ pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
     }
 }
 
+/// An own line to print once its sends succeed: the plaintext twin of the frame, the surface it
+/// goes down, and the addressee's name as the roster gave it when the line was sent.
+struct OwnEcho {
+    message: Authored,
+    echo_as: EchoAs,
+    addressee: Option<Nickname>,
+}
+
 /// Print `echo` once the sends in `pending` all succeed, and give the verdict on
 /// to the caller. A failed send prints nothing: the sender must not read a
 /// message that never arrived as sent. With nothing pending the verdict is known
 /// now, and the echo prints at once.
 fn echo_when_sent(
     out: &emission::Output,
-    echo: Authored,
-    echo_as: EchoAs,
+    echo: OwnEcho,
     pending: Vec<PendingSend>,
 ) -> Vec<PendingSend> {
+    let OwnEcho {
+        message,
+        echo_as,
+        addressee,
+    } = echo;
     if pending.is_empty() {
-        print_echo(out, &echo, echo_as);
+        print_echo(out, &message, echo_as, addressee.as_ref());
         return pending;
     }
     let out = out.clone();
@@ -1650,7 +1770,7 @@ fn echo_when_sent(
     tokio::spawn(async move {
         let verdict = settle(pending).await;
         if verdict.is_ok() {
-            print_echo(&out, &echo, echo_as);
+            print_echo(&out, &message, echo_as, addressee.as_ref());
         }
         let _ = verdict_tx.send(verdict);
     });
@@ -1662,7 +1782,7 @@ fn echo_when_sent(
 /// body is sealed to the addressee, so a status leg's state could not be read
 /// back out of it. The `task_id` is threaded in for the same reason it always
 /// was — the artifact leg never needs its body at all.
-pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Message, task_id: &crate::a2a::TaskId) {
+pub(crate) fn ingest_own_leg(app: &mut A2aApp, message: &Authored, task_id: &crate::a2a::TaskId) {
     task_record::ingest(
         &mut app.tasks,
         task_record::IngestLegParams {
@@ -1746,7 +1866,8 @@ pub(crate) async fn send_shard_repair_requests(
         let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
             continue;
         };
-        let sealed = match seal_directed(state, &ticket.author, &body) {
+        let author_key = ticket.author;
+        let sealed = match seal_directed(state, &author_key, &body) {
             Ok(sealed) => sealed,
             Err(error) => {
                 tracing::debug!(%error, author = %ticket.author, "cannot seal shard repair request yet");
@@ -1759,7 +1880,7 @@ pub(crate) async fn send_shard_repair_requests(
             author,
             AppFrameParams::new(
                 wire::app_tag(wire::REQ),
-                Some(ticket.author.clone()),
+                Some(author_key),
                 Some(corr),
                 sealed,
             ),
@@ -1829,14 +1950,13 @@ pub(crate) async fn broadcast_a2a_call(
     // task with the peer yet) and any read/cancel to a peer we share no task
     // with still require the peer present — method-agnostic, so
     // `SendStreamingMessage` creates gate the same as `SendMessage`.
-    let party_to_a_task = app
-        .tasks
-        .values()
-        .any(|rec| rec.peer == peer && !rec.state.is_terminal());
-    if !party_to_a_task && !state.peers().contains(peer.as_str()) {
-        responder.send_response(&rpc_error(-32602, &format!("unknown peer '{peer}'")));
-        return;
-    }
+    let peer_key = match call_target(state, &app.tasks, &params, &peer) {
+        Ok(key) => key,
+        Err(refusal) => {
+            responder.send_response(&rpc_error(-32602, &refusal));
+            return;
+        }
+    };
     let blob = match file {
         None => None,
         Some(file) => {
@@ -1853,7 +1973,7 @@ pub(crate) async fn broadcast_a2a_call(
     let opens_task = blob.as_ref().is_some_and(|blob| blob.opens_task);
     let blob_group = blob.map(|blob| blob.group);
     if let Some(message_id) = params["message"]["messageId"].as_str() {
-        app.note_sent_ref(message_id, &peer);
+        app.note_sent_ref(message_id, &peer_key);
     }
     let envelope = serde_json::json!({ "method": method, "params": params });
     let Ok(body) = MessageBody::try_new(&envelope.to_string()) else {
@@ -1865,7 +1985,7 @@ pub(crate) async fn broadcast_a2a_call(
         return;
     };
     // Seal the request to the addressee — a relay forwards it but cannot read it.
-    let body = match seal_directed(state, &peer, &body) {
+    let body = match seal_directed(state, &peer_key, &body) {
         Ok(sealed) => sealed,
         Err(error) => {
             app.orphan_blob(blob_group);
@@ -1878,7 +1998,7 @@ pub(crate) async fn broadcast_a2a_call(
     let corr = wire::corr_id(crate::a2a::A2aRpcId::random().as_str());
     let kind = MessageKind::App {
         tag: wire::app_tag(wire::REQ),
-        to: Some(peer.clone()),
+        to: Some(peer_key),
         corr: Some(corr.clone()),
     };
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
@@ -1894,7 +2014,7 @@ pub(crate) async fn broadcast_a2a_call(
     let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
     if let Some(unregistered) = app.register_a2a_waiter(A2aWaiter {
         corr,
-        peer,
+        peer_key,
         deadline,
         responder,
         blob_group,
@@ -2313,8 +2433,12 @@ pub(crate) async fn handle_session_request(
         SessionRequest::MetaMerge { merge, response } => {
             session_merge(SessionMerge(Channel::Meta, merge, response), scope, state).await
         }
+        SessionRequest::OwnKey { response } => {
+            let _ = response.send(state.identity().author_key());
+            false
+        }
         SessionRequest::MetaGet { response } => {
-            let _ = response.send(state.doc(Channel::Meta).to_json());
+            let _ = response.send(ipc_command::meta_view(state));
             false
         }
         SessionRequest::Ping { response } => session_ping(response, state, context).await,
@@ -2435,7 +2559,7 @@ mod call_blob_group_tests {
     use std::collections::HashMap;
     use std::time::Instant;
 
-    use habilis_network::protocol::Nickname;
+    use habilis_network::protocol::{AuthorKey, Nickname};
 
     use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
     use crate::a2a::{TaskId, TaskState};
@@ -2467,6 +2591,7 @@ mod call_blob_group_tests {
             &mut tasks,
             AdoptInitiatorParams {
                 task_id: &known,
+                peer_key: &AuthorKey::from([0xb0; 32]),
                 peer: &Nickname::from("bob"),
                 task_state: TaskState::Working,
                 now: Instant::now(),
@@ -2507,11 +2632,13 @@ mod call_blob_group_tests {
 #[cfg(test)]
 mod echo_when_sent_tests {
     use habilis_network::protocol::messages::Authored;
-    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use habilis_network::protocol::{
+        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
+    };
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::oneshot;
 
-    use super::{EchoAs, PendingSend, echo_when_sent};
+    use super::{EchoAs, OwnEcho, PendingSend, echo_when_sent};
     use crate::a2a::wire;
     use crate::emission;
     use crate::output_event::OutputEvent;
@@ -2526,7 +2653,7 @@ mod echo_when_sent_tests {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
-            MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
+            MessageKind::app_to(wire::MSG, AuthorKey::from([0xb0; 32]), None),
             MessageBody::try_new("hi").expect("valid body"),
         )
     }
@@ -2542,7 +2669,12 @@ mod echo_when_sent_tests {
         let (out, mut events) = emission::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
-        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        let own_echo = OwnEcho {
+            message: echo(),
+            echo_as: EchoAs::Chat,
+            addressee: None,
+        };
+        let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
         verdict_tx.send(Ok(())).expect("receiver is held");
         let verdict = pending.into_iter().next().expect("verdict handle");
         verdict
@@ -2558,7 +2690,12 @@ mod echo_when_sent_tests {
         let (out, mut events) = emission::capture_events::capture_events();
         let (verdict_tx, verdict_rx): (_, PendingSend) = oneshot::channel();
 
-        let pending = echo_when_sent(&out, echo(), EchoAs::Chat, vec![verdict_rx]);
+        let own_echo = OwnEcho {
+            message: echo(),
+            echo_as: EchoAs::Chat,
+            addressee: None,
+        };
+        let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
         verdict_tx
             .send(Err(anyhow::anyhow!("unicast dial failed")))
             .expect("receiver is held");
@@ -2577,7 +2714,9 @@ mod echo_when_sent_tests {
 #[cfg(test)]
 mod sharded_leg_tests {
     use habilis_network::protocol::messages::Verified;
-    use habilis_network::protocol::{MeshId, Message, MessageBody, MessageKind, Nickname};
+    use habilis_network::protocol::{
+        AuthorKey, MeshId, Message, MessageBody, MessageKind, Nickname,
+    };
     use tokio::sync::oneshot;
 
     use super::{PendingSend, queue_sharded_leg, settle, take_sent_legs};
@@ -2592,7 +2731,7 @@ mod sharded_leg_tests {
         Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
-            MessageKind::app_to(wire::MSG, Nickname::from("bob"), None),
+            MessageKind::app_to(wire::MSG, AuthorKey::from([0xb0; 32]), None),
             MessageBody::try_new(text).expect("valid body"),
         )
     }
@@ -2721,6 +2860,94 @@ mod status_leg_tests {
             status_waiting(&leg).as_deref(),
             Some("asks its user"),
             "the status waiting reason is kept"
+        );
+    }
+}
+
+#[cfg(test)]
+mod live_holder_tests {
+    use habilis_network::protocol::Nickname;
+
+    #[test]
+    fn a_name_held_by_two_live_keys_counts_twice() {
+        let shared = Nickname::from("dup-name");
+        let other = Nickname::from("other-name");
+        let live = [&shared, &other, &shared];
+        assert_eq!(
+            super::live_holders(live.into_iter(), &shared),
+            2,
+            "two live keys under one name are two holders"
+        );
+    }
+}
+
+#[cfg(test)]
+mod open_task_gate_tests {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    use habilis_network::protocol::{AuthorKey, Nickname};
+
+    use crate::a2a::task_record::{AdoptInitiatorParams, adopt_initiator};
+    use crate::a2a::{TaskId, TaskState};
+
+    /// A call by the name of a gone task peer must reach the unknown-peer check. The task belongs
+    /// to the key that opened it, and a key that holds the name now is another member.
+    #[test]
+    fn a_call_by_the_name_of_a_gone_task_peer_is_refused_as_unknown() {
+        let mut tasks = HashMap::new();
+        let gone = AuthorKey::from([0xb0; 32]);
+        let holder_now = AuthorKey::from([0xb1; 32]);
+        adopt_initiator(
+            &mut tasks,
+            AdoptInitiatorParams {
+                task_id: &TaskId::random(),
+                peer_key: &gone,
+                peer: &Nickname::from("bob"),
+                task_state: TaskState::Working,
+                now: Instant::now(),
+            },
+        );
+
+        assert!(
+            super::holds_open_task_with(&tasks, &gone),
+            "the key that opened the task is its party"
+        );
+        assert!(
+            !super::holds_open_task_with(&tasks, &holder_now),
+            "a key that only shares the name is not a party to the task"
+        );
+    }
+
+    /// The key of the record, not the key that the name resolves to now, is the counterparty of
+    /// the task. A name that another key holds, or that two keys share, does not move the task.
+    #[test]
+    fn a_call_on_a_task_goes_to_the_key_of_its_record() {
+        let mut tasks = HashMap::new();
+        let task_id = TaskId::random();
+        let holder = AuthorKey::from([0xb0; 32]);
+        adopt_initiator(
+            &mut tasks,
+            AdoptInitiatorParams {
+                task_id: &task_id,
+                peer_key: &holder,
+                peer: &Nickname::from("bob"),
+                task_state: TaskState::Working,
+                now: Instant::now(),
+            },
+        );
+        let follow_up = serde_json::json!({ "message": { "taskId": task_id.as_str() } });
+        let read = serde_json::json!({ "id": task_id.as_str() });
+
+        let by_message = super::recorded_counterparty(&tasks, &follow_up, &Nickname::from("bob"));
+        let by_id = super::recorded_counterparty(&tasks, &read, &Nickname::from("bob"));
+        let other_name = super::recorded_counterparty(&tasks, &read, &Nickname::from("carol"));
+
+        assert_eq!(by_message, Some(holder), "a follow-up goes to the holder");
+        assert_eq!(by_id, Some(holder), "a read goes to the holder");
+        assert_eq!(
+            other_name, None,
+            "a call that names another peer is not redirected"
         );
     }
 }

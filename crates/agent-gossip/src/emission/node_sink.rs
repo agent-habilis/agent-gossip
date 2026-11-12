@@ -33,10 +33,11 @@ impl habilis_network::embed::NodeSink for Output {
             } => self.fork(&nickname, &pubkey, seq),
             NodeEvent::PeerTimeout {
                 nickname,
+                key,
                 last_seen_secs_ago,
-            } => self.peer_timeout(&nickname, last_seen_secs_ago),
-            NodeEvent::PeerReturn { nickname } => self.peer_return(&nickname),
-            NodeEvent::Presence { message, .. } => self.print_presence(&message),
+            } => self.peer_timeout(&nickname, &key, last_seen_secs_ago),
+            NodeEvent::PeerReturn { nickname, key } => self.peer_return(&nickname, &key),
+            NodeEvent::Presence { message, peer, .. } => self.print_presence(&message, &peer),
             NodeEvent::PingReport { peers, known } => self.ping_report(
                 peers
                     .into_iter()

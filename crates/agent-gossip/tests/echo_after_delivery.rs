@@ -17,7 +17,7 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
     events.iter().any(|event| {
         matches!(
             event,
-            OutputEvent::Message { message, is_self: true }
+            OutputEvent::Message { message, is_self: true, .. }
                 if status_update_params::chat_text(message).as_deref() == Some(text)
         )
     })

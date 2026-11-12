@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
-use habilis_network::runtime::state_file::{self, read_session_entry};
+use habilis_network::runtime::state_file::{self, read_identity, read_session_entry};
 use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
@@ -31,6 +31,7 @@ fn discover() -> Discovery {
         if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-gossip") {
             live.push(Target {
                 owner_pid: entry.owner_pid,
+                pubkey: read_identity(&path).pubkey,
                 path,
                 mesh,
                 name: entry.name,
@@ -120,6 +121,9 @@ fn target_json(target: &Target) -> serde_json::Value {
     if let Some(nickname) = &target.nickname {
         obj.insert("nickname".into(), nickname.clone().into());
     }
+    if let Some(pubkey) = &target.pubkey {
+        obj.insert("pubkey".into(), pubkey.clone().into());
+    }
     if let Some(topic) = &target.topic {
         obj.insert("topic".into(), topic.clone().into());
     }
@@ -207,6 +211,7 @@ pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
         mesh: mesh.clone(),
         name: entry.name,
         nickname: nickname.clone(),
+        pubkey: None,
         topic: entry.topic,
         pid,
         owner_pid: entry.owner_pid,
@@ -459,6 +464,7 @@ mod tests {
             mesh: mesh.to_owned(),
             name: Some("cool-team".to_owned()),
             nickname: Some(nickname.to_owned()),
+            pubkey: None,
             topic: None,
             pid,
             owner_pid: None,

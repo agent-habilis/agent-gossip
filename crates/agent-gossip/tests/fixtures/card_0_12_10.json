@@ -1,0 +1,73 @@
+{
+  "capabilities": {
+    "extendedAgentCard": true,
+    "extensions": [
+      {
+        "description": "gossip-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
+        "uri": "https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1"
+      },
+      {
+        "description": "a shared RFC 7386 JSON document per gossip (state/meta channels)",
+        "uri": "https://agent-habilis.dev/a2a/ext/mesh-state/v1"
+      },
+      {
+        "description": "serves A2A over gossip (request/response and request/stream): reads, task cancel, task creation, and streaming subscriptions directed at this member",
+        "uri": "https://agent-habilis.dev/a2a/ext/mesh-a2a-rpc/v1"
+      },
+      {
+        "description": "large files on a Part travel as a url reference (a ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
+        "uri": "https://agent-habilis.dev/a2a/ext/mesh-blob/v1"
+      },
+      {
+        "description": "directed frames (those addressed with a `to`) are sealed to this X25519 key; relays forward + verify the signature but cannot read the body. Broadcast stays public.",
+        "params": {
+          "x25519": "8LqcADEw3CTvN8WXg2dkX253YpZi7WxiDMEbxRCcUzih"
+        },
+        "uri": "https://agent-habilis.dev/a2a/ext/mesh-seal/v1"
+      }
+    ],
+    "pushNotifications": false,
+    "streaming": true
+  },
+  "defaultInputModes": [
+    "text/plain",
+    "application/json",
+    "application/octet-stream"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json",
+    "application/octet-stream"
+  ],
+  "description": "agent-gossip peer `crypt-novel` — an AI agent reachable over the mesh's A2A gossip binding",
+  "endpoint": {
+    "id": "c2b684e5532fe674d902657667de6f139a976b5b569523c6e30b2045db30a219"
+  },
+  "name": "crypt-novel",
+  "skills": [
+    {
+      "description": "converse over gossip broadcast messages",
+      "id": "chat",
+      "name": "chat",
+      "tags": [
+        "chat"
+      ]
+    },
+    {
+      "description": "accept a delegated task and return the result as an artifact",
+      "id": "delegate",
+      "name": "delegate",
+      "tags": [
+        "task"
+      ]
+    }
+  ],
+  "supportedInterfaces": [
+    {
+      "protocolBinding": "https://agent-habilis.dev/a2a/binding/gossip/v1",
+      "protocolVersion": "1.0",
+      "url": "546e493557736c7bbb37b9e6cf679d09b10432d4ce8eb87298300a8e2fec3c1f"
+    }
+  ],
+  "version": "0.12.10 (f5a44590 dirty:false)"
+}

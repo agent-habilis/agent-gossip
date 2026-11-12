@@ -594,7 +594,7 @@ pub fn task_text(frame: &Frame) -> String {
 pub(crate) fn test_status_frame(
     mesh: &MeshId,
     state: TaskState,
-    to: Option<habilis_network::protocol::Nickname>,
+    to: Option<habilis_network::protocol::AuthorKey>,
 ) -> Frame {
     let status = status_update(mesh, StatusUpdateParams::new(&TaskId::random(), state));
     Frame::new_app(
@@ -641,7 +641,11 @@ mod tests {
     fn msg_frame_for(payload: &super::Message) -> Frame {
         let body = payload_body(payload).expect("payload serializes");
         let mut frame = Frame::fixture(
-            MessageKind::app_to(wire::MSG, "addressed-nick".into(), None),
+            MessageKind::app_to(
+                wire::MSG,
+                habilis_network::protocol::AuthorKey::from([0xad; 32]),
+                None,
+            ),
             body.as_str(),
         );
         frame.id = MessageId::try_new(payload.message_id.as_str()).expect("a2a id is a uuid");

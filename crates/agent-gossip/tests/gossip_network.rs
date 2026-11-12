@@ -1175,6 +1175,45 @@ fn test_ready_gate_emits_identity_json_on_success() {
     let _ = fs::remove_file(&state_file);
 }
 
+#[test]
+fn test_ready_gate_prints_the_author_pubkey() {
+    let pubkey = "ab".repeat(32);
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-ready-pubkey-{}.json",
+        std::process::id()
+    ));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the system clock is after the Unix epoch")
+        .as_secs();
+    fs::write(
+        &state_file,
+        format!(
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","peer_count":1,"pubkey":"{pubkey}","ready":true,"gossip":"deadbeef"}}"#
+        ),
+    )
+    .expect("the temp directory is writable");
+
+    let mut command = common::test_cmd();
+    command
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "5"]);
+    let output: std::process::Output = command.output().expect("failed to run agent-gossip ready");
+    assert!(
+        output.status.success(),
+        "a fresh ready:true file should pass the gate"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
+    assert_eq!(
+        parsed["pubkey"], pubkey,
+        "ready prints the author pubkey, the key the meta slot is keyed by"
+    );
+    let _ = fs::remove_file(&state_file);
+}
+
 /// The poll command retrieves buffered events from a running mesh process,
 /// each carrying its surfacing `seq`. Calling poll with `--after <seq>` returns
 /// only events surfaced after that seq. The records are the same shape the live
@@ -2912,6 +2951,18 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     let (survivor, mesh) = Node::create_flags("meta-ghost", &SHORT_EVICT);
     let ghost = Node::join_args(&mesh, "meta-ghost-peer", &[], &SHORT_EVICT);
     common::await_peer_card_cli(&mesh, &survivor.nickname, &ghost.nickname);
+    common::await_peer_card_cli(&mesh, &ghost.nickname, &survivor.nickname);
+    // The slot of a member is the hex of its author key; its card names the nickname.
+    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
+        agent_gossip::Channel::Meta,
+        &mesh,
+        &survivor.nickname,
+    ))
+    .expect("the CLI prints the meta channel as one JSON object");
+    let ghost_slot = common::card_slot_of(&meta["document"], &ghost.nickname)
+        .expect("the wait above ended on this card, so the slot exists");
+    let survivor_slot = common::card_slot_of(&meta["document"], &survivor.nickname)
+        .expect("the wait above ended on the card of the other side, so the slot exists");
 
     // The doomed peer publishes an agent-side fact, as the join skill does.
     let mut command = common::test_cmd();
@@ -2921,10 +2972,7 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     let merged: std::process::Output = command
         .args([
             "--merge",
-            &format!(
-                r#"{{"peers":{{"{}":{{"status":"idle"}}}}}}"#,
-                ghost.nickname
-            ),
+            &format!(r#"{{"peers":{{"{ghost_slot}":{{"status":"idle"}}}}}}"#),
         ])
         .output()
         .expect("failed to run meta merge");
@@ -2936,7 +2984,6 @@ fn meta_get_names_entries_whose_peer_is_gone() {
     // The survivor evicts it from the roster within the alive timeout, but the
     // meta entry cannot follow.
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let ghost_nick = ghost.nickname.clone();
     loop {
         let response: serde_json::Value = serde_json::from_str(&ipc_raw(
             &mesh,
@@ -2953,15 +3000,15 @@ fn meta_get_names_entries_whose_peer_is_gone() {
             .filter_map(serde_json::Value::as_str)
             .collect();
 
-        if absent.contains(&ghost_nick.as_str()) {
+        if absent.contains(&ghost_slot.as_str()) {
             // The entry is still in the document — reported, not deleted.
             assert!(
-                response["document"]["peers"][&ghost_nick].is_object(),
+                response["document"]["peers"][&ghost_slot].is_object(),
                 "the entry must be reported, not trimmed: {response}"
             );
             // And the survivor never reports itself.
             assert!(
-                !absent.contains(&survivor.nickname.as_str()),
+                !absent.contains(&survivor_slot.as_str()),
                 "a node must not flag its own entry: {response}"
             );
             break;
@@ -2969,6 +3016,46 @@ fn meta_get_names_entries_whose_peer_is_gone() {
         assert!(
             Instant::now() < deadline,
             "meta_get never reported the dead peer as absent: {response}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// A row of `peers` names the member by its author key, which is the slot of the member in the
+/// meta document. Two members can share a nickname, so a reader that joins the roster to the meta
+/// document joins by the key and never by the name.
+#[test]
+fn the_peers_row_names_the_pubkey_of_its_meta_slot() {
+    let (host, mesh) = Node::create_named("peers-key");
+    let member = Node::join(&mesh, "peers-key-m");
+    common::await_peer_card_cli(&mesh, &host.nickname, &member.nickname);
+    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
+        agent_gossip::Channel::Meta,
+        &mesh,
+        &host.nickname,
+    ))
+    .expect("the CLI prints the meta channel as one JSON object");
+    let slot = common::card_slot_of(&meta["document"], &member.nickname)
+        .expect("the wait above ended on this card, so the slot exists");
+
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    loop {
+        let roster: serde_json::Value = serde_json::from_str(&cli_peers(&mesh, &host.nickname))
+            .expect("peers prints one JSON object");
+        let rows: &[serde_json::Value] = roster["peers"].as_array().map_or(&[], Vec::as_slice);
+        let row = rows
+            .iter()
+            .find(|row| row["nickname"] == member.nickname.as_str());
+        if let Some(row) = row {
+            assert_eq!(
+                row["pubkey"], slot,
+                "the row does not name the key of the meta slot: {row}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the member never reached the roster: {roster}"
         );
         std::thread::sleep(Duration::from_millis(200));
     }
@@ -3569,6 +3656,15 @@ fn leave_session_scope_via_decoy_parent() {
         sessions[0]["nickname"],
         nickname.as_str(),
         "the session report names the nickname"
+    );
+    // A reattached skill holds no key from the ready gate, and the meta slot of its entry is the
+    // hex of that key, so the session report names it.
+    let pubkey: &str = sessions[0]["pubkey"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the session report names no pubkey: {report}"));
+    assert!(
+        pubkey.len() == 64 && pubkey.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "the pubkey is 64 hex digits: {pubkey}"
     );
     assert!(
         default_state_file(&mesh, &nickname).exists(),

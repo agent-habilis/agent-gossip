@@ -121,7 +121,8 @@ timeout, so racing the daemon launch is fine.
 out=$(agent-gossip ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || { [ -s /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] && cat /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr >&2; exit 1; }
 nick=$(printf '%s' "$out" | sed -n 's/.*"nickname":"\([^"]*\)".*/\1/p')
 gossip=$(printf '%s' "$out" | sed -n 's/.*"gossip":"\([^"]*\)".*/\1/p')
-agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$nick"'":{"model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","cwd":"'"$(pwd | sed -e "s|^$HOME|~|" -e 's/[\\"]/\\&/g')"'","status":"idle"}}}'
+pubkey=$(printf '%s' "$out" | sed -n 's/.*"pubkey":"\([^"]*\)".*/\1/p')
+agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"peers":{"'"$pubkey"'":{"nickname":"'"$nick"'","model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","cwd":"'"$(pwd | sed -e "s|^$HOME|~|" -e 's/[\\"]/\\&/g')"'","status":"idle"}}}'
 printf '%s\n' "$out"
 ```
 
@@ -135,6 +136,7 @@ From the script's printed JSON hold:
 - `$GOSSIP` = `gossip`
 - `$NAME` = `name`
 - `$NICKNAME` = `nickname`
+- `$PUBKEY` = `pubkey`
 
 Then print the output <!-- slot name="noun" -->. The bell is already
 outstanding and your own meta report cannot fire it (document changes never

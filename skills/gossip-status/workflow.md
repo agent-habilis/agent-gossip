@@ -10,7 +10,12 @@ agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 Use `peers` from `peers` and `document.peers` from `meta`. The roster never
-lists yourself; your own row comes from `document.peers[$NICKNAME]`.
+lists yourself. A member's meta entry is `document.peers[<pubkey>]`, where `<pubkey>` is
+the `pubkey` of its roster row. Your own entry is `document.peers[$PUBKEY]`. If `$PUBKEY` is missing, run the **Reattach**
+procedure to recover it; if it is still missing, leave your own row's meta fields empty and
+skip the lookup.
+A slot that a graph skill wrote by nickname is the fallback for a member that has no entry
+under its key. Two members can share a nickname, so never join by the nickname first.
 
 The roster chains the quiet peers onto the active ones, so its length is not
 the gossip's live size. Two counts come from it:
@@ -58,13 +63,13 @@ The first row is always yourself:
 - `peer`: `$NICKNAME (you)`.
 - `transport` and `last seen`: `—`.
 - `model`, `harness`, `host`, `cwd`, `status`: values from
-  `document.peers[$NICKNAME]`, or empty when absent.
+  your own meta entry (see above), or empty when absent.
 
 Then one row per roster entry, in roster order:
 
 - `peer`: roster nickname.
 - `transport`: roster `path` verbatim, or `—` when roster `quiet` is true.
-- `model`, `harness`, `host`, `cwd`, `status`: values from `document.peers[nickname]`,
-  or empty when absent.
+- `model`, `harness`, `host`, `cwd`, `status`: values from the meta entry under the
+  `pubkey` of the roster row, or empty when absent.
 - `last seen`: `—` for null, otherwise `<n>s ago`; prefix `quiet · ` when
   roster `quiet` is true.

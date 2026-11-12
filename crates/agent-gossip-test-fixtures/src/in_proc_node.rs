@@ -10,10 +10,13 @@ use agent_gossip::{
     Channel, JoinTarget, Lane, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
     PresenceSubtype, TaskId, TaskState,
 };
+use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
+use crate::{
+    MSG_TIMEOUT, POLL, RPC_ATTEMPT, card_slot_of, init_test_tracing, is_rpc_timeout, test_mesh_name,
+};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
 ///
@@ -429,14 +432,44 @@ impl InProcNode {
     ///
     /// Panics if the card or a direct lane does not appear before `MSG_TIMEOUT`.
     pub async fn await_peer_card(&self, target: &str) {
-        let pointer = format!("/peers/{target}/card");
         let deadline = Instant::now() + MSG_TIMEOUT;
-        while self.meta_get().await.pointer(&pointer).is_none()
+        while card_slot_of(&self.meta_get().await, target).is_none()
             || !self.carries_directed_frames_to(target).await
         {
             assert!(
                 Instant::now() < deadline,
                 "{target}'s card never reached this node's meta doc, or no direct lane to it formed"
+            );
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
+    /// The author key of this node, as `observer` knows it from its roster. The key is the
+    /// identity of a member, and a nickname is a label that two members can share.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this node is not in the roster of `observer` before `MSG_TIMEOUT`.
+    pub async fn key_seen_by(&self, observer: &InProcNode) -> AuthorKey {
+        let deadline = Instant::now() + MSG_TIMEOUT;
+        loop {
+            let roster = observer
+                .session
+                .peers()
+                .await
+                .expect("the session of the observer stays up for the whole test");
+            if let Some(entry) = roster
+                .peers
+                .iter()
+                .find(|entry| entry.nickname.as_str() == self.nickname)
+            {
+                return entry.key;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} never joined the roster of {}",
+                self.nickname,
+                observer.nickname
             );
             tokio::time::sleep(POLL).await;
         }
@@ -617,7 +650,10 @@ impl InProcNode {
     pub fn tasks(&mut self) -> impl Iterator<Item = (&Authored, bool)> + '_ {
         self.pump();
         self.drained.iter().filter_map(|event| {
-            if let OutputEvent::Task { message, is_self } = event {
+            if let OutputEvent::Task {
+                message, is_self, ..
+            } = event
+            {
                 Some((&**message, *is_self))
             } else {
                 None
@@ -748,6 +784,7 @@ impl InProcNode {
             if let OutputEvent::Message {
                 message,
                 is_self: false,
+                ..
             } = event
             {
                 Some(&**message)
@@ -764,7 +801,7 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { message, is_self: false }
+                    OutputEvent::Message { message, is_self: false, .. }
                         if status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
@@ -793,7 +830,7 @@ impl InProcNode {
             .filter(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { message, is_self: false }
+                    OutputEvent::Message { message, is_self: false, .. }
                         if status_update_params::chat_text(message).as_deref() == Some(body)
                 )
             })
@@ -808,7 +845,7 @@ impl InProcNode {
             .filter(|event| {
                 matches!(
                     event,
-                    OutputEvent::Presence { message }
+                    OutputEvent::Presence { message, .. }
                         if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                 )
             })
@@ -826,7 +863,7 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Presence { message }
+                    OutputEvent::Presence { message, .. }
                         if message.author.to_string() == nick
                             && matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                 )
@@ -849,7 +886,7 @@ impl InProcNode {
                 .filter(|event| {
                     matches!(
                         event,
-                        OutputEvent::Presence { message }
+                        OutputEvent::Presence { message, .. }
                             if matches!(&message.kind, MessageKind::Presence { subtype } if *subtype == want)
                     )
                 })

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use habilis_network::protocol::Nickname;
+use habilis_network::protocol::{AuthorKey, Nickname};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
@@ -8,7 +8,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
-use super::rpc_error::{A2aOp, A2aRequest, RpcError, parse_op};
+use super::rpc_error::{A2aOp, A2aRequest, PeerRef, RpcError, parse_op};
 
 /// Largest accepted request body. JSON-RPC calls carry one A2A Message
 /// (whose wire form is itself capped by the gossip logical-body limit), so
@@ -133,7 +133,7 @@ async fn handle(
             )
         }
         (&Method::GET, _) if is_peer_card_path(&path) => {
-            let Some(peer) = peer_card_nick(&path) else {
+            let Some(peer) = peer_card_ref(&path) else {
                 return not_found();
             };
             execute(A2aOp::PeerCard { peer }, req_tx).await.map_or_else(
@@ -164,11 +164,14 @@ fn is_peer_card_path(path: &str) -> bool {
     path.starts_with("/peers/") && path.ends_with("/.well-known/agent-card.json")
 }
 
-fn peer_card_nick(path: &str) -> Option<Nickname> {
-    let nick = path
+fn peer_card_ref(path: &str) -> Option<PeerRef> {
+    let text = path
         .strip_prefix("/peers/")?
         .strip_suffix("/.well-known/agent-card.json")?;
-    Nickname::try_new(nick).ok()
+    match AuthorKey::decode_hex(text) {
+        Some(key) => Some(PeerRef::Key(key)),
+        None => Nickname::try_new(text).ok().map(PeerRef::Nickname),
+    }
 }
 
 /// The JSON-RPC POST path: authenticate, parse, resolve the URL target,

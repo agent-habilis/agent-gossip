@@ -1,6 +1,6 @@
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{MeshId, MeshName, MessageBody, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageBody, Nickname};
 use habilis_network::runtime::{EventLoopConfig, Node, SignalHandling};
 use tokio::sync::{broadcast, oneshot};
 
@@ -13,6 +13,7 @@ use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
 use crate::a2a::TaskId;
 use crate::a2a::a2a_app::{A2aApp, SurfacedIo};
 use crate::a2a::broadcast_params::FileRef;
+use crate::a2a::ipc_command::MetaView;
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollBatch;
 use crate::emission::Output;
@@ -307,8 +308,14 @@ impl InProcessSession {
             .await
     }
 
+    /// The author key of this member.
+    pub(crate) async fn own_key(&self) -> Result<AuthorKey, SessionError> {
+        self.call(|response| SessionRequest::OwnKey { response })
+            .await
+    }
+
     /// `meta`-channel counterpart of [`state_get`](Self::state_get).
-    pub(crate) async fn meta_get(&self) -> Result<serde_json::Value, SessionError> {
+    pub(crate) async fn meta_get(&self) -> Result<MetaView, SessionError> {
         self.call(|response| SessionRequest::MetaGet { response })
             .await
     }
