@@ -11,12 +11,14 @@ use habilis_network::protocol::{
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
+use serde_json::Value;
+use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder};
 use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
-use crate::a2a::rpc_error::{A2aOp, A2aRequest, RpcError};
+use crate::a2a::rpc_error::{A2aOp, A2aRequest, PeerRef, RpcError};
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::{
     broadcast_params, card, ipc_command, rpc_error, served, status_update_params, task_record,
@@ -246,6 +248,11 @@ impl NodeDriver for A2aApp {
             .await;
             return;
         }
+        // The card of another member is not held here: ask that member over gossip.
+        if let A2aOp::PeerCard { peer } = op {
+            self.ask_peer_card(peer, response, state, context).await;
+            return;
+        }
         let out = self.output.clone();
         let port = self.a2a_port();
         let outcome = rpc_error::handle_op(
@@ -351,7 +358,77 @@ async fn retract_own_meta_entry(state: &mut EventLoopState, context: &HandlerCtx
     let _ = merge_own_meta_entry(state, context, merge, true).await;
 }
 
+/// The card that a member sent, ready for the local HTTP binding: a relaying JSON-RPC interface at
+/// our binding is added, so that a `SendMessage` there reaches the member over gossip.
+fn relay_peer_card(mut card: Value, route: &Nickname, port: u16) -> Result<Value, RpcError> {
+    let Some(interfaces) = card
+        .pointer_mut("/supportedInterfaces")
+        .and_then(Value::as_array_mut)
+    else {
+        return Err(RpcError {
+            code: -32004,
+            message: format!("the card of '{route}' has no interfaces"),
+        });
+    };
+    interfaces.push(serde_json::json!({
+        "url": format!("http://127.0.0.1:{port}/peers/{route}"),
+        "protocolBinding": "JSONRPC",
+        "protocolVersion": super::PROTOCOL_VERSION,
+    }));
+    Ok(card)
+}
+
 impl A2aApp {
+    /// Ask a member for its card with `GetExtendedAgentCard` over gossip, and hand the answer to
+    /// `response` when it comes. The event loop does not wait.
+    async fn ask_peer_card(
+        &mut self,
+        peer: PeerRef,
+        response: oneshot::Sender<Result<Value, RpcError>>,
+        state: &mut EventLoopState,
+        context: &HandlerCtx<'_>,
+    ) {
+        let route: Option<Nickname> = match &peer {
+            PeerRef::Nickname(nickname) => Some(nickname.clone()),
+            PeerRef::Key(key) => state.known_nickname_of(key),
+        };
+        let Some(route) = route else {
+            let _ = response.send(Err(RpcError {
+                code: -32004,
+                message: "no member holds that key".to_owned(),
+            }));
+            return;
+        };
+        let (answer_tx, answer_rx) = oneshot::channel();
+        broadcast_params::broadcast_a2a_call(
+            broadcast_params::BroadcastA2aCallParams {
+                mesh: context.mesh,
+                author: context.author,
+                peer: route.clone(),
+                method: "GetExtendedAgentCard",
+                params: serde_json::json!({}),
+                timeout: Duration::from_secs(tuning::CALL_TIMEOUT_SECS),
+                responder: A2aResponder::Rpc(answer_tx),
+                file: None,
+            },
+            state,
+            self,
+            context.sender,
+        )
+        .await;
+        let port = self.a2a_port();
+        tokio::spawn(async move {
+            let outcome = match answer_rx.await {
+                Ok(Ok(card)) => relay_peer_card(card, &route, port),
+                Ok(Err(error)) => Err(error),
+                Err(_) => Err(RpcError::internal(
+                    "the card request ended without an answer",
+                )),
+            };
+            let _ = response.send(outcome);
+        });
+    }
+
     /// Publish our card, and keep `card_error` and its `/peers/<key>/card_error` mirror in step
     /// with the outcome. A failure is retried on the ticks that the backoff allows (see
     /// `on_tick`).
@@ -394,7 +471,7 @@ impl A2aApp {
 async fn merge_own_meta_entry(
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-    merge: serde_json::Value,
+    merge: Value,
     farewell: bool,
 ) -> anyhow::Result<()> {
     let mirror = if farewell {
@@ -975,8 +1052,8 @@ async fn handle_a2a_req(
     let requester_key = message.key();
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
-    let outcome: Result<serde_json::Value, RpcError> =
-        match serde_json::from_str::<serde_json::Value>(message.body.as_str()) {
+    let outcome: Result<Value, RpcError> =
+        match serde_json::from_str::<Value>(message.body.as_str()) {
             Ok(envelope) => {
                 let method = envelope["method"].as_str().unwrap_or_default();
                 match served::classify(method, &envelope["params"], &requester_key, app) {
@@ -1085,7 +1162,7 @@ async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
+) -> Result<Value, RpcError> {
     let ShardRepairParams {
         group,
         missing,
@@ -1154,7 +1231,7 @@ fn ingest_remote_message(
     (requester_key, requester): (&AuthorKey, &Nickname),
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
+) -> Result<Value, RpcError> {
     use crate::a2a::task_record::{LegInfo, LegKind};
     let now = Instant::now();
     let (task_id, kind) = match &payload.task_id {

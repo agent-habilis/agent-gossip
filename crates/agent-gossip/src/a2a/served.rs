@@ -92,6 +92,9 @@ pub(crate) fn classify(
         "ListTasks" => Served::Op(A2aOp::ListTasks {
             peer: Some(*requester),
         }),
+        // The card is public on the mesh, so any peer may ask for it. It carries no localhost
+        // interface: that one is this machine's, not the asker's.
+        "GetExtendedAgentCard" => Served::Op(A2aOp::GossipCard),
         "mesh/state.get" => Served::Op(A2aOp::ChannelGet {
             channel: Channel::State,
         }),
