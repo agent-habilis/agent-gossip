@@ -94,13 +94,7 @@ pub(crate) enum A2aOp {
         channel: Channel,
         merge: Value,
     },
-    /// The card of this node for the local HTTP binding: the gossip card plus the localhost
-    /// JSON-RPC interface.
     OwnCard,
-    /// The card of this node for a gossip peer: the full card, with no localhost interface.
-    GossipCard,
-    /// The card of another member. The event loop asks that member over gossip, so no handler
-    /// of [`handle_op`] answers it.
     PeerCard {
         peer: PeerRef,
     },
@@ -340,7 +334,7 @@ pub(crate) async fn handle_op(
                 .map(|rec| task_object(&task_id, rec, mesh))
                 .ok_or_else(|| RpcError::task_not_found(&task_id))
         }
-        A2aOp::ChannelGet { channel } => Ok(state.doc(channel).to_json()),
+        A2aOp::ChannelGet { channel } => Ok(state.view(channel)),
         A2aOp::ChannelMerge { channel, merge } => {
             broadcast_state_merge(
                 state,
@@ -356,12 +350,9 @@ pub(crate) async fn handle_op(
             })?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        A2aOp::GossipCard => {
-            let card = own_full_card(state, author, our_pubkey);
-            serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
-        }
         A2aOp::OwnCard => {
-            let mut card = own_full_card(state, author, our_pubkey);
+            let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
+            let mut card = super::card::full_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
             card.supported_interfaces.push(super::AgentInterface {
@@ -372,20 +363,45 @@ pub(crate) async fn handle_op(
             });
             serde_json::to_value(&card).map_err(|error| RpcError::internal(&error.to_string()))
         }
-        A2aOp::PeerCard { .. } => Err(RpcError::internal(
-            "a peer card is asked over gossip by the event loop, not by handle_op",
-        )),
+        A2aOp::PeerCard { peer } => {
+            // A nickname is a label: the card is the one of the key that a send to it would go to.
+            let (key, label) = match &peer {
+                PeerRef::Key(named) => (*named, named.to_string()),
+                PeerRef::Nickname(nickname) => {
+                    let key = state
+                        .addressee_key(nickname)
+                        .map_err(|error| address_error(nickname, error))?;
+                    (key, nickname.to_string())
+                }
+            };
+            // The card is built here from the roster, with nothing taken from the peer. The seal
+            // key of a peer is not exposed by the engine yet, so the card leaves the extension out.
+            let Some(nickname) = state.known_nickname_of(&key) else {
+                return Err(RpcError {
+                    code: -32004,
+                    message: format!("no card published for '{label}'"),
+                });
+            };
+            let mut card = serde_json::to_value(super::card::peer_card(key, &nickname, None))
+                .map_err(|error| RpcError::internal(&error.to_string()))?;
+            // The mesh card declares only its gossip interface (the peer has no
+            // HTTP endpoint of its own). Add a relaying JSONRPC interface at
+            // *our* binding — we relay JSON-RPC to that peer over gossip at
+            // `/peers/<nick>` — so the served peer card is reachable (e.g.
+            // `SendMessage` there creates a task on the peer).
+            if let Some(interfaces) = card
+                .pointer_mut("/supportedInterfaces")
+                .and_then(Value::as_array_mut)
+            {
+                interfaces.push(serde_json::json!({
+                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{nickname}"),
+                    "protocolBinding": "JSONRPC",
+                    "protocolVersion": super::PROTOCOL_VERSION,
+                }));
+            }
+            Ok(card)
+        }
     }
-}
-
-/// The full card of this node, with its seal key.
-fn own_full_card(
-    state: &EventLoopState,
-    author: &Nickname,
-    our_pubkey: AuthorKey,
-) -> super::AgentCard {
-    let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-    super::card::full_card(author, our_pubkey, &seal_b58)
 }
 
 /// The addressee (must be `None`), payload, and identity of one

@@ -186,14 +186,6 @@ pub(crate) struct A2aApp {
     /// Frame ids ride in cleartext headers, so any member can name one: a
     /// receipt counts only from the peer the frame went to.
     pub(crate) sent_refs: BoundedFifoSet<(String, AuthorKey)>,
-    /// Why our own card is not published, while it is not: the last publish failed. Told to the
-    /// other members through `/peers/<nick>/card_error`, and retried on the ticks that the
-    /// backoff allows.
-    pub(crate) card_error: Option<String>,
-    /// Ticks to wait before the next retry of the card, and the wait of the retry after it,
-    /// which doubles at each failure.
-    pub(crate) card_retry_in: u32,
-    pub(crate) card_retry_wait: u32,
 }
 
 /// Own frames that enter the message log once `sent` resolves to true.
@@ -270,9 +262,6 @@ impl A2aApp {
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            card_error: None,
-            card_retry_in: 0,
-            card_retry_wait: 0,
         }
     }
 
@@ -301,9 +290,6 @@ impl A2aApp {
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            card_error: None,
-            card_retry_in: 0,
-            card_retry_wait: 0,
         }
     }
 

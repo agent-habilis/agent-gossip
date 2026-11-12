@@ -3,32 +3,25 @@ use std::time::{Duration, Instant};
 use habilis_network::embed::{
     AppClass, EventLoopState, HandlerCtx, InboundApp, IpcRequest, NodeApp, NodeDriver,
 };
-use habilis_network::net::add_peer_addr;
-use habilis_network::ops::{Farewell, MergeCtx, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
-    AppTag, AuthorKey, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
+    AppTag, AuthorKey, DedupKey, Message, MessageBody, MessageKind, Nickname,
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
-use serde_json::Value;
-use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder};
 use crate::a2a::ipc_command::IpcCommand;
 use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
-use crate::a2a::rpc_error::{A2aOp, A2aRequest, PeerRef, RpcError};
+use crate::a2a::rpc_error::{A2aOp, A2aRequest, RpcError};
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::{
-    broadcast_params, card, ipc_command, rpc_error, served, status_update_params, task_record,
-    tuning, wire,
+    broadcast_params, ipc_command, rpc_error, served, status_update_params, task_record, tuning,
+    wire,
 };
 use crate::cli::bell;
 use crate::emission;
-
-/// The longest wait, in ticks, between two tries to publish a card that did not publish.
-const CARD_RETRY_MAX_TICKS: u32 = 64;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
@@ -68,23 +61,6 @@ impl NodeApp for A2aApp {
         routed.loggable
     }
 
-    fn on_meta_applied(
-        &mut self,
-        author: &AuthorKey,
-        state: &mut EventLoopState,
-        context: &HandlerCtx<'_>,
-    ) {
-        adopt_meta_endpoint(author, state, context);
-    }
-
-    async fn on_meshed(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        // Re-publish our card now that we're meshed: the home relay is homed by
-        // this point, so the card's endpoint hint gets a real dial path (the
-        // startup publish may have had none). A no-op if the address is
-        // unchanged.
-        self.sync_own_card(state, context).await;
-    }
-
     async fn on_peer_left(
         &mut self,
         key: &AuthorKey,
@@ -120,24 +96,11 @@ impl NodeDriver for A2aApp {
         }
     }
 
-    async fn on_startup(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        self.sync_own_card(state, context).await;
-    }
-
     async fn on_tick(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
         broadcast_params::retain_sent_legs(self, state);
-        // A card that did not publish is tried again, with a longer wait after each failure:
-        // no peer can send to us without it.
-        if self.card_error.is_some() {
-            if self.card_retry_in == 0 {
-                self.sync_own_card(state, context).await;
-            } else {
-                self.card_retry_in -= 1;
-            }
-        }
         task_record::tick_task_sweep(state, self, context, &out).await;
         task_record::tick_task_keepalive(state, self, context).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
@@ -151,11 +114,7 @@ impl NodeDriver for A2aApp {
         .await;
     }
 
-    async fn on_shutdown(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        // Retract our meta entry first so the merge frame is queued ahead of
-        // `Left` and rides the same propagation window the engine sleeps after
-        // this hook.
-        retract_own_meta_entry(state, context).await;
+    async fn on_shutdown(&mut self, _state: &mut EventLoopState, _context: &HandlerCtx<'_>) {
         // Empty out any parked A2A-call waiters so a held call returns a
         // clean timeout, then close the blob-serving endpoint (dropping its
         // store removes the `<nick>.blobs/` spool).
@@ -248,11 +207,6 @@ impl NodeDriver for A2aApp {
             .await;
             return;
         }
-        // The card of another member is not held here: ask that member over gossip.
-        if let A2aOp::PeerCard { peer } = op {
-            self.ask_peer_card(peer, response, state, context).await;
-            return;
-        }
         let out = self.output.clone();
         let port = self.a2a_port();
         let outcome = rpc_error::handle_op(
@@ -295,201 +249,6 @@ impl NodeDriver for A2aApp {
         )
         .await
     }
-}
-
-/// Publish this member's `AgentCard` at meta `/peers/<key>/card`, where the slot is the hex of the author key — one of the
-/// daemon's two [`merge_own_meta_entry`] lifecycle merges (the card is the
-/// peer's canonical A2A self-description, architectural rather than app
-/// state). Unmeshed it buffers/backfills like any state event; agent-side
-/// facts (model/harness/host) stay the agent's merge.
-///
-/// The card goes out in several merges, each within one frame: a frame of a passworded gossip
-/// is sealed, which makes it larger, and one merge of the whole card is then refused.
-///
-/// # Errors
-/// The card does not fit the frames, or a merge was refused.
-async fn publish_own_card(
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-) -> anyhow::Result<()> {
-    let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-    let card = card::own_card(context.author, context.our_pubkey, &seal_b58);
-    // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
-    // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
-    // Re-publishing with an unchanged address is a no-op (an automerge change
-    // with no ops), so this is safe to call repeatedly.
-    let mut card = serde_json::to_value(&card)?;
-    card["endpoint"] = card::endpoint_hint(context.endpoint);
-    // The cut follows the size of the frame that the gossip really sends: the merge becomes an
-    // automerge change, and a passworded gossip seals it. The same steps as the merge path.
-    let merges = {
-        let doc = state.doc(Channel::Meta);
-        let identity = state.identity();
-        let actor_seed = *identity.public().as_bytes();
-        card::publish_merges(&context.our_pubkey, &card, |merge| {
-            let Some(change) = doc.build_change(merge, &actor_seed)? else {
-                return Ok(0);
-            };
-            let (wire, _plain) = doc.compose_wire_body(&change, None)?;
-            Ok(
-                Message::new_channel_event(context.mesh, context.author, wire, Channel::Meta)
-                    .sign(identity)
-                    .wire_len(),
-            )
-        })?
-    };
-    for merge in merges {
-        merge_own_meta_entry(state, context, merge, false).await?;
-    }
-    Ok(())
-}
-
-/// Delete this member's whole `/peers/<key>` meta entry on graceful leave —
-/// [`publish_own_card`]'s counterpart. Only self-retraction exists: the
-/// card-forgery gate rejects the delete from any other author, so a peer that
-/// dies without a goodbye leaves a stale entry that persists until a new
-/// session under the same nickname (identity is per-session; nicknames are
-/// never burned) overwrites it and eventually leaves cleanly. A foreign
-/// non-card write racing the delete can survive the merge (add wins), but
-/// peers only ever write their own subtree.
-async fn retract_own_meta_entry(state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-    let merge = card::retract_merge(&context.our_pubkey);
-    // Best effort at leave: the failure is logged by the merge.
-    let _ = merge_own_meta_entry(state, context, merge, true).await;
-}
-
-/// The card that a member sent, ready for the local HTTP binding: a relaying JSON-RPC interface at
-/// our binding is added, so that a `SendMessage` there reaches the member over gossip.
-fn relay_peer_card(mut card: Value, route: &Nickname, port: u16) -> Result<Value, RpcError> {
-    let Some(interfaces) = card
-        .pointer_mut("/supportedInterfaces")
-        .and_then(Value::as_array_mut)
-    else {
-        return Err(RpcError {
-            code: -32004,
-            message: format!("the card of '{route}' has no interfaces"),
-        });
-    };
-    interfaces.push(serde_json::json!({
-        "url": format!("http://127.0.0.1:{port}/peers/{route}"),
-        "protocolBinding": "JSONRPC",
-        "protocolVersion": super::PROTOCOL_VERSION,
-    }));
-    Ok(card)
-}
-
-impl A2aApp {
-    /// Ask a member for its card with `GetExtendedAgentCard` over gossip, and hand the answer to
-    /// `response` when it comes. The event loop does not wait.
-    async fn ask_peer_card(
-        &mut self,
-        peer: PeerRef,
-        response: oneshot::Sender<Result<Value, RpcError>>,
-        state: &mut EventLoopState,
-        context: &HandlerCtx<'_>,
-    ) {
-        let route: Option<Nickname> = match &peer {
-            PeerRef::Nickname(nickname) => Some(nickname.clone()),
-            PeerRef::Key(key) => state.known_nickname_of(key),
-        };
-        let Some(route) = route else {
-            let _ = response.send(Err(RpcError {
-                code: -32004,
-                message: "no member holds that key".to_owned(),
-            }));
-            return;
-        };
-        let (answer_tx, answer_rx) = oneshot::channel();
-        broadcast_params::broadcast_a2a_call(
-            broadcast_params::BroadcastA2aCallParams {
-                mesh: context.mesh,
-                author: context.author,
-                peer: route.clone(),
-                method: "GetExtendedAgentCard",
-                params: serde_json::json!({}),
-                timeout: Duration::from_secs(tuning::CALL_TIMEOUT_SECS),
-                responder: A2aResponder::Rpc(answer_tx),
-                file: None,
-            },
-            state,
-            self,
-            context.sender,
-        )
-        .await;
-        let port = self.a2a_port();
-        tokio::spawn(async move {
-            let outcome = match answer_rx.await {
-                Ok(Ok(card)) => relay_peer_card(card, &route, port),
-                Ok(Err(error)) => Err(error),
-                Err(_) => Err(RpcError::internal(
-                    "the card request ended without an answer",
-                )),
-            };
-            let _ = response.send(outcome);
-        });
-    }
-
-    /// Publish our card, and keep `card_error` and its `/peers/<key>/card_error` mirror in step
-    /// with the outcome. A failure is retried on the ticks that the backoff allows (see
-    /// `on_tick`).
-    async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        let failure: Option<String> = publish_own_card(state, context).await.err().map(|error| {
-            // The reason is read by peers: one line, and no more than a line holds.
-            let reason: String = error.to_string().chars().take(200).collect();
-            reason
-        });
-        if failure.is_some() {
-            self.card_retry_wait = (self.card_retry_wait.max(1) * 2).min(CARD_RETRY_MAX_TICKS);
-            self.card_retry_in = self.card_retry_wait;
-        } else {
-            self.card_retry_wait = 0;
-            self.card_retry_in = 0;
-        }
-        if failure != self.card_error {
-            let merge = card::card_error_merge(&context.our_pubkey, failure.as_deref());
-            let _ = merge_own_meta_entry(state, context, merge, false).await;
-            self.card_error = failure;
-        }
-    }
-}
-
-/// The daemon's write path for its own `/peers/<key>` meta entry. The daemon
-/// is an ordinary channel writer bound by the same rule as its agent — author
-/// only your own subtree, as an RFC 7386 merge through the one shared
-/// pipeline (`broadcast_state_merge`). It makes exactly two lifecycle merges:
-/// the card publish on join/re-mesh and the whole-entry retraction on
-/// graceful leave. Best-effort — a failure is logged, never blocks the
-/// lifecycle edge that triggered it.
-///
-/// `farewell` mirrors the signed frame over the unicast plane — the
-/// retraction only: a leave-time frame dropped into a silently-linkless
-/// overlay dies with the leaver, and anti-entropy can never heal it (see
-/// `gossip::unicast_farewell`).
-///
-/// # Errors
-/// The merge was refused, for example because its frame is over the size limit.
-async fn merge_own_meta_entry(
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-    merge: Value,
-    farewell: bool,
-) -> anyhow::Result<()> {
-    let mirror = if farewell {
-        Farewell::UnicastMirror
-    } else {
-        Farewell::GossipOnly
-    };
-    broadcast_state_merge(
-        state,
-        // Daemon plumbing: the agent didn't write this, so don't surface it
-        // as a "you changed shared state" event (nor race a fetch long-poll).
-        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge)
-            .surface(false)
-            .farewell(mirror),
-    )
-    .await
-    .inspect_err(|error| tracing::warn!(%error, "own /peers entry merge failed"))
-    .map_err(anyhow::Error::from)
 }
 
 /// A peer's `working` with no text on a task already `working` changes nothing
@@ -1052,8 +811,8 @@ async fn handle_a2a_req(
     let requester_key = message.key();
     let requester = message.author.clone();
     // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
-    let outcome: Result<Value, RpcError> =
-        match serde_json::from_str::<Value>(message.body.as_str()) {
+    let outcome: Result<serde_json::Value, RpcError> =
+        match serde_json::from_str::<serde_json::Value>(message.body.as_str()) {
             Ok(envelope) => {
                 let method = envelope["method"].as_str().unwrap_or_default();
                 match served::classify(method, &envelope["params"], &requester_key, app) {
@@ -1162,7 +921,7 @@ async fn resend_cached_shards(
     params: ShardRepairParams<'_>,
     state: &mut EventLoopState,
     context: &HandlerCtx<'_>,
-) -> Result<Value, RpcError> {
+) -> Result<serde_json::Value, RpcError> {
     let ShardRepairParams {
         group,
         missing,
@@ -1231,7 +990,7 @@ fn ingest_remote_message(
     (requester_key, requester): (&AuthorKey, &Nickname),
     app: &mut A2aApp,
     context: &HandlerCtx<'_>,
-) -> Result<Value, RpcError> {
+) -> Result<serde_json::Value, RpcError> {
     use crate::a2a::task_record::{LegInfo, LegKind};
     let now = Instant::now();
     let (task_id, kind) = match &payload.task_id {
@@ -1301,27 +1060,6 @@ fn ingest_remote_message(
         .get(&task_id)
         .map(|rec| serde_json::json!({ "task": rpc_error::task_object(&task_id, rec, context.mesh) }))
         .ok_or_else(|| RpcError::internal("task record missing after ingest"))
-}
-
-/// Adopt `author`'s published endpoint hint (`/peers/<key>/card/endpoint`) into
-/// the dial book — the meta-doc counterpart to `handle_peer_info`. Binds the endpoint to the key
-/// by the rule of a `PeerInfo` (`note_key_endpoint`), so a second live key of one nickname cannot
-/// take the hint of the first, and seeds iroh's address book via
-/// [`add_peer_addr`], so a directed unicast can reach a peer we learned about
-/// from the synced meta doc even before its gossiped `PeerInfo` arrives. Both
-/// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
-/// does **not** graft a gossip link — mesh formation stays `PeerInfo`'s job.
-fn adopt_meta_endpoint(author: &AuthorKey, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-    let doc = state.doc(Channel::Meta).to_json();
-    let Some((peer_id, peer_addr)) = card::peer_endpoint(&doc, author) else {
-        return;
-    };
-    // Never bind our own endpoint or the rendezvous pseudo-node.
-    if peer_id == context.endpoint.id() || peer_id == context.rendezvous_id {
-        return;
-    }
-    state.note_key_endpoint(*author, peer_addr.clone());
-    add_peer_addr(state.address_book(), peer_addr);
 }
 
 #[cfg(test)]
