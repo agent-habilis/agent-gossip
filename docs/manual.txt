@@ -829,7 +829,9 @@ COMMANDS
               a channel is a JSON merge into the own slice of the writer, so
               no writer touches the entry of another member. The daemon
               writes nothing into meta on join, and the engine removes the
-              entry of a member that leaves gracefully.
+              entry of a member that leaves gracefully. The entry of a member
+              that crashes stays until the other members drop its quiet key,
+              which takes about 1 hour.
 
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.

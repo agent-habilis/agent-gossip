@@ -702,7 +702,7 @@ fn sanitize_path(path: &str) -> String {
 /// already-parsed merge document: the touched paths (sanitized, deduped, capped
 /// so the line stays bounded), or `shared state` when none are present. A
 /// top-level key with a non-empty object value is descended one level (so
-/// `{"peers":{"alice":{…}}}` reads `/peers/alice`, naming the changed entry
+/// `{"scores":{"alice":{…}}}` reads `/scores/alice`, naming the changed entry
 /// rather than its every field); anything else names the top-level key. A `null`
 /// value (a delete) still counts as touched.
 fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
