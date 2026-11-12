@@ -7,6 +7,7 @@ default: major
 The engine now keeps one signed slice for each author in the shared state and in the meta channel. It keeps no message log, no hash chain and no DAG. A peer on frame version 14.0 cannot read frames of version 18.0. All peers of a mesh must update together.
 
 For a user:
+- `state get` and `meta get` now print one entry for each member, keyed by the author key in lowercase hex: `{"<author hex>":{...}}`. They do not print one merged document. A write changes your own entry only.
 - The `fork` event is gone. The engine cannot see equivocation now.
 - The poll record of a message has no `seq`, `prev` or `parents` field.
 - The flag `--antientropy-interval-secs` is now `--backfill-interval-secs`. The flag `--antientropy-max-resend` is gone.

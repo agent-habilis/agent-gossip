@@ -19,7 +19,7 @@ impl StateRefusalReply {
         let (reason, hint) = match refusal {
             SliceError::TooLarge { .. } => (
                 "too_large",
-                "split the value into smaller values under their own keys",
+                "delete keys of your own slice with a null merge, or store less",
             ),
             SliceError::RateLimited => (
                 "rate_limited",
@@ -31,11 +31,11 @@ impl StateRefusalReply {
             ),
             SliceError::GoneKey => (
                 "gone_key",
-                "the key of this node is gone from the shared state: leave the gossip and join again",
+                "the key of this node is marked gone, for 2 hours at most: wait, then write again",
             ),
             SliceError::Malformed => (
                 "malformed",
-                "the write is not an object or null at the top level: write a JSON object",
+                "the write is not an object at the top level: write a JSON object",
             ),
             SliceError::WrongChannel => (
                 "wrong_channel",
@@ -101,7 +101,7 @@ mod tests {
                     limit: 2_048,
                 },
                 "too_large",
-                "smaller values",
+                "store less",
             ),
             (SliceError::RateLimited, "rate_limited", "write less often"),
             (
@@ -109,7 +109,7 @@ mod tests {
                 "too_many_authors",
                 "drops out",
             ),
-            (SliceError::GoneKey, "gone_key", "join again"),
+            (SliceError::GoneKey, "gone_key", "2 hours"),
             (SliceError::Malformed, "malformed", "JSON object"),
             (SliceError::WrongChannel, "wrong_channel", "`state` or `meta`"),
             (SliceError::DraftMismatch, "draft_mismatch", "report it"),

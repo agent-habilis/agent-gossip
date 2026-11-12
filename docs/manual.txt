@@ -840,12 +840,16 @@ COMMANDS
 
               Merge input is RFC 7386-style: an object deep-merges (each key is
               set, a null value deletes that key, nested objects merge
-              recursively). It is translated into one change on the shared
-              automerge CRDT. A non-object TOP-LEVEL merge (a bare scalar, array,
-              or null) is REJECTED — the document root is always an object — but
-              a non-object VALUE nested under a key replaces that key as usual.
-              Because each peer writes only its own subtree, concurrent writers to
-              different keys never clobber; concurrent edits merge conflict-free.
+              recursively). A non-object TOP-LEVEL merge (a bare scalar,
+              array, or null) is REJECTED: the value of a member is always an
+              object. A non-object VALUE nested under a key replaces that key
+              as usual.
+
+              Each member writes only its own slice. The slice is the last
+              signed value of that member, and the author key of the member
+              names it. A merge changes your own slice only, so a concurrent
+              writer never overwrites you. A member that leaves removes its
+              slice.
 
               Arrays are replaced wholesale — RFC 7386 has no array append, so a
               merge naming an array key replaces the whole array. Model a mutable
@@ -856,43 +860,35 @@ COMMANDS
               state merge prints {"ok":true} on success. It prints
               {"ok":false,"error":…} on a failure, and exits non-zero on any
               {"ok":false}. The shared state can also refuse a write: see
-              "SIZE LIMITS AND REFUSALS" below. state get prints the current
-              document:
+              "SIZE LIMITS AND REFUSALS" below. state get prints one entry for
+              each member, keyed by the author key of the member in lowercase
+              hex. It does not print one merged document:
 
-                {"ok":true,"document":{…}}
+                {"ok":true,"document":{"<author hex>":{…},"<author hex>":{…}}}
 
-              ORDERING. The shared state is a CRDT: members converge to the
-              byte-identical document regardless of arrival order. Members
-              react via the state event on the stream (see "JSON EVENTS");
-              your own change is not pushed back, so a read→change loop needs
-              no echo handling — for turn-based use, keep a turn marker in the
-              document (get → check → merge). On join, give anti-entropy a
-              moment to backfill before the first state get.
+              To read the value of a member, read the entry of its author key.
+              The author key is the pubkey of the member in a message or in
+              the roster.
+
+              ORDERING. A newer slice of an author replaces its older slice.
+              Two slices of one version keep the one with the lower hash. A
+              member sends its own slice to a newcomer when it joins, and the
+              members compare their slices again at an interval, so a write
+              reaches a member that was away. Members react via the state
+              event on the stream (see "JSON EVENTS"); your own change is not
+              pushed back, so a read→change loop needs no echo handling. On
+              join, give the backfill a moment before the first state get.
 
               SIZE LIMITS AND REFUSALS. The shared state has a size limit, so
-              that a gossip can run for months. Two counts decide: the bytes of
-              the changes, and the operations of the history. A delete is one
-              operation too.
-                - The members rebuild the state from a seed (see "THE CUT")
-                  at about 3 MiB or about 20000 operations.
-                - The state refuses a write that adds a value at about 3.4 MiB
-                  or about 22700 operations, the first that comes. A write of
-                  the same value counts as an add. Large values reach the byte
-                  limit first: strings of 100 bytes reach the cut at about
-                  14000 paths.
-                - The state does not refuse a delete (a null merge) at this
-                  limit. At the memory limit (about 4 MiB or 26700
-                  operations) it refuses every write, deletes too. Then wait
-                  for the next cut.
-                - A write nests 12 levels of keys at most.
-                - One write must fit one message of 3840 bytes. The longest
-                  string value that a write can carry falls with a password
-                  and a little with the depth of its key. Measured with a
-                  nickname of 12 characters: about 1350 bytes at depth 1 and
-                  about 1300 bytes at depth 12 with no password; about 940
-                  bytes at depth 1 and about 900 bytes at depth 12 with a
-                  password. Split a larger value into smaller values under
-                  their own keys.
+              that a gossip can run for months.
+                - The whole slice of a member, all its keys together, must fit
+                  one message of 3840 bytes. The room for the value is less:
+                  the envelope, the gossip id and the nickname take a part, and
+                  a password takes a part. A larger write is refused. Delete
+                  keys of your own slice with a null merge, or store less.
+                - A channel holds the slices of 1024 members at most.
+                - A member that writes faster than its burst and its rate allow
+                  is refused. Write again later, and write less often.
               A refused write changes nothing. state merge prints
               {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
               non-zero. TEXT is for a person. REASON is stable, for a script.
@@ -902,41 +898,29 @@ COMMANDS
               invalid-params error with TEXT, the reason and the hint in its
               message.
 
-                reason       TEXT starts with, and the way out
-                not_synced   "the shared state has not synced yet; retry in a
-                             few seconds". Wait, then write again.
-                state_full   "the shared state is full: …". Delete keys with a
-                             null merge, or wait for the next cut, then write
-                             again.
-                too_deep     "the value is nested N levels deep and the shared
-                             state allows 12". Use fewer levels: key the
-                             entries by an id in one object.
-                too_large    "a value of the write is too large for the shared
-                             state: N bytes with its keys; a value and its keys
-                             must fit one frame". Split the value.
-                clock_ahead  "the clock of the shared state is ahead of this
-                             machine time: retry in a few seconds". Wait a
-                             few seconds, then write again. Check the system
-                             clock of this node and of the peers.
-
-              FIRST SYNC. A member that joins a gossip holds its own writes
-              until it has synced, so that its clock cannot put a write below
-              an earlier write. Until then the member refuses every write with
-              not_synced. The wait ends when a peer answers the first request
-              of the member, which takes a few seconds. It ends after 30
-              seconds at the latest, with one warning in the log. The member
-              that created the gossip never waits. A state get never waits.
-
-              THE CUT. When the state grows, one member rebuilds it from a
-              seed: a short chain of changes that holds the live document and
-              no history. The other members take the seed after about 5
-              minutes. Under load this can happen every few minutes. You can
-              see three effects. The size of the state falls after a cut. Your
-              member sends again a write that you made while the cut ran, so
-              the cut does not lose it. A key that you deleted comes back in
-              two cases only: more than 1024 later deletes pushed its mark out
-              of the seed, or its path is longer than 256 bytes. In both cases,
-              delete the key again. A browser member never builds a seed.
+                reason            The cause, and the way out
+                too_large         The slice of the member is too large. Delete
+                                  keys of your own slice with a null merge, or
+                                  store less.
+                rate_limited      The member wrote too often. Wait a few
+                                  seconds, then write again, and write less
+                                  often.
+                too_many_authors  The channel holds 1024 members already. Wait
+                                  until a member that left drops out, then
+                                  write again.
+                gone_key          The key of this node is marked gone, for 2
+                                  hours at most. Wait, then write again.
+                malformed         The write is not an object at the top level.
+                                  Write a JSON object.
+                wrong_channel     The write is for another channel. Use state
+                                  merge for state and meta merge for meta.
+                draft_mismatch    The write is not the frame that it claims.
+                                  Write again. If it repeats, report a bug.
+                stale_draft       Another write of this member came first.
+                                  Write again.
+                seal              The engine could not seal the write with the
+                                  password. Write again. If it repeats, check
+                                  that the password is the same on all nodes.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME
@@ -1177,7 +1161,7 @@ A2A
 
               iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
               all members inside the signed wire frame (gossip wire version
-              14.0). The frame — signing, dedup, anti-entropy, presence,
+              18.0). The frame — signing, dedup, backfill, presence,
               sharding — is replication machinery below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
               bindings. Chat rides two tags that differ only in addressing:
