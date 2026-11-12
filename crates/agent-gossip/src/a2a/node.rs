@@ -839,16 +839,25 @@ async fn handle_a2a_req(
                         ingest_remote_message(&payload, (&requester_key, &requester), app, context)
                     }
                     Served::ShardRepair { group, missing } => {
-                        resend_cached_shards(
-                            ShardRepairParams {
-                                group: &group,
-                                missing: &missing,
-                                requester: &requester_key,
-                            },
-                            state,
-                            context,
-                        )
-                        .await
+                        // One small ask makes this node send a whole group again, so the asks
+                        // have a budget. The requester asks again on its next tick.
+                        if app.repair_budget.admit(requester_key, Instant::now()) {
+                            resend_cached_shards(
+                                ShardRepairParams {
+                                    group: &group,
+                                    missing: &missing,
+                                    requester: &requester_key,
+                                },
+                                state,
+                                context,
+                            )
+                            .await
+                        } else {
+                            Err(RpcError {
+                                code: -32005,
+                                message: "shard repair budget spent: ask again later".to_owned(),
+                            })
+                        }
                     }
                     Served::ReaderGet => {
                         let (bell, last_poll_secs_ago) = reader_liveness(app, context);
@@ -927,7 +936,14 @@ async fn resend_cached_shards(
         missing,
         requester,
     } = params;
-    let frames: Vec<_> = state.shard_cache_mut().frames(group, missing).collect();
+    // A repeated index would send one frame several times for one ask.
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<u32> = missing
+        .iter()
+        .copied()
+        .filter(|index| seen.insert(*index))
+        .collect();
+    let frames: Vec<_> = state.shard_cache_mut().frames(group, &unique).collect();
     let mut resent = 0usize;
     for bytes in frames {
         let parsed = Message::parse(bytes.as_bytes()).ok();

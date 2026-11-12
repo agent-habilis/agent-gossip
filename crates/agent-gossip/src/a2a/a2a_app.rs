@@ -18,6 +18,7 @@ use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_binding::A2aBinding;
+use crate::a2a::repair_budget::RepairBudget;
 use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
@@ -186,6 +187,9 @@ pub(crate) struct A2aApp {
     /// Frame ids ride in cleartext headers, so any member can name one: a
     /// receipt counts only from the peer the frame went to.
     pub(crate) sent_refs: BoundedFifoSet<(String, AuthorKey)>,
+    /// How many `shard/repair` asks we serve in a window, by member and in all. The table holds
+    /// at most 32 keys and is cleared every 5 s, so it needs no other bound.
+    pub(crate) repair_budget: RepairBudget,
 }
 
 /// Own frames that enter the message log once `sent` resolves to true.
@@ -262,6 +266,7 @@ impl A2aApp {
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
+            repair_budget: RepairBudget::new(Instant::now()),
         }
     }
 
@@ -290,6 +295,7 @@ impl A2aApp {
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
+            repair_budget: RepairBudget::new(Instant::now()),
         }
     }
 

@@ -23,6 +23,7 @@ mod model;
 pub(crate) mod node;
 pub(crate) mod reader_asks;
 pub(crate) mod receipt;
+pub(crate) mod repair_budget;
 pub(crate) mod rpc_error;
 pub(crate) mod served;
 pub(crate) mod session_request;
