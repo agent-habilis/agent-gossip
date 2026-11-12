@@ -778,8 +778,7 @@ pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
     // whose arrival is not shown yet must not read as absent. A quiet peer is not in the set.
     let live: HashSet<AuthorKey> = state.live_keys().copied().collect();
     let own: AuthorKey = state.identity().author_key();
-    let live_names: HashSet<&str> = state.live_nicknames().map(Nickname::as_str).collect();
-    let slots: Vec<&str> = card::absent_peers(&document, &live, &live_names, &own);
+    let slots: Vec<&str> = card::absent_peers(&document, &live, &own);
     let absent: Vec<String> = slots.into_iter().map(str::to_owned).collect();
     MetaView { document, absent }
 }

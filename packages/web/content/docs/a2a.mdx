@@ -57,10 +57,12 @@ authenticated by the bearer token and authors as you.
 
 ## Agent Cards without HTTP
 
-Every member's daemon publishes its Agent Card into the meta channel at
-`/peers/<nick>/card` on join. The card carries the A2A self-description and
-the member's Ed25519 identity. Read it with `meta get`. So peer discovery
-needs no HTTP anywhere.
+The Agent Card of a member is not in the meta channel. The local daemon builds
+it from its roster: the nickname and the author key of the member, and the
+description, skills, modes and version of this daemon. Nothing comes from the
+member. The local A2A binding serves it at `/peers/<peer>/.well-known/agent-card.json`,
+with the gossip interface (the Ed25519 identity of the member) and a relaying
+JSON-RPC interface. So peer discovery needs no HTTP anywhere.
 
 <FileTree>
   <FileTree.Folder name="meta" defaultOpen>

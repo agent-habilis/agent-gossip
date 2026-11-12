@@ -379,26 +379,14 @@ pub(crate) async fn handle_op(
             let Some(nickname) = state.known_nickname_of(&key) else {
                 return Err(RpcError {
                     code: -32004,
-                    message: format!("no card published for '{label}'"),
+                    message: format!("no member known as '{label}'"),
                 });
             };
-            let mut card = serde_json::to_value(super::card::peer_card(key, &nickname, None))
+            // The route names the exact key, because two members can share a nickname.
+            let relay_url = format!("http://127.0.0.1:{a2a_port}/peers/{key}");
+            let card = super::card::peer_card(key, &nickname, None, &relay_url);
+            let card = serde_json::to_value(&card)
                 .map_err(|error| RpcError::internal(&error.to_string()))?;
-            // The mesh card declares only its gossip interface (the peer has no
-            // HTTP endpoint of its own). Add a relaying JSONRPC interface at
-            // *our* binding — we relay JSON-RPC to that peer over gossip at
-            // `/peers/<nick>` — so the served peer card is reachable (e.g.
-            // `SendMessage` there creates a task on the peer).
-            if let Some(interfaces) = card
-                .pointer_mut("/supportedInterfaces")
-                .and_then(Value::as_array_mut)
-            {
-                interfaces.push(serde_json::json!({
-                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{nickname}"),
-                    "protocolBinding": "JSONRPC",
-                    "protocolVersion": super::PROTOCOL_VERSION,
-                }));
-            }
             Ok(card)
         }
     }

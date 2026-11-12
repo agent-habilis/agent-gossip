@@ -8,6 +8,7 @@ The engine now keeps one signed slice for each author in the shared state and in
 
 For a user:
 - `state get` and `meta get` now print one entry for each member, keyed by the author key in lowercase hex: `{"<author hex>":{...}}`. They do not print one merged document. A write changes your own entry only. The author key changes on each start of the daemon, so the entry of a member moves to a new hex key when it restarts.
+- The Agent Card of a member is no longer in the meta channel. `meta get` has no `card`, `card_error` or endpoint hint. The local daemon builds the card of a member from its roster, with the description, skills, modes and version of this daemon, and serves it at `/peers/<peer>/.well-known/agent-card.json`. The relaying interface names the hex key of the member.
 - The `fork` event is gone. The engine cannot see equivocation now.
 - The poll record of a message has no `seq`, `prev` or `parents` field.
 - The flag `--antientropy-interval-secs` is now `--backfill-interval-secs`. The flag `--antientropy-max-resend` is gone.

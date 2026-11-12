@@ -1189,8 +1189,8 @@ A2A
               the session state file (chmod 600) and the ready event
               carries a2a_port. The AgentCard is served unauthenticated at
               /.well-known/agent-card.json (own) and
-              /peers/<peer>/.well-known/agent-card.json (a member's, from
-              the meta channel); every RPC requires
+              /peers/<peer>/.well-known/agent-card.json (a member's, built by
+              this daemon); every RPC requires
               Authorization: Bearer <token>. <peer> is a nickname or the
               64-digit hex of an author key. A nickname names the one live
               member that uses it, or else the one quiet member. If two or
@@ -1209,17 +1209,15 @@ A2A
               Streaming and push notifications are declared off in the
               card (capabilities).
 
-       Every member's daemon publishes its AgentCard — the A2A
-       self-description (A2A v1.0: supportedInterfaces, capabilities,
-       declared extensions, skills, and the member's Ed25519 identity in the
-       gossip interface url, the bare <pubkey>) — into the meta channel at
-       /peers/<pubkey>/card on join as a minimal card (no description,
-       skills or modes). `meta get` returns that minimal card. The full
-       card comes from /peers/<peer>/.well-known/agent-card.json on the
-       local A2A binding. A daemon of version 0.12.10 serves the stored
-       minimal card as it is, so a new peer shows empty skills and modes
-       there until the local serving daemon is upgraded too. So peer
-       discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
+       The AgentCard of a member is not in the meta channel: a card does not
+       fit one sealed slice. The local daemon builds the card of a member
+       from its roster: the nickname and the author key of the member, and
+       the description, the skills, the modes and the version of THIS daemon.
+       Nothing comes from the member. /peers/<peer>/.well-known/agent-card.json
+       on the local A2A binding serves it, with the gossip interface (the bare
+       <pubkey> of the member, its Ed25519 identity) and a relaying JSON-RPC
+       interface at /peers/<hex key> on this binding. A key that no member
+       holds gives an error. So peer discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
        server to a peer, see `a2a expose` / `a2a connect`. See
        docs/a2a-binding.md in the repository for the custom-binding
        conformance statement.
