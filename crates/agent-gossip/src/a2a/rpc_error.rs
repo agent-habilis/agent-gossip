@@ -386,7 +386,7 @@ pub(crate) async fn handle_op(
                 }
             };
             // The card is built here from the roster, with nothing taken from the peer. The seal
-            // key of a peer is not exposed by the engine yet, so the card leaves the extension out.
+            // key comes from the signed `PeerInfo` of the peer, which the engine verified.
             let Some(nickname) = state.known_nickname_of(&key) else {
                 return Err(RpcError {
                     code: -32004,
@@ -395,7 +395,7 @@ pub(crate) async fn handle_op(
             };
             // The route names the exact key, because two members can share a nickname.
             let relay_url = format!("http://127.0.0.1:{a2a_port}/peers/{key}");
-            let card = super::card::peer_card(key, &nickname, None, &relay_url);
+            let card = super::card::peer_card(key, &nickname, state.seal_key_of(&key), &relay_url);
             let card = serde_json::to_value(&card)
                 .map_err(|error| RpcError::internal(&error.to_string()))?;
             Ok(card)

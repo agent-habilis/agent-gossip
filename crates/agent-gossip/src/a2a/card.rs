@@ -137,27 +137,6 @@ pub(crate) fn full_card(
     }
 }
 
-/// Read the published X25519 sealing key of the member `peer` from the derived meta
-/// document — the `mesh-seal` extension's `params.x25519` (base58). The card no longer lives in
-/// meta, so this finds nothing until the engine seals to the key of the addressee itself and this
-/// reader goes.
-pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &AuthorKey) -> Option<PublicKey> {
-    let extensions = meta_doc
-        .pointer(&format!("/peers/{peer}/card/capabilities/extensions"))?
-        .as_array()?;
-    let b58: &str = extensions
-        .iter()
-        .find(|ext| {
-            ext.get("uri")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|uri| uri.contains("mesh-seal"))
-        })?
-        .pointer("/params/x25519")?
-        .as_str()?;
-    let bytes: [u8; 32] = bs58::decode(b58).into_vec().ok()?.try_into().ok()?;
-    Some(PublicKey::from(bytes))
-}
-
 /// The author keys in the `meta` view with no **active** member behind them.
 ///
 /// The view maps the hex of each author key to its slice. A member that leaves gracefully sends a

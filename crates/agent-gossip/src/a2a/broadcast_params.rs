@@ -9,7 +9,7 @@ use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::blob::{ContentId, OffloadRequest};
 use habilis_network::ops::{
     Delivered, MergeCtx, MeshSender, PendingSend, StateMergeParams, blob, broadcast_state_merge,
-    doc,
+    seal_broadcast_body,
 };
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
@@ -30,9 +30,7 @@ use crate::a2a::session_request::SessionRequest;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
-use crate::a2a::{
-    card, ipc_command, receipt, served, status_update_params, task_record, tuning, wire,
-};
+use crate::a2a::{ipc_command, receipt, served, status_update_params, task_record, tuning, wire};
 use crate::emission;
 
 /// Write the dev log of a just-built outbound message. The operator echo is
@@ -303,15 +301,11 @@ impl BroadcastBody {
     /// on the sealed frame; only the local echo + the returned Message carry
     /// plaintext.
     fn seal(state: &EventLoopState, plain: MessageBody) -> anyhow::Result<Self> {
-        let key = state.broadcast_key();
-        let wire = match key {
-            Some(key) => doc::encrypt_body(&plain, key)?,
-            None => plain.clone(),
-        };
+        let wire = seal_broadcast_body(state, &plain)?;
         Ok(Self {
             plain,
             wire,
-            encrypted: key.is_some(),
+            encrypted: state.broadcast_key().is_some(),
         })
     }
 }
@@ -1082,25 +1076,12 @@ pub(crate) fn seal_directed(
     to: &AuthorKey,
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
-    let doc = state.view(Channel::Meta);
-    let key = card::peer_seal_key(&doc, to).ok_or_else(|| {
+    let key = state.seal_key_of(to).ok_or_else(|| {
         let known: Option<Nickname> = state.known_nickname_of(to);
         let name: String = known.map_or_else(|| to.to_string(), |nickname| nickname.to_string());
-        // A peer whose card did not publish says why in its own entry. Without that, the sender
-        // waits for cards that never come.
-        match doc
-            .pointer(&format!("/peers/{to}/card_error"))
-            .and_then(serde_json::Value::as_str)
-        {
-            Some(cause) => {
-                anyhow::anyhow!("cannot seal to '{name}': its card is not published ({cause})")
-            }
-            None => anyhow::anyhow!(
-                "cannot seal to '{name}': its encryption key is not known yet (cards still propagating)"
-            ),
-        }
+        anyhow::anyhow!("cannot seal to '{name}': its encryption key is not known yet")
     })?;
-    habilis_network::protocol::seal_to_body(&key, body.as_str()).map_err(anyhow::Error::from)
+    habilis_network::protocol::seal_to_body(key, body.as_str()).map_err(anyhow::Error::from)
 }
 
 /// A worker-emitted status leg's identity, addressee, task, state/note, and

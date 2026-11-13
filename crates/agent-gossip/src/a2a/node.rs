@@ -30,6 +30,13 @@ impl NodeApp for A2aApp {
         classify(message)
     }
 
+    fn seals(&self, tag: &AppTag) -> bool {
+        matches!(
+            tag.as_str(),
+            wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT
+        )
+    }
+
     async fn on_app_frame(
         &mut self,
         frame: InboundApp<'_>,
@@ -392,20 +399,10 @@ fn classify(message: &Authored) -> AppClass {
         None => true,
         Some(_) => false,
     };
-    // Every directed tag — msg, worker status/artifact push, RPC
-    // request/response — arrives sealed (encrypted) to its addressee, so a
-    // directed frame addressed to us must unseal-or-drop. Sealing is what keeps
-    // a relayed msg unreadable by the peers forwarding it. Broadcast chat is
-    // public by definition, and an unknown tag is never sealed.
-    let sealed = matches!(
-        tag,
-        Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
-    );
     AppClass::NONE
         .plus_if(AppClass::PUSH, pushed)
         .plus_if(AppClass::BEAT, beat)
         .plus_if(AppClass::VALID, valid)
-        .plus_if(AppClass::SEALED, sealed)
 }
 
 /// Route a content frame — chat, or one of the three task shapes — to its
@@ -852,7 +849,6 @@ async fn handle_a2a_req(
                                     requester: &requester_key,
                                 },
                                 state,
-                                context,
                             )
                             .await;
                         } else {
@@ -920,8 +916,8 @@ async fn handle_a2a_req(
     }
 }
 
-/// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
-/// handles.
+/// The value cluster [`resend_cached_shards`] needs beyond its `state`
+/// handle.
 struct ShardRepairParams<'caller> {
     group: &'caller habilis_network::protocol::ShardGroup,
     missing: &'caller [u32],
@@ -932,11 +928,7 @@ struct ShardRepairParams<'caller> {
 /// big (unlogged) outbound groups to the requester. The frames are the raw,
 /// already-signed shards we cached at send time (`state.shard_cache_mut()`), so they
 /// reassemble on the requester exactly as the original send would have.
-async fn resend_cached_shards(
-    params: ShardRepairParams<'_>,
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-) {
+async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLoopState) {
     let ShardRepairParams {
         group,
         missing,
@@ -963,9 +955,9 @@ async fn resend_cached_shards(
         }
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
-        // not start is asked for again on the requester's next tick.
-        if habilis_network::ops::deliver_in_background(&message, bytes, state, context.sender).await
-        {
+        // not start is asked for again on the requester's next tick. Only the
+        // requester gets the shard: a broadcast shard would reach every member.
+        if habilis_network::ops::deliver_to_in_background(requester, &message, state).await {
             resent += 1;
         }
     }
