@@ -1,11 +1,7 @@
 use std::collections::HashSet;
 
-use habilis_network::iroh::{Endpoint, EndpointAddr, EndpointId};
-use habilis_network::net::endpoint_address;
 use habilis_network::protocol::{AuthorKey, Nickname};
-use habilis_network::util::consts::MAX_MESSAGE_SIZE;
 use habilis_network::x25519_dalek::PublicKey;
-use serde::Deserialize;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
@@ -22,31 +18,37 @@ pub(crate) fn peer_url(author_key: AuthorKey) -> String {
     author_key.to_string()
 }
 
-/// This peer's `AgentCard` — the canonical A2A self-description every
-/// member publishes into the meta channel at `/peers/<nick>/card` on join.
-/// Peers enumerate each other's cards from the meta document, so discovery
-/// works with no HTTP server at all; the (flag-gated) local JSON-RPC binding
-/// additionally serves the card at `/.well-known/agent-card.json` (with an
-/// extra `JSONRPC` interface).
-///
-/// The identity is the Ed25519 **public key**, carried in the gossip
-/// `AgentInterface.url` (the bare `<pubkey>`), not the display nickname;
-/// `capabilities.extensions` declares the mesh's protocol extensions so a
-/// strict A2A client can gate on them. Agent-side facts the daemon cannot know
-/// (model, harness, host, cwd, extra skills) are merged by the agent as sibling keys
-/// under `/peers/<nick>` — the card is the daemon's contribution, not the whole
-/// peer entry.
+/// The card of another member, built from what this node knows of it: its nickname and its author
+/// key. Nothing comes from the peer, so the skills, the description and the version are the ones of
+/// this daemon. `relay_url` is the address at the local binding that relays JSON-RPC to the member
+/// over gossip. `seal` is the key that the engine seals a directed body to; with no key the card
+/// leaves the `mesh-seal` extension out, so it never names a key that is not known.
 #[must_use]
-pub(crate) fn own_card(
+pub(crate) fn peer_card(
+    asked: AuthorKey,
     nickname: &Nickname,
-    author_key: AuthorKey,
-    seal_pubkey_b58: &str,
+    seal: Option<&PublicKey>,
+    relay_url: &str,
 ) -> AgentCard {
-    minimal(full_card(nickname, author_key, seal_pubkey_b58))
+    let seal_b58 = seal.map(|key| bs58::encode(key.as_bytes()).into_string());
+    let mut card = full_card(nickname, asked, seal_b58.as_deref().unwrap_or_default());
+    if seal_b58.is_none() {
+        card.capabilities
+            .extensions
+            .retain(|extension| extension.uri != EXT_MESH_SEAL);
+    }
+    // The member has no HTTP endpoint of its own: this daemon relays JSON-RPC to it, so that a
+    // `SendMessage` at the relay address creates a task on the member.
+    card.supported_interfaces.push(AgentInterface {
+        url: relay_url.to_owned(),
+        protocol_binding: "JSONRPC".to_owned(),
+        tenant: None,
+        protocol_version: PROTOCOL_VERSION.to_owned(),
+    });
+    card
 }
 
-/// The card with every optional protocol field filled in. Served to a client; the meta
-/// document holds only [`own_card`]'s minimal form.
+/// The card with every optional protocol field filled in.
 #[must_use]
 pub(crate) fn full_card(
     nickname: &Nickname,
@@ -135,306 +137,39 @@ pub(crate) fn full_card(
     }
 }
 
-/// What the meta document keeps of a card.
+/// The author keys in the `meta` view with no **active** member behind them.
 ///
-/// The kept fields are those an A2A reader needs to parse the card and to find the extensions and
-/// the sealing key. The static parts (skills, modes, extension descriptions) are the same for
-/// every member, so [`full_from_minimal`] rebuilds them.
-fn minimal(full: AgentCard) -> AgentCard {
-    let extensions = full
-        .capabilities
-        .extensions
-        .into_iter()
-        .map(|extension| AgentExtension {
-            uri: extension.uri,
-            description: None,
-            required: None,
-            params: extension.params,
-        })
-        .collect();
-    AgentCard {
-        description: String::new(),
-        documentation_url: None,
-        capabilities: AgentCapabilities {
-            streaming: full.capabilities.streaming,
-            extensions,
-            ..AgentCapabilities::default()
-        },
-        default_input_modes: Vec::new(),
-        default_output_modes: Vec::new(),
-        skills: Vec::new(),
-        security_schemes: None,
-        ..full
-    }
-}
-
-/// The full card rebuilt from a stored card.
+/// The view maps the hex of each author key to its slice. A member that leaves gracefully sends a
+/// tombstone, and the engine drops its slice. A member that dies without a goodbye keeps its slice
+/// until the other members drop its quiet key, about 1 hour, still reporting whatever status its
+/// agent last set. Such a slice is
+/// history, not a peer to give work to.
 ///
-/// The stored card's own fields (name, interfaces, version, extensions, endpoint hint) are kept as
-/// stored. The static parts a minimal card drops (description when empty, modes, skills, security
-/// schemes, streaming) come from [`full_card`]. A stored card whose name or sealing key cannot
-/// rebuild is served as stored.
+/// `live` must hold only the *active* peers. A peer that dies ungracefully is moved to the
+/// roster's quiet set rather than dropped, and the roster snapshot returns both, so passing the
+/// snapshot wholesale reports nothing. Being listed while merely quiet is the honest answer either
+/// way: quiet means no live link, which is what a caller about to delegate work needs to know.
+///
+/// `own` is excluded because the roster lists peers, not self: without it every node would report
+/// its own slice as absent. A slot is the hex of the author key, because two members can share a
+/// nickname.
 #[must_use]
-pub(crate) fn full_from_minimal(stored: &serde_json::Value) -> Option<serde_json::Value> {
-    let parsed = serde_json::from_value::<AgentCard>(stored.clone()).ok()?;
-    let nickname = Nickname::try_new(&parsed.name).ok();
-    let seal_extension = parsed
-        .capabilities
-        .extensions
-        .iter()
-        .find(|extension| extension.uri.contains("mesh-seal"));
-    let seal_params: Option<&serde_json::Value> =
-        seal_extension.and_then(|extension| extension.params.as_ref());
-    let seal: Option<&str> = seal_params
-        .and_then(|params| params.get("x25519"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|seal| {
-            bs58::decode(seal)
-                .into_vec()
-                .is_ok_and(|bytes| bytes.len() == 32)
-        });
-    let (Some(nickname), Some(seal)) = (nickname, seal) else {
-        return Some(stored.clone());
-    };
-    let template =
-        serde_json::to_value(full_card(&nickname, AuthorKey::from([0; 32]), seal)).ok()?;
-
-    let mut rebuilt = stored.clone();
-    let object = rebuilt.as_object_mut()?;
-    if parsed.description.is_empty() {
-        object.insert("description".to_owned(), template["description"].clone());
-    }
-    for key in [
-        "defaultInputModes",
-        "defaultOutputModes",
-        "skills",
-        "securitySchemes",
-    ] {
-        if let Some(value) = template.get(key).filter(|value| !value.is_null()) {
-            object.insert(key.to_owned(), value.clone());
-        }
-    }
-    let known = template["capabilities"]["extensions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if let Some(stored_extensions) = object
-        .get_mut("capabilities")
-        .and_then(|capabilities| capabilities.get_mut("extensions"))
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for extension in stored_extensions.iter_mut() {
-            let Some(uri) = extension.get("uri").and_then(serde_json::Value::as_str) else {
-                continue;
-            };
-            if let Some(description) = known
-                .iter()
-                .find(|known| known["uri"] == uri)
-                .and_then(|known| known.get("description"))
-            {
-                extension["description"] = description.clone();
-            }
-        }
-    }
-    if let Some(capabilities) = object
-        .get_mut("capabilities")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        for flag in ["streaming", "pushNotifications", "extendedAgentCard"] {
-            if let (false, Some(value)) = (
-                capabilities.contains_key(flag),
-                template["capabilities"].get(flag),
-            ) {
-                capabilities.insert(flag.to_owned(), value.clone());
-            }
-        }
-    }
-    Some(rebuilt)
-}
-
-/// Read the published X25519 sealing key of the member `peer` from the derived meta
-/// document — the `mesh-seal` extension's `params.x25519` (base58). `None` if
-/// the peer's card or key hasn't replicated yet. The entry of a member is its slot, the hex of
-/// its author key, and the card is bound to its author (foreign-card merges are dropped), so
-/// this key is authenticated by the same forgery protection as the rest of the card.
-pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &AuthorKey) -> Option<PublicKey> {
-    let extensions = meta_doc
-        .pointer(&format!("/peers/{peer}/card/capabilities/extensions"))?
-        .as_array()?;
-    let b58: &str = extensions
-        .iter()
-        .find(|ext| {
-            ext.get("uri")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|uri| uri.contains("mesh-seal"))
-        })?
-        .pointer("/params/x25519")?
-        .as_str()?;
-    let bytes: [u8; 32] = bs58::decode(b58).into_vec().ok()?.try_into().ok()?;
-    Some(PublicKey::from(bytes))
-}
-
-/// The stable dial hint published *inside* the card at
-/// `/peers/<key>/card/endpoint`: the member's transport `EndpointId` and home
-/// relay. The volatile direct IPs are omitted — iroh re-holepunches from the
-/// relay — so this only re-publishes when the relay re-homes, not on every path
-/// change. Living inside the card, it is covered by the same forgery gate as the
-/// seal key (a sibling `/peers/<key>/addr` would be forgeable by any peer). It
-/// **supplements** gossiped `PeerInfo`: a peer that has synced the meta doc can
-/// dial without waiting for a `PeerInfo` to arrive.
-#[must_use]
-pub(crate) fn endpoint_hint(endpoint: &Endpoint) -> serde_json::Value {
-    let address = endpoint_address(endpoint);
-    serde_json::json!({
-        "id": address.id.to_string(),
-        "relay": address.relay_urls().next().map(ToString::to_string),
-    })
-}
-
-/// Read the published endpoint hint of the member `peer` from the derived meta document →
-/// its `EndpointId` and a bare `EndpointAddr` (id + relay). `None` if the card or
-/// hint hasn't replicated yet. Authenticated by the card-forgery gate, exactly
-/// like [`peer_seal_key`].
-pub(crate) fn peer_endpoint(
-    meta_doc: &serde_json::Value,
-    peer: &AuthorKey,
-) -> Option<(EndpointId, EndpointAddr)> {
-    let hint = meta_doc.pointer(&format!("/peers/{peer}/card/endpoint"))?;
-    habilis_network::net::endpoint_addr_from_json(hint).ok()
-}
-
-/// What a frame can still grow by after it was measured: the dependency list and the sequence
-/// number of a later change are not in the merge that was measured.
-const FRAME_MARGIN: usize = 128;
-
-/// The merges that publish `card` (the card as JSON, endpoint hint included) at
-/// `/peers/<key>/card`, where the slot is the hex of the author key `author`, each in a frame
-/// within [`MAX_MESSAGE_SIZE`]. `frame_len` measures the frame that a merge becomes on the wire,
-/// with the sealing of a passworded gossip, so that the split follows the real size and not an
-/// estimate of it. An RFC 7386 merge sets the keys of the
-/// card one by one, so the card in several merges is the same card as the card in one.
-///
-/// The capabilities go first: they carry the seal key, and a peer can send to us as soon as it
-/// has them. The other keys follow in key order. Nothing but the card is written: a reader tells
-/// a whole card from a partial one by the schema of the card, see [`complete_card`].
-///
-/// # Errors
-/// `card` is not a JSON object, a key of it does not fit a frame by itself, or `frame_len` failed.
-pub(crate) fn publish_merges(
-    author: &AuthorKey,
-    card: &serde_json::Value,
-    frame_len: impl Fn(&serde_json::Value) -> anyhow::Result<usize>,
-) -> anyhow::Result<Vec<serde_json::Value>> {
-    let serde_json::Value::Object(fields) = card else {
-        anyhow::bail!("the agent card is not a JSON object");
-    };
-    let slot = author.to_string();
-    let merge_of = |part: &serde_json::Map<String, serde_json::Value>| serde_json::json!({ "peers": { slot.as_str(): { "card": part } } });
-    let fits = |merge: &serde_json::Value| -> anyhow::Result<bool> {
-        Ok(frame_len(merge)? + FRAME_MARGIN <= MAX_MESSAGE_SIZE)
-    };
-
-    let mut keys: Vec<&String> = fields.keys().collect();
-    keys.sort_by_key(|key| key.as_str() != "capabilities");
-
-    let mut merges = Vec::new();
-    let mut part = serde_json::Map::new();
-    for key in keys {
-        part.insert(key.clone(), fields[key].clone());
-        if fits(&merge_of(&part))? {
-            continue;
-        }
-        part.remove(key);
-        if part.is_empty() {
-            anyhow::bail!("the card field '{key}' does not fit in one frame by itself");
-        }
-        merges.push(merge_of(&part));
-        part = serde_json::Map::new();
-        part.insert(key.clone(), fields[key].clone());
-        if !fits(&merge_of(&part))? {
-            anyhow::bail!("the card field '{key}' does not fit in one frame by itself");
-        }
-    }
-    if !part.is_empty() {
-        merges.push(merge_of(&part));
-    }
-    Ok(merges)
-}
-
-/// The card of the member `peer` in the meta document, when it is whole. A card that is still arriving, in
-/// pieces, or whose later merge failed, lacks fields that an [`AgentCard`] requires, and is not
-/// returned. The schema is the marker: the daemon writes nothing next to the card for this.
-#[must_use]
-pub(crate) fn complete_card<'doc>(
-    meta_doc: &'doc serde_json::Value,
-    peer: &AuthorKey,
-) -> Option<&'doc serde_json::Value> {
-    let card = meta_doc.pointer(&format!("/peers/{peer}/card"))?;
-    AgentCard::deserialize(card).is_ok().then_some(card)
-}
-
-/// The RFC 7386 merge that tells the other members why our card is not published: a member that
-/// cannot seal to us then names the cause, not "cards still propagating". `None` clears it.
-#[must_use]
-pub(crate) fn card_error_merge(key: &AuthorKey, error: Option<&str>) -> serde_json::Value {
-    serde_json::json!({ "peers": { key.to_string(): { "card_error": error } } })
-}
-
-/// The `/peers` entries in `document` with no **active** member behind them.
-///
-/// A member retracts its own entry on a graceful leave ([`retract_merge`]),
-/// and that is the only way an entry ever leaves the document — the forgery
-/// gate binds every author to its own subtree, so a survivor cannot tidy up
-/// after a peer that was `SIGKILL`ed or lost power. Such an entry stays
-/// readable forever, still reporting whatever status its agent last set.
-///
-/// `live` must hold only the *active* peers. A peer that dies ungracefully is
-/// moved to the roster's quiet set rather than dropped, and the roster
-/// snapshot returns both, so passing the snapshot wholesale reports nothing:
-/// the ghost is still in the list. Being flagged while merely quiet is the
-/// honest answer either way — quiet means no live link, which is precisely
-/// what a caller about to delegate work needs to know.
-///
-/// `own` is excluded because the roster lists peers, not self: without
-/// it every node would report its own card as absent. An entry is named by its slot, the hex of
-/// the author key, because two members can share a nickname.
-///
-/// A slot that is the nickname of a live member is no ghost either. The graph skills write
-/// `{"peers":{"<nickname>":{...}}}`, and a graph tool drops every slot that `absent` lists. The
-/// nickname of this member is read from its own card.
-#[must_use]
-pub(crate) fn absent_peers<'doc>(
-    document: &'doc serde_json::Value,
+pub(crate) fn absent_peers<'view>(
+    view: &'view serde_json::Value,
     live: &HashSet<AuthorKey>,
-    live_names: &HashSet<&str>,
     own: &AuthorKey,
-) -> Vec<&'doc str> {
-    let peers: Option<&serde_json::Map<String, serde_json::Value>> =
-        document.get("peers").and_then(serde_json::Value::as_object);
-    let own_entry: Option<&serde_json::Value> = peers.and_then(|peers| peers.get(&own.to_string()));
-    let own_card_name: Option<&serde_json::Value> =
-        own_entry.and_then(|entry| entry.pointer("/card/name"));
-    let own_name: Option<&str> = own_card_name.and_then(serde_json::Value::as_str);
-    peers
-        .map(|peers| {
-            let is_absent = |slot: &&str| {
-                let is_live_key = live.iter().any(|key| key.matches_hex(slot));
-                let is_live_name = live_names.contains(slot) || own_name == Some(slot);
-                !own.matches_hex(slot) && !is_live_key && !is_live_name
-            };
-            let slots = peers.keys().map(String::as_str);
-            slots.filter(is_absent).collect()
+) -> Vec<&'view str> {
+    let is_absent =
+        |slot: &&str| !own.matches_hex(slot) && !live.iter().any(|key| key.matches_hex(slot));
+    view.as_object()
+        .map(|slices| {
+            slices
+                .keys()
+                .map(String::as_str)
+                .filter(is_absent)
+                .collect()
         })
         .unwrap_or_default()
-}
-
-/// The RFC 7386 merge that retracts this member's whole `/peers/<key>` meta
-/// entry — card, endpoint hint, and self-reported agent facts — on graceful
-/// leave. Only the entry's owner can author it: the card-forgery gate rejects
-/// the same delete from anyone else.
-#[must_use]
-pub(crate) fn retract_merge(key: &AuthorKey) -> serde_json::Value {
-    serde_json::json!({ "peers": { key.to_string(): null } })
 }
 
 #[cfg(test)]
@@ -442,9 +177,7 @@ mod tests {
     use std::collections::HashSet;
 
     use habilis_network::protocol::{AuthorKey, Nickname};
-    use habilis_network::util::consts;
-
-    use super::{full_card, full_from_minimal, own_card, publish_merges};
+    use habilis_network::x25519_dalek::PublicKey;
 
     fn key() -> AuthorKey {
         AuthorKey::from([0xab; 32])
@@ -455,196 +188,13 @@ mod tests {
     }
 
     #[test]
-    fn a_served_peer_card_keeps_the_endpoint_hint() {
-        let nickname =
-            Nickname::try_new("endpoint-peer").expect("a literal peer name is a valid nickname");
-        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let mut stored =
-            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-                .expect("an AgentCard is plain data and always serializes");
-        stored["endpoint"] =
-            serde_json::json!({ "id": "ab".repeat(32), "relay": "https://relay.example/" });
-        let rebuilt = full_from_minimal(&stored).expect("a card this module stored must rebuild");
-        assert_eq!(
-            rebuilt["endpoint"], stored["endpoint"],
-            "the rebuilt card drops the endpoint hint"
-        );
-    }
-
-    #[test]
-    fn a_served_peer_card_takes_its_extensions_from_the_stored_card() {
-        let nickname =
-            Nickname::try_new("extension-peer").expect("a literal peer name is a valid nickname");
-        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let mut stored =
-            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-                .expect("an AgentCard is plain data and always serializes");
-        stored["capabilities"]["extensions"]
-            .as_array_mut()
-            .expect("a card built by this module has an extensions array")
-            .push(serde_json::json!({ "uri": "https://example.test/ext/later/v1" }));
-        let rebuilt = full_from_minimal(&stored).expect("a card this module stored must rebuild");
-        let uris_and_params =
-            |card: &serde_json::Value| -> Vec<(serde_json::Value, serde_json::Value)> {
-                let extensions: &Vec<serde_json::Value> = card["capabilities"]["extensions"]
-                    .as_array()
-                    .expect("a card built by this module has an extensions array");
-                extensions
-                    .iter()
-                    .map(|ext| {
-                        (
-                            ext["uri"].clone(),
-                            ext.get("params").cloned().unwrap_or_default(),
-                        )
-                    })
-                    .collect()
-            };
-        assert_eq!(
-            uris_and_params(&rebuilt),
-            uris_and_params(&stored),
-            "the rebuilt card keeps the stored extension URIs and params"
-        );
-    }
-
-    #[test]
-    fn a_card_with_an_undecodable_seal_string_is_served_as_stored() {
-        let nickname =
-            Nickname::try_new("rebuild-peer").expect("a literal peer name is a valid nickname");
-        let mut stored = serde_json::to_value(own_card(
-            &nickname,
-            AuthorKey::from([0xab; 32]),
-            "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U",
-        ))
-        .expect("an AgentCard is plain data and always serializes");
-        let extensions: &mut Vec<serde_json::Value> = stored["capabilities"]["extensions"]
-            .as_array_mut()
-            .expect("the card declares extensions");
-        let seal_extension: &mut serde_json::Value = extensions
-            .iter_mut()
-            .find(|extension| {
-                extension["uri"]
-                    .as_str()
-                    .is_some_and(|uri| uri.contains("mesh-seal"))
-            })
-            .expect("the card declares the mesh-seal extension");
-        seal_extension["params"]["x25519"] = serde_json::json!("not-base58!!");
-        assert_eq!(
-            full_from_minimal(&stored),
-            Some(stored.clone()),
-            "a seal string that is not a 32-byte key is served as stored, not rebuilt"
-        );
-    }
-
-    #[test]
-    fn a_card_that_cannot_be_rebuilt_is_served_as_stored() {
-        let nickname =
-            Nickname::try_new("rebuild-peer").expect("a literal peer name is a valid nickname");
-        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let mut stored =
-            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-                .expect("an AgentCard is plain data and always serializes");
-        let extensions: &mut Vec<serde_json::Value> = stored["capabilities"]["extensions"]
-            .as_array_mut()
-            .expect("the card declares extensions");
-        let seal_extension: &mut serde_json::Value = extensions
-            .iter_mut()
-            .find(|extension| {
-                extension["uri"]
-                    .as_str()
-                    .is_some_and(|uri| uri.contains("mesh-seal"))
-            })
-            .expect("the card declares the mesh-seal extension");
-        seal_extension["params"]["x25519"] = serde_json::json!(7);
-        assert_eq!(
-            full_from_minimal(&stored),
-            Some(stored.clone()),
-            "a card with no usable seal must still be served as stored"
-        );
-    }
-
-    #[test]
-    fn a_real_0_12_10_card_rebuilds_to_itself() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/fixtures/card_0_12_10.json"))
-                .expect("the checked-in 0.12.10 fixture is valid JSON");
-        let rebuilt = full_from_minimal(&fixture).expect("a real 0.12.10 card must rebuild");
-        assert_eq!(
-            rebuilt, fixture,
-            "a full 0.12.10 card must come back unchanged"
-        );
-    }
-
-    #[test]
-    fn a_stored_card_that_does_not_parse_is_not_rebuilt() {
-        let stored = serde_json::json!({ "name": "unparsed-peer", "endpoint": { "id": "ab" } });
-        assert_eq!(
-            full_from_minimal(&stored),
-            None,
-            "a stored card that does not parse as AgentCard is not rebuilt"
-        );
-    }
-
-    #[test]
-    fn an_old_full_card_rebuilds_to_the_same_full_card() {
-        let nickname =
-            Nickname::try_new("old-member").expect("a literal peer name is a valid nickname");
-        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let old_full =
-            serde_json::to_value(full_card(&nickname, AuthorKey::from([0xab; 32]), seal))
-                .expect("an AgentCard is plain data and always serializes");
-        let rebuilt = full_from_minimal(&old_full).expect("an old full card must rebuild");
-        assert_eq!(
-            rebuilt, old_full,
-            "an old full card must come back unchanged"
-        );
-    }
-
-    #[test]
-    fn a_minimal_card_rebuilds_to_the_full_card() {
-        let nickname =
-            Nickname::try_new("new-member").expect("a literal peer name is a valid nickname");
-        let seal = "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U";
-        let key = AuthorKey::from([0xab; 32]);
-        let minimal = serde_json::to_value(own_card(&nickname, key, seal))
-            .expect("an AgentCard is plain data and always serializes");
-        let rebuilt = full_from_minimal(&minimal).expect("a minimal card must rebuild");
-        let full = serde_json::to_value(full_card(&nickname, key, seal))
-            .expect("an AgentCard is plain data and always serializes");
-        assert_eq!(
-            rebuilt, full,
-            "the rebuilt card must match the full card for the same member"
-        );
-    }
-
-    #[test]
-    fn a_peer_card_stays_under_the_per_peer_byte_budget() {
-        let nickname =
-            Nickname::try_new("budget-peer").expect("a literal peer name is a valid nickname");
-        let card = own_card(
-            &nickname,
-            AuthorKey::from([0xab; 32]),
-            "3ZkSZ8w3Z3nTf6r9Pq2Lh1QmYxKkFgWvA7bC5dE4eR1U",
-        );
-        let mut stored =
-            serde_json::to_value(&card).expect("an AgentCard is plain data and always serializes");
-        stored["endpoint"] = serde_json::json!({
-            "id": habilis_network::iroh::SecretKey::from_bytes(&[7; 32]).public().to_string(),
-            "relay": "https://use1-1.relay.n0.iroh-canary.iroh.link./",
-        });
-        let bytes = stored.to_string().len();
-        assert!(
-            bytes <= 900,
-            "a stored peer card with its endpoint hint is {bytes} bytes; the budget is 900 because the hint (about 140 bytes) is part of the stored card"
-        );
-    }
-
-    #[test]
-    fn card_declares_the_mesh_extensions_and_identity() {
-        let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let card = own_card(
+    fn a_peer_card_declares_the_mesh_extensions_and_identity() {
+        let seal = PublicKey::from([7u8; 32]);
+        let card = super::peer_card(
+            key(),
             &Nickname::from("calm-otter"),
-            AuthorKey::from([0xab; 32]),
-            &seal_b58,
+            Some(&seal),
+            "http://127.0.0.1:1/peers/ab",
         );
         assert_eq!(
             card.name, "calm-otter",
@@ -673,338 +223,103 @@ mod tests {
                 "card must declare {needle}"
             );
         }
-        // The seal extension carries this member's X25519 public key.
         let seal_ext = card
             .capabilities
             .extensions
             .iter()
             .find(|ext| ext.uri.contains("mesh-seal"))
-            .expect("the card always declares the mesh-seal extension");
+            .expect("the card declares the mesh-seal extension when it has a key");
         assert_eq!(
             seal_ext
                 .params
                 .as_ref()
                 .expect("the mesh-seal extension always carries params")["x25519"],
-            seal_b58,
+            bs58::encode([7u8; 32]).into_string(),
             "the seal extension carries the x25519 key"
         );
-        // The mesh card's only interface is the gossip binding, whose url
-        // carries the cryptographic identity (no HTTP url).
+    }
+
+    #[test]
+    fn a_peer_card_has_the_gossip_interface_and_the_relay_interface() {
+        let card = super::peer_card(
+            key(),
+            &Nickname::from("calm-otter"),
+            None,
+            "http://127.0.0.1:1/peers/ab",
+        );
         assert_eq!(
             card.supported_interfaces.len(),
-            1,
-            "the card lists one supported interface"
+            2,
+            "the card lists the gossip interface and the relay interface"
         );
         assert_eq!(
             card.supported_interfaces[0].url,
             "ab".repeat(32),
-            "the interface url is the mesh id"
+            "the first interface url is the author key"
         );
-    }
-
-    #[test]
-    fn publish_merge_targets_the_peer_card_path() {
-        let nickname = Nickname::from("calm-otter");
-        let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let card = own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58);
-        let card =
-            serde_json::to_value(card).expect("a test value is plain data and always serializes");
-        // A frame that is never full: the card is one merge.
-        let merges = publish_merges(&key(), &card, |_| Ok(0))
-            .expect("the test card is far below the frame limit");
-        assert_eq!(merges.len(), 1, "one merge is recorded");
-        let merge = &merges[0];
         assert_eq!(
-            merge["peers"][slot()]["card"]["name"],
-            "calm-otter",
-            "the card is merged under the hex of the author key and carries the name"
+            card.supported_interfaces[1].url, "http://127.0.0.1:1/peers/ab",
+            "the second interface is the relay address"
         );
-        assert!(
-            merge["peers"][slot()].get("model").is_none(),
-            "agent-side facts are the agent's own merge, not the daemon's"
+        assert_eq!(
+            card.supported_interfaces[1].protocol_binding, "JSONRPC",
+            "the relay interface speaks JSON-RPC"
         );
     }
 
-    /// A peer that died without a graceful leave keeps its meta entry forever:
-    /// the forgery gate means no survivor can retract it. Reading the document
-    /// alone therefore shows a member that is gone, still carrying whatever
-    /// status it last set, which is what a peer-picking agent goes on.
     #[test]
-    fn absent_peers_names_entries_with_no_live_member() {
+    fn a_peer_card_with_no_seal_key_leaves_the_seal_extension_out() {
+        let card = super::peer_card(key(), &Nickname::from("calm-otter"), None, "http://x/");
+        assert!(
+            card.capabilities
+                .extensions
+                .iter()
+                .all(|ext| !ext.uri.contains("mesh-seal")),
+            "a card never names a seal key that is not known"
+        );
+    }
+
+    /// A peer that died without a graceful leave keeps its meta slice until the gone mark ends,
+    /// still carrying whatever status it last set, which is what a peer-picking agent goes on.
+    #[test]
+    fn absent_peers_names_slices_with_no_live_member() {
         let (live_key, gone_key, own_key) = (
             AuthorKey::from([1; 32]),
             AuthorKey::from([2; 32]),
             AuthorKey::from([3; 32]),
         );
-        let document = serde_json::json!({
-            "peers": {
-                live_key.to_string(): { "status": "idle" },
-                gone_key.to_string(): { "status": "idle" },
-                own_key.to_string(): { "status": "busy" },
-            }
+        let view = serde_json::json!({
+            live_key.to_string(): { "status": "idle" },
+            gone_key.to_string(): { "status": "idle" },
+            own_key.to_string(): { "status": "busy" },
         });
         let live = HashSet::from([live_key]);
 
-        let absent = super::absent_peers(&document, &live, &HashSet::new(), &own_key);
+        let absent = super::absent_peers(&view, &live, &own_key);
 
         assert_eq!(
             absent,
             vec![gone_key.to_string().as_str()],
-            "only the entry with no live peer behind it"
+            "only the slice with no live peer behind it"
         );
     }
 
-    /// The roster lists peers, never self, so our own entry has to be excluded
-    /// explicitly. Without that, every node reports its own card as a ghost.
+    /// The roster lists peers, never self, so our own slice has to be excluded explicitly.
     #[test]
-    fn absent_peers_never_includes_our_own_entry() {
-        let document = serde_json::json!({ "peers": { slot(): { "status": "idle" } } });
-        let live = HashSet::new();
+    fn absent_peers_never_includes_our_own_slice() {
+        let view = serde_json::json!({ slot(): { "status": "idle" } });
         assert!(
-            super::absent_peers(&document, &live, &HashSet::new(), &key()).is_empty(),
-            "a live peer is not reported absent"
+            super::absent_peers(&view, &HashSet::new(), &key()).is_empty(),
+            "our own slice is not reported absent"
         );
     }
 
-    /// A slot named by the nickname of a live member, or of this member, is a graph slot and not a
-    /// ghost; the same slot with no live member behind the name is absent.
+    /// A view with no slice at all (a fresh mesh) is not an error.
     #[test]
-    fn a_slot_named_by_a_live_nickname_is_not_absent() {
-        let own_key = AuthorKey::from([3; 32]);
-        let document = serde_json::json!({
-            "peers": {
-                own_key.to_string(): { "card": { "name": "me" } },
-                "me": { "instance": "g" },
-                "bob": { "instance": "g" },
-                "gone": { "instance": "g" },
-            }
-        });
-        let live_names = HashSet::from(["bob"]);
-
-        let absent = super::absent_peers(&document, &HashSet::new(), &live_names, &own_key);
-
-        assert_eq!(
-            absent,
-            vec!["gone"],
-            "only the slot of a name that no live member holds"
-        );
-    }
-
-    /// A document with no `/peers` map at all (a fresh mesh) is not an error.
-    #[test]
-    fn absent_peers_tolerates_a_document_without_peers() {
-        let live = HashSet::new();
+    fn absent_peers_tolerates_an_empty_view() {
         assert!(
-            super::absent_peers(&serde_json::json!({}), &live, &HashSet::new(), &key()).is_empty(),
-            "a document without peers has no absent peers"
-        );
-    }
-
-    /// The frame that `merge` becomes on a passworded gossip: the automerge change, the `change`
-    /// envelope, the seal under the channel key, the signed channel event.
-    fn passworded_frame_len(merge: &serde_json::Value) -> anyhow::Result<usize> {
-        use habilis_network::ops::doc::{MeshDoc, change_body, encrypt_body};
-        use habilis_network::protocol::{Channel, Identity, MeshId, Message, SymmetricKey};
-
-        let doc = MeshDoc::new_ungated();
-        let Some(change) = doc.build_change(merge, &[9u8; 32])? else {
-            return Ok(0);
-        };
-        let sealed = encrypt_body(&change_body(&change, None)?, &SymmetricKey::from([3u8; 32]))?;
-        let frame = Message::new_channel_event(
-            &MeshId::from("test"),
-            &Nickname::from("calm-otter"),
-            sealed,
-            Channel::Meta,
-        )
-        .sign(&Identity::generate());
-        Ok(frame.wire_len())
-    }
-
-    /// The card of the longest nickname and a relay URL of the real kind.
-    fn worst_case_card(nickname: &Nickname) -> serde_json::Value {
-        let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let mut card =
-            serde_json::to_value(full_card(nickname, AuthorKey::from([0xab; 32]), &seal_b58))
-                .expect("a test value is plain data and always serializes");
-        card["endpoint"] = serde_json::json!({
-            "id": "ab".repeat(32),
-            "relay": "https://euw1-1.relay.n0.iroh-canary.iroh.link./",
-        });
-        card
-    }
-
-    /// The bug of issue 41, measured: the card as one merge is a frame over the limit on a
-    /// passworded gossip. Cut by its real size, each piece fits, with the margin, and the pieces
-    /// together are the whole card.
-    #[test]
-    fn publish_merges_cut_the_card_by_the_measured_frame_and_make_the_same_card() {
-        let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
-        let card = worst_case_card(&nickname);
-        let whole = serde_json::json!({ "peers": { slot(): { "card": card } } });
-        let whole_len =
-            passworded_frame_len(&whole).expect("a JSON frame in the test always has a length");
-        assert!(
-            whole_len > consts::MAX_MESSAGE_SIZE,
-            "the premise of issue 41: the card as one merge is {whole_len} bytes on the wire"
-        );
-
-        let merges = publish_merges(&key(), &card, passworded_frame_len)
-            .expect("the fixture card fields each fit one frame");
-
-        assert!(merges.len() > 1, "a card over the frame is in pieces");
-        for merge in &merges {
-            let len =
-                passworded_frame_len(merge).expect("a JSON frame in the test always has a length");
-            assert!(
-                len + super::FRAME_MARGIN <= consts::MAX_MESSAGE_SIZE,
-                "a frame of {len} bytes leaves no margin"
-            );
-        }
-        let first = &merges[0]["peers"][slot()]["card"];
-        assert!(
-            first.get("capabilities").is_some(),
-            "the capabilities, which carry the seal key, are published first"
-        );
-        let mut rebuilt = serde_json::Map::new();
-        for merge in &merges {
-            let part = merge["peers"][slot()]["card"]
-                .as_object()
-                .expect("the test builds a JSON object for each merge");
-            for (key, value) in part {
-                assert!(
-                    rebuilt.insert(key.clone(), value.clone()).is_none(),
-                    "{key} twice"
-                );
-            }
-        }
-        assert_eq!(
-            serde_json::Value::Object(rebuilt),
-            card,
-            "the rebuilt card matches the original"
-        );
-    }
-
-    /// The pieces arrive in order. No prefix of them but the whole set is served as a card, so a
-    /// reader never takes a card that is still arriving. It holds because the keys of a JSON
-    /// object are sorted here and `version`, a required field, is the last of them.
-    #[test]
-    fn no_prefix_of_the_pieces_but_the_whole_set_is_a_complete_card() {
-        let nickname = Nickname::from("abcdefghij-abcdefghij-abcdefghij");
-        let card = worst_case_card(&nickname);
-        let merges = publish_merges(&key(), &card, passworded_frame_len)
-            .expect("the fixture card fields each fit one frame");
-        assert!(merges.len() > 1, "the premise: the card is in pieces");
-
-        let mut arrived = serde_json::Map::new();
-        for (index, merge) in merges.iter().enumerate() {
-            let part = merge["peers"][slot()]["card"]
-                .as_object()
-                .expect("the test builds a JSON object for each merge");
-            arrived.extend(part.clone());
-            let doc = serde_json::json!({ "peers": { slot(): { "card": arrived } } });
-            assert_eq!(
-                super::complete_card(&doc, &key()).is_some(),
-                index + 1 == merges.len(),
-                "after piece {} of {}",
-                index + 1,
-                merges.len()
-            );
-        }
-    }
-
-    #[test]
-    fn publish_merges_refuse_a_field_that_does_not_fit_a_frame_by_itself() {
-        let card = serde_json::json!({ "description": "x".repeat(4000) });
-        let error = publish_merges(&key(), &card, passworded_frame_len)
-            .expect_err("one field over the frame");
-        assert!(error.to_string().contains("description"), "got: {error}");
-    }
-
-    /// A reader that needs the whole card must not get a card whose later merges are missing.
-    #[test]
-    fn complete_card_serves_a_card_only_when_the_schema_is_whole() {
-        let nickname = Nickname::from("calm-otter");
-        let seal_b58 = bs58::encode([7u8; 32]).into_string();
-        let whole_card =
-            serde_json::to_value(own_card(&nickname, AuthorKey::from([0xab; 32]), &seal_b58))
-                .expect("a test value is plain data and always serializes");
-        let whole = serde_json::json!({ "peers": { slot(): { "card": whole_card } } });
-        assert!(
-            super::complete_card(&whole, &key()).is_some(),
-            "a complete card is recovered"
-        );
-
-        let only_capabilities = serde_json::json!({ "peers": { slot(): { "card": {
-            "capabilities": whole_card["capabilities"],
-        } } } });
-        assert!(
-            super::complete_card(&only_capabilities, &key()).is_none(),
-            "the first piece alone is not served as a card"
-        );
-
-        let none = serde_json::json!({ "peers": {} });
-        assert!(
-            super::complete_card(&none, &key()).is_none(),
-            "a card missing a field is not recovered"
-        );
-    }
-
-    #[test]
-    fn card_error_merge_sets_and_clears_the_reason() {
-        assert_eq!(
-            super::card_error_merge(&key(), Some("too large")),
-            serde_json::json!({ "peers": { slot(): { "card_error": "too large" } } }),
-            "peers read the reason from the meta document to learn why no card was served"
-        );
-        assert_eq!(
-            super::card_error_merge(&key(), None),
-            serde_json::json!({ "peers": { slot(): { "card_error": null } } }),
-            "an RFC 7386 null removes the key"
-        );
-    }
-
-    #[test]
-    fn retract_merge_nulls_the_whole_peer_entry() {
-        let merge = super::retract_merge(&key());
-        assert_eq!(
-            merge,
-            serde_json::json!({ "peers": { slot(): null } }),
-            "an RFC 7386 null must delete the entry itself, not a subtree"
-        );
-    }
-    /// Two members use one nickname. Their entries are two slots, so the card, the seal key and
-    /// the endpoint of one key are never read for the other.
-    #[test]
-    fn the_entry_of_a_key_is_not_the_entry_of_another_key_of_the_same_nickname() {
-        let nickname = Nickname::from("calm-otter");
-        let (first, second) = (AuthorKey::from([1; 32]), AuthorKey::from([2; 32]));
-        let first_seal = bs58::encode([7u8; 32]).into_string();
-        let second_seal = bs58::encode([8u8; 32]).into_string();
-        let mut first_card = serde_json::to_value(own_card(&nickname, first, &first_seal))
-            .expect("a test value is plain data and always serializes");
-        first_card["endpoint"] = serde_json::json!({ "id": "01".repeat(32), "relay": null });
-        let second_card = serde_json::to_value(own_card(&nickname, second, &second_seal))
-            .expect("a test value is plain data and always serializes");
-        let document = serde_json::json!({ "peers": {
-            first.to_string(): { "card": first_card },
-            second.to_string(): { "card": second_card },
-        } });
-
-        assert_eq!(
-            super::peer_seal_key(&document, &first).map(|key| *key.as_bytes()),
-            Some([7u8; 32]),
-            "the seal key of the first key is its own"
-        );
-        assert_eq!(
-            super::peer_seal_key(&document, &second).map(|key| *key.as_bytes()),
-            Some([8u8; 32]),
-            "the seal key of the second key is its own, not the one of the same nickname"
-        );
-        assert!(
-            super::peer_endpoint(&document, &first).is_some()
-                && super::peer_endpoint(&document, &second).is_none(),
-            "only the first key published an endpoint hint"
+            super::absent_peers(&serde_json::json!({}), &HashSet::new(), &key()).is_empty(),
+            "an empty view has no absent peers"
         );
     }
 }

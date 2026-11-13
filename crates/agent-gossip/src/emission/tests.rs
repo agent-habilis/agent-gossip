@@ -214,23 +214,6 @@ fn ready_event_drift_is_present_only_when_stale() {
 }
 
 #[test]
-fn fork_event_json_shape() {
-    use super::OutputEvent;
-    let pubkey = "deadbeef".repeat(8); // 64 hex
-    let json = simple_event::event_json(&OutputEvent::Fork {
-        nickname: nick("alice"),
-        pubkey: pubkey.clone(),
-        seq: 7,
-    })
-    .expect("fork event produces a JSON line");
-    let parsed = parse(&json);
-    assert_eq!(parsed["event"], "fork", "the event field is fork");
-    assert_eq!(parsed["nickname"], "alice", "the nickname field is alice");
-    assert_eq!(parsed["pubkey"], pubkey, "the pubkey field is pubkey");
-    assert_eq!(parsed["seq"], 7, "the seq field is 7");
-}
-
-#[test]
 fn json_self_flag_true() {
     let message = chat_frame("alice", "hi");
     let parsed = parse(&format_msg_json(&message, true, None));

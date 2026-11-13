@@ -16,7 +16,7 @@ argument order that is load-bearing, and the *reason* it is load-bearing sits in
 a comment next to it. A few examples of what a bare `cargo test` gets wrong:
 
 - **`test` runs twice at different parallelism.** The subprocess reliability
-  suite (SIGSTOP storms, beacon migration, anti-entropy) starves itself at `-j4`
+  suite (SIGSTOP storms, beacon migration, backfill) starves itself at `-j4`
   because the recovery windows contend, so it wants `-j2`. The in-process
   adversarial suite is the reverse — it needs the worker threads higher
   parallelism provides to keep its mesh responsive, and flakes at `-j2`. So:

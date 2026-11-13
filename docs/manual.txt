@@ -274,7 +274,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is gossip metadata it self-reports into the meta channel after
               readiness — see the meta merge convention
-              /peers/<pubkey> = {nickname, model, harness, host, cwd}.
+              own entry {nickname, model, harness, host, cwd}.
 
        join [GOSSIP] [OPTIONS]
               Join an existing gossip by its identifier. Long-running.
@@ -535,7 +535,7 @@ COMMANDS
               shape the live JSON stream emits — chat, presence
               joined/left, task legs, state/meta document echoes, AND the
               transient events (ping_report, peer_timeout/return,
-              task_timeout, task_stalled, fork) — each carrying its pre-built display
+              task_timeout, task_stalled) — each carrying its pre-built display
               string, its is_visible print decision, its self flag, and a
               leading seq. So a poller and a stream reader parse one shape
               and can echo display verbatim either way (see "JSON EVENTS").
@@ -707,8 +707,9 @@ COMMANDS
                  "peer_count":3}
 
               pubkey is the author key of the peer in hex. It is the slot of
-              the peer in the meta document, so join a row to its meta entry
-              by pubkey: two peers can share a nickname.
+              the peer in the meta view, so join a row to its meta entry by
+              pubkey. A member admits one key for a nickname, so two different
+              members cannot share a nickname at one observer.
 
               peers are sorted most-recently-seen first. quiet is true for a
               peer the heartbeat sweep evicted after it went silent past the
@@ -748,7 +749,8 @@ COMMANDS
               nickname validation, and the /gossip-status roster.
               The roster does not carry model/harness/host — those are gossip
               metadata each agent self-reports into the meta channel; read
-              them with meta get under /peers/<pubkey> (see meta merge).
+              them with meta get, under the author key of the member (see
+              meta merge).
 
        topology --gossip GOSSIP --nickname NAME
               Print the multihop routing topology — the metric-weighted gossip
@@ -818,19 +820,19 @@ COMMANDS
        state merge --gossip GOSSIP --nickname NAME --merge MERGE
        state get   --gossip GOSSIP --nickname NAME
               Read or change the gossip's shared state — a JSON document the whole
-              gossip shares, separate from the chat log and derived by folding a
-              dedicated, gossiped, signed log of changes. It starts as {} and every
-              member folds the same log to the same document.
+              gossip shares, separate from the chat log. The document is one
+              signed slice for each member, and every member writes only its own
+              slice. It starts as {} and every member derives the same slices.
 
               A gossip has two channels, state and meta (see meta merge / meta get
               below) — the same machinery, differing only by convention: state is
               the task working area; meta holds gossip metadata. Every change to
-              a channel — the daemon's own included — is a JSON merge, and on
-              meta no writer touches another member's /peers entry: agents by
-              convention, agent cards enforced by the forgery gate. The daemon
-              is one more writer under that rule; it merges its agent card into
-              its own /peers/<pubkey> entry on join and merges the entry away
-              (null) on graceful leave, with the same primitive meta merge uses.
+              a channel is a JSON merge into the own slice of the writer, so
+              no writer touches the entry of another member. The daemon
+              writes nothing into meta on join, and the engine removes the
+              entry of a member that leaves gracefully. The entry of a member
+              that crashes stays until the other members drop its quiet key,
+              which takes about 1 hour.
 
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
@@ -840,12 +842,16 @@ COMMANDS
 
               Merge input is RFC 7386-style: an object deep-merges (each key is
               set, a null value deletes that key, nested objects merge
-              recursively). It is translated into one change on the shared
-              automerge CRDT. A non-object TOP-LEVEL merge (a bare scalar, array,
-              or null) is REJECTED — the document root is always an object — but
-              a non-object VALUE nested under a key replaces that key as usual.
-              Because each peer writes only its own subtree, concurrent writers to
-              different keys never clobber; concurrent edits merge conflict-free.
+              recursively). A non-object TOP-LEVEL merge (a bare scalar,
+              array, or null) is REJECTED: the value of a member is always an
+              object. A non-object VALUE nested under a key replaces that key
+              as usual.
+
+              Each member writes only its own slice. The slice is the last
+              signed value of that member, and the author key of the member
+              names it. A merge changes your own slice only, so a concurrent
+              writer never overwrites you. A member that leaves removes its
+              slice.
 
               Arrays are replaced wholesale — RFC 7386 has no array append, so a
               merge naming an array key replaces the whole array. Model a mutable
@@ -856,43 +862,40 @@ COMMANDS
               state merge prints {"ok":true} on success. It prints
               {"ok":false,"error":…} on a failure, and exits non-zero on any
               {"ok":false}. The shared state can also refuse a write: see
-              "SIZE LIMITS AND REFUSALS" below. state get prints the current
-              document:
+              "SIZE LIMITS AND REFUSALS" below. state get prints one entry for
+              each member, keyed by the author key of the member in lowercase
+              hex. It does not print one merged document:
 
-                {"ok":true,"document":{…}}
+                {"ok":true,"document":{"<author hex>":{…},"<author hex>":{…}}}
 
-              ORDERING. The shared state is a CRDT: members converge to the
-              byte-identical document regardless of arrival order. Members
-              react via the state event on the stream (see "JSON EVENTS");
-              your own change is not pushed back, so a read→change loop needs
-              no echo handling — for turn-based use, keep a turn marker in the
-              document (get → check → merge). On join, give anti-entropy a
-              moment to backfill before the first state get.
+              To read the value of a member, read the entry of its author key.
+              The author key is the pubkey of the member in a message or in
+              the roster. The author key changes on each start of the daemon,
+              so the entry of a member moves to a new hex key when it restarts.
+
+              A merge whose top level is not an object prints
+              {"ok":false,"error":"the merge must be a JSON object"} and
+              exits 1. It has no reason and no hint.
+
+              ORDERING. A newer slice of an author replaces its older slice.
+              Two slices of one version keep the one with the lower hash. A
+              member sends its own slice to a newcomer when it joins, and the
+              members compare their slices again at an interval, so a write
+              reaches a member that was away. Members react via the state
+              event on the stream (see "JSON EVENTS"); your own change is not
+              pushed back, so a read→change loop needs no echo handling. On
+              join, give the backfill a moment before the first state get.
 
               SIZE LIMITS AND REFUSALS. The shared state has a size limit, so
-              that a gossip can run for months. Two counts decide: the bytes of
-              the changes, and the operations of the history. A delete is one
-              operation too.
-                - The members rebuild the state from a seed (see "THE CUT")
-                  at about 3 MiB or about 20000 operations.
-                - The state refuses a write that adds a value at about 3.4 MiB
-                  or about 22700 operations, the first that comes. A write of
-                  the same value counts as an add. Large values reach the byte
-                  limit first: strings of 100 bytes reach the cut at about
-                  14000 paths.
-                - The state does not refuse a delete (a null merge) at this
-                  limit. At the memory limit (about 4 MiB or 26700
-                  operations) it refuses every write, deletes too. Then wait
-                  for the next cut.
-                - A write nests 12 levels of keys at most.
-                - One write must fit one message of 3840 bytes. The longest
-                  string value that a write can carry falls with a password
-                  and a little with the depth of its key. Measured with a
-                  nickname of 12 characters: about 1350 bytes at depth 1 and
-                  about 1300 bytes at depth 12 with no password; about 940
-                  bytes at depth 1 and about 900 bytes at depth 12 with a
-                  password. Split a larger value into smaller values under
-                  their own keys.
+              that a gossip can run for months.
+                - The whole slice of a member, all its keys together, must fit
+                  one message of 3840 bytes. The value has less space than that:
+                  the envelope, the gossip id and the nickname take a part, and
+                  a password takes a part. A larger write is refused. Delete
+                  keys of your own slice with a null merge, or store less.
+                - A channel holds the slices of 1024 members at most.
+                - A member that writes faster than its burst and its rate allow
+                  is refused. Write again later, and write less often.
               A refused write changes nothing. state merge prints
               {"ok":false,"error":TEXT,"reason":REASON,"hint":HINT} and exits
               non-zero. TEXT is for a person. REASON is stable, for a script.
@@ -902,41 +905,29 @@ COMMANDS
               invalid-params error with TEXT, the reason and the hint in its
               message.
 
-                reason       TEXT starts with, and the way out
-                not_synced   "the shared state has not synced yet; retry in a
-                             few seconds". Wait, then write again.
-                state_full   "the shared state is full: …". Delete keys with a
-                             null merge, or wait for the next cut, then write
-                             again.
-                too_deep     "the value is nested N levels deep and the shared
-                             state allows 12". Use fewer levels: key the
-                             entries by an id in one object.
-                too_large    "a value of the write is too large for the shared
-                             state: N bytes with its keys; a value and its keys
-                             must fit one frame". Split the value.
-                clock_ahead  "the clock of the shared state is ahead of this
-                             machine time: retry in a few seconds". Wait a
-                             few seconds, then write again. Check the system
-                             clock of this node and of the peers.
-
-              FIRST SYNC. A member that joins a gossip holds its own writes
-              until it has synced, so that its clock cannot put a write below
-              an earlier write. Until then the member refuses every write with
-              not_synced. The wait ends when a peer answers the first request
-              of the member, which takes a few seconds. It ends after 30
-              seconds at the latest, with one warning in the log. The member
-              that created the gossip never waits. A state get never waits.
-
-              THE CUT. When the state grows, one member rebuilds it from a
-              seed: a short chain of changes that holds the live document and
-              no history. The other members take the seed after about 5
-              minutes. Under load this can happen every few minutes. You can
-              see three effects. The size of the state falls after a cut. Your
-              member sends again a write that you made while the cut ran, so
-              the cut does not lose it. A key that you deleted comes back in
-              two cases only: more than 1024 later deletes pushed its mark out
-              of the seed, or its path is longer than 256 bytes. In both cases,
-              delete the key again. A browser member never builds a seed.
+                reason            The cause, and the way out
+                too_large         The slice of the member is too large. Delete
+                                  keys of your own slice with a null merge, or
+                                  store less.
+                rate_limited      The member wrote too often. Wait a few
+                                  seconds, then write again, and write less
+                                  often.
+                too_many_authors  The channel holds 1024 members already. Wait
+                                  until a member that left drops out, then
+                                  write again.
+                gone_key          The key of this run is gone, because this
+                                  run already left or was replaced. Leave the
+                                  gossip and join again.
+                malformed         The engine could not build the slice body.
+                                  Report a bug.
+                wrong_channel     The write is for another channel. Use state
+                                  merge for state and meta merge for meta.
+                draft_mismatch    The write is not the frame that it claims.
+                                  Write again. If it repeats, report a bug.
+                stale_draft       Another write of this member came first.
+                                  Write again.
+                seal              The engine could not seal the write. Write
+                                  again. If it repeats, report a bug.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME
@@ -946,42 +937,36 @@ COMMANDS
               stream). Use it for gossip metadata rather than the task itself.
 
               meta get answers {"ok":true,"document":{...},"absent":[...]}.
-              absent names the /peers entries with no active member behind
-              them. A slot is the hex of an author key, or the nickname of a
-              live member (the graph skills write that form); a slot of
-              either form with a live member behind it is not listed. Only a
-              peer can retract its own entry, so one that died
-              without leaving gracefully stays in the document indefinitely,
-              still reporting whatever status it last set. The document is
-              never trimmed — a returning peer merges into its own entry —
-              so absent is the signal that an entry is history rather than a
-              peer you can give work to.
+              document has one entry for each member, keyed by the author key
+              of the member in lowercase hex. absent lists the keys with no
+              active member behind them. A member that leaves gracefully
+              sends a tombstone, and its entry goes. A member that crashes
+              or is killed keeps its entry until the other members drop its
+              quiet key, which takes about 1 hour. Until then the entry still
+              reports whatever status it last set, so absent is the signal
+              that an entry is history rather than a peer you can give work
+              to. Your own entry is never listed.
 
-              By convention agents self-report what they run on under
-              /peers/<pubkey>, e.g.
+              By convention agents self-report what they run on in their own
+              entry, at the top level of it, e.g.
 
                 agent-gossip meta merge --gossip GOSSIP --nickname NAME \
-                  --merge '{"peers":{"PUBKEY":{"nickname":"NAME","model":"Opus 4.8",
+                  --merge '{"nickname":"NAME","model":"Opus 4.8",
                             "harness":"Claude Code","host":"studio-mbp-01",
-                            "cwd":"~/src/app"}}}'
+                            "cwd":"~/src/app","status":"idle"}'
 
-              PUBKEY is the author key from the ready output, 64 lowercase hex
-              characters. NAME is the nickname, a label inside the entry.
+              NAME is the nickname, a label inside the entry. The author key
+              of your entry is the one in the ready output, 64 lowercase hex
+              characters. It changes when the daemon starts again.
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. cwd is the working directory,
-              with $HOME shortened to ~, so peers can tell which folder
-              each agent works in. /peers is an object keyed by public key,
-              and a merge writes only its own key, so each agent owns its own
-              entry and never clobbers another's (set the key to null to clear
-              it). The /gossip-status roster reads model/harness/host/cwd from here.
-              A peer's whole /peers/<pubkey> entry is removed when it leaves
-              gracefully. A peer that vanishes without a goodbye (crash, kill)
-              leaves a stale entry behind. A rejoin makes a new entry under a new
-              key, so the old entry stays until it is retracted (set its key
-              to null). See state merge /
-              state get above for the full semantics — they apply verbatim
-              to meta.
+              which agents share a box. cwd is the working directory, with
+              $HOME shortened to ~, so peers can tell which folder each agent
+              works in. A merge changes only your own entry, so each agent
+              owns its entry and never clobbers another's (set a key to null
+              to clear it). The /gossip-status roster reads
+              model/harness/host/cwd from here. See state merge / state get
+              above for the full semantics: they apply to meta.
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
@@ -1177,8 +1162,9 @@ A2A
 
               iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
               all members inside the signed wire frame (gossip wire version
-              14.0). The frame — signing, dedup, anti-entropy, presence,
-              sharding — is replication machinery below the A2A layer,
+              18.0). The frame — signing, dedup, presence, sharding, and the
+              backfill of the state and meta slices — is replication machinery
+              below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
               bindings. Chat rides two tags that differ only in addressing:
               a2a_broadcast reaches every member and declares the
@@ -1200,8 +1186,8 @@ A2A
               the session state file (chmod 600) and the ready event
               carries a2a_port. The AgentCard is served unauthenticated at
               /.well-known/agent-card.json (own) and
-              /peers/<peer>/.well-known/agent-card.json (a member's, from
-              the meta channel); every RPC requires
+              /peers/<peer>/.well-known/agent-card.json (a member's, built by
+              this daemon); every RPC requires
               Authorization: Bearer <token>. <peer> is a nickname or the
               64-digit hex of an author key. A nickname names the one live
               member that uses it, or else the one quiet member. If two or
@@ -1209,8 +1195,9 @@ A2A
               the hex key.
 
               URL = agent: POST /mesh (or /) is the mesh-collective
-              broadcast endpoint, POST /peers/<nick> a peer (a nickname
-              that two or more members use gives an error).
+              broadcast endpoint, POST /peers/<nick> or /peers/<hex key> a
+              peer (a nickname that two or more members use gives an
+              error: use the hex key).
               Methods: SendMessage, GetTask, ListTasks, CancelTask,
               plus the mesh-state extension methods mesh/state.get,
               mesh/state.merge, mesh/meta.get, mesh/meta.merge. Unlike
@@ -1220,17 +1207,16 @@ A2A
               Streaming and push notifications are declared off in the
               card (capabilities).
 
-       Every member's daemon publishes its AgentCard — the A2A
-       self-description (A2A v1.0: supportedInterfaces, capabilities,
-       declared extensions, skills, and the member's Ed25519 identity in the
-       gossip interface url, the bare <pubkey>) — into the meta channel at
-       /peers/<pubkey>/card on join as a minimal card (no description,
-       skills or modes). `meta get` returns that minimal card. The full
-       card comes from /peers/<peer>/.well-known/agent-card.json on the
-       local A2A binding. A daemon of version 0.12.10 serves the stored
-       minimal card as it is, so a new peer shows empty skills and modes
-       there until the local serving daemon is upgraded too. So peer
-       discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
+       The AgentCard of a member is not in the meta channel: a card does not
+       fit one sealed slice. The local daemon builds the card of a member
+       from its roster: the nickname and the author key of the member, and
+       the description, the skills, the modes and the version of THIS daemon.
+       Nothing comes from the member.
+       /peers/<peer>/.well-known/agent-card.json on the local A2A binding
+       serves it, with the gossip interface (the bare
+       <pubkey> of the member, its Ed25519 identity) and a relaying JSON-RPC
+       interface at /peers/<hex key> on this binding. A key that no member
+       holds gives an error. So peer discovery needs no HTTP anywhere. To bridge an off-gossip A2A HTTP
        server to a peer, see `a2a expose` / `a2a connect`. See
        docs/a2a-binding.md in the repository for the custom-binding
        conformance statement.
@@ -1295,7 +1281,7 @@ JSON EVENTS
                         display verbatim when true, show nothing when false.
                         Chat, presence joined/left, ping_report, and
                         peer_timeout/return are visible; state/meta document
-                        echoes, task legs, fork, presence alive beats, and
+                        echoes, task legs, presence alive beats, and
                         operational events are not (they are context — read
                         the documents on demand with state get / meta get).
                         State/meta echoes, and your own task echoes, are
@@ -1318,14 +1304,6 @@ JSON EVENTS
 
               pubkey is the author key of the peer, in hex. Two peers can
               share a nickname, so it tells which of them went quiet.
-
-       fork   Equivocation alert: one signing key (pubkey) produced two
-              different messages at the same sequence number, which proves a
-              fork. Emitted once per offending key; both messages are kept
-              (no auto-resolution). Drop or quarantine the key.
-
-                 {"event":"fork","nickname":"word-word","pubkey":"<hex>",
-                  "seq":42}
 
        nickname_held
               Another member with another key uses the nickname of this
@@ -1462,33 +1440,35 @@ JSON EVENTS
                   "display":"💬️ task stalled · `<peer>` has not polled for 35 min"}
 
        state  The gossip's shared state changed (see the state command). Carries
-              the change (merge — the applied merge document) AND the newly-
-              derived full document, so a member reacts in one turn without a
-              separate read. A distinct top-level event — branch on "event".
+              the view of the state AFTER the change: one slice for each member,
+              keyed by the author key in hex. A member reacts in one turn, with
+              no separate read. A distinct top-level event — branch on "event".
 
                  {"event":"state","id":"<uuid>","type":"state","gossip":"<hash>",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "merge":{"turn":"b"},
-                  "document":{"turn":"b"},
+                  "merge":null,
+                  "document":{"<hex of author>":{"turn":"b"}},
                   "display":"💬️ `<nick>` changed shared state","self":false}
 
-              merge     The RFC 7386 merge document that was applied (the delta).
-              document  The full derived document AFTER the change — what you
-                        read to decide your reaction.
+              merge     Always null. The slice of an author replaces its old
+                        slice, so the event holds no delta.
+              document  The view AFTER the change: one slice for each author,
+                        keyed by the author key in hex. Read it to decide
+                        your reaction.
               self      true if YOU authored it. Your own change surfaces here
                         and in poll/fetch, but is NOT pushed into your turn —
                         only a peer's change wakes you, so a read→change loop
                         does not echo. To act only on your turn, put a turn
-                        marker in the document and check it.
+                        marker in your own slice and check it.
 
        meta   The gossip's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta",
-              but WITHOUT the document field: the meta document holds every
-              peer's minimal card, so read it on demand with `meta get`. The
-              merge and self fields and the reaction contract are the same.
+              but WITHOUT the document field: read the view on demand with
+              `meta get`. The merge and self fields and the reaction contract
+              are the same.
               Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
-              by convention a /peers/<pubkey> change is a peer self-reporting what
+              by convention a change of an entry is a peer self-reporting what
               it runs on, which the gossip skills surface in chat as a line such
               as 💬️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
               identity rendered as an inline code span, read from the merge or
@@ -1657,7 +1637,7 @@ MCP SERVER
        apply_state_merge
               Change the shared state. Args: merge (an RFC 7386 JSON Merge Patch
               — a JSON object). Returns {"ok":true} on apply. A refusal of the
-              state (not synced, full, too deep, too large) is an
+              state (too large, rate limited, too many authors, gone key) is an
               invalid-params error: see "SIZE LIMITS AND REFUSALS" in the state
               merge command for the text, the reason and the way out. See the
               state merge command for the merge semantics; peers react to the
@@ -1670,7 +1650,7 @@ MCP SERVER
        apply_meta_merge
               The meta-channel counterpart of apply_state_merge (same args,
               same return, same rules) — a second shared-state channel for gossip
-              metadata, by convention /peers/<pubkey> = {nickname, model, harness,
+              metadata, by convention the own entry {nickname, model, harness,
               host} that each agent self-reports. Peers react to the resulting
               meta event.
 

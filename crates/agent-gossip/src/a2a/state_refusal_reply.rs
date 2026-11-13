@@ -1,4 +1,4 @@
-use habilis_network::runtime::{SendError, StateRefusal};
+use habilis_network::runtime::{SendError, SliceError};
 use serde_json::{Value, json};
 
 /// What the app tells a caller whose write the shared state refused: the text of the engine, a
@@ -17,26 +17,36 @@ impl StateRefusalReply {
             return None;
         };
         let (reason, hint) = match refusal {
-            StateRefusal::NotSynced => (
-                "not_synced",
-                "wait for the first sync, then write again: it ends when a peer answers, and after 30 seconds at the latest",
-            ),
-            StateRefusal::Full { .. } => (
-                "state_full",
-                "delete keys with a null merge, or wait for the next cut of the state; at the memory limit the state refuses deletes too, so wait for the cut; then write again",
-            ),
-            StateRefusal::TooDeep { .. } => (
-                "too_deep",
-                "use fewer levels: key the entries by an id in one object",
-            ),
-            StateRefusal::TooLarge { .. } => (
+            SliceError::TooLarge { .. } => (
                 "too_large",
-                "split the value into smaller values under their own keys",
+                "delete keys of your own slice with a null merge, or store less",
             ),
-            StateRefusal::ClockAhead => (
-                "clock_ahead",
-                "wait a few seconds and write again; check the system clock of this node and of the peers",
+            SliceError::RateLimited => (
+                "rate_limited",
+                "wait a few seconds and write again, and write less often",
             ),
+            SliceError::TooManyAuthors { .. } => (
+                "too_many_authors",
+                "wait until a member that left drops out of the shared state, then write again",
+            ),
+            SliceError::GoneKey => (
+                "gone_key",
+                "the key of this run is gone, because this run already left or was replaced: leave the gossip and join again",
+            ),
+            SliceError::Malformed => (
+                "malformed",
+                "the engine could not build the slice body: report a bug",
+            ),
+            SliceError::WrongChannel => (
+                "wrong_channel",
+                "write to the channel that the command names, `state` or `meta`",
+            ),
+            SliceError::DraftMismatch => (
+                "draft_mismatch",
+                "write again; if it repeats, report it as a bug",
+            ),
+            SliceError::StaleDraft => ("stale_draft", "write again: another write came first"),
+            SliceError::Seal => ("seal", "write again; if it repeats, report a bug"),
             _ => ("refused", "write again later"),
         };
         Some(Self {
@@ -70,11 +80,11 @@ impl StateRefusalReply {
 
 #[cfg(test)]
 mod tests {
-    use habilis_network::runtime::{SendError, StateRefusal};
+    use habilis_network::runtime::{SendError, SliceError};
 
     use super::StateRefusalReply;
 
-    fn reply_of(refusal: StateRefusal) -> StateRefusalReply {
+    fn reply_of(refusal: SliceError) -> StateRefusalReply {
         let error = anyhow::Error::from(SendError::State(refusal));
         StateRefusalReply::of(&error).expect("the error was built from a SendError::State")
     }
@@ -83,44 +93,32 @@ mod tests {
     fn each_refusal_has_its_text_a_reason_and_a_way_out() {
         let cases = [
             (
-                StateRefusal::NotSynced,
-                "the shared state has not synced yet; retry in a few seconds",
-                "not_synced",
-                "30 seconds",
-            ),
-            (
-                StateRefusal::Full {
-                    used: 23_000,
-                    limit: 22_666,
-                    what: "operations",
+                SliceError::TooLarge {
+                    bytes: 3_000,
+                    limit: 2_048,
                 },
-                "the shared state is full: 23000 of 22666 operations; a write that adds a value is refused, also with the same value; delete keys with a null merge to free space, or wait for the next cut",
-                "state_full",
-                "null merge",
-            ),
-            (
-                StateRefusal::TooDeep {
-                    depth: 13,
-                    limit: 12,
-                },
-                "the value is nested 13 levels deep and the shared state allows 12",
-                "too_deep",
-                "fewer levels",
-            ),
-            (
-                StateRefusal::TooLarge { bytes: 3_000 },
-                "a value of the write is too large for the shared state: 3000 bytes with its keys; a value and its keys must fit one frame",
                 "too_large",
-                "smaller values",
+                "store less",
             ),
+            (SliceError::RateLimited, "rate_limited", "write less often"),
             (
-                StateRefusal::ClockAhead,
-                "the clock of the shared state is ahead of this machine time: retry in a few seconds",
-                "clock_ahead",
-                "system clock",
+                SliceError::TooManyAuthors { limit: 1_024 },
+                "too_many_authors",
+                "drops out",
             ),
+            (SliceError::GoneKey, "gone_key", "join again"),
+            (SliceError::Malformed, "malformed", "report a bug"),
+            (
+                SliceError::WrongChannel,
+                "wrong_channel",
+                "`state` or `meta`",
+            ),
+            (SliceError::DraftMismatch, "draft_mismatch", "report it"),
+            (SliceError::StaleDraft, "stale_draft", "came first"),
+            (SliceError::Seal, "seal", "report a bug"),
         ];
-        for (refusal, text, reason, way_out) in cases {
+        for (refusal, reason, way_out) in cases {
+            let text = refusal.to_string();
             let reply = reply_of(refusal);
             assert_eq!(reply.text, text, "the text is the one of the engine");
             assert_eq!(reply.reason, reason, "the reason is stable");

@@ -1,3 +1,8 @@
+> Status: this note describes the design before PR 81 of agent-gossip. The card left the
+> meta channel, and the engine now binds a slice to the key that signed it. The sections about
+> `/peers/<pubkey>/card`, the seal key in the card and the card gate describe a state that no
+> longer exists. Read them as history.
+
 # Nicknames are not identities
 
 Every party check in the A2A layer compares nicknames. A nickname is a

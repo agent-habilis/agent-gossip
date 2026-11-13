@@ -26,8 +26,7 @@ async fn served_metadata(
 async fn get_task_shows_the_waiting_reason_until_the_next_status() {
     let mut alice = InProcNode::create("t-wait").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-wait-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let response = alice.create_task("t-wait-bob", "port the parser").await;
     let task_id: TaskId = response["result"]["task"]["id"]

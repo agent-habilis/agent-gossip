@@ -153,9 +153,10 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     refuses_wrong_token(&pair);
     echoes_and_delivers(&pair);
     advertises_peer_relay(&pair);
+    creates_a_task_at_the_relay_address_of_the_card(&pair);
     creates_and_lists_task(&pair);
     mirrors_mesh_state(&pair);
-    refuses_a_state_that_nests_too_deep(&pair);
+    refuses_a_state_too_large_for_its_slice(&pair);
     serves_extended_card(&pair);
     refuses_push_config(&pair, &card);
 
@@ -251,11 +252,16 @@ fn advertises_peer_relay(pair: &BindingPair) {
     assert_eq!(peer_card_status, 200, "peer card must be served");
     let peer_card: Value = serde_json::from_str(&peer_card)
         .expect("a relayed peer card keeps the JSON form it was published in");
+    // The relay interface names the exact key of the member, the url of the gossip interface.
+    let member_key = peer_card["supportedInterfaces"][0]["url"]
+        .as_str()
+        .expect("the first interface of a peer card is the gossip interface")
+        .to_owned();
     let is_relay_interface = |iface: &Value| {
         iface["protocolBinding"] == "JSONRPC"
             && iface["url"]
                 .as_str()
-                .is_some_and(|url| url.contains("/peers/a2a-peer"))
+                .is_some_and(|url| url.ends_with(&format!("/peers/{member_key}")))
     };
     let advertises_relay = peer_card["supportedInterfaces"]
         .as_array()
@@ -263,6 +269,39 @@ fn advertises_peer_relay(pair: &BindingPair) {
     assert!(
         advertises_relay,
         "peer card advertises the relaying JSONRPC interface: {peer_card}"
+    );
+}
+
+/// The relay address in a peer card works: a `SendMessage` posted to it creates a task on the
+/// member that the card names.
+fn creates_a_task_at_the_relay_address_of_the_card(pair: &BindingPair) {
+    let (_status, card) = get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
+    let card: Value = serde_json::from_str(&card).expect("a peer card is JSON");
+    let interfaces = card["supportedInterfaces"].as_array();
+    let relay = interfaces.and_then(|all| {
+        all.iter()
+            .find(|iface| iface["protocolBinding"] == "JSONRPC")
+    });
+    let relay_url = relay
+        .and_then(|iface| iface["url"].as_str())
+        .expect("the card advertises a relay interface at the local binding");
+    let (_, relay_path) = relay_url
+        .split_once(&format!("127.0.0.1:{}", pair.port))
+        .expect("the relay interface points at the local binding");
+    let task = rpc(RpcCall {
+        port: pair.port,
+        path: relay_path,
+        token: &pair.token,
+        method: "SendMessage",
+        params: &serde_json::json!({ "message": {
+            "messageId": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+            "role": "ROLE_USER",
+            "parts": [{ "text": "reach the member by its relay address" }],
+        }}),
+    });
+    assert_eq!(
+        task["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
+        "a task created at the relay address of the card comes back submitted: {task}"
     );
 }
 
@@ -336,22 +375,23 @@ fn mirrors_mesh_state(pair: &BindingPair) {
         method: "mesh/state.get",
         params: &serde_json::json!({}),
     });
-    assert_eq!(doc["turn"], "a2a", "the document keeps the a2a turn");
+    assert!(
+        doc.as_object()
+            .is_some_and(|slices| slices.values().any(|slice| slice["turn"] == "a2a")),
+        "the view keeps the a2a turn in a slice: {doc}"
+    );
 }
 
 /// A refusal of the shared state is the fault of the caller: invalid params, with the text, the
 /// reason and the way out in the message.
-fn refuses_a_state_that_nests_too_deep(pair: &BindingPair) {
-    let deep = (0..13).fold(
-        serde_json::json!(1),
-        |inner, _| serde_json::json!({ "a": inner }),
-    );
+fn refuses_a_state_too_large_for_its_slice(pair: &BindingPair) {
+    let large = serde_json::json!({ "note": "x".repeat(5_000) });
     let (status, response) = post(
         pair.port,
         "/mesh",
         &pair.token,
         &serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "mesh/state.merge", "params": { "merge": deep }
+            "jsonrpc": "2.0", "id": 1, "method": "mesh/state.merge", "params": { "merge": large }
         }),
     );
     assert_eq!(
@@ -366,9 +406,9 @@ fn refuses_a_state_that_nests_too_deep(pair: &BindingPair) {
         .as_str()
         .expect("a JSON-RPC error always has a message string");
     assert!(
-        message.starts_with("the value is nested 13 levels deep and the shared state allows 12")
-            && message.contains("reason: too_deep")
-            && message.contains("fewer levels"),
+        message.starts_with("the body has ")
+            && message.contains("reason: too_large")
+            && message.contains("null merge"),
         "the message carries the text, the reason and the way out: {message}"
     );
 }

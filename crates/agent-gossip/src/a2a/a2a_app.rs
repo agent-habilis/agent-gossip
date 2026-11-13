@@ -18,6 +18,7 @@ use tokio::sync::oneshot::{Receiver, Sender};
 use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_binding::A2aBinding;
+use crate::a2a::repair_budget::RepairBudget;
 use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
@@ -117,12 +118,12 @@ pub(crate) struct A2aApp {
     /// the skill owns the content. Third-party relays never insert here.
     pub tasks: HashMap<TaskId, TaskRecord>,
     /// Tasks the sweep reaped after they closed, with their peer and last
-    /// state. The record goes 2 min after close, but anti-entropy can serve a
+    /// state. The record goes 2 min after close, but a relay can deliver a
     /// leg of it hours later, and the peer can still ask for the task.
     pub closed_tasks: ClosedTasks,
     /// `Message::dedup_key` of every chat line surfaced, the same
     /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
-    /// a bounded count of frames, and anti-entropy then serves the line again.
+    /// a bounded count of frames, and a relay can then deliver the line again.
     pub surfaced_chat: BoundedFifoSet<DedupKey>,
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
     /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
@@ -178,25 +179,24 @@ pub(crate) struct A2aApp {
     /// enters it when the peer got it, and never before an earlier leg has been settled: the
     /// record then holds only what the peer got, in the order the peer got it.
     own_legs: VecDeque<QueuedLeg>,
-    /// Our own content legs whose send has no outcome yet. Each enters the message log only if
-    /// it was sent: anti-entropy re-sends what the log holds, so a leg whose send failed would
-    /// otherwise reach the peer after the user was told it failed.
+    /// Our own content legs whose send has no outcome yet. Each enters the dev log and the shard
+    /// cache only if it was sent: a repair ask is served from the cache, so a leg whose send failed
+    /// would otherwise reach the peer after the user was told it failed.
     pub(crate) unsent_legs: Vec<UnsentLeg>,
     /// The id and the addressee of each directed frame and task message we sent.
     /// Frame ids ride in cleartext headers, so any member can name one: a
     /// receipt counts only from the peer the frame went to.
     pub(crate) sent_refs: BoundedFifoSet<(String, AuthorKey)>,
-    /// Why our own card is not published, while it is not: the last publish failed. Told to the
-    /// other members through `/peers/<nick>/card_error`, and retried on the ticks that the
-    /// backoff allows.
-    pub(crate) card_error: Option<String>,
-    /// Ticks to wait before the next retry of the card, and the wait of the retry after it,
-    /// which doubles at each failure.
-    pub(crate) card_retry_in: u32,
-    pub(crate) card_retry_wait: u32,
+    /// How many `shard/repair` asks we serve in a window, by member and in all. The table holds
+    /// at most 32 keys and is cleared every 5 s, so it needs no other bound.
+    pub(crate) repair_budget: RepairBudget,
+    /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only: it
+    /// proves that a repair ask was served, whatever else delivers the body.
+    #[cfg(feature = "adversarial")]
+    pub(crate) shards_resent: usize,
 }
 
-/// Own frames that enter the message log once `sent` resolves to true.
+/// Own frames that enter the dev log and the shard cache once `sent` resolves to true.
 pub(crate) struct UnsentLeg {
     pub(crate) frames: Vec<Verified>,
     /// A big shard group's wire frames, for the `shard/repair` cache.
@@ -270,9 +270,9 @@ impl A2aApp {
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            card_error: None,
-            card_retry_in: 0,
-            card_retry_wait: 0,
+            repair_budget: RepairBudget::new(Instant::now()),
+            #[cfg(feature = "adversarial")]
+            shards_resent: 0,
         }
     }
 
@@ -301,9 +301,9 @@ impl A2aApp {
             own_legs: VecDeque::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
-            card_error: None,
-            card_retry_in: 0,
-            card_retry_wait: 0,
+            repair_budget: RepairBudget::new(Instant::now()),
+            #[cfg(feature = "adversarial")]
+            shards_resent: 0,
         }
     }
 
@@ -312,7 +312,8 @@ impl A2aApp {
     pub(crate) fn admit_own_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.own_legs.len() < tuning::own_legs_cap(),
-            "{} own task legs still wait for their send, so this leg was not sent",
+            "{} own task legs still wait for their send (limit {}), so this leg was not sent",
+            self.own_legs.len(),
             tuning::own_legs_cap()
         );
         self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
@@ -323,10 +324,17 @@ impl A2aApp {
     pub(crate) fn admit_unsent_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.unsent_legs.len() < tuning::unsent_legs_cap(),
-            "{} own content legs still wait for their send, so this leg was not sent",
+            "{} own content legs still wait for their send (limit {}), so this leg was not sent",
+            self.unsent_legs.len(),
             tuning::unsent_legs_cap()
         );
         self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
+    }
+
+    /// Count `count` cached shard frames that this node re-sent to a requester.
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn note_shards_resent(&mut self, count: usize) {
+        self.shards_resent += count;
     }
 
     /// Say whether a call with a file may add a blob group to `task`: a task holds at most

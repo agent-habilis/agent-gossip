@@ -43,27 +43,24 @@ async fn multishard_message_reassembles_into_one() {
 }
 
 /// A body past the old 16-shard ceiling (~60 KB) still splits and
-/// reassembles — the shard count is no longer capped — and its shards skip
-/// the message log (big groups must not evict the anti-entropy history), so
-/// the surfaced logical body is the only trace.
+/// reassembles — the shard count is no longer capped — and the surfaced logical
+/// body is the only trace.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_message_past_the_old_cap_reassembles() {
     let mut alice = InProcNode::create("mp-big").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-big-bob").await;
     // Mesh first: an unmeshed multipart send buffers whole in the (64-slot)
     // pending-outbound queue, and ~55 shards would overflow it.
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
-    bob.broadcast("warmup-back").await;
-    assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
+    common::warm_up(&alice, &mut [&mut bob]).await;
+    common::warm_up(&bob, &mut [&mut alice]).await;
 
     // ~200 KB needs ~55 shards — well past the old 16-shard refusal.
     let big = "0123456789".repeat(20 * 1024);
     let id = alice.broadcast(&big).await;
 
-    // `BIG_BODY_TIMEOUT`, not `MSG_TIMEOUT`: past 16 shards the group skips the
-    // message log, so a dropped shard heals only through the (deliberately lazy)
-    // `shard/repair` round — which cannot even begin inside a 1-minute budget.
+    // `BIG_BODY_TIMEOUT`, not `MSG_TIMEOUT`: a dropped shard heals only through the
+    // (deliberately lazy) `shard/repair` round — which cannot even begin inside a
+    // 1-minute budget.
     assert!(
         bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
         "the reassembled >16-shard body never arrived"
@@ -80,59 +77,108 @@ async fn multishard_message_past_the_old_cap_reassembles() {
     bob.leave().await;
 }
 
-/// A big (unlogged) group's heal path is the `shard/repair` RPC: the author
-/// caches its outbound shard frames and re-delivers the ones a receiver names
-/// as missing. Exercise the serve side end-to-end over the real RPC binding.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shard_repair_reserves_cached_big_group_frames() {
-    let mut alice = InProcNode::create("mp-rep").await;
-    let mut bob = InProcNode::join(&alice.mesh, "mp-rep-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
-    bob.broadcast("warmup-back").await;
-    assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
+#[cfg(feature = "adversarial")]
+mod shard_repair {
+    use std::time::{Duration, Instant};
 
-    // A >16-shard body: alice caches its frames for repair.
-    let big = "0123456789".repeat(20 * 1024); // ~200 KB, ~55 shards
-    let id = alice.broadcast(&big).await;
-    // Unlogged group: a lost shard heals only via `shard/repair`, which needs
-    // longer than `MSG_TIMEOUT` to even fire. See `BIG_BODY_TIMEOUT`.
-    assert!(
-        bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
-        "big body arrived"
-    );
+    use agent_gossip::Nickname;
+    use agent_gossip::api::A2aCallParams;
+    use agent_gossip_test_fixtures as common;
+    use common::{BIG_BODY_TIMEOUT, InProcNode};
 
-    // Bob asks alice to re-send two shards of that group (the group id is the
-    // logical message id). Bob already holds them — dedup will drop the
-    // re-delivery — but the serve side must find and re-send them.
-    let alice_nick = alice.nickname.clone();
-    let response = bob
-        .a2a_call(
-            &alice_nick,
-            "shard/repair",
-            serde_json::json!({ "group": id.as_str(), "missing": [0, 5] }),
-        )
-        .await;
-    assert_eq!(
-        response["result"]["resent"], 2,
-        "the author re-served the cached frames: {response}"
-    );
+    /// Send a `shard/repair` ask and check that the call times out: the ask has no reply.
+    async fn ask_without_reply(requester: &InProcNode, author: &str, params: serde_json::Value) {
+        let ask = A2aCallParams::new(
+            Nickname::try_new(author).expect("the nickname of a node is valid"),
+            "shard/repair".to_owned(),
+            params,
+            Duration::from_secs(1),
+        );
+        let response = requester
+            .session
+            .a2a_call(ask)
+            .await
+            .expect("a2a_call transport");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("timed out")),
+            "a shard repair ask gets no reply, so the call times out: {response}"
+        );
+    }
 
-    // An unknown group is a clean zero, not an error.
-    let miss = bob
-        .a2a_call(
-            &alice_nick,
-            "shard/repair",
-            serde_json::json!({
-                "group": "00000000-0000-4000-8000-00000000dead",
-                "missing": [0],
-            }),
-        )
-        .await;
-    assert_eq!(miss["result"]["resent"], 0, "evicted/unknown group: {miss}");
+    /// The count of shard frames that `node` re-sent, once it holds at least `at_least`, or the
+    /// last count after 5 s.
+    async fn shards_resent_by(node: &InProcNode, at_least: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let count = node
+                .session
+                .shards_resent()
+                .await
+                .expect("the session of the author stays up");
+            if count >= at_least || Instant::now() >= deadline {
+                return count;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
 
-    alice.leave().await;
-    bob.leave().await;
+    /// A big group's heal path is the `shard/repair` ask: the author caches its outbound shard
+    /// frames and sends the ones that a receiver names as missing to that receiver only. The ask
+    /// gets no reply. The proof is the count of frames that the author re-sent, which no other
+    /// delivery of the body can fake: the gossip layer can still deliver the body by itself, so
+    /// the arrival of the body would prove nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_shard_repair_ask_re_sends_the_cached_shards_to_the_requester() {
+        let alice = InProcNode::create("mp-rep").await;
+        let mut bob = InProcNode::join(&alice.mesh, "mp-rep-bob").await;
+        let carol = InProcNode::join(&alice.mesh, "mp-rep-carol").await;
+        common::warm_up(&alice, &mut [&mut bob]).await;
+
+        // A >16-shard body: alice caches its frames for repair.
+        let big = "0123456789".repeat(20 * 1024); // ~200 KB, ~55 shards
+        let id = alice.broadcast(&big).await;
+        assert!(
+            bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
+            "big body arrived"
+        );
+        carol.await_peer_card(&alice.nickname).await;
+        let before = alice
+            .session
+            .shards_resent()
+            .await
+            .expect("the session of the author stays up");
+        assert_eq!(before, 0, "the premise: no repair was served yet");
+
+        // The group id is the logical message id. The ask names every index that a group of this
+        // size can hold, and the author skips the ones that it does not cache.
+        let every_index: Vec<u32> = (0..64).collect();
+        let params = serde_json::json!({ "group": id.as_str(), "missing": every_index });
+        ask_without_reply(&carol, &alice.nickname, params).await;
+        let resent = shards_resent_by(&alice, 50).await;
+        assert!(
+            resent >= 50,
+            "the author re-sent {resent} cached shards to the requester, a group has more than 50"
+        );
+
+        // A group that the author never cached is dropped without a reply and re-sends nothing.
+        let unknown =
+            serde_json::json!({ "group": "00000000-0000-4000-8000-00000000dead", "missing": [0] });
+        ask_without_reply(&carol, &alice.nickname, unknown).await;
+        let after = alice
+            .session
+            .shards_resent()
+            .await
+            .expect("the session of the author stays up");
+        assert_eq!(after, resent, "an unknown group re-sends no shard");
+        // A round trip to the author still completes, so its event loop is not stuck.
+        carol.await_peer_card(&alice.nickname).await;
+
+        alice.leave().await;
+        bob.leave().await;
+        carol.leave().await;
+    }
 }
 
 /// The same multishard round-trip on a **password-protected** mesh: the large
@@ -188,11 +234,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     let mut alice = InProcNode::create("mp-ex").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-ex-bob").await;
     // Mesh first so the RPC + push are actually delivered.
-    alice.broadcast("warmup").await;
-    assert!(
-        bob.wait_body("warmup", MSG_TIMEOUT).await,
-        "mesh never formed"
-    );
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     // Alice creates a task on bob (native SendMessage); bob mints the id.
     let response = alice.create_task("mp-ex-bob", "produce a big report").await;

@@ -63,7 +63,7 @@ pub(crate) fn run() -> TaskOutcome {
     // exactly how the two drifted before.
     //
     // The reliability invariants (ungraceful SIGKILL death, sleep/wake heal
-    // recovery, anti-entropy backfill) run every time — they live in
+    // recovery, state backfill) run every time — they live in
     // `tests/gossip_network.rs` with shortened eviction timers.
     crate::test::run()
 }

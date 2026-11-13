@@ -2,9 +2,8 @@ use std::time::Duration;
 
 /// Delivery budget for a **big (unlogged) multi-shard body**.
 ///
-/// A large shard group skips the message log by design — it must not evict the
-/// anti-entropy history — so anti-entropy cannot heal it. A dropped shard is
-/// recovered only by the receiver's `shard/repair` ask, and that path is
+/// The engine keeps no log of a broadcast, so nothing sends a dropped shard again by itself. A
+/// dropped shard is recovered only by the receiver's `shard/repair` ask, and that path is
 /// deliberately lazy: the partial group has to sit idle for
 /// `REASSEMBLY_REPAIR_IDLE_SECS` (60s) *and* the check runs on a one-minute
 /// prune tick, so a repair round can land anywhere up to ~2 minutes out.

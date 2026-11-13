@@ -71,7 +71,7 @@ impl RpcError {
 /// identifies the agent.
 pub(crate) enum A2aOp {
     SendMessage {
-        to: Option<Nickname>,
+        to: Option<PeerRef>,
         message: super::Message,
     },
     GetTask {
@@ -100,11 +100,22 @@ pub(crate) enum A2aOp {
     },
 }
 
-/// The member that a peer-card route names. A nickname is a label that two members can share, so
-/// the route also takes the exact author key.
+/// The member that a peer route names. A nickname is a label that two members can share, so the
+/// route also takes the exact author key.
 pub(crate) enum PeerRef {
     Nickname(Nickname),
     Key(AuthorKey),
+}
+
+impl PeerRef {
+    /// The member that the last segment of a peer route names: the hex of an author key first,
+    /// else a nickname. `None` if it is neither.
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match AuthorKey::decode_hex(text) {
+            Some(key) => Some(Self::Key(key)),
+            None => Nickname::try_new(text).ok().map(Self::Nickname),
+        }
+    }
 }
 
 /// One in-flight request from the HTTP task to the event loop.
@@ -120,7 +131,7 @@ pub(crate) struct A2aRequest {
 pub(crate) fn parse_op(
     method: &str,
     params: &Value,
-    target: Option<Nickname>,
+    target: Option<PeerRef>,
 ) -> Result<A2aOp, RpcError> {
     let task_id_param = || {
         params["id"]
@@ -334,7 +345,7 @@ pub(crate) async fn handle_op(
                 .map(|rec| task_object(&task_id, rec, mesh))
                 .ok_or_else(|| RpcError::task_not_found(&task_id))
         }
-        A2aOp::ChannelGet { channel } => Ok(state.doc(channel).to_json()),
+        A2aOp::ChannelGet { channel } => Ok(state.view(channel)),
         A2aOp::ChannelMerge { channel, merge } => {
             broadcast_state_merge(
                 state,
@@ -374,37 +385,19 @@ pub(crate) async fn handle_op(
                     (key, nickname.to_string())
                 }
             };
-            let doc = state.doc(Channel::Meta).to_json();
-            // A card that is still arriving, in pieces, is not served.
-            let mut card = super::card::complete_card(&doc, &key)
-                .and_then(super::card::full_from_minimal)
-                .unwrap_or(Value::Null);
-            if card.is_null() {
+            // The card is built here from the roster, with nothing taken from the peer. The seal
+            // key comes from the signed `PeerInfo` of the peer, which the engine verified.
+            let Some(nickname) = state.known_nickname_of(&key) else {
                 return Err(RpcError {
                     code: -32004,
-                    message: format!("no card published for '{label}'"),
+                    message: format!("no member known as '{label}'"),
                 });
-            }
-            // The mesh card declares only its gossip interface (the peer has no
-            // HTTP endpoint of its own). Add a relaying JSONRPC interface at
-            // *our* binding — we relay JSON-RPC to that peer over gossip at
-            // `/peers/<nick>` — so the served peer card is reachable (e.g.
-            // `SendMessage` there creates a task on the peer).
-            let route: Option<Nickname> = match &peer {
-                PeerRef::Nickname(nickname) => Some(nickname.clone()),
-                PeerRef::Key(named) => state.known_nickname_of(named),
             };
-            if let (Some(route), Some(interfaces)) = (
-                route,
-                card.pointer_mut("/supportedInterfaces")
-                    .and_then(Value::as_array_mut),
-            ) {
-                interfaces.push(serde_json::json!({
-                    "url": format!("http://127.0.0.1:{a2a_port}/peers/{route}"),
-                    "protocolBinding": "JSONRPC",
-                    "protocolVersion": super::PROTOCOL_VERSION,
-                }));
-            }
+            // The route names the exact key, because two members can share a nickname.
+            let relay_url = format!("http://127.0.0.1:{a2a_port}/peers/{key}");
+            let card = super::card::peer_card(key, &nickname, state.seal_key_of(&key), &relay_url);
+            let card = serde_json::to_value(&card)
+                .map_err(|error| RpcError::internal(&error.to_string()))?;
             Ok(card)
         }
     }
@@ -414,7 +407,7 @@ pub(crate) async fn handle_op(
 /// `message/send` RPC op — grouped so `send_message` stays within the
 /// argument budget alongside its state/sender/output handles.
 struct SendMessageParams<'caller> {
-    to: Option<Nickname>,
+    to: Option<PeerRef>,
     message: super::Message,
     mesh: &'caller MeshId,
     author: &'caller Nickname,

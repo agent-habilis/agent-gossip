@@ -2,7 +2,7 @@
 
 agent-gossip is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
-A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 14.0) carried over
+A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 18.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding (`--a2a-serve`; `src/a2a/http.rs` + `src/a2a/rpc.rs`, wired in
 `src/cli/mod.rs`). `src/tunnel/` is a different thing — the `a2a expose` /
@@ -194,7 +194,7 @@ orphans every running daemon.
 
 `cargo task test` / `cargo task ci` run the suite. **Always run tests in the
 background**: most reliability tests inject short cadences via the hidden
-tuning flags (`--heal-interval-secs`, `--antientropy-interval-secs`) and poll
+tuning flags (`--heal-interval-secs`, `--backfill-interval-secs`) and poll
 observable markers instead of sleeping fixed floors, but the suite still
 takes minutes end to end. The remaining floors are iroh-bound, not ours:
 the 15s direct-path idle timeout floors the freeze-window tests, the two
@@ -222,7 +222,7 @@ Three layers:
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
   `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT
-  heal recovery, anti-entropy backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
+  heal recovery, backfill) — `crates/agent-gossip/tests/gossip_network.rs`.
 - **Adversarial (`--features adversarial`, `crates/agent-gossip/tests/adversarial.rs`):** an
   in-process attacker injects crafted wire bytes a correct client never
   produces; defended cases pass, open-gap `#[should_panic]` tripwires go red

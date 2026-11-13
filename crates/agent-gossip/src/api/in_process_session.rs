@@ -344,20 +344,28 @@ impl InProcessSession {
             .map_err(|_| SessionError::Stopped)
     }
 
-    /// Put the document of `channel` in `epoch` at once. Adversarial-suite only.
+    /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
-    pub(crate) async fn force_epoch(
-        &self,
-        channel: habilis_network::protocol::Channel,
-        epoch: u64,
-    ) -> Result<(), SessionError> {
-        self.node
-            .send(SessionRequest::ForceEpoch { channel, epoch })
+    pub(crate) async fn shards_resent(&self) -> Result<usize, SessionError> {
+        self.call(|response| SessionRequest::ShardsResent { response })
             .await
-            .map_err(|_| SessionError::Stopped)
+    }
+
+    /// The seal key of the member `key`, or `None` while the engine does not hold it.
+    /// Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn seal_key_of(
+        &self,
+        key: AuthorKey,
+    ) -> Result<Option<habilis_network::x25519_dalek::PublicKey>, SessionError> {
+        self.call(|response| SessionRequest::SealKeyOf { key, response })
+            .await
     }
 
     /// Snapshot the reassembly store's accounting

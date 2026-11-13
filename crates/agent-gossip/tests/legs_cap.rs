@@ -1,5 +1,6 @@
 //! Integration tests for the caps on the own legs that wait for their send.
 
+use agent_gossip::MAX_MESSAGE_SIZE;
 use agent_gossip_test_fixtures as common;
 use common::Node;
 
@@ -40,7 +41,7 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
         "a cap of 0 leaves no room, so the command must exit with an error"
     );
     assert!(
-        error.contains("own task legs still wait for their send"),
+        error.contains("0 own task legs still wait for their send (limit 0)"),
         "the caller must get the reason, got: {error}"
     );
 
@@ -53,6 +54,9 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
     );
 }
 
+/// Only a content leg that is split into shards waits in the list of unsent legs: a single frame
+/// has its verdict at once. A cap of 0 therefore refuses a body that needs shards, and still sends
+/// a body of one frame.
 #[test]
 fn a_content_leg_past_the_unsent_legs_cap_is_refused_with_the_reason() {
     let _serial = common::serial_guard();
@@ -69,21 +73,31 @@ fn a_content_leg_past_the_unsent_legs_cap_is_refused_with_the_reason() {
     common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
     common::await_peer_card_cli(&mesh, &bob.nickname, &alice.nickname);
 
-    let refused = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "hello");
+    // Several times the size of one frame, so the body must be split into shards.
+    let split = "abcd ".repeat(MAX_MESSAGE_SIZE);
+    let refused = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, &split);
     let error = String::from_utf8_lossy(&refused.stderr);
     assert!(
         !refused.status.success(),
         "a cap of 0 leaves no room, so the command must exit with an error"
     );
     assert!(
-        error.contains("own content legs still wait for their send"),
-        "the caller must get the reason, got: {error}"
+        error.contains("0 own content legs still wait for their send (limit 0)"),
+        "the caller must get the count limit, not the byte limit, got: {error}"
     );
 
-    let accepted = common::cli_msg_raw(&mesh, &bob.nickname, &alice.nickname, "hello");
+    // The control: a body of one frame never waits in the list, so a cap of 0 does not refuse it.
+    let single = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "hello");
+    assert!(
+        single.status.success(),
+        "a single frame takes no slot, so a cap of 0 sends it: {}",
+        String::from_utf8_lossy(&single.stderr)
+    );
+
+    let accepted = common::cli_msg_raw(&mesh, &bob.nickname, &alice.nickname, &split);
     assert!(
         accepted.status.success(),
-        "a node with the default cap sends its content leg: {}",
+        "a node with the default cap sends its split content leg: {}",
         String::from_utf8_lossy(&accepted.stderr)
     );
 }

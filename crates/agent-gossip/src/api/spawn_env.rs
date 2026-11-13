@@ -65,8 +65,7 @@ pub(super) async fn create_setup(
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
         .max_peers(max_peers)
-        .runtime_base(crate::runtime_base())
-        .per_peer_gate(crate::a2a::card_gate());
+        .runtime_base(crate::runtime_base());
     setup_params.live_count = live_count.clone();
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         CreateError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
@@ -131,8 +130,7 @@ async fn resolved_setup(
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let setup_params = SetupParams::new(author, sink)
         .max_peers(max_peers)
-        .runtime_base(crate::runtime_base())
-        .per_peer_gate(crate::a2a::card_gate());
+        .runtime_base(crate::runtime_base());
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         JoinError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
     })?;

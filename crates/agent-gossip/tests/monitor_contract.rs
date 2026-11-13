@@ -338,15 +338,17 @@ async fn test_peer_discovery_three_peers() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_cross_peer_message_delivery() {
     let (mut creator, joiner_a, mut joiner_b) = common::three_peers("xpeer").await;
+    // A broadcast sent before the links exist is lost, so the links come first.
+    common::warm_up(&joiner_a, &mut [&mut creator, &mut joiner_b]).await;
 
     joiner_a.broadcast("hello from A").await;
 
     assert!(
-        creator.wait_inbound(1, MSG_TIMEOUT).await,
+        creator.wait_body("hello from A", MSG_TIMEOUT).await,
         "creator never received joiner_a's message"
     );
     assert!(
-        joiner_b.wait_inbound(1, MSG_TIMEOUT).await,
+        joiner_b.wait_body("hello from A", MSG_TIMEOUT).await,
         "joiner_b never received joiner_a's message"
     );
 
@@ -377,14 +379,18 @@ async fn test_cross_peer_message_delivery() {
 /// Messages from both joiners are received by the other peers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_bidirectional_multi_peer() {
-    let (mut creator, joiner_a, joiner_b) = common::three_peers("bidir").await;
+    let (mut creator, mut joiner_a, mut joiner_b) = common::three_peers("bidir").await;
+    // A broadcast sent before the links exist is lost, so the links come first.
+    common::warm_up(&joiner_a, &mut [&mut creator, &mut joiner_b]).await;
+    common::warm_up(&joiner_b, &mut [&mut creator, &mut joiner_a]).await;
 
     joiner_a.broadcast("msg from A").await;
     joiner_b.broadcast("msg from B").await;
 
     assert!(
-        creator.wait_inbound(2, MSG_TIMEOUT).await,
-        "creator expected >=2 messages"
+        creator.wait_body("msg from A", MSG_TIMEOUT).await
+            && creator.wait_body("msg from B", MSG_TIMEOUT).await,
+        "creator expected both messages"
     );
 
     let events: Vec<_> = creator.broadcast_events().collect();
@@ -1921,7 +1927,7 @@ async fn test_poll_record_matches_stream_line() {
     );
 }
 
-/// A `ping_report` is a transient event — never in the old message log — yet it
+/// A `ping_report` is a transient event, yet it
 /// is now drainable via `poll`, so a Monitor-less fallback can still render the
 /// RTT table. The originator of the ping surfaces the report on its own stream
 /// *and* in its poll buffer.
@@ -1972,11 +1978,11 @@ fn test_ping_report_is_pollable() {
 }
 
 /// Shared-state wire contract over the REAL path the in-process harness bypasses:
-/// `agent-gossip <channel> merge` on one daemon → the change gossips → the peer's
+/// `agent-gossip <channel> merge` on one daemon → the slice gossips → the peer's
 /// `--output json` stream carries a `{"event":"<chan>","type":"<chan>",...}`
-/// record with the merge, plus the derived document on `state` only, and
-/// `agent-gossip <channel> get` on the peer reflects it. A `meta` event leaves the
-/// document out: it is every peer's agent card, read on demand with `meta get`.
+/// record with no merge (the slice of the author replaces its old one), plus the view on `state`
+/// only, and `agent-gossip <channel> get` on the peer reflects it. A `meta` event leaves the view
+/// out: it is read on demand with `meta get`.
 /// Run for both channels (`state`, `meta`) end to end.
 fn channel_wire_contract(channel: Channel) {
     let label = common::channel_subcommand(channel);
@@ -1985,7 +1991,7 @@ fn channel_wire_contract(channel: Channel) {
     assert!(creator.wait_ready(&mesh), "creator never served");
     assert!(joiner.wait_ready(&mesh), "joiner never served");
     // Let the two daemons mesh so the merge gossips live to the joiner.
-    std::thread::sleep(Duration::from_secs(3));
+    common::await_link_cli(&mesh, &creator.nickname, &joiner.nickname);
 
     // Merge on the creator via the real CLI → Unix socket → daemon path.
     let merge = r#"{"k":"v"}"#;
@@ -2004,26 +2010,36 @@ fn channel_wire_contract(channel: Channel) {
     let want_doc = serde_json::json!({"k": "v"});
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut event = None;
+    let mut last_poll = String::new();
     while Instant::now() < deadline {
         let poll = common::cli_poll(&mesh, &joiner.nickname, None);
+        if poll != "[]" {
+            last_poll.push_str(&poll);
+        }
         let records: Vec<serde_json::Value> =
             serde_json::from_str(&poll).expect("poll JSON parses");
-        // Select OUR merge's event: on the meta channel the daemons' own
-        // card publications (`/peers/<nick>/card`) also surface here.
-        event = records
-            .into_iter()
-            .find(|record| record["event"] == label && record["merge"] == want_doc);
+        // Select the event of the write of the creator.
+        event = records.into_iter().find(|record| {
+            record["event"] == label && record["author"] == creator.nickname.as_str()
+        });
         if event.is_some() {
             break;
         }
         std::thread::sleep(POLL);
     }
-    let event = event.unwrap_or_else(|| panic!("joiner never surfaced a {label} event"));
+    let event = event.unwrap_or_else(|| {
+        panic!("joiner never surfaced a {label} event; the polls that held records: {last_poll}")
+    });
     assert_eq!(event["type"], label, "{label} event carries type:{label}");
-    assert_eq!(
-        event["merge"], want_doc,
-        "{label} event carries the applied merge document: {event}"
+    // The slice of an author replaces its old one, so the event holds no merge.
+    assert!(
+        event["merge"].is_null(),
+        "{label} event has no merge, the engine replaces the slice of the author: {event}"
     );
+    let creator_key = event["pubkey"]
+        .as_str()
+        .expect("the event names the author key")
+        .to_owned();
     if channel == Channel::Meta {
         assert!(
             event.get("document").is_none(),
@@ -2031,23 +2047,18 @@ fn channel_wire_contract(channel: Channel) {
         );
     } else {
         assert_eq!(
-            event["document"], want_doc,
-            "{label} event carries the derived document: {event}"
+            event["document"][&creator_key], want_doc,
+            "{label} event carries the view, with the slice of the creator: {event}"
         );
     }
 
-    // The `<chan> get` command on the joiner returns the same document
-    // (cards masked on meta, as above).
+    // The `<chan> get` command on the joiner returns the same slice of the creator.
     let got = common::cli_channel_get(channel, &mesh, &joiner.nickname);
     let got: serde_json::Value = serde_json::from_str(&got).expect("get stdout is JSON");
     assert_eq!(got["ok"], true, "the got call is ok");
-    let mut got_doc = got["document"].clone();
-    if let Some(map) = got_doc.as_object_mut() {
-        map.remove("peers");
-    }
     assert_eq!(
-        got_doc, want_doc,
-        "{label} get on the peer reflects the creator's merge"
+        got["document"][&creator_key], want_doc,
+        "{label} get on the peer reflects the creator's write"
     );
 }
 

@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use habilis_network::protocol::{AuthorKey, Nickname};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1::Builder;
@@ -168,10 +167,7 @@ fn peer_card_ref(path: &str) -> Option<PeerRef> {
     let text = path
         .strip_prefix("/peers/")?
         .strip_suffix("/.well-known/agent-card.json")?;
-    match AuthorKey::decode_hex(text) {
-        Some(key) => Some(PeerRef::Key(key)),
-        None => Nickname::try_new(text).ok().map(PeerRef::Nickname),
-    }
+    PeerRef::parse(text)
 }
 
 /// The JSON-RPC POST path: authenticate, parse, resolve the URL target,
@@ -192,9 +188,9 @@ async fn rpc(
     }
     let target = match request.uri().path() {
         "/" | "/mesh" => None,
-        path => match path.strip_prefix("/peers/").map(Nickname::try_new) {
-            Some(Ok(nick)) => Some(nick),
-            Some(Err(_)) | None => return not_found(),
+        path => match path.strip_prefix("/peers/").and_then(PeerRef::parse) {
+            Some(peer) => Some(peer),
+            None => return not_found(),
         },
     };
     let body = match read_body(request).await {

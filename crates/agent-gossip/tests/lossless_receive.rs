@@ -188,18 +188,8 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
 
     let (_daemon, mesh, nick) = spawn_create("bellmeta");
 
-    // The create flow's self report.
-    // The slot of a member is the hex of its author key, and its own card names the nickname.
-    common::await_peer_card_cli(&mesh, &nick, &nick);
-    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
-        agent_gossip::Channel::Meta,
-        &mesh,
-        &nick,
-    ))
-    .expect("the CLI prints the meta channel as one JSON object");
-    let slot = common::card_slot_of(&meta["document"], &nick)
-        .expect("the wait above ended on this card, so the slot exists");
-    let merge = format!(r#"{{"peers":{{"{slot}":{{"model":"test-model","status":"idle"}}}}}}"#);
+    // The create flow's self report: the agent writes its own entry, as the join skill does.
+    let merge = r#"{"model":"test-model","status":"idle"}"#;
     let out = test_cmd()
         .args([
             "meta",
@@ -209,7 +199,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
             "--nickname",
             &nick,
             "--merge",
-            &merge,
+            merge,
         ])
         .output()
         .expect("meta merge spawns");

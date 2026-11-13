@@ -8,11 +8,11 @@ agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
 The candidates are exactly the roster's `peers` — never yourself, and
-never a nickname that appears only in the meta document. The meta document is
-not pruned when a peer leaves and includes your own entry; it only decorates
+never a nickname that appears only in the meta document. The meta document
+holds an entry for each member, keyed by author key, and includes your own
+entry; a crashed peer stays in it for about 1 hour. It only decorates
 candidates with model, harness, host, cwd, and status. Join a candidate to its meta entry by
-the `pubkey` of its roster row, because two members can share a nickname. Use the entry
-under the nickname only for a member that has no entry under its key. An empty `peers`
+the `pubkey` of its roster row, because two members can share a nickname. An empty `peers`
 array is the empty-roster stop — do not use the response's `peer_count`, which
 includes self.
 

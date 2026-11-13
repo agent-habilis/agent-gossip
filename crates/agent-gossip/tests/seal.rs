@@ -19,9 +19,7 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     let mut carol = InProcNode::join(&alice.mesh, "seal-carol").await;
 
     // Warm the mesh; a broadcast reaches everyone (proves C is a live relay).
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
+    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
 
     // A delegates a task to B — a directed, sealed `message/send`.
     let response = alice
@@ -60,9 +58,8 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     carol.leave().await;
 }
 
-/// A passworded gossip seals the state frames, which makes the frame of the card larger than
-/// the frame limit when it goes out as one merge. No peer then learns the seal key, and every
-/// directed msg fails with "cards still propagating". The same msg must work with a password.
+/// A passworded gossip seals the state frames. The seal key of a peer comes in its signed
+/// `PeerInfo`, which a password does not change, so a directed msg must work with a password too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_msg_works_on_a_passworded_gossip() {
     const SECRET: &str = "just between us, behind a password";
@@ -72,7 +69,7 @@ async fn a_msg_works_on_a_passworded_gossip() {
         .await
         .expect("the right password joins");
 
-    // A msg is sealed to its recipient, so the card must have replicated.
+    // A msg is sealed to its recipient, so its seal key must have arrived.
     alice.await_peer_card("msgpw-bob").await;
     bob.await_peer_card(&alice.nickname).await;
 
@@ -99,11 +96,9 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
 
     // Warm the mesh; a broadcast reaching everyone proves C is a live relay,
     // so its silence later is about the msg and not about a dead link.
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
+    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
 
-    // A msg is sealed to its recipient, so the card must have replicated.
+    // A msg is sealed to its recipient, so its seal key must have arrived.
     alice.await_peer_card("msgpriv-bob").await;
 
     alice.message("msgpriv-bob", SECRET).await;
@@ -169,54 +164,6 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
         !carol_saw_secret_later,
         "the msg must not surface on a relay even after it has settled"
     );
-
-    alice.leave().await;
-    bob.leave().await;
-    carol.leave().await;
-}
-
-/// A msg must not join the per-author hash chain. It reaches only its
-/// addressee, so a chain entry for it is an unfillable gap for every other
-/// peer — which fork detection reads as a fork. Guards the `chained` repoint
-/// in `classify`, which no existing assertion catches.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn msgs_do_not_advance_the_chain_or_fork_the_gossip() {
-    let alice = InProcNode::create("msgchain").await;
-    let mut bob = InProcNode::join(&alice.mesh, "msgchain-bob").await;
-    let mut carol = InProcNode::join(&alice.mesh, "msgchain-carol").await;
-
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
-    alice.await_peer_card("msgchain-bob").await;
-
-    // A burst of msgs C cannot see. If these were chained, C would observe a
-    // run of missing seqs from A.
-    for index in 0..5 {
-        alice
-            .message("msgchain-bob", &format!("private {index}"))
-            .await;
-    }
-    assert!(
-        bob.wait_body("private 4", MSG_TIMEOUT).await,
-        "bob received the burst"
-    );
-
-    // Broadcast still flows to the peer that saw none of the burst, and no
-    // fork is reported anywhere.
-    alice.broadcast("after the burst").await;
-    assert!(
-        carol.wait_body("after the burst", MSG_TIMEOUT).await,
-        "a peer blind to the msgs still accepts the next broadcast — the \
-         chain never advanced for them"
-    );
-    for (node, who) in [(&mut bob, "bob"), (&mut carol, "carol")] {
-        let forks = node
-            .json_events()
-            .filter(|event| event["event"] == "fork")
-            .count();
-        assert_eq!(forks, 0, "{who} must not see a fork");
-    }
 
     alice.leave().await;
     bob.leave().await;

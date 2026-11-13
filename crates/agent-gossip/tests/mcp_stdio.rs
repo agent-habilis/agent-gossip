@@ -293,19 +293,34 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Linkage above only proves the broadcast path carries the creator's
-    // traffic. A *directed* call (`a2a_call --to`) is additionally sealed to the
-    // creator's published X25519 key, which the daemon refuses to send without
-    // ("cards still propagating") and which replicates through the `meta`
-    // document on its own schedule. So wait for the card too, or every directed
-    // call in this binary races it — the subprocess twin of
-    // `InProcNode::await_peer_card`.
-    assert!(
-        poll_doc(&mut joiner, probe_id, "get_meta", |doc| {
-            common::card_slot_of(doc, &creator_nick).is_some()
-        }),
-        "creator's card never reached the joiner's meta doc"
-    );
+    // Linkage above only proves the broadcast path carries the creator's traffic. A *directed*
+    // call (`a2a_call --to`) is also sealed to the seal key of the creator, which the daemon holds
+    // once the signed `PeerInfo` of the creator has arrived, and the reply is sealed back the same
+    // way. So probe with a `ListTasks` call until a round trip completes, or every directed call
+    // in this binary races the keys — the subprocess twin of `InProcNode::await_peer_card`.
+    let probe_deadline = Instant::now() + MSG_TIMEOUT;
+    let mut call_id = base_id + 91_000;
+    loop {
+        let raw = joiner.tool_call(
+            call_id,
+            "a2a_call",
+            &serde_json::json!({
+                "to": creator_nick,
+                "method": "ListTasks",
+                "params": {},
+                "timeout_secs": 10,
+            }),
+        );
+        if tool_result_json(&raw).is_some_and(|response| response.get("result").is_some()) {
+            break;
+        }
+        assert!(
+            Instant::now() < probe_deadline,
+            "no directed round trip to the creator completed; the last answer: {raw}"
+        );
+        call_id += 1;
+        std::thread::sleep(POLL);
+    }
 
     (creator, joiner, mesh, creator_nick)
 }
@@ -1399,12 +1414,23 @@ fn mesh_info_reports_peer_roster() {
 }
 
 /// A `gossip_info` row names the member by its author key, which is the slot of that member in
-/// the meta document. A reader joins the roster to the meta document by it.
+/// the meta view. A reader joins the roster to the meta document by it.
 #[test]
 fn a_mesh_info_row_names_the_pubkey_of_its_meta_slot() {
-    let (mut creator, joiner, _mesh, _creator_nick) = create_pair(760);
+    let (mut creator, mut joiner, _mesh, _creator_nick) = create_pair(760);
+    // The daemon writes no entry: the joiner reports its own, as the join skill does.
+    let joiner_info =
+        tool_result_json(&joiner.tool_call(762, "gossip_info", &serde_json::json!({})))
+            .expect("joiner gossip_info");
+    let reported = tool_result_json(&joiner.tool_call(
+        763,
+        "apply_meta_merge",
+        &serde_json::json!({ "merge": { "nickname": joiner_info["nickname"] } }),
+    ))
+    .expect("apply_meta_merge must succeed");
+    assert_eq!(reported["ok"], true, "the joiner reports its entry");
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut probe = 761;
+    let mut probe = 764;
     loop {
         let info =
             tool_result_json(&creator.tool_call(probe, "gossip_info", &serde_json::json!({})))
@@ -1413,7 +1439,7 @@ fn a_mesh_info_row_names_the_pubkey_of_its_meta_slot() {
             tool_result_json(&creator.tool_call(probe + 1, "get_meta", &serde_json::json!({})))
                 .expect("creator get_meta");
         let rows: &[serde_json::Value] = info["peers"].as_array().map_or(&[], Vec::as_slice);
-        let slots = &meta["document"]["peers"];
+        let slots = &meta["document"];
         if let Some(row) = rows.first()
             && let Some(pubkey) = row["pubkey"].as_str()
             && slots.get(pubkey).is_some()
@@ -1432,7 +1458,7 @@ fn a_mesh_info_row_names_the_pubkey_of_its_meta_slot() {
 
 /// An MCP client has no `ready` output to read its own key from, and the meta tools need it: the
 /// slot of its entry is the hex of that key. The create result names it, and the key is the slot
-/// of the card that carries the client's nickname.
+/// of the entry that carries the client's nickname.
 #[test]
 fn the_create_result_names_the_pubkey_of_the_own_meta_slot() {
     let mut creator = McpClient::spawn();
@@ -1447,18 +1473,26 @@ fn the_create_result_names_the_pubkey_of_the_own_meta_slot() {
         .unwrap_or_else(|| panic!("the create result names no pubkey: {created}"));
     assert_eq!(pubkey.len(), 64, "a pubkey is 64 hex digits: {created}");
 
+    let reported = tool_result_json(&creator.tool_call(
+        771,
+        "apply_meta_merge",
+        &serde_json::json!({ "merge": { "nickname": created["nickname"] } }),
+    ))
+    .expect("apply_meta_merge must succeed");
+    assert_eq!(reported["ok"], true, "the creator reports its entry");
+
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut probe = 771;
+    let mut probe = 772;
     loop {
         let meta = tool_result_json(&creator.tool_call(probe, "get_meta", &serde_json::json!({})))
             .expect("creator get_meta");
-        let name = &meta["document"]["peers"][pubkey]["card"]["name"];
+        let name = &meta["document"][pubkey]["nickname"];
         if *name == created["nickname"] {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "the pubkey is no slot of the own card: {meta}"
+            "the pubkey is no slot of the own entry: {meta}"
         );
         probe += 1;
         std::thread::sleep(Duration::from_millis(100));
@@ -1606,32 +1640,46 @@ fn poll_doc(
 #[test]
 fn a_refused_state_write_carries_its_reason_and_the_way_out_over_mcp() {
     let (mut creator, _joiner, _mesh, _nick) = create_pair(940);
-    let deep = (0..13).fold(
-        serde_json::json!(1),
-        |inner, _| serde_json::json!({ "a": inner }),
-    );
+    let large = serde_json::json!({ "note": "x".repeat(5_000) });
     let response = creator.tool_call(
         950,
         "apply_state_merge",
-        &serde_json::json!({ "merge": deep }),
+        &serde_json::json!({ "merge": large }),
     );
     let error = response
         .get("error")
         .expect("rmcp answers an invalid-params error with an error object, not a result");
-    assert_eq!(
-        error["message"], "the value is nested 13 levels deep and the shared state allows 12",
+    let message = error["message"]
+        .as_str()
+        .expect("an error has a message string");
+    assert!(
+        message.starts_with("the body has ") && message.contains(" bytes, past the cap of "),
         "the exact text: {response}"
     );
     assert_eq!(
-        error["data"]["reason"], "too_deep",
+        error["data"]["reason"], "too_large",
         "the stable reason: {response}"
     );
     assert!(
         error["data"]["hint"]
             .as_str()
-            .is_some_and(|hint| hint.contains("fewer levels")),
+            .is_some_and(|hint| hint.contains("null merge")),
         "an agent acts on the hint, so it names the next step: {response}"
     );
+}
+
+/// Whether a slice of `view` holds `key` with `value`. The view of a channel has one slice for each
+/// author, keyed by its author key.
+fn has_key(view: &serde_json::Value, key: &str, value: &str) -> bool {
+    view.as_object()
+        .is_some_and(|slices| slices.values().any(|slice| slice[key] == value))
+}
+
+/// Whether a slice of `view` holds `key`, with any value.
+fn has_any_key(view: &serde_json::Value, key: &str) -> bool {
+    let holds = |slice: &serde_json::Value| slice.get(key).is_some();
+    view.as_object()
+        .is_some_and(|slices| slices.values().any(holds))
 }
 
 /// Both shared-state channels round-trip over MCP: an `apply_*_patch` on one
@@ -1651,7 +1699,9 @@ fn state_and_meta_round_trip_over_mcp() {
     .expect("apply_state_merge must succeed");
     assert_eq!(merged["ok"], true, "apply_state_merge reports ok");
     assert!(
-        poll_doc(&mut joiner, 911, "get_state", |doc| doc["turn"] == "a"),
+        poll_doc(&mut joiner, 911, "get_state", |doc| has_key(
+            doc, "turn", "a"
+        )),
         "joiner's get_state never reflected the creator's state merge"
     );
 
@@ -1659,14 +1709,14 @@ fn state_and_meta_round_trip_over_mcp() {
     let meta_merged = tool_result_json(&creator.tool_call(
         920,
         "apply_meta_merge",
-        &serde_json::json!({ "merge": {"peers": {"creator": {"model": "Opus 4.8"}}} }),
+        &serde_json::json!({ "merge": {"model": "Opus 4.8"} }),
     ))
     .expect("apply_meta_merge must succeed");
     assert_eq!(meta_merged["ok"], true, "apply_meta_merge reports ok");
     assert!(
-        poll_doc(&mut joiner, 921, "get_meta", |doc| doc
-            .pointer("/peers/creator/model")
-            == Some(&serde_json::json!("Opus 4.8"))),
+        poll_doc(&mut joiner, 921, "get_meta", |doc| has_key(
+            doc, "model", "Opus 4.8"
+        )),
         "joiner's get_meta never reflected the creator's meta merge"
     );
 
@@ -1675,15 +1725,15 @@ fn state_and_meta_round_trip_over_mcp() {
     let meta_doc = tool_result_json(&joiner.tool_call(930, "get_meta", &serde_json::json!({})))
         .expect("get_meta must succeed");
     assert!(
-        meta_doc["document"].get("turn").is_none(),
-        "a state key leaked into the meta document: {}",
+        !has_any_key(&meta_doc["document"], "turn"),
+        "a state key leaked into the meta view: {}",
         meta_doc["document"]
     );
     let state_doc = tool_result_json(&joiner.tool_call(931, "get_state", &serde_json::json!({})))
         .expect("get_state must succeed");
     assert!(
-        state_doc["document"].get("peers").is_none(),
-        "a meta key leaked into the state document: {}",
+        !has_any_key(&state_doc["document"], "model"),
+        "a meta key leaked into the state view: {}",
         state_doc["document"]
     );
 }

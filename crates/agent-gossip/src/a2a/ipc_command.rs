@@ -22,6 +22,7 @@ use crate::a2a::broadcast_params::{
     emit_task_artifact, emit_task_status, send_broadcast, send_msg, when_sent,
 };
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
@@ -468,7 +469,7 @@ impl IpcRequest<'_> {
             broadcast_params::BroadcastA2aCallParams {
                 mesh,
                 author,
-                peer: to,
+                peer: PeerRef::Nickname(to),
                 method: &method,
                 params,
                 timeout: Duration::from_secs(timeout_secs),
@@ -738,19 +739,17 @@ fn topology_response(state: &EventLoopState) -> String {
 
 /// The `agent-gossip state get` response: the derived document.
 fn state_get_response(state: &EventLoopState, channel: Channel) -> String {
-    let document = state.doc(channel).to_json();
+    let document = state.view(channel);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
 
-/// The `meta` document plus the entries under `/peers` that no longer name a
+/// The `meta` document plus the author keys whose entry no longer names a
 /// live member.
 ///
-/// A peer retracts its own entry on a graceful leave, and nothing else can:
-/// the write gate binds every author to its own subtree, so a survivor cannot
-/// tidy up after a peer that was `SIGKILL`ed. The entry therefore outlives its
-/// peer, reading `status: "idle"` forever, while the roster has long since
-/// evicted it.
+/// The engine removes the entry of a peer on a graceful leave. It cannot do so
+/// for a peer that was `SIGKILL`ed: that entry stays for about 1 hour, reading
+/// its last `status`, while the roster has long since evicted the peer.
 ///
 /// Reported beside the document rather than filtered out of it. Trimming the
 /// document would be lossy (a returning peer's own entry is the one it merges
@@ -773,13 +772,12 @@ pub(crate) struct MetaView {
 }
 
 pub(crate) fn meta_view(state: &EventLoopState) -> MetaView {
-    let document = state.doc(Channel::Meta).to_json();
+    let document = state.view(Channel::Meta);
     // Every live key, shown or not: the roster snapshot lists shown peers only, and a live peer
     // whose arrival is not shown yet must not read as absent. A quiet peer is not in the set.
     let live: HashSet<AuthorKey> = state.live_keys().copied().collect();
     let own: AuthorKey = state.identity().author_key();
-    let live_names: HashSet<&str> = state.live_nicknames().map(Nickname::as_str).collect();
-    let slots: Vec<&str> = card::absent_peers(&document, &live, &live_names, &own);
+    let slots: Vec<&str> = card::absent_peers(&document, &live, &own);
     let absent: Vec<String> = slots.into_iter().map(str::to_owned).collect();
     MetaView { document, absent }
 }
@@ -814,21 +812,6 @@ pub(crate) fn message_record(message: &Authored) -> serde_json::Value {
     );
     let pubkey: String = message.key().to_string();
     record.insert("pubkey".into(), pubkey.into());
-    if let Some(seq) = message.seq {
-        record.insert("seq".into(), seq.into());
-    }
-    if let Some(previous) = &message.previous {
-        record.insert(
-            "prev".into(),
-            serde_json::to_value(previous).expect("a hash serializes"),
-        );
-    }
-    if !message.parents.is_empty() {
-        record.insert(
-            "parents".into(),
-            serde_json::to_value(&message.parents).expect("hashes serialize"),
-        );
-    }
     if let Some(shard) = &message.shard {
         record.insert(
             "shard".into(),
@@ -1171,7 +1154,6 @@ mod tests {
                         &mesh,
                         &author,
                         body,
-                        habilis_network::protocol::ChainCtx::genesis(),
                     ),
                     &identity,
                 )

@@ -63,15 +63,6 @@ pub enum OutputEvent {
         /// The author key of the returning peer.
         key: AuthorKey,
     },
-    /// An author signed two different messages at the same `seq`: proof of a fork.
-    Fork {
-        /// The offending author.
-        nickname: Nickname,
-        /// The author's full public key, hex; the identity behind the nickname.
-        pubkey: String,
-        /// The sequence number that carries two messages.
-        seq: u64,
-    },
     /// The local node posted a message to the mesh.
     MsgPosted {
         /// The id of the posted message.

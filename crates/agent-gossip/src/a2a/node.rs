@@ -1,13 +1,12 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use habilis_network::embed::{
     AppClass, EventLoopState, HandlerCtx, InboundApp, IpcRequest, NodeApp, NodeDriver,
 };
-use habilis_network::net::add_peer_addr;
-use habilis_network::ops::{Farewell, MergeCtx, StateMergeParams, broadcast_state_merge};
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
-    AppTag, AuthorKey, Channel, DedupKey, Message, MessageBody, MessageKind, Nickname,
+    AppTag, AuthorKey, DedupKey, Message, MessageBody, MessageKind, Nickname,
 };
 use habilis_network::runtime::state_file::StateFile;
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
@@ -19,19 +18,20 @@ use crate::a2a::receipt::{Receipt, ReceiptState, send_receipt};
 use crate::a2a::rpc_error::{A2aOp, A2aRequest, RpcError};
 use crate::a2a::session_request::SessionRequest;
 use crate::a2a::{
-    broadcast_params, card, ipc_command, rpc_error, served, status_update_params, task_record,
-    tuning, wire,
+    broadcast_params, ipc_command, rpc_error, served, status_update_params, task_record, tuning,
+    wire,
 };
 use crate::cli::bell;
 use crate::emission;
-
-/// The longest wait, in ticks, between two tries to publish a card that did not publish.
-const CARD_RETRY_MAX_TICKS: u32 = 64;
 
 #[async_trait::async_trait]
 impl NodeApp for A2aApp {
     fn classify(&self, message: &Authored) -> AppClass {
         classify(message)
+    }
+
+    fn seals(&self, tag: &AppTag) -> bool {
+        seals(tag.as_str())
     }
 
     async fn on_app_frame(
@@ -64,23 +64,6 @@ impl NodeApp for A2aApp {
             let _ = send_receipt(state, context, &message.key(), &receipt).await;
         }
         routed.loggable
-    }
-
-    fn on_meta_applied(
-        &mut self,
-        author: &AuthorKey,
-        state: &mut EventLoopState,
-        context: &HandlerCtx<'_>,
-    ) {
-        adopt_meta_endpoint(author, state, context);
-    }
-
-    async fn on_meshed(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        // Re-publish our card now that we're meshed: the home relay is homed by
-        // this point, so the card's endpoint hint gets a real dial path (the
-        // startup publish may have had none). A no-op if the address is
-        // unchanged.
-        self.sync_own_card(state, context).await;
     }
 
     async fn on_peer_left(
@@ -118,24 +101,11 @@ impl NodeDriver for A2aApp {
         }
     }
 
-    async fn on_startup(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        self.sync_own_card(state, context).await;
-    }
-
     async fn on_tick(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
         // Clone the render sink into a local so it doesn't alias the `&mut self`
         // passed alongside it.
         let out = self.output.clone();
         broadcast_params::retain_sent_legs(self, state);
-        // A card that did not publish is tried again, with a longer wait after each failure:
-        // no peer can send to us without it.
-        if self.card_error.is_some() {
-            if self.card_retry_in == 0 {
-                self.sync_own_card(state, context).await;
-            } else {
-                self.card_retry_in -= 1;
-            }
-        }
         task_record::tick_task_sweep(state, self, context, &out).await;
         task_record::tick_task_keepalive(state, self, context).await;
         // Chase down any stalled big (unlogged) shard groups: ask their authors
@@ -149,11 +119,7 @@ impl NodeDriver for A2aApp {
         .await;
     }
 
-    async fn on_shutdown(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        // Retract our meta entry first so the merge frame is queued ahead of
-        // `Left` and rides the same propagation window the engine sleeps after
-        // this hook.
-        retract_own_meta_entry(state, context).await;
+    async fn on_shutdown(&mut self, _state: &mut EventLoopState, _context: &HandlerCtx<'_>) {
         // Empty out any parked A2A-call waiters so a held call returns a
         // clean timeout, then close the blob-serving endpoint (dropping its
         // store removes the `<nick>.blobs/` spool).
@@ -290,131 +256,6 @@ impl NodeDriver for A2aApp {
     }
 }
 
-/// Publish this member's `AgentCard` at meta `/peers/<key>/card`, where the slot is the hex of the author key — one of the
-/// daemon's two [`merge_own_meta_entry`] lifecycle merges (the card is the
-/// peer's canonical A2A self-description, architectural rather than app
-/// state). Unmeshed it buffers/backfills like any state event; agent-side
-/// facts (model/harness/host) stay the agent's merge.
-///
-/// The card goes out in several merges, each within one frame: a frame of a passworded gossip
-/// is sealed, which makes it larger, and one merge of the whole card is then refused.
-///
-/// # Errors
-/// The card does not fit the frames, or a merge was refused.
-async fn publish_own_card(
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-) -> anyhow::Result<()> {
-    let seal_b58 = bs58::encode(state.identity().seal_public().as_bytes()).into_string();
-    let card = card::own_card(context.author, context.our_pubkey, &seal_b58);
-    // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
-    // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
-    // Re-publishing with an unchanged address is a no-op (an automerge change
-    // with no ops), so this is safe to call repeatedly.
-    let mut card = serde_json::to_value(&card)?;
-    card["endpoint"] = card::endpoint_hint(context.endpoint);
-    // The cut follows the size of the frame that the gossip really sends: the merge becomes an
-    // automerge change, and a passworded gossip seals it. The same steps as the merge path.
-    let merges = {
-        let doc = state.doc(Channel::Meta);
-        let identity = state.identity();
-        let actor_seed = *identity.public().as_bytes();
-        card::publish_merges(&context.our_pubkey, &card, |merge| {
-            let Some(change) = doc.build_change(merge, &actor_seed)? else {
-                return Ok(0);
-            };
-            let (wire, _plain) = doc.compose_wire_body(&change, None)?;
-            Ok(
-                Message::new_channel_event(context.mesh, context.author, wire, Channel::Meta)
-                    .sign(identity)
-                    .wire_len(),
-            )
-        })?
-    };
-    for merge in merges {
-        merge_own_meta_entry(state, context, merge, false).await?;
-    }
-    Ok(())
-}
-
-/// Delete this member's whole `/peers/<key>` meta entry on graceful leave —
-/// [`publish_own_card`]'s counterpart. Only self-retraction exists: the
-/// card-forgery gate rejects the delete from any other author, so a peer that
-/// dies without a goodbye leaves a stale entry that persists until a new
-/// session under the same nickname (identity is per-session; nicknames are
-/// never burned) overwrites it and eventually leaves cleanly. A foreign
-/// non-card write racing the delete can survive the merge (add wins), but
-/// peers only ever write their own subtree.
-async fn retract_own_meta_entry(state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-    let merge = card::retract_merge(&context.our_pubkey);
-    // Best effort at leave: the failure is logged by the merge.
-    let _ = merge_own_meta_entry(state, context, merge, true).await;
-}
-
-impl A2aApp {
-    /// Publish our card, and keep `card_error` and its `/peers/<key>/card_error` mirror in step
-    /// with the outcome. A failure is retried on the ticks that the backoff allows (see
-    /// `on_tick`).
-    async fn sync_own_card(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-        let failure: Option<String> = publish_own_card(state, context).await.err().map(|error| {
-            // The reason is read by peers: one line, and no more than a line holds.
-            let reason: String = error.to_string().chars().take(200).collect();
-            reason
-        });
-        if failure.is_some() {
-            self.card_retry_wait = (self.card_retry_wait.max(1) * 2).min(CARD_RETRY_MAX_TICKS);
-            self.card_retry_in = self.card_retry_wait;
-        } else {
-            self.card_retry_wait = 0;
-            self.card_retry_in = 0;
-        }
-        if failure != self.card_error {
-            let merge = card::card_error_merge(&context.our_pubkey, failure.as_deref());
-            let _ = merge_own_meta_entry(state, context, merge, false).await;
-            self.card_error = failure;
-        }
-    }
-}
-
-/// The daemon's write path for its own `/peers/<key>` meta entry. The daemon
-/// is an ordinary channel writer bound by the same rule as its agent — author
-/// only your own subtree, as an RFC 7386 merge through the one shared
-/// pipeline (`broadcast_state_merge`). It makes exactly two lifecycle merges:
-/// the card publish on join/re-mesh and the whole-entry retraction on
-/// graceful leave. Best-effort — a failure is logged, never blocks the
-/// lifecycle edge that triggered it.
-///
-/// `farewell` mirrors the signed frame over the unicast plane — the
-/// retraction only: a leave-time frame dropped into a silently-linkless
-/// overlay dies with the leaver, and anti-entropy can never heal it (see
-/// `gossip::unicast_farewell`).
-///
-/// # Errors
-/// The merge was refused, for example because its frame is over the size limit.
-async fn merge_own_meta_entry(
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-    merge: serde_json::Value,
-    farewell: bool,
-) -> anyhow::Result<()> {
-    let mirror = if farewell {
-        Farewell::UnicastMirror
-    } else {
-        Farewell::GossipOnly
-    };
-    broadcast_state_merge(
-        state,
-        // Daemon plumbing: the agent didn't write this, so don't surface it
-        // as a "you changed shared state" event (nor race a fetch long-poll).
-        StateMergeParams::new(MergeCtx::from(context), Channel::Meta, merge)
-            .surface(false)
-            .farewell(mirror),
-    )
-    .await
-    .inspect_err(|error| tracing::warn!(%error, "own /peers entry merge failed"))
-    .map_err(anyhow::Error::from)
-}
-
 /// A peer's `working` with no text on a task already `working` changes nothing
 /// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
 /// keep the task alive, and each one woke the initiator's bell, so it is kept
@@ -502,8 +343,7 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::EventsLost { .. }
-        | OutputEvent::NicknameHeld { .. }
-        | OutputEvent::Fork { .. } => true,
+        | OutputEvent::NicknameHeld { .. } => true,
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
         OutputEvent::Task { message, .. } => !classify(message).beat(),
@@ -514,16 +354,26 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
     }
 }
 
+/// Every directed tag — msg, worker status/artifact push, RPC request/response, receipt — is
+/// sealed to its addressee, so a relayed frame stays unreadable by the peers that forward it.
+/// Broadcast chat is public by definition, and an unknown tag is never sealed.
+fn seals(tag: &str) -> bool {
+    matches!(
+        tag,
+        wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT
+    )
+}
+
 /// Per-tag/payload classification of an inbound a2a `App` frame — see
 /// [`AppClass`]. Encodes in one place the wire policy the engine used to derive
 /// from hardcoded tag checks.
 fn classify(message: &Authored) -> AppClass {
     let tag = message.kind.app_tag().map(AppTag::as_str);
-    // App payloads log (chat/status/artifact) only. RPC request/response frames
+    // App payloads push (chat/status/artifact) only. RPC request/response frames
     // are plumbing: the result reaches the requester via its parked waiter,
-    // never the chat log / poll-fetch buffer. A tag outside the a2a taxonomy is
-    // not loggable (see `valid` — it never surfaces at all).
-    let loggable = matches!(
+    // never the inbound channel. A tag outside the a2a taxonomy is not pushed
+    // (see `valid` — it never surfaces at all).
+    let pushed = matches!(
         tag,
         Some(wire::BROADCAST | wire::MSG | wire::STATUS | wire::ARTIFACT)
     );
@@ -556,29 +406,10 @@ fn classify(message: &Authored) -> AppClass {
         None => true,
         Some(_) => false,
     };
-    // Only broadcast chat carries `seq`/parents and so participates in
-    // fork-detection + the cross-author DAG. A msg must NOT be chained, and not
-    // merely because the chain is for broadcast: a directed frame reaches only
-    // its addressee, so a chain carried on msgs is unobservable to everyone else
-    // and every non-addressee would see permanent gaps in that author's chain —
-    // which is precisely what fork detection reads as a fork.
-    let chained = message.kind.is_app(wire::BROADCAST);
-    // Every directed tag — msg, worker status/artifact push, RPC
-    // request/response — arrives sealed (encrypted) to its addressee, so a
-    // directed frame addressed to us must unseal-or-drop. Sealing is what keeps
-    // a relayed msg unreadable by the peers forwarding it. Broadcast chat is
-    // public by definition, and an unknown tag is never sealed.
-    let sealed = matches!(
-        tag,
-        Some(wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT)
-    );
-    let content = AppClass::NONE
-        .plus_if(AppClass::LOGGABLE, loggable)
+    AppClass::NONE
+        .plus_if(AppClass::PUSH, pushed)
         .plus_if(AppClass::BEAT, beat)
-        .plus_if(AppClass::VALID, valid);
-    content
-        .plus_if(AppClass::CHAINED, chained)
-        .plus_if(AppClass::SEALED, sealed)
+        .plus_if(AppClass::VALID, valid)
 }
 
 /// Route a content frame — chat, or one of the three task shapes — to its
@@ -974,6 +805,7 @@ struct A2aReqParams<'caller> {
 /// Serve one inbound `a2a_req` addressed to us: classify the JSON-RPC request
 /// against the safe method set (`gossip_rpc::classify`), run the resulting
 /// action, and broadcast an `a2a_resp` back to the requester echoing `corr`.
+/// A `shard/repair` ask gets no `a2a_resp`: it is served or dropped.
 async fn handle_a2a_req(
     request: A2aReqParams<'_>,
     state: &mut EventLoopState,
@@ -1013,16 +845,32 @@ async fn handle_a2a_req(
                         ingest_remote_message(&payload, (&requester_key, &requester), app, context)
                     }
                     Served::ShardRepair { group, missing } => {
-                        resend_cached_shards(
-                            ShardRepairParams {
-                                group: &group,
-                                missing: &missing,
-                                requester: &requester_key,
-                            },
-                            state,
-                            context,
-                        )
-                        .await
+                        // The ask has no reply: the requester parks no waiter and asks again on
+                        // its next tick, and a reply is a sealed, signed, directed frame that
+                        // costs this node as much as the ask costs the requester.
+                        if app.repair_budget.admit(requester_key, Instant::now()) {
+                            let resent = resend_cached_shards(
+                                ShardRepairParams {
+                                    group: &group,
+                                    missing: &missing,
+                                    requester: &requester_key,
+                                },
+                                state,
+                            )
+                            .await;
+                            #[cfg(feature = "adversarial")]
+                            app.note_shards_resent(resent);
+                            #[cfg(not(feature = "adversarial"))]
+                            let _ = resent;
+                        } else {
+                            tracing::debug!(
+                                target: "agent_gossip::a2a",
+                                %group,
+                                %requester_key,
+                                "shard repair budget spent: the ask is dropped"
+                            );
+                        }
+                        return;
                     }
                     Served::ReaderGet => {
                         let (bell, last_poll_secs_ago) = reader_liveness(app, context);
@@ -1079,8 +927,8 @@ async fn handle_a2a_req(
     }
 }
 
-/// The value cluster [`resend_cached_shards`] needs beyond its `state`/`ctx`
-/// handles.
+/// The value cluster [`resend_cached_shards`] needs beyond its `state`
+/// handle.
 struct ShardRepairParams<'caller> {
     group: &'caller habilis_network::protocol::ShardGroup,
     missing: &'caller [u32],
@@ -1091,17 +939,17 @@ struct ShardRepairParams<'caller> {
 /// big (unlogged) outbound groups to the requester. The frames are the raw,
 /// already-signed shards we cached at send time (`state.shard_cache_mut()`), so they
 /// reassemble on the requester exactly as the original send would have.
-async fn resend_cached_shards(
-    params: ShardRepairParams<'_>,
-    state: &mut EventLoopState,
-    context: &HandlerCtx<'_>,
-) -> Result<serde_json::Value, RpcError> {
+async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLoopState) -> usize {
     let ShardRepairParams {
         group,
         missing,
         requester,
     } = params;
-    let frames: Vec<_> = state.shard_cache_mut().frames(group, missing).collect();
+    // A repeated index would send one frame several times for one ask.
+    let mut seen = HashSet::new();
+    let firsts = missing.iter().copied().filter(|index| seen.insert(*index));
+    let unique: Vec<u32> = firsts.collect();
+    let frames: Vec<_> = state.shard_cache_mut().frames(group, &unique).collect();
     let mut resent = 0usize;
     for bytes in frames {
         let parsed = Message::parse(bytes.as_bytes()).ok();
@@ -1115,9 +963,9 @@ async fn resend_cached_shards(
         }
         // In the background: this serves a gossip RPC inline on the event
         // loop, and the requester's connection may be cold. A shard that does
-        // not start is asked for again on the requester's next tick.
-        if habilis_network::ops::deliver_in_background(&message, bytes, state, context.sender).await
-        {
+        // not start is asked for again on the requester's next tick. Only the
+        // requester gets the shard: a broadcast shard would reach every member.
+        if habilis_network::ops::deliver_to_in_background(requester, &message, state).await {
             resent += 1;
         }
     }
@@ -1128,7 +976,7 @@ async fn resend_cached_shards(
         resent,
         "served a shard repair request"
     );
-    Ok(serde_json::json!({ "resent": resent }))
+    resent
 }
 
 /// A `message/send` directed at us over gossip-RPC — we are the task's A2A
@@ -1236,27 +1084,6 @@ fn ingest_remote_message(
         .ok_or_else(|| RpcError::internal("task record missing after ingest"))
 }
 
-/// Adopt `author`'s published endpoint hint (`/peers/<key>/card/endpoint`) into
-/// the dial book — the meta-doc counterpart to `handle_peer_info`. Binds the endpoint to the key
-/// by the rule of a `PeerInfo` (`note_key_endpoint`), so a second live key of one nickname cannot
-/// take the hint of the first, and seeds iroh's address book via
-/// [`add_peer_addr`], so a directed unicast can reach a peer we learned about
-/// from the synced meta doc even before its gossiped `PeerInfo` arrives. Both
-/// are last-writer-wins / additive, so this never conflicts with `PeerInfo`. It
-/// does **not** graft a gossip link — mesh formation stays `PeerInfo`'s job.
-fn adopt_meta_endpoint(author: &AuthorKey, state: &mut EventLoopState, context: &HandlerCtx<'_>) {
-    let doc = state.doc(Channel::Meta).to_json();
-    let Some((peer_id, peer_addr)) = card::peer_endpoint(&doc, author) else {
-        return;
-    };
-    // Never bind our own endpoint or the rendezvous pseudo-node.
-    if peer_id == context.endpoint.id() || peer_id == context.rendezvous_id {
-        return;
-    }
-    state.note_key_endpoint(*author, peer_addr.clone());
-    add_peer_addr(state.address_book(), peer_addr);
-}
-
 #[cfg(test)]
 mod classify_tests {
     use habilis_network::protocol::messages::Authored;
@@ -1265,7 +1092,7 @@ mod classify_tests {
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-    use super::{classify, is_empty_working_repeat, is_replayed_chat, surface_chat, wakes};
+    use super::{classify, is_empty_working_repeat, is_replayed_chat, seals, surface_chat, wakes};
     use crate::a2a::a2a_app::A2aApp;
     use crate::a2a::{TaskState, status_update_params, wire};
     use crate::emission::OutputEvent;
@@ -1469,8 +1296,8 @@ mod classify_tests {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
         let directed = classify(&receipt_frame(Some(key("peer")), body));
         assert!(
-            directed.valid() && directed.sealed() && !directed.loggable(),
-            "a directed chat is valid, sealed and not loggable"
+            directed.valid() && !directed.pushable(),
+            "a directed receipt is valid and not pushed"
         );
         assert!(!classify(&receipt_frame(None, body)).valid(), "broadcast");
         assert!(
@@ -1568,7 +1395,7 @@ mod classify_tests {
         msg_frame_raw(None).sign(identity).authored()
     }
 
-    // Anti-entropy re-sends a chat line once the engine has forgotten its key.
+    // A relay can deliver a chat line again once the engine has forgotten its key.
     // Pre-fix it surfaced again as a new visible line, up to hours late.
     #[test]
     fn a_chat_line_surfaces_once() {
@@ -1649,48 +1476,53 @@ mod classify_tests {
         );
     }
 
-    // These assertions are deliberately worded "broadcast"/"directed" rather
-    // than "chat": both tags are chat, so a `chained` that silently followed the
-    // wrong one would still satisfy a test phrased in terms of chat.
     #[test]
-    fn msg_is_loggable_but_rpc_is_not() {
+    fn broadcast_chat_is_pushed_but_an_rpc_request_is_not() {
         let message = classify(&app_frame(wire::BROADCAST));
-        assert!(message.loggable(), "broadcast chat is loggable");
         assert!(
-            message.chained(),
-            "broadcast chat carries the per-author chain"
+            message.pushable(),
+            "broadcast chat is pushed, because every member reads it"
         );
         let request = classify(&app_frame(wire::REQ));
         assert!(
-            !request.loggable(),
-            "an RPC request is plumbing, not logged"
+            !request.pushable(),
+            "an RPC request is plumbing, not pushed"
         );
-        assert!(!request.chained(), "only broadcast chat is chained");
     }
 
-    // A msg is retained like broadcast chat but must stay out of the hash chain:
-    // it reaches only its addressee, so every other peer would see permanent
-    // gaps in the author's chain — which fork detection reads as a fork.
     #[test]
-    fn dm_is_loggable_and_sealed_but_never_chained() {
+    fn dm_is_pushed() {
         let dm = classify(&msg_frame(Some(key("bob"))));
-        assert!(dm.loggable(), "a msg is retained");
-        assert!(dm.sealed(), "a msg is sealed to its addressee");
-        assert!(!dm.chained(), "a msg must not join the cross-author chain");
+        assert!(dm.pushable(), "a msg is pushed");
     }
 
     #[test]
-    fn unknown_tag_is_invalid_and_not_loggable() {
+    fn every_directed_tag_seals_and_broadcast_chat_does_not() {
+        for tag in [
+            wire::MSG,
+            wire::STATUS,
+            wire::ARTIFACT,
+            wire::REQ,
+            wire::RESP,
+            wire::RECEIPT,
+        ] {
+            assert!(seals(tag), "{tag} is sealed to its addressee");
+        }
+        assert!(!seals(wire::BROADCAST), "broadcast chat is public");
+        assert!(!seals("admin"), "an unknown tag is never sealed");
+    }
+
+    #[test]
+    fn unknown_tag_is_invalid_and_not_pushed() {
         let cls = classify(&app_frame("admin"));
         assert!(!cls.valid(), "an unknown tag fails the boundary gate");
-        assert!(!cls.loggable(), "an unknown tag is not logged");
+        assert!(
+            !cls.pushable(),
+            "an unknown tag is not pushed, because the agent has no use for it"
+        );
         assert!(
             !cls.beat(),
             "a frame that fails the gate must not count as proof that its author is alive"
-        );
-        assert!(
-            !cls.chained(),
-            "a dropped frame must leave no gap in the author's hash chain"
         );
     }
 
@@ -1702,8 +1534,8 @@ mod classify_tests {
             MessageBody::from("{}"),
         )));
         assert!(
-            !peer_info.loggable(),
-            "the engine owns peer info, so the app must not retain it in its log"
+            !peer_info.pushable(),
+            "the engine owns peer info, so the app must not push it"
         );
         let _ = MessageKind::PeerInfo;
     }

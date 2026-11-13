@@ -27,15 +27,10 @@ pub struct SurfacedEvent {
 /// A bounded, seq-ordered record of everything the daemon **surfaced** to the
 /// operator/agent — the history `poll` / `fetch_messages` drain.
 ///
-/// Deliberately distinct from the engine's own `MessageLog`: that is
-/// the cross-node anti-entropy buffer, whose retention is a deterministic
-/// function of the message *set* (`eviction_key`) so every node agrees on what
-/// survives. This buffer is **local**: a single monotonic `seq` records
+/// This buffer is **local**: a single monotonic `seq` records
 /// *surfacing order* on this node, so one `--after <seq>` cursor walks chat,
 /// presence, task legs, and the transient events (`ping_report`,
-/// `peer_timeout`/`return`, `task_timeout`, `fork`) that never enter the message
-/// log. Mixing the two would couple a local cursor to the cross-node eviction
-/// order and break anti-entropy convergence — hence two buffers.
+/// `peer_timeout`/`return`, `task_timeout`).
 ///
 /// Oldest-drop on overflow: the front (lowest seq) is evicted first, so the
 /// retained window is always the most-recently-surfaced `capacity` events.
@@ -263,7 +258,6 @@ fn event_bytes(event: &OutputEvent) -> usize {
         OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::PingReport { .. }
         | OutputEvent::TaskTimeout { .. }
@@ -481,7 +475,6 @@ fn frame_key(event: &OutputEvent) -> Option<DedupKey> {
         | OutputEvent::Ready { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
@@ -534,7 +527,6 @@ fn read_target(event: &OutputEvent, me: &AuthorKey) -> Option<ReadTarget> {
         | OutputEvent::Presence { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::Fork { .. }
         | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
@@ -579,8 +571,7 @@ impl SurfacedState {
     /// The events surfaced after the `after` seq cursor, in surfacing order —
     /// the single source of truth for the CLI socket `poll` and the typed
     /// in-process `Poll` (api `fetch` / MCP `fetch_messages`). Reads the local
-    /// [`surfaced_events`](Self::surfaced_events) ring, NOT the cross-node
-    /// message log, so one `seq` cursor walks chat, presence, task legs, and the
+    /// [`surfaced_events`](Self::surfaced_events) ring, so one `seq` cursor walks chat, presence, task legs, and the
     /// transient events alike. Join-horizon needs no re-filtering here: a
     /// pre-join message is never *surfaced*, so it never entered this ring.
     ///

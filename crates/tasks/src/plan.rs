@@ -76,7 +76,7 @@ struct Census {
     sweep: u64,
     heal: u64,
     reclaim: u64,
-    antientropy: u64,
+    backfill: u64,
     state_refresh: u64,
     linkstate: u64,
     external: u64,
@@ -93,7 +93,7 @@ impl Census {
             sweep: self.sweep - start.sweep,
             heal: self.heal - start.heal,
             reclaim: self.reclaim - start.reclaim,
-            antientropy: self.antientropy - start.antientropy,
+            backfill: self.backfill - start.backfill,
             state_refresh: self.state_refresh - start.state_refresh,
             linkstate: self.linkstate - start.linkstate,
             external: self.external - start.external,
@@ -563,7 +563,7 @@ fn report_wakeups(variants: &[Variant], running: &[Node], elapsed: f64) {
         "wake",
         "reclaim",
         "sweep",
-        "antien",
+        "backfl",
         "refresh",
         "heal",
         "alive",
@@ -582,7 +582,7 @@ fn report_wakeups(variants: &[Variant], running: &[Node], elapsed: f64) {
                 per_min(seen.wakeups),
                 per_min(seen.reclaim),
                 per_min(seen.sweep),
-                per_min(seen.antientropy),
+                per_min(seen.backfill),
                 per_min(seen.state_refresh),
                 per_min(seen.heal),
                 per_min(seen.alive),
@@ -829,7 +829,7 @@ fn census(log_dir: &Path) -> Census {
         total.sweep += field(line, "idle_sweep");
         total.heal += field(line, "idle_heal");
         total.reclaim += field(line, "idle_reclaim");
-        total.antientropy += field(line, "idle_antientropy");
+        total.backfill += field(line, "idle_backfill");
         total.state_refresh += field(line, "idle_state_refresh");
         total.linkstate += field(line, "idle_linkstate");
         total.external += field(line, "idle_external");

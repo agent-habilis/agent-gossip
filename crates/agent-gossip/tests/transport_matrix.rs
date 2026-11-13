@@ -34,17 +34,18 @@ fn task_id_of(response: &Value) -> TaskId {
         .expect("the returned id is a valid task id")
 }
 
-/// Poll until `node`'s derived `channel` document has `pointer == expected`.
+/// Poll until a slice of `node`'s `channel` view has `pointer == expected`. The view holds one
+/// slice for each author, keyed by its author key.
 async fn converged(node: &InProcNode, channel: Channel, pointer: &str, expected: &str) -> bool {
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
-        if node
-            .get(channel)
-            .await
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            == Some(expected)
-        {
+        let view = node.get(channel).await;
+        let holds =
+            |slice: &Value| slice.pointer(pointer).and_then(Value::as_str) == Some(expected);
+        let found = view
+            .as_object()
+            .is_some_and(|slices| slices.values().any(holds));
+        if found {
             return true;
         }
         if Instant::now() >= deadline {
@@ -59,11 +60,7 @@ async fn converged(node: &InProcNode, channel: Channel, pointer: &str, expected:
 async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
     // Warmup: a broadcast (always gossip) meshes the peers and exchanges the
     // `PeerInfo`/cards the directed paths resolve on.
-    alice.broadcast("warmup").await;
-    assert!(
-        bob.wait_body("warmup", MSG_TIMEOUT).await,
-        "mesh never formed (warmup broadcast not received)"
-    );
+    common::warm_up(alice, &mut [&mut *bob]).await;
 
     // 1. Broadcast chat.
     alice.broadcast("hello over the transport").await;

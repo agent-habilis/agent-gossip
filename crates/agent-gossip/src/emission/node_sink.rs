@@ -28,11 +28,6 @@ impl habilis_network::embed::NodeSink for Output {
             }),
             NodeEvent::Info(message) => self.info(&message),
             NodeEvent::Error(message) => self.error(&message),
-            NodeEvent::Fork {
-                nickname,
-                pubkey,
-                seq,
-            } => self.fork(&nickname, &pubkey, seq),
             NodeEvent::PeerTimeout {
                 nickname,
                 key,

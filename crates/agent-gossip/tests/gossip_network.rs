@@ -31,14 +31,8 @@ use serde_json::json;
 const TEST_HEAL_SECS: u64 = 3;
 
 /// Anti-entropy cadence injected into the backfill tests via the hidden
-/// `--antientropy-interval-secs` flag (production default 10s).
-const TEST_AE_SECS: u64 = 2;
-
-/// Freeze window that guarantees a `SIGSTOP`ped peer's QUIC link dies:
-/// iroh's direct-path idle timeout is 15s (deliberately left at the
-/// transport default — see the note at the bottom of
-/// `src/util/consts.rs`), so this floor is iroh-bound, not ours.
-const LINK_DEATH_FREEZE: Duration = Duration::from_secs(18);
+/// `--backfill-interval-secs` flag (production default 10s).
+const TEST_BACKFILL_SECS: u64 = 2;
 
 /// Ceiling for the post-departure handoff poll. A co-host claim takes a
 /// couple of heal cycles; the rest is margin for a loaded host. Callers
@@ -329,51 +323,62 @@ async fn test_password_flag_wire_contract() {
     creator.kill();
 }
 
-/// Durable state log, live propagation: a creator patches the shared state; a
-/// meshed joiner converges to the same derived document via gossip. State rides
-/// the same topic but its own un-pruned log, surfaced through `state get`.
+/// The slices of a channel view folded into one document. The tests write disjoint keys, so the
+/// union of the keys of all slices is the document that the members agree on.
+fn merged_slices(view: &serde_json::Value) -> serde_json::Value {
+    let mut document = serde_json::Map::new();
+    for slice in view
+        .as_object()
+        .into_iter()
+        .flat_map(serde_json::Map::values)
+    {
+        for (key, value) in slice.as_object().into_iter().flatten() {
+            document.insert(key.clone(), value.clone());
+        }
+    }
+    serde_json::Value::Object(document)
+}
+
+/// Live propagation: a creator writes its slice of the shared state; a meshed joiner derives
+/// the same slice via gossip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_state_log_propagates_to_a_peer() {
+async fn test_state_propagates_to_a_peer() {
     let creator = InProcNode::create("netstate").await;
-    let joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
+    let mut joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
 
     // Mesh first (a delivered message proves the link), so the state events
     // broadcast onto a live overlay rather than the unmeshed buffer.
-    creator.broadcast("link").await;
+    common::warm_up(&creator, &mut [&mut joiner]).await;
 
     creator.state_merge(json!({"alpha": 1})).await;
     creator.state_merge(json!({"beta": 2})).await;
 
     let want = json!({"alpha": 1, "beta": 2});
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut got = joiner.state_get().await;
+    let mut got = merged_slices(&joiner.state_get().await);
     while got != want && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        got = joiner.state_get().await;
+        got = merged_slices(&joiner.state_get().await);
     }
+    assert_eq!(got, want, "joiner never derived the state of the creator");
+    // The author holds its own slice too (gossip never echoes to self).
     assert_eq!(
-        got, want,
-        "joiner never converged to the creator's state log"
-    );
-    // The author holds its own events too (gossip never echoes to self).
-    assert_eq!(
-        creator.state_get().await,
+        merged_slices(&creator.state_get().await),
         want,
         "the creator holds its own state"
     );
 }
 
-/// Durable state log, anti-entropy backfill: a peer that joins **after** the
-/// state events are live (so nothing is buffered to flush to it) must still
-/// reconstruct the full un-pruned log via the state digest — the durability
-/// guarantee. Three nodes: creator+early are meshed so the appends broadcast
-/// live (not into the unmeshed buffer); the late joiner can only pull.
+/// A peer that joins **after** the state writes are live (so nothing is buffered to flush to it)
+/// still gets the current slice of the creator. Three nodes: creator+early are meshed so the
+/// writes broadcast live (not into the unmeshed buffer); the late joiner can only be served by
+/// the engine's own sync.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_state_log_backfills_a_late_joiner() {
+async fn test_state_reaches_a_late_joiner() {
     let creator = InProcNode::create("netstatelate").await;
-    let early = InProcNode::join(&creator.mesh, "early-state").await;
-    // Mesh so appends go out live, leaving the creator's outbound buffer empty.
-    creator.broadcast("link").await;
+    let mut early = InProcNode::join(&creator.mesh, "early-state").await;
+    // Mesh so writes go out live, leaving the creator's outbound buffer empty.
+    common::warm_up(&creator, &mut [&mut early]).await;
 
     creator.state_merge(json!({"alpha": 1})).await;
     creator.state_merge(json!({"beta": 2})).await;
@@ -381,25 +386,24 @@ async fn test_state_log_backfills_a_late_joiner() {
     let want = json!({"alpha": 1, "beta": 2});
     // Confirm the live path first.
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut early_got = early.state_get().await;
+    let mut early_got = merged_slices(&early.state_get().await);
     while early_got != want && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        early_got = early.state_get().await;
+        early_got = merged_slices(&early.state_get().await);
     }
     assert_eq!(early_got, want, "early peer never got the live state");
 
-    // The late joiner arrives after all state traffic; only anti-entropy can
-    // backfill it (within an antientropy interval once it advertises its set).
+    // The late joiner arrives after all state traffic.
     let late = InProcNode::join(&creator.mesh, "late-state").await;
     let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let mut late_got = late.state_get().await;
+    let mut late_got = merged_slices(&late.state_get().await);
     while late_got != want && Instant::now() < late_deadline {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        late_got = late.state_get().await;
+        late_got = merged_slices(&late.state_get().await);
     }
     assert_eq!(
         late_got, want,
-        "late joiner never backfilled state via anti-entropy"
+        "late joiner never got the state of the creator"
     );
 }
 
@@ -1427,8 +1431,8 @@ fn drain_until_quiet(mesh: &str, nickname: &str) {
 /// body stays sealed and unsurfaced.
 #[test]
 fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
-    let ae = TEST_AE_SECS.to_string();
-    let flags = [("--antientropy-interval-secs", ae.as_str())];
+    let ae = TEST_BACKFILL_SECS.to_string();
+    let flags = [("--backfill-interval-secs", ae.as_str())];
     let (alice, mesh) = Node::create_flags("bell-priv", &flags);
     let bob = Node::join_flags(&mesh, "bellpriv-bob", &flags);
     let carol = Node::join_flags(&mesh, "bellpriv-carol", &flags);
@@ -1444,7 +1448,7 @@ fn test_msg_to_one_peer_does_not_ring_a_third_peers_bell() {
     let _ = common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "to-bob-only");
 
     // Long enough for several anti-entropy rounds on top of the bell grace.
-    std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
+    std::thread::sleep(Duration::from_secs(4 * TEST_BACKFILL_SECS));
     common::assert_bell_parked(
         &mut bell,
         "a msg addressed to bob rang a bystander's bell — an agent lost a turn \
@@ -1946,7 +1950,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 ///
 /// Subprocess (not `InProcNode`): the negative wait must span several
 /// anti-entropy cycles, and only a spawned daemon can take the hidden
-/// `--antientropy-interval-secs` flag (the api path runs production
+/// `--backfill-interval-secs` flag (the api path runs production
 /// defaults).
 #[test]
 fn test_join_horizon_hides_pre_join_history() {
@@ -1979,7 +1983,7 @@ fn test_join_horizon_hides_pre_join_history() {
     // later "still zero" means the horizon suppressed the backfill, not
     // that it merely hadn't arrived yet. Inherent blind wait (negative
     // assertion).
-    std::thread::sleep(Duration::from_secs(3 * TEST_AE_SECS));
+    std::thread::sleep(Duration::from_secs(3 * TEST_BACKFILL_SECS));
     for tag in ["hist-1", "hist-2", "hist-3"] {
         assert_eq!(
             late.count_from(&creator.nickname, tag),
@@ -2029,7 +2033,7 @@ const EVICT_ONLY: [(&str, &str); 2] = [
 // STAY a member (no `SHORT_EVICT`) while recovery converges quickly.
 const FAST_AE: [(&str, &str); 2] = [
     ("--heal-interval-secs", "3"),
-    ("--antientropy-interval-secs", "2"),
+    ("--backfill-interval-secs", "2"),
 ];
 
 /// Assert `receiver` records `body` from `sender` within `within`,
@@ -2385,58 +2389,9 @@ fn test_resume_triggers_hard_rebootstrap() {
     assert_received(&sleeper, &creator.nickname, "rb-post", RECOVERY_TIMEOUT);
 }
 
-/// Anti-entropy backfill: a peer that briefly freezes — but stays a
-/// member (`gap` << alive-timeout) — misses a post-join message. The
-/// join-horizon does not hide it (it post-dates the join), so
-/// anti-entropy digest task must reconcile the gap.
-///
-/// Not `SHORT_EVICT`: the peer must stay a member, so the production
-/// alive-timeout is required (`FAST_AE` shortens only the reconcile
-/// cadences). The irreducible cost is the iroh-bound
-/// `LINK_DEATH_FREEZE`; the adaptive probe pays only real latency.
-#[test]
-fn test_anti_entropy_set_convergence() {
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    // Well under the ~90s alive-timeout: the peer stays a member.
-    let gap = LINK_DEATH_FREEZE;
-    // Several anti-entropy cycles at the injected cadence, plus a heal
-    // if the freeze dropped the gossip link. Adaptive — paid only if
-    // needed.
-    let reconcile = Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS);
-
-    let (creator, mesh) = Node::create_flags("itest", &FAST_AE);
-    let alpha = Node::join_flags(&mesh, "ae-alpha", &FAST_AE);
-    let bravo = Node::join_flags(&mesh, "ae-bravo", &FAST_AE);
-    assert!(
-        creator.wait_ready(&mesh),
-        "the creator daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        alpha.wait_ready(&mesh),
-        "the alpha daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        bravo.wait_ready(&mesh),
-        "the bravo daemon must bind its control socket before the test sends it any command"
-    );
-
-    // alpha misses this; bravo gets it. alpha stays a member.
-    alpha.stop();
-    let _ = cli_message(&mesh, &creator.nickname, "ae-gap");
-    assert_received(&bravo, &creator.nickname, "ae-gap", MSG_TIMEOUT);
-    std::thread::sleep(gap);
-    alpha.cont();
-
-    // Post-join message, so the horizon does not hide it: anti-entropy
-    // must backfill it to the still-member peer.
-    assert_received(&alpha, &creator.nickname, "ae-gap", reconcile);
-}
-
-/// A directed frame is unicast-only on the send path, and backfill must not be
-/// the hole in that. Both parties retain the frame in their message log, so a
-/// resend loop that just re-broadcasts every missing log entry puts on the
-/// gossip flood exactly what `transport::deliver` structurally kept off it.
+/// A directed frame is unicast-only on the send path, and no resend may be the hole in that: a
+/// repair that put the frame on the gossip flood would reach a bystander, which
+/// `transport::deliver` structurally keeps off it.
 ///
 /// The oracle is the receiver's *wire*, not its screen: the engine's redaction
 /// log records every ingested frame at `recv::ingest` — before any addressee
@@ -2471,11 +2426,9 @@ fn test_directed_msg_never_reaches_a_bystander() {
     let _ = common::cli_msg_checked(&mesh, &alice.nickname, &bob.nickname, "leak-secret");
     assert_received(&bob, &alice.nickname, "leak-secret", MSG_TIMEOUT);
 
-    // Carol never held the frame, so her digest advertises a gap over it every
-    // round — the exact condition that made backfill re-broadcast it. Wait out
-    // several rounds. Inherent blind wait (negative assertion), derived from
+    // Wait out several backfill rounds. Inherent blind wait (negative assertion), derived from
     // the injected cadence.
-    std::thread::sleep(Duration::from_secs(5 * TEST_AE_SECS));
+    std::thread::sleep(Duration::from_secs(5 * TEST_BACKFILL_SECS));
 
     // NOTE: greps the `directed` line emitted by `logging::messages::log`.
     // Keep the two in sync — if that event name is reworded, update this match.
@@ -2491,350 +2444,94 @@ fn test_directed_msg_never_reaches_a_bystander() {
     );
 }
 
-/// The other half of the addressee gate: it must not cost the *addressee* its
-/// backfill. A directed frame's only recovery path is anti-entropy — small
-/// multipart groups are deliberately excluded from `shard/repair` because
-/// "their shards live in the message log and heal via anti-entropy" — so a
-/// blanket "never resend directed frames" would lose a msg whose unicast leg
-/// died, silently and with no repair.
-#[test]
-fn test_directed_msg_backfills_to_its_addressee() {
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    let reconcile = Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS);
-
-    let (alice, mesh) = Node::create_flags("itest", &FAST_AE);
-    let bob = Node::join_flags(&mesh, "backfill-bob", &FAST_AE);
-    assert!(
-        alice.wait_ready(&mesh),
-        "the alice daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        bob.wait_ready(&mesh),
-        "the bob daemon must bind its control socket before the test sends it any command"
-    );
-    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
-
-    // Warm the link first: a send whose dial fails is dropped on purpose (see
-    // `a_msg_whose_send_failed_never_arrives_later`), so a cold dial to the
-    // frozen bob would fail the send and nothing would be left to backfill.
-    let warmup = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "backfill-warmup");
-    assert!(warmup.status.success(), "warm-up msg failed: {warmup:?}");
-    assert_received(&bob, &alice.nickname, "backfill-warmup", reconcile);
-
-    // Freeze bob, then msg him: QUIC buffers the unicast leg locally, and the
-    // freeze outlasts iroh's direct-path idle timeout, so the leg dies with the
-    // frame still in flight. `commit_outbound_part` retained it before
-    // `deliver`, so alice can still serve it — through anti-entropy only.
-    bob.stop();
-    let secret = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, "backfill-secret");
-    assert!(
-        secret.status.success(),
-        "the send to the frozen bob failed, so there is nothing to backfill \
-         (no open link before SIGSTOP?): {secret:?}"
-    );
-    std::thread::sleep(LINK_DEATH_FREEZE);
-    bob.cont();
-
-    assert_received(&bob, &alice.nickname, "backfill-secret", reconcile);
-}
-
-/// Large-gap reconnect replication: with a shared history larger than the
-/// old ~90-uuid digest overflow point, a peer that freezes and misses a
-/// burst must converge to the **full** set when it resumes.
+/// A frozen peer catches up on the state and the meta channel after the thaw. The engine keeps no
+/// log of chat, so only the slices of these two channels are synced by the backfill round: the
+/// gossip layer holds each frame for 30 s, and the freeze lasts longer, so a slice written during
+/// the freeze reaches the peer only through the backfill. The test does not assert that chat is
+/// missed: a buffered stream can still deliver it after the thaw.
 ///
-/// Regression for the digest overflow: pre-fix, a buffer past ~90 messages
-/// made every node's `recent_ids` digest (a JSON array of 36-char uuid
-/// strings, ~8 KB at 200) exceed the gossip cap and get silently dropped —
-/// so anti-entropy stalled and the gap never reconciled. The compact,
-/// windowed digest keeps every digest under the cap, so it recovers.
+/// Not `SHORT_EVICT`: the peer must stay a member, so the production alive-timeout is required.
 #[test]
-fn test_large_gap_reconnect_replication() {
-    // Comfortably past the old ~98-uuid overflow *before* the gap, so the
-    // old string-array digest would have been dropped.
-    const PRELUDE: usize = 120;
-    const GAP: usize = 30;
-    const TOTAL: usize = PRELUDE + GAP;
+fn test_a_frozen_peer_catches_up_on_state_and_meta_after_the_thaw() {
+    // Longer than the 30 s that the gossip layer holds a frame.
+    const FREEZE: Duration = Duration::from_secs(35);
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // Production alive-timeout (no `SHORT_EVICT`) so alpha stays a member
-    // while frozen; a faster max-resend so the deep backfill converges
-    // inside the window, plus the fast reconcile cadences.
+    let backfill = TEST_BACKFILL_SECS.to_string();
     let envs = [
-        ("--antientropy-max-resend", "128"),
         ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", backfill.as_str()),
     ];
 
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&mesh, "lg-alpha", &envs);
-    let bravo = Node::join_flags(&mesh, "lg-bravo", &envs);
-    assert!(
-        creator.wait_ready(&mesh),
-        "the creator daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        alpha.wait_ready(&mesh),
-        "the alpha daemon must bind its control socket before the test sends it any command"
-    );
-    assert!(
-        bravo.wait_ready(&mesh),
-        "the bravo daemon must bind its control socket before the test sends it any command"
-    );
-
-    let author = creator.nickname.clone();
-
-    // Build a shared history past the overflow point; alpha gets it live.
-    for index in 0..PRELUDE {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("lg-{index}"));
-    }
-    let live = wait_until(
-        || alpha.count_distinct_from(&author, "lg-"),
-        PRELUDE,
-        Duration::from_mins(1),
-    );
-    assert_eq!(live, PRELUDE, "alpha never received the live prelude");
-
-    // Freeze alpha, then send the gap it must later recover.
-    alpha.stop();
-    std::thread::sleep(Duration::from_secs(2));
-    for index in PRELUDE..TOTAL {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("lg-{index}"));
-    }
-    // bravo (live) gets everything — confirms the burst actually went out
-    // while alpha was frozen.
-    let bravo_total = wait_until(
-        || bravo.count_distinct_from(&author, "lg-"),
-        TOTAL,
-        Duration::from_mins(1),
-    );
-    assert_eq!(bravo_total, TOTAL, "bravo never received the full burst");
-
-    // Hold the freeze past iroh's direct-path idle timeout so alpha's
-    // link dies and the gap is genuinely missed — recovery then must go
-    // through anti-entropy rather than a buffered post-resume delivery.
-    std::thread::sleep(LINK_DEATH_FREEZE);
-    // Resume: anti-entropy must backfill the gap. A frozen link re-meshes
-    // on a heal tick, then digests reconcile over a few cycles at the
-    // injected cadences. Adaptive ceiling.
-    alpha.cont();
-    let final_count = wait_until(
-        || alpha.count_distinct_from(&author, "lg-"),
-        TOTAL,
-        Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS),
-    );
-    assert_eq!(
-        final_count,
-        TOTAL,
-        "alpha did not converge to the full set after reconnect (got {final_count}/{TOTAL})\n{}",
-        alpha.log_tail(20),
-    );
-}
-
-/// Deep **interior** gap: a peer holds older *and* newer messages but is
-/// missing a middle slice, so its open newest window cannot cover the gap —
-/// it is recovered only by the rolling **closed older** window. Exercises
-/// that path end to end (the tail-loss `test_large_gap_reconnect_replication`
-/// does not).
-#[test]
-fn test_interior_gap_recovered_via_rolling_window() {
-    const OLD: usize = 80; // shared older history
-    const GAP: usize = 40; // interior gap (frozen peer misses these)
-    const TAIL: usize = 80; // newer tail
-    const TOTAL: usize = OLD + GAP + TAIL;
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    let envs = [
-        ("--antientropy-max-resend", "128"),
-        ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
-    ];
-
-    let (creator, mesh) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&mesh, "ig-alpha", &envs);
-    let bravo = Node::join_flags(&mesh, "ig-bravo", &envs);
-    assert!(
-        creator.wait_ready(&mesh) && alpha.wait_ready(&mesh) && bravo.wait_ready(&mesh),
-        "nodes never ready"
-    );
-    let author = creator.nickname.clone();
-
-    let mut index = 0usize;
-    // OLD: shared older history; alpha gets it live.
-    for _ in 0..OLD {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
-        index += 1;
-    }
-    assert_eq!(
-        wait_until(
-            || alpha.count_distinct_from(&author, "ig-"),
-            OLD,
-            Duration::from_mins(1)
-        ),
-        OLD,
-        "alpha missed the shared history"
-    );
-    // Freeze alpha, send the GAP — the interior slice alpha never sees live.
-    alpha.stop();
-    for _ in 0..GAP {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
-        index += 1;
-    }
-    assert_eq!(
-        wait_until(
-            || bravo.count_distinct_from(&author, "ig-"),
-            OLD + GAP,
-            Duration::from_mins(1)
-        ),
-        OLD + GAP,
-        "bravo missed the gap batch"
-    );
-    // Hold the freeze past iroh's direct-path idle timeout so alpha's
-    // link dies and it genuinely misses the gap (recoverable only via
-    // anti-entropy, not a buffered post-resume delivery).
-    std::thread::sleep(LINK_DEATH_FREEZE);
-    // Resume and send the newer TAIL. alpha ends up holding OLD + TAIL with
-    // the GAP strictly below its newest window, so the gap is recoverable
-    // only via the rolling older window.
-    alpha.cont();
-    for _ in 0..TAIL {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{index}"));
-        index += 1;
-    }
-    // The rolling older window needs several cycles to sweep across the
-    // interior gap. Adaptive ceiling at the injected cadences.
-    let final_count = wait_until(
-        || alpha.count_distinct_from(&author, "ig-"),
-        TOTAL,
-        Duration::from_secs(20 * TEST_AE_SECS + 6 * TEST_HEAL_SECS),
-    );
-    assert_eq!(
-        final_count,
-        TOTAL,
-        "interior gap not recovered via the rolling older window (got {final_count}/{TOTAL})\n{}",
-        alpha.log_tail(20),
-    );
-}
-
-/// Steady-state churn-free: once a mesh with a buffer larger than one
-/// digest window is fully converged, anti-entropy must go quiet — no peer
-/// keeps re-sending. A naive sub-window digest (advertising less than it
-/// holds) would make peers perpetually re-send the remainder; the `[lo,hi]`
-/// bounds prevent that. We assert the `resent` log count stops growing.
-#[test]
-fn test_steady_state_no_resend_churn() {
-    const COUNT: usize = 150; // > one 70-id window ⇒ the rolling older window is active
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    let envs = [
-        ("RUST_LOG", "habilis_network::gossip=debug"),
-        ("--log-max-bytes", "0"), // no rotation, so the full log is one file
-        ("--antientropy-interval-secs", "2"),
-    ];
-
-    let (creator, mesh) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&mesh, "cf-alpha", &envs);
-    let bravo = Node::join_flags(&mesh, "cf-bravo", &envs);
-    assert!(
-        creator.wait_ready(&mesh) && alpha.wait_ready(&mesh) && bravo.wait_ready(&mesh),
-        "nodes never ready"
-    );
-    let author = creator.nickname.clone();
-    for index in 0..COUNT {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("cf-{index}"));
-    }
-    assert_eq!(
-        wait_until(
-            || alpha.count_distinct_from(&author, "cf-"),
-            COUNT,
-            Duration::from_mins(1)
-        ),
-        COUNT,
-        "alpha never converged"
-    );
-    assert_eq!(
-        wait_until(
-            || bravo.count_distinct_from(&author, "cf-"),
-            COUNT,
-            Duration::from_mins(1)
-        ),
-        COUNT,
-        "bravo never converged"
-    );
-
-    // NOTE: greps the debug line emitted by `handle_digest` in
-    // `src/gossip/antientropy.rs` ("anti-entropy: resent …"). Keep the two
-    // in sync — if that message is reworded, update this match.
-    let resends: Box<dyn Fn() -> usize + '_> = Box::new(|| -> usize {
-        let nodes = [&creator, &alpha, &bravo];
-        let logs = nodes.iter().map(|node| node.log_contents());
-        logs.map(|log| log.matches("anti-entropy: resent").count())
-            .sum()
-    });
-    // Settle past the convergence-era resends, then observe ≥2 more
-    // anti-entropy cycles in a now-converged mesh. Inherent blind waits
-    // (negative assertion), derived from the injected cadence.
-    std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
-    let before = resends();
-    std::thread::sleep(Duration::from_secs(3 * TEST_AE_SECS));
-    let after = resends();
-    assert_eq!(
-        before, after,
-        "a converged mesh kept re-sending (churn): {before} -> {after}"
-    );
-}
-
-/// Multi-round throttled backfill: a per-round resend budget far smaller
-/// than the gap forces recovery across several anti-entropy cycles (not one
-/// burst). Proves the cumulative catch-up converges.
-#[test]
-fn test_multi_round_throttled_backfill() {
-    const GAP: usize = 40;
-    // Serialize against the other timing-sensitive tests (see `serial_guard`).
-    let _serial = serial_guard();
-    // Tiny budget ⇒ many rounds, at the fast reconcile cadences.
-    let envs = [
-        ("--antientropy-max-resend", "5"),
-        ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
-    ];
-
-    let (creator, mesh) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&mesh, "mr-alpha", &envs);
-    let bravo = Node::join_flags(&mesh, "mr-bravo", &envs);
-    assert!(
-        creator.wait_ready(&mesh) && alpha.wait_ready(&mesh) && bravo.wait_ready(&mesh),
-        "nodes never ready"
-    );
-    let author = creator.nickname.clone();
+    let alpha = Node::join_flags(&mesh, "fz-alpha", &envs);
+    let bravo = Node::join_flags(&mesh, "fz-bravo", &envs);
+    assert!(creator.wait_ready(&mesh), "the creator never served");
+    assert!(alpha.wait_ready(&mesh), "alpha never served");
+    assert!(bravo.wait_ready(&mesh), "bravo never served");
+    common::await_link_cli(&mesh, &creator.nickname, &alpha.nickname);
+    common::await_link_cli(&mesh, &creator.nickname, &bravo.nickname);
 
     alpha.stop();
-    std::thread::sleep(Duration::from_secs(2));
-    for index in 0..GAP {
-        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("mr-{index}"));
+    for (channel, merge) in [
+        (agent_gossip::Channel::State, r#"{"frozen":"state"}"#),
+        (agent_gossip::Channel::Meta, r#"{"frozen":"meta"}"#),
+    ] {
+        let out = common::cli_channel_merge(channel, &mesh, &creator.nickname, merge);
+        assert!(
+            out.status.success(),
+            "the merge during the freeze failed: {out:?}"
+        );
     }
-    let _ = wait_until(
-        || bravo.count_distinct_from(&author, "mr-"),
-        GAP,
-        Duration::from_mins(1),
-    );
-    // Hold the freeze past iroh's direct-path idle timeout so the gap is
-    // genuinely missed and recovered through anti-entropy's throttled resend.
-    std::thread::sleep(LINK_DEATH_FREEZE);
+    // bravo is live: it gets both writes, so they did go out during the freeze.
+    for (channel, value) in [
+        (agent_gossip::Channel::State, "state"),
+        (agent_gossip::Channel::Meta, "meta"),
+    ] {
+        assert!(
+            await_slice_value((&mesh, &bravo.nickname), channel, value, MSG_TIMEOUT),
+            "bravo never got the {value} write"
+        );
+    }
+    std::thread::sleep(FREEZE);
     alpha.cont();
-    // ~8 rounds (GAP 40 / budget 5) at the injected cadence, plus re-mesh
-    // margin. Adaptive ceiling.
-    let final_count = wait_until(
-        || alpha.count_distinct_from(&author, "mr-"),
-        GAP,
-        Duration::from_secs(12 * TEST_AE_SECS + 6 * TEST_HEAL_SECS),
-    );
-    assert_eq!(
-        final_count,
-        GAP,
-        "throttled backfill did not complete over multiple rounds (got {final_count}/{GAP})\n{}",
-        alpha.log_tail(20),
-    );
+
+    // The backfill round at the injected cadence, plus a heal if the freeze dropped the link.
+    let catch_up = Duration::from_secs(10 * TEST_BACKFILL_SECS + 6 * TEST_HEAL_SECS);
+    for (channel, value) in [
+        (agent_gossip::Channel::State, "state"),
+        (agent_gossip::Channel::Meta, "meta"),
+    ] {
+        assert!(
+            await_slice_value((&mesh, &alpha.nickname), channel, value, catch_up),
+            "alpha never caught up on the {value} write after the thaw\n{}",
+            alpha.log_tail(20)
+        );
+    }
+}
+
+/// Whether the view of `channel` at `nickname` holds a slice with `"frozen": value`, within `limit`.
+fn await_slice_value(
+    (mesh, nickname): (&str, &str),
+    channel: agent_gossip::Channel,
+    value: &str,
+    limit: Duration,
+) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        let raw = common::cli_channel_get(channel, mesh, nickname);
+        let view: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+        let held = view["document"]
+            .as_object()
+            .is_some_and(|slices| slices.values().any(|slice| slice["frozen"] == value));
+        if held {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 // ── Key-identity model (Tier 1) ─────────────────────────────────────────
@@ -2853,10 +2550,21 @@ async fn two_members_of_one_nickname_do_not_see_each_others_messages() {
 
     alpha.broadcast("from-alpha").await;
     beta.broadcast("from-beta").await;
-    observer.broadcast("from-observer").await;
+    // A gossip holds no log of a broadcast, so a message sent before the links exist is lost:
+    // the observer sends again until both holders have a message of it.
+    let mut reached_both = false;
+    for round in 0..6 {
+        let body = format!("from-observer-{round}");
+        observer.broadcast(&body).await;
+        if alpha.wait_body(&body, Duration::from_secs(5)).await
+            && beta.wait_body(&body, Duration::from_secs(5)).await
+        {
+            reached_both = true;
+            break;
+        }
+    }
     assert!(
-        alpha.wait_body("from-observer", MSG_TIMEOUT).await
-            && beta.wait_body("from-observer", MSG_TIMEOUT).await,
+        reached_both,
         "the observer's message did not reach a holder: the mesh does not work at all"
     );
     assert!(
@@ -2928,51 +2636,30 @@ async fn nickname_reusable_after_peer_leaves() {
     second.leave().await;
 }
 
-/// A peer that dies without a graceful leave keeps its `/peers` meta entry
-/// forever, and `meta get` must say so.
+/// A peer that dies without a graceful leave keeps its slice of the meta channel for about 1 hour,
+/// and `meta get` must say so.
 ///
-/// Only the entry's own author can retract it: the forgery gate binds every
-/// writer to its own subtree, so no survivor can tidy up after a SIGKILL. The
-/// entry stays readable with whatever status its agent last set, while the
-/// roster evicts the peer within the alive timeout. An agent picking a peer to
-/// delegate to reads that document, so the staleness has to be visible.
+/// Only the author of a slice can remove it: a graceful leave tombstones the slice, and a key that
+/// dies is dropped by the engine only after its quiet time. The entry stays readable with whatever
+/// status its agent last set, while the roster evicts the peer within the alive timeout. An agent
+/// picking a peer to delegate to reads that document, so the staleness has to be visible.
 ///
-/// The document itself is left intact — trimming it would drop a returning
-/// peer's own entry and invite a get/edit/merge round-trip to write the
-/// trimmed view back as truth — so the answer rides alongside, in `absent`.
+/// The document itself is left intact — trimming it would invite a get/edit/merge round-trip to
+/// write the trimmed view back as truth — so the answer rides alongside, in `absent`.
 #[test]
 fn meta_get_names_entries_whose_peer_is_gone() {
     let (survivor, mesh) = Node::create_flags("meta-ghost", &SHORT_EVICT);
     let ghost = Node::join_args(&mesh, "meta-ghost-peer", &[], &SHORT_EVICT);
     common::await_peer_card_cli(&mesh, &survivor.nickname, &ghost.nickname);
     common::await_peer_card_cli(&mesh, &ghost.nickname, &survivor.nickname);
-    // The slot of a member is the hex of its author key; its card names the nickname.
-    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
-        agent_gossip::Channel::Meta,
-        &mesh,
-        &survivor.nickname,
-    ))
-    .expect("the CLI prints the meta channel as one JSON object");
-    let ghost_slot = common::card_slot_of(&meta["document"], &ghost.nickname)
-        .expect("the wait above ended on this card, so the slot exists");
-    let survivor_slot = common::card_slot_of(&meta["document"], &survivor.nickname)
-        .expect("the wait above ended on the card of the other side, so the slot exists");
+    // The daemon writes no entry: each agent reports its own, as the join skill does. The slot of a
+    // member is the hex of its author key; its entry names the nickname.
+    common::cli_meta_report(&mesh, &survivor.nickname);
+    common::cli_meta_report(&mesh, &ghost.nickname);
+    let ghost_slot = common::await_meta_slot_cli(&mesh, &survivor.nickname, &ghost.nickname);
+    let survivor_slot = common::await_meta_slot_cli(&mesh, &survivor.nickname, &survivor.nickname);
 
-    // The doomed peer publishes an agent-side fact, as the join skill does.
-    let mut command = common::test_cmd();
-    command
-        .args(["meta", "merge", "--gossip", &mesh])
-        .args(["--nickname", &ghost.nickname]);
-    let merged: std::process::Output = command
-        .args([
-            "--merge",
-            &format!(r#"{{"peers":{{"{ghost_slot}":{{"status":"idle"}}}}}}"#),
-        ])
-        .output()
-        .expect("failed to run meta merge");
-    assert!(merged.status.success(), "meta merge failed: {merged:?}");
-
-    // Ungraceful death: no `Left`, so no retraction is ever authored.
+    // Ungraceful death: no `Left`, so no tombstone is ever authored.
     ghost.kill();
 
     // The survivor evicts it from the roster within the alive timeout, but the
@@ -2997,7 +2684,7 @@ fn meta_get_names_entries_whose_peer_is_gone() {
         if absent.contains(&ghost_slot.as_str()) {
             // The entry is still in the document — reported, not deleted.
             assert!(
-                response["document"]["peers"][&ghost_slot].is_object(),
+                response["document"][&ghost_slot].is_object(),
                 "the entry must be reported, not trimmed: {response}"
             );
             // And the survivor never reports itself.
@@ -3023,14 +2710,8 @@ fn the_peers_row_names_the_pubkey_of_its_meta_slot() {
     let (host, mesh) = Node::create_named("peers-key");
     let member = Node::join(&mesh, "peers-key-m");
     common::await_peer_card_cli(&mesh, &host.nickname, &member.nickname);
-    let meta: serde_json::Value = serde_json::from_str(&common::cli_channel_get(
-        agent_gossip::Channel::Meta,
-        &mesh,
-        &host.nickname,
-    ))
-    .expect("the CLI prints the meta channel as one JSON object");
-    let slot = common::card_slot_of(&meta["document"], &member.nickname)
-        .expect("the wait above ended on this card, so the slot exists");
+    common::cli_meta_report(&mesh, &member.nickname);
+    let slot = common::await_meta_slot_cli(&mesh, &host.nickname, &member.nickname);
 
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
     loop {
@@ -4341,7 +4022,7 @@ fn test_mass_leave_leaves_no_ghosts() {
     let _serial = serial_guard();
     let envs = [
         ("--heal-interval-secs", "3"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
     let (creator, mesh) = Node::create_args("itest", &[], &envs);
     let survivor = Node::join_flags(&mesh, "ml-survivor", &envs);
@@ -4383,7 +4064,7 @@ fn test_mass_leave_leaves_no_ghosts() {
         "the survivor missed a goodbye"
     );
     // Three anti-entropy rounds: time for a resend of a departed frame to land and be dropped.
-    std::thread::sleep(Duration::from_secs(3 * TEST_AE_SECS));
+    std::thread::sleep(Duration::from_secs(3 * TEST_BACKFILL_SECS));
 
     for observer in [&creator, &survivor] {
         let lines = presence_lines(observer);

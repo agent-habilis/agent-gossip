@@ -72,9 +72,9 @@ work.
 The meta channel is a second shared document beside state, with the same
 merge semantics. It holds gossip metadata rather than the task itself.
 
-Each member publishes its A2A Agent Card into meta at `/peers/<nick>/card` on
-join. No writer touches another member's `/peers` entry. So peer discovery
-needs no HTTP anywhere.
+Each member writes only its own slice of meta, and the author key of the member
+names the slice. The Agent Card of a member is not in meta: the local daemon
+builds it. So peer discovery needs no HTTP anywhere.
 
 ## Skill
 

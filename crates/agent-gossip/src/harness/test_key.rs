@@ -8,11 +8,9 @@
 //! [`crate::api::MeshSession::inject_raw`]. Never compiled into a
 //! normal/release build, so the curated public surface is unchanged.
 
-use habilis_network::ops::doc;
-use habilis_network::ops::doc::MeshDoc;
 use habilis_network::protocol::{
-    AppFrameParams, AuthorKey, ContentHash, Identity, MeshId, Message, MessageBody, MessageKind,
-    Nickname, PresenceSubtype, UnixSecs, encode_pubkey,
+    AppFrameParams, AuthorKey, Identity, MeshId, Message, MessageBody, MessageKind, Nickname,
+    PresenceSubtype, UnixSecs, encode_pubkey,
 };
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
@@ -23,7 +21,7 @@ use habilis_network::x25519_dalek::PublicKey;
 
 use crate::a2a::receipt::Receipt;
 use crate::a2a::receipt::ReceiptState::Read;
-use crate::a2a::{card, status_update_params, wire};
+use crate::a2a::{status_update_params, wire};
 
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
 /// so a test can hold one and pass it to the builder/helpers without the
@@ -35,6 +33,12 @@ pub struct TestKey(Identity);
 /// Mint a fresh signing key — an attacker / peer identity.
 pub fn new_key() -> TestKey {
     TestKey(Identity::generate())
+}
+
+/// The author key of `key`, as a member names it in a frame.
+#[must_use]
+pub fn author_key_of(key: &TestKey) -> AuthorKey {
+    key.0.author_key()
 }
 
 /// The lowercase-hex public key of `key` — the value that appears as the
@@ -59,35 +63,27 @@ pub struct StatusFrameParams<'caller> {
     pub payload_task_id: &'caller str,
 }
 
-/// The value cluster for [`CraftedMsg::meta_far_root`]: the forger, its key, the epoch of the root
-/// and the card that it writes in its own slot.
+/// The value cluster for [`CraftedMsg::slice`]: the author nickname, the version of the slice and
+/// its value.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct MetaFarRootParams<'caller> {
+pub struct SliceParams<'caller> {
     /// Nickname of the message author.
     pub author: &'caller str,
-    /// The key of the forger: the slot and the actor of the change are its own.
-    pub key: &'caller TestKey,
-    /// The epoch of the root.
-    pub epoch: u64,
-    /// The card in the slot of the forger.
-    pub card: &'caller serde_json::Value,
+    /// The version of the slice.
+    pub version: u64,
+    /// The value of the slice: a JSON object, or `null` for a tombstone.
+    pub value: &'caller serde_json::Value,
 }
 
-impl<'caller> MetaFarRootParams<'caller> {
-    /// The parameters of a forged root of `epoch` by `author` under `key`.
+impl<'caller> SliceParams<'caller> {
+    /// The parameters of a slice of `version` by `author` that holds `value`.
     #[must_use]
-    pub fn new(
-        author: &'caller str,
-        key: &'caller TestKey,
-        epoch: u64,
-        card: &'caller serde_json::Value,
-    ) -> Self {
+    pub fn new(author: &'caller str, version: u64, value: &'caller serde_json::Value) -> Self {
         Self {
             author,
-            key,
-            epoch,
-            card,
+            version,
+            value,
         }
     }
 }
@@ -108,8 +104,8 @@ pub struct SealedTaskStatusParams<'caller> {
     pub state: crate::a2a::TaskState,
     /// Marks the leg as a liveness beat rather than a transition.
     pub beat: bool,
-    /// The addressee's public mesh-seal key, as any member can read it from
-    /// the meta document — see [`peer_seal_key`].
+    /// The addressee's public mesh-seal key, as the engine of a member holds it —
+    /// see [`MeshSession::seal_key_of`](crate::api::MeshSession::seal_key_of).
     pub seal_key: PublicKey,
 }
 
@@ -188,15 +184,6 @@ impl<'caller> SealedMsgParams<'caller> {
             seal_key,
         }
     }
-}
-
-/// The addressee's public X25519 mesh-seal key, read out of a meta document.
-///
-/// It is read exactly as the daemon's own send path reads it. Any mesh member holds this
-/// document, which is the point: sealing to a peer needs no secret.
-#[must_use]
-pub fn peer_seal_key(meta_doc: &serde_json::Value, peer: &AuthorKey) -> Option<PublicKey> {
-    card::peer_seal_key(meta_doc, peer)
 }
 
 /// Builder for a crafted `Msg`.
@@ -295,98 +282,37 @@ impl CraftedMsg {
         self
     }
 
-    /// A crafted shared-state merge (`MessageKind::State`) from `author`, whose
-    /// body is the legacy `{"k":"merge","merge":<merge>}` envelope. The automerge
-    /// engine no longer folds this shape (it is a deterministic no-op), so a test
-    /// can assert the receiver never applies it — never a panic, never a change.
-    /// Unsigned until [`sign`](CraftedMsg::sign).
+    /// A crafted slice frame of `channel` from `author`: a well-formed slice body
+    /// `{"version": version, "value": value}`, so that only its signature decides whether the
+    /// receiver takes it. Unsigned until [`sign`](CraftedMsg::sign).
     ///
     /// # Panics
     ///
-    /// Panics unless the author is a valid nickname.
-    pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
-        let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let body =
-            doc::merge_body(merge).expect("state merge envelope composes from any merge value");
-        Self {
-            message: Message::new_state(mesh, &author, body),
-        }
-    }
-
-    /// A crafted `meta` frame carrying a real automerge change that forges
-    /// `victim`'s `/peers/<victim>/card` — the receive-side card-forgery a
-    /// correct client's own gate refuses to author. Built on the deterministic
-    /// `/peers` genesis, so its only causal dep is one every meta replica holds:
-    /// the change is thus *applicable* at the victim and actually exercises the
-    /// forgery gate (rather than being harmlessly buffered for missing deps).
-    /// Unsigned until [`sign`](CraftedMsg::sign).
-    ///
-    /// # Panics
-    ///
-    /// Panics unless the author is a valid nickname.
-    pub fn meta_forge_card(
+    /// Panics unless the author is a valid nickname, or if the channel is neither `state` nor `meta`.
+    pub fn slice(
+        channel: habilis_network::protocol::Channel,
         mesh: &MeshId,
-        author: &str,
-        victim: &str,
-        fake_card: &serde_json::Value,
+        params: SliceParams<'_>,
     ) -> Self {
-        let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let merge = serde_json::json!({ "peers": { victim: { "card": fake_card } } });
-        // `build_change` composes the change without the gate (the gate lives in
-        // `ingest`), exactly as a malicious peer bypassing our write path would.
-        // The attacker picks its own actor seed; the nickname bytes serve.
-        // Gated, so the forge is built on a replica that shares the victim's
-        // genesis — hence the same `peers` object id. Built on an *ungated* doc it
-        // would be a different map, and whether the victim's gate even fires
-        // would come down to which of two conflicting maps automerge keeps.
-        let author_bytes: &[u8] = author.as_str().as_bytes();
-        let change: Vec<u8> = MeshDoc::new_gated(crate::a2a::card_gate())
-            .build_change(&merge, author_bytes)
-            .expect("forge change builds")
-            .expect("forge merge is not a no-op");
-        let body = doc::change_body(&change, None).expect("change body composes");
-        Self {
-            message: Message::new_channel_event(
-                mesh,
-                &author,
-                body,
-                habilis_network::protocol::Channel::Meta,
-            ),
-        }
-    }
+        use habilis_network::protocol::Channel;
 
-    /// A ROOT of `epoch` that a forger broadcasts: the card of the signer's OWN slot on the genesis of
-    /// that epoch, with the actor of the signer. The gate passes it, so only the rule of the far
-    /// jump (and the bound) can refuse it. Sign it with the same `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless the author is a valid nickname.
-    pub fn meta_far_root(mesh: &MeshId, params: MetaFarRootParams<'_>) -> Self {
-        let MetaFarRootParams {
+        let SliceParams {
             author,
-            key,
-            epoch,
-            card,
+            version,
+            value,
         } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let slot = encode_pubkey(&key.0.public());
-        let merge = serde_json::json!({ "peers": { slot: { "card": card } } });
-        let body = MeshDoc::forged_root_body(
-            crate::a2a::card_gate(),
-            epoch,
-            &merge,
-            key.0.public().as_bytes(),
+        let body = MessageBody::try_new(
+            &serde_json::json!({ "version": version, "value": value }).to_string(),
         )
-        .expect("a forged root builds");
-        Self {
-            message: Message::new_channel_event(
-                mesh,
-                &author,
-                body,
-                habilis_network::protocol::Channel::Meta,
-            ),
-        }
+        .expect("a slice body is a valid body");
+        let message = match channel {
+            Channel::State | Channel::Meta => {
+                Message::new_channel_event(mesh, &author, body, channel)
+            }
+            _ => panic!("a slice is of the state or the meta channel"),
+        };
+        Self { message }
     }
 
     /// A crafted `a2a_status` frame whose FRAME correlation field (`corr`)
@@ -542,12 +468,6 @@ impl CraftedMsg {
         self.message.id.as_str().to_owned()
     }
 
-    /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
-    pub fn chain(mut self, seq: u64, previous: Option<ContentHash>) -> Self {
-        self.message = self.message.chain(seq, previous);
-        self
-    }
-
     /// Override the message id — e.g. to replay another message's id (the
     /// dedup-ordering test). Must be a valid UUID string.
     ///
@@ -598,12 +518,6 @@ impl CraftedMsg {
         self.message = self.message.shard(Some(
             habilis_network::protocol::Shard::new(group, total).index(index),
         ));
-        self
-    }
-
-    /// Stamp the cross-author DAG `parents` (Phase 3).
-    pub fn parents(mut self, parents: impl IntoIterator<Item = ContentHash>) -> Self {
-        self.message = self.message.parents(parents);
         self
     }
 
@@ -658,12 +572,6 @@ impl CraftedMsg {
         self
     }
 
-    /// This message's content hash — use as another message's `prev`/parent.
-    #[must_use]
-    pub fn content_hash(&self) -> ContentHash {
-        self.message.content_hash()
-    }
-
     /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
     ///
     /// # Panics
@@ -698,5 +606,22 @@ impl CraftedMsg {
         object.remove("pubkey");
         object.remove("sig");
         bytes::Bytes::from(serde_json::to_vec(&wire).expect("an unsigned frame serializes"))
+    }
+
+    /// The wire bytes of this message signed with `signed_with`, with the author key of the frame
+    /// replaced by `claimed`: a forger names the key of another member and keeps its own signature.
+    /// The signature then does not match the key, and the receiver must drop the frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the message is signed with `signed_with` and serializes.
+    #[must_use]
+    pub fn bytes_claiming(&self, signed_with: &TestKey, claimed: &AuthorKey) -> bytes::Bytes {
+        let wire = String::from_utf8(self.bytes().to_vec()).expect("a frame is UTF-8 text");
+        let own_key = pubkey_hex(signed_with);
+        let (before, after) = wire
+            .split_once(&own_key)
+            .expect("the frame names the key that signed it");
+        bytes::Bytes::from(format!("{before}{claimed}{after}"))
     }
 }

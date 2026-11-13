@@ -5,7 +5,7 @@
 //! rejection of a mutating op, and the fast-fail for an unknown peer.
 
 use agent_gossip_test_fixtures as common;
-use common::{InProcNode, MSG_TIMEOUT, await_mutual_cards};
+use common::{InProcNode, await_mutual_cards};
 use serde_json::json;
 
 /// A `tasks/list` call to a peer returns *that peer's* task view over gossip.
@@ -13,16 +13,11 @@ use serde_json::json;
 async fn rpc_tasks_list_reaches_the_peer() {
     let mut alice = InProcNode::create("rpc-list").await;
     let mut bob = InProcNode::join(&alice.mesh, "rpc-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
-    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // A2aReq/A2aResp are sent once and never again, so a reply
     // broadcast into a still-converging overlay is lost for good.
-    bob.broadcast("link-back").await;
-    assert!(
-        alice.wait_body("link-back", MSG_TIMEOUT).await,
-        "alice meshed"
-    );
+    common::warm_up(&bob, &mut [&mut alice]).await;
     // Linkage is not enough. Both legs of the call are sealed, so both peers
     // must hold the other's card first — see `await_mutual_cards`.
     await_mutual_cards(&alice, &bob).await;
@@ -47,16 +42,11 @@ async fn rpc_tasks_list_reaches_the_peer() {
 async fn rpc_message_send_opens_task_and_returns_it() {
     let mut alice = InProcNode::create("rpc-send").await;
     let mut bob = InProcNode::join(&alice.mesh, "rpc-send-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
-    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // A2aReq/A2aResp are sent once and never again, so a reply
     // broadcast into a still-converging overlay is lost for good.
-    bob.broadcast("link-back").await;
-    assert!(
-        alice.wait_body("link-back", MSG_TIMEOUT).await,
-        "alice meshed"
-    );
+    common::warm_up(&bob, &mut [&mut alice]).await;
     // See `rpc_tasks_list_reaches_the_peer`: both legs are sealed, so both
     // peers must hold the other's card before a directed round trip.
     await_mutual_cards(&alice, &bob).await;
@@ -96,16 +86,11 @@ async fn rpc_message_send_opens_task_and_returns_it() {
 async fn rpc_state_merge_is_refused() {
     let mut alice = InProcNode::create("rpc-merge").await;
     let mut bob = InProcNode::join(&alice.mesh, "rpc-merge-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
-    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // A2aReq/A2aResp are sent once and never again, so a reply
     // broadcast into a still-converging overlay is lost for good.
-    bob.broadcast("link-back").await;
-    assert!(
-        alice.wait_body("link-back", MSG_TIMEOUT).await,
-        "alice meshed"
-    );
+    common::warm_up(&bob, &mut [&mut alice]).await;
     // See `rpc_tasks_list_reaches_the_peer`: both legs are sealed, so both
     // peers must hold the other's card before a directed round trip.
     await_mutual_cards(&alice, &bob).await;

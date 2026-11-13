@@ -28,8 +28,7 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
 async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
     let alice = InProcNode::create_with_nick(name, &format!("{name}-alice")).await;
     let mut bob = InProcNode::join(&alice.mesh, bob_nick).await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     alice.await_peer_card(bob_nick).await;
     (alice, bob)
 }
@@ -94,7 +93,7 @@ fn a_msg_whose_send_failed_never_arrives_later() {
     let _serial = common::serial_guard();
     let flags = [
         ("--alive-timeout-secs", "60"),
-        ("--antientropy-interval-secs", "2"),
+        ("--backfill-interval-secs", "2"),
     ];
     let (alice, mesh) = Node::create_flags("echo-late", &flags);
     let bob = Node::join_flags(&mesh, "echo-late-bob", &flags);

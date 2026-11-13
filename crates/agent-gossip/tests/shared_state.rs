@@ -1,7 +1,11 @@
 //! Shared-state behavioral tests, in-process over the real event loop and a real
-//! iroh mesh (`common::InProcNode`). They exercise the whole primitive — apply an
-//! RFC 7386 merge → fold the log → derive the document → surface the change →
-//! react → merge back — with no app logic in the daemon.
+//! iroh mesh (`common::InProcNode`). They exercise the whole primitive — write the
+//! own slice → gossip it → derive the view → surface the change → react → write
+//! back — with no app logic in the daemon.
+//!
+//! The view of a channel holds one signed slice for each author, keyed by the hex of
+//! the author key. The tests write disjoint keys, so `merged` folds the slices into
+//! one document that a test can compare.
 //!
 //! Every behavior runs against **both channels** (`state` and `meta`): each test
 //! body is `*_for(channel)`, with thin per-channel `#[tokio::test]` wrappers
@@ -10,16 +14,14 @@
 //! channel turns exactly one named test red.
 //!
 //! What each behavior pins:
-//! - convergence: the fold is a deterministic function of the event *set* (for
-//!   disjoint keys merge is order-independent);
-//! - RFC 7386 semantics: a top-level merge that is not an object is refused, and a non-object value
-//!   under a key replaces that key;
+//! - convergence: every member derives the same set of slices;
 //! - the reaction hook (F8) and the self-wake guard (F5): a peer's change wakes
-//!   an agent with the derived document, its own change does not;
-//! - the unbounded log + windowed anti-entropy: a late joiner reconciles a log
-//!   far larger than one digest window;
+//!   an agent with the derived view, its own change does not;
+//! - the late joiner: a member that arrives after all traffic gets the current slice of
+//!   every author;
 //! - reaction + convergence end-to-end: two agents ping-pong a counter via the
-//!   shared document and both converge, strictly alternating (no double-move).
+//!   shared document and both converge, strictly alternating (no double-move);
+//! - a graceful leave removes the slice of the leaver, and a rejoin writes a new one.
 //!
 //! `meta_and_state_channels_are_independent` is the one inherently cross-channel
 //! test and stays standalone.
@@ -55,29 +57,20 @@ fn one(key: String, value: Value) -> Value {
     Value::Object(map)
 }
 
-/// The application's view of a channel document: the daemon-published
-/// `AgentCard`s (meta `/peers/<key>/card`, written once per member at join)
-/// removed, since these tests pin app-driven merges. The card publication has
-/// its own test (`agent_cards_publish_to_meta_on_join`).
-fn app_view(doc: &Value) -> Value {
-    let mut doc = doc.clone();
-    if let Some(peers) = doc.get_mut("peers").and_then(Value::as_object_mut) {
-        for entry in peers.values_mut() {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.remove("card");
-            }
-        }
-        peers.retain(|_, entry| entry.as_object().is_none_or(|obj| !obj.is_empty()));
-    }
-    if doc
-        .get("peers")
-        .and_then(Value::as_object)
-        .is_some_and(serde_json::Map::is_empty)
-        && let Some(map) = doc.as_object_mut()
+/// The slices of a channel view folded into one document. The tests write disjoint keys, so the
+/// union of the keys of all slices is the document that the members agree on.
+fn merged(view: &Value) -> Value {
+    let mut document = serde_json::Map::new();
+    for slice in view
+        .as_object()
+        .into_iter()
+        .flat_map(serde_json::Map::values)
     {
-        map.remove("peers");
+        for (key, value) in slice.as_object().into_iter().flatten() {
+            document.insert(key.clone(), value.clone());
+        }
     }
-    doc
+    Value::Object(document)
 }
 
 /// Poll a node's derived document for `channel` until `pred` holds or `timeout`
@@ -106,18 +99,15 @@ async fn wait_doc(
 async fn meta_and_state_channels_are_independent() {
     let alice = InProcNode::create("ch-indep").await;
     let mut bob = InProcNode::join(&alice.mesh, "ch-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
-    // A meta write propagates to bob's meta doc; both state docs stay empty.
+    // A meta write propagates to bob's meta view; both state views stay empty.
     // The slot of a member is the hex of its author key.
     let alice_slot = alice.key_seen_by(&bob).await.to_string();
-    alice
-        .meta_merge(json!({"peers": {alice_slot.as_str(): {"model": "Opus 4.8"}}}))
-        .await;
+    alice.meta_merge(json!({"model": "Opus 4.8"})).await;
     assert!(
         wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer(&format!("/peers/{alice_slot}/model")) == Some(&json!("Opus 4.8"))
+            doc.pointer(&format!("/{alice_slot}/model")) == Some(&json!("Opus 4.8"))
         })
         .await,
         "bob never saw the meta write: {}",
@@ -137,18 +127,20 @@ async fn meta_and_state_channels_are_independent() {
     // A state write propagates to bob's state doc; meta is unchanged by it.
     alice.state_merge(json!({"turn": "a"})).await;
     assert!(
-        wait_doc(&bob, Channel::State, RECOVERY_TIMEOUT, |doc| doc
-            .pointer("/turn")
-            == Some(&json!("a")))
+        wait_doc(
+            &bob,
+            Channel::State,
+            RECOVERY_TIMEOUT,
+            |doc| merged(doc)["turn"] == json!("a")
+        )
         .await,
         "bob never saw the state write: {}",
         bob.state_get().await
     );
-    // meta still holds only the earlier write (plus the daemon-published
-    // cards, masked by `app_view`).
+    // meta still holds only the earlier write.
     assert_eq!(
-        app_view(&alice.meta_get().await),
-        json!({"peers": {alice_slot.as_str(): {"model": "Opus 4.8"}}}),
+        alice.meta_get().await,
+        json!({ alice_slot.as_str(): {"model": "Opus 4.8"} }),
         "state write must not touch meta"
     );
 
@@ -165,9 +157,7 @@ async fn patches_converge_for(channel: Channel) {
     let mut carol = InProcNode::join(&alice.mesh, "conv-carol").await;
 
     // Mesh first (a delivered message proves the links).
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("link", MSG_TIMEOUT).await, "carol meshed");
+    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
 
     // Each peer seeds a distinct key concurrently — intermediate states differ
     // by arrival order, the final set does not.
@@ -178,7 +168,7 @@ async fn patches_converge_for(channel: Channel) {
     let want = json!({"a": 1, "b": 2, "c": 3});
     for (node, who) in [(&alice, "alice"), (&bob, "bob"), (&carol, "carol")] {
         assert!(
-            wait_doc(node, channel, RECOVERY_TIMEOUT, |doc| app_view(doc) == want).await,
+            wait_doc(node, channel, RECOVERY_TIMEOUT, |doc| merged(doc) == want).await,
             "{who} never converged on {}: {}",
             label(channel),
             node.get(channel).await
@@ -207,20 +197,19 @@ async fn peer_change_wakes_for(channel: Channel) {
     let mut alice = InProcNode::create(&mesh_name(channel, "ss-wake")).await;
     let mut bob = InProcNode::join(&alice.mesh, "wake-bob").await;
 
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     alice.merge(channel, json!({"turn": "bob"})).await;
 
     // F8: bob is woken with the document.
     assert!(
-        bob.wait_change(channel, MSG_TIMEOUT, |doc| doc["turn"] == "bob")
+        bob.wait_change(channel, MSG_TIMEOUT, |doc| merged(doc)["turn"] == "bob")
             .await,
         "a peer's {} change must wake the agent with the derived document (F8)",
         label(channel)
     );
-    // F5: alice was never woken by her OWN merge (peers' card publications
-    // legitimately wake her with `self:false`, so filter on the flag).
+    // F5: alice was never woken by her OWN merge (a peer's change wakes her
+    // with `self:false`, so filter on the flag).
     let self_wakes: Vec<_> = alice
         .changes(channel)
         .filter(|(_, is_self)| *is_self)
@@ -245,61 +234,55 @@ async fn meta_peer_change_wakes_the_agent_self_change_does_not() {
     peer_change_wakes_for(Channel::Meta).await;
 }
 
-/// Unbounded log + windowed anti-entropy: drive far more merges than one digest
-/// window holds, then a late joiner — arriving after all traffic, so only
-/// anti-entropy can reach it — reconciles the *whole* log across several windows
-/// and derives the identical document.
-///
-/// Each merge sets an independent key (`/k0`, `/k1`, …), so the *set* of events
-/// fully determines the document regardless of replay order — the property under
-/// test is completeness of backfill, not causal ordering.
-async fn late_joiner_backfills_for(channel: Channel) {
-    // Comfortably more than two digest windows (`ANTIENTROPY_DIGEST_WINDOW_IDS`
-    // is 70), so the rolling older-window cursor is genuinely exercised.
-    const PATCHES: usize = 160;
+/// A late joiner — arriving after all traffic — gets the current slice of every author and derives
+/// the same document as the others. The engine keeps one slice for each author, so there is no log
+/// to replay: the property under test is that the latest slice reaches a member that was not there.
+async fn late_joiner_gets_the_slices_for(channel: Channel) {
+    // Few writes: an author has a burst and a rate for new versions.
+    const WRITES: usize = 5;
+    const KEYS_PER_WRITE: usize = 20;
 
     let alice = InProcNode::create(&mesh_name(channel, "ss-backfill")).await;
-    let early = InProcNode::join(&alice.mesh, "bf-early").await;
-    // Mesh so the appends go out live (the creator's outbound buffer stays
-    // empty) — the late joiner can then only be served by anti-entropy.
-    alice.broadcast("link").await;
+    let mut early = InProcNode::join(&alice.mesh, "bf-early").await;
+    common::warm_up(&alice, &mut [&mut early]).await;
 
-    for index in 0..PATCHES {
-        alice
-            .merge(channel, one(format!("k{index}"), json!(index)))
-            .await;
+    for write in 0..WRITES {
+        let mut keys = serde_json::Map::new();
+        for key in 0..KEYS_PER_WRITE {
+            let index = write * KEYS_PER_WRITE + key;
+            keys.insert(format!("k{index}"), json!(index));
+        }
+        alice.merge(channel, Value::Object(keys)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
-    let want = app_view(&alice.get(channel).await);
+    let want = merged(&alice.get(channel).await);
     assert_eq!(
         want.as_object().map(serde_json::Map::len),
-        Some(PATCHES),
-        "creator's own {} document holds every key it set",
+        Some(WRITES * KEYS_PER_WRITE),
+        "creator's own {} view holds every key it set",
         label(channel)
     );
 
     // The early (meshed) peer converges via the live path.
     assert!(
-        wait_doc(&early, channel, RECOVERY_TIMEOUT, |doc| app_view(doc)
-            == want)
-        .await,
+        wait_doc(&early, channel, RECOVERY_TIMEOUT, |doc| merged(doc) == want).await,
         "early peer never converged on the live {} path",
         label(channel)
     );
 
-    // The late joiner arrives after all traffic — windowed anti-entropy, across
-    // multiple rounds, must reconstruct the full log.
+    // The late joiner arrives after all traffic and gets the latest slice of the creator.
     let late = InProcNode::join(&alice.mesh, "bf-late").await;
     assert!(
-        wait_doc(&late, channel, Duration::from_secs(150), |doc| app_view(
-            doc
-        ) == want)
+        wait_doc(&late, channel, Duration::from_secs(150), |doc| merged(doc)
+            == want)
         .await,
-        "late joiner never backfilled the full {} log via windowed anti-entropy ({} of {PATCHES} keys)",
+        "late joiner never got the {} slices ({} of {} keys)",
         label(channel),
-        app_view(&late.get(channel).await)
+        merged(&late.get(channel).await)
             .as_object()
-            .map_or(0, serde_json::Map::len)
+            .map_or(0, serde_json::Map::len),
+        WRITES * KEYS_PER_WRITE
     );
 
     alice.leave().await;
@@ -308,19 +291,19 @@ async fn late_joiner_backfills_for(channel: Channel) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn state_late_joiner_backfills_a_log_larger_than_one_window() {
-    late_joiner_backfills_for(Channel::State).await;
+async fn state_late_joiner_gets_the_slice_of_every_member() {
+    late_joiner_gets_the_slices_for(Channel::State).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn meta_late_joiner_backfills_a_log_larger_than_one_window() {
-    late_joiner_backfills_for(Channel::Meta).await;
+async fn meta_late_joiner_gets_the_slice_of_every_member() {
+    late_joiner_gets_the_slices_for(Channel::Meta).await;
 }
 
 /// The number of moves recorded in the shared document (one `/m{k}` key
-/// each; the daemon-published cards are masked out).
+/// each).
 fn move_count(doc: &Value) -> usize {
-    app_view(doc).as_object().map_or(0, serde_json::Map::len)
+    merged(doc).as_object().map_or(0, serde_json::Map::len)
 }
 
 /// Reaction + convergence end-to-end (the chess narrative, no engine): two
@@ -338,8 +321,7 @@ async fn ping_pong_for(channel: Channel) {
     let mut alice = InProcNode::create(&mesh_name(channel, "ss-pp")).await;
     let mut bob = InProcNode::join(&alice.mesh, "pp-bob").await;
 
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     // alice opens with move 1 under its own key — no container to seed first.
     alice.merge(channel, json!({"m1": "alice"})).await;
@@ -384,8 +366,8 @@ async fn ping_pong_for(channel: Channel) {
         label(channel)
     );
     assert_eq!(
-        app_view(&alice.get(channel).await),
-        app_view(&bob.get(channel).await),
+        merged(&alice.get(channel).await),
+        merged(&bob.get(channel).await),
         "both agents must derive the byte-identical {} document",
         label(channel)
     );
@@ -404,174 +386,30 @@ async fn meta_two_agents_ping_pong_via_shared_state() {
     ping_pong_for(Channel::Meta).await;
 }
 
-/// A member may only write its OWN card: a signed meta merge forging another
-/// peer's `/peers/<key>/card` (here, a fake gossip-interface identity url) is
-/// dropped by every recipient before it folds, so the victim's genuine card —
-/// and the identity in it — survives. Without the gate the forgery would win the
-/// last-writer-wins fold and spoof the victim to `agent-gossip card` and `--a2a-serve`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn foreign_card_forgery_is_rejected() {
-    let alice = InProcNode::create("ss-forge").await;
-    let mut bob = InProcNode::join(&alice.mesh, "forge-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
-
-    // Both cards publish on join; wait until alice sees bob's genuine card.
-    // The slot of a member is the hex of its author key.
-    let bob_slot = bob.key_seen_by(&alice).await.to_string();
-    let alice_slot = alice.key_seen_by(&bob).await.to_string();
-    let identity_ptr = format!("/peers/{bob_slot}/card/supportedInterfaces/0/url");
-    assert!(
-        wait_doc(&alice, Channel::Meta, RECOVERY_TIMEOUT, |doc| doc
-            .pointer(&identity_ptr)
-            .is_some())
-        .await,
-        "alice never saw bob's genuine card"
-    );
-    let alice_meta = alice.meta_get().await;
-    let genuine_url: String = alice_meta
-        .pointer(&identity_ptr)
-        .and_then(Value::as_str)
-        .expect("bob's genuine gossip-interface url")
-        .to_owned();
-
-    // Alice tries to forge bob's card with a fake identity. The card-forgery
-    // gate runs on the author's own doc too, so the write is refused at the
-    // source (an honest daemon cannot author it) — the receive-side gate against
-    // a *malicious* peer that bypasses this path is exercised by the adversarial
-    // suite injecting crafted frames. A legit self-write is the delivery barrier.
-    let fake_url = "ff".repeat(32);
-    let forged = alice
-        .try_meta_merge(
-            json!({"peers": {bob_slot.as_str(): {"card": {"supportedInterfaces": [
-                {"url": fake_url, "protocolBinding": "x", "protocolVersion": "1.0"}
-            ]}}}}),
-        )
-        .await;
-    assert!(
-        forged.is_err(),
-        "forging another peer's card must be rejected at the source"
-    );
-    alice
-        .meta_merge(json!({"peers": {alice_slot.as_str(): {"note": "barrier"}}}))
-        .await;
-    assert!(
-        wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| doc
-            .pointer(&format!("/peers/{alice_slot}/note"))
-            == Some(&json!("barrier")))
-        .await,
-        "barrier merge never derived on bob"
-    );
-
-    // Bob's view of his OWN card must still carry his genuine identity — the
-    // forgery never entered any doc.
-    assert_eq!(
-        bob.meta_get()
-            .await
-            .pointer(&identity_ptr)
-            .and_then(Value::as_str),
-        Some(genuine_url.as_str()),
-        "a forged foreign card must never overwrite the victim's genuine card"
-    );
-
-    alice.leave().await;
-    bob.leave().await;
-}
-
-/// Every member's daemon publishes its `AgentCard` at meta `/peers/<key>/card`
-/// on join — the mesh-native discovery path (no HTTP anywhere). Both sides
-/// derive each other's card from the meta document, and the card carries the
-/// A2A protocol version, the declared mesh extensions, and the member's
-/// Ed25519 identity.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn agent_cards_publish_to_meta_on_join() {
-    let alice = InProcNode::create("ss-cards").await;
-    let mut bob = InProcNode::join(&alice.mesh, "cards-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
-
-    // The slot of a member is the hex of its author key; the card names the nickname.
-    let has_card = |doc: &Value, slot: &str, nick: &str| {
-        let card = doc.pointer(&format!("/peers/{slot}/card"));
-        card.is_some_and(|card| {
-            let has_extensions = card["capabilities"]["extensions"]
-                .as_array()
-                .is_some_and(|exts| !exts.is_empty());
-            // v1.0: the protocol version + the Ed25519 identity ride the
-            // gossip `AgentInterface` (the bare `<pubkey>`).
-            let interface = &card["supportedInterfaces"][0];
-            let has_identity = interface["protocolVersion"].is_string()
-                && interface["url"].as_str().is_some_and(|key| key.len() == 64);
-            card["name"] == *nick
-                && has_extensions
-                && has_identity
-                // The stable dial hint (EndpointId + home relay) rides inside the
-                // card, so a synced peer can dial without a gossiped PeerInfo.
-                && card["endpoint"]["id"].is_string()
-        })
-    };
-
-    let alice_nick = alice.nickname.clone();
-    let alice_slot = alice.key_seen_by(&bob).await.to_string();
-    let bob_slot = bob.key_seen_by(&alice).await.to_string();
-    assert!(
-        wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| has_card(
-            doc,
-            &alice_slot,
-            &alice_nick
-        ))
-        .await,
-        "bob never derived alice's card: {}",
-        bob.meta_get().await
-    );
-    assert!(
-        wait_doc(&alice, Channel::Meta, RECOVERY_TIMEOUT, |doc| has_card(
-            doc,
-            &bob_slot,
-            "cards-bob"
-        ))
-        .await,
-        "alice never derived bob's card: {}",
-        alice.meta_get().await
-    );
-
-    alice.leave().await;
-    bob.leave().await;
-}
-
-/// A graceful leave retracts the leaver's whole `/peers/<key>` meta entry —
-/// daemon card and self-reported agent facts alike — on the remaining
-/// replicas, and a later joiner backfills the deletion, not the ghost entry.
-/// The leaver is a joiner, not the creator: a departed creator also takes the
-/// rendezvous beacon with it for ~36s, which is the handoff's own test.
+/// A graceful leave removes the whole slice of the leaver on the remaining replicas, and a later
+/// joiner gets the view without it. The leaver is a joiner, not the creator: a departed creator
+/// also takes the rendezvous beacon with it for ~36s, which is the handoff's own test.
 ///
-/// The retraction is broadcast AND mirrored over the unicast plane
-/// (`Farewell::UnicastMirror`), so it outlives a silently-linkless overlay;
-/// the test still proves the leaver→host path live right before the leave so
-/// a failure indicts the retraction, not the warmup.
+/// The engine tombstones the slice on a graceful leave. The test still proves the leaver→host path
+/// live right before the leave, so a failure indicts the removal, not the warmup.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn graceful_leave_retracts_meta_entry() {
+async fn graceful_leave_removes_the_slice_of_the_leaver() {
     let mut host = InProcNode::create_with_nick("ss-retract", "retract-host").await;
     let mut leaver = InProcNode::join(&host.mesh, "retract-leaver").await;
-    host.broadcast("link").await;
-    assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "leaver meshed");
+    common::warm_up(&host, &mut [&mut leaver]).await;
 
     // The slot of a member is the hex of its author key.
     let leaver_slot = leaver.key_seen_by(&host).await.to_string();
     let host_slot = host.key_seen_by(&leaver).await.to_string();
 
-    // Before the leave the entry holds both writers' data: the daemon's card
-    // and an agent fact.
-    leaver
-        .meta_merge(json!({"peers": {leaver_slot.as_str(): {"model": "test-model"}}}))
-        .await;
+    host.meta_merge(json!({"model": "host-model"})).await;
+    leaver.meta_merge(json!({"model": "test-model"})).await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer(&format!("/peers/{leaver_slot}/card")).is_some()
-                && doc.pointer(&format!("/peers/{leaver_slot}/model")) == Some(&json!("test-model"))
+            doc.pointer(&format!("/{leaver_slot}/model")) == Some(&json!("test-model"))
         })
         .await,
-        "the host never derived the leaver's full entry: {}",
+        "the host never derived the slice of the leaver: {}",
         host.meta_get().await
     );
 
@@ -585,23 +423,17 @@ async fn graceful_leave_retracts_meta_entry() {
 
     leaver.leave().await;
 
-    // The retraction is delivered on two planes (gossip broadcast + the
-    // unicast farewell mirror), so unlike the best-effort `Left` it survives
-    // a silently-linkless overlay at leave time.
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer(&format!("/peers/{leaver_slot}")).is_none()
+            doc.pointer(&format!("/{leaver_slot}")).is_none()
         })
         .await,
-        "the leaver's meta entry survived its graceful leave: {}",
+        "the slice of the leaver survived its graceful leave: {}",
         host.meta_get().await
     );
 
-    // A late joiner backfills the log *including* the deletion: once it holds
-    // the host's card the docs have converged, and the leaver's entry must
-    // not be part of that view. The warmup send is retried: a frame sent into
-    // the post-join overlay flap is dropped for good (chat frames heal by
-    // anti-entropy, but only once a link exists to run it over).
+    // A late joiner gets the slice of the host, and none of the leaver. The warmup send is
+    // retried: a frame sent into the post-join overlay flap is dropped for good.
     let mut late = InProcNode::join(&host.mesh, "retract-late").await;
     let mut meshed = false;
     for attempt in 0..3 {
@@ -617,11 +449,11 @@ async fn graceful_leave_retracts_meta_entry() {
     assert!(meshed, "late joiner never meshed");
     assert!(
         wait_doc(&late, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer(&format!("/peers/{host_slot}/card")).is_some()
-                && doc.pointer(&format!("/peers/{leaver_slot}")).is_none()
+            doc.pointer(&format!("/{host_slot}/model")).is_some()
+                && doc.pointer(&format!("/{leaver_slot}")).is_none()
         })
         .await,
-        "the late joiner backfilled the ghost entry instead of the deletion: {}",
+        "the late joiner got the slice of the leaver, or none of the host: {}",
         late.meta_get().await
     );
 
@@ -629,26 +461,25 @@ async fn graceful_leave_retracts_meta_entry() {
     late.leave().await;
 }
 
-/// Rejoining under the same nickname after a graceful leave republishes the
-/// card: the fresh publish is a real change on top of the retraction, not a
-/// no-op swallowed by a stale "already published" view.
+/// Rejoining under the same nickname after a graceful leave writes a new slice: the new run has a
+/// new key, so its slice is a real addition on top of the removal.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn meta_entry_returns_after_rejoin() {
     let mut host = InProcNode::create_with_nick("ss-rejoin", "rejoin-host").await;
     let mut leaver = InProcNode::join(&host.mesh, "rejoin-peer").await;
-    host.broadcast("link").await;
-    assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "peer meshed");
+    common::warm_up(&host, &mut [&mut leaver]).await;
 
     // The slot of a member is the hex of its author key.
     let first_slot = leaver.key_seen_by(&host).await.to_string();
+    leaver.meta_merge(json!({"nickname": "rejoin-peer"})).await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer(&format!("/peers/{first_slot}/card")).is_some()
+            doc.pointer(&format!("/{first_slot}/nickname")).is_some()
         })
         .await,
-        "the host never derived the peer's card"
+        "the host never derived the slice of the peer"
     );
-    // Same live-path proof as `graceful_leave_retracts_meta_entry`.
+    // Same live-path proof as `graceful_leave_removes_the_slice_of_the_leaver`.
     leaver.broadcast("goodbye-imminent").await;
     assert!(
         host.wait_body("goodbye-imminent", MSG_TIMEOUT).await,
@@ -657,19 +488,17 @@ async fn meta_entry_returns_after_rejoin() {
     leaver.leave().await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            doc.pointer(&format!("/peers/{first_slot}")).is_none()
+            doc.pointer(&format!("/{first_slot}")).is_none()
         })
         .await,
-        "the retraction never reached the host: {}",
+        "the removal never reached the host: {}",
         host.meta_get().await
     );
 
-    // Same nickname, fresh identity/replica — the delete-then-republish case. The new key has
-    // a new slot, so the card to wait for is the one under it.
-    // The rejoin can land while the host's gossip still holds the dead
-    // session's stale link (the retraction mirror makes the leave→rejoin gap
-    // sub-second), so the joiner may only integrate on the next heal tick —
-    // retry the warmup instead of trusting the first frame.
+    // Same nickname, fresh identity — the remove-then-add case. The new key has a new slot, so
+    // the slice to wait for is the one under it. The rejoin can land while the host's gossip still
+    // holds the dead session's stale link, so the joiner may only integrate on the next heal tick
+    // — retry the warmup instead of trusting the first frame.
     let mut returned = InProcNode::join(&host.mesh, "rejoin-peer").await;
     let mut meshed = false;
     for attempt in 0..3 {
@@ -683,12 +512,15 @@ async fn meta_entry_returns_after_rejoin() {
         }
     }
     assert!(meshed, "the returned peer never meshed");
+    returned
+        .meta_merge(json!({"nickname": "rejoin-peer"}))
+        .await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            common::card_slot_of(doc, "rejoin-peer").is_some_and(|slot| slot != first_slot)
+            common::meta_slot_of(doc, "rejoin-peer").is_some_and(|slot| slot != first_slot)
         })
         .await,
-        "the rejoined peer's card never re-appeared: {}",
+        "the rejoined peer's slice never appeared: {}",
         host.meta_get().await
     );
 

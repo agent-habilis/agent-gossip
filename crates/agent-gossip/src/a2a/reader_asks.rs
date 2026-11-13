@@ -13,6 +13,7 @@ use tokio::time::Instant as TokioInstant;
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder};
 use crate::a2a::broadcast_params::{BroadcastA2aCallParams, broadcast_a2a_call};
+use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::served::READER_GET;
 use crate::a2a::tuning::POLL_WAITERS_CAP;
 
@@ -192,7 +193,7 @@ pub(crate) async fn ask_readers(
             BroadcastA2aCallParams {
                 mesh,
                 author,
-                peer: peer.clone(),
+                peer: PeerRef::Nickname(peer.clone()),
                 method: READER_GET,
                 params: serde_json::json!({}),
                 timeout: READER_ASK_TIMEOUT,

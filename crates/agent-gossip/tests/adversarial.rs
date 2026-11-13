@@ -6,7 +6,7 @@
 //!
 //! Two kinds of test:
 //! - **Defended** (`must pass`): the properties Phase 1–3 actually enforce —
-//!   unsigned/tampered messages are dropped, equivocation surfaces a `fork`.
+//!   unsigned/tampered messages are dropped.
 //! - **Open-gap tripwires** (`#[should_panic(expected = "OPEN GAP")]`):
 //!   adversarial scenarios we do **not** yet defend against. Each asserts the
 //!   defense we *lack*; that assert currently fails (panics), which
@@ -20,13 +20,14 @@
 
 use std::time::{Duration, Instant};
 
-use agent_gossip::OutputEvent;
 use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
-use agent_gossip::harness::test_key::{self, CraftedMsg, MetaFarRootParams};
+use agent_gossip::harness::test_key::{self, CraftedMsg, SliceParams};
+use agent_gossip::{Channel, OutputEvent};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use habilis_network::protocol::AuthorKey;
 use habilis_network::util::tuning;
+use habilis_network::x25519_dalek::PublicKey;
 use serde_json::{Value, json};
 
 // Delivery-barrier budget. These tests assert a message *is* delivered (so
@@ -42,11 +43,7 @@ const T: Duration = MSG_TIMEOUT;
 async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
     let mut victim = InProcNode::create(&format!("adv-{tag}")).await;
     let attacker = InProcNode::join(&victim.mesh, &format!("adv-{tag}-atk")).await;
-    attacker.broadcast("warmup").await;
-    assert!(
-        victim.wait_body("warmup", T).await,
-        "victim/attacker never meshed"
-    );
+    common::warm_up(&attacker, &mut [&mut victim]).await;
     (victim, attacker)
 }
 
@@ -75,6 +72,28 @@ async fn key_of_peer(observer: &InProcNode, nickname: &str) -> AuthorKey {
     }
 }
 
+/// The seal key of the peer called `nickname`, as the engine of `observer` holds it. The key
+/// comes from the signed `PeerInfo` of the peer, so it can arrive after the roster entry.
+async fn seal_key_of_peer(observer: &InProcNode, nickname: &str) -> PublicKey {
+    let key = key_of_peer(observer, nickname).await;
+    let deadline = Instant::now() + T;
+    loop {
+        if let Some(seal_key) = observer
+            .session
+            .seal_key_of(key)
+            .await
+            .expect("the session stays up for the whole test")
+        {
+            return seal_key;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the engine of the observer never held the seal key of {nickname}"
+        );
+        tokio::time::sleep(POLL).await;
+    }
+}
+
 /// True if the victim ever surfaced a peer `msg` with this body.
 fn surfaced(victim: &mut InProcNode, body: &str) -> bool {
     victim.count_body(body) > 0
@@ -89,9 +108,10 @@ async fn unsigned_message_is_dropped() {
     // reject it.
     // `wrap_a2a` makes the body a valid chat payload, so the only thing that can drop it is the
     // signature gate. Without it the app layer drops the frame and the test proves nothing.
-    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned")
-        .wrap_a2a()
-        .bytes();
+    let evil: bytes::Bytes =
+        CraftedMsg::new(attacker.session.mesh_id(), "replayer", "evil-unsigned")
+            .wrap_a2a()
+            .bytes();
     attacker
         .session
         .inject_raw(evil)
@@ -196,7 +216,7 @@ async fn untampered_frame_surfaces_as_the_control_of_the_tamper_test() {
 async fn kind_flipped_after_signing_is_dropped() {
     let (mut victim, attacker) = meshed_pair("kindflip").await;
     let key = test_key::new_key();
-    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "flip-me")
+    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "flip-me")
         .sign(&key)
         .flip_chat_kind()
         .bytes();
@@ -219,44 +239,6 @@ async fn kind_flipped_after_signing_is_dropped() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn equivocation_surfaces_a_fork() {
-    let (mut victim, attacker) = meshed_pair("fork").await;
-    let key = test_key::new_key();
-    let mesh = attacker.session.mesh_id();
-    // Same key, same seq, two different bodies → two valid but conflicting
-    // signed messages: cryptographic proof of equivocation.
-    let first = CraftedMsg::new(mesh, "two-face", "fork-a")
-        .wrap_a2a()
-        .chain(7, None)
-        .sign(&key)
-        .bytes();
-    let second = CraftedMsg::new(mesh, "two-face", "fork-b")
-        .wrap_a2a()
-        .chain(7, None)
-        .sign(&key)
-        .bytes();
-    attacker
-        .session
-        .inject_raw(first)
-        .await
-        .expect("the first fork leg must reach the victim before the second can conflict with it");
-    attacker.session.inject_raw(second).await.expect("inject b");
-    let forked = victim
-        .wait_for(T, |events| {
-            events
-                .iter()
-                .any(|event| matches!(event, OutputEvent::Fork { seq, .. } if *seq == 7))
-        })
-        .await;
-    assert!(
-        forked,
-        "two signed messages at the same seq must surface a fork event"
-    );
-    victim.leave().await;
-    attacker.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     // Authenticity must be checked BEFORE dedup: an unsigned/forged message
     // carrying a replayed id must not poison the dedup window and suppress the
@@ -268,7 +250,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
 
     // 1) An UNSIGNED message with a chosen id — dropped at the signature gate,
     //    and (post-fix) never recorded as "seen".
-    let forged = CraftedMsg::new(mesh, "ghost", "forged")
+    let forged = CraftedMsg::new(mesh, "replayer", "forged")
         .id(shared_id)
         .bytes();
     attacker
@@ -282,7 +264,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     assert!(victim.wait_body("after-forged", T).await, "barrier lost");
 
     // 2) A genuine SIGNED message reusing that id must still be delivered.
-    let genuine = CraftedMsg::new(mesh, "ghost", "genuine")
+    let genuine = CraftedMsg::new(mesh, "replayer", "genuine")
         .id(shared_id)
         .wrap_a2a()
         .sign(&key)
@@ -413,7 +395,7 @@ async fn junk_payload_chat_is_dropped() {
     let (mut victim, attacker) = meshed_pair("junk-payload").await;
     let key = test_key::new_key();
     // Validly signed, but the body is raw text, not a serialized A2A Message.
-    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
+    let evil: bytes::Bytes = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "raw-not-a2a")
         .sign(&key)
         .bytes();
     attacker
@@ -439,7 +421,7 @@ async fn payload_frame_id_mismatch_is_dropped() {
     // messageId no longer names the frame, a mismatch only a crafted client
     // produces.
     let wrapped: CraftedMsg =
-        CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body").wrap_a2a();
+        CraftedMsg::new(attacker.session.mesh_id(), "replayer", "id-mismatch-body").wrap_a2a();
     let evil: bytes::Bytes = wrapped
         .id("00000000-0000-0000-0000-00000000beef")
         .sign(&key)
@@ -473,7 +455,7 @@ async fn status_task_id_mismatch_is_dropped() {
     let evil = CraftedMsg::status_frame(
         attacker.session.mesh_id(),
         test_key::StatusFrameParams::new(
-            "ghost",
+            "replayer",
             victim_key,
             "550e8400-e29b-41d4-a716-446655440000", // frame correlation
             "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
@@ -517,7 +499,7 @@ async fn directed_broadcast_is_dropped() {
     // like something the whole gossip had seen.
     let wrapped: CraftedMsg = CraftedMsg::new(
         attacker.session.mesh_id(),
-        "ghost",
+        "replayer",
         "evil-directed-broadcast",
     )
     .wrap_a2a();
@@ -547,7 +529,7 @@ async fn broadcast_shaped_msg_is_dropped() {
     // `a2a_msg` with no addressee: a msg on the broadcast plane. This is the
     // leak direction — it would hand every peer a line meant for one.
     let crafted: CraftedMsg =
-        CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-broadcast-msg")
+        CraftedMsg::new(attacker.session.mesh_id(), "replayer", "evil-broadcast-msg")
             .into_msg()
             .wrap_msg();
     let evil: bytes::Bytes = crafted.address_to(None).sign(&key).bytes();
@@ -578,9 +560,10 @@ async fn msg_declaring_the_broadcast_extension_is_dropped() {
     // A msg carrying a broadcast payload: correctly addressed, but its A2A
     // body declares `mesh-broadcast`. `wrap_a2a` composes the broadcast
     // payload; retagging afterwards leaves the extension in place.
-    let retagged: CraftedMsg = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-ext")
-        .wrap_a2a()
-        .into_msg();
+    let retagged: CraftedMsg =
+        CraftedMsg::new(attacker.session.mesh_id(), "replayer", "evil-msg-ext")
+            .wrap_a2a()
+            .into_msg();
     let evil: bytes::Bytes = retagged.address_to(Some(victim_key)).sign(&key).bytes();
     attacker
         .session
@@ -606,7 +589,7 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
     // the shape a multihop relay legitimately carries. It must forward it
     // without ever surfacing it.
     let crafted: CraftedMsg =
-        CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-msg-elsewhere")
+        CraftedMsg::new(attacker.session.mesh_id(), "replayer", "evil-msg-elsewhere")
             .into_msg()
             .wrap_msg();
     let evil: bytes::Bytes = crafted
@@ -642,7 +625,7 @@ async fn msg_addressed_to_a_third_party_is_not_surfaced_by_a_relay() {
 /// nickname. A relayed msg between two other peers then surfaced to us as one
 /// we had sent, in our own `--output json` stream, with `self: false`.
 ///
-/// The sibling test above misses this because its fixture authors as "ghost";
+/// The sibling test above misses this because its fixture authors as "replayer";
 /// only the victim's own nickname reaches the clause.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn msg_forged_under_our_own_nickname_is_not_surfaced_by_a_relay() {
@@ -697,11 +680,7 @@ async fn a_bystanders_task_status_is_dropped() {
     let mut initiator = InProcNode::create("adv-taskparty").await;
     let mut worker = InProcNode::join(&initiator.mesh, "adv-taskparty-wrk").await;
     let attacker = InProcNode::join(&initiator.mesh, "adv-taskparty-atk").await;
-    attacker.broadcast("warmup").await;
-    assert!(
-        initiator.wait_body("warmup", T).await && worker.wait_body("warmup", T).await,
-        "nodes never meshed"
-    );
+    common::warm_up(&attacker, &mut [&mut initiator, &mut worker]).await;
 
     // A real task, accepted by the real worker.
     let created = initiator.create_task(&worker.nickname, "the brief").await;
@@ -725,11 +704,7 @@ async fn a_bystanders_task_status_is_dropped() {
     // the initiator's to land rather than racing it — under load it has not
     // necessarily arrived by the time the task is established.
     attacker.await_peer_card(&initiator.nickname).await;
-    let seal_key = test_key::peer_seal_key(
-        &attacker.meta_get().await,
-        &key_of_peer(&attacker, &initiator.nickname).await,
-    )
-    .expect("the initiator's seal key is published in the meta doc");
+    let seal_key = seal_key_of_peer(&attacker, &initiator.nickname).await;
     let key = test_key::new_key();
     let evil = CraftedMsg::sealed_task_status(
         attacker.session.mesh_id(),
@@ -790,11 +765,7 @@ async fn a_msg_from_before_the_join_horizon_earns_no_receipt() {
     let (mut victim, mut attacker) = meshed_pair("prejoin-receipt").await;
     attacker.await_peer_card(&victim.nickname).await;
     victim.await_peer_card(&attacker.nickname).await;
-    let seal_key = test_key::peer_seal_key(
-        &attacker.meta_get().await,
-        &key_of_peer(&attacker, &victim.nickname).await,
-    )
-    .expect("the victim's seal key is published in the meta doc");
+    let seal_key = seal_key_of_peer(&attacker, &victim.nickname).await;
 
     let old = CraftedMsg::sealed_msg(
         attacker.session.mesh_id(),
@@ -846,11 +817,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
     let mut sender = InProcNode::create("adv-forged-receipt").await;
     let mut addressee = InProcNode::join(&sender.mesh, "adv-forged-receipt-to").await;
     let attacker = InProcNode::join(&sender.mesh, "adv-forged-receipt-atk").await;
-    attacker.broadcast("warmup").await;
-    assert!(
-        sender.wait_body("warmup", T).await && addressee.wait_body("warmup", T).await,
-        "nodes never meshed"
-    );
+    common::warm_up(&attacker, &mut [&mut sender, &mut addressee]).await;
     sender.await_peer_card(&addressee.nickname).await;
     attacker.await_peer_card(&sender.nickname).await;
 
@@ -862,11 +829,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
         "the real delivered receipt never came"
     );
 
-    let seal_key = test_key::peer_seal_key(
-        &attacker.meta_get().await,
-        &key_of_peer(&attacker, &sender.nickname).await,
-    )
-    .expect("the sender's seal key is published in the meta doc");
+    let seal_key = seal_key_of_peer(&attacker, &sender.nickname).await;
     let forged = CraftedMsg::sealed_receipt(
         attacker.session.mesh_id(),
         test_key::SealedMsgParams::new(
@@ -1056,21 +1019,47 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
 
 // ── Shared-state (Phase 1) adversarial cases ───────────────────────────
 //
-// State merges ride the same crypto gates as chat. A receiver must drop unsigned
-// ones, and fold a *signed* but non-object merge as a deterministic no-op — never
-// a panic, never a root replacement. The "barrier" here is a real, valid merge
-// from the attacker's own identity: once the victim derives it, the crafted one
-// (injected first) has had its turn.
+// Slice frames ride the same crypto gates as chat. A receiver must drop an unsigned slice, and a
+// slice that claims the key of another member. The control in each test is a signed slice of the same
+// shape: once the victim derives it, the crafted frame (injected first) has had its turn.
 
-/// Poll the victim's derived document until `pred` holds or `timeout` elapses.
-async fn wait_doc(
+/// Make `victim` know the key `signer` as a member called `nickname`: a signed chat frame from an
+/// unknown key adds it to the roster, and a slice frame is only taken from a member.
+async fn introduce(
+    victim: &mut InProcNode,
+    attacker: &InProcNode,
+    signer: &test_key::TestKey,
+    nickname: &str,
+) {
+    let hello = CraftedMsg::new(
+        attacker.session.mesh_id(),
+        nickname,
+        "hello-from-the-forger",
+    )
+    .wrap_a2a()
+    .sign(signer)
+    .bytes();
+    attacker
+        .session
+        .inject_raw(hello)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    assert!(
+        victim.wait_body("hello-from-the-forger", T).await,
+        "the signed introduction never surfaced"
+    );
+}
+
+/// Poll the view of `channel` on `node` until `pred` holds or `timeout` elapses.
+async fn wait_view(
     node: &InProcNode,
+    channel: Channel,
     timeout: Duration,
     mut pred: impl FnMut(&Value) -> bool,
 ) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if pred(&node.state_get().await) {
+        if pred(&node.get(channel).await) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -1080,84 +1069,191 @@ async fn wait_doc(
     }
 }
 
-/// Defense in depth: dropped by the receiver gate (isolated by `unsigned_message_is_dropped`) and by
-/// the doc layer's actor == signer check; this test asserts the outcome, not which layer.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsigned_state_merge_is_never_folded() {
-    let (victim, attacker) = meshed_pair("state-unsigned").await;
-    // A well-formed state merge, but UNSIGNED — must be dropped before it can
-    // touch the state log (same authenticity gate as chat).
-    let evil =
-        CraftedMsg::state_merge(attacker.session.mesh_id(), "ghost", json!({"evil": true})).bytes();
+/// A well-formed slice body, but UNSIGNED, must be dropped before it can touch the view of its
+/// channel (the same authenticity gate as chat). The control is the same shape of frame, signed: it
+/// is taken, so that the unsigned frame is dropped for its missing signature and not for a bad body.
+async fn unsigned_slice_is_never_folded_on(channel: Channel) {
+    let (mut victim, attacker) = meshed_pair(&format!("slice-unsigned-{channel:?}")).await;
+    let mesh = attacker.session.mesh_id();
+    let signer = test_key::new_key();
+    introduce(&mut victim, &attacker, &signer, "replayer").await;
+    let evil = CraftedMsg::slice(
+        channel,
+        mesh,
+        SliceParams::new("replayer", 1, &json!({"evil": true})),
+    )
+    .bytes();
     attacker
         .session
         .inject_raw(evil)
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-    // Barrier: a real signed merge from the attacker's own identity.
-    attacker.state_merge(json!({"ok": 1})).await;
+    let control = CraftedMsg::slice(
+        channel,
+        mesh,
+        SliceParams::new("replayer", 1, &json!({"control": true})),
+    )
+    .sign(&signer)
+    .bytes();
+    attacker
+        .session
+        .inject_raw(control)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        wait_doc(&victim, T, |doc| doc["ok"] == 1).await,
-        "barrier state merge never derived"
+        wait_view(&victim, channel, T, |view| {
+            view.as_object()
+                .is_some_and(|slices| slices.values().any(|slice| slice["control"] == true))
+        })
+        .await,
+        "the signed control slice never derived: the frame shape is wrong, so the test proves nothing: {}",
+        victim.get(channel).await
     );
     assert!(
-        victim.state_get().await.get("evil").is_none(),
-        "an unsigned state merge must never be folded into the document"
+        !victim.get(channel).await.to_string().contains("evil"),
+        "an unsigned slice must never be folded into the view"
     );
     victim.leave().await;
     attacker.leave().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
-    // A malicious peer that bypasses its own author-side gate can still SIGN and
-    // inject a meta change forging another member's `/peers/<key>/card` — the
-    // card carries that member's cryptographic identity. Every honest receiver
-    // must reject it before it folds, so the forgery converges nowhere.
-    let (victim, injector) = meshed_pair("card-forge").await;
-    let attacker_key = test_key::new_key();
-    let mesh = injector.session.mesh_id();
-    // The slot of a member is the hex of its author key.
-    let victim_slot = victim.key_seen_by(&injector).await.to_string();
-    let injector_slot = injector.key_seen_by(&victim).await.to_string();
-    let fake = "ff00beefff00beef"; // distinctive marker for the forged identity
+async fn unsigned_state_slice_is_never_folded() {
+    unsigned_slice_is_never_folded_on(Channel::State).await;
+}
 
-    let forged = CraftedMsg::meta_forge_card(
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsigned_meta_slice_is_never_folded() {
+    unsigned_slice_is_never_folded_on(Channel::Meta).await;
+}
+
+/// A signed slice that names the key of a third member, with the signature of its forger, is
+/// dropped: the signature does not match the key. The witness holds a slice already; a forged frame
+/// of a later version would replace it if the receiver took the frame. The barrier is a signed slice
+/// of the forger itself, injected after the forged one, so the forged frame has had its turn.
+///
+/// The key named is the key of the witness and not the key of the victim: a frame that names the
+/// receiver's own key is dropped as a self-echo, so the victim would hide a missing signature check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("slice-claim").await;
+    let mesh = attacker.session.mesh_id();
+    let forger = test_key::new_key();
+    introduce(&mut victim, &attacker, &forger, "replayer").await;
+    let witness = test_key::new_key();
+    introduce(&mut victim, &attacker, &witness, "witness").await;
+    let witness_slot = test_key::pubkey_hex(&witness);
+    let forger_slot = test_key::pubkey_hex(&forger);
+    let witness_key = test_key::author_key_of(&witness);
+
+    let own = CraftedMsg::slice(
+        Channel::Meta,
         mesh,
-        "attacker",
-        &victim_slot,
-        &json!({"metadata": {"pubkey": fake}}),
+        SliceParams::new("witness", 1, &json!({"model": "own"})),
     )
-    .sign(&attacker_key)
+    .sign(&witness)
     .bytes();
-    injector
+    attacker
         .session
-        .inject_raw(forged)
+        .inject_raw(own)
         .await
-        .expect("the forged card must reach the victim for the rejection to be tested");
-
-    // Barrier: a genuine meta write from the injector's own subtree (not a card,
-    // so ungated). Once the victim derives it, the forged frame — sent first on
-    // the same link — has had its turn.
-    injector
-        .meta_merge(json!({"peers": {injector_slot.as_str(): {"barrier": true}}}))
-        .await;
-    let barrier_ptr = format!("/peers/{injector_slot}/barrier");
-    let deadline = Instant::now() + T;
-    while victim.meta_get().await.pointer(&barrier_ptr) != Some(&json!(true)) {
-        assert!(
-            Instant::now() < deadline,
-            "barrier meta merge never derived"
-        );
-        tokio::time::sleep(POLL).await;
-    }
-
+        .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        !victim.meta_get().await.to_string().contains(fake),
-        "a signed forged foreign card must be rejected on receipt, never folded"
+        wait_view(&victim, Channel::Meta, T, |view| {
+            view.pointer(&format!("/{witness_slot}/model")) == Some(&json!("own"))
+        })
+        .await,
+        "the slice of the witness never derived: the frame shape is wrong: {}",
+        victim.meta_get().await
+    );
+
+    let claimed = CraftedMsg::slice(
+        Channel::Meta,
+        mesh,
+        SliceParams::new("replayer", 2, &json!({"model": "claimed"})),
+    )
+    .sign(&forger);
+    attacker
+        .session
+        .inject_raw(claimed.bytes_claiming(&forger, &witness_key))
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    let barrier = CraftedMsg::slice(
+        Channel::Meta,
+        mesh,
+        SliceParams::new("replayer", 1, &json!({"model": "barrier"})),
+    )
+    .sign(&forger)
+    .bytes();
+    attacker
+        .session
+        .inject_raw(barrier)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    assert!(
+        wait_view(&victim, Channel::Meta, T, |view| {
+            view.pointer(&format!("/{forger_slot}/model")) == Some(&json!("barrier"))
+        })
+        .await,
+        "the barrier slice of the forger never derived: {}",
+        victim.meta_get().await
+    );
+
+    let view = victim.meta_get().await;
+    assert_eq!(
+        view[&witness_slot]["model"], "own",
+        "a frame that claims the key of the witness must not change its slice: {view}"
+    );
+    assert!(
+        !view.to_string().contains("claimed"),
+        "the claimed slice must be nowhere in the view: {view}"
     );
     victim.leave().await;
-    injector.leave().await;
+    attacker.leave().await;
+}
+
+/// A member writes only its own slice of the meta channel: the engine takes the slot from the
+/// verified author key of the frame, never from the body. An attacker that writes the nickname of
+/// the victim into its own slice changes its own entry and leaves the entry of the victim as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_meta_write_naming_another_member_changes_only_the_own_entry() {
+    let (victim, attacker) = meshed_pair("meta-slot").await;
+    let victim_slot = victim.key_seen_by(&attacker).await.to_string();
+    let attacker_slot = attacker.key_seen_by(&victim).await.to_string();
+    victim
+        .meta_merge(json!({"nickname": victim.nickname, "model": "genuine"}))
+        .await;
+    attacker
+        .meta_merge(json!({"nickname": victim.nickname, "model": "forged"}))
+        .await;
+
+    let deadline = Instant::now() + T;
+    let views = loop {
+        let seen_by_victim = victim.meta_get().await;
+        let seen_by_attacker = attacker.meta_get().await;
+        if seen_by_victim[&attacker_slot]["model"] == "forged"
+            && seen_by_attacker[&victim_slot]["model"] == "genuine"
+        {
+            break [seen_by_victim, seen_by_attacker];
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the meta entries never converged: {seen_by_victim} / {seen_by_attacker}"
+        );
+        tokio::time::sleep(POLL).await;
+    };
+    for view in &views {
+        assert_eq!(
+            view[&victim_slot]["model"], "genuine",
+            "a write by the attacker must never change the entry of the victim"
+        );
+        assert_eq!(
+            view[&attacker_slot]["model"], "forged",
+            "the write of the attacker lands in its own entry"
+        );
+    }
+    victim.leave().await;
+    attacker.leave().await;
 }
 
 // ── Shard reassembly: crafted headers + byte budgets ────────────────────
@@ -1171,7 +1267,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
     let (mut victim, attacker) = meshed_pair("shard-hdr").await;
     let key = test_key::new_key();
     // idx outside total.
-    let idx_outside = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
+    let idx_outside = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "slice")
         .shard(GROUP, 3, 3)
         .sign(&key)
         .bytes();
@@ -1181,7 +1277,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     // total past the header tripwire.
-    let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
+    let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "slice")
         .shard(GROUP, 0, agent_gossip::MAX_SHARD_TOTAL + 1)
         .sign(&key)
         .bytes();
@@ -1275,7 +1371,7 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
     // signing with its real key) sends a genuine multipart body. The poisoned
     // slice is under a different key, so it cannot enter the genuine set.
     let key = test_key::new_key();
-    let poisoned = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "POISON")
+    let poisoned = CraftedMsg::new(attacker.session.mesh_id(), "replayer", "POISON")
         .shard("00000000-0000-4000-8000-00000000beef", 1, 2)
         .sign(&key)
         .bytes();
@@ -1300,150 +1396,4 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
     );
     victim.leave().await;
     attacker.leave().await;
-}
-
-// ── The far root: a joiner can always join ──────────────────────────────
-//
-// Two forged roots, 10 minutes apart, put a mesh above twice the bound of a jump
-// (`DOC_EPOCH_JUMP_MAX`, 131072 epochs). A node at epoch 0 (a joiner, or a node that restarted)
-// then refused every root above the bound and got NO meta for good: no roster, no cards. The
-// engine takes such a root now only as the point-to-point answer to the first request of a node
-// that awaits it, within 5 s. An honest node reaches a far epoch by two adoptions (5 minutes of
-// ticks each), so the test puts it there at once with `force_epoch` (adversarial hook).
-//
-// Not covered here, on purpose: a valid frame of epoch 0 that comes by gossip BEFORE the answer
-// (the answer comes a few milliseconds after the first request, so no test can order the two
-// without a race; the doc-crate test `a_meta_document_that_holds_a_frame_of_another_author_takes_
-// the_far_root_as_the_answer` proves the property), and the state channel (an honest node reaches
-// a far state epoch by a cut, which no hook forces).
-
-/// A far epoch, above twice the bound of a jump.
-const FAR_EPOCH: u64 = 262_144;
-
-/// The field of the slot of the honest node that exists only in the far epoch.
-const FAR_MARKER: &str = "far_epoch_marker";
-
-/// A joiner at epoch 0 meets an honest node in a far epoch and gets its meta: the cards of both
-/// nodes are in both documents. Against the engine that refused far roots, the joiner never saw
-/// the card of the honest node.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_joiner_at_epoch_zero_gets_the_meta_of_an_honest_node_in_a_far_epoch() {
-    let honest = InProcNode::create("adv-far-root").await;
-    let card_deadline = Instant::now() + T;
-    let (slot, card) = loop {
-        let meta = honest
-            .session
-            .meta_get()
-            .await
-            .expect("the session answers until the test ends");
-        if let Some(slot) = common::card_slot_of(&meta, &honest.nickname) {
-            let card = meta["peers"][&slot]["card"].clone();
-            break (slot, card);
-        }
-        assert!(
-            Instant::now() < card_deadline,
-            "the honest node never published its card"
-        );
-        tokio::time::sleep(POLL).await;
-    };
-    honest
-        .session
-        .force_epoch(habilis_network::protocol::Channel::Meta, FAR_EPOCH)
-        .await
-        .expect("the honest node stays up");
-    // The slot of the honest node carries a marker in the far epoch, so that the old card of epoch
-    // 0 (the log of the honest node can send it again by gossip) is not taken for it. The marker is
-    // not in the card: the app writes its card again and would lose it. The card is written too.
-    honest
-        .session
-        .meta_merge(json!({ "peers": { &slot: { "card": card, FAR_MARKER: true } } }))
-        .await
-        .expect("the honest node writes its slot in the far epoch");
-
-    let joiner = InProcNode::join(&honest.mesh, "adv-far-root-joiner").await;
-
-    // First the property itself: the joiner gets what the honest node wrote in the far epoch (the
-    // marker), and not only its old card of epoch 0.
-    let marker_deadline = Instant::now() + T;
-    loop {
-        let meta = joiner
-            .session
-            .meta_get()
-            .await
-            .expect("the session answers until the test ends");
-        if meta.pointer(&format!("/peers/{slot}/{FAR_MARKER}")) == Some(&json!(true)) {
-            break;
-        }
-        assert!(
-            Instant::now() < marker_deadline,
-            "the joiner never adopted the far epoch of the honest node before the deadline; its meta is {meta}"
-        );
-        tokio::time::sleep(POLL).await;
-    }
-    // Then the other direction: the joiner writes its card again in the far epoch (the switch hands
-    // it back), and the honest node holds it.
-    let joiner_card_deadline = Instant::now() + T;
-    loop {
-        let meta = honest
-            .session
-            .meta_get()
-            .await
-            .expect("the session answers until the test ends");
-        if common::card_slot_of(&meta, &joiner.nickname).is_some() {
-            break;
-        }
-        assert!(
-            Instant::now() < joiner_card_deadline,
-            "the card of the joiner never reached the honest node; its meta is {meta}"
-        );
-        tokio::time::sleep(POLL).await;
-    }
-    honest.leave().await;
-    joiner.leave().await;
-}
-
-/// A far root that comes by gossip is not taken: a joiner in a mesh at epoch 0 keeps the meta of
-/// the mesh, and holds no card of the forger. The root is valid (the card of the forger's own slot,
-/// the actor of its key), so only the rule of the far jump refuses it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_far_root_by_gossip_does_not_capture_a_joiner() {
-    let (honest, attacker) = meshed_pair("far-gossip").await;
-    let mut joiner = InProcNode::join(&honest.mesh, "adv-far-gossip-joiner").await;
-    common::await_mutual_cards(&honest, &joiner).await;
-    let key = test_key::new_key();
-    let forged_card = json!({ "name": "forger" });
-    let forged = CraftedMsg::meta_far_root(
-        attacker.session.mesh_id(),
-        MetaFarRootParams::new("adv-far-gossip-forger", &key, 3 * 131_072, &forged_card),
-    )
-    .sign(&key)
-    .bytes();
-
-    attacker
-        .session
-        .inject_raw(forged)
-        .await
-        .expect("the attacker session stays connected to the mesh for the whole test");
-    attacker.broadcast("barrier-far-gossip").await;
-    assert!(
-        joiner.wait_body("barrier-far-gossip", T).await,
-        "barrier lost"
-    );
-
-    let meta = joiner
-        .session
-        .meta_get()
-        .await
-        .expect("the session answers until the test ends");
-    assert!(
-        common::card_slot_of(&meta, &honest.nickname).is_some(),
-        "the joiner kept the meta of the mesh"
-    );
-    assert!(
-        common::card_slot_of(&meta, "forger").is_none(),
-        "a far root that came by gossip must not be taken"
-    );
-    honest.leave().await;
-    attacker.leave().await;
-    joiner.leave().await;
 }

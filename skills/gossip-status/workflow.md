@@ -9,13 +9,12 @@ agent-gossip peers --gossip "$GOSSIP" --nickname "$NICKNAME"
 agent-gossip meta get --gossip "$GOSSIP" --nickname "$NICKNAME"
 ```
 
-Use `peers` from `peers` and `document.peers` from `meta`. The roster never
-lists yourself. A member's meta entry is `document.peers[<pubkey>]`, where `<pubkey>` is
-the `pubkey` of its roster row. Your own entry is `document.peers[$PUBKEY]`. If `$PUBKEY` is missing, run the **Reattach**
+Use `peers` from `peers` and `document` from `meta`. The roster never
+lists yourself. A member's meta entry is `document[<pubkey>]`, where `<pubkey>` is
+the `pubkey` of its roster row. Your own entry is `document[$PUBKEY]`. If `$PUBKEY` is missing, run the **Reattach**
 procedure to recover it; if it is still missing, leave your own row's meta fields empty and
 skip the lookup.
-A slot that a graph skill wrote by nickname is the fallback for a member that has no entry
-under its key. Two members can share a nickname, so never join by the nickname first.
+Two members can share a nickname, so never join by the nickname.
 
 The roster chains the quiet peers onto the active ones, so its length is not
 the gossip's live size. Two counts come from it:

@@ -21,14 +21,12 @@ const TASK_WAIT: Duration = MSG_TIMEOUT;
 async fn a_file_result_is_offloaded_as_a_url_reference() {
     let mut alice = InProcNode::create("t-blob").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-blob-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
     // broadcast into a still-converging overlay is lost for good and the call
     // dies as a 60s waiter timeout — the suite's long-standing flake.
-    bob.broadcast("warmup-back").await;
-    assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
+    common::warm_up(&bob, &mut [&mut alice]).await;
 
     // `create_task` waits for bob's card (the directed-seal key) before sending.
     let response = alice.create_task("t-blob-bob", "render the report").await;
