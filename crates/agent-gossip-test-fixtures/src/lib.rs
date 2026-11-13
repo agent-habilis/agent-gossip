@@ -21,6 +21,7 @@ pub use agent_gossip::{PresenceSubtype, runtime_base};
 
 mod apply_flags;
 mod assert_bell_parked;
+mod await_link_cli;
 mod await_mutual_cards;
 mod await_peer_card_cli;
 mod bell_grace;
@@ -81,6 +82,7 @@ mod warm_up;
 
 pub(crate) use self::apply_flags::apply_flags;
 pub use self::assert_bell_parked::assert_bell_parked;
+pub use self::await_link_cli::await_link_cli;
 pub use self::await_mutual_cards::await_mutual_cards;
 pub use self::await_peer_card_cli::await_peer_card_cli;
 pub use self::bell_grace::BELL_GRACE;

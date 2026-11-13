@@ -46,9 +46,15 @@ fn init_short_tuning() {
     init(tuning);
 }
 
-/// `await_mutual_cards` with an explicit deadline instead of the fixture's
-/// fixed `MSG_TIMEOUT` — split-merge convergence spans several shed rounds.
-async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Duration) {
+/// Each node writes its own meta entry, then waits until each node holds the entry of the other,
+/// within `deadline`. Split-merge convergence spans several shed rounds, which is longer than the
+/// fixed `MSG_TIMEOUT` of the fixtures.
+async fn await_entries_bounded(left: &InProcNode, right: &InProcNode, deadline: Duration) {
+    left.meta_merge(serde_json::json!({ "nickname": left.nickname }))
+        .await;
+    right
+        .meta_merge(serde_json::json!({ "nickname": right.nickname }))
+        .await;
     let until = Instant::now() + deadline;
     loop {
         let left_doc = left.meta_get().await;
@@ -67,7 +73,7 @@ async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Du
     }
 }
 
-/// Convergence budget. A quiet run crosses cards in ~15-25s; the merge is a
+/// Convergence budget. A quiet run crosses the entries in ~15-25s; the merge is a
 /// geometric race across shed rounds, so the bound is several rounds rather
 /// than one. Trimmed from 150s: at 150s a host that simply cannot converge
 /// (no working multicast) burned 300s of CI proving it, and 75s still leaves
@@ -125,7 +131,7 @@ async fn staggered_topic_joiners_converge() {
     // Same bound as the simultaneous test, not the fixture's fixed 60s
     // helper: when host mDNS is slow, even the no-race path may fall back
     // to a duplicate claim repaired by shed rounds.
-    await_cards_bounded(&alice, &bob, MERGE_BUDGET).await;
+    await_entries_bounded(&alice, &bob, MERGE_BUDGET).await;
 
     alice.leave().await;
     bob.leave().await;
@@ -152,16 +158,16 @@ async fn two_simultaneous_topic_joiners_converge() {
         "same string must derive the same gossip id"
     );
 
-    // Convergence = each side holds the other's card in its meta doc (the
-    // 2-peer roster + card-exchange marker). Pre-fix this hangs forever:
-    // both nodes sit alone in their own overlay and the cards never cross.
+    // Convergence = each side holds the other's entry in its meta doc (the
+    // 2-peer roster + entry-exchange marker). Pre-fix this hangs forever:
+    // both nodes sit alone in their own overlay and the entries never cross.
     // Merge timing is a geometric race (each shed round separates the two
     // holders' phases by fresh jitter until one probe lands while the other
     // still holds), so the bound is several rounds, not one fixture timeout.
     // Generous for a loaded host (the full suite runs other binaries in
     // parallel and a busy machine stretches every mDNS query round); a
     // quiet run converges in ~15-25s.
-    await_cards_bounded(&alice, &bob, MERGE_BUDGET).await;
+    await_entries_bounded(&alice, &bob, MERGE_BUDGET).await;
 
     // And traffic flows across the merged overlay, both directions.
     alice.broadcast("after-merge-a").await;
