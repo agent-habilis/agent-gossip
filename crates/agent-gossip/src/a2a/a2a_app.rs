@@ -312,7 +312,8 @@ impl A2aApp {
     pub(crate) fn admit_own_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.own_legs.len() < tuning::own_legs_cap(),
-            "{} own task legs still wait for their send, so this leg was not sent",
+            "{} own task legs still wait for their send (limit {}), so this leg was not sent",
+            self.own_legs.len(),
             tuning::own_legs_cap()
         );
         self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
@@ -323,7 +324,8 @@ impl A2aApp {
     pub(crate) fn admit_unsent_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.unsent_legs.len() < tuning::unsent_legs_cap(),
-            "{} own content legs still wait for their send, so this leg was not sent",
+            "{} own content legs still wait for their send (limit {}), so this leg was not sent",
+            self.unsent_legs.len(),
             tuning::unsent_legs_cap()
         );
         self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())

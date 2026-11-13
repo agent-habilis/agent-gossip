@@ -41,7 +41,7 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
         "a cap of 0 leaves no room, so the command must exit with an error"
     );
     assert!(
-        error.contains("own task legs still wait for their send"),
+        error.contains("0 own task legs still wait for their send (limit 0)"),
         "the caller must get the reason, got: {error}"
     );
 
@@ -82,8 +82,8 @@ fn a_content_leg_past_the_unsent_legs_cap_is_refused_with_the_reason() {
         "a cap of 0 leaves no room, so the command must exit with an error"
     );
     assert!(
-        error.contains("own content legs still wait for their send"),
-        "the caller must get the reason, got: {error}"
+        error.contains("0 own content legs still wait for their send (limit 0)"),
+        "the caller must get the count limit, not the byte limit, got: {error}"
     );
 
     // The control: a body of one frame never waits in the list, so a cap of 0 does not refuse it.
