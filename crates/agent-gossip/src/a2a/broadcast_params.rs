@@ -695,10 +695,6 @@ async fn broadcast_directed_frame(
     if task_id.is_some() {
         app.admit_own_leg(own_leg_bytes(echo_body.as_str()))?;
     }
-    if content {
-        // The sealed frames and the shard cache hold the body twice.
-        app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
-    }
     let signer = state.identity().clone();
     // Fast path: the whole leg in one frame. The id is pinned before signing —
     // the signature covers it.
@@ -725,7 +721,6 @@ async fn broadcast_directed_frame(
             sender,
             out,
             DirectedLegPart {
-                app,
                 message: &single,
                 bytes,
                 echo: Some(&echo),
@@ -743,6 +738,8 @@ async fn broadcast_directed_frame(
     if !content {
         return Err(anyhow::anyhow!("task beat leg too large to send"));
     }
+    // The sealed frames and the shard cache hold the body twice, until every shard has a verdict.
+    app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
     // The shard group carries the logical id, so the reassembled view is
     // named identically on both ends.
     let group =
@@ -777,7 +774,6 @@ async fn broadcast_directed_frame(
                 sender,
                 out,
                 DirectedLegPart {
-                    app,
                     message: &message,
                     bytes,
                     echo: None,
@@ -1316,7 +1312,6 @@ pub(crate) async fn broadcast_task_artifact(
     } = params;
     // Before the offload: a refused artifact must not copy its file into the blob store for nothing.
     app.admit_own_leg(own_leg_bytes(text))?;
-    app.admit_unsent_leg(unsent_leg_bytes(text))?;
     let parts = build_offload_parts(
         OffloadTextParams {
             mesh,
@@ -1492,7 +1487,6 @@ pub(crate) async fn attach_call_file(
         .get_mut("message")
         .ok_or_else(|| anyhow::anyhow!("--file needs a SendMessage call with a message"))?;
     let mut message: crate::a2a::Message = serde_json::from_value(slot.take())?;
-    app.admit_unsent_leg(0)?;
     app.admit_call_blob_group(message.task_id.as_ref())?;
     let opens_task = message.task_id.is_none();
     let (group_id, fresh_group) = call_blob_group(message.task_id.clone(), &app.tasks);
@@ -1526,7 +1520,6 @@ pub(crate) async fn attach_call_file(
 /// cap-tracking flag — the part [`send_directed_leg`] retains/delivers, grouped
 /// so the state/sender/out handles stay their own leading params.
 struct DirectedLegPart<'source> {
-    app: &'source mut A2aApp,
     echo_as: EchoAs,
     message: &'source Verified,
     bytes: WireFrame,
@@ -1544,7 +1537,6 @@ async fn send_directed_leg(
     part: DirectedLegPart<'_>,
 ) -> anyhow::Result<Option<PendingSend>> {
     let DirectedLegPart {
-        app,
         message,
         bytes,
         echo,
@@ -1564,11 +1556,7 @@ async fn send_directed_leg(
                 Ok(None)
             }
             Delivered::Pending(pending) => {
-                let pending = if content {
-                    retain_when_sent(app, message.clone(), pending)
-                } else {
-                    pending
-                };
+                retain_leg(message, content);
                 let pending = match echo {
                     Some(echo) => {
                         let addressee = addressee_name(state, echo);
@@ -1606,25 +1594,6 @@ fn retain_leg(message: &Verified, content: bool) {
     if content {
         log_outbound(message);
     }
-}
-
-/// Queue `msg` for the dev log, behind the verdict of its send. The handle is replaced by
-/// one that gives the same verdict.
-fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -> PendingSend {
-    let (sent_tx, sent_rx) = oneshot::channel();
-    let (verdict_tx, verdict_rx) = oneshot::channel();
-    app.unsent_legs.push(UnsentLeg {
-        frames: vec![message],
-        cache: None,
-        sent: sent_rx,
-    });
-    let deadline = send_deadline();
-    tokio::spawn(async move {
-        let verdict = settle(vec![pending], deadline).await;
-        let _ = sent_tx.send(verdict.is_ok());
-        let _ = verdict_tx.send(verdict);
-    });
-    verdict_rx
 }
 
 /// Queue the shards of one leg for the dev log and the shard cache, as one group: they
