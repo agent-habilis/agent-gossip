@@ -73,8 +73,8 @@ pub struct SealedTaskStatusParams<'caller> {
     pub state: crate::a2a::TaskState,
     /// Marks the leg as a liveness beat rather than a transition.
     pub beat: bool,
-    /// The addressee's public mesh-seal key, as any member can read it from
-    /// the meta document — see [`peer_seal_key`].
+    /// The addressee's public mesh-seal key, as the engine of a member holds it —
+    /// see [`MeshSession::seal_key_of`](crate::api::MeshSession::seal_key_of).
     pub seal_key: PublicKey,
 }
 

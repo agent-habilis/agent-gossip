@@ -14,9 +14,7 @@ use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{
-    MSG_TIMEOUT, POLL, RPC_ATTEMPT, card_slot_of, init_test_tracing, is_rpc_timeout, test_mesh_name,
-};
+use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
 ///
@@ -407,28 +405,44 @@ impl InProcNode {
         .await
     }
 
-    /// Block until `target` has an entry in this node's `meta` doc and a direct lane to it — the
+    /// Block until a directed call to `target` completes a round trip on a direct lane — the
     /// precondition [`Self::a2a_call`] cannot enforce itself (the unknown-peer tests call a
     /// nickname that will never arrive and must fail fast, not block).
     /// [`Self::create_task`] applies it for you; a bare `a2a_call` to a real peer must call this
     /// first or it races the join of the peer.
     ///
-    /// The entry is not enough on its own: the meta doc and the live roster converge separately,
-    /// and a directed send checks the roster. Until `target` is in it on a lane that carries
-    /// payload, the send fails as an unknown peer or is held for a relay that is lookup only —
-    /// both seen as CI flakes in `tests/seal.rs`.
+    /// The probe is a `ListTasks` call, which changes nothing at the peer. It succeeds only when
+    /// this node holds the seal key of the peer, from its signed `PeerInfo`, and the peer holds
+    /// the seal key of this node, because the reply is sealed back. The lane check comes first:
+    /// the roster and the keys converge separately, and a send on a lane that is lookup only is
+    /// held, as seen in `tests/seal.rs`.
     ///
     /// # Panics
     ///
-    /// Panics if the entry or a direct lane does not appear before `MSG_TIMEOUT`.
+    /// Panics if no direct lane forms or the probe does not succeed before `MSG_TIMEOUT`.
     pub async fn await_peer_card(&self, target: &str) {
+        let peer = Nickname::try_new(target).expect("valid target");
         let deadline = Instant::now() + MSG_TIMEOUT;
-        while card_slot_of(&self.meta_get().await, target).is_none()
-            || !self.carries_directed_frames_to(target).await
-        {
+        loop {
+            if self.carries_directed_frames_to(target).await {
+                let probe = A2aCallParams::new(
+                    peer.clone(),
+                    "ListTasks".to_owned(),
+                    serde_json::json!({}),
+                    RPC_ATTEMPT,
+                );
+                let response: serde_json::Value = self
+                    .session
+                    .a2a_call(probe)
+                    .await
+                    .expect("a2a_call transport");
+                if response.get("result").is_some() {
+                    return;
+                }
+            }
             assert!(
                 Instant::now() < deadline,
-                "{target} never got an entry in this node's meta doc, or no direct lane to it formed"
+                "no directed round trip to {target} completed: no direct lane formed, or a seal key is missing"
             );
             tokio::time::sleep(POLL).await;
         }

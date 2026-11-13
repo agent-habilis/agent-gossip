@@ -1534,9 +1534,9 @@ struct DirectedLegPart<'source> {
     content: bool,
 }
 
-/// Broadcast (or buffer, while unmeshed) one fully-built task leg. `echo` carries the plaintext twin whose
-/// operator line surfaces (`None` for the raw shards of a split leg, which
-/// commit silently). Errors if the unmeshed buffer is full.
+/// Broadcast (or buffer, while unmeshed) one fully-built task leg. `echo` carries the
+/// plaintext twin whose operator line surfaces (`None` for the raw shards of a split
+/// leg, which commit silently). Errors if the unmeshed buffer is full.
 async fn send_directed_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,

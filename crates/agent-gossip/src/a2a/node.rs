@@ -354,9 +354,6 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
     }
 }
 
-/// Per-tag/payload classification of an inbound a2a `App` frame — see
-/// [`AppClass`]. Encodes in one place the wire policy the engine used to derive
-/// from hardcoded tag checks.
 /// Every directed tag — msg, worker status/artifact push, RPC request/response, receipt — is
 /// sealed to its addressee, so a relayed frame stays unreadable by the peers that forward it.
 /// Broadcast chat is public by definition, and an unknown tag is never sealed.
@@ -367,6 +364,9 @@ fn seals(tag: &str) -> bool {
     )
 }
 
+/// Per-tag/payload classification of an inbound a2a `App` frame — see
+/// [`AppClass`]. Encodes in one place the wire policy the engine used to derive
+/// from hardcoded tag checks.
 fn classify(message: &Authored) -> AppClass {
     let tag = message.kind.app_tag().map(AppTag::as_str);
     // App payloads push (chat/status/artifact) only. RPC request/response frames

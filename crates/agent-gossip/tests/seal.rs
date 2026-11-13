@@ -60,9 +60,8 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     carol.leave().await;
 }
 
-/// A passworded gossip seals the state frames, which makes the frame of the card larger than
-/// the frame limit when it goes out as one merge. No peer then learns the seal key, and every
-/// directed msg fails with "cards still propagating". The same msg must work with a password.
+/// A passworded gossip seals the state frames. The seal key of a peer comes in its signed
+/// `PeerInfo`, which a password does not change, so a directed msg must work with a password too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_msg_works_on_a_passworded_gossip() {
     const SECRET: &str = "just between us, behind a password";
@@ -72,7 +71,7 @@ async fn a_msg_works_on_a_passworded_gossip() {
         .await
         .expect("the right password joins");
 
-    // A msg is sealed to its recipient, so the card must have replicated.
+    // A msg is sealed to its recipient, so its seal key must have arrived.
     alice.await_peer_card("msgpw-bob").await;
     bob.await_peer_card(&alice.nickname).await;
 
@@ -103,7 +102,7 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "bob meshed");
     assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
 
-    // A msg is sealed to its recipient, so the card must have replicated.
+    // A msg is sealed to its recipient, so its seal key must have arrived.
     alice.await_peer_card("msgpriv-bob").await;
 
     alice.message("msgpriv-bob", SECRET).await;

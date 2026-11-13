@@ -1081,6 +1081,50 @@ async fn unsigned_state_merge_is_never_folded() {
     attacker.leave().await;
 }
 
+/// A member writes only its own slice of the meta channel: the engine takes the slot from the
+/// verified author key of the frame, never from the body. An attacker that writes the nickname of
+/// the victim into its own slice changes its own entry and leaves the entry of the victim as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_meta_write_naming_another_member_changes_only_the_own_entry() {
+    let (victim, attacker) = meshed_pair("meta-slot").await;
+    let victim_slot = victim.key_seen_by(&attacker).await.to_string();
+    let attacker_slot = attacker.key_seen_by(&victim).await.to_string();
+    victim
+        .meta_merge(json!({"nickname": victim.nickname, "model": "genuine"}))
+        .await;
+    attacker
+        .meta_merge(json!({"nickname": victim.nickname, "model": "forged"}))
+        .await;
+
+    let deadline = Instant::now() + T;
+    loop {
+        let seen_by_victim = victim.meta_get().await;
+        let seen_by_attacker = attacker.meta_get().await;
+        if seen_by_victim[&attacker_slot]["model"] == "forged"
+            && seen_by_attacker[&victim_slot]["model"] == "genuine"
+        {
+            for view in [&seen_by_victim, &seen_by_attacker] {
+                assert_eq!(
+                    view[&victim_slot]["model"], "genuine",
+                    "a write by the attacker must never change the entry of the victim"
+                );
+                assert_eq!(
+                    view[&attacker_slot]["model"], "forged",
+                    "the write of the attacker lands in its own entry"
+                );
+            }
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the meta entries never converged: {seen_by_victim} / {seen_by_attacker}"
+        );
+        tokio::time::sleep(POLL).await;
+    }
+    victim.leave().await;
+    attacker.leave().await;
+}
+
 // ── Shard reassembly: crafted headers + byte budgets ────────────────────
 
 /// A crafted shard with an out-of-range header (`idx >= total`, or a `total`
