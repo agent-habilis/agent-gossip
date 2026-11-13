@@ -768,31 +768,29 @@ mod tests {
         second.leave().await;
     }
 
-    /// An object merge applies and is reflected by `state_get`; a non-object
-    /// top-level merge is rejected (automerge's document root is always a map, so
-    /// the old RFC 7386 "replace the whole document" case has no representation).
+    /// An object merge applies and is reflected by `state_get` under the own author key; a
+    /// non-object top-level merge is rejected, because the slice of an author is always a map.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn apply_state_merge_applies_and_reads_back() {
         let session = Session::create(create_cfg("merge", "alice"))
             .await
             .expect("a loopback create needs no network and cannot fail");
+        let own = session.own_key().to_string();
 
         session
             .apply_state_merge(json!({"turn": "a"}))
             .await
             .expect("an object merge applies");
+        let expected = json!({ own.as_str(): {"turn": "a"} });
         assert_eq!(
             session
                 .state_get()
                 .await
-                .expect("a created session owns its shared state document, so reading it succeeds")
-                ["turn"],
-            json!("a"),
-            "the object merge sets turn to a"
+                .expect("a created session owns its shared state document, so reading it succeeds"),
+            expected,
+            "the object merge sets turn to a in the own slice"
         );
 
-        // A non-object top-level merge cannot be represented on the automerge
-        // root and is refused — the prior document stands.
         assert!(
             session.apply_state_merge(json!([1, 2, 3])).await.is_err(),
             "a non-object top-level merge must be rejected"
@@ -802,7 +800,7 @@ mod tests {
                 .state_get()
                 .await
                 .expect("a created session owns its shared state document, so reading it succeeds"),
-            json!({"turn": "a"}),
+            expected,
             "a refused merge leaves the prior document"
         );
 
