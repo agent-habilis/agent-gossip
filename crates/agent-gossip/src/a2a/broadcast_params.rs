@@ -158,6 +158,13 @@ async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> an
     Ok(())
 }
 
+/// Whether a leg waits in `A2aApp::unsent_legs` until every shard has a verdict: only a content leg
+/// that does not fit one frame does. A single frame has its verdict at once, and a beat is never
+/// split, so neither takes a slot, and neither can be refused for a full list that it never joins.
+fn needs_unsent_slot(wire_len: usize, content: bool) -> bool {
+    content && wire_len > MAX_MESSAGE_SIZE
+}
+
 /// The bytes that an own task leg holds in the queue while its send waits: the plaintext body.
 fn own_leg_bytes(body: &str) -> usize {
     body.len()
@@ -707,6 +714,10 @@ async fn broadcast_directed_frame(
     if let MessageKind::App { to: Some(to), .. } = &kind {
         app.note_sent_ref(single.id.as_str(), to);
     }
+    if needs_unsent_slot(single.wire_len(), content) {
+        // The sealed frames and the shard cache hold the body twice, until every shard has a verdict.
+        app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
+    }
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = single.serialize()?;
         let id = single.id.clone();
@@ -738,8 +749,6 @@ async fn broadcast_directed_frame(
     if !content {
         return Err(anyhow::anyhow!("task beat leg too large to send"));
     }
-    // The sealed frames and the shard cache hold the body twice, until every shard has a verdict.
-    app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
     // The shard group carries the logical id, so the reassembled view is
     // named identically on both ends.
     let group =
@@ -2645,8 +2654,8 @@ mod sharded_leg_tests {
     use tokio::sync::oneshot;
 
     use super::{
-        OwnLeg, PendingSend, ingest_own_leg_when_sent, queue_sharded_leg, send_deadline, settle,
-        take_sent_legs,
+        MAX_MESSAGE_SIZE, OwnLeg, PendingSend, ingest_own_leg_when_sent, needs_unsent_slot,
+        queue_sharded_leg, send_deadline, settle, take_sent_legs,
     };
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
     use crate::a2a::{tuning, wire};
@@ -2668,6 +2677,22 @@ mod sharded_leg_tests {
         let (verdict_tx, verdict_rx) = oneshot::channel();
         verdict_tx.send(outcome).expect("receiver is held");
         verdict_rx
+    }
+
+    #[test]
+    fn only_a_content_leg_that_does_not_fit_one_frame_takes_a_slot() {
+        assert!(
+            needs_unsent_slot(MAX_MESSAGE_SIZE + 1, true),
+            "a content leg that must be split waits for the verdict of every shard"
+        );
+        assert!(
+            !needs_unsent_slot(MAX_MESSAGE_SIZE, true),
+            "a content leg of one frame has its verdict at once, so a full list cannot refuse it"
+        );
+        assert!(
+            !needs_unsent_slot(MAX_MESSAGE_SIZE + 1, false),
+            "a beat is never split, so it takes no slot"
+        );
     }
 
     #[tokio::test]
