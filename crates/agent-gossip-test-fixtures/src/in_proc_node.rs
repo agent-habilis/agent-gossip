@@ -421,31 +421,33 @@ impl InProcNode {
     ///
     /// Panics if no direct lane forms or the probe does not succeed before `MSG_TIMEOUT`.
     pub async fn await_peer_card(&self, target: &str) {
-        let peer = Nickname::try_new(target).expect("valid target");
         let deadline = Instant::now() + MSG_TIMEOUT;
-        loop {
-            if self.carries_directed_frames_to(target).await {
-                let probe = A2aCallParams::new(
-                    peer.clone(),
-                    "ListTasks".to_owned(),
-                    serde_json::json!({}),
-                    RPC_ATTEMPT,
-                );
-                let response: serde_json::Value = self
-                    .session
-                    .a2a_call(probe)
-                    .await
-                    .expect("a2a_call transport");
-                if response.get("result").is_some() {
-                    return;
-                }
-            }
+        while !self.round_trip_completes(target).await {
             assert!(
                 Instant::now() < deadline,
                 "no directed round trip to {target} completed: no direct lane formed, or a seal key is missing"
             );
             tokio::time::sleep(POLL).await;
         }
+    }
+
+    /// Whether a `ListTasks` call to `target` completes now, on a lane that carries payload.
+    async fn round_trip_completes(&self, target: &str) -> bool {
+        if !self.carries_directed_frames_to(target).await {
+            return false;
+        }
+        let probe = A2aCallParams::new(
+            Nickname::try_new(target).expect("valid target"),
+            "ListTasks".to_owned(),
+            serde_json::json!({}),
+            RPC_ATTEMPT,
+        );
+        let response: serde_json::Value = self
+            .session
+            .a2a_call(probe)
+            .await
+            .expect("a2a_call transport");
+        response.get("result").is_some()
     }
 
     /// The author key of this node, as `observer` knows it from its roster. The key is the

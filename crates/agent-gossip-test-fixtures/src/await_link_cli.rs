@@ -2,10 +2,11 @@ use std::time::{Duration, Instant};
 
 use crate::{MSG_TIMEOUT, cli_message_raw, cli_poll};
 
-/// Block until a chat message of `sender` reaches `receiver`: send a probe and send it again until
-/// the poll of the receiver holds it. A gossip holds no log of a broadcast, so a probe that leaves
-/// before the link exists is lost, and nothing sends it again. A merge of the state or the meta
-/// channel needs the same link, so a test calls this first.
+/// Block until a chat probe of `sender` reaches `receiver`.
+///
+/// The probe is sent again until the poll of the receiver holds it. A gossip holds no log of a
+/// broadcast, so a probe that leaves before the link exists is lost, and nothing sends it again. A
+/// merge of the state or the meta channel needs the same link, so a test calls this first.
 ///
 /// The polls of the receiver advance its cursor past the probes.
 ///

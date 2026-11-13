@@ -21,7 +21,7 @@
 use std::time::{Duration, Instant};
 
 use agent_gossip::a2a::{TaskId, TaskState, status_update_params};
-use agent_gossip::harness::test_key::{self, CraftedMsg};
+use agent_gossip::harness::test_key::{self, CraftedMsg, SliceParams};
 use agent_gossip::{Channel, OutputEvent};
 use agent_gossip_test_fixtures as common;
 use common::{InProcNode, MSG_TIMEOUT, POLL};
@@ -1081,15 +1081,24 @@ async fn unsigned_slice_is_never_folded_on(channel: Channel) {
     let mesh = attacker.session.mesh_id();
     let signer = test_key::new_key();
     introduce(&mut victim, &attacker, &signer, "replayer").await;
-    let evil = CraftedMsg::slice(channel, mesh, "replayer", 1, json!({"evil": true})).bytes();
+    let evil = CraftedMsg::slice(
+        channel,
+        mesh,
+        SliceParams::new("replayer", 1, &json!({"evil": true})),
+    )
+    .bytes();
     attacker
         .session
         .inject_raw(evil)
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-    let control = CraftedMsg::slice(channel, mesh, "replayer", 1, json!({"control": true}))
-        .sign(&signer)
-        .bytes();
+    let control = CraftedMsg::slice(
+        channel,
+        mesh,
+        SliceParams::new("replayer", 1, &json!({"control": true})),
+    )
+    .sign(&signer)
+    .bytes();
     attacker
         .session
         .inject_raw(control)
@@ -1141,9 +1150,13 @@ async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
     let forger_slot = test_key::pubkey_hex(&forger);
     let witness_key = test_key::author_key_of(&witness);
 
-    let own = CraftedMsg::slice(Channel::Meta, mesh, "witness", 1, json!({"model": "own"}))
-        .sign(&witness)
-        .bytes();
+    let own = CraftedMsg::slice(
+        Channel::Meta,
+        mesh,
+        SliceParams::new("witness", 1, &json!({"model": "own"})),
+    )
+    .sign(&witness)
+    .bytes();
     attacker
         .session
         .inject_raw(own)
@@ -1161,9 +1174,7 @@ async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
     let claimed = CraftedMsg::slice(
         Channel::Meta,
         mesh,
-        "replayer",
-        2,
-        json!({"model": "claimed"}),
+        SliceParams::new("replayer", 2, &json!({"model": "claimed"})),
     )
     .sign(&forger);
     attacker
@@ -1174,9 +1185,7 @@ async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
     let barrier = CraftedMsg::slice(
         Channel::Meta,
         mesh,
-        "replayer",
-        1,
-        json!({"model": "barrier"}),
+        SliceParams::new("replayer", 1, &json!({"model": "barrier"})),
     )
     .sign(&forger)
     .bytes();
@@ -1223,29 +1232,29 @@ async fn a_meta_write_naming_another_member_changes_only_the_own_entry() {
         .await;
 
     let deadline = Instant::now() + T;
-    loop {
+    let views = loop {
         let seen_by_victim = victim.meta_get().await;
         let seen_by_attacker = attacker.meta_get().await;
         if seen_by_victim[&attacker_slot]["model"] == "forged"
             && seen_by_attacker[&victim_slot]["model"] == "genuine"
         {
-            for view in [&seen_by_victim, &seen_by_attacker] {
-                assert_eq!(
-                    view[&victim_slot]["model"], "genuine",
-                    "a write by the attacker must never change the entry of the victim"
-                );
-                assert_eq!(
-                    view[&attacker_slot]["model"], "forged",
-                    "the write of the attacker lands in its own entry"
-                );
-            }
-            break;
+            break [seen_by_victim, seen_by_attacker];
         }
         assert!(
             Instant::now() < deadline,
             "the meta entries never converged: {seen_by_victim} / {seen_by_attacker}"
         );
         tokio::time::sleep(POLL).await;
+    };
+    for view in &views {
+        assert_eq!(
+            view[&victim_slot]["model"], "genuine",
+            "a write by the attacker must never change the entry of the victim"
+        );
+        assert_eq!(
+            view[&attacker_slot]["model"], "forged",
+            "the write of the attacker lands in its own entry"
+        );
     }
     victim.leave().await;
     attacker.leave().await;

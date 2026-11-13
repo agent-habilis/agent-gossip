@@ -94,7 +94,7 @@ async fn a_shared_nickname_holds_one_slot_for_the_admitted_key() {
 async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_admitted() {
     let mut alice = InProcNode::create_with_nick("mbk-send", SHARED).await;
     let mut beta = InProcNode::join(&alice.mesh, SHARED).await;
-    let mut observer = InProcNode::join(&alice.mesh, "mbk-sender").await;
+    let observer = InProcNode::join(&alice.mesh, "mbk-sender").await;
     common::warm_up(&observer, &mut [&mut alice, &mut beta]).await;
 
     let deadline = Instant::now() + RECOVERY_TIMEOUT;

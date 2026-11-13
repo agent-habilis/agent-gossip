@@ -2,9 +2,10 @@ use std::time::{Duration, Instant};
 
 use crate::{InProcNode, MSG_TIMEOUT};
 
-/// Bring up the links from `from` to every node of `to`: send a warmup and send it again until all
-/// of them have it. A gossip holds no log of a broadcast, so a warmup that leaves before a link
-/// exists is lost, and nothing sends it again.
+/// Bring up the links from `from` to every node of `to`.
+///
+/// The warmup is sent again until all of them have it. A gossip holds no log of a broadcast, so a
+/// warmup that leaves before a link exists is lost, and nothing sends it again.
 ///
 /// # Panics
 ///

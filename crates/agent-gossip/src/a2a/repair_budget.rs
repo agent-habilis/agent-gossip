@@ -82,14 +82,10 @@ mod tests {
     fn all_members_together_get_the_global_cap_and_no_more() {
         let now = Instant::now();
         let mut budget = RepairBudget::new(now);
-        let mut served = 0;
-        for byte in 0..=255u8 {
-            for _ in 0..PER_MEMBER_MAX {
-                if budget.admit(member(byte), now) {
-                    served += 1;
-                }
-            }
-        }
+        let served = (0..=255u8)
+            .flat_map(|byte| (0..PER_MEMBER_MAX).map(move |_| byte))
+            .filter(|byte| budget.admit(member(*byte), now))
+            .count();
         assert_eq!(
             served, GLOBAL_MAX as usize,
             "256 members that ask at the cap are served the global cap"

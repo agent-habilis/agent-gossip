@@ -63,6 +63,31 @@ pub struct StatusFrameParams<'caller> {
     pub payload_task_id: &'caller str,
 }
 
+/// The value cluster for [`CraftedMsg::slice`]: the author nickname, the version of the slice and
+/// its value.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct SliceParams<'caller> {
+    /// Nickname of the message author.
+    pub author: &'caller str,
+    /// The version of the slice.
+    pub version: u64,
+    /// The value of the slice: a JSON object, or `null` for a tombstone.
+    pub value: &'caller serde_json::Value,
+}
+
+impl<'caller> SliceParams<'caller> {
+    /// The parameters of a slice of `version` by `author` that holds `value`.
+    #[must_use]
+    pub fn new(author: &'caller str, version: u64, value: &'caller serde_json::Value) -> Self {
+        Self {
+            author,
+            version,
+            value,
+        }
+    }
+}
+
 /// The value cluster for [`CraftedMsg::sealed_task_status`]: a *well-formed*
 /// status leg for an existing task, from an author who is not that task's
 /// counterparty.
@@ -267,12 +292,15 @@ impl CraftedMsg {
     pub fn slice(
         channel: habilis_network::protocol::Channel,
         mesh: &MeshId,
-        author: &str,
-        version: u64,
-        value: serde_json::Value,
+        params: SliceParams<'_>,
     ) -> Self {
         use habilis_network::protocol::Channel;
 
+        let SliceParams {
+            author,
+            version,
+            value,
+        } = params;
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
         let body = MessageBody::try_new(
             &serde_json::json!({ "version": version, "value": value }).to_string(),

@@ -145,16 +145,16 @@ async fn a_shard_repair_ask_re_sends_the_cached_shards_to_the_requester() {
         serde_json::json!({ "group": "00000000-0000-4000-8000-00000000dead", "missing": [0] }),
         Duration::from_secs(1),
     );
-    let response = carol
+    let unknown_response = carol
         .session
         .a2a_call(unknown)
         .await
         .expect("a2a_call transport");
     assert!(
-        response["error"]["message"]
+        unknown_response["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("timed out")),
-        "an unknown group gets no reply either: {response}"
+        "an unknown group gets no reply either: {unknown_response}"
     );
     alice.broadcast("after-repair").await;
     assert!(
