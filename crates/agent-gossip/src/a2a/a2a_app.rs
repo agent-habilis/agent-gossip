@@ -118,12 +118,12 @@ pub(crate) struct A2aApp {
     /// the skill owns the content. Third-party relays never insert here.
     pub tasks: HashMap<TaskId, TaskRecord>,
     /// Tasks the sweep reaped after they closed, with their peer and last
-    /// state. The record goes 2 min after close, but anti-entropy can serve a
+    /// state. The record goes 2 min after close, but a relay can deliver a
     /// leg of it hours later, and the peer can still ask for the task.
     pub closed_tasks: ClosedTasks,
     /// `Message::dedup_key` of every chat line surfaced, the same
     /// `(pubkey, id)` key the engine dedups on. The engine forgets a key after
-    /// a bounded count of frames, and anti-entropy then serves the line again.
+    /// a bounded count of frames, and a relay can then deliver the line again.
     pub surfaced_chat: BoundedFifoSet<DedupKey>,
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
     /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
@@ -179,9 +179,9 @@ pub(crate) struct A2aApp {
     /// enters it when the peer got it, and never before an earlier leg has been settled: the
     /// record then holds only what the peer got, in the order the peer got it.
     own_legs: VecDeque<QueuedLeg>,
-    /// Our own content legs whose send has no outcome yet. Each enters the message log only if
-    /// it was sent: anti-entropy re-sends what the log holds, so a leg whose send failed would
-    /// otherwise reach the peer after the user was told it failed.
+    /// Our own content legs whose send has no outcome yet. Each enters the dev log and the shard
+    /// cache only if it was sent: a repair ask is served from the cache, so a leg whose send failed
+    /// would otherwise reach the peer after the user was told it failed.
     pub(crate) unsent_legs: Vec<UnsentLeg>,
     /// The id and the addressee of each directed frame and task message we sent.
     /// Frame ids ride in cleartext headers, so any member can name one: a
@@ -192,7 +192,7 @@ pub(crate) struct A2aApp {
     pub(crate) repair_budget: RepairBudget,
 }
 
-/// Own frames that enter the message log once `sent` resolves to true.
+/// Own frames that enter the dev log and the shard cache once `sent` resolves to true.
 pub(crate) struct UnsentLeg {
     pub(crate) frames: Vec<Verified>,
     /// A big shard group's wire frames, for the `shard/repair` cache.

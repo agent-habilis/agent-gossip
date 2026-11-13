@@ -261,8 +261,8 @@ impl InProcNode {
     ///
     /// # Errors
     ///
-    /// Returns the session error when the merge is rejected: a refusal of the shared state (full,
-    /// too deep, too large, not synced), a merge that is not a JSON object, or a stopped loop.
+    /// Returns the session error when the merge is rejected: a refusal of the shared state (too
+    /// large, rate limited, gone key), a merge that is not a JSON object, or a stopped loop.
     pub async fn try_state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.session.state_merge(merge).await
     }

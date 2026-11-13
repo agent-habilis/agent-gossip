@@ -1390,7 +1390,7 @@ mod classify_tests {
         msg_frame_raw(None).sign(identity).authored()
     }
 
-    // Anti-entropy re-sends a chat line once the engine has forgotten its key.
+    // A relay can deliver a chat line again once the engine has forgotten its key.
     // Pre-fix it surfaced again as a new visible line, up to hours late.
     #[test]
     fn a_chat_line_surfaces_once() {

@@ -43,11 +43,7 @@ const T: Duration = MSG_TIMEOUT;
 async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
     let mut victim = InProcNode::create(&format!("adv-{tag}")).await;
     let attacker = InProcNode::join(&victim.mesh, &format!("adv-{tag}-atk")).await;
-    attacker.broadcast("warmup").await;
-    assert!(
-        victim.wait_body("warmup", T).await,
-        "victim/attacker never meshed"
-    );
+    common::warm_up(&attacker, &mut [&mut victim]).await;
     (victim, attacker)
 }
 

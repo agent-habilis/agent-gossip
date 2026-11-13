@@ -19,9 +19,7 @@ async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     let mut carol = InProcNode::join(&alice.mesh, "seal-carol").await;
 
     // Warm the mesh; a broadcast reaches everyone (proves C is a live relay).
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
+    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
 
     // A delegates a task to B — a directed, sealed `message/send`.
     let response = alice
@@ -98,9 +96,7 @@ async fn a_msg_is_surfaced_only_by_its_two_parties() {
 
     // Warm the mesh; a broadcast reaching everyone proves C is a live relay,
     // so its silence later is about the msg and not about a dead link.
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("warmup", MSG_TIMEOUT).await, "carol meshed");
+    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
 
     // A msg is sealed to its recipient, so its seal key must have arrived.
     alice.await_peer_card("msgpriv-bob").await;

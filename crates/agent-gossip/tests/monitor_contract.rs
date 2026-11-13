@@ -1927,7 +1927,7 @@ async fn test_poll_record_matches_stream_line() {
     );
 }
 
-/// A `ping_report` is a transient event — never in the old message log — yet it
+/// A `ping_report` is a transient event, yet it
 /// is now drainable via `poll`, so a Monitor-less fallback can still render the
 /// RTT table. The originator of the ping surfaces the report on its own stream
 /// *and* in its poll buffer.

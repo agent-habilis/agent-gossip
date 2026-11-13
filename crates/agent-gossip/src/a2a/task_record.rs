@@ -108,7 +108,7 @@ pub(crate) struct TaskRecord {
     /// silence cannot be read as death.
     pub peer_beats: bool,
     /// Ids of the peer's legs already surfaced for this task. The engine
-    /// forgets a frame id after a bounded count, and anti-entropy then serves
+    /// forgets a frame id after a bounded count, and a relay can then deliver
     /// the same leg again, so the app remembers what it has shown. Beats are
     /// never recorded: at one every 30 s they would evict every real id.
     pub surfaced_legs: BoundedFifoSet<MessageId>,
@@ -309,7 +309,7 @@ pub(crate) fn ingest(
         now,
     );
     // Every status leg restates whether the worker waits, so a plain one clears
-    // it. Anti-entropy replays old legs, so two checks gate the waiting update
+    // it. A relay can replay an old leg, so two checks gate the waiting update
     // only: `is_newer_than_waiting` drops a leg older than the last answer, and
     // `surfaced_legs` drops a leg already shown, which covers a replay in the
     // same second as the answer. `apply` above still runs for every leg and
@@ -531,7 +531,7 @@ pub(crate) fn adopt_initiator(
             // RPC snapshot (e.g. a `GetTask` reply that raced the artifact push)
             // must NOT regress a live non-terminal state. But a **terminal**
             // snapshot is final truth — it repairs a terminal frame we missed
-            // (aged out of the anti-entropy window), the reconciliation path a
+            // (a frame that was lost and that nothing sends again), the reconciliation path a
             // manual `GetTask` gives.
             let rec = slot.get_mut();
             // …and only from the task's own worker. The caller has already
@@ -1470,7 +1470,7 @@ mod tests {
         );
     }
 
-    /// Anti-entropy re-serves old status legs hours late. Both the `--waiting`
+    /// A relay can deliver an old status leg hours late. Both the `--waiting`
     /// leg and the plain leg that clears it surface once, so the node records
     /// their ids; their wire time covers the rest. A replay must not set or clear
     /// the reason again, also when the leg shares its second with the clear.
@@ -1791,7 +1791,7 @@ mod tests {
         );
     }
 
-    /// A leg on a task that already closed is a replay: anti-entropy served an
+    /// A leg on a task that already closed is a replay: a relay delivered an
     /// old frame after the engine forgot its id. Pre-fix it surfaced again,
     /// so agents saw `completed` twice and stale `working` text after it.
     #[test]
@@ -1806,7 +1806,7 @@ mod tests {
         let late = status_leg(false);
         assert!(
             super::is_replay(&tasks, &closed(), &tid(), &late.id),
-            "anti-entropy serves old frames, and a closed task must not surface them twice"
+            "a relay can deliver an old frame, and a closed task must not surface it twice"
         );
     }
 

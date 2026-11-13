@@ -28,8 +28,7 @@ fn has_self_echo(events: &[OutputEvent], text: &str) -> bool {
 async fn meshed_pair(name: &str, bob_nick: &str) -> (InProcNode, InProcNode) {
     let alice = InProcNode::create_with_nick(name, &format!("{name}-alice")).await;
     let mut bob = InProcNode::join(&alice.mesh, bob_nick).await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     alice.await_peer_card(bob_nick).await;
     (alice, bob)
 }

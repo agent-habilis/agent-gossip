@@ -707,8 +707,9 @@ COMMANDS
                  "peer_count":3}
 
               pubkey is the author key of the peer in hex. It is the slot of
-              the peer in the meta document, so join a row to its meta entry
-              by pubkey: two peers can share a nickname.
+              the peer in the meta view, so join a row to its meta entry by
+              pubkey. A member admits one key for a nickname, so two different
+              members cannot share a nickname at one observer.
 
               peers are sorted most-recently-seen first. quiet is true for a
               peer the heartbeat sweep evicted after it went silent past the
@@ -1439,30 +1440,32 @@ JSON EVENTS
                   "display":"💬️ task stalled · `<peer>` has not polled for 35 min"}
 
        state  The gossip's shared state changed (see the state command). Carries
-              the change (merge — the applied merge document) AND the newly-
-              derived full document, so a member reacts in one turn without a
-              separate read. A distinct top-level event — branch on "event".
+              the view of the state AFTER the change: one slice for each member,
+              keyed by the author key in hex. A member reacts in one turn, with
+              no separate read. A distinct top-level event — branch on "event".
 
                  {"event":"state","id":"<uuid>","type":"state","gossip":"<hash>",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "merge":{"turn":"b"},
-                  "document":{"turn":"b"},
+                  "merge":null,
+                  "document":{"<hex of author>":{"turn":"b"}},
                   "display":"💬️ `<nick>` changed shared state","self":false}
 
-              merge     The RFC 7386 merge document that was applied (the delta).
-              document  The full derived document AFTER the change — what you
-                        read to decide your reaction.
+              merge     Always null. The slice of an author replaces its old
+                        slice, so the event holds no delta.
+              document  The view AFTER the change: one slice for each author,
+                        keyed by the author key in hex. Read it to decide
+                        your reaction.
               self      true if YOU authored it. Your own change surfaces here
                         and in poll/fetch, but is NOT pushed into your turn —
                         only a peer's change wakes you, so a read→change loop
                         does not echo. To act only on your turn, put a turn
-                        marker in the document and check it.
+                        marker in your own slice and check it.
 
        meta   The gossip's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta",
-              but WITHOUT the document field: the meta document holds every
-              peer's minimal card, so read it on demand with `meta get`. The
-              merge and self fields and the reaction contract are the same.
+              but WITHOUT the document field: read the view on demand with
+              `meta get`. The merge and self fields and the reaction contract
+              are the same.
               Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
               by convention a change of an entry is a peer self-reporting what
@@ -1634,7 +1637,7 @@ MCP SERVER
        apply_state_merge
               Change the shared state. Args: merge (an RFC 7386 JSON Merge Patch
               — a JSON object). Returns {"ok":true} on apply. A refusal of the
-              state (not synced, full, too deep, too large) is an
+              state (too large, rate limited, too many authors, gone key) is an
               invalid-params error: see "SIZE LIMITS AND REFUSALS" in the state
               merge command for the text, the reason and the way out. See the
               state merge command for the merge semantics; peers react to the

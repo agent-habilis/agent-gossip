@@ -26,7 +26,7 @@ pub(crate) fn run() -> TaskOutcome {
 
     // Two runs at different parallelism: the suites want opposite thread counts.
     // The subprocess reliability tests (`gossip_network.rs`: SIGSTOP storms,
-    // beacon migration, anti-entropy, flap storms) oversubscribe the host at -j4
+    // beacon migration, backfill, flap storms) oversubscribe the host at -j4
     // and starve each other's heal-cadence-gated recovery, so they want -j2. The
     // in-process adversarial suite is the reverse — it needs the worker threads
     // higher parallelism provides to keep its mesh responsive, and flakes at -j2.

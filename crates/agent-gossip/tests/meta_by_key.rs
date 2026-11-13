@@ -62,7 +62,20 @@ async fn a_shared_nickname_holds_one_slot_for_the_admitted_key() {
 
     let slots = await_shared_slots(&observer, 1).await;
     let admitted = alice.key_seen_by(&observer).await.to_string();
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    // The barrier: a second write of each key, sent after the first write of the refused key. The
+    // observer holds the second write of the admitted key once it has had its turn, and it knows
+    // the admitted key by the roster only, so both members write.
+    let marker = json!({ "nickname": SHARED, "marker": 1 });
+    alice.meta_merge(marker.clone()).await;
+    beta.meta_merge(marker).await;
+    let marker_deadline = Instant::now() + MSG_TIMEOUT;
+    while observer.meta_get().await[&admitted]["marker"] != 1 {
+        assert!(
+            Instant::now() < marker_deadline,
+            "the second write of the admitted key never reached the observer"
+        );
+        tokio::time::sleep(POLL).await;
+    }
     let later = shared_slots(&observer.meta_get().await);
 
     assert!(
@@ -261,6 +274,8 @@ fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_its_hex
     let second = join_as_member("second");
     let second_key = ready_pubkey(&state_of("second"));
     assert_ne!(first_key, second_key, "the premise: two daemons, two keys");
+    // No event marks a frame that the gate of the host refuses, so the test gives the second key
+    // time to arrive and be refused before it asks for the card.
     std::thread::sleep(Duration::from_secs(5));
 
     let (status, body) = get(port, &route);

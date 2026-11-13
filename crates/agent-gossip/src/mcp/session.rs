@@ -193,7 +193,7 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped, if the merge is not a JSON object, or if the state
-    /// refuses the write: not synced yet, full, nested too deep, or too large.
+    /// refuses the write: a slice too large, a write too soon after the last one, or a gone key.
     pub(super) async fn apply_state_merge(
         &self,
         merge: serde_json::Value,

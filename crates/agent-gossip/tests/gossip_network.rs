@@ -350,11 +350,11 @@ fn merged_slices(view: &serde_json::Value) -> serde_json::Value {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_state_propagates_to_a_peer() {
     let creator = InProcNode::create("netstate").await;
-    let joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
+    let mut joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
 
     // Mesh first (a delivered message proves the link), so the state events
     // broadcast onto a live overlay rather than the unmeshed buffer.
-    creator.broadcast("link").await;
+    common::warm_up(&creator, &mut [&mut joiner]).await;
 
     creator.state_merge(json!({"alpha": 1})).await;
     creator.state_merge(json!({"beta": 2})).await;
@@ -382,9 +382,9 @@ async fn test_state_propagates_to_a_peer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_state_reaches_a_late_joiner() {
     let creator = InProcNode::create("netstatelate").await;
-    let early = InProcNode::join(&creator.mesh, "early-state").await;
+    let mut early = InProcNode::join(&creator.mesh, "early-state").await;
     // Mesh so writes go out live, leaving the creator's outbound buffer empty.
-    creator.broadcast("link").await;
+    common::warm_up(&creator, &mut [&mut early]).await;
 
     creator.state_merge(json!({"alpha": 1})).await;
     creator.state_merge(json!({"beta": 2})).await;

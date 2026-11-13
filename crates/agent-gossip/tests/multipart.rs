@@ -48,17 +48,15 @@ async fn multishard_message_reassembles_into_one() {
 }
 
 /// A body past the old 16-shard ceiling (~60 KB) still splits and
-/// reassembles — the shard count is no longer capped — and its shards skip
-/// the message log (big groups must not evict the anti-entropy history), so
-/// the surfaced logical body is the only trace.
+/// reassembles — the shard count is no longer capped — and the surfaced logical
+/// body is the only trace.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_message_past_the_old_cap_reassembles() {
     let mut alice = InProcNode::create("mp-big").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-big-bob").await;
     // Mesh first: an unmeshed multipart send buffers whole in the (64-slot)
     // pending-outbound queue, and ~55 shards would overflow it.
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     bob.broadcast("warmup-back").await;
     assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
 
@@ -66,9 +64,9 @@ async fn multishard_message_past_the_old_cap_reassembles() {
     let big = "0123456789".repeat(20 * 1024);
     let id = alice.broadcast(&big).await;
 
-    // `BIG_BODY_TIMEOUT`, not `MSG_TIMEOUT`: past 16 shards the group skips the
-    // message log, so a dropped shard heals only through the (deliberately lazy)
-    // `shard/repair` round — which cannot even begin inside a 1-minute budget.
+    // `BIG_BODY_TIMEOUT`, not `MSG_TIMEOUT`: a dropped shard heals only through the
+    // (deliberately lazy) `shard/repair` round — which cannot even begin inside a
+    // 1-minute budget.
     assert!(
         bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
         "the reassembled >16-shard body never arrived"
@@ -221,11 +219,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     let mut alice = InProcNode::create("mp-ex").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-ex-bob").await;
     // Mesh first so the RPC + push are actually delivered.
-    alice.broadcast("warmup").await;
-    assert!(
-        bob.wait_body("warmup", MSG_TIMEOUT).await,
-        "mesh never formed"
-    );
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     // Alice creates a task on bob (native SendMessage); bob mints the id.
     let response = alice.create_task("mp-ex-bob", "produce a big report").await;

@@ -1552,8 +1552,8 @@ async fn send_directed_leg(
         echo_as,
     } = part;
     if state.is_meshed() {
-        // Meshed: a leg enters our log for anti-entropy only once it was sent
-        // (see `A2aApp::unsent_legs`). Directed legs go unicast, broadcasts
+        // Meshed: a leg is logged, and its shards are cached for repair, only once
+        // it was sent (see `A2aApp::unsent_legs`). Directed legs go unicast, broadcasts
         // gossip (see `transport::deliver`).
         return match habilis_network::ops::deliver(message, bytes, state, sender).await? {
             Delivered::Done => {
@@ -1608,7 +1608,7 @@ fn retain_leg(message: &Verified, content: bool) {
     }
 }
 
-/// Queue `msg` for the message log, behind the verdict of its send. The handle is replaced by
+/// Queue `msg` for the dev log, behind the verdict of its send. The handle is replaced by
 /// one that gives the same verdict.
 fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -> PendingSend {
     let (sent_tx, sent_rx) = oneshot::channel();
@@ -1627,9 +1627,9 @@ fn retain_when_sent(app: &mut A2aApp, message: Verified, pending: PendingSend) -
     verdict_rx
 }
 
-/// Queue the shards of one leg for the message log and the shard cache, as one group: they
-/// enter only when every shard was sent. One shard in the log lets anti-entropy and
-/// `shard/repair` rebuild a leg whose send failed. `pending` holds the handle of each shard,
+/// Queue the shards of one leg for the dev log and the shard cache, as one group: they
+/// enter only when every shard was sent. One shard in the cache lets `shard/repair`
+/// rebuild a leg whose send failed. `pending` holds the handle of each shard,
 /// `None` for a shard already sent. The handles are replaced by one that gives the verdict of
 /// the whole leg.
 fn queue_sharded_leg(
@@ -1677,7 +1677,7 @@ fn take_sent_legs(app: &mut A2aApp) -> Vec<UnsentLeg> {
     sent
 }
 
-/// Move the own legs that were sent into the message log and the shard cache, and forget the
+/// Move the own legs that were sent into the dev log and the shard cache, and forget the
 /// legs whose send failed.
 pub(crate) fn retain_sent_legs(app: &mut A2aApp, state: &mut EventLoopState) {
     for leg in take_sent_legs(app) {
@@ -2011,7 +2011,7 @@ pub(crate) struct DirectedRpcParams<'caller> {
 /// splitting a sealed body too large for one frame into shard-tagged frames —
 /// each an ordinary directed frame riding unicast, so the RPC plane is
 /// size-transparent like chat and task legs. RPC
-/// frames are plumbing (never logged for anti-entropy); the shards reassemble
+/// frames are plumbing (never cached for repair); the shards reassemble
 /// only in the receiver's dedicated store, and a big group is served from the
 /// sender-side `ShardCache` (an engine internal) through the `shard/repair`
 /// RPC.
@@ -2792,7 +2792,7 @@ mod sharded_leg_tests {
     }
 
     /// The layers of one leg wrap each other's verdict. When the caller was told that the leg
-    /// failed, the log must not keep it: anti-entropy would send a leg that the user thinks is lost.
+    /// failed, the shard cache must not keep it: a repair ask would send a leg that the user thinks is lost.
     #[tokio::test(start_paused = true)]
     async fn a_leg_that_the_caller_was_told_failed_is_not_logged_by_a_late_shard() {
         let mut app = A2aApp::new();

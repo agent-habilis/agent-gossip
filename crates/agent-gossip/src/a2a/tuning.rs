@@ -61,7 +61,7 @@ pub(crate) const TASK_STALL_CHECK_SECS: u64 = 30 * 60;
 /// **Must stay above the engine's heal interval**, currently 15s
 /// (`habilis_network::util::tuning::HEAL_INTERVAL_SECS`). A directed request
 /// rides the gossip overlay unlogged, so one sent while the overlay holds no
-/// live peer link is dropped outright and anti-entropy never heals it; the
+/// live peer link is dropped outright and nothing sends it again; the
 /// sender is rescued only when the next heal tick re-bridges the pair. This sat
 /// at 15 — exactly one heal interval — which made the rescue arrive at the same
 /// moment the caller gave up, so a call issued while the overlay was still
@@ -90,12 +90,10 @@ pub(crate) const BELL_CHECK_GRACE_MS: u64 = 1_500;
 pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 
 /// Capacity of the daemon-local **surfaced-events** ring — the seq-ordered
-/// history `poll` / `fetch_messages` drain. Distinct from the engine's message
-/// log: that is the cross-node anti-entropy buffer (evicted by a deterministic
-/// `eviction_key`); this is a *local* record of what was surfaced to the
-/// operator/agent (msg + presence + task legs **and** the transient events —
-/// `ping_report`, `peer_timeout`/`return`, `task_timeout`, `fork` — that never
-/// entered the message log). Oldest-drop on overflow.
+/// history `poll` / `fetch_messages` drain. It is a *local* record of what was
+/// surfaced to the operator/agent (msg + presence + task legs **and** the
+/// transient events — `ping_report`, `peer_timeout`/`return`, `task_timeout`).
+/// Oldest-drop on overflow.
 ///
 /// Sized **equal to** [`POLL_RESPONSE_MAX_MSGS`] so the ring never holds more
 /// than a single `poll` returns: ring eviction and the response cap coincide, so
@@ -146,8 +144,7 @@ pub(crate) const LATE_CANCELS_CAP: usize = 64;
 
 /// How many served frames the ring remembers, by the engine's dedup key, so a copy that reaches
 /// the tap again is not a second event. Past the ring: a copy that lands after the ring rotated
-/// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`, twice
-/// its message log), doubled, so the two layers agree on how far back a copy is a copy. Finite
+/// would otherwise read as new. Sized to the engine's own dedup horizon (`SEEN_IDS_CAP`), doubled, so the two layers agree on how far back a copy is a copy. Finite
 /// on purpose: a frame is served once within that horizon, not forever.
 pub(crate) const SERVED_FRAMES_CAP: usize = tuning::SEEN_IDS_CAP * 2;
 

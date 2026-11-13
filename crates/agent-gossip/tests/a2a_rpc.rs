@@ -13,8 +13,7 @@ use serde_json::json;
 async fn rpc_tasks_list_reaches_the_peer() {
     let mut alice = InProcNode::create("rpc-list").await;
     let mut bob = InProcNode::join(&alice.mesh, "rpc-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
     // broadcast into a still-converging overlay is lost for good.
@@ -47,8 +46,7 @@ async fn rpc_tasks_list_reaches_the_peer() {
 async fn rpc_message_send_opens_task_and_returns_it() {
     let mut alice = InProcNode::create("rpc-send").await;
     let mut bob = InProcNode::join(&alice.mesh, "rpc-send-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
     // broadcast into a still-converging overlay is lost for good.
@@ -96,8 +94,7 @@ async fn rpc_message_send_opens_task_and_returns_it() {
 async fn rpc_state_merge_is_refused() {
     let mut alice = InProcNode::create("rpc-merge").await;
     let mut bob = InProcNode::join(&alice.mesh, "rpc-merge-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
     // broadcast into a still-converging overlay is lost for good.

@@ -99,8 +99,7 @@ async fn wait_doc(
 async fn meta_and_state_channels_are_independent() {
     let alice = InProcNode::create("ch-indep").await;
     let mut bob = InProcNode::join(&alice.mesh, "ch-bob").await;
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     // A meta write propagates to bob's meta view; both state views stay empty.
     // The slot of a member is the hex of its author key.
@@ -158,9 +157,7 @@ async fn patches_converge_for(channel: Channel) {
     let mut carol = InProcNode::join(&alice.mesh, "conv-carol").await;
 
     // Mesh first (a delivered message proves the links).
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
-    assert!(carol.wait_body("link", MSG_TIMEOUT).await, "carol meshed");
+    common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
 
     // Each peer seeds a distinct key concurrently — intermediate states differ
     // by arrival order, the final set does not.
@@ -200,8 +197,7 @@ async fn peer_change_wakes_for(channel: Channel) {
     let mut alice = InProcNode::create(&mesh_name(channel, "ss-wake")).await;
     let mut bob = InProcNode::join(&alice.mesh, "wake-bob").await;
 
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     alice.merge(channel, json!({"turn": "bob"})).await;
 
@@ -247,8 +243,8 @@ async fn late_joiner_gets_the_slices_for(channel: Channel) {
     const KEYS_PER_WRITE: usize = 20;
 
     let alice = InProcNode::create(&mesh_name(channel, "ss-backfill")).await;
-    let early = InProcNode::join(&alice.mesh, "bf-early").await;
-    alice.broadcast("link").await;
+    let mut early = InProcNode::join(&alice.mesh, "bf-early").await;
+    common::warm_up(&alice, &mut [&mut early]).await;
 
     for write in 0..WRITES {
         let mut keys = serde_json::Map::new();
@@ -325,8 +321,7 @@ async fn ping_pong_for(channel: Channel) {
     let mut alice = InProcNode::create(&mesh_name(channel, "ss-pp")).await;
     let mut bob = InProcNode::join(&alice.mesh, "pp-bob").await;
 
-    alice.broadcast("link").await;
-    assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     // alice opens with move 1 under its own key — no container to seed first.
     alice.merge(channel, json!({"m1": "alice"})).await;
@@ -401,8 +396,7 @@ async fn meta_two_agents_ping_pong_via_shared_state() {
 async fn graceful_leave_removes_the_slice_of_the_leaver() {
     let mut host = InProcNode::create_with_nick("ss-retract", "retract-host").await;
     let mut leaver = InProcNode::join(&host.mesh, "retract-leaver").await;
-    host.broadcast("link").await;
-    assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "leaver meshed");
+    common::warm_up(&host, &mut [&mut leaver]).await;
 
     // The slot of a member is the hex of its author key.
     let leaver_slot = leaver.key_seen_by(&host).await.to_string();
@@ -473,8 +467,7 @@ async fn graceful_leave_removes_the_slice_of_the_leaver() {
 async fn meta_entry_returns_after_rejoin() {
     let mut host = InProcNode::create_with_nick("ss-rejoin", "rejoin-host").await;
     let mut leaver = InProcNode::join(&host.mesh, "rejoin-peer").await;
-    host.broadcast("link").await;
-    assert!(leaver.wait_body("link", MSG_TIMEOUT).await, "peer meshed");
+    common::warm_up(&host, &mut [&mut leaver]).await;
 
     // The slot of a member is the hex of its author key.
     let first_slot = leaver.key_seen_by(&host).await.to_string();

@@ -36,8 +36,7 @@ fn task_id_of(response: &serde_json::Value) -> TaskId {
 async fn creation_mints_server_id_and_returns_submitted_task() {
     let alice = InProcNode::create("t-create").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-create-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let response = alice.create_task("t-create-bob", "review src/net").await;
     assert!(response["result"]["task"].is_object(), "got: {response}");
@@ -70,8 +69,7 @@ async fn creation_mints_server_id_and_returns_submitted_task() {
 async fn task_label_reaches_the_worker_and_is_absent_when_unset() {
     let alice = InProcNode::create("t-label").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-label-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     alice
         .create_task_labeled(
@@ -88,11 +86,7 @@ async fn task_label_reaches_the_worker_and_is_absent_when_unset() {
     );
 
     let mut carol = InProcNode::join(&alice.mesh, "t-label-carol").await;
-    alice.broadcast("warmup2").await;
-    assert!(
-        carol.wait_body("warmup2", MSG_TIMEOUT).await,
-        "carol joined"
-    );
+    common::warm_up(&alice, &mut [&mut carol]).await;
     alice.create_task("t-label-carol", "unlabeled brief").await;
     assert!(carol.wait_task_message(TASK_WAIT).await, "brief surfaced");
     assert_eq!(
@@ -114,8 +108,7 @@ async fn task_label_reaches_the_worker_and_is_absent_when_unset() {
 async fn full_lifecycle_worker_completes_after_approval() {
     let mut alice = InProcNode::create("t-life").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-life-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let response = alice.create_task("t-life-bob", "port the parser").await;
     let task_id = task_id_of(&response);
@@ -180,8 +173,7 @@ async fn full_lifecycle_worker_completes_after_approval() {
 async fn worker_leave_cancels_live_task_and_fails_followup_fast() {
     let mut alice = InProcNode::create("t-left").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-left-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let response = alice.create_task("t-left-bob", "doomed work").await;
     let task_id = task_id_of(&response);
@@ -266,8 +258,7 @@ async fn served_state(initiator: &InProcNode, worker: &str, task_id: &TaskId) ->
 async fn own_sharded_status_leg_completes_the_workers_own_record() {
     let alice = InProcNode::create("t-shard").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-shard-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let task_id = task_id_of(&alice.create_task("t-shard-bob", "big note").await);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
@@ -302,8 +293,7 @@ async fn own_sharded_status_leg_completes_the_workers_own_record() {
 async fn cancel_advances_the_cancellers_own_record_and_response() {
     let alice = InProcNode::create("t-cancel").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-cancel-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let task_id = task_id_of(&alice.create_task("t-cancel-bob", "never mind").await);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
@@ -341,8 +331,7 @@ async fn cancel_advances_the_cancellers_own_record_and_response() {
 async fn two_tasks_get_distinct_ids() {
     let alice = InProcNode::create("t-two").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-two-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let first = task_id_of(&alice.create_task("t-two-bob", "task one").await);
     let second = task_id_of(&alice.create_task("t-two-bob", "task two").await);
@@ -357,11 +346,7 @@ async fn two_tasks_get_distinct_ids() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn not_surfaced_to_third_party() {
     let (alice, mut bob, mut gamma) = three_peers("t-priv").await;
-    alice.broadcast("warmup").await;
-    assert!(
-        bob.wait_body("warmup", MSG_TIMEOUT).await && gamma.wait_body("warmup", MSG_TIMEOUT).await,
-        "mesh formed"
-    );
+    common::warm_up(&alice, &mut [&mut bob, &mut gamma]).await;
 
     let response = alice
         .create_task(bob.nickname.as_str(), "private work")
@@ -401,8 +386,7 @@ async fn not_surfaced_to_third_party() {
 async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shares_its_name() {
     let mut alice = InProcNode::create("t-twin").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-twin-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     let task_id = task_id_of(&alice.create_task("t-twin-bob", "port the parser").await);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
 
@@ -448,8 +432,7 @@ async fn a_status_leg_goes_to_the_key_that_opened_the_task_when_another_key_shar
 async fn a_follow_up_goes_to_the_key_that_holds_the_task_when_another_key_shares_the_worker_name() {
     let mut alice = InProcNode::create("t-fu").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-fu-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
     let task_id = task_id_of(&alice.create_task("t-fu-bob", "port the parser").await);
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
     bob.task_status(&task_id, TaskState::Working, None).await;
@@ -497,8 +480,7 @@ async fn a_peer_cannot_open_tasks_past_its_quota() {
 
     let alice = InProcNode::create("t-quota").await;
     let mut bob = InProcNode::join(&alice.mesh, "t-quota-bob").await;
-    alice.broadcast("warmup").await;
-    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    common::warm_up(&alice, &mut [&mut bob]).await;
 
     let mut opened = 0;
     let mut refusal = None;
