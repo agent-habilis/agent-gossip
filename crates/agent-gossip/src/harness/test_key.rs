@@ -35,6 +35,12 @@ pub fn new_key() -> TestKey {
     TestKey(Identity::generate())
 }
 
+/// The author key of `key`, as a member names it in a frame.
+#[must_use]
+pub fn author_key_of(key: &TestKey) -> AuthorKey {
+    key.0.author_key()
+}
+
 /// The lowercase-hex public key of `key` — the value that appears as the
 /// `pubkey` in the JSON event.
 #[must_use]

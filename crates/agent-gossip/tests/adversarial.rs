@@ -1054,15 +1054,16 @@ async fn introduce(
     );
 }
 
-/// Like [`wait_doc`] for the meta view.
-async fn wait_doc_meta(
+/// Poll the view of `channel` on `node` until `pred` holds or `timeout` elapses.
+async fn wait_view(
     node: &InProcNode,
+    channel: Channel,
     timeout: Duration,
     mut pred: impl FnMut(&Value) -> bool,
 ) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if pred(&node.meta_get().await) {
+        if pred(&node.get(channel).await) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -1072,22 +1073,21 @@ async fn wait_doc_meta(
     }
 }
 
-/// A well-formed slice body, but UNSIGNED, must be dropped before it can touch the meta view (the
-/// same authenticity gate as chat). The control is the same shape of frame, signed: it is taken, so
-/// that the unsigned frame is dropped for its missing signature and not for a bad body.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsigned_meta_slice_is_never_folded() {
-    let (mut victim, attacker) = meshed_pair("slice-unsigned").await;
+/// A well-formed slice body, but UNSIGNED, must be dropped before it can touch the view of its
+/// channel (the same authenticity gate as chat). The control is the same shape of frame, signed: it
+/// is taken, so that the unsigned frame is dropped for its missing signature and not for a bad body.
+async fn unsigned_slice_is_never_folded_on(channel: Channel) {
+    let (mut victim, attacker) = meshed_pair(&format!("slice-unsigned-{channel:?}")).await;
     let mesh = attacker.session.mesh_id();
     let signer = test_key::new_key();
     introduce(&mut victim, &attacker, &signer, "replayer").await;
-    let evil = CraftedMsg::slice(Channel::Meta, mesh, "replayer", 1, json!({"evil": true})).bytes();
+    let evil = CraftedMsg::slice(channel, mesh, "replayer", 1, json!({"evil": true})).bytes();
     attacker
         .session
         .inject_raw(evil)
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-    let control = CraftedMsg::slice(Channel::Meta, mesh, "replayer", 1, json!({"control": true}))
+    let control = CraftedMsg::slice(channel, mesh, "replayer", 1, json!({"control": true}))
         .sign(&signer)
         .bytes();
     attacker
@@ -1096,79 +1096,108 @@ async fn unsigned_meta_slice_is_never_folded() {
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
     assert!(
-        wait_doc_meta(&victim, T, |doc| {
-            doc.as_object()
+        wait_view(&victim, channel, T, |view| {
+            view.as_object()
                 .is_some_and(|slices| slices.values().any(|slice| slice["control"] == true))
         })
         .await,
         "the signed control slice never derived: the frame shape is wrong, so the test proves nothing: {}",
-        victim.meta_get().await
+        victim.get(channel).await
     );
     assert!(
-        !victim.meta_get().await.to_string().contains("evil"),
-        "an unsigned meta slice must never be folded into the view"
+        !victim.get(channel).await.to_string().contains("evil"),
+        "an unsigned slice must never be folded into the view"
     );
     victim.leave().await;
     attacker.leave().await;
 }
 
-/// A signed slice that names the key of another member, with the signature of its forger, is dropped:
-/// the signature does not match the key. The control is the same frame as the forger signed it, which
-/// lands in the slot of the forger and not in the slot of anyone else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsigned_state_slice_is_never_folded() {
+    unsigned_slice_is_never_folded_on(Channel::State).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsigned_meta_slice_is_never_folded() {
+    unsigned_slice_is_never_folded_on(Channel::Meta).await;
+}
+
+/// A signed slice that names the key of a third member, with the signature of its forger, is
+/// dropped: the signature does not match the key. The witness holds a slice already; a forged frame
+/// of a later version would replace it if the receiver took the frame. The barrier is a signed slice
+/// of the forger itself, injected after the forged one, so the forged frame has had its turn.
+///
+/// The key named is the key of the witness and not the key of the victim: a frame that names the
+/// receiver's own key is dropped as a self-echo, so the victim would hide a missing signature check.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_meta_slice_that_claims_the_key_of_another_member_is_dropped() {
     let (mut victim, attacker) = meshed_pair("slice-claim").await;
     let mesh = attacker.session.mesh_id();
     let forger = test_key::new_key();
     introduce(&mut victim, &attacker, &forger, "replayer").await;
-    // The control comes from a second key, so its slice does not compete with the claimed one.
     let witness = test_key::new_key();
     introduce(&mut victim, &attacker, &witness, "witness").await;
     let witness_slot = test_key::pubkey_hex(&witness);
-    let victim_key = victim.key_seen_by(&attacker).await;
-    let victim_slot = victim_key.to_string();
-    victim.meta_merge(json!({"model": "genuine"})).await;
+    let forger_slot = test_key::pubkey_hex(&forger);
+    let witness_key = test_key::author_key_of(&witness);
+
+    let own = CraftedMsg::slice(Channel::Meta, mesh, "witness", 1, json!({"model": "own"}))
+        .sign(&witness)
+        .bytes();
+    attacker
+        .session
+        .inject_raw(own)
+        .await
+        .expect("the attacker session stays connected to the mesh for the whole test");
+    assert!(
+        wait_view(&victim, Channel::Meta, T, |view| {
+            view.pointer(&format!("/{witness_slot}/model")) == Some(&json!("own"))
+        })
+        .await,
+        "the slice of the witness never derived: the frame shape is wrong: {}",
+        victim.meta_get().await
+    );
 
     let claimed = CraftedMsg::slice(
         Channel::Meta,
         mesh,
         "replayer",
-        1,
+        2,
         json!({"model": "claimed"}),
     )
     .sign(&forger);
     attacker
         .session
-        .inject_raw(claimed.bytes_claiming(&forger, &victim_key))
+        .inject_raw(claimed.bytes_claiming(&forger, &witness_key))
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-    let control = CraftedMsg::slice(
+    let barrier = CraftedMsg::slice(
         Channel::Meta,
         mesh,
-        "witness",
+        "replayer",
         1,
-        json!({"model": "control"}),
+        json!({"model": "barrier"}),
     )
-    .sign(&witness)
+    .sign(&forger)
     .bytes();
     attacker
         .session
-        .inject_raw(control)
+        .inject_raw(barrier)
         .await
         .expect("the attacker session stays connected to the mesh for the whole test");
-
     assert!(
-        wait_doc_meta(&victim, T, |doc| {
-            doc.pointer(&format!("/{witness_slot}/model")) == Some(&json!("control"))
+        wait_view(&victim, Channel::Meta, T, |view| {
+            view.pointer(&format!("/{forger_slot}/model")) == Some(&json!("barrier"))
         })
         .await,
-        "the control slice never derived: the frame shape is wrong, so the test proves nothing: {}",
+        "the barrier slice of the forger never derived: {}",
         victim.meta_get().await
     );
+
     let view = victim.meta_get().await;
     assert_eq!(
-        view[&victim_slot]["model"], "genuine",
-        "a frame that claims the key of the victim must not change its slice: {view}"
+        view[&witness_slot]["model"], "own",
+        "a frame that claims the key of the witness must not change its slice: {view}"
     );
     assert!(
         !view.to_string().contains("claimed"),

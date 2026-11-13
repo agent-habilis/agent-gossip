@@ -119,7 +119,7 @@ async fn a_shard_repair_ask_re_sends_the_cached_shards_to_the_requester() {
         Nickname::try_new(&alice.nickname).expect("the nickname of a node is valid"),
         "shard/repair".to_owned(),
         serde_json::json!({ "group": id.as_str(), "missing": (0..64).collect::<Vec<u32>>() }),
-        Duration::from_secs(3),
+        Duration::from_secs(1),
     );
     let response = carol
         .session
@@ -143,7 +143,7 @@ async fn a_shard_repair_ask_re_sends_the_cached_shards_to_the_requester() {
         Nickname::try_new(&alice.nickname).expect("the nickname of a node is valid"),
         "shard/repair".to_owned(),
         serde_json::json!({ "group": "00000000-0000-4000-8000-00000000dead", "missing": [0] }),
-        Duration::from_secs(3),
+        Duration::from_secs(1),
     );
     let response = carol
         .session
