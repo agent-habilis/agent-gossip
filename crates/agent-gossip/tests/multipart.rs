@@ -124,26 +124,20 @@ mod shard_repair {
         );
     }
 
-    /// Ask the author to re-send the shards of `group` until `body` reassembles at `requester`,
-    /// at most twice. The ask names every index that a group of this size can hold, and the author
-    /// skips the ones that it does not cache. A receiver asks again on its next tick, so the test
-    /// asks once more if shards are still missing. The gossip layer delivers the body by itself
-    /// after about 10 s, so a body within the 3 s after an ask comes from the re-sent frames.
-    async fn repair_until_reassembled(
+    /// Ask the author once to re-send the shards of `group`, and say whether `body` reassembles at
+    /// `requester` within 3 s. The ask names every index that a group of this size can hold, and
+    /// the author skips the ones that it does not cache. The gossip layer delivers the body by
+    /// itself only after about 10 s, so a body inside this window comes from the re-sent frames.
+    async fn repair_reassembles(
         requester: &mut InProcNode,
         author: &str,
         group: &str,
         body: &str,
     ) -> bool {
         let every_index: Vec<u32> = (0..64).collect();
-        for _ in 0..2 {
-            let params = serde_json::json!({ "group": group, "missing": every_index });
-            ask_without_reply(requester, author, params).await;
-            if wait_body_severed(requester, body, Duration::from_secs(3)).await {
-                return true;
-            }
-        }
-        false
+        let params = serde_json::json!({ "group": group, "missing": every_index });
+        ask_without_reply(requester, author, params).await;
+        wait_body_severed(requester, body, Duration::from_secs(3)).await
     }
 
     /// A big group's heal path is the `shard/repair` ask: the author caches its outbound shard frames
@@ -180,8 +174,7 @@ mod shard_repair {
         );
 
         // The group id is the logical message id.
-        let reassembled =
-            repair_until_reassembled(&mut carol, &alice.nickname, id.as_str(), &big).await;
+        let reassembled = repair_reassembles(&mut carol, &alice.nickname, id.as_str(), &big).await;
         assert!(
             reassembled,
             "the author did not re-send its cached shards to the requester"
