@@ -118,6 +118,9 @@ pub(crate) enum SessionRequest {
         key: AuthorKey,
         response: oneshot::Sender<Option<habilis_network::x25519_dalek::PublicKey>>,
     },
+    /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only.
+    #[cfg(feature = "adversarial")]
+    ShardsResent { response: oneshot::Sender<usize> },
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
     #[cfg(feature = "adversarial")]

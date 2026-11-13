@@ -162,7 +162,12 @@ async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> an
 /// that does not fit one frame does. A single frame has its verdict at once, and a beat is never
 /// split, so neither takes a slot, and neither can be refused for a full list that it never joins.
 fn needs_unsent_slot(wire_len: usize, content: bool) -> bool {
-    content && wire_len > MAX_MESSAGE_SIZE
+    content && !fits_one_frame(wire_len)
+}
+
+/// Whether a frame of `wire_len` bytes goes out whole, and is not split into shards.
+fn fits_one_frame(wire_len: usize) -> bool {
+    wire_len <= MAX_MESSAGE_SIZE
 }
 
 /// The bytes that an own task leg holds in the queue while its send waits: the plaintext body.
@@ -718,7 +723,7 @@ async fn broadcast_directed_frame(
         // The sealed frames and the shard cache hold the body twice, until every shard has a verdict.
         app.admit_unsent_leg(unsent_leg_bytes(payload_body.as_str()))?;
     }
-    if single.wire_len() <= MAX_MESSAGE_SIZE {
+    if fits_one_frame(single.wire_len()) {
         let bytes = single.serialize()?;
         let id = single.id.clone();
         // The wire frame's directed body is sealed to the addressee, which we
@@ -2397,6 +2402,11 @@ pub(crate) async fn handle_session_request(
         SessionRequest::SeverGossip => {
             state.sever_gossip();
             tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
+            false
+        }
+        #[cfg(feature = "adversarial")]
+        SessionRequest::ShardsResent { response } => {
+            let _ = response.send(app.shards_resent);
             false
         }
         #[cfg(feature = "adversarial")]

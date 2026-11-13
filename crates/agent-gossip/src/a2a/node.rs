@@ -849,7 +849,7 @@ async fn handle_a2a_req(
                         // its next tick, and a reply is a sealed, signed, directed frame that
                         // costs this node as much as the ask costs the requester.
                         if app.repair_budget.admit(requester_key, Instant::now()) {
-                            resend_cached_shards(
+                            let resent = resend_cached_shards(
                                 ShardRepairParams {
                                     group: &group,
                                     missing: &missing,
@@ -858,6 +858,10 @@ async fn handle_a2a_req(
                                 state,
                             )
                             .await;
+                            #[cfg(feature = "adversarial")]
+                            app.note_shards_resent(resent);
+                            #[cfg(not(feature = "adversarial"))]
+                            let _ = resent;
                         } else {
                             tracing::debug!(
                                 target: "agent_gossip::a2a",
@@ -935,7 +939,7 @@ struct ShardRepairParams<'caller> {
 /// big (unlogged) outbound groups to the requester. The frames are the raw,
 /// already-signed shards we cached at send time (`state.shard_cache_mut()`), so they
 /// reassemble on the requester exactly as the original send would have.
-async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLoopState) {
+async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLoopState) -> usize {
     let ShardRepairParams {
         group,
         missing,
@@ -972,6 +976,7 @@ async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLo
         resent,
         "served a shard repair request"
     );
+    resent
 }
 
 /// A `message/send` directed at us over gossip-RPC — we are the task's A2A

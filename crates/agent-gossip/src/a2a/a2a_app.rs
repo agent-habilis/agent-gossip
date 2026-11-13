@@ -190,6 +190,10 @@ pub(crate) struct A2aApp {
     /// How many `shard/repair` asks we serve in a window, by member and in all. The table holds
     /// at most 32 keys and is cleared every 5 s, so it needs no other bound.
     pub(crate) repair_budget: RepairBudget,
+    /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only: it
+    /// proves that a repair ask was served, whatever else delivers the body.
+    #[cfg(feature = "adversarial")]
+    pub(crate) shards_resent: usize,
 }
 
 /// Own frames that enter the dev log and the shard cache once `sent` resolves to true.
@@ -267,6 +271,8 @@ impl A2aApp {
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             repair_budget: RepairBudget::new(Instant::now()),
+            #[cfg(feature = "adversarial")]
+            shards_resent: 0,
         }
     }
 
@@ -296,6 +302,8 @@ impl A2aApp {
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             repair_budget: RepairBudget::new(Instant::now()),
+            #[cfg(feature = "adversarial")]
+            shards_resent: 0,
         }
     }
 
@@ -319,6 +327,12 @@ impl A2aApp {
             tuning::unsent_legs_cap()
         );
         self.admit_unsent_bytes_within(bytes, tuning::unsent_legs_bytes_cap())
+    }
+
+    /// Count `count` cached shard frames that this node re-sent to a requester.
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn note_shards_resent(&mut self, count: usize) {
+        self.shards_resent += count;
     }
 
     /// Say whether a call with a file may add a blob group to `task`: a task holds at most

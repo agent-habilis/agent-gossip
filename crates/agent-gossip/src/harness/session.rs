@@ -29,6 +29,15 @@ impl MeshSession {
         self.core.sever_gossip().await
     }
 
+    /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only: it
+    /// proves that a shard repair ask was served, whatever else delivers the body.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub async fn shards_resent(&self) -> Result<usize, crate::api::SessionError> {
+        self.core.shards_resent().await
+    }
+
     /// The seal key of the member `key`, or `None` while the engine does not hold it.
     /// Adversarial-suite only: the suite seals a crafted frame to an honest member with it.
     ///

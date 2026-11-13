@@ -344,6 +344,16 @@ impl InProcessSession {
             .map_err(|_| SessionError::Stopped)
     }
 
+    /// How many cached shard frames this node re-sent to requesters. Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn shards_resent(&self) -> Result<usize, SessionError> {
+        self.call(|response| SessionRequest::ShardsResent { response })
+            .await
+    }
+
     /// The seal key of the member `key`, or `None` while the engine does not hold it.
     /// Adversarial-suite only.
     ///

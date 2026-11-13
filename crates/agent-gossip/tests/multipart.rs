@@ -79,29 +79,12 @@ async fn multishard_message_past_the_old_cap_reassembles() {
 
 #[cfg(feature = "adversarial")]
 mod shard_repair {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use agent_gossip::Nickname;
     use agent_gossip::api::A2aCallParams;
     use agent_gossip_test_fixtures as common;
     use common::{BIG_BODY_TIMEOUT, InProcNode};
-
-    /// Wait for `body` at `node` while its gossip stream stays ended: the stream is ended again every
-    /// 200 ms, because the node resubscribes by itself, and a resubscribed node gets the frames that the
-    /// gossip layer still holds. Only the unicast lane can deliver the body then.
-    async fn wait_body_severed(node: &mut InProcNode, body: &str, limit: Duration) -> bool {
-        let deadline = std::time::Instant::now() + limit;
-        while std::time::Instant::now() < deadline {
-            node.session
-                .sever_gossip()
-                .await
-                .expect("the session of the node stays up");
-            if node.wait_body(body, Duration::from_millis(200)).await {
-                return true;
-            }
-        }
-        false
-    }
 
     /// Send a `shard/repair` ask and check that the call times out: the ask has no reply.
     async fn ask_without_reply(requester: &InProcNode, author: &str, params: serde_json::Value) {
@@ -124,42 +107,34 @@ mod shard_repair {
         );
     }
 
-    /// Ask the author once to re-send the shards of `group`, and say whether `body` reassembles at
-    /// `requester` within 3 s. The ask names every index that a group of this size can hold, and
-    /// the author skips the ones that it does not cache. The gossip layer delivers the body by
-    /// itself only after about 10 s, so a body inside this window comes from the re-sent frames.
-    async fn repair_reassembles(
-        requester: &mut InProcNode,
-        author: &str,
-        group: &str,
-        body: &str,
-    ) -> bool {
-        let every_index: Vec<u32> = (0..64).collect();
-        let params = serde_json::json!({ "group": group, "missing": every_index });
-        ask_without_reply(requester, author, params).await;
-        wait_body_severed(requester, body, Duration::from_secs(3)).await
+    /// The count of shard frames that `node` re-sent, once it holds at least `at_least`, or the
+    /// last count after 5 s.
+    async fn shards_resent_by(node: &InProcNode, at_least: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let count = node
+                .session
+                .shards_resent()
+                .await
+                .expect("the session of the author stays up");
+            if count >= at_least || Instant::now() >= deadline {
+                return count;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
-    /// A big group's heal path is the `shard/repair` ask: the author caches its outbound shard frames
-    /// and sends the ones that a receiver names as missing to that receiver only. The ask gets no
-    /// reply. A member whose gossip stream ended before the send holds none of the shards, so it asks
-    /// for all of them and must reassemble the body from the re-sent frames alone. (A member that joins
-    /// after the send cannot be the requester: a message stamped before its join is never surfaced.)
+    /// A big group's heal path is the `shard/repair` ask: the author caches its outbound shard
+    /// frames and sends the ones that a receiver names as missing to that receiver only. The ask
+    /// gets no reply. The proof is the count of frames that the author re-sent, which no other
+    /// delivery of the body can fake: the gossip layer can still deliver the body by itself, so
+    /// the arrival of the body would prove nothing.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_shard_repair_ask_re_sends_the_cached_shards_to_the_requester() {
         let alice = InProcNode::create("mp-rep").await;
         let mut bob = InProcNode::join(&alice.mesh, "mp-rep-bob").await;
-        let mut carol = InProcNode::join(&alice.mesh, "mp-rep-carol").await;
-        common::warm_up(&alice, &mut [&mut bob, &mut carol]).await;
-        carol.await_peer_card(&alice.nickname).await;
-
-        // The gossip stream of carol ends, so the shards of the next broadcast never reach her. The
-        // unicast lane to alice stays, and it carries the re-sent shards.
-        carol
-            .session
-            .sever_gossip()
-            .await
-            .expect("the session of carol stays up");
+        let carol = InProcNode::join(&alice.mesh, "mp-rep-carol").await;
+        common::warm_up(&alice, &mut [&mut bob]).await;
 
         // A >16-shard body: alice caches its frames for repair.
         let big = "0123456789".repeat(20 * 1024); // ~200 KB, ~55 shards
@@ -168,23 +143,35 @@ mod shard_repair {
             bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
             "big body arrived"
         );
+        carol.await_peer_card(&alice.nickname).await;
+        let before = alice
+            .session
+            .shards_resent()
+            .await
+            .expect("the session of the author stays up");
+        assert_eq!(before, 0, "the premise: no repair was served yet");
+
+        // The group id is the logical message id. The ask names every index that a group of this
+        // size can hold, and the author skips the ones that it does not cache.
+        let every_index: Vec<u32> = (0..64).collect();
+        let params = serde_json::json!({ "group": id.as_str(), "missing": every_index });
+        ask_without_reply(&carol, &alice.nickname, params).await;
+        let resent = shards_resent_by(&alice, 50).await;
         assert!(
-            !wait_body_severed(&mut carol, &big, Duration::from_secs(3)).await,
-            "the premise: carol holds no shard"
+            resent >= 50,
+            "the author re-sent {resent} cached shards to the requester, a group has more than 50"
         );
 
-        // The group id is the logical message id.
-        let reassembled = repair_reassembles(&mut carol, &alice.nickname, id.as_str(), &big).await;
-        assert!(
-            reassembled,
-            "the author did not re-send its cached shards to the requester"
-        );
-
-        // A group that the author never cached is dropped without a reply, and the author keeps
-        // serving.
+        // A group that the author never cached is dropped without a reply and re-sends nothing.
         let unknown =
             serde_json::json!({ "group": "00000000-0000-4000-8000-00000000dead", "missing": [0] });
         ask_without_reply(&carol, &alice.nickname, unknown).await;
+        let after = alice
+            .session
+            .shards_resent()
+            .await
+            .expect("the session of the author stays up");
+        assert_eq!(after, resent, "an unknown group re-sends no shard");
         // A round trip to the author still completes, so its event loop is not stuck.
         carol.await_peer_card(&alice.nickname).await;
 
