@@ -524,7 +524,7 @@ async fn meta_entry_returns_after_rejoin() {
         .await;
     assert!(
         wait_doc(&host, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
-            common::card_slot_of(doc, "rejoin-peer").is_some_and(|slot| slot != first_slot)
+            common::meta_slot_of(doc, "rejoin-peer").is_some_and(|slot| slot != first_slot)
         })
         .await,
         "the rejoined peer's slice never appeared: {}",

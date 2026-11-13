@@ -197,7 +197,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
         &nick,
     ))
     .expect("the CLI prints the meta channel as one JSON object");
-    let slot = common::card_slot_of(&meta["document"], &nick)
+    let slot = common::meta_slot_of(&meta["document"], &nick)
         .expect("the wait above ended on this card, so the slot exists");
     let merge = format!(r#"{{"peers":{{"{slot}":{{"model":"test-model","status":"idle"}}}}}}"#);
     let out = test_cmd()

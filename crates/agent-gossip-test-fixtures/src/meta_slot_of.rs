@@ -4,7 +4,7 @@
 /// share. The entry carries the nickname in its `nickname` field, so a test that knows only a name
 /// finds the slot by it. If two members share the name, this gives the first slot in key order.
 #[must_use]
-pub fn card_slot_of(meta_doc: &serde_json::Value, nickname: &str) -> Option<String> {
+pub fn meta_slot_of(meta_doc: &serde_json::Value, nickname: &str) -> Option<String> {
     let slots = meta_doc.as_object()?;
     let mut named: Vec<&String> = slots
         .iter()

@@ -52,10 +52,10 @@ async fn await_cards_bounded(left: &InProcNode, right: &InProcNode, deadline: Du
     let until = Instant::now() + deadline;
     loop {
         let left_doc = left.meta_get().await;
-        let left_crossed = common::card_slot_of(&left_doc, &right.nickname).is_some();
+        let left_crossed = common::meta_slot_of(&left_doc, &right.nickname).is_some();
         let right_doc = right.meta_get().await;
         let crossed: bool =
-            left_crossed && common::card_slot_of(&right_doc, &left.nickname).is_some();
+            left_crossed && common::meta_slot_of(&right_doc, &left.nickname).is_some();
         if crossed {
             return;
         }

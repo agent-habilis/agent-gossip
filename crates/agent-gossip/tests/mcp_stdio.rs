@@ -302,7 +302,7 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     // `InProcNode::await_peer_card`.
     assert!(
         poll_doc(&mut joiner, probe_id, "get_meta", |doc| {
-            common::card_slot_of(doc, &creator_nick).is_some()
+            common::meta_slot_of(doc, &creator_nick).is_some()
         }),
         "creator's card never reached the joiner's meta doc"
     );
