@@ -619,10 +619,9 @@ impl CraftedMsg {
     pub fn bytes_claiming(&self, signed_with: &TestKey, claimed: &AuthorKey) -> bytes::Bytes {
         let wire = String::from_utf8(self.bytes().to_vec()).expect("a frame is UTF-8 text");
         let own_key = pubkey_hex(signed_with);
-        assert!(
-            wire.contains(&own_key),
-            "the frame names the key that signed it"
-        );
-        bytes::Bytes::from(wire.replacen(&own_key, &claimed.to_string(), 1))
+        let (before, after) = wire
+            .split_once(&own_key)
+            .expect("the frame names the key that signed it");
+        bytes::Bytes::from(format!("{before}{claimed}{after}"))
     }
 }

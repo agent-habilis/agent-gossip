@@ -15,7 +15,7 @@ pub fn cli_meta_report(mesh: &str, nickname: &str) {
     let output = cli_channel_merge(Channel::Meta, mesh, nickname, &merge);
     assert!(
         output.status.success(),
-        "the meta report of {nickname} failed: {output:?}"
+        "the daemon of {nickname} refused its own meta report: {output:?}"
     );
 }
 

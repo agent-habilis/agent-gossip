@@ -19,11 +19,10 @@ fn shared_slots(doc: &Value) -> Vec<String> {
     let Some(slots) = doc.as_object() else {
         return Vec::new();
     };
-    let mut named: Vec<String> = slots
-        .iter()
-        .filter(|(_, entry)| entry.get("nickname").and_then(Value::as_str) == Some(SHARED))
-        .map(|(slot, _)| slot.clone())
-        .collect();
+    let names_shared =
+        |entry: &Value| entry.get("nickname").and_then(Value::as_str) == Some(SHARED);
+    let entries = slots.iter().filter(|(_, entry)| names_shared(entry));
+    let mut named: Vec<String> = entries.map(|(slot, _)| slot.clone()).collect();
     named.sort();
     named
 }
@@ -203,7 +202,10 @@ fn ready_pubkey(state_file: &std::path::Path) -> String {
         .arg(state_file)
         .output()
         .expect("the ready command spawns");
-    assert!(output.status.success(), "ready failed: {output:?}");
+    assert!(
+        output.status.success(),
+        "the ready gate failed, so the key of the daemon is unknown: {output:?}"
+    );
     let ready: Value =
         serde_json::from_slice(&output.stdout).expect("ready prints one JSON object");
     ready["pubkey"]

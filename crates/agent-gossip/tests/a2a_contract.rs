@@ -277,20 +277,20 @@ fn advertises_peer_relay(pair: &BindingPair) {
 fn creates_a_task_at_the_relay_address_of_the_card(pair: &BindingPair) {
     let (_status, card) = get(pair.port, "/peers/a2a-peer/.well-known/agent-card.json");
     let card: Value = serde_json::from_str(&card).expect("a peer card is JSON");
-    let relay_path = card["supportedInterfaces"]
-        .as_array()
-        .and_then(|interfaces| {
-            interfaces
-                .iter()
-                .find(|iface| iface["protocolBinding"] == "JSONRPC")
-        })
+    let interfaces = card["supportedInterfaces"].as_array();
+    let relay = interfaces.and_then(|all| {
+        all.iter()
+            .find(|iface| iface["protocolBinding"] == "JSONRPC")
+    });
+    let relay_url = relay
         .and_then(|iface| iface["url"].as_str())
-        .and_then(|url| url.split_once(&format!("127.0.0.1:{}", pair.port)))
-        .map(|(_, path)| path.to_owned())
         .expect("the card advertises a relay interface at the local binding");
+    let (_, relay_path) = relay_url
+        .split_once(&format!("127.0.0.1:{}", pair.port))
+        .expect("the relay interface points at the local binding");
     let task = rpc(RpcCall {
         port: pair.port,
-        path: &relay_path,
+        path: relay_path,
         token: &pair.token,
         method: "SendMessage",
         params: &serde_json::json!({ "message": {
@@ -301,7 +301,7 @@ fn creates_a_task_at_the_relay_address_of_the_card(pair: &BindingPair) {
     });
     assert_eq!(
         task["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
-        "the relay address of the card creates a task: {task}"
+        "a task created at the relay address of the card comes back submitted: {task}"
     );
 }
 

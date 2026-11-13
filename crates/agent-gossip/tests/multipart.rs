@@ -115,10 +115,11 @@ async fn a_shard_repair_ask_re_sends_the_cached_shards_to_the_requester() {
     // The group id is the logical message id. The ask names every index that a group of this
     // size can hold, and the author skips the ones that it does not cache. The ask has no reply,
     // so the call times out.
+    let every_index: Vec<u32> = (0..64).collect();
     let ask = A2aCallParams::new(
         Nickname::try_new(&alice.nickname).expect("the nickname of a node is valid"),
         "shard/repair".to_owned(),
-        serde_json::json!({ "group": id.as_str(), "missing": (0..64).collect::<Vec<u32>>() }),
+        serde_json::json!({ "group": id.as_str(), "missing": every_index }),
         Duration::from_secs(1),
     );
     let response = carol

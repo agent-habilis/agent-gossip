@@ -1677,8 +1677,9 @@ fn has_key(view: &serde_json::Value, key: &str, value: &str) -> bool {
 
 /// Whether a slice of `view` holds `key`, with any value.
 fn has_any_key(view: &serde_json::Value, key: &str) -> bool {
+    let holds = |slice: &serde_json::Value| slice.get(key).is_some();
     view.as_object()
-        .is_some_and(|slices| slices.values().any(|slice| slice.get(key).is_some()))
+        .is_some_and(|slices| slices.values().any(holds))
 }
 
 /// Both shared-state channels round-trip over MCP: an `apply_*_patch` on one

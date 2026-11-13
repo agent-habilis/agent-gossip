@@ -943,11 +943,8 @@ async fn resend_cached_shards(params: ShardRepairParams<'_>, state: &mut EventLo
     } = params;
     // A repeated index would send one frame several times for one ask.
     let mut seen = HashSet::new();
-    let unique: Vec<u32> = missing
-        .iter()
-        .copied()
-        .filter(|index| seen.insert(*index))
-        .collect();
+    let firsts = missing.iter().copied().filter(|index| seen.insert(*index));
+    let unique: Vec<u32> = firsts.collect();
     let frames: Vec<_> = state.shard_cache_mut().frames(group, &unique).collect();
     let mut resent = 0usize;
     for bytes in frames {
@@ -1477,7 +1474,10 @@ mod classify_tests {
     #[test]
     fn broadcast_chat_is_pushed_but_an_rpc_request_is_not() {
         let message = classify(&app_frame(wire::BROADCAST));
-        assert!(message.pushable(), "broadcast chat is pushed");
+        assert!(
+            message.pushable(),
+            "broadcast chat is pushed, because every member reads it"
+        );
         let request = classify(&app_frame(wire::REQ));
         assert!(
             !request.pushable(),
@@ -1511,7 +1511,10 @@ mod classify_tests {
     fn unknown_tag_is_invalid_and_not_pushed() {
         let cls = classify(&app_frame("admin"));
         assert!(!cls.valid(), "an unknown tag fails the boundary gate");
-        assert!(!cls.pushable(), "an unknown tag is not pushed");
+        assert!(
+            !cls.pushable(),
+            "an unknown tag is not pushed, because the agent has no use for it"
+        );
         assert!(
             !cls.beat(),
             "a frame that fails the gate must not count as proof that its author is alive"

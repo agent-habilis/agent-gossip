@@ -40,11 +40,11 @@ async fn converged(node: &InProcNode, channel: Channel, pointer: &str, expected:
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         let view = node.get(channel).await;
-        let found = view.as_object().is_some_and(|slices| {
-            slices
-                .values()
-                .any(|slice| slice.pointer(pointer).and_then(Value::as_str) == Some(expected))
-        });
+        let holds =
+            |slice: &Value| slice.pointer(pointer).and_then(Value::as_str) == Some(expected);
+        let found = view
+            .as_object()
+            .is_some_and(|slices| slices.values().any(holds));
         if found {
             return true;
         }

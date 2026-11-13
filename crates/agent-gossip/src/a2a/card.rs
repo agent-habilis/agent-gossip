@@ -179,8 +179,6 @@ mod tests {
     use habilis_network::protocol::{AuthorKey, Nickname};
     use habilis_network::x25519_dalek::PublicKey;
 
-    use super::peer_card;
-
     fn key() -> AuthorKey {
         AuthorKey::from([0xab; 32])
     }
@@ -192,7 +190,7 @@ mod tests {
     #[test]
     fn a_peer_card_declares_the_mesh_extensions_and_identity() {
         let seal = PublicKey::from([7u8; 32]);
-        let card = peer_card(
+        let card = super::peer_card(
             key(),
             &Nickname::from("calm-otter"),
             Some(&seal),
@@ -243,7 +241,7 @@ mod tests {
 
     #[test]
     fn a_peer_card_has_the_gossip_interface_and_the_relay_interface() {
-        let card = peer_card(
+        let card = super::peer_card(
             key(),
             &Nickname::from("calm-otter"),
             None,
@@ -271,7 +269,7 @@ mod tests {
 
     #[test]
     fn a_peer_card_with_no_seal_key_leaves_the_seal_extension_out() {
-        let card = peer_card(key(), &Nickname::from("calm-otter"), None, "http://x/");
+        let card = super::peer_card(key(), &Nickname::from("calm-otter"), None, "http://x/");
         assert!(
             card.capabilities
                 .extensions
