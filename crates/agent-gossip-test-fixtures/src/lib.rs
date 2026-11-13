@@ -77,6 +77,7 @@ mod trace_log;
 mod wait_bell_output;
 mod wait_total;
 mod wait_until;
+mod warm_up;
 
 pub(crate) use self::apply_flags::apply_flags;
 pub use self::assert_bell_parked::assert_bell_parked;
@@ -136,3 +137,4 @@ pub use self::trace_log::trace_log;
 pub use self::wait_bell_output::wait_bell_output;
 pub use self::wait_total::wait_total;
 pub use self::wait_until::wait_until;
+pub use self::warm_up::warm_up;
