@@ -888,7 +888,7 @@ COMMANDS
               SIZE LIMITS AND REFUSALS. The shared state has a size limit, so
               that a gossip can run for months.
                 - The whole slice of a member, all its keys together, must fit
-                  one message of 3840 bytes. The room for the value is less:
+                  one message of 3840 bytes. The value has less space than that:
                   the envelope, the gossip id and the nickname take a part, and
                   a password takes a part. A larger write is refused. Delete
                   keys of your own slice with a null merge, or store less.
