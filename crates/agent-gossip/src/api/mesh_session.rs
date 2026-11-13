@@ -184,8 +184,8 @@ impl MeshSession {
 
     /// Subscribe to inbound messages. Each call returns an independent
     /// receiver that sees traffic sent *after* it subscribed, so subscribe
-    /// before you expect messages. Includes every kind that parses — `msg`,
-    /// `presence` (joined/left/alive), `peer_info`; filter as needed. Under
+    /// before you expect messages. Includes the kinds that reach the app —
+    /// `msg` and `presence` (joined/left/alive); filter as needed. Under
     /// sustained lag the bounded ring drops the oldest messages and the
     /// receiver observes [`broadcast::error::RecvError::Lagged`] — by design,
     /// so a slow consumer never stalls the gossip loop.
