@@ -251,20 +251,34 @@ impl CraftedMsg {
         self
     }
 
-    /// A crafted shared-state frame (`MessageKind::State`) from `author`, whose
-    /// body is the JSON text of `merge`. It is not a signed slice, so a test can
-    /// assert the receiver never applies it — never a panic, never a change.
-    /// Unsigned until [`sign`](CraftedMsg::sign).
+    /// A crafted slice frame of `channel` from `author`: a well-formed slice body
+    /// `{"version": version, "value": value}`, so that only its signature decides whether the
+    /// receiver takes it. Unsigned until [`sign`](CraftedMsg::sign).
     ///
     /// # Panics
     ///
-    /// Panics unless the author is a valid nickname.
-    pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
+    /// Panics unless the author is a valid nickname, or if the channel is neither `state` nor `meta`.
+    pub fn slice(
+        channel: habilis_network::protocol::Channel,
+        mesh: &MeshId,
+        author: &str,
+        version: u64,
+        value: serde_json::Value,
+    ) -> Self {
+        use habilis_network::protocol::Channel;
+
         let author = Nickname::try_new(author).expect("test author is a valid nickname");
-        let body = MessageBody::try_new(&merge.to_string()).expect("a merge value is a valid body");
-        Self {
-            message: Message::new_state(mesh, &author, body),
-        }
+        let body = MessageBody::try_new(
+            &serde_json::json!({ "version": version, "value": value }).to_string(),
+        )
+        .expect("a slice body is a valid body");
+        let message = match channel {
+            Channel::State | Channel::Meta => {
+                Message::new_channel_event(mesh, &author, body, channel)
+            }
+            _ => panic!("a slice is of the state or the meta channel"),
+        };
+        Self { message }
     }
 
     /// A crafted `a2a_status` frame whose FRAME correlation field (`corr`)
@@ -558,5 +572,23 @@ impl CraftedMsg {
         object.remove("pubkey");
         object.remove("sig");
         bytes::Bytes::from(serde_json::to_vec(&wire).expect("an unsigned frame serializes"))
+    }
+
+    /// The wire bytes of this message signed with `signed_with`, with the author key of the frame
+    /// replaced by `claimed`: a forger names the key of another member and keeps its own signature.
+    /// The signature then does not match the key, and the receiver must drop the frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the message is signed with `signed_with` and serializes.
+    #[must_use]
+    pub fn bytes_claiming(&self, signed_with: &TestKey, claimed: &AuthorKey) -> bytes::Bytes {
+        let wire = String::from_utf8(self.bytes().to_vec()).expect("a frame is UTF-8 text");
+        let own_key = pubkey_hex(signed_with);
+        assert!(
+            wire.contains(&own_key),
+            "the frame names the key that signed it"
+        );
+        bytes::Bytes::from(wire.replacen(&own_key, &claimed.to_string(), 1))
     }
 }

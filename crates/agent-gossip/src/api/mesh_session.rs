@@ -214,21 +214,20 @@ impl MeshSession {
         self.core.message(to, body).await
     }
 
-    /// Apply an RFC 7386 JSON Merge Patch to the shared state: the top-level
-    /// merge must be an object, which merges into the document (a `null` member
-    /// deletes its key; nested objects merge recursively), and a non-object
-    /// value under a key replaces that key.
+    /// Apply an RFC 7386 JSON Merge Patch to your own slice of the shared state: the top-level
+    /// merge must be an object, which merges into the slice (a `null` member deletes its key;
+    /// nested objects merge recursively), and a non-object value under a key replaces that key.
     ///
     /// # Errors
     /// Fails if the event loop has stopped. It also fails when the state refuses the write: a top
-    /// level that is not an object, a value too large for one frame, too deep, a full state, a state
-    /// not yet synced, or a clock ahead of this machine.
+    /// level that is not an object, a slice larger than its cap, a write too soon after the last
+    /// one, or a key of this run that is gone.
     pub async fn state_merge(&self, merge: serde_json::Value) -> Result<(), SessionError> {
         self.core.state_merge(merge).await
     }
 
-    /// The current derived shared-state document (the merge fold over the state
-    /// log).
+    /// The current shared-state view: one slice for each author, keyed by the hex of its
+    /// author key.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -245,7 +244,8 @@ impl MeshSession {
         self.core.meta_merge(merge).await
     }
 
-    /// The current derived **meta**-channel document.
+    /// The current **meta**-channel view: one slice for each author, keyed by the hex of its
+    /// author key.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.

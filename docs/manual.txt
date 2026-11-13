@@ -819,9 +819,9 @@ COMMANDS
        state merge --gossip GOSSIP --nickname NAME --merge MERGE
        state get   --gossip GOSSIP --nickname NAME
               Read or change the gossip's shared state — a JSON document the whole
-              gossip shares, separate from the chat log and derived by folding a
-              dedicated, gossiped, signed log of changes. It starts as {} and every
-              member folds the same log to the same document.
+              gossip shares, separate from the chat log. The document is one
+              signed slice for each member, and every member writes only its own
+              slice. It starts as {} and every member derives the same slices.
 
               A gossip has two channels, state and meta (see meta merge / meta get
               below) — the same machinery, differing only by convention: state is
@@ -1161,8 +1161,9 @@ A2A
 
               iroh-gossip replicates A2A payloads (A2A v1.0, ProtoJSON) to
               all members inside the signed wire frame (gossip wire version
-              18.0). The frame — signing, dedup, backfill, presence,
-              sharding — is replication machinery below the A2A layer,
+              18.0). The frame — signing, dedup, presence, sharding, and the
+              backfill of the state and meta slices — is replication machinery
+              below the A2A layer,
               exactly as HTTP/TLS sit below JSON-RPC in the standard
               bindings. Chat rides two tags that differ only in addressing:
               a2a_broadcast reaches every member and declares the
