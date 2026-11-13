@@ -16,9 +16,7 @@ use habilis_network::protocol::{
     AppFrameParams, AuthorKey, Channel, Identity, MeshId, Message, MessageBody, MessageId,
     MessageKind, Nickname, Shard, ShardGroup, reassembly,
 };
-use habilis_network::util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES, MAX_SHARD_TOTAL,
-};
+use habilis_network::util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL};
 use habilis_network::util::logging;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
@@ -614,9 +612,9 @@ pub(crate) async fn send_broadcast(
         .await;
     }
     // Too big: split the payload across shard-tagged frames. Each shard is an
-    // ordinary chained frame with its own minted id, retained for
-    // anti-entropy; the *group* carries the A2A messageId, so the reassembled
-    // logical frame — the only thing echoed and returned — is named by it.
+    // ordinary frame with its own minted id, cached for shard repair; the
+    // *group* carries the A2A messageId, so the reassembled logical frame — the
+    // only thing echoed and returned — is named by it.
     let shards = BroadcastShards::plan(
         &frames,
         state,
@@ -665,7 +663,7 @@ enum EchoAs {
 
 /// Send one already-composed **directed** frame — a worker's
 /// `TaskStatusUpdate`/`TaskArtifactUpdate`, or a msg — sharding a
-/// large body, retaining **content** legs for anti-entropy, echoing the sender's
+/// large body, caching the shards of a **content** leg for repair, echoing the sender's
 /// own line, and (for a task leg) advancing our own coarse task machine.
 /// `content` is false for a liveness beat (never retained/reassembled).
 /// Fire-and-forget push — the A2A streaming plane over gossip.
@@ -1064,12 +1062,12 @@ pub(crate) async fn emit_task_artifact(
 }
 
 /// Seal a directed payload `body` to the published X25519 key of the member `to`. A directed
-/// frame is **never** sent in plaintext — if the recipient's card / seal key has
-/// not replicated yet, this errors rather than leaking the body. The Ed25519
+/// frame is **never** sent in plaintext — if the seal key of the recipient has
+/// not arrived yet, this errors rather than leaking the body. The Ed25519
 /// frame signature (added later, over this ciphertext) authenticates the sender.
 ///
 /// # Errors
-/// The recipient's seal key is not yet known (cards still propagating), or the
+/// The recipient's seal key is not yet known (its `PeerInfo` is not here yet), or the
 /// seal operation fails.
 pub(crate) fn seal_directed(
     state: &EventLoopState,
@@ -1536,8 +1534,7 @@ struct DirectedLegPart<'source> {
     content: bool,
 }
 
-/// Broadcast (or buffer, while unmeshed) one fully-built task leg, retaining
-/// **content** legs for anti-entropy. `echo` carries the plaintext twin whose
+/// Broadcast (or buffer, while unmeshed) one fully-built task leg. `echo` carries the plaintext twin whose
 /// operator line surfaces (`None` for the raw shards of a split leg, which
 /// commit silently). Errors if the unmeshed buffer is full.
 async fn send_directed_leg(
@@ -2041,9 +2038,9 @@ pub(crate) async fn send_directed_rpc(
         log_unless_done(habilis_network::ops::deliver(&single, bytes, state, sender).await?);
         return Ok(());
     }
-    // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
-    // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
-    if body.as_str().len() > MAX_SEALED_BODY_BYTES {
+    // The RPC body is already sealed — gate on the sealed length of the largest
+    // logical body, so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
+    if body.as_str().len() > habilis_network::ops::sealed_body_len_bound(MAX_LOGICAL_BODY_BYTES) {
         return Err(anyhow::anyhow!(
             "rpc body too large: {} sealed bytes exceeds the input ceiling \
              ({MAX_LOGICAL_BODY_BYTES} raw bytes); use the blob channel for files",
@@ -2424,10 +2421,9 @@ pub(crate) async fn handle_session_request(
             tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
             false
         }
-        // A channel document put in an epoch at once (adversarial only).
         #[cfg(feature = "adversarial")]
-        SessionRequest::ForceEpoch { channel, epoch } => {
-            state.force_epoch(channel, epoch);
+        SessionRequest::SealKeyOf { key, response } => {
+            let _ = response.send(state.seal_key_of(&key).copied());
             false
         }
         // Reassembly accounting snapshot (adversarial only) for the

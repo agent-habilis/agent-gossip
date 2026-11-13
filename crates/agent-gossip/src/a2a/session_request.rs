@@ -111,12 +111,12 @@ pub(crate) enum SessionRequest {
     /// without needing to kill the gossip actor from outside.
     #[cfg(feature = "adversarial")]
     SeverGossip,
-    /// Put the document of a channel in an epoch at once, as an adoption does after its wait.
-    /// Adversarial-suite only: it puts an honest node in a far epoch without 10 minutes of ticks.
+    /// The seal key that the signed `PeerInfo` of a member names, once the engine holds it.
+    /// Adversarial-suite only: it lets the suite seal a crafted frame to an honest member.
     #[cfg(feature = "adversarial")]
-    ForceEpoch {
-        channel: habilis_network::protocol::Channel,
-        epoch: u64,
+    SealKeyOf {
+        key: AuthorKey,
+        response: oneshot::Sender<Option<habilis_network::x25519_dalek::PublicKey>>,
     },
     /// Snapshot the reassembly store's accounting
     /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.

@@ -31,10 +31,7 @@ impl NodeApp for A2aApp {
     }
 
     fn seals(&self, tag: &AppTag) -> bool {
-        matches!(
-            tag.as_str(),
-            wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT
-        )
+        seals(tag.as_str())
     }
 
     async fn on_app_frame(
@@ -360,6 +357,16 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
 /// Per-tag/payload classification of an inbound a2a `App` frame — see
 /// [`AppClass`]. Encodes in one place the wire policy the engine used to derive
 /// from hardcoded tag checks.
+/// Every directed tag — msg, worker status/artifact push, RPC request/response, receipt — is
+/// sealed to its addressee, so a relayed frame stays unreadable by the peers that forward it.
+/// Broadcast chat is public by definition, and an unknown tag is never sealed.
+fn seals(tag: &str) -> bool {
+    matches!(
+        tag,
+        wire::MSG | wire::STATUS | wire::ARTIFACT | wire::REQ | wire::RESP | wire::RECEIPT
+    )
+}
+
 fn classify(message: &Authored) -> AppClass {
     let tag = message.kind.app_tag().map(AppTag::as_str);
     // App payloads push (chat/status/artifact) only. RPC request/response frames
@@ -1083,7 +1090,7 @@ mod classify_tests {
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-    use super::{classify, is_empty_working_repeat, is_replayed_chat, surface_chat, wakes};
+    use super::{classify, is_empty_working_repeat, is_replayed_chat, seals, surface_chat, wakes};
     use crate::a2a::a2a_app::A2aApp;
     use crate::a2a::{TaskState, status_update_params, wire};
     use crate::emission::OutputEvent;
@@ -1287,8 +1294,8 @@ mod classify_tests {
         let body = r#"{"ref":"abc","state":"delivered"}"#;
         let directed = classify(&receipt_frame(Some(key("peer")), body));
         assert!(
-            directed.valid() && directed.sealed() && !directed.pushable(),
-            "a directed receipt is valid, sealed and not pushed"
+            directed.valid() && !directed.pushable(),
+            "a directed receipt is valid and not pushed"
         );
         assert!(!classify(&receipt_frame(None, body)).valid(), "broadcast");
         assert!(
@@ -1479,10 +1486,25 @@ mod classify_tests {
     }
 
     #[test]
-    fn dm_is_pushed_and_sealed() {
+    fn dm_is_pushed() {
         let dm = classify(&msg_frame(Some(key("bob"))));
         assert!(dm.pushable(), "a msg is pushed");
-        assert!(dm.sealed(), "a msg is sealed to its addressee");
+    }
+
+    #[test]
+    fn every_directed_tag_seals_and_broadcast_chat_does_not() {
+        for tag in [
+            wire::MSG,
+            wire::STATUS,
+            wire::ARTIFACT,
+            wire::REQ,
+            wire::RESP,
+            wire::RECEIPT,
+        ] {
+            assert!(seals(tag), "{tag} is sealed to its addressee");
+        }
+        assert!(!seals(wire::BROADCAST), "broadcast chat is public");
+        assert!(!seals("admin"), "an unknown tag is never sealed");
     }
 
     #[test]

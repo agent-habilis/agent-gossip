@@ -29,17 +29,16 @@ impl MeshSession {
         self.core.sever_gossip().await
     }
 
-    /// Put the document of `channel` in `epoch` at once, as an adoption does after its wait: an
-    /// honest node in a far epoch without 10 minutes of ticks. Adversarial-suite only.
+    /// The seal key of the member `key`, or `None` while the engine does not hold it.
+    /// Adversarial-suite only: the suite seals a crafted frame to an honest member with it.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub async fn force_epoch(
+    pub async fn seal_key_of(
         &self,
-        channel: habilis_network::protocol::Channel,
-        epoch: u64,
-    ) -> Result<(), crate::api::SessionError> {
-        self.core.force_epoch(channel, epoch).await
+        key: habilis_network::protocol::AuthorKey,
+    ) -> Result<Option<habilis_network::x25519_dalek::PublicKey>, crate::api::SessionError> {
+        self.core.seal_key_of(key).await
     }
 
     /// Snapshot the reassembly store's accounting

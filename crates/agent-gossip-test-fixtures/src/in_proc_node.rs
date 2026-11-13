@@ -12,26 +12,11 @@ use agent_gossip::{
 };
 use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
-use habilis_network::runtime::{SendError, StateRefusal};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{
     MSG_TIMEOUT, POLL, RPC_ATTEMPT, card_slot_of, init_test_tracing, is_rpc_timeout, test_mesh_name,
 };
-
-/// How long a state write waits for the first sync of the node: just above the 30 s deadline of
-/// the engine, which is the longest that the engine itself can refuse with `not_synced`.
-const FIRST_SYNC_WAIT: Duration = Duration::from_secs(35);
-
-fn is_not_synced(error: &SessionError) -> bool {
-    let SessionError::Loop(cause) = error else {
-        return false;
-    };
-    matches!(
-        cause.downcast_ref::<SendError>(),
-        Some(SendError::State(StateRefusal::NotSynced))
-    )
-}
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
 ///
@@ -262,24 +247,15 @@ impl InProcNode {
             .await
     }
 
-    /// Apply an RFC 7386 merge to the shared state. A joining node refuses state writes with
-    /// `not_synced` until a peer answers its first request, as a user is told to retry: this
-    /// waits for that answer, for `FIRST_SYNC_WAIT` at most. Any other refusal fails at once.
+    /// Apply an RFC 7386 merge to the shared state.
     ///
     /// # Panics
     ///
-    /// Panics if the merge is rejected (not a JSON object, full, too deep, too large, loop
-    /// stopped), or if the node has not synced within `FIRST_SYNC_WAIT`.
+    /// Panics if the merge is rejected (not a JSON object, too large, rate limited, loop
+    /// stopped).
     pub async fn state_merge(&self, merge: serde_json::Value) {
-        let deadline = Instant::now() + FIRST_SYNC_WAIT;
-        loop {
-            match self.try_state_merge(merge.clone()).await {
-                Ok(()) => return,
-                Err(error) if is_not_synced(&error) && Instant::now() < deadline => {
-                    tokio::time::sleep(POLL).await;
-                }
-                Err(error) => panic!("in-process state_merge failed: {error:?}"),
-            }
+        if let Err(error) = self.try_state_merge(merge).await {
+            panic!("in-process state_merge failed: {error:?}");
         }
     }
 
@@ -416,10 +392,10 @@ impl InProcNode {
         text: &str,
         label: Option<&str>,
     ) -> serde_json::Value {
-        // Task creation seals the request to `target`'s card
-        // (`a2a::card::peer_seal_key`). The card propagates asynchronously and the
-        // seal is one-shot, so wait for it first — otherwise, under the concurrent
-        // suite's load, the request is silently dropped and the call hangs.
+        // Task creation seals the request to the seal key of `target`. The key
+        // arrives asynchronously and the seal is one-shot, so wait for the peer
+        // first — otherwise, under the concurrent suite's load, the request is
+        // silently dropped and the call hangs.
         self.await_peer_card(target).await;
         let message =
             status_update_params::send_message_payload(self.session.mesh_id(), None, text, label);
@@ -431,22 +407,20 @@ impl InProcNode {
         .await
     }
 
-    /// Block until `target`'s card is present in this node's `meta` doc — the
-    /// seal-key source for any directed A2A call, and the precondition
-    /// [`Self::a2a_call`] cannot enforce itself (the unknown-peer tests call a
-    /// nickname whose card will never arrive and must fail fast, not block).
-    /// [`Self::create_task`] applies it for you; a bare `a2a_call` to a real
-    /// peer must call this first or it races card propagation.
+    /// Block until `target` has an entry in this node's `meta` doc and a direct lane to it — the
+    /// precondition [`Self::a2a_call`] cannot enforce itself (the unknown-peer tests call a
+    /// nickname that will never arrive and must fail fast, not block).
+    /// [`Self::create_task`] applies it for you; a bare `a2a_call` to a real peer must call this
+    /// first or it races the join of the peer.
     ///
-    /// The card is not enough on its own: the meta doc and the live roster
-    /// converge separately, and a directed send checks the roster. Until
-    /// `target` is in it on a lane that carries payload, the send fails as an
-    /// unknown peer or is held for a relay that is lookup only — both seen as
-    /// CI flakes in `tests/seal.rs`.
+    /// The entry is not enough on its own: the meta doc and the live roster converge separately,
+    /// and a directed send checks the roster. Until `target` is in it on a lane that carries
+    /// payload, the send fails as an unknown peer or is held for a relay that is lookup only —
+    /// both seen as CI flakes in `tests/seal.rs`.
     ///
     /// # Panics
     ///
-    /// Panics if the card or a direct lane does not appear before `MSG_TIMEOUT`.
+    /// Panics if the entry or a direct lane does not appear before `MSG_TIMEOUT`.
     pub async fn await_peer_card(&self, target: &str) {
         let deadline = Instant::now() + MSG_TIMEOUT;
         while card_slot_of(&self.meta_get().await, target).is_none()
@@ -454,7 +428,7 @@ impl InProcNode {
         {
             assert!(
                 Instant::now() < deadline,
-                "{target}'s card never reached this node's meta doc, or no direct lane to it formed"
+                "{target} never got an entry in this node's meta doc, or no direct lane to it formed"
             );
             tokio::time::sleep(POLL).await;
         }

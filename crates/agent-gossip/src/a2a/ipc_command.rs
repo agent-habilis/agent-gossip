@@ -1154,7 +1154,6 @@ mod tests {
                         &mesh,
                         &author,
                         body,
-                        habilis_network::protocol::ChainCtx::genesis(),
                     ),
                     &identity,
                 )
