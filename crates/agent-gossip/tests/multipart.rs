@@ -5,8 +5,13 @@
 //! These pin that round-trip for a plain `msg` and for a task content leg —
 //! the body surfaces **once**, as the whole logical message, never as raw shards.
 
+use std::time::Duration;
+
 use agent_gossip::a2a::status_update_params;
-use agent_gossip::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
+use agent_gossip::api::A2aCallParams;
+use agent_gossip::{
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, Nickname, TaskId, TaskState,
+};
 use agent_gossip_test_fixtures as common;
 use common::{BIG_BODY_TIMEOUT, InProcNode, MSG_TIMEOUT, chat_text};
 
@@ -80,11 +85,11 @@ async fn multishard_message_past_the_old_cap_reassembles() {
     bob.leave().await;
 }
 
-/// A big (unlogged) group's heal path is the `shard/repair` RPC: the author
-/// caches its outbound shard frames and re-delivers the ones a receiver names
-/// as missing. Exercise the serve side end-to-end over the real RPC binding.
+/// A big group's heal path is the `shard/repair` ask: the author caches its outbound shard frames
+/// and sends the ones that a receiver names as missing to that receiver only. The ask gets no
+/// reply, so the caller times out, and a node keeps serving after it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shard_repair_reserves_cached_big_group_frames() {
+async fn a_shard_repair_ask_gets_no_reply_and_the_author_keeps_serving() {
     let mut alice = InProcNode::create("mp-rep").await;
     let mut bob = InProcNode::join(&alice.mesh, "mp-rep-bob").await;
     alice.broadcast("warmup").await;
@@ -95,41 +100,35 @@ async fn shard_repair_reserves_cached_big_group_frames() {
     // A >16-shard body: alice caches its frames for repair.
     let big = "0123456789".repeat(20 * 1024); // ~200 KB, ~55 shards
     let id = alice.broadcast(&big).await;
-    // Unlogged group: a lost shard heals only via `shard/repair`, which needs
-    // longer than `MSG_TIMEOUT` to even fire. See `BIG_BODY_TIMEOUT`.
     assert!(
         bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
         "big body arrived"
     );
 
-    // Bob asks alice to re-send two shards of that group (the group id is the
-    // logical message id). Bob already holds them — dedup will drop the
-    // re-delivery — but the serve side must find and re-send them.
-    let alice_nick = alice.nickname.clone();
-    let response = bob
-        .a2a_call(
-            &alice_nick,
-            "shard/repair",
-            serde_json::json!({ "group": id.as_str(), "missing": [0, 5] }),
-        )
-        .await;
-    assert_eq!(
-        response["result"]["resent"], 2,
-        "the author re-served the cached frames: {response}"
-    );
+    // Bob asks for two shards of that group (the group id is the logical message id), and for a
+    // group that alice never cached. Neither ask gets a reply.
+    for group in [id.as_str(), "00000000-0000-4000-8000-00000000dead"] {
+        let ask = A2aCallParams::new(
+            Nickname::try_new(&alice.nickname).expect("the nickname of a node is valid"),
+            "shard/repair".to_owned(),
+            serde_json::json!({ "group": group, "missing": [0, 5] }),
+            Duration::from_secs(3),
+        );
+        let response = bob.session.a2a_call(ask).await.expect("a2a_call transport");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("timed out")),
+            "a shard repair ask gets no reply, so the call times out: {response}"
+        );
+    }
 
-    // An unknown group is a clean zero, not an error.
-    let miss = bob
-        .a2a_call(
-            &alice_nick,
-            "shard/repair",
-            serde_json::json!({
-                "group": "00000000-0000-4000-8000-00000000dead",
-                "missing": [0],
-            }),
-        )
-        .await;
-    assert_eq!(miss["result"]["resent"], 0, "evicted/unknown group: {miss}");
+    // The event loop of the author is not stuck: a later broadcast still arrives.
+    alice.broadcast("after-repair").await;
+    assert!(
+        bob.wait_body("after-repair", MSG_TIMEOUT).await,
+        "the author stopped serving after a shard repair ask"
+    );
 
     alice.leave().await;
     bob.leave().await;

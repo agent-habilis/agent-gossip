@@ -51,6 +51,25 @@ async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
     (victim, attacker)
 }
 
+/// Bring up the links from `from` to every node of `to`: send a warmup and send it again until all
+/// of them have it. A gossip holds no log of a broadcast, so a warmup that leaves before a link
+/// exists is lost, and nothing sends it again.
+async fn warm_up(from: &InProcNode, to: &mut [&mut InProcNode]) {
+    let deadline = Instant::now() + T;
+    for round in 0.. {
+        let body = format!("warmup-{round}");
+        from.broadcast(&body).await;
+        let mut all_received = true;
+        for node in to.iter_mut() {
+            all_received &= node.wait_body(&body, Duration::from_secs(2)).await;
+        }
+        if all_received {
+            return;
+        }
+        assert!(Instant::now() < deadline, "nodes never meshed");
+    }
+}
+
 /// The key of the peer called `nickname`, as `observer` knows it. A nickname is a label: a frame
 /// names its addressee by key.
 async fn key_of_peer(observer: &InProcNode, nickname: &str) -> AuthorKey {
@@ -682,11 +701,7 @@ async fn a_bystanders_task_status_is_dropped() {
     let mut initiator = InProcNode::create("adv-taskparty").await;
     let mut worker = InProcNode::join(&initiator.mesh, "adv-taskparty-wrk").await;
     let attacker = InProcNode::join(&initiator.mesh, "adv-taskparty-atk").await;
-    attacker.broadcast("warmup").await;
-    assert!(
-        initiator.wait_body("warmup", T).await && worker.wait_body("warmup", T).await,
-        "nodes never meshed"
-    );
+    warm_up(&attacker, &mut [&mut initiator, &mut worker]).await;
 
     // A real task, accepted by the real worker.
     let created = initiator.create_task(&worker.nickname, "the brief").await;
@@ -823,11 +838,7 @@ async fn a_bystanders_forged_receipt_is_dropped() {
     let mut sender = InProcNode::create("adv-forged-receipt").await;
     let mut addressee = InProcNode::join(&sender.mesh, "adv-forged-receipt-to").await;
     let attacker = InProcNode::join(&sender.mesh, "adv-forged-receipt-atk").await;
-    attacker.broadcast("warmup").await;
-    assert!(
-        sender.wait_body("warmup", T).await && addressee.wait_body("warmup", T).await,
-        "nodes never meshed"
-    );
+    warm_up(&attacker, &mut [&mut sender, &mut addressee]).await;
     sender.await_peer_card(&addressee.nickname).await;
     attacker.await_peer_card(&sender.nickname).await;
 
@@ -1070,11 +1081,19 @@ async fn unsigned_state_merge_is_never_folded() {
     // Barrier: a real signed merge from the attacker's own identity.
     attacker.state_merge(json!({"ok": 1})).await;
     assert!(
-        wait_doc(&victim, T, |doc| doc["ok"] == 1).await,
+        wait_doc(&victim, T, |doc| {
+            doc.as_object()
+                .is_some_and(|slices| slices.values().any(|slice| slice["ok"] == 1))
+        })
+        .await,
         "barrier state merge never derived"
     );
     assert!(
-        victim.state_get().await.get("evil").is_none(),
+        victim
+            .state_get()
+            .await
+            .as_object()
+            .is_some_and(|slices| slices.values().all(|slice| slice.get("evil").is_none())),
         "an unsigned state merge must never be folded into the document"
     );
     victim.leave().await;
