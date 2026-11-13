@@ -10,23 +10,22 @@ use std::time::{Duration, Instant};
 use agent_gossip::Channel;
 use agent_gossip_test_fixtures as common;
 use common::{CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Node, POLL, RECOVERY_TIMEOUT};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const SHARED: &str = "dup";
 
-/// The `(slot, card)` pairs of `doc` whose card names `SHARED`, in slot order.
-fn shared_cards(doc: &Value) -> Vec<(String, Value)> {
-    let Some(peers) = doc.get("peers").and_then(Value::as_object) else {
+/// The slots of `doc` whose entry names `SHARED`, in slot order.
+fn shared_slots(doc: &Value) -> Vec<String> {
+    let Some(slots) = doc.as_object() else {
         return Vec::new();
     };
-    let names_shared = |entry: &Value| {
-        let name: Option<&str> = entry.pointer("/card/name").and_then(Value::as_str);
-        name == Some(SHARED)
-    };
-    let named = peers.iter().filter(|(_, entry)| names_shared(entry));
+    let mut named: Vec<String> = slots
+        .iter()
+        .filter(|(_, entry)| entry.get("nickname").and_then(Value::as_str) == Some(SHARED))
+        .map(|(slot, _)| slot.clone())
+        .collect();
+    named.sort();
     named
-        .map(|(slot, entry)| (slot.clone(), entry["card"].clone()))
-        .collect()
 }
 
 fn is_key_hex(slot: &str) -> bool {
@@ -34,48 +33,51 @@ fn is_key_hex(slot: &str) -> bool {
     slot.len() == 64 && slot.bytes().all(is_hex_digit)
 }
 
-/// Wait until `node` holds `count` complete cards that name `SHARED`.
-async fn await_shared_cards(node: &InProcNode, count: usize) -> Vec<(String, Value)> {
+/// Wait until `node` holds `count` entries that name `SHARED`.
+async fn await_shared_slots(node: &InProcNode, count: usize) -> Vec<String> {
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
-        let cards = shared_cards(&node.meta_get().await);
-        let has_endpoint = |(_, card): &(String, Value)| card.get("endpoint").is_some();
-        if cards.len() == count && cards.iter().all(has_endpoint) {
-            return cards;
+        let slots = shared_slots(&node.meta_get().await);
+        if slots.len() == count {
+            return slots;
         }
         assert!(
             Instant::now() < deadline,
-            "{} never held {count} cards of '{SHARED}': {cards:?}",
+            "{} never held {count} entries of '{SHARED}': {slots:?}",
             node.nickname
         );
         tokio::time::sleep(POLL).await;
     }
 }
 
-/// Two live members use one nickname. A third member holds two entries, one for each key, and
-/// each card carries the endpoint of its own member. Two members that share one nickname are two
-/// entries in the meta document, one slot for each author key: the card, the seal key and the route
-/// of a send follow the key, never the name.
+/// Two live members use one nickname, and both write an entry that names it. A third member admits
+/// one key for a nickname, so it holds the entry of that key only: the slot is the author key in hex
+/// of the admitted member, and the entry of the refused key is not in its view.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_keys_of_one_nickname_publish_two_cards() {
+async fn a_shared_nickname_holds_one_slot_for_the_admitted_key() {
     let alice = InProcNode::create_with_nick("mbk-cards", SHARED).await;
     let beta = InProcNode::join(&alice.mesh, SHARED).await;
     let observer = InProcNode::join(&alice.mesh, "mbk-observer").await;
+    alice.meta_merge(json!({ "nickname": SHARED })).await;
+    beta.meta_merge(json!({ "nickname": SHARED })).await;
 
-    let cards = await_shared_cards(&observer, 2).await;
+    let slots = await_shared_slots(&observer, 1).await;
+    let admitted = alice.key_seen_by(&observer).await.to_string();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let later = shared_slots(&observer.meta_get().await);
 
-    for (slot, _) in &cards {
-        assert!(
-            is_key_hex(slot),
-            "the slot '{slot}' is not an author key in hex"
-        );
-    }
-    assert_ne!(cards[0].0, cards[1].0, "the two keys share one slot");
-    let endpoint = |card: &Value| card.pointer("/endpoint/id").cloned();
-    assert_ne!(
-        endpoint(&cards[0].1),
-        endpoint(&cards[1].1),
-        "the two cards carry one endpoint: the card of a key was read for the other key"
+    assert!(
+        is_key_hex(&slots[0]),
+        "the slot '{}' is not an author key in hex",
+        slots[0]
+    );
+    assert_eq!(
+        later, slots,
+        "the entry of the refused key reached the observer"
+    );
+    assert_eq!(
+        slots[0], admitted,
+        "the slot is not the key that the observer admitted for the nickname"
     );
 
     alice.leave().await;
@@ -92,8 +94,8 @@ async fn two_keys_of_one_nickname_publish_two_cards() {
 async fn a_send_by_a_shared_nickname_reaches_exactly_the_key_that_the_observer_admitted() {
     let mut alice = InProcNode::create_with_nick("mbk-send", SHARED).await;
     let mut beta = InProcNode::join(&alice.mesh, SHARED).await;
-    let observer = InProcNode::join(&alice.mesh, "mbk-sender").await;
-    let _ = await_shared_cards(&observer, 2).await;
+    let mut observer = InProcNode::join(&alice.mesh, "mbk-sender").await;
+    common::warm_up(&observer, &mut [&mut alice, &mut beta]).await;
 
     let deadline = Instant::now() + RECOVERY_TIMEOUT;
     loop {
@@ -194,40 +196,34 @@ fn await_served_card(port: u16, path: &str) -> Value {
     }
 }
 
-/// Wait until the meta document of the host holds `count` complete cards of `SHARED`: a card that is
-/// still arriving has no endpoint yet.
-fn await_host_cards(mesh: &str, host: &Node, count: usize) -> Vec<(String, Value)> {
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    loop {
-        let raw = common::cli_channel_get(Channel::Meta, mesh, &host.nickname);
-        let doc: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-        let cards = shared_cards(&doc["document"]);
-        let has_endpoint = |(_, card): &(String, Value)| card.get("endpoint").is_some();
-        if cards.len() == count && cards.iter().all(has_endpoint) {
-            return cards;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the host never held {count} complete cards of '{SHARED}': {raw}"
-        );
-        std::thread::sleep(POLL);
-    }
+/// The author key of the daemon that runs on `state_file`, from its `ready` output.
+fn ready_pubkey(state_file: &std::path::Path) -> String {
+    let output = common::test_cmd()
+        .args(["ready", "--state-file"])
+        .arg(state_file)
+        .output()
+        .expect("the ready command spawns");
+    assert!(output.status.success(), "ready failed: {output:?}");
+    let ready: Value =
+        serde_json::from_slice(&output.stdout).expect("ready prints one JSON object");
+    ready["pubkey"]
+        .as_str()
+        .expect("ready names the author key of the daemon")
+        .to_owned()
 }
 
-fn endpoint_id(card: &Value) -> Option<&str> {
-    card.pointer("/endpoint/id").and_then(Value::as_str)
+/// The identity that a served card names: the author key in the first interface.
+fn identity_of(card: &Value) -> Option<&str> {
+    card.pointer("/supportedInterfaces/0/url")
+        .and_then(Value::as_str)
 }
 
 /// The peer-card route takes a nickname or the key in hex. A host admits one key for a nickname, the
 /// first that proved it, so the nickname gives the card of that key and stays with it when a second key
-/// claims the same nickname. The key in hex gives the card of each key, the refused one too.
-///
-/// BEFORE: `the_peer_card_route_refuses_a_shared_nickname_and_serves_a_key` started both keys at once and
-/// expected two live keys at the host. That state lasts at most one `ALIVE_TIMEOUT`, and only when both
-/// keys got in before either proof, so the test failed in 3 of 5 runs. The two-live-keys answer is
-/// tested without a roster in `a_nickname_of_two_live_keys_gets_a_404_that_names_the_nickname_and_the_two_members`.
+/// claims the same nickname. The key in hex gives the card of the admitted key. The refused key is no
+/// member of the host, so its hex gets a 404: the daemon builds a card only from its roster.
 #[test]
-fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_each_key_by_its_hex() {
+fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_its_hex() {
     let folder =
         std::env::temp_dir().join(format!("agent-gossip-meta-by-key-{}", std::process::id()));
     std::fs::create_dir_all(&folder).expect("the temp folder is writable");
@@ -250,19 +246,20 @@ fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_each_ke
     assert!(host.wait_ready(&mesh), "the host socket never appeared");
     let port = wait_port(&state_file);
     let route = format!("/peers/{SHARED}/.well-known/agent-card.json");
+    let first_key = ready_pubkey(&state_of("first"));
 
-    // The host holds the complete card of the first key, and serves it by the nickname, before a second
-    // key claims the nickname: the host holds the proof of the first key when the second one comes.
-    let first_cards = await_host_cards(&mesh, &host, 1);
-    let first_endpoint = endpoint_id(&first_cards[0].1).expect("a complete card has an endpoint");
+    // The host serves the card of the first key by the nickname, before a second key claims the
+    // nickname: the host holds the proof of the first key when the second one comes.
     let served_first = await_served_card(port, &route);
     assert_eq!(
-        endpoint_id(&served_first),
-        Some(first_endpoint),
+        identity_of(&served_first),
+        Some(first_key.as_str()),
         "the host serves the first nickname holder with the card of another key"
     );
     let second = join_as_member("second");
-    let slots = await_host_cards(&mesh, &host, 2);
+    let second_key = ready_pubkey(&state_of("second"));
+    assert_ne!(first_key, second_key, "the premise: two daemons, two keys");
+    std::thread::sleep(Duration::from_secs(5));
 
     let (status, body) = get(port, &route);
     assert_eq!(
@@ -272,46 +269,54 @@ fn the_peer_card_route_serves_the_admitted_key_for_a_shared_nickname_and_each_ke
     let served_now: Value =
         serde_json::from_str(&body).expect("the route answers 200 with a JSON card");
     assert_eq!(
-        endpoint_id(&served_now),
-        Some(first_endpoint),
+        identity_of(&served_now),
+        Some(first_key.as_str()),
         "the nickname moved to the key that the gate refused"
     );
 
-    for (slot, doc_card) in &slots {
-        let (key_status, key_body) =
-            get(port, &format!("/peers/{slot}/.well-known/agent-card.json"));
-        assert_eq!(
-            key_status, 200,
-            "the card of a key in hex is not served: {key_body}"
-        );
-        let card: Value = serde_json::from_str(&key_body).expect("a served card is JSON");
-        assert_eq!(
-            card["name"], SHARED,
-            "the served card is not the card of the key"
-        );
-        assert_eq!(
-            endpoint_id(&card),
-            endpoint_id(doc_card),
-            "the card of a key in hex is the card of another key"
-        );
-    }
+    let (key_status, key_body) = get(
+        port,
+        &format!("/peers/{first_key}/.well-known/agent-card.json"),
+    );
+    assert_eq!(
+        key_status, 200,
+        "the card of the admitted key in hex is not served: {key_body}"
+    );
+    let card: Value = serde_json::from_str(&key_body).expect("a served card is JSON");
+    assert_eq!(card["name"], SHARED, "the served card names the nickname");
+    assert_eq!(
+        identity_of(&card),
+        Some(first_key.as_str()),
+        "the card of a key in hex is the card of another key"
+    );
+
+    let (refused_status, refused_body) = get(
+        port,
+        &format!("/peers/{second_key}/.well-known/agent-card.json"),
+    );
+    assert_eq!(
+        refused_status, 404,
+        "the refused key is no member of the host, so it has no card: {refused_body}"
+    );
 
     drop((first, second, host));
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// The graph skills write the slot of a member by its nickname: `{"peers":{"<nick>":{...}}}`.
-/// That slot is no key, but its nickname names a live member, so `absent` must not list it. An
-/// entry in `absent` is dropped by the graph tools, and the graph would vanish.
+/// The graph skills write the entry of a member by its nickname, inside the own slice of the
+/// member: `{"peers":{"<nick>":{...}}}`. The slice is under the key of a live member, so `absent`
+/// must not list it. An entry in `absent` is dropped by the graph tools, and the graph would vanish.
 #[test]
-fn a_graph_slot_named_by_the_nickname_of_a_live_member_is_not_absent() {
+fn a_graph_entry_inside_the_slice_of_a_live_member_is_not_absent() {
     let (host, mesh) = Node::create_named("mbk-graph");
     let member = Node::join(&mesh, "mbk-graph-m");
     common::await_peer_card_cli(&mesh, &host.nickname, &member.nickname);
     common::await_peer_card_cli(&mesh, &member.nickname, &host.nickname);
 
-    let slot = member.nickname.clone();
-    let merge = format!(r#"{{"peers":{{"{slot}":{{"instance":"g"}}}}}}"#);
+    common::cli_meta_report(&mesh, &member.nickname);
+    let slot = common::await_meta_slot_cli(&mesh, &host.nickname, &member.nickname);
+    let nick = member.nickname.clone();
+    let merge = format!(r#"{{"peers":{{"{nick}":{{"instance":"g"}}}}}}"#);
     let mut command = common::test_cmd();
     command
         .args(["meta", "merge", "--gossip", &mesh])
@@ -324,17 +329,17 @@ fn a_graph_slot_named_by_the_nickname_of_a_live_member_is_not_absent() {
     loop {
         let raw = common::cli_channel_get(Channel::Meta, &mesh, &host.nickname);
         let view: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-        if view["document"]["peers"][&slot]["instance"] == "g" {
+        if view["document"][&slot]["peers"][&nick]["instance"] == "g" {
             let absent = view["absent"].as_array().expect("meta get carries absent");
             assert!(
                 !absent.iter().any(|entry| entry == slot.as_str()),
-                "the slot of a live member is listed as absent: {view}"
+                "the slice of a live member is listed as absent: {view}"
             );
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "the host never saw the graph slot: {raw}"
+            "the host never saw the graph entry: {raw}"
         );
         std::thread::sleep(POLL);
     }
