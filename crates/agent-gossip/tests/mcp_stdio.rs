@@ -1696,7 +1696,7 @@ fn poll_doc(
 #[test]
 fn a_refused_state_write_carries_its_reason_and_the_way_out_over_mcp() {
     let (mut creator, _joiner, _mesh, _nick) = create_pair(940);
-    let large = serde_json::json!({ "note": "x".repeat(5_000) });
+    let large = serde_json::json!({ "k": vec![1; 32_768] });
     let response = creator.tool_call(
         950,
         "apply_state_merge",
@@ -1709,17 +1709,18 @@ fn a_refused_state_write_carries_its_reason_and_the_way_out_over_mcp() {
         .as_str()
         .expect("an error has a message string");
     assert!(
-        message.starts_with("the body has ") && message.contains(" bytes, past the cap of "),
+        message.starts_with("the value has ")
+            && message.contains(" structure units, past the cap of "),
         "the exact text: {response}"
     );
     assert_eq!(
-        error["data"]["reason"], "too_large",
+        error["data"]["reason"], "value_too_complex",
         "the stable reason: {response}"
     );
     assert!(
         error["data"]["hint"]
             .as_str()
-            .is_some_and(|hint| hint.contains("null merge")),
+            .is_some_and(|hint| hint.contains("blob")),
         "an agent acts on the hint, so it names the next step: {response}"
     );
 }
