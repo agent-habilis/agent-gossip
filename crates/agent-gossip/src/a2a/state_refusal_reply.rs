@@ -47,6 +47,18 @@ impl StateRefusalReply {
             ),
             SliceError::StaleDraft => ("stale_draft", "write again: another write came first"),
             SliceError::Seal => ("seal", "write again; if it repeats, report a bug"),
+            SliceError::ValueTooLarge { .. } => (
+                "value_too_large",
+                "store the data as a blob and put the ticket in the value, or store less",
+            ),
+            SliceError::ValueTooComplex { .. } => (
+                "value_too_complex",
+                "store the data as a blob and put the ticket in the value, or use fewer keys and array items",
+            ),
+            SliceError::Reserved => (
+                "reserved_key",
+                "rename the key: `$chunks` is reserved for the engine",
+            ),
             _ => ("refused", "write again later"),
         };
         Some(Self {
@@ -116,6 +128,23 @@ mod tests {
             (SliceError::DraftMismatch, "draft_mismatch", "report it"),
             (SliceError::StaleDraft, "stale_draft", "came first"),
             (SliceError::Seal, "seal", "report a bug"),
+            (
+                SliceError::ValueTooLarge {
+                    bytes: 2_000_000,
+                    limit: 1_048_576,
+                },
+                "value_too_large",
+                "blob",
+            ),
+            (
+                SliceError::ValueTooComplex {
+                    units: 40_000,
+                    limit: 32_768,
+                },
+                "value_too_complex",
+                "blob",
+            ),
+            (SliceError::Reserved, "reserved_key", "`$chunks`"),
         ];
         for (refusal, reason, way_out) in cases {
             let text = refusal.to_string();
