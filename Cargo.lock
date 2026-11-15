@@ -1752,7 +1752,7 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1794,7 +1794,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "bs58",
  "chacha20poly1305",
@@ -1808,7 +1808,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1826,7 +1826,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-multihop-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1846,7 +1846,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "iroh",
 ]
@@ -1854,7 +1854,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1881,7 +1881,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -1894,7 +1894,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1919,7 +1919,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=66c472ac38b99e11da0094b4d95637ec928c122c#66c472ac38b99e11da0094b4d95637ec928c122c"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=1518acdfe663c751b786b3c1fa9cbed64c4dcaa2#1518acdfe663c751b786b3c1fa9cbed64c4dcaa2"
 dependencies = [
  "libc",
  "rustix",
