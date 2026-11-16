@@ -29,6 +29,7 @@ const OWNED_SKILL_DIRS: &[&str] = &[
     "gossip-status",
     "gossip-task",
     "gossip-topic",
+    "gossip-topology",
 ];
 
 /// Ties this module's compilation to the embedded artifacts' content
@@ -402,7 +403,7 @@ mod tests {
 
     /// The skills that include the shared events partial, and so its Task
     /// widget section. A skill that stops including it turns this red.
-    const TASK_WIDGET_SKILLS: [&str; 13] = [
+    const TASK_WIDGET_SKILLS: [&str; 14] = [
         "gossip-broadcast",
         "gossip-create",
         "gossip-join",
@@ -416,6 +417,7 @@ mod tests {
         "gossip-status",
         "gossip-task",
         "gossip-topic",
+        "gossip-topology",
     ];
 
     /// A todo subject is the one place a model writes a counterparty by hand,
