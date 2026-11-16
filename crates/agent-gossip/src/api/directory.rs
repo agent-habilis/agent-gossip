@@ -284,13 +284,17 @@ mod lookup_tests {
     /// The directory's gossip id may not move by accident when the habilis-network
     /// pin moves. The values moved once on purpose, with mesh id version 2
     /// (the release is breaking: a peer on version 1 lands in another
-    /// directory). Create, join and topic need no such pin: they never passed
+    /// directory). The public default moved again, on purpose, from
+    /// `0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7` with the
+    /// Nostr preset (habilis-network PR #63, the mesh feature byte): a peer on
+    /// the older release lands in another directory. The mdns-only and the
+    /// non-public ids did not move. Create, join and topic need no such pin: they never passed
     /// `public`, so they resolve as before by construction.
     #[test]
     fn directory_ids_survive_the_lookup_api_change() {
         assert_eq!(
             directory_topic(true, LookupSet::default()),
-            "TopicId(0ac3690b9968f8fd7f2183337984af2629df292a94165f0405135ed001db0dc7)",
+            "TopicId(d5c6c0044a4171e5e947f4c26d9223ade1f3da800afcb92dab7fa2b872ec2387)",
             "the directory topic id is stable across the lookup API"
         );
         let mut mdns_only = LookupSet::default();
