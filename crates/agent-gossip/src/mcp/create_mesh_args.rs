@@ -18,19 +18,24 @@ pub(crate) struct CreateMeshArgs {
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     pub(crate) nickname: Option<String>,
-    /// Networking lookups: any of "mdns", "dht", "relay". Naming any
+    /// Networking lookups: any of "mdns", "dht", "relay", "nostr". Naming any
     /// restricts to those; an empty list makes a loopback-only gossip, or one
-    /// with all three when `advertise` is true (the same model as the CLI
-    /// `--lookup` flag).
+    /// with the public preset (all four) when `advertise` is true (the same
+    /// model as the CLI `--lookup` flag).
     #[serde(default)]
     pub(crate) lookup: Vec<Lookup>,
     /// Ordered relay ladder. Requires "relay" in `lookup`; omit for the
     /// default relay set.
     #[serde(default)]
     pub(crate) relay_urls: Vec<String>,
+    /// Nostr relays (`ws://` or `wss://`), one URL per entry, that replace the
+    /// pinned list. Requires "nostr" in `lookup`; omit for the pinned relays.
+    #[serde(default)]
+    pub(crate) nostr_urls: Vec<String>,
     /// Which paths may carry mesh payload: any of "udp", "webrtc", "multihop",
-    /// "gossip", "relay". The list is literal and needs "udp" or "webrtc";
-    /// "relay" needs "relay" in `lookup`. Omit it for the default, `["udp",
+    /// "gossip", "relay", "nostr". The list is literal and needs "udp" or "webrtc";
+    /// "relay" needs "relay" in `lookup`; "nostr" needs "nostr" in `lookup` and
+    /// `nostr_urls`. Omit it for the default, `["udp",
     /// "webrtc","gossip"]` plus "relay" when "relay" is in `lookup`.
     #[serde(default)]
     pub(crate) transport: Vec<Transport>,

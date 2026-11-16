@@ -15,6 +15,7 @@ use rmcp::model::{
 use rmcp::service::{MaybeSendFuture, RequestContext};
 use rmcp::{RoleServer, ServerHandler, tool, tool_router};
 use tokio::sync::Mutex;
+use url::Url;
 
 use super::session::Session;
 use super::{
@@ -72,8 +73,17 @@ impl AgentGossipServer {
                 })?,
             )
         };
+        let nostr_urls = args
+            .nostr_urls
+            .iter()
+            .map(|raw| {
+                Url::parse(raw).map_err(|error| {
+                    McpError::invalid_params(format!("invalid nostr url `{raw}`: {error}"), None)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let lookups = lookup::lookups_or_public(&args.lookup, args.advertise);
-        let resolved = resolved::resolve(&lookups, relay_urls, &args.transport)
+        let resolved = resolved::resolve(&lookups, relay_urls, nostr_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI
         // (`opts.name.unwrap_or_else(MeshName::random)`).

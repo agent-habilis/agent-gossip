@@ -20,6 +20,7 @@ pub(super) async fn create(options: CreateOpts) -> Result<()> {
     let mesh_parts = super::args::resolved::resolve(
         &lookups,
         options.lookups.relay_url.clone(),
+        options.lookups.nostr_url.clone(),
         &options.transport,
     )?;
     // The verifier is baked in at setup: its salt is the seed, which is

@@ -3,6 +3,7 @@ use habilis_network::protocol::{LookupSet, OptFlag, RelayLadder, RelaySelection}
 use habilis_network::runtime::tuning::directory_private_for_test;
 use rmcp::schemars;
 use serde::Deserialize;
+use url::Url;
 
 /// One networking lookup mechanism a gossip may use to find peers — the
 /// `--lookup` allowlist. Naming any restricts to exactly those; naming none
@@ -27,13 +28,13 @@ pub(crate) enum Lookup {
     Nostr,
 }
 
-/// The `--lookup`/`--relay-url` flags: naming any lookup uses *only* those
+/// The `--lookup`/`--relay-url`/`--nostr-url` flags: naming any lookup uses *only* those
 /// passed; naming none falls back to the command's default (`create`:
 /// loopback; `discover`/`a2a expose`/`a2a discover`: the all-on public
 /// preset).
 #[derive(Parser, Debug)]
 pub(crate) struct LookupArgs {
-    /// Comma-separated networking lookups: mdns, dht, relay. An unknown
+    /// Comma-separated networking lookups: mdns, dht, relay, nostr. An unknown
     /// value is an error.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub lookup: Vec<Lookup>,
@@ -43,13 +44,19 @@ pub(crate) struct LookupArgs {
     /// `relay` in `--lookup`; omit for the default relay set.
     #[arg(long, value_name = "URL[,URL…]")]
     pub relay_url: Option<RelayLadder>,
+
+    /// Comma-separated Nostr relays (`ws://` or `wss://`) that replace the
+    /// pinned list, e.g. `wss://a.example,wss://b.example`. Requires `nostr`
+    /// in `--lookup`; omit for the pinned relays. A URL cannot hold a comma.
+    #[arg(long, value_name = "URL[,URL…]", value_delimiter = ',')]
+    pub nostr_url: Vec<Url>,
 }
 
 impl LookupArgs {
     /// # Errors
     /// `--relay-url` was given without `relay` in `--lookup`.
     pub(crate) fn to_set(&self) -> anyhow::Result<LookupSet> {
-        lookup_set(&self.lookup, self.relay_url.clone())
+        lookup_set(&self.lookup, self.relay_url.clone(), self.nostr_url.clone())
     }
 }
 
@@ -74,10 +81,12 @@ pub(crate) fn lookups_or_public(lookups: &[Lookup], advertise: bool) -> Vec<Look
 /// and the MCP `create_gossip` tool so the two surfaces cannot drift.
 ///
 /// # Errors
-/// `relay_url` is given but `lookups` does not name `relay`.
+/// `relay_url` is given but `lookups` does not name `relay`, or `nostr_urls`
+/// is not a valid custom Nostr list (the engine says why).
 pub(crate) fn lookup_set(
     lookups: &[Lookup],
     relay_url: Option<RelayLadder>,
+    nostr_urls: Vec<Url>,
 ) -> anyhow::Result<LookupSet> {
     let relay = lookups.contains(&Lookup::Relay);
     if relay_url.is_some() && !relay {
@@ -95,7 +104,11 @@ pub(crate) fn lookup_set(
     if lookups.contains(&Lookup::Nostr) {
         set.nostr = OptFlag::Default;
     }
-    Ok(set)
+    if nostr_urls.is_empty() {
+        Ok(set)
+    } else {
+        set.with_nostr_urls(nostr_urls).map_err(anyhow::Error::from)
+    }
 }
 
 #[cfg(test)]
@@ -106,9 +119,63 @@ mod tests {
     use super::{Lookup, lookup_set};
     use crate::cli::args::Cli;
 
+    fn create_args(flags: &[&str]) -> Result<super::LookupArgs, clap::Error> {
+        let mut command_line = vec!["agent-gossip", "create"];
+        command_line.extend_from_slice(flags);
+        Cli::try_parse_from(command_line).map(|cli| {
+            let crate::cli::args::Commands::Create { options } = cli.command else {
+                panic!("expected Create command");
+            };
+            options.lookups
+        })
+    }
+
+    #[test]
+    fn nostr_url_takes_a_comma_list_and_repeats() {
+        let lookups = create_args(&[
+            "--lookup",
+            "nostr",
+            "--nostr-url",
+            "wss://a.example,wss://b.example",
+            "--nostr-url",
+            "wss://c.example",
+        ])
+        .expect("a comma list and a repeat both parse");
+        assert_eq!(
+            lookups.nostr_url.len(),
+            3,
+            "the comma list and the repeat make three URLs"
+        );
+        lookups
+            .to_set()
+            .expect("a custom Nostr list with the nostr lookup is valid");
+    }
+
+    #[test]
+    fn nostr_url_with_a_comma_inside_is_a_parse_error() {
+        let error = create_args(&["--lookup", "nostr", "--nostr-url", "wss://a.example/x,y"])
+            .expect_err("the comma splits the URL, and `y` is not a URL");
+        assert!(
+            error.to_string().contains("--nostr-url"),
+            "the error names the flag: {error}"
+        );
+    }
+
+    #[test]
+    fn nostr_url_without_the_nostr_lookup_is_the_engine_error() {
+        let lookups = create_args(&["--lookup", "mdns", "--nostr-url", "wss://a.example"])
+            .expect("the flags parse");
+        let error = lookups.to_set().expect_err("a Nostr list needs `nostr`");
+        assert!(
+            error.to_string().contains("needs lookup `nostr`"),
+            "the engine says why: {error}"
+        );
+    }
+
     #[test]
     fn lookup_list_resolves_to_only_named() {
-        let set = lookup_set(&[Lookup::Mdns], None).expect("this lookup combination is valid");
+        let set = lookup_set(&[Lookup::Mdns], None, Vec::new())
+            .expect("this lookup combination is valid");
         assert!(
             set.mdns && !set.dht,
             "a bare --lookup mdns sets mdns and not dht"
@@ -132,7 +199,8 @@ mod tests {
 
     #[test]
     fn lookup_relay_default_and_custom_ladder() {
-        let bare = lookup_set(&[Lookup::Relay], None).expect("this lookup combination is valid");
+        let bare = lookup_set(&[Lookup::Relay], None, Vec::new())
+            .expect("this lookup combination is valid");
         assert_eq!(
             bare.relay_lookup,
             RelaySelection::Default,
@@ -142,7 +210,7 @@ mod tests {
         let ladder: RelayLadder = "https://a.example,https://b.example"
             .parse()
             .expect("the test literal parses");
-        let custom = lookup_set(&[Lookup::Relay], Some(ladder.clone()))
+        let custom = lookup_set(&[Lookup::Relay], Some(ladder.clone()), Vec::new())
             .expect("this lookup combination is valid");
         assert_eq!(
             custom.relay_lookup,
@@ -178,7 +246,7 @@ mod tests {
             .parse()
             .expect("the test literal parses");
         assert!(
-            lookup_set(&[Lookup::Mdns], Some(ladder)).is_err(),
+            lookup_set(&[Lookup::Mdns], Some(ladder), Vec::new()).is_err(),
             "mdns cannot combine with a custom relay ladder"
         );
     }
