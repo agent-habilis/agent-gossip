@@ -3,7 +3,7 @@ use anyhow::Result;
 use super::args::TopologyOpts;
 use super::msg_response::MsgResponse;
 use crate::a2a::ipc_command::IpcCommand;
-use crate::topology_draw::{TopologyDoc, render, warnings};
+use crate::topology_doc::{TopologyDoc, render, warnings};
 
 /// Print the multihop routing topology (assembled mesh graph) from the running
 /// daemon: as JSON, or drawn as text with `--draw`.
