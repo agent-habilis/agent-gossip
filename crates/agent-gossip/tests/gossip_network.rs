@@ -824,7 +824,7 @@ fn test_state_file_removed_on_signal() {
         let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
         let mut command = common::test_cmd();
         command
-            .args(["create", "--name", "statefile-test"])
+            .args(["create", "--name", "statefile-test", "--lookup", "loopback"])
             .arg("--state-file")
             .arg(&state_file);
         let mut child: Child = command
@@ -883,7 +883,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "ready-test"])
+        .args(["create", "--name", "ready-test", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut child: Child = command
@@ -956,7 +956,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "collide-first"])
+        .args(["create", "--name", "collide-first", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut first: Child = command
@@ -980,7 +980,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
     // exits, so waiting on it would hang the suite instead of failing it.
     command = common::test_cmd();
     command
-        .args(["create", "--name", "collide-second"])
+        .args(["create", "--name", "collide-second", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut second: Child = command
@@ -1060,7 +1060,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     command = common::test_cmd();
     command
-        .args(["create", "--name", "ready-race"])
+        .args(["create", "--name", "ready-race", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut child: Child = command
@@ -2969,7 +2969,7 @@ fn spawn_discoverable_daemon(name: &str) -> (DiscoverableDaemon, PathBuf, String
             .expect("the log file handle can be cloned for stdout"),
     );
     let mut command = common::test_cmd();
-    command.args(["create", "--name", name]);
+    command.args(["create", "--name", name, "--lookup", "loopback"]);
     let mut daemon = DiscoverableDaemon(
         command
             .stdout(stdout)
@@ -3722,7 +3722,14 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     let stderr = File::create(&stderr_file).expect("the test temp dir is writable");
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", name, "--owner-pid"])
+        .args([
+            "create",
+            "--name",
+            name,
+            "--lookup",
+            "loopback",
+            "--owner-pid",
+        ])
         .arg(owner_pid)
         .arg("--state-file")
         .arg(&state_file);
@@ -3895,7 +3902,14 @@ fn detached_daemon_releases_a_captured_pipe() {
     let owner_pid = owner.0.id().to_string();
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "detach-pipe", "--owner-pid"])
+        .args([
+            "create",
+            "--name",
+            "detach-pipe",
+            "--lookup",
+            "loopback",
+            "--owner-pid",
+        ])
         .arg(owner_pid)
         .arg("--state-file")
         .arg(&state_file);
@@ -3979,7 +3993,8 @@ fn owner_pid_rejects_init_and_dead_owner() {
         // CI sets RUST_BACKTRACE, which makes anyhow append a backtrace to the
         // error; the one-line check is about the output a user sees by default.
         let mut command = common::test_cmd();
-        command.args(["create", "--name", "owner-reject", "--owner-pid", owner]);
+        command.args(["create", "--name", "owner-reject", "--lookup", "loopback"]);
+        command.args(["--owner-pid", owner]);
         command
             .env_remove("RUST_BACKTRACE")
             .env_remove("RUST_LIB_BACKTRACE")
@@ -4014,7 +4029,15 @@ fn owner_pid_launcher_reports_flag_errors() {
     let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
     let bad_invocations: [&[&str]; 2] = [
         &["join", &mesh, "--name", "not-allowed"],
-        &["create", "--name", "flag-error", "--transport", "relay"],
+        &[
+            "create",
+            "--name",
+            "flag-error",
+            "--lookup",
+            "loopback",
+            "--transport",
+            "relay",
+        ],
     ];
     for args in bad_invocations {
         let mut command = common::test_cmd();

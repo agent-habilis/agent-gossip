@@ -413,8 +413,13 @@ fn spawn(
     let log_dir = base.join(format!("logs-{variant}-{index}"));
     let state_file = base.join(format!("{variant}-{index}.state.json"));
     let mut daemon = Command::new(binary);
+    daemon.arg(command);
+    // The default lookup of `create` reaches the public network; a run of
+    // idle nodes stays on this machine unless a variant names its lookups.
+    if command == "create" && !extra.contains(&"--lookup") {
+        daemon.args(["--lookup", "loopback"]);
+    }
     daemon
-        .arg(command)
         .args(extra)
         .args(["--nickname", &format!("idle-{variant}-{index}")]);
     daemon

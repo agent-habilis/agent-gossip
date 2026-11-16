@@ -55,7 +55,7 @@ fn spawn_create_with(name: &str, flags: &[&str]) -> (Daemon, String, String) {
         .expect("the log file handle can be cloned for stdout");
     let mut command = test_cmd();
     command
-        .args(["create", "--name", name])
+        .args(["create", "--name", name, "--lookup", "loopback"])
         .args(flags)
         .stdout(Stdio::from(stdout_handle))
         .stderr(Stdio::from(file));
@@ -90,7 +90,7 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
 
     let mut command = test_cmd();
     command
-        .args(["create", "--name", name])
+        .args(["create", "--name", name, "--lookup", "loopback"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child: Child = command

@@ -42,7 +42,9 @@ impl Node {
     }
 
     /// Like [`create_flags`](Self::create_flags) but also passes extra raw
-    /// `create` CLI args (e.g. `["--lookup", "mdns,dht,relay"]`).
+    /// `create` CLI args (e.g. `["--lookup", "mdns,dht,relay"]`). A create that
+    /// names no `--lookup` stays on loopback, because the default lookup
+    /// reaches the public network.
     ///
     /// # Panics
     ///
@@ -52,6 +54,9 @@ impl Node {
         let log = tmp_log("create");
         let file = File::create(&log).expect("create the daemon log file");
         let mut args = vec!["create", "--name", name];
+        if !extra.contains(&"--lookup") {
+            args.extend(["--lookup", "loopback"]);
+        }
         args.extend_from_slice(extra);
         let mut command = test_cmd();
         command.args(&args);

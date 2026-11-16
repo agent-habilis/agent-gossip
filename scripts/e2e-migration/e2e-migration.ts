@@ -214,7 +214,7 @@ const sameFile = (a: string, b: string): boolean => {
 const steps = async (): Promise<void> => {
   log("1. start the creator (alice) on a private loopback mesh");
   start(
-    ["create", "--nickname", "alice", "--state-file", `${RUN}/alice.state`],
+    ["create", "--lookup", "loopback", "--nickname", "alice", "--state-file", `${RUN}/alice.state`],
     "alice",
   );
   if (!(await waitFor('"event":"ready"', `${RUN}/alice.log`, 60))) {

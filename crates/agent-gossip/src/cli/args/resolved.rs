@@ -163,13 +163,12 @@ mod tests {
     }
 
     #[test]
-    fn create_advertise_without_lookup_is_public_with_relay_transport() {
-        let cli = Cli::try_parse_from(["agent-gossip", "create", "--advertise"])
-            .expect("a bare --advertise parses");
+    fn create_without_lookup_is_public_with_relay_transport() {
+        let cli = Cli::try_parse_from(["agent-gossip", "create"]).expect("a bare create parses");
         let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };
-        let lookups = lookups_or_public(&options.lookups.lookup, options.advertise.is_some());
+        let lookups = lookups_or_public(&options.lookups.lookup);
         let resolved = resolve(&lookups, None, &options.transport).expect("advertise resolves");
         assert_eq!(
             resolved.lookups,
@@ -184,15 +183,39 @@ mod tests {
     }
 
     #[test]
-    fn advertise_keeps_the_lookups_that_are_named() {
+    fn the_lookups_that_are_named_are_kept() {
         assert_eq!(
-            lookups_or_public(&[Lookup::Mdns], true),
+            lookups_or_public(&[Lookup::Mdns]),
             [Lookup::Mdns],
-            "--public keeps the mdns lookup as given"
+            "a named lookup is kept as given"
         );
+        assert_eq!(
+            lookups_or_public(&[Lookup::Loopback]),
+            [Lookup::Loopback],
+            "loopback is a name, so it is kept"
+        );
+    }
+
+    #[test]
+    fn create_with_loopback_has_no_lookup_and_no_relay_transport() {
+        let resolved = resolve(&[Lookup::Loopback], None, &[]).expect("loopback resolves");
+        assert_eq!(
+            resolved.lookups,
+            LookupOpts::loopback(),
+            "loopback names no lookup"
+        );
+        assert_eq!(
+            resolved.transport,
+            policy(true, false, false),
+            "with no relay lookup the relay carries no payload"
+        );
+    }
+
+    #[test]
+    fn loopback_stands_alone() {
         assert!(
-            lookups_or_public(&[], false).is_empty(),
-            "without lookups the public set is empty"
+            resolve(&[Lookup::Loopback, Lookup::Mdns], None, &[]).is_err(),
+            "loopback with another lookup is a contradiction"
         );
     }
 

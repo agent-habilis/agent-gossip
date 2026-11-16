@@ -111,7 +111,7 @@ export async function startMesh(): Promise<Mesh> {
   const daemonALogPath = join(dir, "daemon-a.log");
 
   const daemonA = Bun.spawn(
-    [bin, "create", "--name", "a2a-interop", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateA],
+    [bin, "create", "--name", "a2a-interop", "--lookup", "loopback", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateA],
     { stdout: Bun.file(daemonALogPath), stderr: Bun.file(join(dir, "daemon-a.err.log")) },
   );
   const children = [daemonA];
