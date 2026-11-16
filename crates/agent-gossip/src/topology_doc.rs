@@ -99,7 +99,6 @@ impl TopologyDoc {
     }
 }
 
-/// One roster row of `peers`, with the endpoint id that `endpoint_of` finds.
 fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerView {
     let text = |key: &str| row[key].as_str().map(str::to_owned);
     let flag = |key: &str| row[key].as_bool();
@@ -118,7 +117,6 @@ fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerV
     }
 }
 
-/// One link-state edge, or none when a field is missing.
 fn edge_view(edge: &Value) -> Option<EdgeView> {
     let from = edge["from"].as_str()?.to_owned();
     let to = edge["to"].as_str()?.to_owned();
@@ -126,17 +124,14 @@ fn edge_view(edge: &Value) -> Option<EdgeView> {
     Some(EdgeView { from, to, metric })
 }
 
-/// The items of a JSON array, or none when the value is not an array.
 fn items(value: &Value) -> &[Value] {
     value.as_array().map_or(&[], Vec::as_slice)
 }
 
-/// The first 8 characters of an endpoint id.
 fn short(endpoint: &str) -> String {
     endpoint.chars().take(8).collect()
 }
 
-/// The widest text, in characters.
 fn widest(texts: &[String]) -> usize {
     let widths = texts.iter().map(|text| text.chars().count());
     widths.max().unwrap_or(0)
