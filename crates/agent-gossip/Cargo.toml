@@ -62,6 +62,9 @@ dhat = { version = "0.3", optional = true }
 tokio.workspace = true
 futures-util.workspace = true
 clap = { version = "4", features = ["derive"] }
+# The `--nostr-url` list: `LookupSet::with_nostr_urls` takes `url::Url` and the engine
+# re-exports neither it nor its parser. The same version the engine resolves.
+url = "2"
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-gossip plug` is self-contained.
 include_dir = "0.7"
