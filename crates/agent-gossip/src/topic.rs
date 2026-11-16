@@ -1,6 +1,6 @@
 use anyhow::Result;
 use habilis_network::protocol::{
-    LookupSet, Mesh, MeshConfig, Nickname, RelaySelection, resolve_lookups,
+    LookupSet, Mesh, MeshConfig, Nickname, OptFlag, RelaySelection, resolve_lookups,
 };
 use habilis_network::runtime::{Resolved, SetupKind, TopicParams, derive_topic_mesh_config};
 use habilis_network::util::tuning;
@@ -18,6 +18,7 @@ pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
     if !tuning::topic_mdns_only_for_test() {
         lookups.dht = true;
         lookups.relay_lookup = RelaySelection::Default;
+        lookups.nostr = OptFlag::Default;
     }
     let transport = policy::app_transport_policy(&lookups);
     let config = MeshConfig::new(resolve_lookups(lookups), None, None, transport);

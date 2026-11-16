@@ -1,12 +1,12 @@
 use clap::Parser;
-use habilis_network::protocol::{LookupSet, RelayLadder, RelaySelection};
+use habilis_network::protocol::{LookupSet, OptFlag, RelayLadder, RelaySelection};
 use habilis_network::runtime::tuning::directory_private_for_test;
 use rmcp::schemars;
 use serde::Deserialize;
 
 /// One networking lookup mechanism a gossip may use to find peers — the
 /// `--lookup` allowlist. Naming any restricts to exactly those; naming none
-/// falls back to the command's default (`create`: loopback, or all three with
+/// falls back to the command's default (`create`: loopback, or the public preset with
 /// `--advertise`; `discover`/`a2a expose`/`a2a discover`: the all-on public
 /// preset — see "NETWORKING").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Deserialize, schemars::JsonSchema)]
@@ -22,6 +22,9 @@ pub(crate) enum Lookup {
     /// relay carry payload.
     #[value(name = "relay")]
     Relay,
+    /// Rendezvous and signalling through public Nostr relays.
+    #[value(name = "nostr")]
+    Nostr,
 }
 
 /// The `--lookup`/`--relay-url` flags: naming any lookup uses *only* those
@@ -52,7 +55,7 @@ impl LookupArgs {
 
 /// The lookups a `create` uses. Listing a gossip in a directory
 /// (`--advertise`) only makes sense for a mesh that other machines can reach,
-/// so naming no lookup there takes all three.
+/// so naming no lookup there takes the public preset, Nostr included.
 ///
 /// The hidden `--directory-private` keeps the loopback lookups: the advertiser
 /// reaches the directory over its own lookups, and those are baked into the
@@ -60,7 +63,7 @@ impl LookupArgs {
 /// meet an advertiser that took the public ones.
 pub(crate) fn lookups_or_public(lookups: &[Lookup], advertise: bool) -> Vec<Lookup> {
     if advertise && lookups.is_empty() && !directory_private_for_test() {
-        vec![Lookup::Mdns, Lookup::Dht, Lookup::Relay]
+        vec![Lookup::Mdns, Lookup::Dht, Lookup::Relay, Lookup::Nostr]
     } else {
         lookups.to_vec()
     }
@@ -89,6 +92,9 @@ pub(crate) fn lookup_set(
     set.mdns = lookups.contains(&Lookup::Mdns);
     set.dht = lookups.contains(&Lookup::Dht);
     set.relay_lookup = relay_lookup;
+    if lookups.contains(&Lookup::Nostr) {
+        set.nostr = OptFlag::Default;
+    }
     Ok(set)
 }
 
