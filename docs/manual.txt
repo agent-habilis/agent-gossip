@@ -1081,7 +1081,8 @@ NETWORKING
                        a2a expose, and a2a discover, omitting --lookup uses
                        all three lookups; naming any restricts to those.
                        On create, --lookup loopback makes a loopback-only
-                       gossip (single machine); it stands alone.
+                       gossip (single machine); it stands alone. The other
+                       commands refuse loopback.
        mdns            LAN multicast. Same-LAN reach only.
        dht             Mainline BitTorrent DHT. Public, infrastructure-free.
        relay           Rendezvous through a relay server (the relay-direct

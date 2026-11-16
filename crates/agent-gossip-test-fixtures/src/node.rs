@@ -54,7 +54,7 @@ impl Node {
         let log = tmp_log("create");
         let file = File::create(&log).expect("create the daemon log file");
         let mut args = vec!["create", "--name", name];
-        if !extra.contains(&"--lookup") {
+        if !crate::names_lookup(extra) {
             args.extend(["--lookup", "loopback"]);
         }
         args.extend_from_slice(extra);

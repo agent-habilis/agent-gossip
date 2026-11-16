@@ -416,7 +416,10 @@ fn spawn(
     daemon.arg(command);
     // The default lookup of `create` reaches the public network; a run of
     // idle nodes stays on this machine unless a variant names its lookups.
-    if command == "create" && !extra.contains(&"--lookup") {
+    let names_lookup = extra
+        .iter()
+        .any(|arg| *arg == "--lookup" || arg.starts_with("--lookup="));
+    if command == "create" && !names_lookup {
         daemon.args(["--lookup", "loopback"]);
     }
     daemon

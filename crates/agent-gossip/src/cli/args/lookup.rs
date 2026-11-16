@@ -21,7 +21,8 @@ pub(crate) enum Lookup {
     /// relay carry payload.
     #[value(name = "relay")]
     Relay,
-    /// No lookup: the gossip stays on this machine. It stands alone in the list.
+    /// No lookup: the gossip stays on this machine. `create` only; it stands
+    /// alone in the list.
     #[value(name = "loopback")]
     Loopback,
 }
@@ -44,9 +45,18 @@ pub(crate) struct LookupArgs {
 }
 
 impl LookupArgs {
+    /// The lookups of a command that reaches a directory or a bridge. An empty
+    /// set resolves to the public preset there, so `loopback` would become
+    /// public: it is refused, and `create` is the one command that honors it.
+    ///
     /// # Errors
-    /// `--relay-url` was given without `relay` in `--lookup`.
+    /// `--relay-url` was given without `relay` in `--lookup`, or `--lookup`
+    /// names `loopback`.
     pub(crate) fn to_set(&self) -> anyhow::Result<LookupSet> {
+        anyhow::ensure!(
+            !self.lookup.contains(&Lookup::Loopback),
+            "--lookup loopback is for `create` only: this command takes mdns, dht or relay, or all three when it names none"
+        );
         lookup_set(&self.lookup, self.relay_url.clone())
     }
 }
@@ -146,6 +156,18 @@ mod tests {
             custom.relay_lookup,
             RelaySelection::Named(ladder),
             "a custom relay ladder is kept as given"
+        );
+    }
+
+    #[test]
+    fn directory_commands_reject_loopback() {
+        let args = super::LookupArgs {
+            lookup: vec![Lookup::Loopback],
+            relay_url: None,
+        };
+        assert!(
+            args.to_set().is_err(),
+            "an empty set would resolve to the public preset, so loopback cannot be honored here"
         );
     }
 
