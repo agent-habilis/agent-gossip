@@ -2,11 +2,13 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-/// A cap on direct connections: `used` of `max`.
+/// A cap on direct connections: `used` of `max`, and the QUIC connections of
+/// all kinds against their own cap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cap {
     pub used: u64,
     pub max: u64,
+    pub all: Option<(u64, u64)>,
 }
 
 /// One peer of the roster.
@@ -23,8 +25,6 @@ pub(crate) struct PeerView {
     pub neighbor: Option<bool>,
     pub pinned: Option<bool>,
     pub via: Option<String>,
-    /// Reached through other members because the cap was full.
-    pub capped: Option<bool>,
 }
 
 /// One directed link-state edge, by endpoint id.
@@ -35,8 +35,8 @@ pub(crate) struct EdgeView {
     pub metric: u64,
 }
 
-// `neighbor`, `pinned`, `via`, `capped` and `cap` are `Option`: the engine
-// does not report them yet, and the drawing omits a field it does not have.
+// `neighbor`, `pinned`, `via` and `cap` are `Option`: a daemon of an older
+// build sends none of them, and the drawing omits a field it does not have.
 /// Everything the drawing needs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TopologyDoc {
@@ -66,17 +66,37 @@ impl TopologyDoc {
             .iter()
             .filter_map(edge_view)
             .collect();
-        let cap_json = &topology["topology"]["cap"];
-        let used = cap_json["used"].as_u64();
-        let max = cap_json["max_connections"].as_u64();
         let self_id = topology["topology"]["self_id"].as_str();
-        let cap = used.zip(max).map(|(used, max)| Cap { used, max });
-        Self {
+        let mut doc = Self {
             me: me.to_owned(),
             self_id: self_id.unwrap_or_default().to_owned(),
-            cap,
+            cap: cap_of(&topology["cap"]),
             peers,
             edges,
+        };
+        doc.take_links(items(&topology["links"]));
+        doc
+    }
+
+    /// Copy the flags and the first hop of each link to the peer of the same
+    /// endpoint. The first hop is an endpoint id; the drawing names it.
+    fn take_links(&mut self, links: &[Value]) {
+        for peer in &mut self.peers {
+            let link = links.iter().find(|link| {
+                peer.endpoint.is_some() && link["endpoint"].as_str() == peer.endpoint.as_deref()
+            });
+            let Some(link) = link else { continue };
+            peer.neighbor = link["neighbor"].as_bool();
+            peer.pinned = link["pinned"].as_bool();
+            peer.via = link["via"].as_str().map(str::to_owned);
+        }
+        let names: Vec<Option<String>> = self
+            .peers
+            .iter()
+            .map(|peer| peer.via.as_deref().map(|via| self.name_of(via)))
+            .collect();
+        for (peer, name) in self.peers.iter_mut().zip(names) {
+            peer.via = name;
         }
     }
 
@@ -99,6 +119,15 @@ impl TopologyDoc {
     }
 }
 
+fn cap_of(cap: &Value) -> Option<Cap> {
+    let used = cap["used"].as_u64()?;
+    let max = cap["max_connections"].as_u64()?;
+    let all = cap["quic_connections"]
+        .as_u64()
+        .zip(cap["quic_cap"].as_u64());
+    Some(Cap { used, max, all })
+}
+
 fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerView {
     let text = |key: &str| row[key].as_str().map(str::to_owned);
     let flag = |key: &str| row[key].as_bool();
@@ -112,7 +141,6 @@ fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerV
         neighbor: flag("neighbor"),
         pinned: flag("pinned"),
         via: text("via"),
-        capped: flag("capped"),
         nickname,
     }
 }
@@ -173,10 +201,16 @@ pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
 
 /// Draw the document. The text ends with a newline.
 pub(crate) fn render(doc: &TopologyDoc) -> String {
+    use std::fmt::Write as _;
+
     let mut out: Vec<String> = Vec::new();
     let mut me_lines = vec![format!("{} (you)", doc.me)];
     if let Some(cap) = &doc.cap {
-        me_lines.push(format!("cap {}/{}", cap.used, cap.max));
+        let mut line = format!("cap {}/{}", cap.used, cap.max);
+        if let Some((used, max)) = cap.all {
+            let _ = write!(line, " · all {used}/{max}");
+        }
+        me_lines.push(line);
     }
     out.extend(boxed(&me_lines));
 
@@ -201,13 +235,13 @@ pub(crate) fn render(doc: &TopologyDoc) -> String {
         }
     }
 
-    let capped_peers = peers.iter().filter(|peer| peer.capped == Some(true));
-    let capped: Vec<&str> = capped_peers.map(|peer| peer.nickname.as_str()).collect();
-    if !capped.is_empty() {
+    let pinned_peers = peers.iter().filter(|peer| peer.pinned == Some(true));
+    let pinned: Vec<&str> = pinned_peers.map(|peer| peer.nickname.as_str()).collect();
+    if !pinned.is_empty() {
         out.push(String::new());
         out.push(format!(
             "reached through other peers because of the cap: {}",
-            capped.join(", ")
+            pinned.join(", ")
         ));
     }
 
@@ -385,37 +419,44 @@ links between other peers
         );
     }
 
-    /// The engine fields that are not reported yet stay out of the drawing;
-    /// when they are present they show: the cap, the neighbor flag, and the
-    /// peers reached through others because of the cap.
+    /// The snapshot fields stay out of the drawing when the daemon sends none;
+    /// when they are present they show: the cap, the neighbor and pinned flags,
+    /// the first hop by name, and the peers reached through others.
     #[test]
-    fn shows_the_optional_engine_fields_when_present() {
-        let (mut peers, mut topology) = responses(false);
-        peers["peers"][1]["neighbor"] = json!(true);
-        peers["peers"][1]["pinned"] = json!(true);
-        peers["peers"][0]["neighbor"] = json!(false);
-        peers["peers"][0]["capped"] = json!(true);
-        peers["peers"][0]["via"] = json!("amy");
-        topology["topology"]["cap"] = json!({"used": 8, "max_connections": 8});
+    fn shows_the_snapshot_fields_when_present() {
+        let (peers, mut topology) = responses(false);
+        topology["cap"] = json!({
+            "used": 8, "max_connections": 8, "quic_connections": 11, "quic_cap": 16
+        });
+        topology["links"] = json!([
+            {"endpoint": ONE, "nickname": "amy", "path": "ip", "via": null,
+             "neighbor": true, "pinned": false},
+            {"endpoint": TWO, "nickname": "zed", "path": "multihop", "via": ONE,
+             "neighbor": false, "pinned": true},
+        ]);
         let doc = TopologyDoc::assemble("me", &peers, &topology);
 
         let drawing = render(&doc);
 
         assert!(
-            drawing.contains("cap 8/8"),
-            "the cap shows in the box of this node:\n{drawing}"
+            drawing.contains("cap 8/8 · all 11/16"),
+            "the cap and the total show in the box of this node:\n{drawing}"
         );
         assert!(
-            drawing.contains("neighbor · pinned"),
-            "flags of amy:\n{drawing}"
+            drawing.contains("neighbor") && !drawing.contains("neighbor · pinned"),
+            "amy is a neighbor and not pinned:\n{drawing}"
         );
         assert!(
             drawing.contains("webrtc via amy · multihop"),
-            "the via shows:\n{drawing}"
+            "the first hop shows by name:\n{drawing}"
+        );
+        assert!(
+            drawing.contains("unicast · pinned"),
+            "zed is pinned:\n{drawing}"
         );
         assert!(
             drawing.contains("reached through other peers because of the cap: zed"),
-            "the capped footer:\n{drawing}"
+            "the pinned footer:\n{drawing}"
         );
         assert_eq!(
             warnings(&doc),

@@ -725,16 +725,27 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// Serialize this daemon's multihop routing topology (its assembled mesh graph)
-/// for the `topology` IPC query: `{"ok":true,"topology":{self_id, edges:[…]},
-/// "endpoints":[{nickname, endpoint}]}`. `topology` is empty when the multihop
-/// transport is off (no routing table). `endpoints` maps the endpoint ids of
-/// the edges to roster nicknames.
+/// Serialize the topology of this daemon for the `topology` IPC query:
+/// `{"ok":true,"topology":{self_id, edges:[…]},"cap":{…},"links":[…],
+/// "endpoints":[{nickname, endpoint}]}`. `topology` is the multihop link-state
+/// graph, empty when the multihop transport is off. `cap` and `links` come from
+/// the engine snapshot: the direct units against the cap, and per peer the path,
+/// the first hop, the neighbor flag and the pinned flag. `endpoints` maps the
+/// endpoint ids of the edges to roster nicknames.
 fn topology_response(state: &EventLoopState) -> String {
-    let topology = state.multihop().map_or_else(
+    let snapshot = state.topology_snapshot();
+    let graph = snapshot.graph.as_ref().map_or_else(
         || serde_json::json!({"self_id": "", "edges": []}),
-        |handle| serde_json::to_value(handle.topology_view()).unwrap_or(serde_json::Value::Null),
+        |graph| serde_json::to_value(graph).unwrap_or(serde_json::Value::Null),
     );
+    let cap = serde_json::json!({
+        "used": snapshot.direct_units,
+        "max_connections": snapshot.max_connections,
+        "over_ceiling": snapshot.over_ceiling,
+        "quic_connections": snapshot.quic_connections,
+        "quic_cap": snapshot.quic_cap,
+    });
+    let links = serde_json::to_value(&snapshot.peers).unwrap_or(serde_json::Value::Null);
     let endpoints: Vec<serde_json::Value> = state
         .roster_snapshot()
         .peers
@@ -744,7 +755,14 @@ fn topology_response(state: &EventLoopState) -> String {
             Some(serde_json::json!({"nickname": entry.nickname, "endpoint": endpoint.to_string()}))
         })
         .collect();
-    serde_json::json!({"ok": true, "topology": topology, "endpoints": endpoints}).to_string()
+    serde_json::json!({
+        "ok": true,
+        "topology": graph,
+        "cap": cap,
+        "links": links,
+        "endpoints": endpoints,
+    })
+    .to_string()
 }
 
 /// The `agent-gossip state get` response: the derived document.

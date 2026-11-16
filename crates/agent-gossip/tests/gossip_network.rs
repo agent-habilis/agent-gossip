@@ -1711,10 +1711,9 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     );
 }
 
-/// The `self_id` that the running daemon's `topology` reports. The daemon
-/// reads it from its multihop handle, so it is empty when the session has none.
+/// The reply of the `topology` query of the running daemon, as JSON.
 /// `node` names the daemon that is asked, for the failure text.
-fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
+fn topology_reply(mesh: &str, nickname: &str, node: &str) -> serde_json::Value {
     let out: std::process::Output = common::test_cmd()
         .args(["topology", "--gossip", mesh, "--nickname", nickname])
         .output()
@@ -1726,17 +1725,64 @@ fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
-    let reply: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|error| {
+    serde_json::from_str(&stdout).unwrap_or_else(|error| {
         panic!(
             "topology of the {node} ({nickname}) printed no JSON object: {error}\nstdout: {stdout}"
         )
-    });
+    })
+}
+
+/// The `self_id` that the running daemon's `topology` reports. The daemon
+/// reads it from its multihop handle, so it is empty when the session has none.
+fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
+    let reply = topology_reply(mesh, nickname, node);
     reply["topology"]["self_id"]
         .as_str()
         .unwrap_or_else(|| {
-            panic!("topology of the {node} ({nickname}) has no self_id\nstdout: {stdout}")
+            panic!("topology of the {node} ({nickname}) has no self_id\nstdout: {reply}")
         })
         .to_owned()
+}
+
+/// `--max-connections` reaches the engine, and the `topology` reply reports the
+/// cap, its use, and a link to the joined peer.
+#[test]
+fn test_topology_reports_the_cap_and_the_links() {
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create_args("topology-cap", &["--max-connections", "5"], &[]);
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    let joiner = Node::join(&mesh, "cap-joiner");
+    assert!(
+        joiner.wait_ready(&mesh),
+        "joiner socket never appeared\nlog tail:\n{}",
+        joiner.log_tail(15),
+    );
+    let mut reply = topology_reply(&mesh, &creator.nickname, "creator");
+    for _ in 0..40 {
+        if reply["links"]
+            .as_array()
+            .is_some_and(|links| !links.is_empty())
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        reply = topology_reply(&mesh, &creator.nickname, "creator");
+    }
+    assert_eq!(
+        reply["cap"]["max_connections"], 5,
+        "the flag reaches the engine\n{reply}"
+    );
+    assert_eq!(
+        reply["cap"]["quic_cap"], 10,
+        "the total cap is twice the flag\n{reply}"
+    );
+    let links = reply["links"].as_array().expect("links is an array");
+    assert!(
+        links
+            .iter()
+            .any(|link| link["nickname"] == joiner.nickname.as_str()),
+        "the creator holds a link to the joiner\n{reply}"
+    );
 }
 
 /// Create a mesh with `create_args`, join it, and assert which sessions hold a
