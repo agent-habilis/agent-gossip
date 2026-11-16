@@ -88,6 +88,13 @@ impl TopologyDoc {
             peer.neighbor = link["neighbor"].as_bool();
             peer.pinned = link["pinned"].as_bool();
             peer.via = link["via"].as_str().map(str::to_owned);
+            // A pinned peer uses multihop paths only, and the roster reply can
+            // still read the path of an earlier direct connection.
+            if peer.pinned == Some(true)
+                && let Some(path) = link["path"].as_str()
+            {
+                path.clone_into(&mut peer.path);
+            }
         }
         let named: Vec<Option<String>> =
             self.peers.iter().map(|peer| self.hop_name(peer)).collect();
@@ -270,7 +277,8 @@ fn edge_label(peer: &PeerView) -> String {
     if let Some(via) = &peer.via {
         let _ = write!(label, " via {via}");
     }
-    if let Some(lane) = peer.lane.as_deref().filter(|lane| *lane != "unicast") {
+    let lane = peer.lane.as_deref();
+    if let Some(lane) = lane.filter(|lane| *lane != "unicast" && *lane != peer.path) {
         let _ = write!(label, " · {lane}");
     }
     label
@@ -454,8 +462,8 @@ links between other peers
             "amy is a neighbor and not pinned:\n{drawing}"
         );
         assert!(
-            drawing.contains("webrtc via amy · multihop"),
-            "the first hop shows by name:\n{drawing}"
+            drawing.contains("multihop via amy") && !drawing.contains("webrtc via amy"),
+            "a pinned peer takes the multihop path of the snapshot, with the first hop by name:\n{drawing}"
         );
         assert!(
             drawing.contains("unicast · pinned"),
