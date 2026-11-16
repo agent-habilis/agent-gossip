@@ -1390,7 +1390,7 @@ dependencies = [
 [[package]]
 name = "habilis-network"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1430,7 +1430,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-doc"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "bs58",
  "chacha20poly1305",
@@ -1444,7 +1444,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-gossip-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "bytes",
  "habilis-network-iroh-transport-util",
@@ -1462,7 +1462,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-nostr-address-lookup"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1489,7 +1489,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-transport-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "iroh",
 ]
@@ -1497,7 +1497,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-iroh-webrtc-transport"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1524,7 +1524,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-logging"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "anyhow",
  "habilis-network-protocol",
@@ -1536,7 +1536,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-protocol"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1563,7 +1563,7 @@ dependencies = [
 [[package]]
 name = "habilis-network-util"
 version = "0.6.0"
-source = "git+https://github.com/agent-habilis/habilis-network?rev=0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4#0498a6f82602d8c2f6b35aa0108b7d5aef2bc3a4"
+source = "git+https://github.com/agent-habilis/habilis-network?rev=31402fe1f3a5915b9e10d7d4e06ca284b978bb71#31402fe1f3a5915b9e10d7d4e06ca284b978bb71"
 dependencies = [
  "tokio",
  "tracing",
