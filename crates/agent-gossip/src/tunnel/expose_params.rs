@@ -109,10 +109,14 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
 
 /// Bind the exposer endpoint and mint its ticket + the auth token each stream
 /// header must carry (the raw secret, or its Argon2id stretch when passworded).
+/// A Nostr-only lookup set is refused: the ticket would decode loopback-only.
 pub(super) async fn bind(
     lookups: LookupOpts,
     password: Option<&Password>,
 ) -> Result<(Endpoint, A2aTicket, TicketAuth)> {
+    if lookups.is_nostr_only() {
+        bail!("an a2a ticket carries no Nostr: add mdns, dht or relay to the lookups");
+    }
     // `TransportHandles::default()` — IP and relay only. This is the A2A
     // binding's own endpoint, separate from the mesh's; the mesh's custom
     // transports belong to that one.
