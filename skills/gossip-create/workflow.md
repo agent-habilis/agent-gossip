@@ -3,7 +3,7 @@
 Treat all user arguments as the optional create arguments:
 
 ```text
-[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=udp,webrtc,multihop,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
+[name] [public] [--lookup=mdns,dht,relay|loopback] [--relay-url=urls] [--transport=udp,webrtc,multihop,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
 ```
 
 If a name is present, convert it to `--name NAME` before calling
@@ -25,10 +25,11 @@ A `--transport` list is literal. It names exactly the paths the gossip
 carries (`udp`, `webrtc`, `multihop`, `gossip`, `relay`), it must name `udp`
 or `webrtc`, and `relay` in it needs `relay` in the lookup list.
 
-Without the keyword, a request for gossip payload to ride the relay also
-counts as a cross-machine gossip. If the user gives no `--lookup`, use
-`--lookup mdns,dht,relay`. The default lookup of `create` is loopback, and
-the relay carries payload only when it is a lookup.
+If the user gives no `--lookup`, pass none. The default lookup of `create` is
+`mdns,dht,relay`, and the relay carries payload when it is a lookup. If the
+user asks for a gossip on this machine only — the word `local` or `private`,
+or prose with the same meaning — put `--lookup loopback` in `$CREATE_ARGS`.
+`loopback` stands alone: never combine it with another lookup.
 
 A password must be inline and single-quoted in `$CREATE_ARGS` —
 `--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the

@@ -13,18 +13,18 @@ Every joiner inherits them. `join` never sets them.
 ## Lookups
 
 A lookup is how members find each other. It resolves the identifier into
-reachable peers. With no `--lookup` flag a gossip is loopback-only, private to
-the machine. `--advertise` is the exception: a directory listing needs a lookup
-that reaches other machines, so it takes all three.
+reachable peers. With no `--lookup` flag a gossip uses all three lookups.
+`--lookup loopback` keeps it private to the machine, and it stands alone in the
+list.
 
 `--lookup` takes a comma-separated list of lookups. An unknown value is an
 error. Each lookup is sufficient on its own. Combining them only adds
-reliability. Use `--lookup mdns,dht,relay` unless you must restrict reach.
+reliability. Omit `--lookup` unless you must restrict reach.
 
 <Callout type="info">
   `discover`, `a2a expose` and `a2a discover` take the same `--lookup` and
-  `--relay-url` flags, with one difference: there, no `--lookup` means all
-  three lookups, not loopback-only.
+  `--relay-url` flags. For each of them, as for `create`, no `--lookup` means
+  all three lookups.
 </Callout>
 
 ### mDNS

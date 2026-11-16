@@ -288,7 +288,8 @@ the password.
 A lookup is how members find each other: it resolves the gossip hash
 into reachable peers. Lookups are chosen at `/gossip-create` and carried in
 the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
-`--lookup` flag a gossip is loopback-only, private to the machine.
+`--lookup` flag a gossip uses all three lookups. `--lookup loopback` keeps it
+private to the machine.
 
 `--lookup` takes a comma-separated list, and naming any lookup uses only those.
 Each lookup is sufficient on its own, and combining them only adds reliability.

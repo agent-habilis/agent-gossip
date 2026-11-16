@@ -182,10 +182,10 @@ COMMANDS
 
               --lookup LOOKUPS
                      Comma-separated list of networking lookups: mdns, dht,
-                     relay (see "NETWORKING"). An unknown value is an error.
-                     Omit for a loopback-only gossip that works on the local
-                     machine only. Name mdns,dht,relay for a cross-machine
-                     gossip. Baked into the id.
+                     relay (see "NETWORKING"), or loopback alone. An unknown
+                     value is an error. Omit for all three lookups, a
+                     cross-machine gossip. Name loopback for a gossip that
+                     works on the local machine only. Baked into the id.
 
               --relay-url URLS
                      Ordered, comma-separated relay ladder, e.g.
@@ -1072,12 +1072,11 @@ NETWORKING
 
        --lookup LOOKUPS
                        Comma-separated list of lookups: mdns, dht, relay. An
-                       unknown value is an error. On create, omitting
-                       --lookup makes a loopback-only gossip (single
-                       machine); name mdns,dht,relay for a cross-machine
-                       gossip. On discover, a2a expose, and a2a discover,
-                       omitting --lookup uses all three lookups; naming any
-                       restricts to those.
+                       unknown value is an error. On create, discover,
+                       a2a expose, and a2a discover, omitting --lookup uses
+                       all three lookups; naming any restricts to those.
+                       On create, --lookup loopback makes a loopback-only
+                       gossip (single machine); it stands alone.
        mdns            LAN multicast. Same-LAN reach only.
        dht             Mainline BitTorrent DHT. Public, infrastructure-free.
        relay           Rendezvous through a relay server (the relay-direct
@@ -1098,9 +1097,8 @@ NETWORKING
        discover, the flags must match whatever the advertiser used.
 
        discover, a2a expose, and a2a discover take the same --lookup and
-       --relay-url flags, with one difference: there the all-on preset is
-       already the no-flag default, so an empty --lookup means all three
-       lookups instead of loopback-only.
+       --relay-url flags, and the all-on preset is the no-flag default for
+       each of them, create included.
 
 TRANSPORT
        A lookup says how members find each other. The transport policy says
@@ -1555,8 +1553,8 @@ MCP SERVER
               relay_urls (array of URL strings; requires "relay" in lookup),
               and transport (array of "udp" | "webrtc" | "multihop" | "gossip" |
               "relay"; a literal list, omitted for the default). An empty
-              lookup makes a loopback-only gossip, or one with all three
-              lookups when advertise is true. An unknown param is
+              lookup makes a gossip with all three lookups; name "loopback" alone for
+              a loopback-only gossip. An unknown param is
               rejected. The name, lookup and transport choices are baked into the
               identifier. Returns the gossip id, name, your nickname, and your
               pubkey (your author key in hex, the slot of your meta entry).

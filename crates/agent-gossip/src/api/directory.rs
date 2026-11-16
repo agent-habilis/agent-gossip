@@ -116,9 +116,9 @@ impl Directory {
     /// discoverer only sees advertisers that reached the directory over the
     /// **same** lookups; bare `LookupSet::default()` resolves to the all-on
     /// preset (mDNS + DHT + relay), the CLI `discover` default. An advertiser
-    /// has no such default — `create` without `--lookup` is loopback and
-    /// cannot advertise — so it meets this session only by naming
-    /// `--lookup mdns,dht,relay`. A disabled leg issues no network requests
+    /// takes the same all-on default when `create` names no `--lookup`, so it
+    /// meets this session; an advertiser on `--lookup loopback` cannot
+    /// advertise. A disabled leg issues no network requests
     /// for the directory. Returns once
     /// the directory session is ready; listings then accumulate in the
     /// background.

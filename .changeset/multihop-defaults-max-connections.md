@@ -2,11 +2,12 @@
 default: major
 ---
 
-# Multihop on by default, `--max-connections` replaces `--max-peers`; the mesh id of a default gossip changes
+# Relay and multihop on by default, `--max-connections` replaces `--max-peers`; the mesh id of a default gossip changes
 
-The default transport of a gossip is now `udp,webrtc,multihop`, plus `relay` when `relay` is in `--lookup`. Before, it was `udp,webrtc,gossip`. The `gossip` transport is off by default. The transport is part of the gossip hash, so a gossip made with the default policy gets a new hash, and a topic gossip derives a new id. A peer of an older release and a peer of this release do not meet in the same default gossip or topic. All peers must update together. A gossip that names `--transport` keeps its hash.
+The default lookup of `create` is now `mdns,dht,relay`, and the default transport is `udp,webrtc,multihop`, plus `relay` when `relay` is in `--lookup`. Before, a `create` with no `--lookup` was loopback-only, and the transport was `udp,webrtc,gossip`. The `gossip` transport is off by default. The transport is part of the gossip hash, so a gossip made with the default policy gets a new hash, and a topic gossip derives a new id. A peer of an older release and a peer of this release do not meet in the same default gossip or topic. All peers must update together. A gossip that names `--transport` keeps its hash.
 
 For a user:
+- A `create` with no `--lookup` (CLI and MCP `create_gossip`) now reaches other machines. The new value `--lookup loopback` keeps a gossip on this machine. It stands alone in the list. The Rust API keeps its loopback default in `CreateConfig`: a caller names the lookups it wants.
 - The flag `--max-peers` is now `--max-connections`. It caps the direct connections of a node, gossip neighbors included. The default is 32. Before, the active view held 32 and the connection ceiling held 64.
 - A send to a peer beyond the cap goes through a connected peer (multihop). It opens no new direct connection. Connections pinned to multihop and extra connections fit up to twice the cap in all.
 - The browser client turns multihop on, turns gossip off, and holds 8 connections. A browser tab and a native node of the same default gossip compute the same hash.
