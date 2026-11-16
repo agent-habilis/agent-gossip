@@ -3,7 +3,7 @@
 Treat all user arguments as the optional create arguments:
 
 ```text
-[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=udp,webrtc,gossip,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
+[name] [public] [--lookup=mdns,dht,relay,nostr] [--relay-url=urls] [--nostr-url=urls] [--transport=udp,webrtc,gossip,relay,nostr] [--advertise[=dir]] [--password[=pw]] [--invite-only]
 ```
 
 If a name is present, convert it to `--name NAME` before calling
@@ -15,15 +15,18 @@ contains a positional name.
 
 If the user asks for a public or cross-machine gossip — the word `public`,
 `--public`, or prose with the same meaning — put every lookup in
-`$CREATE_ARGS`: `--lookup mdns,dht,relay`. Do not add `--transport`: the
+`$CREATE_ARGS`: `--lookup mdns,dht,relay,nostr`. Do not add `--transport`: the
 relay carries payload by default when `relay` is in the lookup list. The
 `--public` flag does not exist on the CLI: never pass it. A bare `public` in
 the arguments is this keyword, not the gossip name. If the user also gives
 `--lookup`, the explicit value wins over the keyword.
 
 A `--transport` list is literal. It names exactly the paths the gossip
-carries (`udp`, `webrtc`, `multihop`, `gossip`, `relay`), it must name `udp`
-or `webrtc`, and `relay` in it needs `relay` in the lookup list.
+carries (`udp`, `webrtc`, `multihop`, `gossip`, `relay`, `nostr`), it must
+name `udp` or `webrtc`, and `relay` in it needs `relay` in the lookup list.
+`nostr` in it needs `nostr` in the lookup list and a `--nostr-url` list.
+`--nostr-url` takes comma-separated `ws://` or `wss://` URLs and needs `nostr`
+in the lookup list. A URL cannot contain a comma.
 
 Without the keyword, a request for gossip payload to ride the relay also
 counts as a cross-machine gossip. If the user gives no `--lookup`, use
