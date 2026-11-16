@@ -341,9 +341,13 @@ With no `--transport` flag, a gossip carries `udp,webrtc,multihop`, and adds
 `gossip` transport is off by default.
 
 `--max-connections N` (default 32) caps the direct connections of a node,
-gossip neighbors included. A send to a peer beyond the cap goes through a
-connected peer (multihop) and opens no new direct connection. Pinned and extra
-connections fit up to `2N` in all. A browser tab holds 8.
+gossip neighbors included. When the transport policy names `multihop` and a
+route exists, a send to a peer beyond the cap goes through a connected peer and
+opens no new direct connection. Without multihop (for example
+`--transport udp,webrtc`) or without a route, the send dials directly. It
+evicts an idle peer that is not a gossip neighbor. If no peer can go, the new
+connection is an extra. Pinned connections and extras fit up to `2N` in all,
+and an extra closes after 60 s with no use. A browser tab holds 8.
 
 
 <br>
@@ -370,7 +374,8 @@ Needs `udp` or `webrtc` in the list. Off by default.
 ### Multihop
 
 A peer with no direct path, or past `--max-connections`, is reached through
-other members. Needs `udp` or `webrtc` in the list. On by default.
+other members when a route exists. Needs `udp` or `webrtc` in the list. On by
+default. A list without `multihop` turns it off.
 
 <br>
 
