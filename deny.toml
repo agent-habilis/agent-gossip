@@ -1,0 +1,12 @@
+# cargo-deny: only the RustSec advisories gate. CI checks each lockfile of the repo with it.
+[advisories]
+ignore = [
+    # Unmaintained, with no fixed version and no known vulnerability. Path: netlink-packet-core
+    # 0.8.1, through netdev 0.45 and the netwatch fork of net-tools. habilis-network keeps the
+    # same ignore in its own deny.toml.
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, no fixed version, no known vulnerability; via netlink-packet-core 0.8.1 (netdev 0.45, netwatch fork)" },
+    # The bug is in the Streamable HTTP client transports only. crates/agent-gossip/Cargo.toml
+    # enables rmcp with the features server, transport-io, macros and schemars, so the code with
+    # the bug is not compiled. Remove this ignore when moving to rmcp >= 3.9.
+    { id = "RUSTSEC-2026-0462", reason = "rmcp: the vulnerable transport-streamable-http-client-* transports are not compiled (features server, transport-io, macros, schemars only); remove when moving to rmcp >= 3.9" },
+]
