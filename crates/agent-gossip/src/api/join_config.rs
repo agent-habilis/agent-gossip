@@ -1,5 +1,5 @@
 use habilis_network::protocol::{JoinTarget, LookupSet, MeshName, Nickname, TransportPolicy};
-use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use habilis_network::util::tuning::MAX_CONNECTIONS;
 
 use crate::policy;
 
@@ -15,7 +15,7 @@ pub struct JoinConfig {
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
-    pub max_peers: usize,
+    pub max_connections: usize,
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
     pub password: Option<String>,
@@ -23,7 +23,7 @@ pub struct JoinConfig {
 
 impl JoinConfig {
     /// A config for `target` with a random nickname and the default
-    /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_peers`]
+    /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_connections`]
     /// afterwards to override. Build the [`JoinTarget`] by parsing a
     /// string (`"<hash>".parse()?`).
     #[must_use]
@@ -31,7 +31,7 @@ impl JoinConfig {
         Self {
             target,
             nickname: None,
-            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            max_connections: MAX_CONNECTIONS,
             password: None,
         }
     }
@@ -43,10 +43,10 @@ impl JoinConfig {
         self
     }
 
-    /// Cap the direct peer connections at `max_peers`.
+    /// Cap the direct peer connections at `max_connections`.
     #[must_use]
-    pub fn with_max_peers(mut self, max_peers: usize) -> Self {
-        self.max_peers = max_peers;
+    pub fn with_max_connections(mut self, max_connections: usize) -> Self {
+        self.max_connections = max_connections;
         self
     }
 
@@ -73,7 +73,7 @@ pub struct TopicConfig {
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
-    pub max_peers: usize,
+    pub max_connections: usize,
 }
 
 impl TopicConfig {
@@ -83,7 +83,7 @@ impl TopicConfig {
         Self {
             string,
             nickname: None,
-            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            max_connections: MAX_CONNECTIONS,
         }
     }
 
@@ -94,10 +94,10 @@ impl TopicConfig {
         self
     }
 
-    /// Cap the direct peer connections at `max_peers`.
+    /// Cap the direct peer connections at `max_connections`.
     #[must_use]
-    pub fn with_max_peers(mut self, max_peers: usize) -> Self {
-        self.max_peers = max_peers;
+    pub fn with_max_connections(mut self, max_connections: usize) -> Self {
+        self.max_connections = max_connections;
         self
     }
 }
@@ -134,7 +134,7 @@ pub struct CreateConfig {
     /// `None` ⇒ the well-known `global` directory.
     pub directory: Option<MeshName>,
     /// Max direct peer connections before gossip relays the rest.
-    pub max_peers: usize,
+    pub max_connections: usize,
     /// Protect the mesh with a password: its verifier is baked into the
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
@@ -154,7 +154,7 @@ impl CreateConfig {
             transport: policy::app_policy(false),
             advertise: false,
             directory: None,
-            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            max_connections: MAX_CONNECTIONS,
             password: None,
         }
     }
@@ -166,10 +166,10 @@ impl CreateConfig {
         self
     }
 
-    /// Cap the direct peer connections at `max_peers`.
+    /// Cap the direct peer connections at `max_connections`.
     #[must_use]
-    pub fn with_max_peers(mut self, max_peers: usize) -> Self {
-        self.max_peers = max_peers;
+    pub fn with_max_connections(mut self, max_connections: usize) -> Self {
+        self.max_connections = max_connections;
         self
     }
 

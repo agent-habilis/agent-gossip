@@ -45,9 +45,7 @@ impl GossipPeer {
             LookupOpts::public_preset(),
             None,
             None,
-            TransportPolicy::default()
-                .multihop(false)
-                .relay_transport(true),
+            TransportPolicy::default().relay_transport(true),
         );
         let resolved = CreateParams::new(
             MeshName::random(),

@@ -70,14 +70,15 @@ mod tests {
         );
     }
 
-    fn policy(multihop: bool, relay_transport: bool) -> TransportPolicy {
+    fn policy(multihop: bool, gossip: bool, relay_transport: bool) -> TransportPolicy {
         TransportPolicy::default()
             .multihop(multihop)
+            .gossip(gossip)
             .relay_transport(relay_transport)
     }
 
     #[test]
-    fn create_without_flags_is_loopback_with_udp_webrtc_gossip() {
+    fn create_without_flags_is_loopback_with_udp_webrtc_multihop() {
         let resolved = resolve(&[], None, &[]).expect("no flags resolves");
         assert_eq!(
             resolved.lookups,
@@ -86,7 +87,7 @@ mod tests {
         );
         assert_eq!(
             resolved.transport,
-            policy(false, false),
+            policy(true, false, false),
             "the default transport is the plain policy"
         );
     }
@@ -96,7 +97,7 @@ mod tests {
         let resolved = resolve(&[Lookup::Relay], None, &[]).expect("relay lookup resolves");
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(true, false, true),
             "the webrtc policy is enabled"
         );
     }
@@ -107,7 +108,7 @@ mod tests {
             .expect("the public mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(true, false, true),
             "the webrtc policy stays enabled"
         );
     }
@@ -118,7 +119,7 @@ mod tests {
             .expect("the lan mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
-            policy(false, false),
+            policy(true, false, false),
             "the udp-only policy is kept"
         );
     }
@@ -140,7 +141,7 @@ mod tests {
             .expect("an explicit list resolves");
         assert_eq!(
             resolved.transport,
-            policy(false, false),
+            policy(false, true, false),
             "the plain policy is kept with no transport flag"
         );
     }
@@ -156,7 +157,7 @@ mod tests {
         .expect("an explicit list with relay resolves");
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(false, true, true),
             "the webrtc policy is kept when given"
         );
     }
@@ -177,7 +178,7 @@ mod tests {
         );
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(true, false, true),
             "the public preset keeps the webrtc policy"
         );
     }
@@ -201,7 +202,9 @@ mod tests {
             .expect("multihop with direct paths resolves");
         assert_eq!(
             resolved.transport,
-            TransportPolicy::default().gossip(false),
+            TransportPolicy::default()
+                .gossip(false)
+                .relay_transport(false),
             "multihop with direct paths gives the multihop policy"
         );
     }

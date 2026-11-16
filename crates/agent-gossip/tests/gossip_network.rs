@@ -1767,22 +1767,18 @@ fn assert_joiner_multihop(name: &str, create_args: &[&str], expect_multihop: boo
     );
 }
 
-/// A mesh id made with `udp,webrtc,multihop` gives its joiner a multihop
-/// handle, although the app default has none.
+/// A mesh id made with `udp,webrtc` names no multihop, so its joiner gets no
+/// multihop handle although the app default has one.
 #[test]
-fn test_joiner_takes_multihop_from_the_mesh_id() {
-    assert_joiner_multihop(
-        "join-policy-mh",
-        &["--transport", "udp,webrtc,multihop"],
-        true,
-    );
+fn test_joiner_takes_no_multihop_from_a_mesh_id_that_names_none() {
+    assert_joiner_multihop("join-policy-nomh", &["--transport", "udp,webrtc"], false);
 }
 
-/// A mesh id made with the app default (`udp,webrtc,gossip`) gives its joiner
-/// no multihop handle.
+/// A mesh id made with the app default (`udp,webrtc,multihop`) gives its joiner
+/// a multihop handle.
 #[test]
-fn test_joiner_takes_no_multihop_from_the_app_default_id() {
-    assert_joiner_multihop("join-policy-default", &[], false);
+fn test_joiner_takes_multihop_from_the_app_default_id() {
+    assert_joiner_multihop("join-policy-default", &[], true);
 }
 
 /// The headline resilience guarantee: a mesh survives its creator's death
@@ -2817,7 +2813,7 @@ fn test_lone_creator_never_trips_starvation() {
 }
 
 /// The 2026-05-31 roster-collapse, mechanized: a 5-node mesh at
-/// `--max-peers 2` (the partial-mesh churn regime) put through
+/// `--max-connections 2` (the partial-mesh churn regime) put through
 /// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
 /// loss. Post-fix (link truth + starvation watchdog), every node must
@@ -2829,7 +2825,7 @@ fn test_flap_storm_all_rosters_recover() {
         ("--sweep-interval-secs", "1"),
         ("--heal-interval-secs", "3"),
         ("--starvation-threshold-secs", "6"),
-        ("--max-peers", "2"),
+        ("--max-connections", "2"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();

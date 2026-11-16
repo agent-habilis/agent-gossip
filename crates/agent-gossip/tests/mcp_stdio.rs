@@ -809,13 +809,11 @@ fn created_mesh(
 }
 
 fn app_policy(relay_transport: bool) -> habilis_network::protocol::TransportPolicy {
-    habilis_network::protocol::TransportPolicy::default()
-        .multihop(false)
-        .relay_transport(relay_transport)
+    habilis_network::protocol::TransportPolicy::default().relay_transport(relay_transport)
 }
 
 #[test]
-fn create_mesh_default_transport_is_udp_webrtc_gossip() {
+fn create_mesh_default_transport_is_udp_webrtc_multihop() {
     let mut client = McpClient::spawn();
     let mesh = created_mesh(
         &mut client,
@@ -863,7 +861,10 @@ fn create_mesh_explicit_transport_list_is_literal() {
     );
     assert_eq!(
         mesh.config().transport,
-        app_policy(false),
+        habilis_network::protocol::TransportPolicy::default()
+            .multihop(false)
+            .gossip(true)
+            .relay_transport(false),
         "an explicit transport list must win over the relay lookup"
     );
 }

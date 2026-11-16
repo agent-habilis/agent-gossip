@@ -18,12 +18,11 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Cap on live direct connections (the gossip overlay's active-neighbor
-    /// set). The gossip holds at most this many QUIC links and relays to peers
-    /// beyond it; gossips up to this size form a full mesh with no membership
-    /// churn.
-    #[arg(long, default_value_t = defaults::GOSSIP_ACTIVE_VIEW_CAPACITY)]
-    pub max_peers: usize,
+    /// Cap on direct connections, gossip neighbors included. A peer past the
+    /// cap is reached through a connected peer (multihop). Pinned and extra
+    /// connections fit up to twice this value.
+    #[arg(long, default_value_t = defaults::MAX_CONNECTIONS)]
+    pub max_connections: usize,
 
     /// Serve the A2A JSON-RPC 2.0 binding on 127.0.0.1 (off by default).
     ///

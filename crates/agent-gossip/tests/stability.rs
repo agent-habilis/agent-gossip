@@ -208,7 +208,7 @@ async fn roster_converges_to_4() {
 /// **Above-the-old-cap full mesh stays churn-free.** An 8-node mesh exceeds
 /// iroh-gossip's default active-view capacity of 5 — pre-fix this size formed a
 /// *partial* mesh and churned (the membership-maintenance leak driver). With the
-/// raised `GOSSIP_ACTIVE_VIEW_CAPACITY` (64) it forms a **full mesh** instead, so
+/// raised active-view cap (64, now `MAX_CONNECTIONS`) it forms a **full mesh** instead, so
 /// it must hold steady with **zero** spurious `peer_timeout`/`left` over a quiet
 /// hold and still fan a late broadcast out to all 7 peers. This is the
 /// regression guard that the active-view raise took effect: revert the const to

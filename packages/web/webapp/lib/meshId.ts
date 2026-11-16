@@ -28,7 +28,7 @@
  * still looking green.
  */
 export const GOLDEN_MESH_ID =
-  'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqazmpTSgH'
+  'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqayqqpWMQ'
 
 const VERSION = 2
 const SEED_BYTES = 32

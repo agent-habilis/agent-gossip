@@ -66,7 +66,9 @@ mod tests {
         assert_eq!(
             transport_policy(&[Transport::Udp, Transport::WebRtc])
                 .expect("this transport combination is valid"),
-            TransportPolicy::default().multihop(false).gossip(false),
+            TransportPolicy::default()
+                .multihop(false)
+                .relay_transport(false),
             "udp and webrtc alone enable no multihop, gossip or relay"
         );
     }

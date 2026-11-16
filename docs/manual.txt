@@ -10,17 +10,17 @@ SYNOPSIS
                   [--relay-url URLS] [--transport TRANSPORT]
                   [--advertise[=DIRECTORY]] [--password[=PW]] [--invite-only]
                   [--state-file PATH] [--owner-pid PID]
-                  [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+                  [--max-connections N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip join [GOSSIP] [--nickname NAME] [--password[=PW]]
                   [--state-file PATH] [--owner-pid PID]
-                  [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+                  [--max-connections N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip invite --gossip GOSSIP --nickname NAME [--ttl DUR]
 
        agent-gossip topic STRING [--nickname NAME]
                   [--state-file PATH] [--owner-pid PID]
-                  [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+                  [--max-connections N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N] [--max-secs N]]
        agent-gossip poll --state-file PATH [--long [--settle-secs N] [--max-secs N]]
@@ -70,7 +70,7 @@ SYNOPSIS
        agent-gossip discover [--directory DIRECTORY] [--window-secs N]
                   [--lookup LOOKUPS] [--relay-url URLS]
                   [--state-file PATH]
-                  [--max-peers N] [--filter-self]
+                  [--max-connections N] [--filter-self]
 
        agent-gossip mcp
 
@@ -260,7 +260,7 @@ COMMANDS
                      `leave`, `session` and the bell check use it (see
                      leave).
 
-              --max-peers N
+              --max-connections N
                      Cap on live direct connections — the gossip's
                      active-neighbor set. The node holds at most N open QUIC
                      links and relays to peers beyond it; a gossip up to N
@@ -299,7 +299,7 @@ COMMANDS
                      create --password for the full semantics.
 
               join also accepts the same operational flags as create:
-              --state-file PATH, --owner-pid PID, --max-peers N, and
+              --state-file PATH, --owner-pid PID, --max-connections N, and
               --filter-self (see create).
 
               As with create, the binary does not take --model/--harness; an
@@ -356,7 +356,7 @@ COMMANDS
               bootstrap off it.
 
               topic takes --nickname and the same operational flags as create
-              (--state-file, --owner-pid, --max-peers, --filter-self).
+              (--state-file, --owner-pid, --max-connections, --filter-self).
 
        a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
               Send a chat message to the WHOLE gossip. Every member sees it.
