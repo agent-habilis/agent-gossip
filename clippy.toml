@@ -26,9 +26,10 @@ absolute-paths-max-segments = 3
 # `cargo clippy -- -D warnings`. Remove a crate from the list when its versions meet.
 allowed-duplicate-crates = [
     # Two generations of RustCrypto and `rand`: `rand` 0.9 (engine), `rand` 0.10 (`chacha20` 0.10),
-    # `chacha20poly1305` 0.10 (`chacha20` 0.9), and `crypto-common` 0.1 against 0.2.
+    # `chacha20poly1305` 0.10 (`chacha20` 0.9), and `crypto-common` 0.1 against 0.2. `k256` 0.14 of
+    # the Nostr lookup crate brings `sec1` 0.8 next to the 0.7 of the rest of the stack.
     "base16ct", "chacha20", "const-oid", "cpufeatures", "crypto-common", "der", "getrandom",
-    "pem-rfc7468", "pkcs8", "r-efi", "rand", "rand_core", "signature", "spki",
+    "pem-rfc7468", "pkcs8", "r-efi", "rand", "rand_core", "sec1", "signature", "spki",
     # `dimpl` uses `nom` 8; `acto` uses `smol_str` 0.1 and `automerge` uses 0.3.
     "nom", "smol_str",
     # Two generations of the platform bindings under the network and TLS stack.
