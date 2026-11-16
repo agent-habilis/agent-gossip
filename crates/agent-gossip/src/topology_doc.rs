@@ -50,7 +50,7 @@ pub(crate) struct TopologyDoc {
 
 impl TopologyDoc {
     /// Build the document from the `peers` and `topology` IPC responses.
-    pub(crate) fn from_responses(me: &str, peers: &Value, topology: &Value) -> Self {
+    pub(crate) fn assemble(me: &str, peers: &Value, topology: &Value) -> Self {
         let endpoint_of = |nickname: &str| {
             let entry = items(&topology["endpoints"])
                 .iter()
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn draws_peers_edges_and_mesh_links() {
         let (peers, topology) = responses(true);
-        let doc = TopologyDoc::from_responses("me", &peers, &topology);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
 
         let drawing = render(&doc);
 
@@ -363,7 +363,7 @@ links between other peers
         let peers = json!({"peers": []});
         let topology =
             json!({"ok": true, "topology": {"self_id": "", "edges": []}, "endpoints": []});
-        let doc = TopologyDoc::from_responses("me", &peers, &topology);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
 
         assert_eq!(
             warnings(&doc),
@@ -378,7 +378,7 @@ links between other peers
     fn warns_about_unknown_endpoints_and_missing_paths() {
         let (mut peers, topology) = responses(true);
         peers["peers"][0]["path"] = json!("unknown");
-        let doc = TopologyDoc::from_responses("me", &peers, &topology);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
 
         assert_eq!(
             warnings(&doc),
@@ -402,7 +402,7 @@ links between other peers
         peers["peers"][0]["capped"] = json!(true);
         peers["peers"][0]["via"] = json!("amy");
         topology["topology"]["cap"] = json!({"used": 8, "max_connections": 8});
-        let doc = TopologyDoc::from_responses("me", &peers, &topology);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
 
         let drawing = render(&doc);
 
