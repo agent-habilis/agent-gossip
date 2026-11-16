@@ -24,6 +24,8 @@ pub(crate) struct PeerView {
     pub quiet: bool,
     pub neighbor: Option<bool>,
     pub pinned: Option<bool>,
+    /// Took no unit of the cap: it counts toward the total only.
+    pub extra: Option<bool>,
     pub via: Option<String>,
 }
 
@@ -35,7 +37,7 @@ pub(crate) struct EdgeView {
     pub metric: u64,
 }
 
-// `neighbor`, `pinned`, `via` and `cap` are `Option`: a daemon of an older
+// `neighbor`, `pinned`, `extra`, `via` and `cap` are `Option`: a daemon of an older
 // build sends none of them, and the drawing omits a field it does not have.
 /// Everything the drawing needs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -87,6 +89,7 @@ impl TopologyDoc {
             };
             peer.neighbor = link["neighbor"].as_bool();
             peer.pinned = link["pinned"].as_bool();
+            peer.extra = link["extra"].as_bool();
             peer.via = link["via"].as_str().map(str::to_owned);
             // A pinned peer uses multihop paths only, and the roster reply can
             // still read the path of an earlier direct connection.
@@ -130,9 +133,9 @@ impl TopologyDoc {
 fn cap_of(cap: &Value) -> Option<Cap> {
     let used = cap["used"].as_u64()?;
     let max = cap["max_connections"].as_u64()?;
-    let quic_used = cap["quic_connections"].as_u64();
-    let quic_max = cap["quic_cap"].as_u64();
-    let all = quic_used.zip(quic_max);
+    let connected = cap["connected_peers"].as_u64();
+    let connected_cap = cap["connected_cap"].as_u64();
+    let all = connected.zip(connected_cap);
     Some(Cap { used, max, all })
 }
 
@@ -154,6 +157,7 @@ fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerV
         quiet: flag("quiet").unwrap_or(false),
         neighbor: flag("neighbor"),
         pinned: flag("pinned"),
+        extra: None,
         via: text("via"),
         nickname,
     }
@@ -293,6 +297,9 @@ fn peer_lines(peer: &PeerView) -> Vec<String> {
     }
     if peer.pinned == Some(true) {
         flags.push("pinned");
+    }
+    if peer.extra == Some(true) {
+        flags.push("extra");
     }
     if peer.quiet {
         flags.push("quiet");
@@ -441,13 +448,13 @@ links between other peers
     fn shows_the_snapshot_fields_when_present() {
         let (peers, mut topology) = responses(false);
         topology["cap"] = json!({
-            "used": 8, "max_connections": 8, "quic_connections": 11, "quic_cap": 16
+            "used": 8, "max_connections": 8, "connected_peers": 11, "connected_cap": 16
         });
         topology["links"] = json!([
             {"endpoint": ONE, "nickname": "amy", "path": "ip", "via": null,
-             "neighbor": true, "pinned": false},
+             "neighbor": true, "pinned": false, "extra": false},
             {"endpoint": TWO, "nickname": "zed", "path": "multihop", "via": ONE,
-             "neighbor": false, "pinned": true},
+             "neighbor": false, "pinned": true, "extra": true},
         ]);
         let doc = TopologyDoc::assemble("me", &peers, &topology);
 
@@ -466,8 +473,8 @@ links between other peers
             "a pinned peer takes the multihop path of the snapshot, with the first hop by name:\n{drawing}"
         );
         assert!(
-            drawing.contains("unicast · pinned"),
-            "zed is pinned:\n{drawing}"
+            drawing.contains("unicast · pinned · extra"),
+            "zed is pinned and took no unit:\n{drawing}"
         );
         assert!(
             drawing.contains("reached through other peers because of the cap: zed"),

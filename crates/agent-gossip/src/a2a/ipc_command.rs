@@ -730,7 +730,7 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
 /// "endpoints":[{nickname, endpoint}]}`. `topology` is the multihop link-state
 /// graph, empty when the multihop transport is off. `cap` and `links` come from
 /// the engine snapshot: the direct units against the cap, and per peer the path,
-/// the first hop, the neighbor flag and the pinned flag. `endpoints` maps the
+/// the first hop, the neighbor flag, the pinned flag and the extra flag. `endpoints` maps the
 /// endpoint ids of the edges to roster nicknames.
 fn topology_response(state: &EventLoopState) -> String {
     let snapshot = state.topology_snapshot();
@@ -742,8 +742,8 @@ fn topology_response(state: &EventLoopState) -> String {
         "used": snapshot.direct_units,
         "max_connections": snapshot.max_connections,
         "over_ceiling": snapshot.over_ceiling,
-        "quic_connections": snapshot.quic_connections,
-        "quic_cap": snapshot.quic_cap,
+        "connected_peers": snapshot.connected_peers,
+        "connected_cap": snapshot.connected_cap,
     });
     let links = serde_json::to_value(&snapshot.peers).unwrap_or(serde_json::Value::Null);
     let endpoints: Vec<serde_json::Value> = state

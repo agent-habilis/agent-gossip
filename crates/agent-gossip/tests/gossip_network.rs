@@ -1773,7 +1773,7 @@ fn test_topology_reports_the_cap_and_the_links() {
         "the flag reaches the engine\n{reply}"
     );
     assert_eq!(
-        reply["cap"]["quic_cap"], 10,
+        reply["cap"]["connected_cap"], 10,
         "the total cap is twice the flag\n{reply}"
     );
     let links = reply["links"]
