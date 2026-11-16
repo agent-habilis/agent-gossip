@@ -199,7 +199,7 @@ COMMANDS
                      "TRANSPORT"): udp, webrtc, multihop, gossip, relay.
                      Baked into the id and inherited by every joiner. The
                      list is literal and must name udp or webrtc. Without
-                     it, a gossip carries udp,webrtc,gossip, plus relay when
+                     it, a gossip carries udp,webrtc,multihop, plus relay when
                      relay is in --lookup.
 
               --advertise[=DIRECTORY]
@@ -261,11 +261,12 @@ COMMANDS
                      leave).
 
               --max-connections N
-                     Cap on live direct connections — the gossip's
-                     active-neighbor set. The node holds at most N open QUIC
-                     links and relays to peers beyond it; a gossip up to N
-                     members forms a full mesh with no membership churn.
-                     Default 64.
+                     Cap on direct connections, gossip neighbors included.
+                     A send to a peer beyond the cap goes through a connected
+                     peer (multihop) and opens no new direct connection.
+                     Pinned and extra connections fit up to 2N in all. A
+                     gossip up to N members forms a full mesh with no
+                     membership churn. Default 32.
 
               --filter-self
                      Suppress your own messages from the JSON stream, for
@@ -341,7 +342,7 @@ COMMANDS
               "#github.com/x". Capped at 32 chars (an over-long name ends in
               "…"), or "topic" if nothing valid survives. This affects the name
               only, never the seed. Networking is always the public preset
-              (mDNS + DHT + relay), and the transport is udp,webrtc,gossip,relay:
+              (mDNS + DHT + relay), and the transport is udp,webrtc,multihop,relay:
               payload falls back to the relay when a direct path fails.
 
               The string is the only coordination needed, so it is compared
@@ -1116,14 +1117,14 @@ TRANSPORT
                        gossip carries the payload of a peer with no direct
                        path in the frames of the gossip itself. multihop
                        reaches a peer with no direct path through other
-                       members, and is off by default. Both need udp or
-                       webrtc in the list.
+                       members, and is on by default. gossip is off by
+                       default. Both need udp or webrtc in the list.
                        relay lets the payload also fall back to the relay
                        when a direct path fails. It requires relay in
                        --lookup. Without relay, the relay serves lookup only
                        (bootstrap dial, signalling, NAT traversal).
                        Without --transport, a gossip carries
-                       udp,webrtc,gossip, plus relay when relay is in
+                       udp,webrtc,multihop, plus relay when relay is in
                        --lookup.
 
 DIRECTORIES

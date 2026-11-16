@@ -31,7 +31,7 @@ pub(crate) struct CreateMeshArgs {
     /// Which paths may carry mesh payload: any of "udp", "webrtc", "multihop",
     /// "gossip", "relay". The list is literal and needs "udp" or "webrtc";
     /// "relay" needs "relay" in `lookup`. Omit it for the default, `["udp",
-    /// "webrtc","gossip"]` plus "relay" when "relay" is in `lookup`.
+    /// "webrtc","multihop"]` plus "relay" when "relay" is in `lookup`.
     #[serde(default)]
     pub(crate) transport: Vec<Transport>,
     /// List this gossip in a directory so others can find it with

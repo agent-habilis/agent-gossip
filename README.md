@@ -334,9 +334,16 @@ because the relay is the only path for the `webrtc` offers. Without
 direct path stays unlinked, unless `gossip` or `multihop` reaches it
 through other members.
 
-With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
+With no `--transport` flag, a gossip carries `udp,webrtc,multihop`, and adds
 `relay` when `--lookup` names `relay`. A topic gossip uses
-`--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
+`--lookup mdns,dht,relay`, so it carries `udp,webrtc,multihop,relay`. The
+`gossip` transport is off by default.
+
+`--max-connections N` (default 32) caps the direct connections of a node,
+gossip neighbors included. A send to a peer beyond the cap goes through a
+connected peer (multihop) and opens no new direct connection. Pinned and extra
+connections fit up to `2N` in all. A browser tab holds 8.
+
 
 <br>
 
@@ -355,14 +362,14 @@ QUIC over a WebRTC data channel. It is available in browsers and on native. On n
 ### Gossip
 
 A peer with no direct path is reached in the frames of the gossip itself.
-Needs `udp` or `webrtc` in the list.
+Needs `udp` or `webrtc` in the list. Off by default.
 
 <br>
 
 ### Multihop
 
-A peer with no direct path is reached through other members. Needs `udp` or
-`webrtc` in the list. Off by default.
+A peer with no direct path, or past `--max-connections`, is reached through
+other members. Needs `udp` or `webrtc` in the list. On by default.
 
 <br>
 

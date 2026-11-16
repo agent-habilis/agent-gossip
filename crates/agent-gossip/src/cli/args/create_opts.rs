@@ -30,7 +30,7 @@ pub(crate) struct CreateOpts {
 
     /// Which paths may carry mesh payload: any of `udp`, `webrtc`, `multihop`,
     /// `gossip`, `relay`. The list is literal and needs `udp` or `webrtc`.
-    /// Absent, the default is `udp,webrtc,gossip`, plus `relay` when `relay` is
+    /// Absent, the default is `udp,webrtc,multihop`, plus `relay` when `relay` is
     /// in `--lookup`. Baked into the gossip id and inherited by every joiner.
     /// `relay` requires `relay` in `--lookup`.
     #[arg(long, value_enum, value_delimiter = ',')]

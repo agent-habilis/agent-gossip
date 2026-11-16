@@ -3,7 +3,7 @@
 Treat all user arguments as the optional create arguments:
 
 ```text
-[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=udp,webrtc,gossip,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
+[name] [public] [--lookup=mdns,dht,relay] [--relay-url=urls] [--transport=udp,webrtc,multihop,relay] [--advertise[=dir]] [--password[=pw]] [--invite-only]
 ```
 
 If a name is present, convert it to `--name NAME` before calling

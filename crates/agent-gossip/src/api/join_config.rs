@@ -123,7 +123,7 @@ pub struct CreateConfig {
     /// loopback). Mirrors the CLI `--lookup`/`--relay-url` flags.
     pub lookups: LookupSet,
     /// Which transports may carry mesh payload. [`CreateConfig::new`] takes
-    /// `udp,webrtc,gossip`, with no multihop and no relay. Mirrors the CLI
+    /// `udp,webrtc,multihop`, with no gossip and no relay. Mirrors the CLI
     /// `--transport` flag; a list set here is literal.
     pub transport: TransportPolicy,
     /// List this mesh in a directory so discoverers can find it
