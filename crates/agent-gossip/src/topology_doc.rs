@@ -82,22 +82,23 @@ impl TopologyDoc {
     /// endpoint. The first hop is an endpoint id; the drawing names it.
     fn take_links(&mut self, links: &[Value]) {
         for peer in &mut self.peers {
-            let link = links.iter().find(|link| {
-                peer.endpoint.is_some() && link["endpoint"].as_str() == peer.endpoint.as_deref()
-            });
-            let Some(link) = link else { continue };
+            let Some(link) = link_of(links, peer.endpoint.as_deref()) else {
+                continue;
+            };
             peer.neighbor = link["neighbor"].as_bool();
             peer.pinned = link["pinned"].as_bool();
             peer.via = link["via"].as_str().map(str::to_owned);
         }
-        let names: Vec<Option<String>> = self
-            .peers
-            .iter()
-            .map(|peer| peer.via.as_deref().map(|via| self.name_of(via)))
-            .collect();
-        for (peer, name) in self.peers.iter_mut().zip(names) {
+        let named: Vec<Option<String>> =
+            self.peers.iter().map(|peer| self.hop_name(peer)).collect();
+        for (peer, name) in self.peers.iter_mut().zip(named) {
             peer.via = name;
         }
+    }
+
+    fn hop_name(&self, peer: &PeerView) -> Option<String> {
+        let via = peer.via.as_deref()?;
+        Some(self.name_of(via))
     }
 
     /// The name of an endpoint id: this node, a peer, or the id shortened.
@@ -122,10 +123,16 @@ impl TopologyDoc {
 fn cap_of(cap: &Value) -> Option<Cap> {
     let used = cap["used"].as_u64()?;
     let max = cap["max_connections"].as_u64()?;
-    let all = cap["quic_connections"]
-        .as_u64()
-        .zip(cap["quic_cap"].as_u64());
+    let quic_used = cap["quic_connections"].as_u64();
+    let quic_max = cap["quic_cap"].as_u64();
+    let all = quic_used.zip(quic_max);
     Some(Cap { used, max, all })
+}
+
+fn link_of<'a>(links: &'a [Value], endpoint: Option<&str>) -> Option<&'a Value> {
+    let endpoint = endpoint?;
+    let mut candidates = links.iter();
+    candidates.find(|link| link["endpoint"].as_str() == Some(endpoint))
 }
 
 fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerView {

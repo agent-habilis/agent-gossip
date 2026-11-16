@@ -1765,7 +1765,7 @@ fn test_topology_reports_the_cap_and_the_links() {
         {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(250));
         reply = topology_reply(&mesh, &creator.nickname, "creator");
     }
     assert_eq!(
@@ -1776,7 +1776,9 @@ fn test_topology_reports_the_cap_and_the_links() {
         reply["cap"]["quic_cap"], 10,
         "the total cap is twice the flag\n{reply}"
     );
-    let links = reply["links"].as_array().expect("links is an array");
+    let links = reply["links"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the daemon sent no links\n{reply}"));
     assert!(
         links
             .iter()
