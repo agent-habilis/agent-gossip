@@ -13,4 +13,9 @@ pub(crate) struct TopologyOpts {
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
     pub nickname: Nickname,
+
+    /// Draw the mesh as text (one box per peer, its path, the links between
+    /// the other peers) instead of printing the raw JSON
+    #[arg(long)]
+    pub draw: bool,
 }

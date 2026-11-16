@@ -68,6 +68,7 @@ pub(crate) mod mcp;
 pub mod output_event;
 pub(crate) mod policy;
 pub(crate) mod topic;
+pub(crate) mod topology_draw;
 pub(crate) mod tunnel;
 
 pub mod api;

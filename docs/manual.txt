@@ -29,7 +29,7 @@ SYNOPSIS
 
        agent-gossip peers --gossip GOSSIP --nickname NAME
 
-       agent-gossip topology --gossip GOSSIP --nickname NAME
+       agent-gossip topology --gossip GOSSIP --nickname NAME [--draw]
 
        agent-gossip a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
        agent-gossip a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
@@ -752,13 +752,21 @@ COMMANDS
               them with meta get, under the author key of the member (see
               meta merge).
 
-       topology --gossip GOSSIP --nickname NAME
+       topology --gossip GOSSIP --nickname NAME [--draw]
               Print the multihop routing topology — the metric-weighted gossip
               graph the daemon has assembled from gossiped link-state — as
               one JSON object:
 
                 {"self_id":"<hex>","edges":[{"from":"<hex>","to":"<hex>",
                  "metric":1}]}
+
+              The reply also holds "endpoints", the nickname of each endpoint
+              id: {"endpoints":[{"nickname":"<nick>","endpoint":"<hex>"}]}.
+
+              With --draw, print a text drawing instead: one box per peer, the
+              path of each peer on its edge, and the links between the other
+              peers. Warnings go to stderr, one `warning:` line each. The
+              /gossip-topology skill runs this.
 
               Short-lived; requires a running create/join daemon. Exits
               non-zero on {"ok":false}.

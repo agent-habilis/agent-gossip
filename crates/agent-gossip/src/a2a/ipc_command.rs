@@ -726,15 +726,25 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
 }
 
 /// Serialize this daemon's multihop routing topology (its assembled mesh graph)
-/// for the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
-/// Empty when the multihop transport is off (no routing table).
+/// for the `topology` IPC query: `{"ok":true,"topology":{self_id, edges:[…]},
+/// "endpoints":[{nickname, endpoint}]}`. `topology` is empty when the multihop
+/// transport is off (no routing table). `endpoints` maps the endpoint ids of
+/// the edges to roster nicknames.
 fn topology_response(state: &EventLoopState) -> String {
-    let Some(handle) = state.multihop() else {
-        return r#"{"ok":true,"topology":{"self_id":"","edges":[]}}"#.to_owned();
-    };
-    let topology = handle.topology_view();
-    let topo_json = serde_json::to_string(&topology).unwrap_or_else(|_| "null".to_owned());
-    format!(r#"{{"ok":true,"topology":{topo_json}}}"#)
+    let topology = state.multihop().map_or_else(
+        || serde_json::json!({"self_id": "", "edges": []}),
+        |handle| serde_json::to_value(handle.topology_view()).unwrap_or(serde_json::Value::Null),
+    );
+    let endpoints: Vec<serde_json::Value> = state
+        .roster_snapshot()
+        .peers
+        .iter()
+        .filter_map(|entry| {
+            let endpoint = state.peer_endpoint(&entry.nickname)?;
+            Some(serde_json::json!({"nickname": entry.nickname, "endpoint": endpoint.to_string()}))
+        })
+        .collect();
+    serde_json::json!({"ok": true, "topology": topology, "endpoints": endpoints}).to_string()
 }
 
 /// The `agent-gossip state get` response: the derived document.
