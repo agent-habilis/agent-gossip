@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 
 use serde_json::Value;
 
@@ -53,53 +52,31 @@ impl TopologyDoc {
     /// Build the document from the `peers` and `topology` IPC responses.
     pub(crate) fn from_responses(me: &str, peers: &Value, topology: &Value) -> Self {
         let endpoint_of = |nickname: &str| {
-            topology["endpoints"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|entry| entry["nickname"] == nickname)
-                .and_then(|entry| entry["endpoint"].as_str())
-                .map(str::to_owned)
+            let entry = items(&topology["endpoints"])
+                .iter()
+                .find(|entry| entry["nickname"] == nickname);
+            let endpoint = entry.and_then(|found| found["endpoint"].as_str());
+            endpoint.map(str::to_owned)
         };
-        let text = |row: &Value, key: &str| row[key].as_str().map(str::to_owned);
-        let peers = peers["peers"].as_array().into_iter().flatten().map(|row| {
-            let nickname = text(row, "nickname").unwrap_or_default();
-            PeerView {
-                endpoint: endpoint_of(&nickname),
-                path: text(row, "path").unwrap_or_else(|| "unknown".to_owned()),
-                lane: text(row, "transport"),
-                quiet: row["quiet"].as_bool().unwrap_or(false),
-                neighbor: row["neighbor"].as_bool(),
-                pinned: row["pinned"].as_bool(),
-                via: text(row, "via"),
-                capped: row["capped"].as_bool(),
-                nickname,
-            }
-        });
-        let edges = topology["topology"]["edges"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|edge| {
-                Some(EdgeView {
-                    from: edge["from"].as_str()?.to_owned(),
-                    to: edge["to"].as_str()?.to_owned(),
-                    metric: edge["metric"].as_u64()?,
-                })
-            });
-        let cap = &topology["topology"]["cap"];
+        let peers: Vec<PeerView> = items(&peers["peers"])
+            .iter()
+            .map(|row| peer_view(row, &endpoint_of))
+            .collect();
+        let edges: Vec<EdgeView> = items(&topology["topology"]["edges"])
+            .iter()
+            .filter_map(edge_view)
+            .collect();
+        let cap_json = &topology["topology"]["cap"];
+        let used = cap_json["used"].as_u64();
+        let max = cap_json["max_connections"].as_u64();
+        let self_id = topology["topology"]["self_id"].as_str();
+        let cap = used.zip(max).map(|(used, max)| Cap { used, max });
         Self {
             me: me.to_owned(),
-            self_id: topology["topology"]["self_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-            cap: cap["used"]
-                .as_u64()
-                .zip(cap["max_connections"].as_u64())
-                .map(|(used, max)| Cap { used, max }),
-            peers: peers.collect(),
-            edges: edges.collect(),
+            self_id: self_id.unwrap_or_default().to_owned(),
+            cap,
+            peers,
+            edges,
         }
     }
 
@@ -108,22 +85,61 @@ impl TopologyDoc {
         if endpoint == self.self_id {
             return self.me.clone();
         }
-        self.peers
-            .iter()
-            .find(|peer| peer.endpoint.as_deref() == Some(endpoint))
-            .map_or_else(
-                || endpoint.chars().take(8).collect(),
-                |peer| peer.nickname.clone(),
-            )
+        let peer = self.peer_at(endpoint);
+        peer.map_or_else(|| short(endpoint), |found| found.nickname.clone())
+    }
+
+    fn peer_at(&self, endpoint: &str) -> Option<&PeerView> {
+        let mut peers = self.peers.iter();
+        peers.find(|peer| peer.endpoint.as_deref() == Some(endpoint))
     }
 
     fn knows(&self, endpoint: &str) -> bool {
-        endpoint == self.self_id
-            || self
-                .peers
-                .iter()
-                .any(|peer| peer.endpoint.as_deref() == Some(endpoint))
+        endpoint == self.self_id || self.peer_at(endpoint).is_some()
     }
+}
+
+/// One roster row of `peers`, with the endpoint id that `endpoint_of` finds.
+fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerView {
+    let text = |key: &str| row[key].as_str().map(str::to_owned);
+    let flag = |key: &str| row[key].as_bool();
+    let nickname = text("nickname").unwrap_or_default();
+    let path = text("path").unwrap_or_else(|| "unknown".to_owned());
+    PeerView {
+        endpoint: endpoint_of(&nickname),
+        path,
+        lane: text("transport"),
+        quiet: flag("quiet").unwrap_or(false),
+        neighbor: flag("neighbor"),
+        pinned: flag("pinned"),
+        via: text("via"),
+        capped: flag("capped"),
+        nickname,
+    }
+}
+
+/// One link-state edge, or none when a field is missing.
+fn edge_view(edge: &Value) -> Option<EdgeView> {
+    let from = edge["from"].as_str()?.to_owned();
+    let to = edge["to"].as_str()?.to_owned();
+    let metric = edge["metric"].as_u64()?;
+    Some(EdgeView { from, to, metric })
+}
+
+/// The items of a JSON array, or none when the value is not an array.
+fn items(value: &Value) -> &[Value] {
+    value.as_array().map_or(&[], Vec::as_slice)
+}
+
+/// The first 8 characters of an endpoint id.
+fn short(endpoint: &str) -> String {
+    endpoint.chars().take(8).collect()
+}
+
+/// The widest text, in characters.
+fn widest(texts: &[String]) -> usize {
+    let widths = texts.iter().map(|text| text.chars().count());
+    widths.max().unwrap_or(0)
 }
 
 /// The problems of the document, one line each, `warning: ...`.
@@ -140,24 +156,22 @@ pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
             cap.used, cap.max
         ));
     }
-    for peer in doc
-        .peers
-        .iter()
-        .filter(|peer| !peer.quiet && peer.path == "unknown")
-    {
-        lines.push(format!("warning: {} has no known path", peer.nickname));
+    for peer in &doc.peers {
+        if !peer.quiet && peer.path == "unknown" {
+            lines.push(format!("warning: {} has no known path", peer.nickname));
+        }
     }
-    let unknown: BTreeSet<&str> = doc
-        .edges
-        .iter()
-        .flat_map(|edge| [edge.from.as_str(), edge.to.as_str()])
-        .filter(|id| !doc.knows(id))
-        .collect();
+    let mut unknown: BTreeSet<&str> = BTreeSet::new();
+    for edge in &doc.edges {
+        for id in [edge.from.as_str(), edge.to.as_str()] {
+            if !doc.knows(id) {
+                unknown.insert(id);
+            }
+        }
+    }
     for id in unknown {
-        let short: String = id.chars().take(8).collect();
-        lines.push(format!(
-            "warning: link endpoint {short} is not in the roster"
-        ));
+        let id = short(id);
+        lines.push(format!("warning: link endpoint {id} is not in the roster"));
     }
     lines
 }
@@ -174,11 +188,7 @@ pub(crate) fn render(doc: &TopologyDoc) -> String {
     let mut peers: Vec<&PeerView> = doc.peers.iter().collect();
     peers.sort_by(|left, right| (left.quiet, &left.nickname).cmp(&(right.quiet, &right.nickname)));
     let labels: Vec<String> = peers.iter().map(|peer| edge_label(peer)).collect();
-    let label_width = labels
-        .iter()
-        .map(|label| label.chars().count())
-        .max()
-        .unwrap_or(0);
+    let label_width = widest(&labels);
     for (index, (peer, label)) in peers.iter().zip(&labels).enumerate() {
         let last = index + 1 == peers.len();
         let (branch, trunk) = if last {
@@ -196,11 +206,8 @@ pub(crate) fn render(doc: &TopologyDoc) -> String {
         }
     }
 
-    let capped: Vec<&str> = peers
-        .iter()
-        .filter(|peer| peer.capped == Some(true))
-        .map(|peer| peer.nickname.as_str())
-        .collect();
+    let capped_peers = peers.iter().filter(|peer| peer.capped == Some(true));
+    let capped: Vec<&str> = capped_peers.map(|peer| peer.nickname.as_str()).collect();
     if !capped.is_empty() {
         out.push(String::new());
         out.push(format!(
@@ -221,6 +228,8 @@ pub(crate) fn render(doc: &TopologyDoc) -> String {
 }
 
 fn edge_label(peer: &PeerView) -> String {
+    use std::fmt::Write as _;
+
     let mut label = peer.path.clone();
     if let Some(via) = &peer.via {
         let _ = write!(label, " via {via}");
@@ -253,26 +262,23 @@ fn peer_lines(peer: &PeerView) -> Vec<String> {
 
 /// The edges that do not touch this node, by name, without repeats.
 fn mesh_links(doc: &TopologyDoc) -> Vec<String> {
-    let links: BTreeSet<(String, String, u64)> = doc
+    let others = doc
         .edges
         .iter()
-        .filter(|edge| edge.from != doc.self_id && edge.to != doc.self_id)
+        .filter(|edge| edge.from != doc.self_id && edge.to != doc.self_id);
+    let links: BTreeSet<(String, String, u64)> = others
         .map(|edge| (doc.name_of(&edge.from), doc.name_of(&edge.to), edge.metric))
         .collect();
-    links
+    let rows = links
         .into_iter()
-        .map(|(from, to, metric)| format!("  {from} ──{metric}─▶ {to}"))
-        .collect()
+        .map(|(from, to, metric)| format!("  {from} ──{metric}─▶ {to}"));
+    rows.collect()
 }
 
 /// Put the lines in a box. The first line is the title row; a box with one
 /// line still has the three rows top, content, bottom.
 fn boxed(lines: &[String]) -> Vec<String> {
-    let width = lines
-        .iter()
-        .map(|line| line.chars().count())
-        .max()
-        .unwrap_or(0);
+    let width = widest(lines);
     let bar = "─".repeat(width + 2);
     let mut rows = vec![format!("┌{bar}┐")];
     rows.extend(lines.iter().map(|line| {
