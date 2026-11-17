@@ -9,10 +9,17 @@ pub(crate) fn run() -> TaskOutcome {
     // A2A nor the app, and the engine now lives in its own repo (`habilis-network`), so
     // the boundary is enforced by the repo edge rather than by a grep.
 
-    // The CI jobs `style` and `script-language` run these two checkers, and no lint covers their
-    // rules, so the gate runs them too: a violation fails here and not first on the pull request.
-    // The checker runs before its own tests because it is the fast one.
-    for checker in ["style-check", "script-language"] {
+    // The `style` job of ci.yml runs these checkers, and no lint covers their rules, so the gate
+    // runs them too: a violation fails here and not first on the pull request. A checker runs
+    // before its own tests because it is the fast one.
+    for checker in [
+        "style-check",
+        "script-language",
+        "macro-rules",
+        "pub-trait",
+        "module-layout",
+        "naming",
+    ] {
         output::status("Checking", checker);
         Invocation::new("bun")
             .args([format!("scripts/{checker}/{checker}.ts")])
@@ -26,6 +33,13 @@ pub(crate) fn run() -> TaskOutcome {
             .quiet()
             .run()?;
     }
+    // The last step of the `style` job has no checker: its test runs rustdoc and clippy on a scratch
+    // crate.
+    output::status("Checking", "rustdoc-lints");
+    Invocation::new("bun")
+        .args(["test", "scripts/rustdoc-lints/rustdoc-lints.test.ts"])
+        .quiet()
+        .run()?;
 
     output::status("Running", "clippy");
     // `--features adversarial` so the adversarial suite + shim are linted
