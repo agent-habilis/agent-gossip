@@ -942,6 +942,16 @@ COMMANDS
                                   Write again.
                 seal              The engine could not seal the write. Write
                                   again. If it repeats, report a bug.
+                value_too_large   The value is larger than 1 MiB. Store the
+                                  data as a blob and put the ticket in the
+                                  value, or store less.
+                value_too_complex The value has more than 32768 structure
+                                  units (the braces, brackets and commas of
+                                  its JSON). Store the data as a blob and put
+                                  the ticket in the value, or use fewer keys
+                                  and array items.
+                reserved_key      The value holds the key $chunks, which the
+                                  engine reserves. Rename the key.
 
        meta merge --gossip GOSSIP --nickname NAME --merge MERGE
        meta get   --gossip GOSSIP --nickname NAME
