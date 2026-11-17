@@ -36,7 +36,8 @@ pub(crate) struct CreateMeshArgs {
     /// "gossip", "relay", "nostr". The list is literal and needs "udp" or "webrtc";
     /// "relay" needs "relay" in `lookup`; "nostr" needs "nostr" in `lookup` and
     /// `nostr_urls`. Omit it for the default, `["udp",
-    /// "webrtc","gossip"]` plus "relay" when "relay" is in `lookup`.
+    /// "webrtc","gossip"]` plus "relay" when "relay" is in `lookup`, and plus
+    /// "nostr" when `nostr_urls` is not empty.
     #[serde(default)]
     pub(crate) transport: Vec<Transport>,
     /// List this gossip in a directory so others can find it with

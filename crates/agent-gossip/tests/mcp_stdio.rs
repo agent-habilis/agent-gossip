@@ -969,8 +969,8 @@ fn create_mesh_nostr_transport_needs_nostr_urls() {
             "transport": ["udp", "webrtc", "nostr"]
         }),
     );
-    let err =
-        tool_error(&response).expect("the nostr transport without a custom list should error");
+    let err = tool_error(&response)
+        .expect("the engine refuses a payload path with no relays to carry it");
     assert!(
         err.contains("nostr"),
         "expected the error to name the nostr requirement, got: {err}"
@@ -985,7 +985,7 @@ fn create_mesh_rejects_a_bad_nostr_url() {
         "create_gossip",
         &serde_json::json!({ "name": "nostrbad", "lookup": ["nostr"], "nostr_urls": ["not a url"] }),
     );
-    let err = tool_error(&response).expect("a bad nostr URL should error");
+    let err = tool_error(&response).expect("`not a url` does not parse, so the call is refused");
     assert!(
         err.contains("nostr url"),
         "expected the error to name the nostr url, got: {err}"

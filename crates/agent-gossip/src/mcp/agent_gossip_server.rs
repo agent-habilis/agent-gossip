@@ -73,15 +73,13 @@ impl AgentGossipServer {
                 })?,
             )
         };
-        let nostr_urls = args
-            .nostr_urls
-            .iter()
-            .map(|raw| {
-                Url::parse(raw).map_err(|error| {
-                    McpError::invalid_params(format!("invalid nostr url `{raw}`: {error}"), None)
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut nostr_urls: Vec<Url> = Vec::new();
+        for raw in &args.nostr_urls {
+            let url = Url::parse(raw).map_err(|error| {
+                McpError::invalid_params(format!("invalid nostr url `{raw}`: {error}"), None)
+            })?;
+            nostr_urls.push(url);
+        }
         let lookups = lookup::lookups_or_public(&args.lookup, args.advertise);
         let resolved = resolved::resolve(&lookups, relay_urls, nostr_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
