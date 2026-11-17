@@ -340,7 +340,7 @@ With no `--transport` flag, a gossip carries `udp,webrtc,multihop`, and adds
 `--lookup mdns,dht,relay`, so it carries `udp,webrtc,multihop,relay`. The
 `gossip` transport is off by default.
 
-`--max-connections N` (default 32) caps the direct connections of a node,
+`--max-connections N` (default 16) caps the direct connections of a node,
 gossip neighbors included. When the transport policy names `multihop` and a
 route exists, a send to a peer beyond the cap goes through a connected peer and
 opens no new direct connection. Without multihop (for example

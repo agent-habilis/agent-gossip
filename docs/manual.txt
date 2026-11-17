@@ -271,7 +271,7 @@ COMMANDS
                      Pinned connections and extras fit up to 2N in all; an
                      extra closes after 60 s with no use. A gossip up to N
                      members forms a full mesh with no membership churn.
-                     Default 32.
+                     Default 16.
 
               --filter-self
                      Suppress your own messages from the JSON stream, for

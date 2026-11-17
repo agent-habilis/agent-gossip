@@ -8,7 +8,7 @@ The default lookup of `create` is now `mdns,dht,relay`, and the default transpor
 
 For a user:
 - A `create` with no `--lookup` (CLI and MCP `create_gossip`) now reaches other machines. The new value `--lookup loopback` keeps a gossip on this machine. It stands alone in the list. The Rust API keeps its loopback default in `CreateConfig`: a caller names the lookups it wants.
-- The flag `--max-peers` is now `--max-connections`. It caps the direct connections of a node, gossip neighbors included. The default is 32. Before, the active view held 32 and the connection ceiling held 64.
+- The flag `--max-peers` is now `--max-connections`. It caps the direct connections of a node, gossip neighbors included. The default is 16. Before, the active view held 32 and the connection ceiling held 64.
 - A send to a peer beyond the cap goes through a connected peer (multihop) when the transport policy names `multihop` and a route to the peer exists. It opens no new direct connection. Connections pinned to multihop fit up to twice the cap in all.
 - If the policy has no multihop (for example `--transport udp,webrtc`), or no route exists, the send dials directly as before. It evicts an idle peer that is not a gossip neighbor. If no peer can go, the new connection is an extra: it counts toward twice the cap, and it closes after 60 s with no use.
 - The browser client turns multihop on, turns gossip off, and holds 8 connections. A browser tab and a native node of the same default gossip compute the same hash.
