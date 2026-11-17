@@ -33,8 +33,10 @@ pub(crate) struct CreateOpts {
     /// `webrtc`. Absent, the default is `udp,webrtc,gossip`, plus `relay` when
     /// `relay` is in `--lookup`, and plus `nostr` when `--nostr-url` is given.
     /// Baked into the gossip id and inherited by every joiner. `relay` requires
-    /// `relay` in `--lookup`. `nostr` requires `nostr` in `--lookup` and
-    /// `--nostr-url`.
+    /// `relay` in `--lookup`. `nostr` requires the Nostr lookup and
+    /// `--nostr-url`. A bare `--advertise` already has the Nostr lookup through
+    /// the public preset, so `nostr` in `--lookup` is needed only with an
+    /// explicit `--lookup` list, which replaces the preset.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub transport: Vec<Transport>,
 
