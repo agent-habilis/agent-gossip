@@ -156,7 +156,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     creates_a_task_at_the_relay_address_of_the_card(&pair);
     creates_and_lists_task(&pair);
     mirrors_mesh_state(&pair);
-    refuses_a_state_too_large_for_its_slice(&pair);
+    refuses_a_state_with_too_many_units(&pair);
     serves_extended_card(&pair);
     refuses_push_config(&pair, &card);
 
@@ -384,8 +384,8 @@ fn mirrors_mesh_state(pair: &BindingPair) {
 
 /// A refusal of the shared state is the fault of the caller: invalid params, with the text, the
 /// reason and the way out in the message.
-fn refuses_a_state_too_large_for_its_slice(pair: &BindingPair) {
-    let large = serde_json::json!({ "note": "x".repeat(5_000) });
+fn refuses_a_state_with_too_many_units(pair: &BindingPair) {
+    let large = serde_json::json!({ "k": vec![1; 32_768] });
     let (status, response) = post(
         pair.port,
         "/mesh",
@@ -406,9 +406,9 @@ fn refuses_a_state_too_large_for_its_slice(pair: &BindingPair) {
         .as_str()
         .expect("a JSON-RPC error always has a message string");
     assert!(
-        message.starts_with("the body has ")
-            && message.contains("reason: too_large")
-            && message.contains("null merge"),
+        message.starts_with("the value has ")
+            && message.contains("reason: value_too_complex")
+            && message.contains("blob"),
         "the message carries the text, the reason and the way out: {message}"
     );
 }
