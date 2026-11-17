@@ -134,6 +134,22 @@ fn create_config_default_transport_is_udp_webrtc_multihop() {
     );
 }
 
+/// A browser tab holds 8; every native config starts from the same default.
+#[test]
+fn every_config_defaults_to_16_direct_connections() {
+    let name = MeshName::try_new("capdefault").expect("valid name");
+    assert_eq!(
+        CreateConfig::new(name).max_connections,
+        16,
+        "a create holds 16 direct connections by default"
+    );
+    assert_eq!(
+        TopicConfig::new("capdefault".to_owned()).max_connections,
+        16,
+        "a topic holds 16 direct connections by default"
+    );
+}
+
 #[test]
 fn create_config_builder_sets_only_the_named_fields() {
     let name = MeshName::try_new("builder").expect("valid name");

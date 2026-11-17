@@ -6,10 +6,10 @@
 //! but not the daemon flags (`discover`) can take just those.
 
 use clap::Parser;
-use habilis_network::util::tuning as defaults;
 
 use super::legacy_output::LegacyOutput;
 use super::tuning_opts::TuningOpts;
+use crate::DEFAULT_MAX_CONNECTIONS;
 
 /// Shared options for the daemon commands.
 #[derive(Parser, Debug)]
@@ -21,7 +21,7 @@ pub(crate) struct SharedServerOpts {
     /// Cap on direct connections, gossip neighbors included. A peer past the
     /// cap is reached through a connected peer (multihop). Pinned and extra
     /// connections fit up to twice this value.
-    #[arg(long, default_value_t = defaults::MAX_CONNECTIONS)]
+    #[arg(long, default_value_t = DEFAULT_MAX_CONNECTIONS)]
     pub max_connections: usize,
 
     /// Serve the A2A JSON-RPC 2.0 binding on 127.0.0.1 (off by default).
@@ -68,4 +68,23 @@ pub(crate) struct SharedServerOpts {
 
     #[command(flatten)]
     pub tuning: TuningOpts,
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use crate::cli::args::{Cli, Commands};
+
+    #[test]
+    fn the_daemon_commands_default_to_16_direct_connections() {
+        let cli = Cli::try_parse_from(["agent-gossip", "create"]).expect("a bare create parses");
+        let Commands::Create { options } = cli.command else {
+            panic!("expected Create command");
+        };
+        assert_eq!(
+            options.shared.max_connections, 16,
+            "the flag defaults to 16 direct connections"
+        );
+    }
 }

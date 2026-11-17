@@ -5,7 +5,6 @@ use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
 use habilis_network::runtime::{
     CoHostPolicy, EventLoopConfig, SetupKind, SetupParams, SignalHandling, setup_mesh,
 };
-use habilis_network::util::tuning::MAX_CONNECTIONS;
 use tokio::sync::{broadcast, mpsc};
 
 use super::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
@@ -15,6 +14,7 @@ use super::in_process_session::InProcessSession;
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use super::session_error::SessionError;
 use super::spawn_env::{SpawnEnv, create_setup, join_setup, topic_setup};
+use crate::DEFAULT_MAX_CONNECTIONS;
 use crate::a2a::a2a_app::SurfacedIo;
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::surfaced_event::PollBatch;
@@ -103,7 +103,7 @@ impl MeshSession {
             // Router: the A2A binding stands up a separate endpoint of its own
             // (see `tunnel::expose`), so there is no accept() loop to share.
             SetupParams::new(author, sink)
-                .max_connections(MAX_CONNECTIONS)
+                .max_connections(DEFAULT_MAX_CONNECTIONS)
                 .runtime_base(crate::runtime_base())
                 .cohost(cohost),
         )
