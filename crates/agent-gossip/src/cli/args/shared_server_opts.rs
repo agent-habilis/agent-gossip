@@ -6,10 +6,10 @@
 //! but not the daemon flags (`discover`) can take just those.
 
 use clap::Parser;
+use habilis_network::util::tuning as defaults;
 
 use super::legacy_output::LegacyOutput;
 use super::tuning_opts::TuningOpts;
-use crate::DEFAULT_MAX_CONNECTIONS;
 
 /// Shared options for the daemon commands.
 #[derive(Parser, Debug)]
@@ -21,7 +21,7 @@ pub(crate) struct SharedServerOpts {
     /// Cap on direct connections, gossip neighbors included. A peer past the
     /// cap is reached through a connected peer (multihop). Pinned and extra
     /// connections fit up to twice this value.
-    #[arg(long, default_value_t = DEFAULT_MAX_CONNECTIONS)]
+    #[arg(long, default_value_t = defaults::MAX_CONNECTIONS)]
     pub max_connections: usize,
 
     /// Serve the A2A JSON-RPC 2.0 binding on 127.0.0.1 (off by default).

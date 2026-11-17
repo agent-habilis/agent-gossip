@@ -1,6 +1,7 @@
 use habilis_network::protocol::{JoinTarget, LookupSet, MeshName, Nickname, TransportPolicy};
+use habilis_network::util::tuning::MAX_CONNECTIONS;
 
-use crate::{DEFAULT_MAX_CONNECTIONS, policy};
+use crate::policy;
 
 /// How to join a mesh.
 #[derive(Debug, Clone)]
@@ -30,7 +31,7 @@ impl JoinConfig {
         Self {
             target,
             nickname: None,
-            max_connections: DEFAULT_MAX_CONNECTIONS,
+            max_connections: MAX_CONNECTIONS,
             password: None,
         }
     }
@@ -82,7 +83,7 @@ impl TopicConfig {
         Self {
             string,
             nickname: None,
-            max_connections: DEFAULT_MAX_CONNECTIONS,
+            max_connections: MAX_CONNECTIONS,
         }
     }
 
@@ -153,7 +154,7 @@ impl CreateConfig {
             transport: policy::app_policy(false),
             advertise: false,
             directory: None,
-            max_connections: DEFAULT_MAX_CONNECTIONS,
+            max_connections: MAX_CONNECTIONS,
             password: None,
         }
     }

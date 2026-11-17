@@ -82,7 +82,6 @@ pub mod harness;
 
 pub use self::app_log_pins::APP_LOG_PINS;
 pub use self::cli_command::cli_command;
-pub use self::default_max_connections::DEFAULT_MAX_CONNECTIONS;
 pub use self::ensure_mesh_runtime_dir::ensure_mesh_runtime_dir;
 pub use self::ensure_runtime_base::ensure_runtime_base;
 pub use self::flush_log_if_pending::flush_log_if_pending;
@@ -96,7 +95,6 @@ pub use self::version::version;
 mod app_log_pins;
 mod cli_command;
 mod cli_error;
-mod default_max_connections;
 mod ensure_mesh_runtime_dir;
 mod ensure_runtime_base;
 mod flush_log_if_pending;
