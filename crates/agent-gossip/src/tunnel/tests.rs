@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use futures_util::stream::FuturesUnordered;
 use habilis_network::iroh::endpoint::ConnectionError;
 use habilis_network::net::{add_peer_addr, address_book, build_peer_endpoint};
+use habilis_network::protocol::meshes::NostrChoice;
 use habilis_network::protocol::{LookupOpts, Password};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -155,6 +156,21 @@ async fn consumer(ticket: &A2aTicket) -> (habilis_network::iroh::Endpoint, Share
     add_peer_addr(&address_book(&endpoint), ticket.address.clone());
     let shared = SharedConnection::new(endpoint.clone(), ticket.address.clone());
     (endpoint, shared)
+}
+
+#[tokio::test]
+async fn a_nostr_only_lookup_set_is_refused_because_a_ticket_carries_no_nostr() {
+    let nostr_only = LookupOpts::loopback().nostr(NostrChoice::Pinned);
+    let error = bind(nostr_only, None)
+        .await
+        .err()
+        .expect("a ticket of a Nostr-only exposer would reach no remote consumer");
+    assert!(
+        error
+            .to_string()
+            .contains("an a2a ticket carries no Nostr: add mdns, dht or relay to the lookups"),
+        "the refusal names the fix, got: {error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

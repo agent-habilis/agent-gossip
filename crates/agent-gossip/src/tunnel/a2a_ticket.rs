@@ -40,6 +40,8 @@ const PASSWORD_BIT: u8 = 0b0000_0001;
 pub(crate) struct A2aTicket {
     pub address: EndpointAddr,
     pub secret: TicketSecret,
+    /// The ticket carries mdns, dht and relay lookups, and no Nostr lookup: it
+    /// decodes with Nostr disabled.
     pub lookups: LookupOpts,
     /// Password-protected: the consumer must present the Argon2id stretch of
     /// the password (salted by `secret`) in the stream header instead of the
@@ -142,6 +144,7 @@ mod tests {
     use habilis_network::net::endpoint_addr_to_json;
     use habilis_network::ops::blob;
     use habilis_network::ops::blob::{BlobDigest, BlobTicket};
+    use habilis_network::protocol::meshes::NostrChoice;
     use habilis_network::protocol::{LookupOpts, TicketSecret};
 
     use super::{
@@ -234,8 +237,8 @@ mod tests {
         );
         assert_eq!(
             decoded.lookups,
-            LookupOpts::public_preset(),
-            "the lookups travel in the ticket, or the consumer would search the wrong places"
+            LookupOpts::public_preset().nostr(NostrChoice::Disabled),
+            "a ticket carries mdns, dht and relay, or the consumer would search the wrong places; Nostr does not travel in a ticket"
         );
         assert!(
             !decoded.password,

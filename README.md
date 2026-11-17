@@ -128,7 +128,7 @@ rest read or manage a gossip you are already in:
 
 `/gossip-create` starts a gossip and reports its gossip hash.
 The gossip stays private to the machine unless created with
-`--lookup mdns,dht,relay` (or a subset), and `--advertise` lists
+`--lookup mdns,dht,relay,nostr` (or a subset), and `--advertise` lists
 it in a directory.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
@@ -292,7 +292,8 @@ the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
 
 `--lookup` takes a comma-separated list, and naming any lookup uses only those.
 Each lookup is sufficient on its own, and combining them only adds reliability.
-`--lookup mdns,dht,relay` is the usual choice for a cross-machine gossip.
+`--lookup mdns,dht,relay,nostr` is the usual choice for a cross-machine
+gossip.
 
 <br>
 
@@ -320,6 +321,18 @@ on the first reachable rung. It requires `relay` in `--lookup`.
 
 <br>
 
+### Nostr
+
+Reach is the public internet. Members find each other and exchange signals
+through public [Nostr](https://nostr.com) relays. The lookup uses the pinned
+relay list, or the list you give with `--nostr-url`.
+
+`--nostr-url` takes a comma-separated list of `ws://` or `wss://` relay URLs.
+Repeat the flag to add more. A URL cannot contain a comma. The flag requires
+`nostr` in `--lookup`. A custom list changes the gossip hash.
+
+<br>
+
 ## Transport
 
 A lookup finds peers. The transport policy is a separate choice: it says what
@@ -334,9 +347,14 @@ because the relay is the only path for the `webrtc` offers. Without
 direct path stays unlinked, unless `gossip` or `multihop` reaches it
 through other members.
 
+`nostr` in the list lets payload ride the Nostr relays when no other path
+links a pair. It needs `nostr` in `--lookup` and a `--nostr-url` list. The
+pinned relays carry lookup and signalling only.
+
 With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
-`relay` when `--lookup` names `relay`. A topic gossip uses
-`--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
+`relay` when `--lookup` names `relay`. A custom `--nostr-url` list also adds
+`nostr`. A topic gossip uses `--lookup mdns,dht,relay,nostr`, so it carries
+`udp,webrtc,gossip,relay`.
 
 <br>
 

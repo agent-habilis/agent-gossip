@@ -1,6 +1,8 @@
+use habilis_network::protocol::meshes::NostrChoice;
 use habilis_network::protocol::{
-    LookupOpts, LookupSet, RelayChoice, RelayLadder, TransportPolicy, resolve_lookups,
+    LookupOpts, LookupSet, MeshConfig, RelayChoice, RelayLadder, TransportPolicy, resolve_lookups,
 };
+use url::Url;
 
 use super::lookup::{Lookup, lookup_set};
 use super::transport::{Transport, transport_policy};
@@ -23,19 +25,30 @@ pub(crate) struct Resolved {
 /// in `MeshConfig::validate`, but names its own fields there — this check runs
 /// first, naming the flags.
 ///
+/// A custom `--nostr-url` list with no `--transport` also turns the Nostr
+/// transport on, as the engine does: the list is the only reason to name it.
+///
 /// # Errors
-/// `relay_url` is given without `relay` in `lookups`, `transports` is invalid
-/// (see [`transport_policy`]), or `transports` names `relay` while no relay
-/// lookup is on.
+/// `relay_url` is given without `relay` in `lookups`, `nostr_urls` is given
+/// without `nostr` in `lookups` or is not a valid list, `transports` is
+/// invalid (see [`transport_policy`]), `transports` names `relay` while no
+/// relay lookup is on, or the engine refuses the whole config (`nostr` in
+/// `transports` without `nostr` in `lookups` and a `--nostr-url` list).
 pub(crate) fn resolve(
     lookups: &[Lookup],
     relay_url: Option<RelayLadder>,
+    nostr_urls: Vec<Url>,
     transports: &[Transport],
 ) -> anyhow::Result<Resolved> {
-    let set = lookup_set(lookups, relay_url)?;
+    let set = lookup_set(lookups, relay_url, nostr_urls)?;
     let resolved = resolve_lookups(set.clone());
     let transport = if transports.is_empty() {
-        policy::app_transport_policy(&set)
+        let policy = policy::app_transport_policy(&set);
+        if matches!(resolved.nostr, NostrChoice::Custom(_)) {
+            policy.nostr_transport(true)
+        } else {
+            policy
+        }
     } else {
         transport_policy(transports)?
     };
@@ -44,6 +57,7 @@ pub(crate) fn resolve(
     {
         anyhow::bail!("--transport relay needs a relay lookup: add `relay` to --lookup");
     }
+    MeshConfig::new(resolved.clone(), None, None, transport.clone()).validate()?;
     Ok(Resolved {
         set,
         lookups: resolved,
@@ -54,7 +68,7 @@ pub(crate) fn resolve(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use habilis_network::protocol::{LookupOpts, RelayChoice, TransportPolicy};
+    use habilis_network::protocol::{LookupOpts, Mesh, MeshConfig, RelayChoice, TransportPolicy};
 
     use super::{Resolved, resolve};
     use crate::cli::args::lookup::{Lookup, lookups_or_public};
@@ -65,7 +79,7 @@ mod tests {
     fn relay_transport_without_relay_lookup_errors() {
         let relay = [Transport::Udp, Transport::WebRtc, Transport::Relay];
         assert!(
-            resolve(&[Lookup::Mdns], None, &relay).is_err(),
+            resolve(&[Lookup::Mdns], None, Vec::new(), &relay).is_err(),
             "an mdns lookup without a relay is rejected"
         );
     }
@@ -78,7 +92,7 @@ mod tests {
 
     #[test]
     fn create_without_flags_is_loopback_with_udp_webrtc_gossip() {
-        let resolved = resolve(&[], None, &[]).expect("no flags resolves");
+        let resolved = resolve(&[], None, Vec::new(), &[]).expect("no flags resolves");
         assert_eq!(
             resolved.lookups,
             LookupOpts::loopback(),
@@ -93,7 +107,8 @@ mod tests {
 
     #[test]
     fn create_with_relay_lookup_adds_relay_transport() {
-        let resolved = resolve(&[Lookup::Relay], None, &[]).expect("relay lookup resolves");
+        let resolved =
+            resolve(&[Lookup::Relay], None, Vec::new(), &[]).expect("relay lookup resolves");
         assert_eq!(
             resolved.transport,
             policy(false, true),
@@ -103,8 +118,13 @@ mod tests {
 
     #[test]
     fn create_with_public_lookups_adds_relay_transport() {
-        let resolved = resolve(&[Lookup::Mdns, Lookup::Dht, Lookup::Relay], None, &[])
-            .expect("the public mix has no custom relay ladder, so no lookup conflicts");
+        let resolved = resolve(
+            &[Lookup::Mdns, Lookup::Dht, Lookup::Relay],
+            None,
+            Vec::new(),
+            &[],
+        )
+        .expect("the public mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
             policy(false, true),
@@ -114,7 +134,7 @@ mod tests {
 
     #[test]
     fn create_with_lan_lookups_has_no_relay_transport() {
-        let resolved = resolve(&[Lookup::Mdns, Lookup::Dht], None, &[])
+        let resolved = resolve(&[Lookup::Mdns, Lookup::Dht], None, Vec::new(), &[])
             .expect("the lan mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
@@ -131,7 +151,81 @@ mod tests {
         let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };
-        resolve(&options.lookups.lookup, None, &options.transport)
+        resolve(
+            &options.lookups.lookup,
+            None,
+            options.lookups.nostr_url.clone(),
+            &options.transport,
+        )
+    }
+
+    #[test]
+    fn custom_nostr_list_alone_turns_the_nostr_transport_on() {
+        let resolved = resolve_flags(&["--lookup", "mdns,nostr", "--nostr-url", "wss://a.example"])
+            .expect("a custom list with the nostr lookup resolves");
+        assert!(
+            resolved
+                .transport
+                .allows(habilis_network::protocol::Transport::Nostr),
+            "with no --transport, a custom list brings the nostr transport"
+        );
+    }
+
+    #[test]
+    fn bare_nostr_lookup_has_no_nostr_transport() {
+        let resolved =
+            resolve_flags(&["--lookup", "mdns,nostr"]).expect("the pinned list resolves");
+        assert!(
+            !resolved
+                .transport
+                .allows(habilis_network::protocol::Transport::Nostr),
+            "the pinned relays carry lookup and signalling, not payload"
+        );
+    }
+
+    #[test]
+    fn nostr_transport_without_a_custom_list_is_the_engine_error() {
+        let error = resolve_flags(&["--lookup", "nostr", "--transport", "udp,nostr"])
+            .err()
+            .expect("the nostr transport needs --nostr-url");
+        assert!(
+            error.to_string().contains("nostr"),
+            "the engine error names nostr: {error}"
+        );
+    }
+
+    #[test]
+    fn nostr_transport_without_the_nostr_lookup_is_an_error() {
+        assert!(
+            resolve_flags(&[
+                "--lookup",
+                "mdns",
+                "--transport",
+                "udp,nostr",
+                "--nostr-url",
+                "wss://a.example"
+            ])
+            .is_err(),
+            "the nostr transport and a list need `nostr` in --lookup"
+        );
+    }
+
+    #[test]
+    fn a_nostr_url_list_changes_the_mesh_id() {
+        let id = |flags: &[&str]| {
+            let resolved = resolve_flags(flags).expect("these flags resolve");
+            Mesh::for_topic(
+                "standup",
+                MeshConfig::new(resolved.lookups, None, None, resolved.transport),
+            )
+            .expect("the config is valid")
+            .to_string()
+        };
+        let pinned = id(&["--lookup", "mdns,nostr"]);
+        let custom = id(&["--lookup", "mdns,nostr", "--nostr-url", "wss://a.example"]);
+        let other = id(&["--lookup", "mdns,nostr", "--nostr-url", "wss://b.example"]);
+        assert_ne!(pinned, custom, "a custom list moves the id");
+        assert_ne!(custom, other, "another list moves it again");
     }
 
     #[test]
@@ -169,7 +263,8 @@ mod tests {
             panic!("expected Create command");
         };
         let lookups = lookups_or_public(&options.lookups.lookup, options.advertise.is_some());
-        let resolved = resolve(&lookups, None, &options.transport).expect("advertise resolves");
+        let resolved =
+            resolve(&lookups, None, Vec::new(), &options.transport).expect("advertise resolves");
         assert_eq!(
             resolved.lookups,
             LookupOpts::public_preset(),
@@ -237,7 +332,7 @@ mod tests {
     #[test]
     fn relay_transport_with_relay_lookup_resolves() {
         let relay = [Transport::Udp, Transport::WebRtc, Transport::Relay];
-        let Ok(resolved) = resolve(&[Lookup::Relay], None, &relay) else {
+        let Ok(resolved) = resolve(&[Lookup::Relay], None, Vec::new(), &relay) else {
             panic!("relay lookup + relay transport must resolve");
         };
         assert!(

@@ -937,6 +937,62 @@ fn create_mesh_relay_transport_needs_relay_lookup() {
 }
 
 #[test]
+fn create_mesh_with_nostr_urls_and_transport_succeeds() {
+    let mut client = McpClient::spawn();
+    let response = client.tool_call(
+        131,
+        "create_gossip",
+        &serde_json::json!({
+            "name": "nostrurls",
+            "lookup": ["mdns", "nostr"],
+            "nostr_urls": ["wss://nostr.example/"],
+            "transport": ["udp", "webrtc", "nostr"]
+        }),
+    );
+    let result = tool_result_json(&response)
+        .expect("the nostr lookup with a custom list and the nostr transport is valid");
+    assert!(
+        agent_gossip::MeshId::try_new(result["gossip"].as_str().unwrap_or_default()).is_ok(),
+        "the server must return a mesh id that parses, got: {result}"
+    );
+}
+
+#[test]
+fn create_mesh_nostr_transport_needs_nostr_urls() {
+    let mut client = McpClient::spawn();
+    let response = client.tool_call(
+        132,
+        "create_gossip",
+        &serde_json::json!({
+            "name": "nostrnolist",
+            "lookup": ["nostr"],
+            "transport": ["udp", "webrtc", "nostr"]
+        }),
+    );
+    let err = tool_error(&response)
+        .expect("the engine refuses a payload path with no relays to carry it");
+    assert!(
+        err.contains("nostr"),
+        "expected the error to name the nostr requirement, got: {err}"
+    );
+}
+
+#[test]
+fn create_mesh_rejects_a_bad_nostr_url() {
+    let mut client = McpClient::spawn();
+    let response = client.tool_call(
+        133,
+        "create_gossip",
+        &serde_json::json!({ "name": "nostrbad", "lookup": ["nostr"], "nostr_urls": ["not a url"] }),
+    );
+    let err = tool_error(&response).expect("`not a url` does not parse, so the call is refused");
+    assert!(
+        err.contains("nostr url"),
+        "expected the error to name the nostr url, got: {err}"
+    );
+}
+
+#[test]
 fn create_mesh_rejects_removed_network_param() {
     let mut client = McpClient::spawn();
     let response = client.tool_call(

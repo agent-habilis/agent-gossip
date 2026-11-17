@@ -29,10 +29,14 @@ pub(crate) struct CreateOpts {
     pub name: Option<MeshName>,
 
     /// Which paths may carry mesh payload: any of `udp`, `webrtc`, `multihop`,
-    /// `gossip`, `relay`. The list is literal and needs `udp` or `webrtc`.
-    /// Absent, the default is `udp,webrtc,gossip`, plus `relay` when `relay` is
-    /// in `--lookup`. Baked into the gossip id and inherited by every joiner.
-    /// `relay` requires `relay` in `--lookup`.
+    /// `gossip`, `relay`, `nostr`. The list is literal and needs `udp` or
+    /// `webrtc`. Absent, the default is `udp,webrtc,gossip`, plus `relay` when
+    /// `relay` is in `--lookup`, and plus `nostr` when `--nostr-url` is given.
+    /// Baked into the gossip id and inherited by every joiner. `relay` requires
+    /// `relay` in `--lookup`. `nostr` requires the Nostr lookup and
+    /// `--nostr-url`. A bare `--advertise` already has the Nostr lookup through
+    /// the public preset, so `nostr` in `--lookup` is needed only with an
+    /// explicit `--lookup` list, which replaces the preset.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub transport: Vec<Transport>,
 

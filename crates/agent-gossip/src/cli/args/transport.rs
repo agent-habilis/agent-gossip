@@ -24,6 +24,11 @@ pub(crate) enum Transport {
     /// Let payload also fall back to the relay when no direct path exists.
     #[value(name = "relay")]
     Relay,
+    /// Carry payload over the Nostr relays of a custom `--nostr-url` list when
+    /// no other path links a pair. Needs `nostr` in `--lookup` and
+    /// `--nostr-url`.
+    #[value(name = "nostr")]
+    Nostr,
 }
 
 impl From<Transport> for habilis_network::protocol::Transport {
@@ -34,6 +39,7 @@ impl From<Transport> for habilis_network::protocol::Transport {
             Transport::Multihop => Self::Multihop,
             Transport::Gossip => Self::Gossip,
             Transport::Relay => Self::Relay,
+            Transport::Nostr => Self::Nostr,
         }
     }
 }
@@ -59,7 +65,7 @@ mod tests {
     use habilis_network::protocol::TransportPolicy;
 
     use super::{Transport, transport_policy};
-    use crate::cli::args::Cli;
+    use crate::cli::args::{Cli, Commands};
 
     #[test]
     fn transport_list_is_literal() {
@@ -86,6 +92,26 @@ mod tests {
                 && policy.allows(habilis_network::protocol::Transport::Gossip)
                 && policy.allows(habilis_network::protocol::Transport::Relay),
             "udp and webrtc together enable multihop, gossip and relay transport"
+        );
+    }
+
+    #[test]
+    fn transport_nostr_is_named_with_a_direct_path() {
+        let policy = transport_policy(&[Transport::Udp, Transport::Nostr])
+            .expect("this transport combination is valid");
+        assert!(
+            policy.allows(habilis_network::protocol::Transport::Nostr),
+            "a list that names nostr turns the nostr transport on"
+        );
+        let cli = Cli::try_parse_from(["agent-gossip", "create", "--transport", "udp,nostr"])
+            .expect("nostr is a transport name");
+        let Commands::Create { options } = cli.command else {
+            panic!("expected Create command");
+        };
+        assert_eq!(
+            options.transport,
+            [Transport::Udp, Transport::Nostr],
+            "--transport udp,nostr parses to both paths"
         );
     }
 
