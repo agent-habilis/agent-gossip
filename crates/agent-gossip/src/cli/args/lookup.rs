@@ -117,13 +117,13 @@ mod tests {
     use habilis_network::protocol::{RelayChoice, RelayLadder, RelaySelection, resolve_lookups};
 
     use super::{Lookup, lookup_set};
-    use crate::cli::args::Cli;
+    use crate::cli::args::{Cli, Commands};
 
     fn create_args(flags: &[&str]) -> Result<super::LookupArgs, clap::Error> {
         let mut command_line = vec!["agent-gossip", "create"];
         command_line.extend_from_slice(flags);
         Cli::try_parse_from(command_line).map(|cli| {
-            let crate::cli::args::Commands::Create { options } = cli.command else {
+            let Commands::Create { options } = cli.command else {
                 panic!("expected Create command");
             };
             options.lookups

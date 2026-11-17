@@ -65,7 +65,7 @@ mod tests {
     use habilis_network::protocol::TransportPolicy;
 
     use super::{Transport, transport_policy};
-    use crate::cli::args::Cli;
+    use crate::cli::args::{Cli, Commands};
 
     #[test]
     fn transport_list_is_literal() {
@@ -105,7 +105,7 @@ mod tests {
         );
         let cli = Cli::try_parse_from(["agent-gossip", "create", "--transport", "udp,nostr"])
             .expect("nostr is a transport name");
-        let crate::cli::args::Commands::Create { options } = cli.command else {
+        let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };
         assert_eq!(
