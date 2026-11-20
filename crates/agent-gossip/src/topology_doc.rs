@@ -317,11 +317,12 @@ fn edge_label(peer: &PeerView) -> String {
 
 fn peer_lines(peer: &PeerView) -> Vec<String> {
     let mut flags = Vec::new();
+    // A pinned peer takes multihop paths only, so it is not a unicast peer.
+    let takes_direct_paths = peer.pinned != Some(true);
     match peer.neighbor {
         Some(true) => flags.push("neighbor"),
-        Some(false) if peer.pinned != Some(true) => flags.push("unicast"),
-        Some(false) => {}
-        None => {}
+        Some(false) if takes_direct_paths => flags.push("unicast"),
+        Some(false) | None => {}
     }
     if peer.pinned == Some(true) {
         flags.push("pinned");
@@ -571,7 +572,7 @@ links between other peers
         assert_eq!(
             warnings(&doc),
             ["warning: link to endpoint eeeeeeee has no roster row"],
-            "the link of no roster row"
+            "the drawing cannot show a link that no roster row owns"
         );
     }
 }
