@@ -1539,7 +1539,7 @@ async fn test_silent_tasks_survive_while_daemons_live() {
 
 /// A peer's repeated `working` with no text changes nothing: the task is
 /// already `working`. Pre-fix each one surfaced to the initiator and woke its
-/// bell, which is what a 0.8/0.9 worker's manual beat loop still sends.
+/// bell, which is what a worker agent that repeats its status causes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_a_repeated_working_does_not_reach_the_initiator() {
     let worker_nick = "tk-repeat";

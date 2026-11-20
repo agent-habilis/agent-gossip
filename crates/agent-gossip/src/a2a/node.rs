@@ -257,11 +257,11 @@ impl NodeDriver for A2aApp {
 }
 
 /// A peer's `working` with no text on a task already `working` changes nothing
-/// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
-/// keep the task alive, and each one woke the initiator's bell, so it is kept
-/// off the surface like a beat. It still reaches the state machine, which
-/// counts it as the peer's activity. A leg that sets or clears the waiting
-/// reason (`prior_waiting` is the record's current one) is news and surfaces.
+/// the agent can act on. A worker agent can repeat its status, and each repeat
+/// would wake the initiator's bell, so it is kept off the surface like a beat. It still
+/// reaches the state machine, which counts it as the peer's activity. A leg that
+/// sets or clears the waiting reason (`prior_waiting` is the record's current
+/// one) is news and surfaces.
 fn is_empty_working_repeat(
     prior: Option<super::TaskState>,
     prior_waiting: Option<&str>,
