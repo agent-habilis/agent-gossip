@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use serde_json::Value;
+use unicode_width::UnicodeWidthStr;
 
 /// A cap on direct connections: `used` of `max`, and the QUIC connections of
 /// all kinds against their own cap.
@@ -231,7 +232,7 @@ fn short(endpoint: &str) -> String {
 }
 
 fn widest(texts: &[String]) -> usize {
-    let widths = texts.iter().map(|text| text.chars().count());
+    let widths = texts.iter().map(|text| text.width());
     widths.max().unwrap_or(0)
 }
 
@@ -306,7 +307,7 @@ pub(crate) fn render(doc: &TopologyDoc) -> String {
         } else {
             ("├─", "│")
         };
-        let fill = "─".repeat(label_width - label.chars().count());
+        let fill = "─".repeat(label_width - label.width());
         for (row, line) in boxed(&peer_lines(peer)).into_iter().enumerate() {
             if row == 1 {
                 out.push(format!("  {branch} {label} {fill}─▶ {line}"));
@@ -401,7 +402,7 @@ fn boxed(lines: &[String]) -> Vec<String> {
     let bar = "─".repeat(width + 2);
     let mut rows = vec![format!("┌{bar}┐")];
     rows.extend(lines.iter().map(|line| {
-        let pad = " ".repeat(width - line.chars().count());
+        let pad = " ".repeat(width - line.width());
         format!("│ {line}{pad} │")
     }));
     rows.push(format!("└{bar}┘"));
@@ -411,6 +412,7 @@ fn boxed(lines: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use unicode_width::UnicodeWidthStr;
 
     use super::{TopologyDoc, render, warnings};
 
@@ -531,6 +533,24 @@ links between other peers
             drawing.contains("  twin (bbbbbbbb) ──2─▶ sink\n")
                 && drawing.contains("  twin (cccccccc) ──2─▶ sink\n"),
             "one line per endpoint, each with its short id:\n{drawing}"
+        );
+    }
+
+    /// A box is as wide in terminal columns on every row. A wide character, such
+    /// as one of a nickname in Chinese, takes 2 columns and counts as 1 char.
+    #[test]
+    fn a_box_is_as_wide_in_columns_on_every_row_with_wide_characters() {
+        let rows = super::boxed(&["日本語".to_owned(), "amy".to_owned()]);
+
+        let widths: Vec<usize> = rows
+            .iter()
+            .map(|row| UnicodeWidthStr::width(row.as_str()))
+            .collect();
+
+        assert!(
+            widths.windows(2).all(|pair| pair[0] == pair[1]),
+            "every row has the same width in columns: {widths:?}\n{}",
+            rows.join("\n")
         );
     }
 
