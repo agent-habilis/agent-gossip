@@ -4831,6 +4831,7 @@ name = "tasks"
 version = "0.1.0"
 dependencies = [
  "agent-gossip",
+ "agent-gossip-test-fixtures",
  "anyhow",
  "cargo-zigbuild",
  "clap",
