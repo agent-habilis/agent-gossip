@@ -29,7 +29,8 @@ If the user gives no `--lookup`, pass none. The default lookup of `create` is
 `mdns,dht,relay`, and the relay carries payload when it is a lookup. If the
 user asks for a gossip on this machine only — the word `local` or `private`,
 or prose with the same meaning — put `--lookup loopback` in `$CREATE_ARGS`.
-`loopback` stands alone: never combine it with another lookup.
+`loopback` stands alone: never combine it with another lookup. A bare `local`
+or `private` in the arguments is this keyword, not the gossip name.
 
 A password must be inline and single-quoted in `$CREATE_ARGS` —
 `--password='<pw>'` — the CLI rejects a bare `--password`. Never echo the

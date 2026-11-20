@@ -14,7 +14,8 @@ pub struct JoinConfig {
     pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// Max direct peer connections before gossip relays the rest.
+    /// Cap on direct connections, gossip neighbors included. A peer past the
+    /// cap is reached through a connected peer (multihop).
     pub max_connections: usize,
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
@@ -72,7 +73,8 @@ pub struct TopicConfig {
     pub string: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// Max direct peer connections before gossip relays the rest.
+    /// Cap on direct connections, gossip neighbors included. A peer past the
+    /// cap is reached through a connected peer (multihop).
     pub max_connections: usize,
 }
 
@@ -120,7 +122,8 @@ pub struct CreateConfig {
     /// Granular lookup allowlist (`mdns`/`dht`/`relay`). Naming any one
     /// uses *only* those (relay defaults off); naming none makes a
     /// loopback-only mesh. Default [`LookupSet::default`] (all off, i.e.
-    /// loopback). Mirrors the CLI `--lookup`/`--relay-url` flags.
+    /// loopback). Mirrors the CLI `--lookup`/`--relay-url` flags, except for
+    /// the default: the CLI `create` names all three when none is given.
     pub lookups: LookupSet,
     /// Which transports may carry mesh payload. [`CreateConfig::new`] takes
     /// `udp,webrtc,multihop`, with no gossip and no relay. Mirrors the CLI
@@ -133,7 +136,8 @@ pub struct CreateConfig {
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
     pub directory: Option<MeshName>,
-    /// Max direct peer connections before gossip relays the rest.
+    /// Cap on direct connections, gossip neighbors included. A peer past the
+    /// cap is reached through a connected peer (multihop).
     pub max_connections: usize,
     /// Protect the mesh with a password: its verifier is baked into the
     /// minted id (joiners must present the password), and every derivation

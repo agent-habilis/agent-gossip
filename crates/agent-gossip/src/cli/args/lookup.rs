@@ -32,8 +32,8 @@ pub(crate) enum Lookup {
 /// preset.
 #[derive(Parser, Debug)]
 pub(crate) struct LookupArgs {
-    /// Comma-separated networking lookups: mdns, dht, relay. An unknown
-    /// value is an error.
+    /// Comma-separated networking lookups: mdns, dht, relay, or loopback
+    /// (`create` only, alone). An unknown value is an error.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub lookup: Vec<Lookup>,
 
