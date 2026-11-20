@@ -155,7 +155,7 @@ fn askable_names(candidates: &[&Nickname], live: &[&Nickname], room: usize) -> V
 
 /// The endpoint that a `peers` row may report: a name held by two or more live members has no
 /// single endpoint, so the row reports none rather than the endpoint of one holder.
-fn row_endpoint<T>(holders: usize, endpoint: Option<T>) -> Option<T> {
+pub(crate) fn row_endpoint<T>(holders: usize, endpoint: Option<T>) -> Option<T> {
     if holders == 1 { endpoint } else { None }
 }
 

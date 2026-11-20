@@ -15,6 +15,8 @@ pub(crate) struct Cap {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PeerView {
     pub nickname: String,
+    /// Author key in hex; tells apart two members of one nickname.
+    pub pubkey: Option<String>,
     /// Endpoint id in hex; the key of the link-state edges.
     pub endpoint: Option<String>,
     /// The path label of `peers`: `ip`, `webrtc`, `relay`, `ip+relay`, `unknown`.
@@ -53,10 +55,13 @@ pub(crate) struct TopologyDoc {
 impl TopologyDoc {
     /// Build the document from the `peers` and `topology` IPC responses.
     pub(crate) fn assemble(me: &str, peers: &Value, topology: &Value) -> Self {
-        let endpoint_of = |nickname: &str| {
-            let entry = items(&topology["endpoints"])
-                .iter()
-                .find(|entry| entry["nickname"] == nickname);
+        let endpoint_of = |nickname: &str, pubkey: Option<&str>| {
+            let entry = items(&topology["endpoints"]).iter().find(|entry| {
+                match (pubkey, entry["pubkey"].as_str()) {
+                    (Some(wanted), Some(owner)) => wanted == owner,
+                    (None, _) | (_, None) => entry["nickname"] == nickname,
+                }
+            });
             let endpoint = entry.and_then(|found| found["endpoint"].as_str());
             endpoint.map(str::to_owned)
         };
@@ -145,13 +150,15 @@ fn link_of<'a>(links: &'a [Value], endpoint: Option<&str>) -> Option<&'a Value> 
     candidates.find(|link| link["endpoint"].as_str() == Some(endpoint))
 }
 
-fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str) -> Option<String>) -> PeerView {
+fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str, Option<&str>) -> Option<String>) -> PeerView {
     let text = |key: &str| row[key].as_str().map(str::to_owned);
     let flag = |key: &str| row[key].as_bool();
     let nickname = text("nickname").unwrap_or_default();
     let path = text("path").unwrap_or_else(|| "unknown".to_owned());
+    let pubkey = text("pubkey");
     PeerView {
-        endpoint: endpoint_of(&nickname),
+        endpoint: endpoint_of(&nickname, pubkey.as_deref()),
+        pubkey,
         path,
         lane: text("transport"),
         quiet: flag("quiet").unwrap_or(false),
@@ -405,6 +412,34 @@ links between other peers
   zed ──2─▶ ffffffff
 ";
         assert_eq!(drawing, expected, "the drawing of the fixed document");
+    }
+
+    /// Two members can share a nickname. The endpoint of the pair names the
+    /// key of its owner, so it joins that row and not the other row of the
+    /// same nickname.
+    #[test]
+    fn an_endpoint_joins_the_row_of_its_key_and_not_of_its_nickname() {
+        let row = |pubkey: &str| {
+            json!({"pubkey": pubkey, "nickname": "twin", "path": "ip",
+                   "quiet": false, "transport": "unicast"})
+        };
+        let peers = json!({"ok": true, "peers": [row("k1"), row("k2")]});
+        let topology = json!({"ok": true,
+            "topology": {"self_id": ME, "edges": []},
+            "endpoints": [{"pubkey": "k2", "nickname": "twin", "endpoint": TWO}]});
+
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        let endpoints: Vec<Option<&str>> = doc
+            .peers
+            .iter()
+            .map(|peer| peer.endpoint.as_deref())
+            .collect();
+        assert_eq!(
+            endpoints,
+            [None, Some(TWO)],
+            "the endpoint of k2 does not go to k1"
+        );
     }
 
     /// With the multihop transport off, the mesh view is empty and the

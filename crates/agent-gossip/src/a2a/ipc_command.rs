@@ -19,9 +19,11 @@ use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::a2a_app::A2aResponder::Ipc;
 use crate::a2a::broadcast_params::{
     BroadcastParams, FileRef, MsgParams, TaskArtifactEmitParams, TaskStatusParams,
-    emit_task_artifact, emit_task_status, send_broadcast, send_msg, when_sent,
+    emit_task_artifact, emit_task_status, live_holders, send_broadcast, send_msg, when_sent,
 };
-use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::reader_asks::{
+    ReaderAskParams, ask_readers, respond_with_paths, roster_rows, row_endpoint,
+};
 use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
@@ -727,11 +729,12 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
 
 /// Serialize the topology of this daemon for the `topology` IPC query:
 /// `{"ok":true,"topology":{self_id, edges:[…]},"cap":{…},"links":[…],
-/// "endpoints":[{nickname, endpoint}]}`. `topology` is the multihop link-state
+/// "endpoints":[{pubkey, nickname, endpoint}]}`. `topology` is the multihop link-state
 /// graph, empty when the multihop transport is off. `cap` and `links` come from
 /// the engine snapshot: the direct units against the cap, and per peer the path,
 /// the first hop, the neighbor flag, the pinned flag and the extra flag. `endpoints` maps the
-/// endpoint ids of the edges to roster nicknames.
+/// endpoint ids of the edges to roster members by key. A nickname that two live members hold names
+/// no single endpoint, so it has no row.
 fn topology_response(state: &EventLoopState) -> String {
     let snapshot = state.topology_snapshot();
     let graph = snapshot.graph.as_ref().map_or_else(
@@ -746,13 +749,20 @@ fn topology_response(state: &EventLoopState) -> String {
         "connected_cap": snapshot.connected_cap,
     });
     let links = serde_json::to_value(&snapshot.peers).unwrap_or(serde_json::Value::Null);
-    let endpoints: Vec<serde_json::Value> = state
-        .roster_snapshot()
+    let roster = state.roster_snapshot();
+    let live: Vec<&Nickname> = state.live_nicknames().collect();
+    let endpoints: Vec<serde_json::Value> = roster
         .peers
         .iter()
-        .filter_map(|entry| {
-            let endpoint = state.peer_endpoint(&entry.nickname)?;
-            Some(serde_json::json!({"nickname": entry.nickname, "endpoint": endpoint.to_string()}))
+        .zip(roster_rows(&roster.peers))
+        .filter_map(|(entry, row)| {
+            let holders = live_holders(live.iter().copied(), &entry.nickname);
+            let endpoint = row_endpoint(holders, state.peer_endpoint(&entry.nickname))?;
+            Some(serde_json::json!({
+                "pubkey": row["pubkey"],
+                "nickname": entry.nickname,
+                "endpoint": endpoint.to_string(),
+            }))
         })
         .collect();
     serde_json::json!({
