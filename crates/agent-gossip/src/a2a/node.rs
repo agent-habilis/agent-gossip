@@ -648,14 +648,10 @@ fn is_replayed_chat(surfaced: &BoundedFifoSet<DedupKey>, message: &Authored) -> 
 /// gates only the *display*: a pre-join message is still logged/relayed but not
 /// printed.
 fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: bool) -> bool {
-    if message.kind.is_app(wire::BROADCAST) {
-        if surfaceable {
-            out.print_message(message, None);
-        }
-        true
-    } else {
-        false
+    if surfaceable {
+        out.print_message(message, None);
     }
+    true
 }
 
 /// The value cluster [`handle_msg`] needs beyond its `out` sink handle.

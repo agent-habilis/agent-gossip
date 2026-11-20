@@ -742,16 +742,7 @@ async fn send_cancels(
             status_update_params::StatusUpdateParams::new(task_id, TaskState::Canceled)
                 .with_metadata(serde_json::json!({ META_REASON: reason })),
         );
-        broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key,
-                task_id,
-                update: &update,
-            },
-        )
-        .await;
+        broadcast_status(state, context, peer_key, &update).await;
     }
 }
 
@@ -943,32 +934,13 @@ pub(crate) async fn tick_task_keepalive(
                 status_update_params::beat_metadata_with_reader(fraction, reader),
             ),
         );
-        let sent = broadcast_status(
-            state,
-            context,
-            BroadcastStatusParams {
-                peer_key: &peer_key,
-                task_id: &task_id,
-                update: &update,
-            },
-        )
-        .await;
+        let sent = broadcast_status(state, context, &peer_key, &update).await;
         if sent && let Some(rec) = app.tasks.get_mut(&task_id) {
             let sent_at = Instant::now();
             rec.last_activity = sent_at;
             rec.last_sent = sent_at;
         }
     }
-}
-
-/// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
-/// handles.
-struct BroadcastStatusParams<'caller> {
-    peer_key: &'caller AuthorKey,
-    /// The task id rides inside the status payload body (8.0); the envelope no
-    /// longer carries it, so this is unused here beyond documenting the leg.
-    task_id: &'caller TaskId,
-    update: &'caller super::TaskStatusUpdate,
 }
 
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
@@ -980,13 +952,9 @@ struct BroadcastStatusParams<'caller> {
 async fn broadcast_status(
     state: &EventLoopState,
     context: &HandlerCtx<'_>,
-    params: BroadcastStatusParams<'_>,
+    peer_key: &AuthorKey,
+    update: &super::TaskStatusUpdate,
 ) -> bool {
-    let BroadcastStatusParams {
-        peer_key,
-        task_id: _task_id,
-        update,
-    } = params;
     let Ok(body) = status_update_params::payload_body(update) else {
         return false;
     };
