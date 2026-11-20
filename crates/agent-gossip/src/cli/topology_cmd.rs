@@ -12,8 +12,7 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
         mesh: options.gossip.clone(),
     };
     let response = super::send::send(&command, &options.nickname).await?;
-    let parsed: MsgResponse = serde_json::from_str(&response)?;
-    if !parsed.ok {
+    if !reply_is_ok(&response)? {
         println!("{response}");
         std::process::exit(1);
     }
@@ -25,8 +24,7 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
         mesh: options.gossip,
     };
     let peers_response = super::send::send(&peers_command, &options.nickname).await?;
-    let peers_reply: MsgResponse = serde_json::from_str(&peers_response)?;
-    if !peers_reply.ok {
+    if !reply_is_ok(&peers_response)? {
         println!("{peers_response}");
         std::process::exit(1);
     }
@@ -40,4 +38,32 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
         eprintln!("{line}");
     }
     Ok(())
+}
+
+fn reply_is_ok(response: &str) -> Result<bool> {
+    let parsed: MsgResponse = serde_json::from_str(response)?;
+    Ok(parsed.ok)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::topology_cmd;
+
+    /// `topology --draw` exits 1 on a reply that is not ok, for the topology reply and for the
+    /// peers reply alike. The exit call itself needs a daemon that answers one query and not the
+    /// other, so the test pins the decision.
+    #[test]
+    fn a_reply_that_says_not_ok_fails_the_command() {
+        let failed = r#"{"ok":false,"error":"no such gossip"}"#;
+        let fine = r#"{"ok":true,"peers":[]}"#;
+
+        assert!(
+            !topology_cmd::reply_is_ok(failed).expect("a reply is JSON"),
+            "the daemon refused the query, so the command exits 1"
+        );
+        assert!(
+            topology_cmd::reply_is_ok(fine).expect("a reply is JSON"),
+            "the daemon answered, so the command goes on to the drawing"
+        );
+    }
 }
