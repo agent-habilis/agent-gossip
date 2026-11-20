@@ -1,13 +1,13 @@
 //! `agent-gossip a2a discover`: open a named directory, collect advertised a2a
 //! bridge tickets, and stream `ticket_found`/`ticket_lost` JSON for an agent.
-//! The collector lives in [`crate::a2a::TicketDirectory`].
+//! The collector lives in [`crate::tunnel::TicketDirectory`].
 
 use anyhow::Result;
 use habilis_network::protocol::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 use habilis_network::util::logging;
 
 use super::signal::{interrupted, sigterm_stream};
-use crate::a2a::{TicketDirectory, TicketDirectoryEvent};
+use crate::tunnel::{TicketDirectory, TicketDirectoryEvent};
 
 /// The parsed `agent-gossip a2a discover` CLI arguments.
 pub(super) struct DiscoverParams {

@@ -153,7 +153,7 @@ async fn expose(args: ExposeArgs) -> Result<()> {
     } = args;
     let password = super::password_flag::resolve_password(password)?;
     let advertise = habilis_network::protocol::DirectorySelection::from(advertise);
-    Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
+    Box::pin(crate::tunnel::expose(crate::tunnel::ExposeParams {
         to: &to,
         flags: lookups.to_set()?,
         advertise,
@@ -172,7 +172,7 @@ async fn connect(
     // Error when the ticket needs a password and none was passed
     // (mirrors the mesh-join UX); otherwise resolve the given flag.
     let password = match password {
-        None if crate::a2a::ticket_requires_password(ticket) => {
+        None if crate::tunnel::ticket_requires_password(ticket) => {
             Some(super::password_flag::require_password("ticket")?)
         }
         other => super::password_flag::resolve_password(other)?,
