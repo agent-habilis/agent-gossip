@@ -147,6 +147,23 @@ impl TopologyDoc {
         peer.map_or_else(|| short(endpoint), |found| found.nickname.clone())
     }
 
+    /// The name of an endpoint id, with the short id after it when another
+    /// endpoint of the drawing carries the same name.
+    fn label_of(&self, endpoint: &str) -> String {
+        let name = self.name_of(endpoint);
+        let named_alike = self
+            .peers
+            .iter()
+            .filter(|peer| peer.endpoint.is_some() && peer.nickname == name)
+            .count();
+        let holders = named_alike + usize::from(self.me == name);
+        if holders > 1 {
+            format!("{name} ({})", short(endpoint))
+        } else {
+            name
+        }
+    }
+
     fn peer_at(&self, endpoint: &str) -> Option<&PeerView> {
         let mut peers = self.peers.iter();
         peers.find(|peer| peer.endpoint.as_deref() == Some(endpoint))
@@ -365,13 +382,16 @@ fn mesh_links(doc: &TopologyDoc) -> Vec<String> {
         .edges
         .iter()
         .filter(|edge| edge.from != doc.self_id && edge.to != doc.self_id);
-    let links: BTreeSet<(String, String, u64)> = others
-        .map(|edge| (doc.name_of(&edge.from), doc.name_of(&edge.to), edge.metric))
+    let by_id: BTreeSet<(&str, &str, u64)> = others
+        .map(|edge| (edge.from.as_str(), edge.to.as_str(), edge.metric))
         .collect();
-    let rows = links
+    let rows: BTreeSet<String> = by_id
         .into_iter()
-        .map(|(from, to, metric)| format!("  {from} ──{metric}─▶ {to}"));
-    rows.collect()
+        .map(|(from, to, metric)| {
+            format!("  {} ──{metric}─▶ {}", doc.label_of(from), doc.label_of(to))
+        })
+        .collect();
+    rows.into_iter().collect()
 }
 
 /// Put the lines in a box. The first line is the title row; a box with one
@@ -480,6 +500,37 @@ links between other peers
             endpoints,
             [None, Some(TWO)],
             "the endpoint of k2 does not go to k1"
+        );
+    }
+
+    /// Two endpoints can carry one nickname. The links of the mesh are told apart by
+    /// endpoint id, so neither link is lost, and the equal names get a short id.
+    #[test]
+    fn two_endpoints_of_one_name_are_two_links_with_distinct_labels() {
+        let row = |pubkey: &str, nickname: &str| {
+            json!({"pubkey": pubkey, "nickname": nickname, "path": "ip",
+                   "quiet": false, "transport": "unicast"})
+        };
+        let peers = json!({"ok": true, "peers": [
+            row("k1", "twin"), row("k2", "twin"), row("k3", "sink")]});
+        let topology = json!({"ok": true,
+        "topology": {"self_id": ME, "edges": [
+            {"from": "bbbbbbbb", "to": "dddddddd", "metric": 2},
+            {"from": "cccccccc", "to": "dddddddd", "metric": 2},
+        ]},
+        "endpoints": [
+            {"pubkey": "k1", "nickname": "twin", "endpoint": "bbbbbbbb"},
+            {"pubkey": "k2", "nickname": "twin", "endpoint": "cccccccc"},
+            {"pubkey": "k3", "nickname": "sink", "endpoint": "dddddddd"},
+        ]});
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        let drawing = render(&doc);
+
+        assert!(
+            drawing.contains("  twin (bbbbbbbb) ──2─▶ sink\n")
+                && drawing.contains("  twin (cccccccc) ──2─▶ sink\n"),
+            "one line per endpoint, each with its short id:\n{drawing}"
         );
     }
 
