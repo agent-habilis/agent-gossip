@@ -25,6 +25,11 @@ pub(super) async fn topology_cmd(options: TopologyOpts) -> Result<()> {
         mesh: options.gossip,
     };
     let peers_response = super::send::send(&peers_command, &options.nickname).await?;
+    let peers_reply: MsgResponse = serde_json::from_str(&peers_response)?;
+    if !peers_reply.ok {
+        println!("{peers_response}");
+        std::process::exit(1);
+    }
     let doc = TopologyDoc::assemble(
         options.nickname.as_str(),
         &serde_json::from_str(&peers_response)?,

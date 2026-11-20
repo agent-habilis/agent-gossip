@@ -8,6 +8,8 @@ use serde_json::Value;
 pub(crate) struct Cap {
     pub used: u64,
     pub max: u64,
+    /// How many units the count is over the ceiling by.
+    pub over_ceiling: u64,
     pub all: Option<(u64, u64)>,
 }
 
@@ -50,6 +52,8 @@ pub(crate) struct TopologyDoc {
     pub cap: Option<Cap>,
     pub peers: Vec<PeerView>,
     pub edges: Vec<EdgeView>,
+    /// The endpoint ids of the links that no roster row owns.
+    pub orphan_links: Vec<String>,
 }
 
 impl TopologyDoc {
@@ -80,6 +84,7 @@ impl TopologyDoc {
             cap: cap_of(&topology["cap"]),
             peers,
             edges,
+            orphan_links: Vec::new(),
         };
         doc.take_links(items(&topology["links"]));
         doc
@@ -88,6 +93,11 @@ impl TopologyDoc {
     /// Copy the flags and the first hop of each link to the peer of the same
     /// endpoint. The first hop is an endpoint id; the drawing names it.
     fn take_links(&mut self, links: &[Value]) {
+        let orphans = links.iter().filter_map(|link| link["endpoint"].as_str());
+        self.orphan_links = orphans
+            .filter(|endpoint| !self.knows(endpoint))
+            .map(str::to_owned)
+            .collect();
         for peer in &mut self.peers {
             let Some(link) = link_of(links, peer.endpoint.as_deref()) else {
                 continue;
@@ -141,7 +151,13 @@ fn cap_of(cap: &Value) -> Option<Cap> {
     let connected = cap["connected_peers"].as_u64();
     let connected_cap = cap["connected_cap"].as_u64();
     let all = connected.zip(connected_cap);
-    Some(Cap { used, max, all })
+    let over_ceiling = cap["over_ceiling"].as_u64().unwrap_or(0);
+    Some(Cap {
+        used,
+        max,
+        over_ceiling,
+        all,
+    })
 }
 
 fn link_of<'a>(links: &'a [Value], endpoint: Option<&str>) -> Option<&'a Value> {
@@ -197,11 +213,11 @@ pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
         lines.push("warning: multihop is off, the mesh view is empty".to_owned());
     }
     if let Some(cap) = &doc.cap
-        && cap.used >= cap.max
+        && cap.over_ceiling > 0
     {
         lines.push(format!(
-            "warning: connection cap is full ({}/{})",
-            cap.used, cap.max
+            "warning: connection count is over the cap by {} ({}/{})",
+            cap.over_ceiling, cap.used, cap.max
         ));
     }
     for peer in &doc.peers {
@@ -220,6 +236,10 @@ pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
     for id in unknown {
         let id = short(id);
         lines.push(format!("warning: link endpoint {id} is not in the roster"));
+    }
+    for id in &doc.orphan_links {
+        let id = short(id);
+        lines.push(format!("warning: link to endpoint {id} has no roster row"));
     }
     lines
 }
@@ -299,7 +319,8 @@ fn peer_lines(peer: &PeerView) -> Vec<String> {
     let mut flags = Vec::new();
     match peer.neighbor {
         Some(true) => flags.push("neighbor"),
-        Some(false) => flags.push("unicast"),
+        Some(false) if peer.pinned != Some(true) => flags.push("unicast"),
+        Some(false) => {}
         None => {}
     }
     if peer.pinned == Some(true) {
@@ -508,8 +529,8 @@ links between other peers
             "a pinned peer takes the multihop path of the snapshot, with the first hop by name:\n{drawing}"
         );
         assert!(
-            drawing.contains("unicast · pinned · extra"),
-            "zed is pinned and took no unit:\n{drawing}"
+            drawing.contains("pinned · extra") && !drawing.contains("unicast · pinned"),
+            "zed is pinned, takes multihop paths and took no unit:\n{drawing}"
         );
         assert!(
             drawing.contains("reached through other peers because of the cap: zed"),
@@ -517,8 +538,40 @@ links between other peers
         );
         assert_eq!(
             warnings(&doc),
-            ["warning: connection cap is full (8/8)"],
-            "a full cap warns"
+            Vec::<String>::new(),
+            "a full cap that holds no excess is the normal state"
+        );
+    }
+
+    /// The cap is full in the normal state, because the engine fills it on
+    /// purpose. Only a count over the ceiling is a problem.
+    #[test]
+    fn warns_about_a_cap_only_when_the_count_is_over_the_ceiling() {
+        let (peers, mut topology) = responses(false);
+        topology["cap"] = json!({"used": 10, "max_connections": 8, "over_ceiling": 2});
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: connection count is over the cap by 2 (10/8)"],
+            "the excess warns"
+        );
+    }
+
+    /// A link that no roster row owns is a warning: the drawing cannot show it.
+    #[test]
+    fn warns_about_a_link_with_no_roster_row() {
+        let (peers, mut topology) = responses(false);
+        topology["links"] = json!([
+            {"endpoint": ONE, "nickname": "amy", "path": "ip", "neighbor": true},
+            {"endpoint": "eeeeeeeeeeee", "path": "ip", "neighbor": true},
+        ]);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: link to endpoint eeeeeeee has no roster row"],
+            "the link of no roster row"
         );
     }
 }
