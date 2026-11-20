@@ -324,10 +324,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
 }
 
 pub(crate) fn session(options: &SessionOpts) {
-    let SessionOpts {
-        session_pid,
-        legacy_output: _,
-    } = options;
+    let SessionOpts { session_pid } = options;
     let Discovery { live, cleaned } = discover();
     let (owned, other_sessions) = owned_sessions(live, *session_pid);
 

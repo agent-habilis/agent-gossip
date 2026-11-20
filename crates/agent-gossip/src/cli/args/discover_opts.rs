@@ -4,7 +4,6 @@
 use clap::Parser;
 use habilis_network::protocol::MeshName;
 
-use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
 use super::tuning_opts::TuningOpts;
 
@@ -37,9 +36,6 @@ pub(crate) struct DiscoverOpts {
     /// which it would silently ignore.
     #[command(flatten)]
     pub tuning: TuningOpts,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

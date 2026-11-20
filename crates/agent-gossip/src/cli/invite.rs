@@ -12,7 +12,6 @@ pub(super) async fn invite(options: InviteOpts) -> Result<()> {
         gossip: mesh,
         nickname,
         ttl,
-        legacy_output: _,
     } = options;
     let ttl = parse_ttl(ttl.as_deref())?;
     let command = IpcCommand::Invite { mesh, ttl };

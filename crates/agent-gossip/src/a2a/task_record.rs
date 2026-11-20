@@ -103,10 +103,6 @@ pub(crate) struct TaskRecord {
     /// measures how long both agents have left the task alone, and a forgotten
     /// task stops being beaten.
     pub last_skill_activity: Instant,
-    /// Whether the counterparty has beaten this task at least once. A 0.8/0.9
-    /// peer beats only while it owes the next move, so until it has, its
-    /// silence cannot be read as death.
-    pub peer_beats: bool,
     /// Ids of the peer's legs already surfaced for this task. The engine
     /// forgets a frame id after a bounded count, and a relay can then deliver
     /// the same leg again, so the app remembers what it has shown. Beats are
@@ -174,7 +170,8 @@ fn stalled(reader: ReaderBeat, rec: &TaskRecord, interval: Duration, now: Instan
 
 /// Check the reader keys of a fresh inbound beat (the value [`ingest`] returns)
 /// for a silent worker, and mark the task so the next notice waits one
-/// interval. A beat from an old peer carries no keys, so it never gets here.
+/// interval. A beat from a worker that never polled carries no keys, so it never
+/// gets here.
 pub(crate) fn stall_notice(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     task_id: &TaskId,
@@ -510,7 +507,6 @@ pub(crate) fn adopt_initiator(
                 last_sent: now,
                 last_peer_activity: now,
                 last_skill_activity: now,
-                peer_beats: false,
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 waiting: None,
@@ -589,7 +585,6 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
                 last_sent: now,
                 last_peer_activity: now,
                 last_skill_activity: now,
-                peer_beats: false,
                 surfaced_legs: BoundedFifoSet::new(TASK_SURFACED_LEGS_CAP),
                 last_fraction: None,
                 waiting: None,
@@ -626,9 +621,7 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     } else {
         rec.last_peer_activity = now;
     }
-    if leg.kind == LegKind::Beat {
-        rec.peer_beats |= !leg.mine;
-    } else {
+    if leg.kind != LegKind::Beat {
         rec.last_skill_activity = now;
     }
 }
@@ -840,8 +833,7 @@ fn sweep_registry(
     let mut expired = Vec::new();
     for (task_id, rec) in tasks.iter_mut() {
         let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
-        let peer_gone = rec.peer_beats || rec.skill_silence_exceeded(now);
-        if !rec.state.is_terminal() && peer_silent && peer_gone {
+        if !rec.state.is_terminal() && peer_silent {
             rec.state = TaskState::Canceled;
             rec.last_activity = now;
             expired.push((task_id.clone(), rec.peer_key));
@@ -1127,29 +1119,6 @@ mod tests {
         );
     }
 
-    /// A 0.8/0.9 peer beats only while it owes the next move, so its silence
-    /// says nothing about whether it lives. Reaping it after one idle timeout
-    /// cancelled a working task 2 min after accept, sooner than before the
-    /// heartbeat.
-    #[test]
-    fn a_peer_that_never_beat_is_not_reaped_for_silence() {
-        let timeout = Duration::from_mins(2);
-        let now = Instant::now();
-        let accepted = now
-            .checked_sub(timeout * 2)
-            .expect("the test instant is far from the clock origin");
-        let mut tasks = HashMap::new();
-        apply(&mut tasks, &leg(LegKind::Offer, false), accepted);
-        apply(
-            &mut tasks,
-            &leg(LegKind::Status(TaskState::Working), true),
-            accepted,
-        );
-
-        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
-        assert!(expired.is_empty(), "an old peer's silence is not death");
-    }
-
     /// The silence cap still ends a task with a peer that never beat.
     #[test]
     fn a_peer_that_never_beat_is_reaped_after_the_silence_cap() {
@@ -1402,7 +1371,7 @@ mod tests {
         );
     }
 
-    /// A beat from an old peer carries no reader keys, so it is never flagged.
+    /// A beat from a worker that never polled carries no reader keys, so it is never flagged.
     #[test]
     fn a_beat_without_reader_keys_raises_no_notice() {
         let now = Instant::now();
@@ -2177,11 +2146,10 @@ mod tests {
         let now = Instant::now();
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
-        // A peer that beats, idle well past the debounce.
+        // A peer idle well past the debounce.
         let rec = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
-        rec.peer_beats = true;
         rec.last_peer_activity = now.checked_sub(timeout * 2).expect("test clock");
 
         let (expired, reaped) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
@@ -2220,13 +2188,12 @@ mod tests {
         let long_ago = now.checked_sub(timeout * 2).expect("test clock");
         let mut tasks = HashMap::new();
         apply(&mut tasks, &leg(LegKind::Offer, true), long_ago);
-        // Our daemon beat a moment ago; the worker, which beats, has said
+        // Our daemon beat a moment ago; the worker has said
         // nothing since.
         let rec = tasks
             .get_mut(&tid())
             .expect("the test inserted this task earlier");
         rec.last_activity = now;
-        rec.peer_beats = true;
 
         let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
         assert_eq!(

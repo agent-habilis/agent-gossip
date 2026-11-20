@@ -11,7 +11,6 @@ pub(super) async fn ping(options: PingOpts) -> Result<()> {
     let PingOpts {
         gossip: mesh,
         nickname,
-        legacy_output: _,
     } = options;
     let command = IpcCommand::Ping { mesh };
     let response = super::send::send(&command, &nickname).await?;

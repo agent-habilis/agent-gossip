@@ -414,7 +414,7 @@ pub fn is_beat(update: &TaskStatusUpdate) -> bool {
 }
 
 /// The [`ReaderBeat`] a beat carries. `None` unless both keys are present, so a
-/// beat from an old peer, or from a worker that never polled, reads as unknown.
+/// beat from a worker that never polled reads as unknown.
 #[must_use]
 pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
     let meta = update.metadata.as_ref()?;

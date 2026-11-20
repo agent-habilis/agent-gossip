@@ -278,8 +278,8 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
 
 /// The subprocess wire contract for `--password`: `create --password=pw`
 /// mints a passworded id; `join` without the password exits non-zero with
-/// "password-protected" under `--no-interactive`, a wrong password exits
-/// non-zero with "wrong password", and `join --password=pw` meshes.
+/// "password-protected", a wrong password exits non-zero with
+/// "wrong password", and `join --password=pw` meshes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_password_flag_wire_contract() {
     let (creator, mesh_id) = Node::create_args("pwwire", &["--password=hunter2"], &[]);

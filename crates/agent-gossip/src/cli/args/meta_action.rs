@@ -14,7 +14,7 @@ pub(crate) enum MetaAction {
     /// `state` channels are fully independent.
     Merge {
         /// Gossip identifier
-        #[arg(long, alias = "room")]
+        #[arg(long)]
         gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
@@ -29,7 +29,7 @@ pub(crate) enum MetaAction {
     /// Read the current derived `meta`-channel document.
     Get {
         /// Gossip identifier
-        #[arg(long, alias = "room")]
+        #[arg(long)]
         gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
