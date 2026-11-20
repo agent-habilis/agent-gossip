@@ -1787,6 +1787,109 @@ fn test_topology_reports_the_cap_and_the_links() {
     );
 }
 
+/// `topology --draw` against a live daemon joins the roster to the endpoints of
+/// the topology reply. Without the `endpoints` key of that reply no peer takes
+/// the flags of its link, so the drawing shows the neighbor flag of a joined
+/// peer only when the key is there.
+#[test]
+fn test_topology_draw_shows_the_link_flags_of_a_joined_peer() {
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create();
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    let joiner = Node::join(&mesh, "draw-joiner");
+    assert!(
+        joiner.wait_ready(&mesh),
+        "joiner socket never appeared\nlog tail:\n{}",
+        joiner.log_tail(15),
+    );
+    let linked = || {
+        let reply = topology_reply(&mesh, &creator.nickname, "creator");
+        let links = reply["links"].as_array().cloned().unwrap_or_default();
+        usize::from(links.iter().any(|link| link["neighbor"] == true))
+    };
+    assert_eq!(
+        wait_until(linked, 1, MSG_TIMEOUT),
+        1,
+        "the creator never held a gossip link to the joiner"
+    );
+
+    let out = common::test_cmd()
+        .args(["topology", "--draw", "--gossip", &mesh])
+        .args(["--nickname", &creator.nickname])
+        .output()
+        .expect("failed to run topology --draw");
+
+    let drawing = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "topology --draw failed: {:?}\nstdout: {drawing}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        drawing.contains(&joiner.nickname),
+        "the drawing names the joiner\n{drawing}"
+    );
+    assert!(
+        drawing.contains("neighbor"),
+        "the joiner takes the neighbor flag of its link, through the endpoints of the reply\n{drawing}"
+    );
+}
+
+/// The headline of the multihop transport: at `--max-connections 2` a node of
+/// five cannot hold a direct connection to each of the four others, and every
+/// directed message still arrives. A peer past the cap is pinned: the
+/// `topology` reply names its first hop.
+#[test]
+fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers() {
+    const CAP2: [(&str, &str); 1] = [("--max-connections", "2")];
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create_flags("cap-two", &CAP2);
+    let joiners: Vec<Node> = (0..4)
+        .map(|index| Node::join_flags(&mesh, &format!("cp-{index}"), &CAP2))
+        .collect();
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    for joiner in &joiners {
+        assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
+    }
+    let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
+    for sender in &all {
+        for receiver in &all {
+            if sender.nickname != receiver.nickname {
+                common::await_peer_card_cli(&mesh, &sender.nickname, &receiver.nickname);
+            }
+        }
+    }
+
+    for sender in &all {
+        for receiver in &all {
+            if sender.nickname == receiver.nickname {
+                continue;
+            }
+            let body = format!("{}-to-{}", sender.nickname, receiver.nickname);
+            let _ = common::cli_msg_checked(&mesh, &sender.nickname, &receiver.nickname, &body);
+            assert_received(receiver, &sender.nickname, &body, RECOVERY_TIMEOUT);
+        }
+    }
+
+    let pinned_with_hop = || {
+        let mut count = 0;
+        for node in &all {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            let links = reply["links"].as_array().cloned().unwrap_or_default();
+            let pins = links
+                .iter()
+                .any(|link| link["pinned"] == true && link["via"].is_string());
+            count += usize::from(pins);
+        }
+        count
+    };
+    assert!(
+        wait_until(pinned_with_hop, 1, MSG_TIMEOUT) >= 1,
+        "no node reports a pinned link with a first hop at a cap of 2"
+    );
+}
+
 /// Create a mesh with `create_args`, join it, and assert which sessions hold a
 /// multihop handle. The joiner takes no transport flag: its policy can come
 /// only from the mesh id.
