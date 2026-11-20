@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use habilis_network::protocol::messages::Authored;
-use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageId, Nickname};
+use habilis_network::protocol::{AuthorKey, MeshId, MeshName, Nickname};
 
 use crate::a2a::{TaskId, TaskState};
 
@@ -62,11 +62,6 @@ pub enum OutputEvent {
         nickname: Nickname,
         /// The author key of the returning peer.
         key: AuthorKey,
-    },
-    /// The local node posted a message to the mesh.
-    MsgPosted {
-        /// The id of the posted message.
-        id: MessageId,
     },
     /// A notice for the operator. Not an error.
     Info {

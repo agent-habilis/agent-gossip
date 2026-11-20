@@ -15,7 +15,6 @@ fn declared_tools() -> BTreeSet<String> {
 /// not here has to be a real tool.
 const NOT_TOOLS: &[&str] = &[
     // event kinds
-    "msg_posted",
     "peer_return",
     "peer_timeout",
     "ping_report",

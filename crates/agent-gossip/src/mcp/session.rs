@@ -316,7 +316,6 @@ mod tests {
             OutputEvent::Ready { .. }
             | OutputEvent::PeerTimeout { .. }
             | OutputEvent::PeerReturn { .. }
-            | OutputEvent::MsgPosted { .. }
             | OutputEvent::Info { .. }
             | OutputEvent::Error { .. }
             | OutputEvent::NicknameHeld { .. }

@@ -39,9 +39,6 @@ pub(super) enum SimpleEvent<'source> {
         #[serde(skip_serializing_if = "Option::is_none")]
         a2a_port: Option<u16>,
     },
-    MsgPosted {
-        id: &'source str,
-    },
     PeerTimeout {
         nickname: &'source str,
         /// The author key of the peer, hex: two peers can share a nickname.
@@ -426,7 +423,6 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => false,
     }
 }
@@ -911,7 +907,6 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::NicknameHeld { .. }
@@ -988,9 +983,6 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
                 display: peer_return_display(nickname.as_str()),
             })
             .ok()
-        }
-        OutputEvent::MsgPosted { id } => {
-            serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() }).ok()
         }
         OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }).ok(),
         OutputEvent::Error { message } => {
