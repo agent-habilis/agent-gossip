@@ -1802,15 +1802,20 @@ fn test_topology_draw_shows_the_link_flags_of_a_joined_peer() {
         "joiner socket never appeared\nlog tail:\n{}",
         joiner.log_tail(15),
     );
-    let linked = || {
+    let linked_and_named = || {
         let reply = topology_reply(&mesh, &creator.nickname, "creator");
         let links = reply["links"].as_array().cloned().unwrap_or_default();
-        usize::from(links.iter().any(|link| link["neighbor"] == true))
+        let endpoints = reply["endpoints"].as_array().cloned().unwrap_or_default();
+        let linked = links.iter().any(|link| link["neighbor"] == true);
+        let named = endpoints
+            .iter()
+            .any(|entry| entry["nickname"] == joiner.nickname.as_str());
+        usize::from(linked && named)
     };
     assert_eq!(
-        wait_until(linked, 1, MSG_TIMEOUT),
+        wait_until(linked_and_named, 1, MSG_TIMEOUT),
         1,
-        "the creator never held a gossip link to the joiner"
+        "the creator never held a gossip link to the joiner and learned its endpoint"
     );
 
     let out = common::test_cmd()
