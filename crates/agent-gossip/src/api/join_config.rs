@@ -14,8 +14,9 @@ pub struct JoinConfig {
     pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// Cap on direct connections, gossip neighbors included. A peer past the
-    /// cap is reached through a connected peer (multihop).
+    /// Cap on direct connections, gossip neighbors included. When the gossip id
+    /// names the multihop transport, a peer past the cap is reached through a
+    /// connected peer.
     pub max_connections: usize,
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
@@ -73,8 +74,9 @@ pub struct TopicConfig {
     pub string: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// Cap on direct connections, gossip neighbors included. A peer past the
-    /// cap is reached through a connected peer (multihop).
+    /// Cap on direct connections, gossip neighbors included. When the gossip id
+    /// names the multihop transport, a peer past the cap is reached through a
+    /// connected peer.
     pub max_connections: usize,
 }
 
@@ -136,8 +138,9 @@ pub struct CreateConfig {
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
     pub directory: Option<MeshName>,
-    /// Cap on direct connections, gossip neighbors included. A peer past the
-    /// cap is reached through a connected peer (multihop).
+    /// Cap on direct connections, gossip neighbors included. When the gossip id
+    /// names the multihop transport, a peer past the cap is reached through a
+    /// connected peer.
     pub max_connections: usize,
     /// Protect the mesh with a password: its verifier is baked into the
     /// minted id (joiners must present the password), and every derivation

@@ -766,8 +766,14 @@ COMMANDS
                 {"self_id":"<hex>","edges":[{"from":"<hex>","to":"<hex>",
                  "metric":1}]}
 
-              The reply also holds "endpoints", the nickname of each endpoint
-              id: {"endpoints":[{"nickname":"<nick>","endpoint":"<hex>"}]}.
+              The reply also holds "cap", the direct connections against the
+              cap, and "links", one entry per peer the node holds a link to,
+              with its path, first hop, and the neighbor, pinned and extra
+              flags. It holds "endpoints" too, the endpoint id of each live
+              member, by key: {"endpoints":[{"pubkey":"<hex>",
+              "nickname":"<nick>","endpoint":"<hex>"}]}. A nickname that two
+              live members hold has no entry, because it names no single
+              endpoint.
 
               With --draw, print a text drawing instead: one box per peer, the
               path of each peer on its edge, and the links between the other
