@@ -27,7 +27,6 @@ mod finish_send;
 mod install_tuning;
 mod invite;
 mod join;
-mod meta;
 mod msg_response;
 mod parse_ttl;
 mod password_flag;
