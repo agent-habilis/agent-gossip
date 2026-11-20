@@ -111,7 +111,7 @@ export async function startMesh(): Promise<Mesh> {
   const daemonALogPath = join(dir, "daemon-a.log");
 
   const daemonA = Bun.spawn(
-    [bin, "create", "--name", "a2a-interop", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateA],
+    [bin, "create", "--name", "a2a-interop", "--a2a-serve", "--state-file", stateA],
     { stdout: Bun.file(daemonALogPath), stderr: Bun.file(join(dir, "daemon-a.err.log")) },
   );
   const children = [daemonA];
@@ -123,7 +123,7 @@ export async function startMesh(): Promise<Mesh> {
     const sessionA = await waitForSession(stateA);
 
     const daemonB = Bun.spawn(
-      [bin, "join", sessionA.gossip, "--nickname", "worker", "--no-interactive", "--output", "json", "--a2a-serve", "--state-file", stateB],
+      [bin, "join", sessionA.gossip, "--nickname", "worker", "--a2a-serve", "--state-file", stateB],
       { stdout: Bun.file(join(dir, "daemon-b.log")), stderr: Bun.file(join(dir, "daemon-b.err.log")) },
     );
     children.push(daemonB);

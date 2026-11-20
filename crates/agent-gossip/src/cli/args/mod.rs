@@ -5,7 +5,7 @@
 //! `shared` (`SharedServerOpts`) and `lookup` (`LookupArgs`). The
 //! imperative per-command logic lives in the parent [`super`] module.
 
-pub(crate) use self::a2a_action::A2aAction;
+pub(crate) use self::a2a_action::{A2aAction, ArtifactArgs, CallArgs, ExposeArgs, StatusArgs};
 pub(crate) use self::bell_check_opts::BellCheckOpts;
 pub(crate) use self::cli::Cli;
 pub(crate) use self::commands::Commands;
@@ -39,7 +39,6 @@ mod doctor_opts;
 mod invite_opts;
 mod join_opts;
 mod leave_opts;
-mod legacy_output;
 pub(crate) mod lookup;
 mod meta_action;
 mod meta_opts;

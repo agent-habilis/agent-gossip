@@ -5,20 +5,15 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy_output::LegacyOutput;
-
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
     /// Gossip identifier
-    #[arg(long, alias = "room")]
+    #[arg(long)]
     pub gossip: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
     pub nickname: Nickname,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

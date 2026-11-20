@@ -1,10 +1,11 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 use habilis_network::protocol::Nickname;
 use habilis_network::runtime::state_file::{read_identity, read_session_entry};
 use habilis_network::runtime::{ipc, state_file};
-use habilis_network::util::process;
+use habilis_network::util::{process, tuning};
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
 use super::bell;
@@ -12,6 +13,11 @@ use super::discovery::Discovery;
 use super::target::Target;
 use crate::a2a::ipc_command::IpcCommand::Info;
 use crate::runtime_base;
+
+// A signalled daemon takes up to `NODE_LEAVE` to close its rendezvous and drop
+// its state file. Confirming sooner reports a live daemon as gone, and a
+// relaunch then races it.
+const CONFIRM_TIMEOUT: Duration = tuning::NODE_LEAVE.saturating_add(Duration::from_secs(2));
 
 /// Walk every state file under [`runtime_base`](fn@runtime_base) and resolve it to a live
 /// daemon or clean it up. Covers both per-mesh files
@@ -232,8 +238,6 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         gossip: mesh,
         nickname,
         session_pid,
-        confirm_timeout_secs,
-        legacy_output: _,
     } = options;
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
@@ -277,8 +281,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     // identity, the new one announcing `joined` before the old one broadcast
     // `left`. Requiring silence on the socket too makes the report agree with
     // the predicate `run_session` refuses to start against.
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(confirm_timeout_secs);
+    let deadline = tokio::time::Instant::now() + CONFIRM_TIMEOUT;
     let mut outcomes: Vec<(Target, bool, bool)> = left
         .into_iter()
         .map(|(target, signalled)| (target, signalled, false))
@@ -299,7 +302,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         if !waiting || tokio::time::Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     let left_json: Vec<serde_json::Value> = outcomes
@@ -321,10 +324,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
 }
 
 pub(crate) fn session(options: &SessionOpts) {
-    let SessionOpts {
-        session_pid,
-        legacy_output: _,
-    } = options;
+    let SessionOpts { session_pid } = options;
     let Discovery { live, cleaned } = discover();
     let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
@@ -393,7 +393,7 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
     let (owned, _) = owned_sessions(discover().live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    let deadline = std::time::Instant::now() + Duration::from_millis(grace_ms);
     loop {
         let missing = unarmed(&owned, is_ready, bell::is_armed);
         if missing.is_empty() {
@@ -410,7 +410,7 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
             );
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 

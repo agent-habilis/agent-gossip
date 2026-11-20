@@ -39,9 +39,6 @@ pub(super) enum SimpleEvent<'source> {
         #[serde(skip_serializing_if = "Option::is_none")]
         a2a_port: Option<u16>,
     },
-    MsgPosted {
-        id: &'source str,
-    },
     PeerTimeout {
         nickname: &'source str,
         /// The author key of the peer, hex: two peers can share a nickname.
@@ -392,12 +389,6 @@ pub(super) fn emit(line: &str) {
     let _ = lock.flush();
 }
 
-pub(super) fn emit_json<T: Serialize>(value: &T, is_visible: bool) {
-    if let Ok(json) = serde_json::to_string(value) {
-        emit(&stamp_visibility(json, is_visible));
-    }
-}
-
 /// Whether an event's `display` line belongs in the agent's transcript — the
 /// daemon-owned print decision, stamped on every JSON line as `is_visible` so
 /// no skill re-derives a skip-list. Everything else in a poll batch is
@@ -426,7 +417,6 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Ready { .. } => false,
     }
 }
@@ -520,14 +510,6 @@ pub(super) fn format_msg_json(
         .expect("message event serialization should never fail"),
         true,
     )
-}
-
-pub(super) fn print_message_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_msg_json(message, is_self, addressee_name));
 }
 
 /// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
@@ -671,14 +653,6 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
         .expect("task event serialization should never fail"),
         false,
     )
-}
-
-pub(super) fn print_task_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_task_json(message, is_self, addressee_name));
 }
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
@@ -911,7 +885,6 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::MsgPosted { .. }
         | OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::NicknameHeld { .. }
@@ -988,9 +961,6 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
                 display: peer_return_display(nickname.as_str()),
             })
             .ok()
-        }
-        OutputEvent::MsgPosted { id } => {
-            serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() }).ok()
         }
         OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }).ok(),
         OutputEvent::Error { message } => {

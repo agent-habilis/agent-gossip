@@ -7,10 +7,6 @@ pub use self::model::{
     Message, MessageId, PROTOCOL_VERSION, Part, Role, SendMessageResponse, StreamResponse, Task,
     TaskArtifactUpdate, TaskId, TaskState, TaskStatus, TaskStatusUpdate, friendly_state,
 };
-// Compatibility facade: the HTTP tunnel is a bridge subsystem, not A2A core.
-pub(crate) use crate::tunnel::{
-    ExposeParams, TicketDirectory, TicketDirectoryEvent, expose, ticket_requires_password,
-};
 
 pub(crate) mod a2a_app;
 pub(crate) mod a2a_binding;

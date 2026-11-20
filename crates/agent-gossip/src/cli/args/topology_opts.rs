@@ -7,7 +7,7 @@ use habilis_network::protocol::{MeshId, Nickname};
 #[derive(Parser, Debug)]
 pub(crate) struct TopologyOpts {
     /// Gossip identifier
-    #[arg(long, alias = "room")]
+    #[arg(long)]
     pub gossip: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)

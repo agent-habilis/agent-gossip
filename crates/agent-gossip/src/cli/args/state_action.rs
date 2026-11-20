@@ -13,7 +13,7 @@ pub(crate) enum StateAction {
     /// and a non-object value under a key replaces that key.
     Merge {
         /// Gossip identifier
-        #[arg(long, alias = "room")]
+        #[arg(long)]
         gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
@@ -28,7 +28,7 @@ pub(crate) enum StateAction {
     /// Read the current derived shared-state document.
     Get {
         /// Gossip identifier
-        #[arg(long, alias = "room")]
+        #[arg(long)]
         gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)

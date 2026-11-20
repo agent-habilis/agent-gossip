@@ -340,16 +340,11 @@ async fn active_meshes_section() -> Section {
     }
 }
 
-// The `room`/`participant_count` aliases mirror the state-file read fallback:
-// a daemon from the previous release may still be serving, and doctor must
-// list it rather than silently skip its unparseable info reply.
 #[derive(serde::Deserialize)]
 struct InfoResponse {
-    #[serde(alias = "room")]
     gossip: String,
     name: String,
     nickname: String,
-    #[serde(alias = "participant_count")]
     peer_count: usize,
 }
 

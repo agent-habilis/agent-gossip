@@ -257,11 +257,11 @@ impl NodeDriver for A2aApp {
 }
 
 /// A peer's `working` with no text on a task already `working` changes nothing
-/// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
-/// keep the task alive, and each one woke the initiator's bell, so it is kept
-/// off the surface like a beat. It still reaches the state machine, which
-/// counts it as the peer's activity. A leg that sets or clears the waiting
-/// reason (`prior_waiting` is the record's current one) is news and surfaces.
+/// the agent can act on. A worker agent can repeat its status, and each repeat
+/// would wake the initiator's bell, so it is kept off the surface like a beat. It still
+/// reaches the state machine, which counts it as the peer's activity. A leg that
+/// sets or clears the waiting reason (`prior_waiting` is the record's current
+/// one) is news and surfaces.
 fn is_empty_working_repeat(
     prior: Option<super::TaskState>,
     prior_waiting: Option<&str>,
@@ -325,7 +325,7 @@ fn is_self_task_echo(event: &emission::OutputEvent) -> bool {
 /// allow-list of the documented pollable contract (chat, presence joined/left,
 /// content task legs, and the transient `ping_report`/`peer_timeout`/
 /// `peer_return`/`task_timeout`/`fork`). Deliberately an allow-list, not
-/// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
+/// "everything except X": operational notices (`info`/`error`) and
 /// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
 /// liveness widget update, never a retained record).
@@ -347,10 +347,7 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         // A task liveness beat (a `Progress` widget update) is never retained;
         // the per-frame classification is the source of truth for it.
         OutputEvent::Task { message, .. } => !classify(message).beat(),
-        OutputEvent::Info { .. }
-        | OutputEvent::Error { .. }
-        | OutputEvent::MsgPosted { .. }
-        | OutputEvent::Ready { .. } => false,
+        OutputEvent::Info { .. } | OutputEvent::Error { .. } | OutputEvent::Ready { .. } => false,
     }
 }
 
@@ -651,14 +648,10 @@ fn is_replayed_chat(surfaced: &BoundedFifoSet<DedupKey>, message: &Authored) -> 
 /// gates only the *display*: a pre-join message is still logged/relayed but not
 /// printed.
 fn handle_broadcast(out: &emission::Output, message: &Authored, surfaceable: bool) -> bool {
-    if message.kind.is_app(wire::BROADCAST) {
-        if surfaceable {
-            out.print_message(message, None);
-        }
-        true
-    } else {
-        false
+    if surfaceable {
+        out.print_message(message, None);
     }
+    true
 }
 
 /// The value cluster [`handle_msg`] needs beyond its `out` sink handle.

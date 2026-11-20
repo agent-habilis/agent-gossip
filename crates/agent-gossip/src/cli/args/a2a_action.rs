@@ -1,7 +1,6 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use habilis_network::protocol::{MeshId, MeshName, Nickname};
 
-use super::legacy_output::LegacyOutput;
 use super::lookup::LookupArgs;
 use crate::cli::password_flag::{PasswordFlag, password_flag_parser};
 
@@ -13,42 +12,7 @@ pub(crate) enum A2aAction {
     /// each connecting peer's requests to it, rewriting the Agent Card's URLs so
     /// discovery resolves through the tunnel. Strictly 1:1 — one consumer is
     /// served at a time; a second is refused until the first disconnects.
-    Expose {
-        /// The local A2A origin to bridge, as a plain http URL (e.g.
-        /// `http://127.0.0.1:9999`). https and path-prefixed origins are out of
-        /// scope — the bridge forwards raw TCP to a plain-http localhost origin.
-        #[arg(long)]
-        to: String,
-
-        /// Which lookup mechanisms the bridge uses (same flags as `create`):
-        /// naming any uses only those; naming none is the all-on public
-        /// preset.
-        #[command(flatten)]
-        lookups: LookupArgs,
-
-        /// Advertise this bridge's ticket in a directory so a peer can find it
-        /// with `agent-gossip a2a discover` — no ticket to copy. Bare `--advertise` ⇒ the
-        /// default `global` directory; `--advertise <name>` ⇒ that named
-        /// directory (share the name with the peer). The ad carries the full
-        /// bearer ticket, so pair it with `--password`.
-        #[arg(long, num_args(0..=1), default_missing_value = "global")]
-        advertise: Option<MeshName>,
-
-        /// Protect the bridge with a password: the ticket alone no longer
-        /// redeems — consumers must present the password (so a passworded ticket
-        /// is safe to share). Pass it inline as `--password=<pw>`.
-        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0", value_parser = password_flag_parser())]
-        password: Option<PasswordFlag>,
-
-        /// Force loopback-only lookups so two agents on one machine bridge
-        /// hermetically off the ticket's direct address (no mDNS/DHT/relay).
-        /// Hidden — a testing knob.
-        #[arg(long, hide = true, default_value_t = false)]
-        loopback: bool,
-
-        #[command(flatten)]
-        legacy_output: LegacyOutput,
-    },
+    Expose(ExposeArgs),
 
     /// Redeem a ticket and bind a local A2A endpoint for a client.
     ///
@@ -77,9 +41,6 @@ pub(crate) enum A2aAction {
         /// either way.
         #[arg(long)]
         allow_anonymous: bool,
-
-        #[command(flatten)]
-        legacy_output: LegacyOutput,
     },
 
     /// Browse a directory for advertised a2a bridges — the receiver side of
@@ -98,9 +59,6 @@ pub(crate) enum A2aAction {
         /// all-on public preset.
         #[command(flatten)]
         lookups: LookupArgs,
-
-        #[command(flatten)]
-        legacy_output: LegacyOutput,
     },
 
     /// Send a chat message to the whole gossip.
@@ -108,7 +66,7 @@ pub(crate) enum A2aAction {
     /// Every member sees it. Use `a2a msg` to reach one peer privately.
     Broadcast {
         /// Gossip identifier
-        #[arg(long, alias = "room")]
+        #[arg(long)]
         gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
@@ -127,7 +85,7 @@ pub(crate) enum A2aAction {
     /// This is chat, not a task — use `a2a call --to <peer>` to delegate work.
     Msg {
         /// Gossip identifier
-        #[arg(long, alias = "room")]
+        #[arg(long)]
         gossip: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
@@ -155,116 +113,16 @@ pub(crate) enum A2aAction {
     ///
     /// This always opens or advances a **task**. For chat, use `a2a broadcast`
     /// or `a2a msg`. Exits non-zero when the response is an error or times out.
-    Call {
-        /// Gossip identifier
-        #[arg(long, alias = "room")]
-        gossip: MeshId,
-
-        /// Nickname of the local agent (must have a running join/create session)
-        #[arg(long)]
-        nickname: Nickname,
-
-        /// The peer to call.
-        #[arg(long)]
-        to: Nickname,
-
-        /// The A2A JSON-RPC method (e.g. `SendMessage`, `GetTask`,
-        /// `ListTasks`, `CancelTask`).
-        #[arg(long, default_value = "SendMessage")]
-        method: String,
-
-        /// Message text — sugar for `SendMessage` (the daemon composes the A2A
-        /// Message). Ignored when `--params` is given.
-        #[arg(long)]
-        text: Option<String>,
-
-        /// Task id — the follow-up target for `SendMessage`, or the `id` for
-        /// `GetTask` / `CancelTask`. Ignored when `--params` is given.
-        #[arg(long)]
-        task_id: Option<crate::a2a::TaskId>,
-
-        /// One-line name for the task, carried to the peer so both parties
-        /// label it identically. Sugar for `SendMessage`; ignored when
-        /// `--params` is given.
-        #[arg(long)]
-        label: Option<String>,
-
-        /// The raw JSON-RPC params object. Overrides `--text` / `--task-id` /
-        /// `--label`.
-        #[arg(long)]
-        params: Option<String>,
-
-        /// How long to wait for the peer's response, in seconds.
-        #[arg(long, default_value_t = crate::a2a::tuning::CALL_TIMEOUT_SECS)]
-        timeout_secs: u64,
-
-        /// Attach a file to the `SendMessage`, transferred peer-to-peer over
-        /// the blob channel and referenced as a Part.url. Works on a new task
-        /// and on a `--task-id` follow-up; the peer fetches it with
-        /// `agent-gossip a2a fetch <ticket>`.
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-        /// Filename to advertise for --file (defaults to the file's own name).
-        #[arg(long, requires = "file")]
-        file_name: Option<String>,
-        /// MIME type to advertise for --file (e.g. application/x-tar).
-        #[arg(long, requires = "file")]
-        file_mime: Option<String>,
-    },
+    Call(CallArgs),
 
     /// Worker-emit a task `TaskStatusUpdate` (the A2A streaming plane): move a
     /// task you're serving to `working` / `input-required` / `completed` /
     /// `failed`. Pushed fire-and-forget to the other party.
-    Status {
-        /// Gossip identifier
-        #[arg(long, alias = "room")]
-        gossip: MeshId,
-        /// Nickname of the local agent (must have a running join/create session)
-        #[arg(long)]
-        nickname: Nickname,
-        /// The task id (uuid).
-        #[arg(long)]
-        task_id: crate::a2a::TaskId,
-        /// The new A2A state.
-        #[arg(long, value_parser = parse_state)]
-        state: crate::a2a::TaskState,
-        /// Optional message text (becomes the status message — a question, a
-        /// completion summary, a failure reason).
-        #[arg(long = "text", alias = "note")]
-        note: Option<String>,
-        /// Mark the task as waiting on your own user, with the reason. Only
-        /// valid with `--state working`; the next status clears it.
-        #[arg(long)]
-        waiting: Option<String>,
-    },
+    Status(StatusArgs),
 
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
     /// serving. Parks the task in `input-required` for the initiator's approval.
-    Artifact {
-        /// Gossip identifier
-        #[arg(long, alias = "room")]
-        gossip: MeshId,
-        /// Nickname of the local agent (must have a running join/create session)
-        #[arg(long)]
-        nickname: Nickname,
-        /// The task id (uuid).
-        #[arg(long)]
-        task_id: crate::a2a::TaskId,
-        /// The result text (optional when --file is given).
-        #[arg(long)]
-        text: Option<String>,
-        /// Attach a file as the result, transferred peer-to-peer over the blob
-        /// channel and referenced as a Part.url. For binaries too large to
-        /// inline; the receiver fetches it with `agent-gossip a2a fetch <ticket>`.
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-        /// Filename to advertise for --file (defaults to the file's own name).
-        #[arg(long)]
-        file_name: Option<String>,
-        /// MIME type to advertise for --file (e.g. application/pdf).
-        #[arg(long)]
-        file_mime: Option<String>,
-    },
+    Artifact(ArtifactArgs),
 
     /// Fetch a blob artifact by its ticket reference (the `url` of a received
     /// file part). A direct peer-to-peer transfer, streamed to disk. With
@@ -286,6 +144,150 @@ pub(crate) enum A2aAction {
         #[arg(long)]
         password: Option<String>,
     },
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ExposeArgs {
+    /// The local A2A origin to bridge, as a plain http URL (e.g.
+    /// `http://127.0.0.1:9999`). https and path-prefixed origins are out of
+    /// scope — the bridge forwards raw TCP to a plain-http localhost origin.
+    #[arg(long)]
+    pub to: String,
+
+    /// Which lookup mechanisms the bridge uses (same flags as `create`):
+    /// naming any uses only those; naming none is the all-on public
+    /// preset.
+    #[command(flatten)]
+    pub lookups: LookupArgs,
+
+    /// Advertise this bridge's ticket in a directory so a peer can find it
+    /// with `agent-gossip a2a discover` — no ticket to copy. Bare `--advertise` ⇒ the
+    /// default `global` directory; `--advertise <name>` ⇒ that named
+    /// directory (share the name with the peer). The ad carries the full
+    /// bearer ticket, so pair it with `--password`.
+    #[arg(long, num_args(0..=1), default_missing_value = "global")]
+    pub advertise: Option<MeshName>,
+
+    /// Protect the bridge with a password: the ticket alone no longer
+    /// redeems — consumers must present the password (so a passworded ticket
+    /// is safe to share). Pass it inline as `--password=<pw>`.
+    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0", value_parser = password_flag_parser())]
+    pub password: Option<PasswordFlag>,
+
+    /// Force loopback-only lookups so two agents on one machine bridge
+    /// hermetically off the ticket's direct address (no mDNS/DHT/relay).
+    /// Hidden — a testing knob.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub loopback: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CallArgs {
+    /// Gossip identifier
+    #[arg(long)]
+    pub gossip: MeshId,
+
+    /// Nickname of the local agent (must have a running join/create session)
+    #[arg(long)]
+    pub nickname: Nickname,
+
+    /// The peer to call.
+    #[arg(long)]
+    pub to: Nickname,
+
+    /// The A2A JSON-RPC method (e.g. `SendMessage`, `GetTask`,
+    /// `ListTasks`, `CancelTask`).
+    #[arg(long, default_value = "SendMessage")]
+    pub method: String,
+
+    /// Message text — sugar for `SendMessage` (the daemon composes the A2A
+    /// Message). Ignored when `--params` is given.
+    #[arg(long)]
+    pub text: Option<String>,
+
+    /// Task id — the follow-up target for `SendMessage`, or the `id` for
+    /// `GetTask` / `CancelTask`. Ignored when `--params` is given.
+    #[arg(long)]
+    pub task_id: Option<crate::a2a::TaskId>,
+
+    /// One-line name for the task, carried to the peer so both parties
+    /// label it identically. Sugar for `SendMessage`; ignored when
+    /// `--params` is given.
+    #[arg(long)]
+    pub label: Option<String>,
+
+    /// The raw JSON-RPC params object. Overrides `--text` / `--task-id` /
+    /// `--label`.
+    #[arg(long)]
+    pub params: Option<String>,
+
+    /// How long to wait for the peer's response, in seconds.
+    #[arg(long, default_value_t = crate::a2a::tuning::CALL_TIMEOUT_SECS)]
+    pub timeout_secs: u64,
+
+    /// Attach a file to the `SendMessage`, transferred peer-to-peer over
+    /// the blob channel and referenced as a Part.url. Works on a new task
+    /// and on a `--task-id` follow-up; the peer fetches it with
+    /// `agent-gossip a2a fetch <ticket>`.
+    #[arg(long)]
+    pub file: Option<std::path::PathBuf>,
+    /// Filename to advertise for --file (defaults to the file's own name).
+    #[arg(long, requires = "file")]
+    pub file_name: Option<String>,
+    /// MIME type to advertise for --file (e.g. application/x-tar).
+    #[arg(long, requires = "file")]
+    pub file_mime: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct StatusArgs {
+    /// Gossip identifier
+    #[arg(long)]
+    pub gossip: MeshId,
+    /// Nickname of the local agent (must have a running join/create session)
+    #[arg(long)]
+    pub nickname: Nickname,
+    /// The task id (uuid).
+    #[arg(long)]
+    pub task_id: crate::a2a::TaskId,
+    /// The new A2A state.
+    #[arg(long, value_parser = parse_state)]
+    pub state: crate::a2a::TaskState,
+    /// Optional message text (becomes the status message — a question, a
+    /// completion summary, a failure reason).
+    #[arg(long = "text", alias = "note")]
+    pub note: Option<String>,
+    /// Mark the task as waiting on your own user, with the reason. Only
+    /// valid with `--state working`; the next status clears it.
+    #[arg(long)]
+    pub waiting: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ArtifactArgs {
+    /// Gossip identifier
+    #[arg(long)]
+    pub gossip: MeshId,
+    /// Nickname of the local agent (must have a running join/create session)
+    #[arg(long)]
+    pub nickname: Nickname,
+    /// The task id (uuid).
+    #[arg(long)]
+    pub task_id: crate::a2a::TaskId,
+    /// The result text (optional when --file is given).
+    #[arg(long)]
+    pub text: Option<String>,
+    /// Attach a file as the result, transferred peer-to-peer over the blob
+    /// channel and referenced as a Part.url. For binaries too large to
+    /// inline; the receiver fetches it with `agent-gossip a2a fetch <ticket>`.
+    #[arg(long)]
+    pub file: Option<std::path::PathBuf>,
+    /// Filename to advertise for --file (defaults to the file's own name).
+    #[arg(long)]
+    pub file_name: Option<String>,
+    /// MIME type to advertise for --file (e.g. application/pdf).
+    #[arg(long)]
+    pub file_mime: Option<String>,
 }
 
 /// Parse the A2A task state a worker can send, from its friendly (kebab-case)
@@ -313,7 +315,7 @@ fn parse_state(raw: &str) -> Result<crate::a2a::TaskState, String> {
 mod tests {
     use clap::Parser as _;
 
-    use super::A2aAction;
+    use super::{A2aAction, CallArgs};
     use crate::a2a::tuning;
     use crate::cli::args::{Cli, Commands};
 
@@ -337,7 +339,7 @@ mod tests {
         let Commands::A2a { options } = cli.command else {
             panic!("expected the a2a command");
         };
-        let A2aAction::Call { timeout_secs, .. } = options.action else {
+        let A2aAction::Call(CallArgs { timeout_secs, .. }) = options.action else {
             panic!("expected the call action");
         };
         assert_eq!(

@@ -38,7 +38,7 @@ preamble/postamble. `display` already carries the `💬️` prefix, the nicks, t
 byte-for-byte.
 
 WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \
-`msg_posted`, `ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
+`ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
 and any entry with `self:true` EXCEPT your own chat (a `type:\"broadcast\"` or \
 `type:\"msg\"` with `self:true` is your outbound message echoed back — emit its \
 `display`; that echo is the send confirmation). Show (emit `display` verbatim): \

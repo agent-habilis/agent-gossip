@@ -1,8 +1,6 @@
 use clap::Parser;
 use habilis_network::protocol::{MeshId, Nickname};
 
-use super::legacy_output::LegacyOutput;
-
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
     /// The id of the gossip to leave — the full id or a unique prefix
@@ -20,21 +18,11 @@ pub(crate) struct LeaveOpts {
     /// shell's `$PPID` (the agent process itself).
     #[arg(long)]
     pub session_pid: Option<u32>,
-
-    /// Seconds to wait for a signalled daemon to drop its state file and stop
-    /// answering its socket before reporting it unconfirmed. Hidden — a test
-    /// knob. The default outlasts the engine's own leave budget.
-    #[arg(long, hide = true, default_value_t = habilis_network::util::tuning::NODE_LEAVE.as_secs() + 2)]
-    pub confirm_timeout_secs: u64,
-
-    #[command(flatten)]
-    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use habilis_network::util::tuning;
 
     use crate::cli::args::{Cli, Commands};
 
@@ -55,14 +43,6 @@ mod tests {
         assert!(
             options.session_pid.is_none(),
             "leave without --session-pid leaves the pid unset"
-        );
-        // A signalled daemon takes up to NODE_LEAVE to close its
-        // rendezvous and drop its state file; confirming sooner reports a
-        // live daemon as gone, and a relaunch then races it.
-        assert!(
-            options.confirm_timeout_secs > tuning::NODE_LEAVE.as_secs(),
-            "leave gives up before the daemon's own leave budget: {}",
-            options.confirm_timeout_secs
         );
     }
 
