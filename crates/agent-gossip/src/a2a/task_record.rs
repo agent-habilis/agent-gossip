@@ -31,7 +31,7 @@ use super::status_update_params::ReaderBeat;
 use super::{META_REASON, TaskId, TaskState, status_update_params, wire};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::tuning::{
-    TASK_SURFACED_LEGS_CAP, task_keepalive_secs, task_skill_silence_max_secs,
+    TASK_SKILL_SILENCE_MAX_SECS, TASK_SURFACED_LEGS_CAP, task_keepalive_secs,
     task_stall_check_secs, task_timeout_secs,
 };
 use crate::a2a::{broadcast_params, tuning};
@@ -144,7 +144,7 @@ impl TaskRecord {
 
     fn skill_silence_exceeded(&self, now: Instant) -> bool {
         now.duration_since(self.last_skill_activity)
-            > Duration::from_secs(task_skill_silence_max_secs())
+            > Duration::from_secs(TASK_SKILL_SILENCE_MAX_SECS)
     }
 }
 
