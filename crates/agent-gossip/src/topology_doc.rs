@@ -52,8 +52,15 @@ pub(crate) struct TopologyDoc {
     pub cap: Option<Cap>,
     pub peers: Vec<PeerView>,
     pub edges: Vec<EdgeView>,
-    /// The endpoint ids of the links that no roster row owns.
-    pub orphan_links: Vec<String>,
+    /// The links that no roster row owns.
+    pub orphan_links: Vec<OrphanLink>,
+}
+
+/// A link to an endpoint that no roster row owns. `nickname` is the one that the link carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OrphanLink {
+    pub endpoint: String,
+    pub nickname: Option<String>,
 }
 
 impl TopologyDoc {
@@ -93,10 +100,15 @@ impl TopologyDoc {
     /// Copy the flags and the first hop of each link to the peer of the same
     /// endpoint. The first hop is an endpoint id; the drawing names it.
     fn take_links(&mut self, links: &[Value]) {
-        let orphans = links.iter().filter_map(|link| link["endpoint"].as_str());
+        let orphans = links.iter().filter_map(|link| {
+            let endpoint = link["endpoint"].as_str()?;
+            Some(OrphanLink {
+                endpoint: endpoint.to_owned(),
+                nickname: link["nickname"].as_str().map(str::to_owned),
+            })
+        });
         self.orphan_links = orphans
-            .filter(|endpoint| !self.knows(endpoint))
-            .map(str::to_owned)
+            .filter(|orphan| !self.knows(&orphan.endpoint))
             .collect();
         for peer in &mut self.peers {
             let Some(link) = link_of(links, peer.endpoint.as_deref()) else {
@@ -228,7 +240,8 @@ pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
     let mut unknown: BTreeSet<&str> = BTreeSet::new();
     for edge in &doc.edges {
         for id in [edge.from.as_str(), edge.to.as_str()] {
-            if !doc.knows(id) {
+            let is_orphan_link = doc.orphan_links.iter().any(|orphan| orphan.endpoint == id);
+            if !doc.knows(id) && !is_orphan_link {
                 unknown.insert(id);
             }
         }
@@ -237,9 +250,15 @@ pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
         let id = short(id);
         lines.push(format!("warning: link endpoint {id} is not in the roster"));
     }
-    for id in &doc.orphan_links {
-        let id = short(id);
-        lines.push(format!("warning: link to endpoint {id} has no roster row"));
+    for orphan in &doc.orphan_links {
+        let id = short(&orphan.endpoint);
+        let named = orphan
+            .nickname
+            .as_ref()
+            .map_or_else(String::new, |nickname| format!(" ({nickname})"));
+        lines.push(format!(
+            "warning: link to endpoint {id}{named} has no roster row"
+        ));
     }
     lines
 }
@@ -556,6 +575,25 @@ links between other peers
             warnings(&doc),
             ["warning: connection count is over the cap by 2 (10/8)"],
             "the excess warns"
+        );
+    }
+
+    /// An endpoint that is a link and an edge end at once, and that no roster
+    /// row owns, is one problem. It gets one warning, and the warning names the
+    /// nickname that the link carries.
+    #[test]
+    fn warns_once_about_an_endpoint_that_is_a_link_and_an_edge_end() {
+        let (peers, mut topology) = responses(false);
+        topology["topology"]["edges"] = json!([{"from": ME, "to": "eeeeeeeeeeee", "metric": 1}]);
+        topology["links"] = json!([
+            {"endpoint": "eeeeeeeeeeee", "nickname": "ghost", "path": "ip", "neighbor": true},
+        ]);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: link to endpoint eeeeeeee (ghost) has no roster row"],
+            "one warning for the endpoint, with the nickname of the link"
         );
     }
 
