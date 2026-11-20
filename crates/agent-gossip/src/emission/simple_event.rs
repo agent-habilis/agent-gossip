@@ -389,12 +389,6 @@ pub(super) fn emit(line: &str) {
     let _ = lock.flush();
 }
 
-pub(super) fn emit_json<T: Serialize>(value: &T, is_visible: bool) {
-    if let Ok(json) = serde_json::to_string(value) {
-        emit(&stamp_visibility(json, is_visible));
-    }
-}
-
 /// Whether an event's `display` line belongs in the agent's transcript — the
 /// daemon-owned print decision, stamped on every JSON line as `is_visible` so
 /// no skill re-derives a skip-list. Everything else in a poll batch is
@@ -516,14 +510,6 @@ pub(super) fn format_msg_json(
         .expect("message event serialization should never fail"),
         true,
     )
-}
-
-pub(super) fn print_message_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_msg_json(message, is_self, addressee_name));
 }
 
 /// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
@@ -667,14 +653,6 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
         .expect("task event serialization should never fail"),
         false,
     )
-}
-
-pub(super) fn print_task_json(
-    message: &Authored,
-    is_self: bool,
-    addressee_name: Option<&Nickname>,
-) {
-    emit(&format_task_json(message, is_self, addressee_name));
 }
 
 /// Make a peer-controlled merge path safe to splice into the `state` display.
