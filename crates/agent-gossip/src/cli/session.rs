@@ -571,6 +571,7 @@ pub(crate) async fn bell_check(options: &BellCheckOpts) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::symlink;
     use std::path::PathBuf;
 
     use habilis_network::util::process;
@@ -895,14 +896,13 @@ mod tests {
         let real = base.join("realmesh");
         std::fs::create_dir_all(&real).expect("the temp dir is writable");
         std::fs::write(real.join("one-two.state.json"), "{}").expect("the temp dir is writable");
-        std::os::unix::fs::symlink(&outside, base.join("linkedmesh"))
-            .expect("the temp dir is writable");
+        symlink(&outside, base.join("linkedmesh")).expect("the temp dir is writable");
 
         let listed = super::state_file_paths_in(&base);
 
         assert!(
             listed.contains(&real.join("one-two.state.json")),
-            "the file of a real mesh folder is listed"
+            "a normal folder still gives the discovery the file of its daemon"
         );
         assert!(
             !listed
