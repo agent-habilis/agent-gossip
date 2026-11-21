@@ -94,6 +94,10 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "the warning of a session file that starts a new member",
         ),
         (
+            "pid>.stderr file",
+            "where the warning lands in the launch of the skills",
+        ),
+        (
             "Only the beacon publishes to the DHT",
             "who publishes to the DHT",
         ),

@@ -34,9 +34,21 @@ fn is_session_file(state_file: &Path, base: &Path) -> bool {
     let plain = !state_file
         .components()
         .any(|part| matches!(part, Component::ParentDir));
-    let in_sessions = state_file.parent() == Some(base.join("sessions").as_path());
     let json = state_file.extension().is_some_and(|ext| ext == "json");
+    let in_sessions = state_file
+        .parent()
+        .is_some_and(|folder| same_folder(folder, &base.join("sessions")));
     plain && in_sessions && json
+}
+
+/// Whether two paths name one folder. Real folders are compared, so that another spelling of the runtime base
+/// (`/private/tmp` for `/tmp` on macOS) does not turn the rule off: a safety rule that a spelling disables
+/// protects nothing. Where a folder does not exist yet, the paths are compared as written.
+fn same_folder(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(real_left), Ok(real_right)) => real_left == real_right,
+        _ => left == right,
+    }
 }
 
 /// The pid that the name of a session file gives: the whole stem is digits.
@@ -70,6 +82,13 @@ pub(super) fn key_policy(
 /// # Errors
 /// The lock file is a link, or the files cannot be opened or removed.
 pub(super) fn forget_kept_key(state_file: &Path) -> io::Result<KeptFiles> {
+    // No folder holds no key, and the CLI makes no folder for a state file: the engine decides, as before.
+    let folder_is_missing = state_file.parent().is_some_and(|folder| {
+        matches!(std::fs::metadata(folder), Err(error) if error.kind() == io::ErrorKind::NotFound)
+    });
+    if folder_is_missing {
+        return Ok(KeptFiles::NothingKept);
+    }
     let lock_path = state_file.with_extension("key.lock");
     if is_link(&lock_path) {
         return Err(io::Error::other(format!(
@@ -341,6 +360,47 @@ mod tests {
             "a link cannot keep two starts apart, and the engine refuses it too"
         );
         assert!(state.with_extension("key").exists(), "nothing was removed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_linked_spelling_of_the_runtime_base_is_still_a_session_file() {
+        let real = scratch("real-base");
+        fs::create_dir_all(real.join("sessions")).expect("the temp dir is writable");
+        let link = scratch("link-base-holder").join("linked");
+        symlink(&real, &link).expect("the temp dir is writable");
+
+        // the state file is spelled through the link, and the base is the real folder
+        let state = link.join("sessions").join("12.json");
+        let policy = key_policy(Some(&state), &real, 4000, |pid| pid == 12);
+        assert_eq!(
+            policy,
+            KeyPolicy::Bound(12),
+            "another spelling of the same folder is the same folder"
+        );
+        let other = link.join("sessions").join("13.json");
+        assert_eq!(
+            key_policy(Some(&other), &real, 4000, |_| false),
+            KeyPolicy::Fresh(Some(13)),
+            "a rule that a spelling turns off would protect nothing"
+        );
+        let _ = fs::remove_dir_all(&real);
+    }
+
+    #[test]
+    fn a_folder_that_does_not_exist_holds_no_kept_key() {
+        let dir = scratch("missing-parent");
+        let state = dir.join("not-yet").join("12.json");
+
+        assert_eq!(
+            forget_kept_key(&state).expect("a missing folder is not an error"),
+            KeptFiles::NothingKept,
+            "no folder, no key: the engine decides what a start there means"
+        );
+        assert!(
+            !dir.join("not-yet").exists(),
+            "the CLI does not make the folder of a state file"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
