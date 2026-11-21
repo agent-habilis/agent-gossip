@@ -118,11 +118,19 @@ pub(crate) async fn mesh_for_nickname(nickname: &str) -> Option<String> {
 }
 
 fn state_file_paths() -> Vec<PathBuf> {
-    let Ok(mesh_dirs) = std::fs::read_dir(runtime_base()) else {
+    state_file_paths_in(&runtime_base())
+}
+
+fn state_file_paths_in(base: &Path) -> Vec<PathBuf> {
+    let Ok(mesh_dirs) = std::fs::read_dir(base) else {
         return Vec::new();
     };
     let entries = mesh_dirs.flatten().map(|dir_entry| dir_entry.path());
-    let dirs = entries.filter(|path| path.is_dir());
+    // `symlink_metadata` does not follow a link: a mesh folder that is a link leads outside the base, and
+    // `discover` removes the stale files that it lists.
+    let dirs = entries.filter(|path| {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+    });
     let files = dirs.flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten());
     let paths = files.map(|file_entry| file_entry.path());
     paths
@@ -875,5 +883,33 @@ mod tests {
             700,
             "the flag names the session before the parent does"
         );
+    }
+
+    #[test]
+    fn a_mesh_folder_that_is_a_link_lists_no_state_file() {
+        let base = std::env::temp_dir().join(format!("state-paths-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&outside).expect("the temp dir is writable");
+        std::fs::write(outside.join("elsewhere.json"), "{}").expect("the temp dir is writable");
+        let real = base.join("realmesh");
+        std::fs::create_dir_all(&real).expect("the temp dir is writable");
+        std::fs::write(real.join("one-two.state.json"), "{}").expect("the temp dir is writable");
+        std::os::unix::fs::symlink(&outside, base.join("linkedmesh"))
+            .expect("the temp dir is writable");
+
+        let listed = super::state_file_paths_in(&base);
+
+        assert!(
+            listed.contains(&real.join("one-two.state.json")),
+            "the file of a real mesh folder is listed"
+        );
+        assert!(
+            !listed
+                .iter()
+                .any(|path| path.starts_with(base.join("linkedmesh"))),
+            "a file behind a link is not in the runtime base, and discovery may remove what it lists"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
