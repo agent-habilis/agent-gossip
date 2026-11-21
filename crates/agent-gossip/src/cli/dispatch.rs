@@ -74,11 +74,11 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Leave { options } => super::session::leave(options).await,
         Commands::Session { options } => {
-            super::session::session(&options);
+            super::session::session(&options).await;
             Ok(())
         }
         Commands::BellCheck { options } => {
-            if super::session::bell_check(&options) {
+            if super::session::bell_check(&options).await {
                 // 3, not 1 or 2: clap's usage error is 2, and 1 is any error.
                 std::io::Write::flush(&mut std::io::stdout())?;
                 std::process::exit(3);

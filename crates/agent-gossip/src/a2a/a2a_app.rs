@@ -6,6 +6,7 @@
 //! `&mut` borrow.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use habilis_network::ops::blob::{BlobServer, ContentId};
@@ -162,6 +163,10 @@ pub(crate) struct A2aApp {
     /// state file (the local client's mode-600 discovery channel) at startup.
     a2a_port: Option<u16>,
     a2a_token: Option<String>,
+    /// The absolute path of the state file this daemon was started with (`--state-file`). `None`
+    /// means the engine default under the runtime base. The `Info` reply reports it: a state file
+    /// elsewhere is found only through the daemon's socket, which always sits in the runtime base.
+    state_file: Option<PathBuf>,
     /// The a2a layer's concrete render sink (the tapped `Output`). Used for
     /// a2a-specific surfacings (`print_task` / `task_message` / `print_message`
     /// / `task_timeout`) the engine's generic `NodeSink` doesn't cover; generic
@@ -263,6 +268,7 @@ impl A2aApp {
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
+            state_file: None,
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
@@ -294,6 +300,7 @@ impl A2aApp {
             late_cancels: Vec::new(),
             a2a_port: None,
             a2a_token: None,
+            state_file: None,
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
@@ -452,6 +459,20 @@ impl A2aApp {
         let (tx, rx) = mpsc::channel::<A2aRequest>(a2a_binding::REQUEST_QUEUE);
         a2a_binding::spawn(binding, tx);
         rx
+    }
+
+    /// Record the state file this daemon was started with, as an absolute path: `leave` runs in
+    /// another working directory than the daemon, so a relative path would name another file.
+    ///
+    /// # Errors
+    /// The working directory cannot be read, so the path cannot be made absolute.
+    pub(crate) fn set_state_file(&mut self, path: &Path) -> std::io::Result<()> {
+        self.state_file = Some(std::path::absolute(path)?);
+        Ok(())
+    }
+
+    pub(crate) fn state_file(&self) -> Option<&Path> {
+        self.state_file.as_deref()
     }
 
     /// The a2a bind port + bearer token, if the local binding is on.

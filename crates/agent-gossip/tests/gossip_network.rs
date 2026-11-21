@@ -3881,17 +3881,22 @@ struct DetachedDaemon {
 }
 
 /// Launch `create --owner-pid` for a `sleep` owner and wait for the launcher
-/// to exit. The state file sits where `session` discovery looks for it.
+/// to exit. The state file sits in the runtime base, where `session` discovery
+/// walks for it.
 fn launch_detached_daemon(name: &str) -> DetachedDaemon {
+    launch_detached_daemon_in(name, &common::runtime_base().join("sessions"))
+}
+
+/// Like [`launch_detached_daemon`], with the state file in `state_dir`.
+fn launch_detached_daemon_in(name: &str, state_dir: &std::path::Path) -> DetachedDaemon {
     let owner = KillOnDrop(
         Command::new("sleep")
             .arg("600")
             .spawn()
             .expect("a long sleep stands in for the owner process and exists on every unix host"),
     );
-    let sessions_dir = common::runtime_base().join("sessions");
-    fs::create_dir_all(&sessions_dir).expect("the test temp dir is writable");
-    let state_file = sessions_dir.join(format!("{}.json", owner.0.id()));
+    fs::create_dir_all(state_dir).expect("the test temp dir is writable");
+    let state_file = state_dir.join(format!("{}.json", owner.0.id()));
     let stderr_file = tmp_log(&format!("{name}-stderr"));
 
     let started = Instant::now();
@@ -4057,6 +4062,166 @@ fn detached_daemon_leaves_by_owner() {
     assert!(
         wait_until_gone(&daemon.state_file, Duration::from_secs(5)),
         "the state file survived leave"
+    );
+}
+
+/// Wait until the daemon that writes `state_file` reports ready.
+fn wait_ready(state_file: &std::path::Path) {
+    let mut command = common::test_cmd();
+    command.arg("ready").arg("--state-file").arg(state_file);
+    let ready: std::process::Output = command
+        .output()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    assert!(
+        ready.status.success(),
+        "a session query before ready races the daemon's start: {ready:?}"
+    );
+}
+
+/// Run `leave --session-pid` and parse its report.
+fn leave_by_owner(owner_pid: &str) -> serde_json::Value {
+    let mut command = common::test_cmd();
+    command.args(["leave", "--session-pid", owner_pid]);
+    let out: std::process::Output = command
+        .output()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    assert!(
+        out.status.success(),
+        "a daemon that cannot be stopped exits non-zero: {out:?}"
+    );
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+        .expect("leave prints JSON on success")
+}
+
+/// `leave` and `session` find a daemon whose `--state-file` is outside the
+/// runtime base: its IPC socket is always inside it, so the socket leads to
+/// the state file.
+#[test]
+fn a_daemon_with_a_state_file_outside_the_runtime_base_is_found_and_left() {
+    let _serial = serial_guard();
+    let outside = std::env::temp_dir().join(format!("outside-base-{}", std::process::id()));
+    assert!(
+        !outside.starts_with(common::runtime_base()),
+        "inside the runtime base the old walk finds the file, and the test proves nothing"
+    );
+    let daemon = launch_detached_daemon_in("outside-base", &outside);
+    wait_ready(&daemon.state_file);
+
+    let owner_pid = daemon.owner.0.id().to_string();
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "the daemon is listed once, not missed and not doubled: {sessions}"
+    );
+
+    let report = leave_by_owner(&owner_pid);
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
+    assert_eq!(
+        left.len(),
+        1,
+        "leave reports the daemon it stopped: {report}"
+    );
+    assert_eq!(
+        left[0]["confirmed"], true,
+        "a daemon still serving after leave is not left: {report}"
+    );
+    assert!(
+        wait_until_gone(&daemon.state_file, Duration::from_secs(5)),
+        "the daemon removes its own state file on the way out"
+    );
+    let _ = fs::remove_dir_all(&outside);
+}
+
+/// A relative `--state-file` names a file by the daemon's working directory. `leave` runs
+/// somewhere else, so the daemon must report the absolute path.
+#[test]
+fn a_relative_state_file_is_found_from_another_directory() {
+    let _serial = serial_guard();
+    let workdir = std::env::temp_dir().join(format!("relative-state-{}", std::process::id()));
+    fs::create_dir_all(&workdir).expect("the test temp dir is writable");
+    let owner = KillOnDrop(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("a long sleep stands in for the owner process and exists on every unix host"),
+    );
+    let owner_pid = owner.0.id().to_string();
+    let mut command = common::test_cmd();
+    command.current_dir(&workdir);
+    command.args(["create", "--name", "relative-state", "--lookup", "loopback"]);
+    command.args(["--owner-pid", &owner_pid]);
+    command.args(["--state-file", "daemon.json"]);
+    command.stdin(Stdio::null()).stdout(Stdio::null());
+    let launcher = command
+        .status()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    assert!(
+        launcher.success(),
+        "create detaches and exits zero: {launcher}"
+    );
+    let state_file = workdir.join("daemon.json");
+    wait_ready(&state_file);
+
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "a relative path in the reply names no file from this directory: {sessions}"
+    );
+    leave_by_owner(&owner_pid);
+    assert!(
+        wait_until_gone(&state_file, Duration::from_secs(5)),
+        "the daemon removes its own state file on the way out"
+    );
+    let _ = fs::remove_dir_all(&workdir);
+}
+
+/// A stopped daemon (`SIGSTOP`) still accepts a connection and never answers. The Stop hook
+/// runs `session` discovery at the end of every turn, so it must not wait for such a daemon.
+#[test]
+fn a_stopped_daemon_does_not_hold_up_session() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("stopped-daemon");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let daemon_pid = session_report(&owner_pid)["sessions"][0]["pid"].to_string();
+    let signal = |name: &str| {
+        let status = Command::new("kill")
+            .args([name, &daemon_pid])
+            .status()
+            .expect("kill is on PATH on every unix host, so it spawns");
+        assert!(
+            status.success(),
+            "the signal reaches the daemon it was read from"
+        );
+    };
+
+    signal("-STOP");
+    let started = Instant::now();
+    let sessions = session_report(&owner_pid);
+    let took = started.elapsed();
+    signal("-CONT");
+
+    assert!(
+        took < Duration::from_secs(10),
+        "a reply that never comes holds the hook for {took:?}"
+    );
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "the state file in the runtime base still lists the stopped daemon: {sessions}"
     );
 }
 

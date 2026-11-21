@@ -72,6 +72,9 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     });
     let sink = io.sink();
     let mut app = A2aApp::new_with_io(io);
+    if let Some(path) = shared.state_file.as_deref() {
+        app.set_state_file(path)?;
+    }
     let http_rx = binding.map(|bound| app.serve_a2a(bound));
     // Advertising needs a live-peer counter shared with the re-broadcast task.
     // Built before setup so the config is complete when it is returned, rather

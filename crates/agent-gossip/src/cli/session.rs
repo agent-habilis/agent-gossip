@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
+use futures_util::future::join_all;
 use habilis_network::protocol::Nickname;
 use habilis_network::runtime::state_file::{read_identity, read_session_entry};
 use habilis_network::runtime::{ipc, state_file};
@@ -17,7 +19,10 @@ use crate::runtime_base;
 /// daemon or clean it up. Covers both per-mesh files
 /// (`<prefix>/<nick>.state.json`) and the CLI-fallback location the skills
 /// use (`sessions/<ppid>.json`) — any first-level `*.json`.
-fn discover() -> Discovery {
+///
+/// A state file outside the runtime base is found through its daemon: the socket is always in the
+/// base, and the daemon's `Info` reply (in `owners`) names the file.
+fn discover(owners: &[Owner]) -> Discovery {
     let mut live = Vec::new();
     let mut cleaned = 0;
     for path in state_file_paths() {
@@ -45,7 +50,39 @@ fn discover() -> Discovery {
             cleaned += 1;
         }
     }
+    for owner in owners {
+        let Some(path) = &owner.state_file else {
+            continue;
+        };
+        let walked = live
+            .iter()
+            .any(|target| target.pid == owner.pid && target.mesh == owner.gossip);
+        if walked {
+            continue;
+        }
+        live.extend(reported_target(owner, path));
+    }
     Discovery { live, cleaned }
+}
+
+/// The target that a daemon's own reply points at, or `None` when the file does not agree with the
+/// reply. It never removes a file: the reply names the path, and a path that a reply names is not
+/// ours to delete.
+fn reported_target(owner: &Owner, path: &Path) -> Option<Target> {
+    let entry = read_session_entry(path)?;
+    if entry.pid != Some(owner.pid) || entry.mesh.as_deref() != Some(owner.gossip.as_str()) {
+        return None;
+    }
+    Some(Target {
+        owner_pid: entry.owner_pid,
+        pubkey: read_identity(path).pubkey,
+        path: path.to_path_buf(),
+        mesh: owner.gossip.clone(),
+        name: entry.name,
+        nickname: entry.nickname,
+        topic: entry.topic,
+        pid: owner.pid,
+    })
 }
 
 /// Whether the session anchored at `anchor` owns this daemon: the daemon is
@@ -61,8 +98,8 @@ fn owned_by(target: &Target, anchor: u32) -> bool {
 /// Resolve a live session's mesh id from its nickname — for commands that need
 /// the session's runtime dir without retyping the mesh id (e.g. `a2a fetch`
 /// landing a blob under `<nick>.recv`). `None` if no live session claims it.
-pub(crate) fn mesh_for_nickname(nickname: &str) -> Option<String> {
-    discover()
+pub(crate) async fn mesh_for_nickname(nickname: &str) -> Option<String> {
+    discover(&live_owners().await)
         .live
         .into_iter()
         .find(|target| target.nickname.as_deref() == Some(nickname))
@@ -133,11 +170,35 @@ fn target_json(target: &Target) -> serde_json::Value {
 }
 
 /// What a live daemon answered when asked who it is: its mesh, its nickname,
-/// and — the part no state file can be trusted for — its own pid.
+/// and — the part no state file can be trusted for — its own pid. `state_file` is the absolute path
+/// it was started with, or `None` for the default under the runtime base (and for a daemon that
+/// predates the field).
 struct Owner {
     gossip: String,
     nickname: String,
     pid: u32,
+    state_file: Option<PathBuf>,
+}
+
+/// A stopped daemon (`SIGSTOP`) still accepts the connection and never answers, and the engine's
+/// client has no timeout of its own. Without this bound the Stop hook would wait on it for ever.
+const OWNER_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn parse_owner(response: &str) -> Option<Owner> {
+    let value: serde_json::Value = serde_json::from_str(response).ok()?;
+    let gossip = value["gossip"].as_str()?.to_owned();
+    let nickname = value["nickname"].as_str()?.to_owned();
+    let pid = u32::try_from(value["pid"].as_u64()?).ok()?;
+    let state_file = value["state_file"]
+        .as_str()
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    Some(Owner {
+        gossip,
+        nickname,
+        pid,
+        state_file,
+    })
 }
 
 /// Ask every daemon socket on this machine to identify itself.
@@ -146,29 +207,15 @@ struct Owner {
 /// fails to answer and is skipped, which is exactly the case this is here to
 /// tell apart from a live one.
 async fn live_owners() -> Vec<Owner> {
-    let mut owners = Vec::new();
-    for path in ipc::active_socket_paths(&runtime_base()) {
-        let Ok(response) = ipc::send_to_path(&path, &Info).await else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
-            continue;
-        };
-        let pid = value["pid"]
-            .as_u64()
-            .and_then(|pid| u32::try_from(pid).ok());
-        let (Some(gossip), Some(nickname), Some(pid)) =
-            (value["gossip"].as_str(), value["nickname"].as_str(), pid)
-        else {
-            continue;
-        };
-        owners.push(Owner {
-            gossip: gossip.to_owned(),
-            nickname: nickname.to_owned(),
-            pid,
-        });
-    }
-    owners
+    let base = runtime_base();
+    let probes = ipc::active_socket_paths(&base).map(|path| async move {
+        let reply = tokio::time::timeout(OWNER_PROBE_TIMEOUT, ipc::send_to_path(&path, &Info))
+            .await
+            .ok()?
+            .ok()?;
+        parse_owner(&reply)
+    });
+    join_all(probes).await.into_iter().flatten().collect()
 }
 
 /// Does a live daemon actually answer for this target's mesh *at this pid*?
@@ -203,7 +250,7 @@ fn confirm_owner(owners: &[Owner], target: &Target) -> bool {
 ///
 /// A leftover file from a `SIGKILL`ed daemon is not a collision: nothing
 /// answers for it, so the path is free and the new daemon overwrites it.
-pub(crate) async fn live_owner_of(path: &std::path::Path) -> Option<String> {
+pub(crate) async fn live_owner_of(path: &Path) -> Option<String> {
     let entry = read_session_entry(path)?;
     let (mesh, pid) = (entry.mesh?, entry.pid?);
     let nickname = entry.nickname.clone();
@@ -235,7 +282,8 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         confirm_timeout_secs,
         legacy_output: _,
     } = options;
-    let Discovery { live, cleaned } = discover();
+    let owners = live_owners().await;
+    let Discovery { live, cleaned } = discover(&owners);
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
         (
             select_explicit(
@@ -250,7 +298,6 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         split_owned(live, |target| owned_by(target, anchor))
     };
 
-    let owners = live_owners().await;
     let mut left = Vec::new();
     for target in &matched {
         // Confirm the pid still belongs to *this* session before signalling.
@@ -277,8 +324,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     // identity, the new one announcing `joined` before the old one broadcast
     // `left`. Requiring silence on the socket too makes the report agree with
     // the predicate `run_session` refuses to start against.
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(confirm_timeout_secs);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(confirm_timeout_secs);
     let mut outcomes: Vec<(Target, bool, bool)> = left
         .into_iter()
         .map(|(target, signalled)| (target, signalled, false))
@@ -299,7 +345,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         if !waiting || tokio::time::Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     let left_json: Vec<serde_json::Value> = outcomes
@@ -320,12 +366,12 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn session(options: &SessionOpts) {
+pub(crate) async fn session(options: &SessionOpts) {
     let SessionOpts {
         session_pid,
         legacy_output: _,
     } = options;
-    let Discovery { live, cleaned } = discover();
+    let Discovery { live, cleaned } = discover(&live_owners().await);
     let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
     let sessions: Vec<_> = owned
@@ -385,15 +431,15 @@ fn is_ready(target: &Target) -> bool {
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
 /// turn, and Claude Code still reads the JSON.
-pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
+pub(crate) async fn bell_check(options: &BellCheckOpts) -> bool {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
     } = options;
-    let (owned, _) = owned_sessions(discover().live, session_pid);
+    let (owned, _) = owned_sessions(discover(&live_owners().await).live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    let deadline = std::time::Instant::now() + Duration::from_millis(grace_ms);
     loop {
         let missing = unarmed(&owned, is_ready, bell::is_armed);
         if missing.is_empty() {
@@ -410,19 +456,24 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
             );
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use habilis_network::util::process;
 
-    use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
+    use super::{
+        Owner, Target, confirm_owner, owned_by, parse_owner, reported_target, select_explicit,
+        split_owned, unarmed,
+    };
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
-            path: std::path::PathBuf::from("/nonexistent"),
+            path: PathBuf::from("/nonexistent"),
             mesh: mesh.to_owned(),
             name: Some("cool-team".to_owned()),
             nickname: Some(nickname.to_owned()),
@@ -467,6 +518,7 @@ mod tests {
             gossip: "bbbb".to_owned(),
             nickname: "three-four".to_owned(),
             pid: 10,
+            state_file: None,
         }];
 
         // The stale entry: right pid, wrong gossip. Nobody answers for `aaaa`.
@@ -553,5 +605,69 @@ mod tests {
             select_explicit(live, "none", None).is_empty(),
             "an unknown mesh selects nothing"
         );
+    }
+
+    #[test]
+    fn an_info_reply_names_a_state_file_outside_the_runtime_base() {
+        let reply = r#"{"ok":true,"gossip":"aaaa","name":"n","nickname":"one-two","peer_count":1,"pid":10,"state_file":"/srv/x/mac.json"}"#;
+        let owner = parse_owner(reply).expect("a complete reply parses");
+        assert_eq!(
+            owner.state_file,
+            Some(PathBuf::from("/srv/x/mac.json")),
+            "an absolute path in the reply is kept as the daemon wrote it"
+        );
+    }
+
+    #[test]
+    fn an_info_reply_without_a_usable_state_file_names_none() {
+        let replies = [
+            // A daemon older than the field.
+            r#"{"gossip":"aaaa","nickname":"one-two","pid":10}"#,
+            // The default state file, in the runtime base.
+            r#"{"gossip":"aaaa","nickname":"one-two","pid":10,"state_file":null}"#,
+            // A relative path names no file for a caller in another directory.
+            r#"{"gossip":"aaaa","nickname":"one-two","pid":10,"state_file":"mac.json"}"#,
+        ];
+        for reply in replies {
+            let owner = parse_owner(reply).expect("the identity fields are all there");
+            assert!(
+                owner.state_file.is_none(),
+                "{reply}: an older daemon, the default file and a relative path give no usable path"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reported_file_that_disagrees_with_the_reply_is_ignored_and_kept() {
+        let dir = std::env::temp_dir().join(format!("reported-target-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the temp dir is writable");
+        let path = dir.join("other.json");
+        let owner = Owner {
+            gossip: "aaaa".to_owned(),
+            nickname: "one-two".to_owned(),
+            pid: 10,
+            state_file: Some(path.clone()),
+        };
+
+        // The file belongs to another daemon: right file, wrong pid and gossip.
+        std::fs::write(
+            &path,
+            r#"{"gossip":"bbbb","pid":11,"nickname":"three-four"}"#,
+        )
+        .expect("the temp dir is writable");
+        assert!(
+            reported_target(&owner, &path).is_none(),
+            "a file of another daemon is not this daemon's"
+        );
+        assert!(path.exists(), "a path that a reply names is never deleted");
+
+        std::fs::write(
+            &path,
+            r#"{"gossip":"aaaa","pid":10,"nickname":"one-two","owner_pid":5}"#,
+        )
+        .expect("the temp dir is writable");
+        let found = reported_target(&owner, &path).expect("the file agrees with the reply");
+        assert_eq!(found.owner_pid, Some(5), "the file keeps its owner pid");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
