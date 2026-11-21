@@ -114,6 +114,47 @@ jobs:
           # can read the checksums without re-downloading the tarballs.
           checksum: sha256
 
+  # Until the AUR is open to new accounts, Arch users install this package
+  # with `pacman -U`. The job builds it from packaging/aur/agent-gossip-bin,
+  # with `pkgver` and the checksums set for this tag, as the AUR job will. The
+  # asset names carry no version, so `releases/latest/download/` resolves.
+  arch-package:
+    needs: upload
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Without git in the image, `actions/checkout` falls back to the REST API.
+      - name: Install the build tools
+        run: pacman -Syu --noconfirm --needed git pacman-contrib github-cli
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - name: Build the pacman packages for x86_64 and aarch64
+        run: |
+          # makepkg refuses to run as root.
+          useradd -m builder
+          cp -r packaging/aur/agent-gossip-bin /home/builder/pkg
+          cd /home/builder/pkg
+          ver="${TAG#v}"
+          perl -pi -e "s/^pkgver=.*/pkgver=$ver/; s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          chown -R builder /home/builder/pkg
+          # The package only repacks the release binary, so the x86_64 runner
+          # packages aarch64 too. `options=('!strip')` keeps the foreign binary
+          # away from the host `strip`.
+          su builder -c "updpkgsums && makepkg -f --noconfirm && CARCH=aarch64 makepkg -fC --noconfirm"
+          for arch in x86_64 aarch64; do
+            mv "agent-gossip-bin-$ver-1-$arch.pkg.tar.zst" "agent-gossip-bin-$arch.pkg.tar.zst"
+            sha256sum "agent-gossip-bin-$arch.pkg.tar.zst" > "agent-gossip-bin-$arch.pkg.tar.zst.sha256"
+          done
+      - name: Upload the packages to the release
+        working-directory: /home/builder/pkg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" agent-gossip-bin-*.pkg.tar.zst agent-gossip-bin-*.pkg.tar.zst.sha256 --repo "$GITHUB_REPOSITORY" --clobber
+
   update-formula:
     needs: upload
     runs-on: ubuntu-latest
