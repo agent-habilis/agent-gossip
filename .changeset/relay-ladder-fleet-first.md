@@ -8,4 +8,4 @@ The default relay ladder now has 7 rungs: 3 relays of the fleet, then 4 n0 relay
 
 For a user:
 - A gossip on the default relay choice homes on the relays of the fleet first. A peer of an older release homes on a different rung. All peers must update together.
-- Only rung 0 answers QUIC address discovery. A peer that is homed on a tunnel rung learns no public address from its relay.
+- Of the fleet relays, only rung 0 answers QUIC address discovery. A peer that is homed on a fleet tunnel rung (1 or 2) learns no public address from its relay. The n0 rungs (3 to 6) still answer it, so a peer that falls back to them keeps discovery.

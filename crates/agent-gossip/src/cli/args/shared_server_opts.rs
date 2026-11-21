@@ -18,9 +18,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Cap on direct connections, gossip neighbors included. A peer past the
-    /// cap is reached through a connected peer (multihop). Pinned and extra
-    /// connections fit up to twice this value.
+    /// Cap on direct connections, gossip neighbors included. If the transport
+    /// policy has multihop and a route is known, a peer past the cap is reached
+    /// through a connected peer. Pinned and extra connections fit up to twice
+    /// this value.
     #[arg(long, default_value_t = defaults::MAX_CONNECTIONS)]
     pub max_connections: usize,
 
