@@ -773,7 +773,10 @@ COMMANDS
               member, by key: {"endpoints":[{"pubkey":"<hex>",
               "nickname":"<nick>","endpoint":"<hex>"}]}. A nickname that two
               live members hold has no entry, because it names no single
-              endpoint.
+              endpoint. With --draw, such a member has no link flags, and
+              its link gets a warning. A quiet member has no entry either;
+              a live member of the same nickname can still name the endpoint
+              that the quiet one owns.
 
               With --draw, print a text drawing instead: one box per peer, the
               path of each peer on its edge, and the links between the other

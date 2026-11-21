@@ -782,9 +782,10 @@ struct EndpointCandidate<'roster> {
 /// The `endpoints` entries of the topology reply: the endpoint of each member, by key.
 ///
 /// A quiet member has no entry, as it has no endpoint in the `peers` reply. A nickname that two or
-/// more live members hold names no single endpoint, so it has no entry. The engine keeps one endpoint per nickname, and `address_of` (the lookup by key) is not
-/// public at the pinned engine, so the entry of a live member can still name an endpoint that a
-/// quiet key of the same nickname owns.
+/// more live members hold names no single endpoint, so it has no entry. The engine keeps one
+/// endpoint per nickname, and `address_of` (the lookup by key) is not public at the pinned engine,
+/// so the entry of a live member can still name an endpoint that a quiet key of the same nickname
+/// owns.
 fn endpoint_entries(
     candidates: &[EndpointCandidate<'_>],
     live: &[&Nickname],

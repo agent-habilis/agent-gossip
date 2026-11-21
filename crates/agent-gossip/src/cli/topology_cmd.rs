@@ -47,8 +47,6 @@ fn reply_is_ok(response: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::topology_cmd;
-
     /// `topology --draw` exits 1 on a reply that is not ok, for the topology reply and for the
     /// peers reply alike. The exit call itself needs a daemon that answers one query and not the
     /// other, so the test pins the decision.
@@ -58,11 +56,11 @@ mod tests {
         let fine = r#"{"ok":true,"peers":[]}"#;
 
         assert!(
-            !topology_cmd::reply_is_ok(failed).expect("a reply is JSON"),
+            !super::reply_is_ok(failed).expect("a reply is JSON"),
             "the daemon refused the query, so the command exits 1"
         );
         assert!(
-            topology_cmd::reply_is_ok(fine).expect("a reply is JSON"),
+            super::reply_is_ok(fine).expect("a reply is JSON"),
             "the daemon answered, so the command goes on to the drawing"
         );
     }
