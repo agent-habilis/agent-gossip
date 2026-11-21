@@ -832,7 +832,11 @@ COMMANDS
               every process, so it would select the daemons of every
               session. So is a default that falls to init, when the parent
               process of the command is unknown or is init. session and
-              bell-check refuse the same pids.
+              bell-check refuse the same pids. The guard closes init only:
+              a real pid that is an ancestor of more than one session, such
+              as a login shell or a terminal server, still selects all of
+              them, because a session owns a daemon when its pid is an
+              ancestor of it.
 
               With an explicit GOSSIP (the full id or a unique prefix; the
               flag form --gossip GOSSIP is the same, and naming it twice is

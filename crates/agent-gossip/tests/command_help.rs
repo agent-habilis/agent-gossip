@@ -73,6 +73,10 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
         ("up to 8 s", "how long leave waits for a stop"),
         ("7 days", "when the tracing log of a dead member goes"),
         ("0 or 1", "that a --session-pid of init is refused"),
+        (
+            "more than one session",
+            "that a real pid above several sessions still selects them all",
+        ),
     ] {
         assert!(
             MANUAL.contains(needle),
