@@ -53,3 +53,29 @@ fn the_state_file_help_names_the_limit_of_a_path_outside_the_runtime_base() {
         "the --state-file help is silent about a path that no discovery can clean: {help}"
     );
 }
+
+const MANUAL: &str = include_str!("../../../docs/manual.txt");
+
+/// The manual says what a stop leaves behind and how long it takes, so a reader does not take a
+/// lock file for a stuck daemon or a 4 s stop for a hang.
+#[test]
+fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
+    for (needle, why) in [
+        (
+            ".key.lock",
+            "the lock files that stay beside the state file",
+        ),
+        ("flock", "why the lock files are not deleted"),
+        (
+            "up to 6 s",
+            "the longest stop when a peer does not acknowledge the close",
+        ),
+        ("up to 8 s", "how long leave waits for a stop"),
+        ("7 days", "when the tracing log of a dead member goes"),
+    ] {
+        assert!(
+            MANUAL.contains(needle),
+            "docs/manual.txt does not name {why}: it has no {needle:?}"
+        );
+    }
+}

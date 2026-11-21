@@ -796,6 +796,28 @@ COMMANDS
               files whose recorded pid is gone (SIGKILL, power loss) are
               deleted along the way and counted in `cleaned`.
 
+              leave and session also sweep what a dead member left in its
+              folder under /tmp/agent-gossip: a socket that refuses the
+              connection goes at once, with the member's `<nick>.chunks`
+              folder; its `<nick>.tracing.log` goes when it has no socket
+              beside it and is 7 days old; the folder goes when it is
+              empty. A member that does not answer in time is not dead and
+              keeps every file.
+
+              A daemon stops within about 0.5 s. When a peer does not
+              acknowledge the close (the peer is stopped, gone, or on a slow
+              link), the stop waits for the QUIC close to drain: up to 6 s.
+              leave waits up to 8 s for a stop before it reports
+              `confirmed` false.
+
+              A stopped daemon removes its state file, but the two empty
+              lock files `<state>.key.lock` and `<state>.run.lock` stay
+              beside it. They stay on purpose. A daemon holds each one with
+              flock, and deleting a lock file that another process can open
+              is a race: one process opens it, the file is deleted, a third
+              process creates and locks a new file, and two processes hold
+              the lock. The next daemon on that state path reuses them.
+
               With no GOSSIP, only daemons OWNED BY THE CALLING SESSION are
               stopped: a daemon is session-owned when --session-pid (default:
               this command's parent process) appears among its process

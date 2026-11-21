@@ -49,7 +49,8 @@ pub(crate) enum Commands {
     /// touches other sessions'. An explicit GOSSIP, or `--gossip`, targets
     /// that gossip's local member(s) regardless of owner. State files in the
     /// runtime base whose daemon is gone (SIGKILL, power loss) are cleaned
-    /// up along the way.
+    /// up along the way, and so are the socket and the chunk folder of a
+    /// dead member. A member that does not answer in time is not dead.
     Leave {
         #[command(flatten)]
         options: LeaveOpts,
