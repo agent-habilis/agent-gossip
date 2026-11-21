@@ -9,9 +9,9 @@ use habilis_network::runtime::{ipc, state_file};
 use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
-use super::bell;
 use super::discovery::Discovery;
 use super::target::Target;
+use super::{bell, leftovers};
 use crate::a2a::ipc_command::IpcCommand::Info;
 use crate::runtime_base;
 
@@ -217,28 +217,37 @@ enum Probe {
     Answered(Owner),
     /// No answer in time. The daemon can be alive: stopped, or slow under load.
     TimedOut(PathBuf),
-    /// A refused connection or an unreadable reply: nothing serves there.
-    Dead,
+    /// A reply that is no identity: the socket still accepts, so a daemon can serve there.
+    Unreadable(PathBuf),
+    /// A refused connection: nothing serves there.
+    Dead(PathBuf),
 }
 
 async fn probe(path: PathBuf) -> Probe {
     match tokio::time::timeout(OWNER_PROBE_TIMEOUT, ipc::send_to_path(&path, &Info)).await {
         Err(_) => Probe::TimedOut(path),
-        Ok(Err(_)) => Probe::Dead,
-        Ok(Ok(reply)) => parse_owner(&reply).map_or(Probe::Dead, Probe::Answered),
+        Ok(Err(_)) if leftovers::is_refused(&path).await => Probe::Dead(path),
+        Ok(Err(_)) => Probe::Unreadable(path),
+        Ok(Ok(reply)) => match parse_owner(&reply) {
+            Some(owner) => Probe::Answered(owner),
+            None => Probe::Unreadable(path),
+        },
     }
 }
 
 /// What the daemon sockets of this machine answered.
 struct Owners {
     answered: Vec<Owner>,
-    /// The sockets that gave no answer in time.
+    /// The sockets that gave no usable answer: no answer in time, or a reply that is no identity.
+    /// A daemon can serve behind each of them.
     silent: Vec<PathBuf>,
+    /// The sockets that refused the connection. Their daemons are gone.
+    dead: Vec<PathBuf>,
 }
 
 impl Owners {
-    /// Whether the probe of this target's own socket timed out. Such a daemon can be alive, and
-    /// a timeout says nothing about it, so nobody removes its file or reports it gone.
+    /// Whether the probe of this target's own socket gave no usable answer. Such a daemon can be
+    /// alive, and silence says nothing about it, so nobody removes its file or reports it gone.
     fn unknown(&self, target: &Target) -> bool {
         let Some(nickname) = &target.nickname else {
             return !self.silent.is_empty();
@@ -260,12 +269,13 @@ async fn live_owners() -> Owners {
     let mut owners = Owners {
         answered: Vec::new(),
         silent: Vec::new(),
+        dead: Vec::new(),
     };
     for result in join_all(probes).await {
         match result {
             Probe::Answered(owner) => owners.answered.push(owner),
-            Probe::TimedOut(path) => owners.silent.push(path),
-            Probe::Dead => {}
+            Probe::TimedOut(path) | Probe::Unreadable(path) => owners.silent.push(path),
+            Probe::Dead(path) => owners.dead.push(path),
         }
     }
     owners
@@ -413,6 +423,10 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
+    // The daemons that just stopped have left their sockets behind, and so has any member that died
+    // before: sweep what a refused connection proves dead.
+    leftovers::sweep(&live_owners().await.dead).await;
+
     let left_json: Vec<serde_json::Value> = outcomes
         .iter()
         .map(|(target, _, gone)| {
@@ -436,7 +450,9 @@ pub(crate) async fn session(options: &SessionOpts) {
         session_pid,
         legacy_output: _,
     } = options;
-    let Discovery { live, cleaned } = discover(&live_owners().await.answered);
+    let owners = live_owners().await;
+    let Discovery { live, cleaned } = discover(&owners.answered);
+    leftovers::sweep(&owners.dead).await;
     let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
     let sessions: Vec<_> = owned
@@ -767,6 +783,7 @@ mod tests {
         let owners = Owners {
             answered: Vec::new(),
             silent: vec![socket],
+            dead: Vec::new(),
         };
         assert!(
             owners.unknown(&target(mesh, "one-two", 10)),

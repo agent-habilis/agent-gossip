@@ -4331,6 +4331,156 @@ fn leave_keeps_the_state_file_of_a_daemon_that_does_not_answer() {
     );
 }
 
+/// A member as `session` reports it, with the files that its daemon keeps in its runtime folder.
+struct MemberFiles {
+    pid: String,
+    dir: PathBuf,
+    socket: PathBuf,
+    chunks: PathBuf,
+    log: PathBuf,
+}
+
+fn member_files(owner_pid: &str) -> MemberFiles {
+    let report = session_report(owner_pid);
+    let member = &report["sessions"][0];
+    let text_of = |key: &str| {
+        member[key]
+            .as_str()
+            .expect("a listed session carries its gossip and nickname")
+            .to_owned()
+    };
+    let (mesh, nickname) = (text_of("gossip"), text_of("nickname"));
+    let dir = default_state_file(&mesh, &nickname)
+        .parent()
+        .expect("a state file sits in a folder")
+        .to_path_buf();
+    MemberFiles {
+        pid: member["pid"].to_string(),
+        socket: dir.join(format!("{nickname}.ipc.sock")),
+        chunks: dir.join(format!("{nickname}.chunks")),
+        log: dir.join(format!("{nickname}.tracing.log")),
+        dir,
+    }
+}
+
+/// `SIGKILL` leaves the files of a daemon behind, and `leave` and `session` sweep what a dead
+/// member left: its socket and its chunk folder at once, its tracing log (the debug record of the
+/// run) only when it is 7 days old, and the folder when nothing else is in it.
+#[test]
+fn session_sweeps_the_leftovers_of_a_dead_member() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("swept-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    assert!(
+        member.socket.exists() && member.chunks.exists(),
+        "a running daemon keeps its socket and its chunk folder in {:?}",
+        member.dir
+    );
+    // The test harness sends the log to \`--log-dir\`. A default daemon writes it here.
+    fs::write(&member.log, "a run's tracing log").expect("the member folder is writable");
+
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon it was read from"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while process::is_alive(member.pid.parse().expect("a pid is a number")) {
+        assert!(
+            Instant::now() < deadline,
+            "the killed daemon is still alive"
+        );
+        std::thread::sleep(POLL);
+    }
+
+    session_report(&owner_pid);
+    assert!(
+        !member.socket.exists(),
+        "a socket that refuses the connection belongs to no daemon"
+    );
+    assert!(
+        !member.chunks.exists(),
+        "the chunk folder of a dead member is a cache that nobody reads"
+    );
+    assert!(
+        member.log.exists(),
+        "the log of a run that ended a moment ago is the record of why it ended"
+    );
+
+    let week_and_a_day = Duration::from_hours(8 * 24);
+    let old = fs::OpenOptions::new()
+        .write(true)
+        .open(&member.log)
+        .expect("the log is a file of this user");
+    old.set_modified(std::time::SystemTime::now() - week_and_a_day)
+        .expect("the owner of a file sets its modification time");
+    drop(old);
+    session_report(&owner_pid);
+    assert!(
+        !member.log.exists(),
+        "the log of a dead member goes after 7 days"
+    );
+    assert!(
+        !member.dir.exists(),
+        "an empty member folder goes with its last file"
+    );
+}
+
+/// A clean stop removes the state file, and the engine removes neither the socket nor the chunk
+/// folder. `leave` sweeps them once the daemon is gone, so a member that it stopped leaves no
+/// files of its own behind.
+#[test]
+fn leave_sweeps_what_the_stopped_daemon_left() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("stopped-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+
+    let report = leave_by_owner(&owner_pid);
+    assert_eq!(
+        report["left"][0]["confirmed"], true,
+        "the daemon is gone before its files are swept: {report}"
+    );
+    assert!(
+        !member.socket.exists(),
+        "the socket of the daemon that leave stopped is swept"
+    );
+    assert!(
+        !member.chunks.exists(),
+        "the chunk folder of the daemon that leave stopped is swept"
+    );
+}
+
+/// The sweep removes only what a refused connection proves dead: a live member and a member that
+/// does not answer in time keep every file.
+#[test]
+fn session_keeps_the_files_of_live_and_silent_members() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("kept-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    fs::write(&member.log, "a run's tracing log").expect("the member folder is writable");
+    let all_there = |when: &str| {
+        for file in [&member.socket, &member.chunks, &member.log] {
+            assert!(file.exists(), "{file:?} is gone {when}");
+        }
+    };
+
+    session_report(&owner_pid);
+    all_there("after a session query of a live member");
+
+    let _stopped = StoppedDaemon::new(member.pid.clone());
+    session_report(&owner_pid);
+    all_there("after a session query of a member that does not answer");
+}
+
 /// A caller that captures the launcher's output reads it to EOF. The detached
 /// daemon must not hold the write end of that pipe, or the caller blocks until
 /// the daemon exits and gets the daemon's JSON stdout as well.
