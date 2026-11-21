@@ -1841,6 +1841,31 @@ fn test_topology_draw_shows_the_link_flags_of_a_joined_peer() {
     );
 }
 
+/// The endpoint ids that the link-state graph of a `topology` reply reaches from its own node,
+/// that node included.
+fn reachable_endpoints(reply: &serde_json::Value) -> HashSet<String> {
+    let start = reply["topology"]["self_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let edges = reply["topology"]["edges"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut seen: HashSet<String> = HashSet::from([start.clone()]);
+    let mut frontier = vec![start];
+    while let Some(node) = frontier.pop() {
+        for edge in edges.iter().filter(|edge| edge["from"] == node.as_str()) {
+            if let Some(next) = edge["to"].as_str()
+                && seen.insert(next.to_owned())
+            {
+                frontier.push(next.to_owned());
+            }
+        }
+    }
+    seen
+}
+
 /// The headline of the multihop transport: at `--max-connections 2` a node of
 /// five cannot hold a direct connection to each of the four others, and every
 /// directed message still arrives. A peer past the cap is pinned: the
@@ -1858,6 +1883,38 @@ fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers
         assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
     }
     let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
+    // A send past the cap takes a multihop route only when the node knows one. Before that it dials
+    // direct and holds an extra connection, which is not pinned. Every directed call below,
+    // the card probes included, waits for the link-state graphs to reach all nodes.
+    let nodes_that_reach_all = || {
+        let reaching = all.iter().filter(|node| {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            reachable_endpoints(&reply).len() == all.len()
+        });
+        reaching.count()
+    };
+    let reaching = wait_until(nodes_that_reach_all, all.len(), RECOVERY_TIMEOUT);
+    let graph_of_each_node: Vec<String> = all
+        .iter()
+        .map(|node| {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            format!(
+                "{}: self {} reaches {} edges {} links {}",
+                node.nickname,
+                reply["topology"]["self_id"],
+                reachable_endpoints(&reply).len(),
+                reply["topology"]["edges"],
+                reply["links"]
+            )
+        })
+        .collect();
+    assert_eq!(
+        reaching,
+        all.len(),
+        "the link-state graph of a node never reached all {} nodes\n{}",
+        all.len(),
+        graph_of_each_node.join("\n")
+    );
     for sender in &all {
         for receiver in &all {
             if sender.nickname != receiver.nickname {
@@ -1889,9 +1946,21 @@ fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers
         }
         count
     };
+    let pinned_seen = wait_until(pinned_with_hop, 1, MSG_TIMEOUT);
+    let state_of_each_node: Vec<String> = all
+        .iter()
+        .map(|node| {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            format!(
+                "{}: cap {} links {}",
+                node.nickname, reply["cap"], reply["links"]
+            )
+        })
+        .collect();
     assert!(
-        wait_until(pinned_with_hop, 1, MSG_TIMEOUT) >= 1,
-        "no node reports a pinned link with a first hop at a cap of 2"
+        pinned_seen >= 1,
+        "no node reports a pinned link with a first hop at a cap of 2\n{}",
+        state_of_each_node.join("\n")
     );
 }
 
