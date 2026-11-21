@@ -11,7 +11,8 @@ use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, test_cmd};
 ///
 /// # Panics
 ///
-/// Panics if no probe succeeds before `MSG_TIMEOUT`.
+/// Panics if no probe succeeds before `MSG_TIMEOUT`. The message holds the exit status, the
+/// stderr and the stdout of the last probe.
 pub fn await_peer_card_cli(mesh: &str, nickname: &str, target: &str) {
     let deadline = Instant::now() + MSG_TIMEOUT;
     let timeout = RPC_ATTEMPT.as_secs().to_string();
@@ -40,7 +41,11 @@ pub fn await_peer_card_cli(mesh: &str, nickname: &str, target: &str) {
         }
         assert!(
             Instant::now() < deadline,
-            "no directed round trip from {nickname} to {target} completed"
+            "no directed round trip from {nickname} to {target} completed\n\
+             last probe: {}\nstderr: {}\nstdout: {}",
+            probe.status,
+            String::from_utf8_lossy(&probe.stderr),
+            String::from_utf8_lossy(&probe.stdout),
         );
         std::thread::sleep(POLL);
     }
