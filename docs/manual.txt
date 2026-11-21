@@ -250,6 +250,24 @@ COMMANDS
                      garbage-collect a stale file whose pid is gone (SIGKILL,
                      power loss). Gate on the `ready` flag with `agent-gossip
                      ready` (see "READINESS AND POLLING").
+                     A state file at <runtime base>/sessions/<pid>.json
+                     is the state of the agent session with that pid. When
+                     no --owner-pid is given and that pid is an ancestor of
+                     the daemon, the member key is bound to that process (its
+                     pid and start time): a restart of the same agent keeps
+                     its member, also with a shell between the agent and the
+                     daemon, and a later agent that gets the same pid has
+                     another start time and a new member. When the pid is
+                     dead, or is alive but not an ancestor of the daemon, the
+                     start makes a new member: it removes the kept key of
+                     that path and prints one warning on stderr that says
+                     "the state file names pid N, which is not an ancestor
+                     of this daemon: a new member identity was made". It
+                     never reuses that key and never refuses the start. A
+                     state file in any other place is a path that you
+                     chose: its key is kept and reused after a restart under
+                     any parent, and no owner is bound to it. --owner-pid,
+                     when given, wins over all of this.
 
               --owner-pid PID
                      Detach the daemon and tie its life to process PID. The
