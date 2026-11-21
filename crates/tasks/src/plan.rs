@@ -4,6 +4,8 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use std::{fs, thread};
 
+use agent_gossip_test_fixtures::names_lookup;
+
 use crate::TaskOutcome;
 use crate::util::Invocation;
 
@@ -413,8 +415,13 @@ fn spawn(
     let log_dir = base.join(format!("logs-{variant}-{index}"));
     let state_file = base.join(format!("{variant}-{index}.state.json"));
     let mut daemon = Command::new(binary);
+    daemon.arg(command);
+    // The default lookup of `create` reaches the public network; a run of
+    // idle nodes stays on this machine unless a variant names its lookups.
+    if command == "create" && !names_lookup(extra) {
+        daemon.args(["--lookup", "loopback"]);
+    }
     daemon
-        .arg(command)
         .args(extra)
         .args(["--nickname", &format!("idle-{variant}-{index}")]);
     daemon

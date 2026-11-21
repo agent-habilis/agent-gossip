@@ -82,7 +82,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
-        .max_peers(shared.max_peers)
+        .max_connections(shared.max_connections)
         .runtime_base(crate::runtime_base())
         // The CLI daemon writes its status file to the default state path, and keeps its member key and its
         // run counter there too: a restart after a crash is the same member. The in-process sessions do not.

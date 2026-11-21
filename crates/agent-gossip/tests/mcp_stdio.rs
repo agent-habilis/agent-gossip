@@ -127,8 +127,15 @@ impl McpClient {
     }
 
     /// Simple tool call: send and return the matching response,
-    /// skipping any notifications that arrive in the meantime.
+    /// skipping any notifications that arrive in the meantime. A
+    /// `create_gossip` that names no lookup and no advertise stays on loopback,
+    /// because the default lookup reaches the public network.
     fn tool_call(&mut self, id: u64, name: &str, args: &serde_json::Value) -> serde_json::Value {
+        let mut args = args.clone();
+        let names_no_lookup = args.get("lookup").is_none() && args.get("advertise").is_none();
+        if name == "create_gossip" && names_no_lookup {
+            args["lookup"] = serde_json::json!(["loopback"]);
+        }
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -394,7 +401,7 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_gossip","arguments":{"name":"mcptest"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_gossip","arguments":{"name":"mcptest","lookup":["loopback"]}}}"#,
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_broadcast","arguments":{"text":"sanity"}}}"#,
         r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_gossip","arguments":{}}}"#,
     ] {
@@ -809,23 +816,21 @@ fn created_mesh(
 }
 
 fn app_policy(relay_transport: bool) -> habilis_network::protocol::TransportPolicy {
-    habilis_network::protocol::TransportPolicy::default()
-        .multihop(false)
-        .relay_transport(relay_transport)
+    habilis_network::protocol::TransportPolicy::default().relay_transport(relay_transport)
 }
 
 #[test]
-fn create_mesh_default_transport_is_udp_webrtc_gossip() {
+fn create_mesh_loopback_transport_is_udp_webrtc_multihop() {
     let mut client = McpClient::spawn();
     let mesh = created_mesh(
         &mut client,
         150,
-        &serde_json::json!({ "name": "defaulttransport" }),
+        &serde_json::json!({ "name": "defaulttransport", "lookup": ["loopback"] }),
     );
     assert_eq!(
         mesh.config().lookups,
         habilis_network::protocol::LookupOpts::loopback(),
-        "tests must not reach the public network, so a create without a lookup stays on loopback"
+        "the loopback lookup names no network lookup"
     );
     assert_eq!(
         mesh.config().transport,
@@ -863,7 +868,10 @@ fn create_mesh_explicit_transport_list_is_literal() {
     );
     assert_eq!(
         mesh.config().transport,
-        app_policy(false),
+        habilis_network::protocol::TransportPolicy::default()
+            .multihop(false)
+            .gossip(true)
+            .relay_transport(false),
         "an explicit transport list must win over the relay lookup"
     );
 }

@@ -6,9 +6,8 @@ use serde::Deserialize;
 
 /// One networking lookup mechanism a gossip may use to find peers — the
 /// `--lookup` allowlist. Naming any restricts to exactly those; naming none
-/// falls back to the command's default (`create`: loopback, or all three with
-/// `--advertise`; `discover`/`a2a expose`/`a2a discover`: the all-on public
-/// preset — see "NETWORKING").
+/// falls back to the command's default (`create`, `discover`, `a2a expose` and
+/// `a2a discover`: the all-on public preset — see "NETWORKING").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Lookup {
@@ -22,16 +21,19 @@ pub(crate) enum Lookup {
     /// relay carry payload.
     #[value(name = "relay")]
     Relay,
+    /// No lookup: the gossip stays on this machine. `create` only; it stands
+    /// alone in the list.
+    #[value(name = "loopback")]
+    Loopback,
 }
 
 /// The `--lookup`/`--relay-url` flags: naming any lookup uses *only* those
-/// passed; naming none falls back to the command's default (`create`:
-/// loopback; `discover`/`a2a expose`/`a2a discover`: the all-on public
-/// preset).
+/// passed; naming none falls back to the command's default, the all-on public
+/// preset.
 #[derive(Parser, Debug)]
 pub(crate) struct LookupArgs {
-    /// Comma-separated networking lookups: mdns, dht, relay. An unknown
-    /// value is an error.
+    /// Comma-separated networking lookups: mdns, dht, relay, or loopback
+    /// (`create` only, alone). An unknown value is an error.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub lookup: Vec<Lookup>,
 
@@ -43,23 +45,32 @@ pub(crate) struct LookupArgs {
 }
 
 impl LookupArgs {
+    /// The lookups of a command that reaches a directory or a bridge. An empty
+    /// set resolves to the public preset there, so `loopback` would become
+    /// public: it is refused, and `create` is the one command that honors it.
+    ///
     /// # Errors
-    /// `--relay-url` was given without `relay` in `--lookup`.
+    /// `--relay-url` was given without `relay` in `--lookup`, or `--lookup`
+    /// names `loopback`.
     pub(crate) fn to_set(&self) -> anyhow::Result<LookupSet> {
+        anyhow::ensure!(
+            !self.lookup.contains(&Lookup::Loopback),
+            "--lookup loopback is for `create` only: this command takes mdns, dht or relay, or all three when it names none"
+        );
         lookup_set(&self.lookup, self.relay_url.clone())
     }
 }
 
-/// The lookups a `create` uses. Listing a gossip in a directory
-/// (`--advertise`) only makes sense for a mesh that other machines can reach,
-/// so naming no lookup there takes all three.
+/// The lookups a `create` uses. Naming no lookup takes all three: a gossip
+/// that other machines can reach is the default, and `--lookup loopback`
+/// keeps it on this machine.
 ///
 /// The hidden `--directory-private` keeps the loopback lookups: the advertiser
 /// reaches the directory over its own lookups, and those are baked into the
 /// directory's gossip id, so a discoverer on the loopback ladder would never
 /// meet an advertiser that took the public ones.
-pub(crate) fn lookups_or_public(lookups: &[Lookup], advertise: bool) -> Vec<Lookup> {
-    if advertise && lookups.is_empty() && !directory_private_for_test() {
+pub(crate) fn lookups_or_public(lookups: &[Lookup]) -> Vec<Lookup> {
+    if lookups.is_empty() && !directory_private_for_test() {
         vec![Lookup::Mdns, Lookup::Dht, Lookup::Relay]
     } else {
         lookups.to_vec()
@@ -79,6 +90,9 @@ pub(crate) fn lookup_set(
     let relay = lookups.contains(&Lookup::Relay);
     if relay_url.is_some() && !relay {
         anyhow::bail!("--relay-url needs `relay` in --lookup");
+    }
+    if lookups.contains(&Lookup::Loopback) && lookups.len() > 1 {
+        anyhow::bail!("--lookup loopback stands alone: it cannot combine with another lookup");
     }
     let relay_lookup = if relay {
         relay_url.map_or(RelaySelection::Default, RelaySelection::Named)
@@ -142,6 +156,18 @@ mod tests {
             custom.relay_lookup,
             RelaySelection::Named(ladder),
             "a custom relay ladder is kept as given"
+        );
+    }
+
+    #[test]
+    fn directory_commands_reject_loopback() {
+        let args = super::LookupArgs {
+            lookup: vec![Lookup::Loopback],
+            relay_url: None,
+        };
+        assert!(
+            args.to_set().is_err(),
+            "an empty set would resolve to the public preset, so loopback cannot be honored here"
         );
     }
 

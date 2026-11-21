@@ -70,14 +70,15 @@ mod tests {
         );
     }
 
-    fn policy(multihop: bool, relay_transport: bool) -> TransportPolicy {
+    fn policy(multihop: bool, gossip: bool, relay_transport: bool) -> TransportPolicy {
         TransportPolicy::default()
             .multihop(multihop)
+            .gossip(gossip)
             .relay_transport(relay_transport)
     }
 
     #[test]
-    fn create_without_flags_is_loopback_with_udp_webrtc_gossip() {
+    fn create_without_flags_is_loopback_with_udp_webrtc_multihop() {
         let resolved = resolve(&[], None, &[]).expect("no flags resolves");
         assert_eq!(
             resolved.lookups,
@@ -86,7 +87,7 @@ mod tests {
         );
         assert_eq!(
             resolved.transport,
-            policy(false, false),
+            policy(true, false, false),
             "the default transport is the plain policy"
         );
     }
@@ -96,7 +97,7 @@ mod tests {
         let resolved = resolve(&[Lookup::Relay], None, &[]).expect("relay lookup resolves");
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(true, false, true),
             "the webrtc policy is enabled"
         );
     }
@@ -107,7 +108,7 @@ mod tests {
             .expect("the public mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(true, false, true),
             "the webrtc policy stays enabled"
         );
     }
@@ -118,7 +119,7 @@ mod tests {
             .expect("the lan mix has no custom relay ladder, so no lookup conflicts");
         assert_eq!(
             resolved.transport,
-            policy(false, false),
+            policy(true, false, false),
             "the udp-only policy is kept"
         );
     }
@@ -140,7 +141,7 @@ mod tests {
             .expect("an explicit list resolves");
         assert_eq!(
             resolved.transport,
-            policy(false, false),
+            policy(false, true, false),
             "the plain policy is kept with no transport flag"
         );
     }
@@ -156,19 +157,18 @@ mod tests {
         .expect("an explicit list with relay resolves");
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(false, true, true),
             "the webrtc policy is kept when given"
         );
     }
 
     #[test]
-    fn create_advertise_without_lookup_is_public_with_relay_transport() {
-        let cli = Cli::try_parse_from(["agent-gossip", "create", "--advertise"])
-            .expect("a bare --advertise parses");
+    fn create_without_lookup_is_public_with_relay_transport() {
+        let cli = Cli::try_parse_from(["agent-gossip", "create"]).expect("a bare create parses");
         let Commands::Create { options } = cli.command else {
             panic!("expected Create command");
         };
-        let lookups = lookups_or_public(&options.lookups.lookup, options.advertise.is_some());
+        let lookups = lookups_or_public(&options.lookups.lookup);
         let resolved = resolve(&lookups, None, &options.transport).expect("advertise resolves");
         assert_eq!(
             resolved.lookups,
@@ -177,21 +177,45 @@ mod tests {
         );
         assert_eq!(
             resolved.transport,
-            policy(false, true),
+            policy(true, false, true),
             "the public preset keeps the webrtc policy"
         );
     }
 
     #[test]
-    fn advertise_keeps_the_lookups_that_are_named() {
+    fn the_lookups_that_are_named_are_kept() {
         assert_eq!(
-            lookups_or_public(&[Lookup::Mdns], true),
+            lookups_or_public(&[Lookup::Mdns]),
             [Lookup::Mdns],
-            "--public keeps the mdns lookup as given"
+            "a named lookup is kept as given"
         );
+        assert_eq!(
+            lookups_or_public(&[Lookup::Loopback]),
+            [Lookup::Loopback],
+            "loopback is a name, so it is kept"
+        );
+    }
+
+    #[test]
+    fn create_with_loopback_has_no_lookup_and_no_relay_transport() {
+        let resolved = resolve(&[Lookup::Loopback], None, &[]).expect("loopback resolves");
+        assert_eq!(
+            resolved.lookups,
+            LookupOpts::loopback(),
+            "loopback names no lookup"
+        );
+        assert_eq!(
+            resolved.transport,
+            policy(true, false, false),
+            "with no relay lookup the relay carries no payload"
+        );
+    }
+
+    #[test]
+    fn loopback_stands_alone() {
         assert!(
-            lookups_or_public(&[], false).is_empty(),
-            "without lookups the public set is empty"
+            resolve(&[Lookup::Loopback, Lookup::Mdns], None, &[]).is_err(),
+            "loopback with another lookup is a contradiction"
         );
     }
 
@@ -201,7 +225,9 @@ mod tests {
             .expect("multihop with direct paths resolves");
         assert_eq!(
             resolved.transport,
-            TransportPolicy::default().gossip(false),
+            TransportPolicy::default()
+                .gossip(false)
+                .relay_transport(false),
             "multihop with direct paths gives the multihop policy"
         );
     }

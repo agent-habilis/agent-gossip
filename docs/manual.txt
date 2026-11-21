@@ -10,17 +10,17 @@ SYNOPSIS
                   [--relay-url URLS] [--transport TRANSPORT]
                   [--advertise[=DIRECTORY]] [--password[=PW]] [--invite-only]
                   [--state-file PATH] [--owner-pid PID]
-                  [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+                  [--max-connections N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip join [GOSSIP] [--nickname NAME] [--password[=PW]]
                   [--state-file PATH] [--owner-pid PID]
-                  [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+                  [--max-connections N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip invite --gossip GOSSIP --nickname NAME [--ttl DUR]
 
        agent-gossip topic STRING [--nickname NAME]
                   [--state-file PATH] [--owner-pid PID]
-                  [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
+                  [--max-connections N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-gossip poll --gossip GOSSIP --nickname NAME [--long [--settle-secs N] [--max-secs N]]
        agent-gossip poll --state-file PATH [--long [--settle-secs N] [--max-secs N]]
@@ -29,7 +29,7 @@ SYNOPSIS
 
        agent-gossip peers --gossip GOSSIP --nickname NAME
 
-       agent-gossip topology --gossip GOSSIP --nickname NAME
+       agent-gossip topology --gossip GOSSIP --nickname NAME [--draw]
 
        agent-gossip a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
        agent-gossip a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
@@ -70,7 +70,7 @@ SYNOPSIS
        agent-gossip discover [--directory DIRECTORY] [--window-secs N]
                   [--lookup LOOKUPS] [--relay-url URLS]
                   [--state-file PATH]
-                  [--max-peers N] [--filter-self]
+                  [--max-connections N] [--filter-self]
 
        agent-gossip mcp
 
@@ -182,10 +182,10 @@ COMMANDS
 
               --lookup LOOKUPS
                      Comma-separated list of networking lookups: mdns, dht,
-                     relay (see "NETWORKING"). An unknown value is an error.
-                     Omit for a loopback-only gossip that works on the local
-                     machine only. Name mdns,dht,relay for a cross-machine
-                     gossip. Baked into the id.
+                     relay (see "NETWORKING"), or loopback alone. An unknown
+                     value is an error. Omit for all three lookups, a
+                     cross-machine gossip. Name loopback for a gossip that
+                     works on the local machine only. Baked into the id.
 
               --relay-url URLS
                      Ordered, comma-separated relay ladder, e.g.
@@ -199,7 +199,7 @@ COMMANDS
                      "TRANSPORT"): udp, webrtc, multihop, gossip, relay.
                      Baked into the id and inherited by every joiner. The
                      list is literal and must name udp or webrtc. Without
-                     it, a gossip carries udp,webrtc,gossip, plus relay when
+                     it, a gossip carries udp,webrtc,multihop, plus relay when
                      relay is in --lookup.
 
               --advertise[=DIRECTORY]
@@ -260,12 +260,18 @@ COMMANDS
                      `leave`, `session` and the bell check use it (see
                      leave).
 
-              --max-peers N
-                     Cap on live direct connections — the gossip's
-                     active-neighbor set. The node holds at most N open QUIC
-                     links and relays to peers beyond it; a gossip up to N
+              --max-connections N
+                     Cap on direct connections, gossip neighbors included.
+                     When the transport names multihop and a route exists, a
+                     send to a peer beyond the cap goes through a connected
+                     peer and opens no new direct connection. Without
+                     multihop, or without a route, the send dials directly:
+                     it evicts an idle peer that is not a gossip neighbor,
+                     and if none can go, the new connection is an extra.
+                     Pinned connections and extras fit up to 2N in all; an
+                     extra closes after 60 s with no use. A gossip up to N
                      members forms a full mesh with no membership churn.
-                     Default 64.
+                     Default 16.
 
               --filter-self
                      Suppress your own messages from the JSON stream, for
@@ -299,7 +305,7 @@ COMMANDS
                      create --password for the full semantics.
 
               join also accepts the same operational flags as create:
-              --state-file PATH, --owner-pid PID, --max-peers N, and
+              --state-file PATH, --owner-pid PID, --max-connections N, and
               --filter-self (see create).
 
               As with create, the binary does not take --model/--harness; an
@@ -341,7 +347,7 @@ COMMANDS
               "#github.com/x". Capped at 32 chars (an over-long name ends in
               "…"), or "topic" if nothing valid survives. This affects the name
               only, never the seed. Networking is always the public preset
-              (mDNS + DHT + relay), and the transport is udp,webrtc,gossip,relay:
+              (mDNS + DHT + relay), and the transport is udp,webrtc,multihop,relay:
               payload falls back to the relay when a direct path fails.
 
               The string is the only coordination needed, so it is compared
@@ -356,7 +362,7 @@ COMMANDS
               bootstrap off it.
 
               topic takes --nickname and the same operational flags as create
-              (--state-file, --owner-pid, --max-peers, --filter-self).
+              (--state-file, --owner-pid, --max-connections, --filter-self).
 
        a2a broadcast --gossip GOSSIP --nickname NAME --text TEXT
               Send a chat message to the WHOLE gossip. Every member sees it.
@@ -752,13 +758,30 @@ COMMANDS
               them with meta get, under the author key of the member (see
               meta merge).
 
-       topology --gossip GOSSIP --nickname NAME
+       topology --gossip GOSSIP --nickname NAME [--draw]
               Print the multihop routing topology — the metric-weighted gossip
               graph the daemon has assembled from gossiped link-state — as
               one JSON object:
 
                 {"self_id":"<hex>","edges":[{"from":"<hex>","to":"<hex>",
                  "metric":1}]}
+
+              The reply also holds "cap", the direct connections against the
+              cap, and "links", one entry per peer the node holds a link to,
+              with its path, first hop, and the neighbor, pinned and extra
+              flags. It holds "endpoints" too, the endpoint id of each live
+              member, by key: {"endpoints":[{"pubkey":"<hex>",
+              "nickname":"<nick>","endpoint":"<hex>"}]}. A nickname that two
+              live members hold has no entry, because it names no single
+              endpoint. With --draw, such a member has no link flags, and
+              its link gets a warning. A quiet member has no entry either;
+              a live member of the same nickname can still name the endpoint
+              that the quiet one owns.
+
+              With --draw, print a text drawing instead: one box per peer, the
+              path of each peer on its edge, and the links between the other
+              peers. Warnings go to stderr, one `warning:` line each. The
+              /gossip-topology skill runs this.
 
               Short-lived; requires a running create/join daemon. Exits
               non-zero on {"ok":false}.
@@ -1073,12 +1096,12 @@ NETWORKING
 
        --lookup LOOKUPS
                        Comma-separated list of lookups: mdns, dht, relay. An
-                       unknown value is an error. On create, omitting
-                       --lookup makes a loopback-only gossip (single
-                       machine); name mdns,dht,relay for a cross-machine
-                       gossip. On discover, a2a expose, and a2a discover,
-                       omitting --lookup uses all three lookups; naming any
-                       restricts to those.
+                       unknown value is an error. On create, discover,
+                       a2a expose, and a2a discover, omitting --lookup uses
+                       all three lookups; naming any restricts to those.
+                       On create, --lookup loopback makes a loopback-only
+                       gossip (single machine); it stands alone. The other
+                       commands refuse loopback.
        mdns            LAN multicast. Same-LAN reach only.
        dht             Mainline BitTorrent DHT. Public, infrastructure-free.
        relay           Rendezvous through a relay server (the relay-direct
@@ -1099,9 +1122,8 @@ NETWORKING
        discover, the flags must match whatever the advertiser used.
 
        discover, a2a expose, and a2a discover take the same --lookup and
-       --relay-url flags, with one difference: there the all-on preset is
-       already the no-flag default, so an empty --lookup means all three
-       lookups instead of loopback-only.
+       --relay-url flags, and the all-on preset is the no-flag default for
+       each of them, create included.
 
 TRANSPORT
        A lookup says how members find each other. The transport policy says
@@ -1118,14 +1140,14 @@ TRANSPORT
                        gossip carries the payload of a peer with no direct
                        path in the frames of the gossip itself. multihop
                        reaches a peer with no direct path through other
-                       members, and is off by default. Both need udp or
-                       webrtc in the list.
+                       members, and is on by default. gossip is off by
+                       default. Both need udp or webrtc in the list.
                        relay lets the payload also fall back to the relay
                        when a direct path fails. It requires relay in
                        --lookup. Without relay, the relay serves lookup only
                        (bootstrap dial, signalling, NAT traversal).
                        Without --transport, a gossip carries
-                       udp,webrtc,gossip, plus relay when relay is in
+                       udp,webrtc,multihop, plus relay when relay is in
                        --lookup.
 
 DIRECTORIES
@@ -1556,8 +1578,8 @@ MCP SERVER
               relay_urls (array of URL strings; requires "relay" in lookup),
               and transport (array of "udp" | "webrtc" | "multihop" | "gossip" |
               "relay"; a literal list, omitted for the default). An empty
-              lookup makes a loopback-only gossip, or one with all three
-              lookups when advertise is true. An unknown param is
+              lookup makes a gossip with all three lookups; name "loopback" alone for
+              a loopback-only gossip. An unknown param is
               rejected. The name, lookup and transport choices are baked into the
               identifier. Returns the gossip id, name, your nickname, and your
               pubkey (your author key in hex, the slot of your meta entry).

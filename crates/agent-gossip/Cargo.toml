@@ -65,6 +65,8 @@ clap = { version = "4", features = ["derive"] }
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-gossip plug` is self-contained.
 include_dir = "0.7"
+# Pads the boxes of `topology --draw` by displayed width: a nickname can hold wide characters.
+unicode-width = "0.2"
 # NOTE: no `iroh` dependency. The bridge and the A2A card name iroh types, but
 # they take them from `habilis_network::iroh` — the engine owns which fork and revision
 # that is, and a second declaration here would resolve the published crate

@@ -7,9 +7,8 @@ use habilis_network::util::tuning;
 
 use crate::policy;
 
-// Both lanes take the app transport policy, never the engine default (which
-// has multihop on). The policy is baked into the topic id, so peers on another
-// policy land in a different gossip.
+// Both lanes take the app transport policy. The policy is baked into the topic
+// id, so peers on another policy land in a different gossip.
 pub(crate) fn derive_topic_mesh(string: &str) -> Result<Mesh> {
     // The test lane reaches no further than the LAN and has no relay lookup,
     // so the policy gives it no relay transport.
@@ -43,22 +42,22 @@ pub(crate) fn resolve_topic(string: String, nickname: Option<Nickname>) -> Resul
 mod tests {
     use habilis_network::protocol::{LookupOpts, TransportPolicy};
 
-    /// The id that habilis-network 2b468bb (mesh id v2) minted for `standup` with
-    /// the policy `udp,webrtc,gossip,relay`. It is unchanged at 92a332a. It is a
-    /// deliberate split from the 0.11.2 id. A drift here splits a topic into two
+    /// The id that habilis-network 99f2ece minted for `standup` with the policy
+    /// `udp,webrtc,multihop,relay`. It is a deliberate split from the id of the
+    /// release before the multihop default. A drift here splits a topic into two
     /// gossips, one per version.
     #[test]
     fn topic_id_matches_the_released_derivation() {
         let mesh = super::derive_topic_mesh("standup").expect("the test topic is valid");
         assert_eq!(
             mesh.to_string(),
-            "L4rA2igekqYAiecUqXZpt3yPPEPPUwDF6UuaVXxT4QdHbsiKQHCcvAJbq37HwwmKbD",
+            "L4rA2igekqYAiecUqXZpt3yPPEPPUwDF6UuaVXxT4QdHbsiKQHCcvAJbq37GbrSCT6",
             "the topic id derivation matches the released value"
         );
     }
 
     #[test]
-    fn topic_mesh_is_public_with_udp_webrtc_gossip_and_relay_but_no_multihop() {
+    fn topic_mesh_is_public_with_udp_webrtc_multihop_and_relay_but_no_gossip() {
         let mesh = super::derive_topic_mesh("x").expect("a non-empty string derives");
         assert_eq!(
             mesh.config().lookups,
@@ -67,9 +66,7 @@ mod tests {
         );
         assert_eq!(
             mesh.config().transport,
-            TransportPolicy::default()
-                .multihop(false)
-                .relay_transport(true),
+            TransportPolicy::default().relay_transport(true),
             "a topic has no creator to dial, so relay carries peers that cannot connect directly"
         );
     }

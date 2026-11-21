@@ -39,7 +39,7 @@ pub(super) async fn create_setup(
         (true, None) => DirectorySelection::Default,
         (true, Some(directory)) => DirectorySelection::Named(directory),
     };
-    let max_peers = config.max_peers;
+    let max_connections = config.max_connections;
     let Resolved {
         kind,
         author,
@@ -64,7 +64,7 @@ pub(super) async fn create_setup(
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
-        .max_peers(max_peers)
+        .max_connections(max_connections)
         .runtime_base(crate::runtime_base());
     setup_params.live_count = live_count.clone();
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
@@ -97,7 +97,7 @@ pub(super) async fn join_setup(
     )
     .resolve()
     .map_err(|error| JoinError::Resolve(anyhow::Error::from(error)))?;
-    resolved_setup(resolved, config.max_peers, output).await
+    resolved_setup(resolved, config.max_connections, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public mesh).
@@ -111,14 +111,14 @@ pub(super) async fn topic_setup(
 ) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     let resolved =
         topic::resolve_topic(config.string, config.nickname).map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, config.max_peers, output).await
+    resolved_setup(resolved, config.max_connections, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_mesh` for
 /// an already-resolved join-flavored setup.
 async fn resolved_setup(
     resolved: Resolved,
-    max_peers: usize,
+    max_connections: usize,
     output: Output,
 ) -> Result<(EventLoopConfig, SurfacedIo), JoinError> {
     crate::register_build_version();
@@ -129,7 +129,7 @@ async fn resolved_setup(
     // Router: the A2A binding stands up a separate endpoint of its own
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let setup_params = SetupParams::new(author, sink)
-        .max_peers(max_peers)
+        .max_connections(max_connections)
         .runtime_base(crate::runtime_base());
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         JoinError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
