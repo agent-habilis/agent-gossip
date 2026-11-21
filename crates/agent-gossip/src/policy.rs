@@ -1,9 +1,8 @@
 use habilis_network::protocol::{LookupSet, TransportPolicy};
 
-/// The transport a create takes when it names none: every direct path and
-/// gossip, with the relay carrying payload whenever the relay is a lookup.
-/// Multihop is off because it stands up a second endpoint on every native
-/// member; a mesh that wants it names it in `--transport`.
+/// The transport a create takes when it names none: udp, webrtc and multihop,
+/// with the relay carrying payload whenever the relay is a lookup. Gossip
+/// is off; a mesh that wants it names it in `--transport`.
 pub(crate) fn app_transport_policy(lookups: &LookupSet) -> TransportPolicy {
     app_policy(lookups.relay_lookup.is_set())
 }
@@ -11,9 +10,7 @@ pub(crate) fn app_transport_policy(lookups: &LookupSet) -> TransportPolicy {
 /// [`app_transport_policy`] for a caller that already knows whether the relay
 /// is a lookup.
 pub(crate) fn app_policy(relay_lookup: bool) -> TransportPolicy {
-    TransportPolicy::default()
-        .multihop(false)
-        .relay_transport(relay_lookup)
+    TransportPolicy::default().relay_transport(relay_lookup)
 }
 
 #[cfg(test)]
@@ -33,12 +30,12 @@ mod tests {
         assert!(
             policy.allows(Transport::Udp)
                 && policy.allows(Transport::WebRtc)
-                && policy.allows(Transport::Gossip),
-            "the default policy keeps udp, webrtc and gossip"
+                && policy.allows(Transport::Multihop),
+            "the default policy keeps udp, webrtc and multihop"
         );
         assert!(
-            !policy.allows(Transport::Multihop) && !policy.allows(Transport::Relay),
-            "the default policy has no multihop or relay transport"
+            !policy.allows(Transport::Gossip) && !policy.allows(Transport::Relay),
+            "with no relay lookup the default policy has no gossip or relay transport"
         );
     }
 

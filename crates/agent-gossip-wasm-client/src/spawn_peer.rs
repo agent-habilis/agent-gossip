@@ -8,7 +8,7 @@ use wasm_bindgen::JsValue;
 use crate::err::err;
 use crate::gossip_driver::{GossipDriver, Inbox};
 use crate::gossip_peer::GossipPeer;
-use crate::max_direct_peers::MAX_DIRECT_PEERS;
+use crate::max_connections::MAX_CONNECTIONS;
 
 pub(crate) async fn spawn_peer(
     resolved: Resolved,
@@ -19,8 +19,7 @@ pub(crate) async fn spawn_peer(
     // A tab writes no files and binds no socket. Both are already optional on
     // the engine, so the defaults of `SetupParams::new` are the configuration.
     let setup_params = SetupParams::new(author.clone(), SilentSink::default())
-        .max_peers(MAX_DIRECT_PEERS)
-        .max_direct(MAX_DIRECT_PEERS)
+        .max_connections(MAX_CONNECTIONS)
         .transports(transports);
     let config = setup_mesh(kind, setup_params)
         .await

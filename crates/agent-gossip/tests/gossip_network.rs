@@ -824,7 +824,7 @@ fn test_state_file_removed_on_signal() {
         let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
         let mut command = common::test_cmd();
         command
-            .args(["create", "--name", "statefile-test"])
+            .args(["create", "--name", "statefile-test", "--lookup", "loopback"])
             .arg("--state-file")
             .arg(&state_file);
         let mut child: Child = command
@@ -883,7 +883,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "ready-test"])
+        .args(["create", "--name", "ready-test", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut child: Child = command
@@ -956,7 +956,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "collide-first"])
+        .args(["create", "--name", "collide-first", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut first: Child = command
@@ -980,7 +980,7 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
     // exits, so waiting on it would hang the suite instead of failing it.
     command = common::test_cmd();
     command
-        .args(["create", "--name", "collide-second"])
+        .args(["create", "--name", "collide-second", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut second: Child = command
@@ -1060,7 +1060,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     command = common::test_cmd();
     command
-        .args(["create", "--name", "ready-race"])
+        .args(["create", "--name", "ready-race", "--lookup", "loopback"])
         .arg("--state-file")
         .arg(&state_file);
     let mut child: Child = command
@@ -1711,10 +1711,9 @@ fn test_join_empty_mesh_succeeds_and_reseeds() {
     );
 }
 
-/// The `self_id` that the running daemon's `topology` reports. The daemon
-/// reads it from its multihop handle, so it is empty when the session has none.
+/// The reply of the `topology` query of the running daemon, as JSON.
 /// `node` names the daemon that is asked, for the failure text.
-fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
+fn topology_reply(mesh: &str, nickname: &str, node: &str) -> serde_json::Value {
     let out: std::process::Output = common::test_cmd()
         .args(["topology", "--gossip", mesh, "--nickname", nickname])
         .output()
@@ -1726,17 +1725,243 @@ fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
-    let reply: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|error| {
+    serde_json::from_str(&stdout).unwrap_or_else(|error| {
         panic!(
             "topology of the {node} ({nickname}) printed no JSON object: {error}\nstdout: {stdout}"
         )
-    });
+    })
+}
+
+/// The `self_id` that the running daemon's `topology` reports. The daemon
+/// reads it from its multihop handle, so it is empty when the session has none.
+fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
+    let reply = topology_reply(mesh, nickname, node);
     reply["topology"]["self_id"]
         .as_str()
         .unwrap_or_else(|| {
-            panic!("topology of the {node} ({nickname}) has no self_id\nstdout: {stdout}")
+            panic!("topology of the {node} ({nickname}) has no self_id\nstdout: {reply}")
         })
         .to_owned()
+}
+
+/// `--max-connections` reaches the engine, and the `topology` reply reports the
+/// cap, its use, and a link to the joined peer.
+#[test]
+fn test_topology_reports_the_cap_and_the_links() {
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create_args("topology-cap", &["--max-connections", "5"], &[]);
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    let joiner = Node::join(&mesh, "cap-joiner");
+    assert!(
+        joiner.wait_ready(&mesh),
+        "joiner socket never appeared\nlog tail:\n{}",
+        joiner.log_tail(15),
+    );
+    let mut reply = topology_reply(&mesh, &creator.nickname, "creator");
+    for _ in 0..40 {
+        if reply["links"]
+            .as_array()
+            .is_some_and(|links| !links.is_empty())
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+        reply = topology_reply(&mesh, &creator.nickname, "creator");
+    }
+    assert_eq!(
+        reply["cap"]["max_connections"], 5,
+        "the flag reaches the engine\n{reply}"
+    );
+    assert_eq!(
+        reply["cap"]["connected_cap"], 10,
+        "the total cap is twice the flag\n{reply}"
+    );
+    let links = reply["links"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the daemon sent no links\n{reply}"));
+    assert!(
+        links
+            .iter()
+            .any(|link| link["nickname"] == joiner.nickname.as_str()),
+        "the creator holds a link to the joiner\n{reply}"
+    );
+}
+
+/// `topology --draw` against a live daemon joins the roster to the endpoints of
+/// the topology reply. Without the `endpoints` key of that reply no peer takes
+/// the flags of its link, so the drawing shows the neighbor flag of a joined
+/// peer only when the key is there.
+#[test]
+fn test_topology_draw_shows_the_link_flags_of_a_joined_peer() {
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create();
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    let joiner = Node::join(&mesh, "draw-joiner");
+    assert!(
+        joiner.wait_ready(&mesh),
+        "joiner socket never appeared\nlog tail:\n{}",
+        joiner.log_tail(15),
+    );
+    let linked_and_named = || {
+        let reply = topology_reply(&mesh, &creator.nickname, "creator");
+        let links = reply["links"].as_array().cloned().unwrap_or_default();
+        let endpoints = reply["endpoints"].as_array().cloned().unwrap_or_default();
+        let linked = links.iter().any(|link| link["neighbor"] == true);
+        let named = endpoints
+            .iter()
+            .any(|entry| entry["nickname"] == joiner.nickname.as_str());
+        usize::from(linked && named)
+    };
+    assert_eq!(
+        wait_until(linked_and_named, 1, MSG_TIMEOUT),
+        1,
+        "the creator never held a gossip link to the joiner and learned its endpoint"
+    );
+
+    let out = common::test_cmd()
+        .args(["topology", "--draw", "--gossip", &mesh])
+        .args(["--nickname", &creator.nickname])
+        .output()
+        .expect("failed to run topology --draw");
+
+    let drawing = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "topology --draw failed: {:?}\nstdout: {drawing}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        drawing.contains(&joiner.nickname),
+        "the drawing names the joiner\n{drawing}"
+    );
+    assert!(
+        drawing.contains("neighbor"),
+        "the joiner takes the neighbor flag of its link, through the endpoints of the reply\n{drawing}"
+    );
+}
+
+/// The endpoint ids that the link-state graph of a `topology` reply reaches from its own node,
+/// that node included.
+fn reachable_endpoints(reply: &serde_json::Value) -> HashSet<String> {
+    let start = reply["topology"]["self_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let edges = reply["topology"]["edges"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut seen: HashSet<String> = HashSet::from([start.clone()]);
+    let mut frontier = vec![start];
+    while let Some(node) = frontier.pop() {
+        for edge in edges.iter().filter(|edge| edge["from"] == node.as_str()) {
+            if let Some(next) = edge["to"].as_str()
+                && seen.insert(next.to_owned())
+            {
+                frontier.push(next.to_owned());
+            }
+        }
+    }
+    seen
+}
+
+/// The headline of the multihop transport: at `--max-connections 2` a node of
+/// five cannot hold a direct connection to each of the four others, and every
+/// directed message still arrives. A peer past the cap is pinned: the
+/// `topology` reply names its first hop.
+#[test]
+fn test_directed_messages_cross_a_cap_of_two_and_the_topology_pins_the_far_peers() {
+    const CAP2: [(&str, &str); 1] = [("--max-connections", "2")];
+    let _serial = serial_guard();
+    let (creator, mesh) = Node::create_flags("cap-two", &CAP2);
+    let joiners: Vec<Node> = (0..4)
+        .map(|index| Node::join_flags(&mesh, &format!("cp-{index}"), &CAP2))
+        .collect();
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    for joiner in &joiners {
+        assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
+    }
+    let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
+    // A send past the cap takes a multihop route only when the node knows one. Before that it dials
+    // direct and holds an extra connection, which is not pinned. Every directed call below,
+    // the card probes included, waits for the link-state graphs to reach all nodes.
+    let nodes_that_reach_all = || {
+        let reaching = all.iter().filter(|node| {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            reachable_endpoints(&reply).len() == all.len()
+        });
+        reaching.count()
+    };
+    let reaching = wait_until(nodes_that_reach_all, all.len(), RECOVERY_TIMEOUT);
+    let graph_of_each_node: Vec<String> = all
+        .iter()
+        .map(|node| {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            format!(
+                "{}: self {} reaches {} edges {} links {}",
+                node.nickname,
+                reply["topology"]["self_id"],
+                reachable_endpoints(&reply).len(),
+                reply["topology"]["edges"],
+                reply["links"]
+            )
+        })
+        .collect();
+    assert_eq!(
+        reaching,
+        all.len(),
+        "the link-state graph of a node never reached all {} nodes\n{}",
+        all.len(),
+        graph_of_each_node.join("\n")
+    );
+    for sender in &all {
+        for receiver in &all {
+            if sender.nickname != receiver.nickname {
+                common::await_peer_card_cli(&mesh, &sender.nickname, &receiver.nickname);
+            }
+        }
+    }
+
+    for sender in &all {
+        for receiver in &all {
+            if sender.nickname == receiver.nickname {
+                continue;
+            }
+            let body = format!("{}-to-{}", sender.nickname, receiver.nickname);
+            let _ = common::cli_msg_checked(&mesh, &sender.nickname, &receiver.nickname, &body);
+            assert_received(receiver, &sender.nickname, &body, RECOVERY_TIMEOUT);
+        }
+    }
+
+    let pinned_with_hop = || {
+        let mut count = 0;
+        for node in &all {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            let links = reply["links"].as_array().cloned().unwrap_or_default();
+            let pins = links
+                .iter()
+                .any(|link| link["pinned"] == true && link["via"].is_string());
+            count += usize::from(pins);
+        }
+        count
+    };
+    let pinned_seen = wait_until(pinned_with_hop, 1, MSG_TIMEOUT);
+    let state_of_each_node: Vec<String> = all
+        .iter()
+        .map(|node| {
+            let reply = topology_reply(&mesh, &node.nickname, &node.nickname);
+            format!(
+                "{}: cap {} links {}",
+                node.nickname, reply["cap"], reply["links"]
+            )
+        })
+        .collect();
+    assert!(
+        pinned_seen >= 1,
+        "no node reports a pinned link with a first hop at a cap of 2\n{}",
+        state_of_each_node.join("\n")
+    );
 }
 
 /// Create a mesh with `create_args`, join it, and assert which sessions hold a
@@ -1767,22 +1992,18 @@ fn assert_joiner_multihop(name: &str, create_args: &[&str], expect_multihop: boo
     );
 }
 
-/// A mesh id made with `udp,webrtc,multihop` gives its joiner a multihop
-/// handle, although the app default has none.
+/// A mesh id made with `udp,webrtc` names no multihop, so its joiner gets no
+/// multihop handle although the app default has one.
 #[test]
-fn test_joiner_takes_multihop_from_the_mesh_id() {
-    assert_joiner_multihop(
-        "join-policy-mh",
-        &["--transport", "udp,webrtc,multihop"],
-        true,
-    );
+fn test_joiner_takes_no_multihop_from_a_mesh_id_that_names_none() {
+    assert_joiner_multihop("join-policy-nomh", &["--transport", "udp,webrtc"], false);
 }
 
-/// A mesh id made with the app default (`udp,webrtc,gossip`) gives its joiner
-/// no multihop handle.
+/// A mesh id made with the app default (`udp,webrtc,multihop`) gives its joiner
+/// a multihop handle.
 #[test]
-fn test_joiner_takes_no_multihop_from_the_app_default_id() {
-    assert_joiner_multihop("join-policy-default", &[], false);
+fn test_joiner_takes_multihop_from_the_app_default_id() {
+    assert_joiner_multihop("join-policy-default", &[], true);
 }
 
 /// The headline resilience guarantee: a mesh survives its creator's death
@@ -2817,7 +3038,7 @@ fn test_lone_creator_never_trips_starvation() {
 }
 
 /// The 2026-05-31 roster-collapse, mechanized: a 5-node mesh at
-/// `--max-peers 2` (the partial-mesh churn regime) put through
+/// `--max-connections 2` (the partial-mesh churn regime) put through
 /// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
 /// loss. Post-fix (link truth + starvation watchdog), every node must
@@ -2829,7 +3050,7 @@ fn test_flap_storm_all_rosters_recover() {
         ("--sweep-interval-secs", "1"),
         ("--heal-interval-secs", "3"),
         ("--starvation-threshold-secs", "6"),
-        ("--max-peers", "2"),
+        ("--max-connections", "2"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2925,7 +3146,7 @@ fn spawn_discoverable_daemon(name: &str) -> (DiscoverableDaemon, PathBuf, String
             .expect("the log file handle can be cloned for stdout"),
     );
     let mut command = common::test_cmd();
-    command.args(["create", "--name", name]);
+    command.args(["create", "--name", name, "--lookup", "loopback"]);
     let mut daemon = DiscoverableDaemon(
         command
             .stdout(stdout)
@@ -3678,7 +3899,14 @@ fn launch_detached_daemon(name: &str) -> DetachedDaemon {
     let stderr = File::create(&stderr_file).expect("the test temp dir is writable");
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", name, "--owner-pid"])
+        .args([
+            "create",
+            "--name",
+            name,
+            "--lookup",
+            "loopback",
+            "--owner-pid",
+        ])
         .arg(owner_pid)
         .arg("--state-file")
         .arg(&state_file);
@@ -3851,7 +4079,14 @@ fn detached_daemon_releases_a_captured_pipe() {
     let owner_pid = owner.0.id().to_string();
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "detach-pipe", "--owner-pid"])
+        .args([
+            "create",
+            "--name",
+            "detach-pipe",
+            "--lookup",
+            "loopback",
+            "--owner-pid",
+        ])
         .arg(owner_pid)
         .arg("--state-file")
         .arg(&state_file);
@@ -3935,7 +4170,8 @@ fn owner_pid_rejects_init_and_dead_owner() {
         // CI sets RUST_BACKTRACE, which makes anyhow append a backtrace to the
         // error; the one-line check is about the output a user sees by default.
         let mut command = common::test_cmd();
-        command.args(["create", "--name", "owner-reject", "--owner-pid", owner]);
+        command.args(["create", "--name", "owner-reject", "--lookup", "loopback"]);
+        command.args(["--owner-pid", owner]);
         command
             .env_remove("RUST_BACKTRACE")
             .env_remove("RUST_LIB_BACKTRACE")
@@ -3970,7 +4206,15 @@ fn owner_pid_launcher_reports_flag_errors() {
     let mesh = habilis_network::protocol::MeshId::from("owner-flag-error").to_string();
     let bad_invocations: [&[&str]; 2] = [
         &["join", &mesh, "--name", "not-allowed"],
-        &["create", "--name", "flag-error", "--transport", "relay"],
+        &[
+            "create",
+            "--name",
+            "flag-error",
+            "--lookup",
+            "loopback",
+            "--transport",
+            "relay",
+        ],
     ];
     for args in bad_invocations {
         let mut command = common::test_cmd();

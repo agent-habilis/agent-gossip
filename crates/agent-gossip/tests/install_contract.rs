@@ -218,12 +218,12 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
     let names = file_names.map(|name| name.to_string_lossy().into_owned());
     let installed: Vec<String> = names.filter(|name| name.starts_with("gossip-")).collect();
 
-    // The doc names four skills and claims "twelve more"; that arithmetic is
+    // The doc names four skills and claims "thirteen more"; that arithmetic is
     // only true while this count holds.
     assert_eq!(
         installed.len(),
-        16,
-        "expected 16 gossip skills, found {installed:?}"
+        17,
+        "expected 17 gossip skills, found {installed:?}"
     );
     for named in ["gossip-create", "gossip-join", "gossip-msg", "gossip-task"] {
         assert!(

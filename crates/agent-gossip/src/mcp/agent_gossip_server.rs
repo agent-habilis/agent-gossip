@@ -72,7 +72,7 @@ impl AgentGossipServer {
                 })?,
             )
         };
-        let lookups = lookup::lookups_or_public(&args.lookup, args.advertise);
+        let lookups = lookup::lookups_or_public(&args.lookup);
         let resolved = resolved::resolve(&lookups, relay_urls, &args.transport)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         // Mint a random `word-word` name when omitted, mirroring the CLI

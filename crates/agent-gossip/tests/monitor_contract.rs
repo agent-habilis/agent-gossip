@@ -80,7 +80,7 @@ impl JsonNode {
         );
         let mut command = common::test_cmd();
         command
-            .args(["create", "--name", "jtest"])
+            .args(["create", "--name", "jtest", "--lookup", "loopback"])
             .args(common::flag_args(flags));
         let child: Child = command
             .stdout(stdout)
@@ -845,7 +845,8 @@ fn test_hard_kill_triggers_peer_timeout() {
     let stdout = Stdio::from(file.try_clone().expect("the test log file handle is open"));
     let mut command = common::test_cmd();
     command
-        .args(["create", "--name", "hardkill", "--state-file", state])
+        .args(["create", "--name", "hardkill", "--lookup", "loopback"])
+        .args(["--state-file", state])
         .args(["--alive-timeout-secs", "3", "--sweep-interval-secs", "1"]);
     let mut creator: Child = command
         .stdout(stdout)

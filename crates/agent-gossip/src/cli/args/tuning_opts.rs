@@ -3,7 +3,7 @@
 //! the tuning without also advertising the daemon flags it does not honor.
 //! `discover` is the case in point: it needs the knobs (the suite varies its
 //! directory cadence) but writes no state file and runs no gossip session, so
-//! flattening the full server group would list `--state-file` / `--max-peers` /
+//! flattening the full server group would list `--state-file` / `--max-connections` /
 //! `--filter-self` / `--a2a-serve` in its `--help` as silent no-ops.
 //!
 //! Not in `--help`. Production runs on the `habilis_network::util::tuning`

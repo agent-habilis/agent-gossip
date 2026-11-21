@@ -19,9 +19,9 @@ use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::a2a_app::A2aResponder::Ipc;
 use crate::a2a::broadcast_params::{
     BroadcastParams, FileRef, MsgParams, TaskArtifactEmitParams, TaskStatusParams,
-    emit_task_artifact, emit_task_status, send_broadcast, send_msg, when_sent,
+    emit_task_artifact, emit_task_status, live_holders, send_broadcast, send_msg, when_sent,
 };
-use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths};
+use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths, row_endpoint};
 use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
@@ -725,16 +725,83 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// Serialize this daemon's multihop routing topology (its assembled mesh graph)
-/// for the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
-/// Empty when the multihop transport is off (no routing table).
+/// Serialize the topology of this daemon for the `topology` IPC query:
+/// `{"ok":true,"topology":{self_id, edges:[…]},"cap":{…},"links":[…],
+/// "endpoints":[{pubkey, nickname, endpoint}]}`. `topology` is the multihop link-state
+/// graph, empty when the multihop transport is off. `cap` and `links` come from
+/// the engine snapshot: the direct units against the cap, and per peer the path,
+/// the first hop, the neighbor flag, the pinned flag and the extra flag. `endpoints` maps the
+/// endpoint ids of the edges to roster members by key. A nickname that two live members hold names
+/// no single endpoint, so it has no row.
 fn topology_response(state: &EventLoopState) -> String {
-    let Some(handle) = state.multihop() else {
-        return r#"{"ok":true,"topology":{"self_id":"","edges":[]}}"#.to_owned();
-    };
-    let topology = handle.topology_view();
-    let topo_json = serde_json::to_string(&topology).unwrap_or_else(|_| "null".to_owned());
-    format!(r#"{{"ok":true,"topology":{topo_json}}}"#)
+    let snapshot = state.topology_snapshot();
+    let graph = snapshot.graph.as_ref().map_or_else(
+        || serde_json::json!({"self_id": "", "edges": []}),
+        |graph| serde_json::to_value(graph).unwrap_or(serde_json::Value::Null),
+    );
+    let cap = serde_json::json!({
+        "used": snapshot.direct_units,
+        "max_connections": snapshot.max_connections,
+        "over_ceiling": snapshot.over_ceiling,
+        "connected_peers": snapshot.connected_peers,
+        "connected_cap": snapshot.connected_cap,
+    });
+    let links = serde_json::to_value(&snapshot.peers).unwrap_or(serde_json::Value::Null);
+    let roster = state.roster_snapshot();
+    let live: Vec<&Nickname> = state.live_nicknames().collect();
+    let candidates: Vec<EndpointCandidate<'_>> = roster
+        .peers
+        .iter()
+        .map(|entry| EndpointCandidate {
+            key: entry.key.to_string(),
+            nickname: &entry.nickname,
+            quiet: entry.quiet,
+        })
+        .collect();
+    let endpoints = endpoint_entries(&candidates, &live, |nickname| {
+        state.peer_endpoint(nickname).map(|id| id.to_string())
+    });
+    serde_json::json!({
+        "ok": true,
+        "topology": graph,
+        "cap": cap,
+        "links": links,
+        "endpoints": endpoints,
+    })
+    .to_string()
+}
+
+/// A roster member, as the `endpoints` rule of the topology reply reads it.
+struct EndpointCandidate<'roster> {
+    /// The author key in hex.
+    key: String,
+    nickname: &'roster Nickname,
+    quiet: bool,
+}
+
+/// The `endpoints` entries of the topology reply: the endpoint of each member, by key.
+///
+/// A quiet member has no entry, as it has no endpoint in the `peers` reply. A nickname that two or
+/// more live members hold names no single endpoint, so it has no entry. The engine keeps one
+/// endpoint per nickname, and `address_of` (the lookup by key) is not public at the pinned engine,
+/// so the entry of a live member can still name an endpoint that a quiet key of the same nickname
+/// owns.
+fn endpoint_entries(
+    candidates: &[EndpointCandidate<'_>],
+    live: &[&Nickname],
+    endpoint_of: impl Fn(&Nickname) -> Option<String>,
+) -> Vec<serde_json::Value> {
+    let live_members = candidates.iter().filter(|member| !member.quiet);
+    let entries = live_members.filter_map(|member| {
+        let holders = live_holders(live.iter().copied(), member.nickname);
+        let endpoint = row_endpoint(holders, endpoint_of(member.nickname))?;
+        Some(serde_json::json!({
+            "pubkey": member.key,
+            "nickname": member.nickname,
+            "endpoint": endpoint,
+        }))
+    });
+    entries.collect()
 }
 
 /// The `agent-gossip state get` response: the derived document.
@@ -831,7 +898,86 @@ fn json_ok_record(id: &MessageId, message: &Authored) -> String {
 mod tests {
     use habilis_network::runtime::ipc::Addressed;
 
-    use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
+    use super::{
+        EndpointCandidate, IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState,
+        endpoint_entries,
+    };
+
+    // ── Topology endpoints ─────────────────────────────────────────
+
+    fn candidate<'roster>(
+        key: &str,
+        nickname: &'roster Nickname,
+        quiet: bool,
+    ) -> EndpointCandidate<'roster> {
+        EndpointCandidate {
+            key: key.to_owned(),
+            nickname,
+            quiet,
+        }
+    }
+
+    fn keys_of(entries: &[serde_json::Value]) -> Vec<&str> {
+        let keys = entries.iter().filter_map(|entry| entry["pubkey"].as_str());
+        keys.collect()
+    }
+
+    #[test]
+    fn a_nickname_of_one_live_member_has_an_entry() {
+        let twin = Nickname::from("solo");
+        let members = [candidate("k1", &twin, false)];
+
+        let entries = endpoint_entries(&members, &[&twin], |_| Some("ee".to_owned()));
+
+        assert_eq!(
+            keys_of(&entries),
+            ["k1"],
+            "one live holder names its endpoint"
+        );
+    }
+
+    #[test]
+    fn two_live_keys_of_one_nickname_have_no_entry() {
+        let twin = Nickname::from("twin");
+        let members = [candidate("k1", &twin, false), candidate("k2", &twin, false)];
+
+        let entries = endpoint_entries(&members, &[&twin, &twin], |_| Some("ee".to_owned()));
+
+        assert!(
+            entries.is_empty(),
+            "two live holders name no single endpoint"
+        );
+    }
+
+    #[test]
+    fn three_holders_of_one_nickname_have_no_entry() {
+        let triplet = Nickname::from("triplet");
+        let members = [
+            candidate("k1", &triplet, false),
+            candidate("k2", &triplet, false),
+            candidate("k3", &triplet, false),
+        ];
+
+        let live = [&triplet, &triplet, &triplet];
+        let entries = endpoint_entries(&members, &live, |_| Some("ee".to_owned()));
+
+        assert!(
+            entries.is_empty(),
+            "three live holders name no single endpoint"
+        );
+    }
+
+    /// The `peers` reply gives a quiet member no endpoint. A quiet key of a live member's nickname
+    /// must not take the endpoint of the live key, nor give the live key a dead one.
+    #[test]
+    fn a_quiet_key_of_a_live_nickname_has_no_entry() {
+        let twin = Nickname::from("twin");
+        let members = [candidate("k1", &twin, false), candidate("k2", &twin, true)];
+
+        let entries = endpoint_entries(&members, &[&twin], |_| Some("ee".to_owned()));
+
+        assert_eq!(keys_of(&entries), ["k1"], "only the live key has an entry");
+    }
 
     // ── IpcCommand serialization ───────────────────────────────────
     //

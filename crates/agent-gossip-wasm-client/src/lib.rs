@@ -26,7 +26,7 @@ pub use self::start::start;
 mod gossip_driver;
 mod err;
 mod gossip_peer;
-mod max_direct_peers;
+mod max_connections;
 mod parse_nickname;
 mod parse_path_mode;
 mod spawn_peer;

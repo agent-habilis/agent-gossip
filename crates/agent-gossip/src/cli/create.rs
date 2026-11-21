@@ -11,12 +11,8 @@ pub(super) async fn create(options: CreateOpts) -> Result<()> {
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = options.advertise_selection();
     let password = super::password_flag::resolve_password(options.password.clone())?;
-    // Naming no lookup is loopback and naming any restricts to it, except
-    // that `--advertise` needs a lookup that reaches other machines.
-    let lookups = super::args::lookup::lookups_or_public(
-        &options.lookups.lookup,
-        options.advertise.is_some(),
-    );
+    // Naming no lookup takes all three; naming any restricts to those.
+    let lookups = super::args::lookup::lookups_or_public(&options.lookups.lookup);
     let mesh_parts = super::args::resolved::resolve(
         &lookups,
         options.lookups.relay_url.clone(),

@@ -1,5 +1,5 @@
 //! The `topic_mdns_only` lane derives its topic mesh from the app policy
-//! (`udp,webrtc,gossip`, no relay, no multihop), not from the engine default.
+//! (`udp,webrtc,multihop`, no relay, no gossip).
 //!
 //! Own integration binary: the process-global `Tuning` is a `OnceLock`, and
 //! this suite needs `topic_mdns_only` on for the whole process.
@@ -24,9 +24,7 @@ async fn mdns_only_topic_lane_uses_the_app_policy_without_relay() {
             LookupOpts::new(RelayChoice::Disabled).mdns(true),
             None,
             None,
-            TransportPolicy::default()
-                .multihop(false)
-                .relay_transport(false),
+            TransportPolicy::default().relay_transport(false),
         ),
     )
     .expect("a non-empty string derives");

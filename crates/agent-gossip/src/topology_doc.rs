@@ -1,0 +1,687 @@
+use std::collections::BTreeSet;
+
+use serde_json::Value;
+use unicode_width::UnicodeWidthStr;
+
+/// A cap on direct connections: `used` of `max`, and the QUIC connections of
+/// all kinds against their own cap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Cap {
+    pub used: u64,
+    pub max: u64,
+    /// How many units the count is over the ceiling by.
+    pub over_ceiling: u64,
+    pub all: Option<(u64, u64)>,
+}
+
+/// One peer of the roster.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PeerView {
+    pub nickname: String,
+    /// Author key in hex; tells apart two members of one nickname.
+    pub pubkey: Option<String>,
+    /// Endpoint id in hex; the key of the link-state edges.
+    pub endpoint: Option<String>,
+    /// The path label of `peers`: `ip`, `webrtc`, `relay`, `ip+relay`, `unknown`.
+    pub path: String,
+    /// The lane of a directed send: `unicast`, `multihop`, `relay-only`, ...
+    pub lane: Option<String>,
+    pub quiet: bool,
+    pub neighbor: Option<bool>,
+    pub pinned: Option<bool>,
+    /// Took no unit of the cap: it counts toward the total only.
+    pub extra: Option<bool>,
+    pub via: Option<String>,
+}
+
+/// One directed link-state edge, by endpoint id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EdgeView {
+    pub from: String,
+    pub to: String,
+    pub metric: u64,
+}
+
+// `neighbor`, `pinned`, `extra`, `via` and `cap` are `Option`: a daemon of an older
+// build sends none of them, and the drawing omits a field it does not have.
+/// Everything the drawing needs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TopologyDoc {
+    pub me: String,
+    /// Endpoint id of this node; empty when the multihop transport is off.
+    pub self_id: String,
+    pub cap: Option<Cap>,
+    pub peers: Vec<PeerView>,
+    pub edges: Vec<EdgeView>,
+    /// The links that no roster row owns.
+    pub orphan_links: Vec<OrphanLink>,
+}
+
+/// A link to an endpoint that no roster row owns. `nickname` is the one that the link carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OrphanLink {
+    pub endpoint: String,
+    pub nickname: Option<String>,
+}
+
+impl TopologyDoc {
+    /// Build the document from the `peers` and `topology` IPC responses.
+    pub(crate) fn assemble(me: &str, peers: &Value, topology: &Value) -> Self {
+        let endpoint_of = |nickname: &str, pubkey: Option<&str>| {
+            let entry = items(&topology["endpoints"]).iter().find(|entry| {
+                match (pubkey, entry["pubkey"].as_str()) {
+                    (Some(wanted), Some(owner)) => wanted == owner,
+                    (None, _) | (_, None) => entry["nickname"] == nickname,
+                }
+            });
+            let endpoint = entry.and_then(|found| found["endpoint"].as_str());
+            endpoint.map(str::to_owned)
+        };
+        let peers: Vec<PeerView> = items(&peers["peers"])
+            .iter()
+            .map(|row| peer_view(row, &endpoint_of))
+            .collect();
+        let edges: Vec<EdgeView> = items(&topology["topology"]["edges"])
+            .iter()
+            .filter_map(edge_view)
+            .collect();
+        let self_id = topology["topology"]["self_id"].as_str();
+        let mut doc = Self {
+            me: me.to_owned(),
+            self_id: self_id.unwrap_or_default().to_owned(),
+            cap: cap_of(&topology["cap"]),
+            peers,
+            edges,
+            orphan_links: Vec::new(),
+        };
+        doc.take_links(items(&topology["links"]));
+        doc
+    }
+
+    /// Copy the flags and the first hop of each link to the peer of the same
+    /// endpoint. The first hop is an endpoint id; the drawing names it.
+    fn take_links(&mut self, links: &[Value]) {
+        let orphans = links.iter().filter_map(|link| {
+            let endpoint = link["endpoint"].as_str()?;
+            Some(OrphanLink {
+                endpoint: endpoint.to_owned(),
+                nickname: link["nickname"].as_str().map(str::to_owned),
+            })
+        });
+        self.orphan_links = orphans
+            .filter(|orphan| !self.knows(&orphan.endpoint))
+            .collect();
+        for peer in &mut self.peers {
+            let Some(link) = link_of(links, peer.endpoint.as_deref()) else {
+                continue;
+            };
+            peer.neighbor = link["neighbor"].as_bool();
+            peer.pinned = link["pinned"].as_bool();
+            peer.extra = link["extra"].as_bool();
+            peer.via = link["via"].as_str().map(str::to_owned);
+            // A pinned peer uses multihop paths only, and the roster reply can
+            // still read the path of an earlier direct connection.
+            if peer.pinned == Some(true)
+                && let Some(path) = link["path"].as_str()
+            {
+                path.clone_into(&mut peer.path);
+            }
+        }
+        let named: Vec<Option<String>> =
+            self.peers.iter().map(|peer| self.hop_name(peer)).collect();
+        for (peer, name) in self.peers.iter_mut().zip(named) {
+            peer.via = name;
+        }
+    }
+
+    fn hop_name(&self, peer: &PeerView) -> Option<String> {
+        let via = peer.via.as_deref()?;
+        Some(self.name_of(via))
+    }
+
+    /// The name of an endpoint id: this node, a peer, or the id shortened.
+    fn name_of(&self, endpoint: &str) -> String {
+        if endpoint == self.self_id {
+            return self.me.clone();
+        }
+        let peer = self.peer_at(endpoint);
+        peer.map_or_else(|| short(endpoint), |found| found.nickname.clone())
+    }
+
+    /// The name of an endpoint id, with the short id after it when another
+    /// endpoint of the drawing carries the same name.
+    fn label_of(&self, endpoint: &str) -> String {
+        let name = self.name_of(endpoint);
+        let named_alike = self
+            .peers
+            .iter()
+            .filter(|peer| peer.endpoint.is_some() && peer.nickname == name)
+            .count();
+        let holders = named_alike + usize::from(self.me == name);
+        if holders > 1 {
+            format!("{name} ({})", short(endpoint))
+        } else {
+            name
+        }
+    }
+
+    fn peer_at(&self, endpoint: &str) -> Option<&PeerView> {
+        let mut peers = self.peers.iter();
+        peers.find(|peer| peer.endpoint.as_deref() == Some(endpoint))
+    }
+
+    fn knows(&self, endpoint: &str) -> bool {
+        endpoint == self.self_id || self.peer_at(endpoint).is_some()
+    }
+}
+
+fn cap_of(cap: &Value) -> Option<Cap> {
+    let used = cap["used"].as_u64()?;
+    let max = cap["max_connections"].as_u64()?;
+    let connected = cap["connected_peers"].as_u64();
+    let connected_cap = cap["connected_cap"].as_u64();
+    let all = connected.zip(connected_cap);
+    let over_ceiling = cap["over_ceiling"].as_u64().unwrap_or(0);
+    Some(Cap {
+        used,
+        max,
+        over_ceiling,
+        all,
+    })
+}
+
+fn link_of<'a>(links: &'a [Value], endpoint: Option<&str>) -> Option<&'a Value> {
+    let endpoint = endpoint?;
+    let mut candidates = links.iter();
+    candidates.find(|link| link["endpoint"].as_str() == Some(endpoint))
+}
+
+fn peer_view(row: &Value, endpoint_of: &dyn Fn(&str, Option<&str>) -> Option<String>) -> PeerView {
+    let text = |key: &str| row[key].as_str().map(str::to_owned);
+    let flag = |key: &str| row[key].as_bool();
+    let nickname = text("nickname").unwrap_or_default();
+    let path = text("path").unwrap_or_else(|| "unknown".to_owned());
+    let pubkey = text("pubkey");
+    PeerView {
+        endpoint: endpoint_of(&nickname, pubkey.as_deref()),
+        pubkey,
+        path,
+        lane: text("transport"),
+        quiet: flag("quiet").unwrap_or(false),
+        neighbor: flag("neighbor"),
+        pinned: flag("pinned"),
+        extra: None,
+        via: text("via"),
+        nickname,
+    }
+}
+
+fn edge_view(edge: &Value) -> Option<EdgeView> {
+    let from = edge["from"].as_str()?.to_owned();
+    let to = edge["to"].as_str()?.to_owned();
+    let metric = edge["metric"].as_u64()?;
+    Some(EdgeView { from, to, metric })
+}
+
+fn items(value: &Value) -> &[Value] {
+    value.as_array().map_or(&[], Vec::as_slice)
+}
+
+fn short(endpoint: &str) -> String {
+    endpoint.chars().take(8).collect()
+}
+
+fn widest(texts: &[String]) -> usize {
+    let widths = texts.iter().map(|text| text.width());
+    widths.max().unwrap_or(0)
+}
+
+/// The problems of the document, one line each, `warning: ...`.
+pub(crate) fn warnings(doc: &TopologyDoc) -> Vec<String> {
+    let mut lines = Vec::new();
+    if doc.self_id.is_empty() {
+        lines.push("warning: multihop is off, the mesh view is empty".to_owned());
+    }
+    if let Some(cap) = &doc.cap
+        && cap.over_ceiling > 0
+    {
+        lines.push(format!(
+            "warning: connection count is over the cap by {} ({}/{})",
+            cap.over_ceiling, cap.used, cap.max
+        ));
+    }
+    for peer in &doc.peers {
+        if !peer.quiet && peer.path == "unknown" {
+            lines.push(format!("warning: {} has no known path", peer.nickname));
+        }
+    }
+    let mut unknown: BTreeSet<&str> = BTreeSet::new();
+    for edge in &doc.edges {
+        for id in [edge.from.as_str(), edge.to.as_str()] {
+            let is_orphan_link = doc.orphan_links.iter().any(|orphan| orphan.endpoint == id);
+            if !doc.knows(id) && !is_orphan_link {
+                unknown.insert(id);
+            }
+        }
+    }
+    for id in unknown {
+        let id = short(id);
+        lines.push(format!("warning: link endpoint {id} is not in the roster"));
+    }
+    for orphan in &doc.orphan_links {
+        let id = short(&orphan.endpoint);
+        let named = orphan
+            .nickname
+            .as_ref()
+            .map_or_else(String::new, |nickname| format!(" ({nickname})"));
+        lines.push(format!(
+            "warning: link to endpoint {id}{named} has no roster row"
+        ));
+    }
+    lines
+}
+
+/// Draw the document. The text ends with a newline.
+pub(crate) fn render(doc: &TopologyDoc) -> String {
+    use std::fmt::Write as _;
+
+    let mut out: Vec<String> = Vec::new();
+    let mut me_lines = vec![format!("{} (you)", doc.me)];
+    if let Some(cap) = &doc.cap {
+        let mut line = format!("cap {}/{}", cap.used, cap.max);
+        if let Some((used, max)) = cap.all {
+            let _ = write!(line, " · all {used}/{max}");
+        }
+        me_lines.push(line);
+    }
+    out.extend(boxed(&me_lines));
+
+    let mut peers: Vec<&PeerView> = doc.peers.iter().collect();
+    peers.sort_by(|left, right| (left.quiet, &left.nickname).cmp(&(right.quiet, &right.nickname)));
+    let labels: Vec<String> = peers.iter().map(|peer| edge_label(peer)).collect();
+    let label_width = widest(&labels);
+    for (index, (peer, label)) in peers.iter().zip(&labels).enumerate() {
+        let last = index + 1 == peers.len();
+        let (branch, trunk) = if last {
+            ("└─", " ")
+        } else {
+            ("├─", "│")
+        };
+        let fill = "─".repeat(label_width - label.width());
+        for (row, line) in boxed(&peer_lines(peer)).into_iter().enumerate() {
+            if row == 1 {
+                out.push(format!("  {branch} {label} {fill}─▶ {line}"));
+            } else {
+                out.push(format!("  {trunk}  {} {line}", " ".repeat(label_width + 3)));
+            }
+        }
+    }
+
+    let pinned_peers = peers.iter().filter(|peer| peer.pinned == Some(true));
+    let pinned: Vec<&str> = pinned_peers.map(|peer| peer.nickname.as_str()).collect();
+    if !pinned.is_empty() {
+        out.push(String::new());
+        out.push(format!(
+            "reached through other peers because of the cap: {}",
+            pinned.join(", ")
+        ));
+    }
+
+    out.push(String::new());
+    out.push("links between other peers".to_owned());
+    let links = mesh_links(doc);
+    if links.is_empty() {
+        out.push("  none".to_owned());
+    }
+    out.extend(links);
+    out.push(String::new());
+    out.join("\n")
+}
+
+fn edge_label(peer: &PeerView) -> String {
+    use std::fmt::Write as _;
+
+    let mut label = peer.path.clone();
+    if let Some(via) = &peer.via {
+        let _ = write!(label, " via {via}");
+    }
+    let lane = peer.lane.as_deref();
+    if let Some(lane) = lane.filter(|lane| *lane != "unicast" && *lane != peer.path) {
+        let _ = write!(label, " · {lane}");
+    }
+    label
+}
+
+fn peer_lines(peer: &PeerView) -> Vec<String> {
+    let mut flags = Vec::new();
+    // A pinned peer takes multihop paths only, so it is not a unicast peer.
+    let takes_direct_paths = peer.pinned != Some(true);
+    match peer.neighbor {
+        Some(true) => flags.push("neighbor"),
+        Some(false) if takes_direct_paths => flags.push("unicast"),
+        Some(false) | None => {}
+    }
+    if peer.pinned == Some(true) {
+        flags.push("pinned");
+    }
+    if peer.extra == Some(true) {
+        flags.push("extra");
+    }
+    if peer.quiet {
+        flags.push("quiet");
+    }
+    let mut lines = vec![peer.nickname.clone()];
+    if !flags.is_empty() {
+        lines.push(flags.join(" · "));
+    }
+    lines
+}
+
+/// The edges that do not touch this node, by name, without repeats.
+fn mesh_links(doc: &TopologyDoc) -> Vec<String> {
+    let others = doc
+        .edges
+        .iter()
+        .filter(|edge| edge.from != doc.self_id && edge.to != doc.self_id);
+    let by_id: BTreeSet<(&str, &str, u64)> = others
+        .map(|edge| (edge.from.as_str(), edge.to.as_str(), edge.metric))
+        .collect();
+    let rows: BTreeSet<String> = by_id
+        .into_iter()
+        .map(|(from, to, metric)| {
+            format!("  {} ──{metric}─▶ {}", doc.label_of(from), doc.label_of(to))
+        })
+        .collect();
+    rows.into_iter().collect()
+}
+
+/// Put the lines in a box. The first line is the title row; a box with one
+/// line still has the three rows top, content, bottom.
+fn boxed(lines: &[String]) -> Vec<String> {
+    let width = widest(lines);
+    let bar = "─".repeat(width + 2);
+    let mut rows = vec![format!("┌{bar}┐")];
+    rows.extend(lines.iter().map(|line| {
+        let pad = " ".repeat(width - line.width());
+        format!("│ {line}{pad} │")
+    }));
+    rows.push(format!("└{bar}┘"));
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use unicode_width::UnicodeWidthStr;
+
+    use super::{TopologyDoc, render, warnings};
+
+    const ME: &str = "aa";
+    const ONE: &str = "bb";
+    const TWO: &str = "cc";
+
+    fn responses(with_edges: bool) -> (serde_json::Value, serde_json::Value) {
+        let peers = json!({"ok": true, "peers": [
+            {"nickname": "zed", "path": "webrtc", "quiet": false, "transport": "multihop"},
+            {"nickname": "amy", "path": "ip", "quiet": false, "transport": "unicast"},
+            {"nickname": "old", "path": "unknown", "quiet": true, "transport": "unreachable"},
+        ]});
+        let edges = if with_edges {
+            json!([
+                {"from": ME, "to": ONE, "metric": 1},
+                {"from": ONE, "to": TWO, "metric": 3},
+                {"from": ONE, "to": TWO, "metric": 3},
+                {"from": TWO, "to": "ffffffffffff", "metric": 2},
+            ])
+        } else {
+            json!([])
+        };
+        let topology = json!({"ok": true,
+        "topology": {"self_id": ME, "edges": edges},
+        "endpoints": [
+            {"nickname": "amy", "endpoint": ONE},
+            {"nickname": "zed", "endpoint": TWO},
+        ]});
+        (peers, topology)
+    }
+
+    /// Paths and lanes label the edges; a multihop lane shows after the path;
+    /// quiet peers sort last; the links between other peers are named and
+    /// listed once.
+    #[test]
+    fn draws_peers_edges_and_mesh_links() {
+        let (peers, topology) = responses(true);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        let drawing = render(&doc);
+
+        let expected = "\
+┌──────────┐
+│ me (you) │
+└──────────┘
+  │                           ┌─────┐
+  ├─ ip ────────────────────▶ │ amy │
+  │                           └─────┘
+  │                           ┌─────┐
+  ├─ webrtc · multihop ─────▶ │ zed │
+  │                           └─────┘
+                              ┌───────┐
+  └─ unknown · unreachable ─▶ │ old   │
+                              │ quiet │
+                              └───────┘
+
+links between other peers
+  amy ──3─▶ zed
+  zed ──2─▶ ffffffff
+";
+        assert_eq!(drawing, expected, "the drawing of the fixed document");
+    }
+
+    /// Two members can share a nickname. The endpoint of the pair names the
+    /// key of its owner, so it joins that row and not the other row of the
+    /// same nickname.
+    #[test]
+    fn an_endpoint_joins_the_row_of_its_key_and_not_of_its_nickname() {
+        let row = |pubkey: &str| {
+            json!({"pubkey": pubkey, "nickname": "twin", "path": "ip",
+                   "quiet": false, "transport": "unicast"})
+        };
+        let peers = json!({"ok": true, "peers": [row("k1"), row("k2")]});
+        let topology = json!({"ok": true,
+            "topology": {"self_id": ME, "edges": []},
+            "endpoints": [{"pubkey": "k2", "nickname": "twin", "endpoint": TWO}]});
+
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        let endpoints: Vec<Option<&str>> = doc
+            .peers
+            .iter()
+            .map(|peer| peer.endpoint.as_deref())
+            .collect();
+        assert_eq!(
+            endpoints,
+            [None, Some(TWO)],
+            "the endpoint of k2 does not go to k1"
+        );
+    }
+
+    /// Two endpoints can carry one nickname. The links of the mesh are told apart by
+    /// endpoint id, so neither link is lost, and the equal names get a short id.
+    #[test]
+    fn two_endpoints_of_one_name_are_two_links_with_distinct_labels() {
+        let row = |pubkey: &str, nickname: &str| {
+            json!({"pubkey": pubkey, "nickname": nickname, "path": "ip",
+                   "quiet": false, "transport": "unicast"})
+        };
+        let peers = json!({"ok": true, "peers": [
+            row("k1", "twin"), row("k2", "twin"), row("k3", "sink")]});
+        let topology = json!({"ok": true,
+        "topology": {"self_id": ME, "edges": [
+            {"from": "bbbbbbbb", "to": "dddddddd", "metric": 2},
+            {"from": "cccccccc", "to": "dddddddd", "metric": 2},
+        ]},
+        "endpoints": [
+            {"pubkey": "k1", "nickname": "twin", "endpoint": "bbbbbbbb"},
+            {"pubkey": "k2", "nickname": "twin", "endpoint": "cccccccc"},
+            {"pubkey": "k3", "nickname": "sink", "endpoint": "dddddddd"},
+        ]});
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        let drawing = render(&doc);
+
+        assert!(
+            drawing.contains("  twin (bbbbbbbb) ──2─▶ sink\n")
+                && drawing.contains("  twin (cccccccc) ──2─▶ sink\n"),
+            "one line per endpoint, each with its short id:\n{drawing}"
+        );
+    }
+
+    /// A box is as wide in terminal columns on every row. A wide character, such
+    /// as one of a nickname in Chinese, takes 2 columns and counts as 1 char.
+    #[test]
+    fn a_box_is_as_wide_in_columns_on_every_row_with_wide_characters() {
+        let rows = super::boxed(&["日本語".to_owned(), "amy".to_owned()]);
+
+        let widths: Vec<usize> = rows
+            .iter()
+            .map(|row| UnicodeWidthStr::width(row.as_str()))
+            .collect();
+
+        assert!(
+            widths.windows(2).all(|pair| pair[0] == pair[1]),
+            "every row has the same width in columns: {widths:?}\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// With the multihop transport off, the mesh view is empty and the
+    /// warning says why.
+    #[test]
+    fn warns_when_multihop_is_off() {
+        let peers = json!({"peers": []});
+        let topology =
+            json!({"ok": true, "topology": {"self_id": "", "edges": []}, "endpoints": []});
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: multihop is off, the mesh view is empty"],
+            "one warning for the off transport"
+        );
+    }
+
+    /// An edge to an endpoint that no roster row owns is a warning, and a
+    /// peer with no path is a warning; a quiet peer with no path is not.
+    #[test]
+    fn warns_about_unknown_endpoints_and_missing_paths() {
+        let (mut peers, topology) = responses(true);
+        peers["peers"][0]["path"] = json!("unknown");
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            [
+                "warning: zed has no known path",
+                "warning: link endpoint ffffffff is not in the roster",
+            ],
+            "the warnings, in order"
+        );
+    }
+
+    /// The snapshot fields stay out of the drawing when the daemon sends none;
+    /// when they are present they show: the cap, the neighbor and pinned flags,
+    /// the first hop by name, and the peers reached through others.
+    #[test]
+    fn shows_the_snapshot_fields_when_present() {
+        let (peers, mut topology) = responses(false);
+        topology["cap"] = json!({
+            "used": 8, "max_connections": 8, "connected_peers": 11, "connected_cap": 16
+        });
+        topology["links"] = json!([
+            {"endpoint": ONE, "nickname": "amy", "path": "ip", "via": null,
+             "neighbor": true, "pinned": false, "extra": false},
+            {"endpoint": TWO, "nickname": "zed", "path": "multihop", "via": ONE,
+             "neighbor": false, "pinned": true, "extra": true},
+        ]);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        let drawing = render(&doc);
+
+        assert!(
+            drawing.contains("cap 8/8 · all 11/16"),
+            "the cap and the total show in the box of this node:\n{drawing}"
+        );
+        assert!(
+            drawing.contains("neighbor") && !drawing.contains("neighbor · pinned"),
+            "amy is a neighbor and not pinned:\n{drawing}"
+        );
+        assert!(
+            drawing.contains("multihop via amy") && !drawing.contains("webrtc via amy"),
+            "a pinned peer takes the multihop path of the snapshot, with the first hop by name:\n{drawing}"
+        );
+        assert!(
+            drawing.contains("pinned · extra") && !drawing.contains("unicast · pinned"),
+            "zed is pinned, takes multihop paths and took no unit:\n{drawing}"
+        );
+        assert!(
+            drawing.contains("reached through other peers because of the cap: zed"),
+            "the pinned footer:\n{drawing}"
+        );
+        assert_eq!(
+            warnings(&doc),
+            Vec::<String>::new(),
+            "a full cap that holds no excess is the normal state"
+        );
+    }
+
+    /// The cap is full in the normal state, because the engine fills it on
+    /// purpose. Only a count over the ceiling is a problem.
+    #[test]
+    fn warns_about_a_cap_only_when_the_count_is_over_the_ceiling() {
+        let (peers, mut topology) = responses(false);
+        topology["cap"] = json!({"used": 10, "max_connections": 8, "over_ceiling": 2});
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: connection count is over the cap by 2 (10/8)"],
+            "the excess warns"
+        );
+    }
+
+    /// An endpoint that is a link and an edge end at once, and that no roster
+    /// row owns, is one problem. It gets one warning, and the warning names the
+    /// nickname that the link carries.
+    #[test]
+    fn warns_once_about_an_endpoint_that_is_a_link_and_an_edge_end() {
+        let (peers, mut topology) = responses(false);
+        topology["topology"]["edges"] = json!([{"from": ME, "to": "eeeeeeeeeeee", "metric": 1}]);
+        topology["links"] = json!([
+            {"endpoint": "eeeeeeeeeeee", "nickname": "ghost", "path": "ip", "neighbor": true},
+        ]);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: link to endpoint eeeeeeee (ghost) has no roster row"],
+            "one warning for the endpoint, with the nickname of the link"
+        );
+    }
+
+    /// A link that no roster row owns is a warning: the drawing cannot show it.
+    #[test]
+    fn warns_about_a_link_with_no_roster_row() {
+        let (peers, mut topology) = responses(false);
+        topology["links"] = json!([
+            {"endpoint": ONE, "nickname": "amy", "path": "ip", "neighbor": true},
+            {"endpoint": "eeeeeeeeeeee", "path": "ip", "neighbor": true},
+        ]);
+        let doc = TopologyDoc::assemble("me", &peers, &topology);
+
+        assert_eq!(
+            warnings(&doc),
+            ["warning: link to endpoint eeeeeeee has no roster row"],
+            "the drawing cannot show a link that no roster row owns"
+        );
+    }
+}
