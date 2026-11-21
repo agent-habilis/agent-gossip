@@ -152,13 +152,26 @@ fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec
         .collect()
 }
 
-/// The default ownership anchor when `--session-pid` is not given: this
-/// command's own parent. When an agent's Bash tool runs `agent-gossip leave`
-/// directly (not via a wrapping shell script), that parent *is* the shell
-/// whose parent is the agent — so skills pass `$PPID` explicitly instead of
-/// relying on this.
-fn default_session_pid() -> u32 {
-    process::parent_of(std::process::id()).unwrap_or(1)
+/// The pid that names the calling session: `--session-pid`, or when it is not given this command's
+/// own parent. When an agent's Bash tool runs `agent-gossip leave` directly (not via a wrapping shell
+/// script), that parent *is* the shell whose parent is the agent — so skills pass `$PPID` explicitly
+/// instead of relying on this.
+///
+/// Pid 0 and pid 1 name no session: init is an ancestor of every process, so a daemon is "owned" by
+/// it, and a command that selected by it would stop the daemons of every session on the host. They
+/// are refused as `--owner-pid` is, and so is a parent that is unknown or is init (an orphaned shell).
+fn session_anchor(session_pid: Option<u32>, parent: Option<u32>) -> Result<u32> {
+    let Some(pid) = session_pid.or(parent) else {
+        anyhow::bail!(
+            "the parent process of this command is unknown, so no session is named: pass --session-pid"
+        );
+    };
+    if pid <= 1 {
+        anyhow::bail!(
+            "session pid {pid} is init or invalid: it is an ancestor of every process, so it would select the daemons of every session. Pass the pid of the agent process"
+        );
+    }
+    Ok(pid)
 }
 
 fn target_json(target: &Target) -> serde_json::Value {
@@ -348,6 +361,11 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         legacy_output: _,
     } = options;
     let mesh = gossip.or(gossip_flag);
+    let parent = process::parent_of(std::process::id());
+    // A named pid that names no session is refused, whether or not GOSSIP leaves it unused.
+    if let Some(pid) = session_pid {
+        session_anchor(Some(pid), parent)?;
+    }
     let owners = live_owners().await;
     let Discovery { live, cleaned } = discover(&owners.answered);
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
@@ -360,7 +378,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
             0,
         )
     } else {
-        let anchor = session_pid.unwrap_or_else(default_session_pid);
+        let anchor = session_anchor(session_pid, parent)?;
         split_owned(live, |target| owned_by(target, anchor))
     };
 
@@ -445,15 +463,16 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn session(options: &SessionOpts) {
+pub(crate) async fn session(options: &SessionOpts) -> Result<()> {
     let SessionOpts {
         session_pid,
         legacy_output: _,
     } = options;
+    let anchor = session_anchor(*session_pid, process::parent_of(std::process::id()))?;
     let owners = live_owners().await;
     let Discovery { live, cleaned } = discover(&owners.answered);
     leftovers::sweep(&owners.dead).await;
-    let (owned, other_sessions) = owned_sessions(live, *session_pid);
+    let (owned, other_sessions) = owned_sessions(live, anchor);
 
     let sessions: Vec<_> = owned
         .iter()
@@ -474,10 +493,10 @@ pub(crate) async fn session(options: &SessionOpts) {
         "cleaned": cleaned,
     });
     println!("{report}");
+    Ok(())
 }
 
-fn owned_sessions(live: Vec<Target>, session_pid: Option<u32>) -> (Vec<Target>, usize) {
-    let anchor = session_pid.unwrap_or_else(default_session_pid);
+fn owned_sessions(live: Vec<Target>, anchor: u32) -> (Vec<Target>, usize) {
     split_owned(live, |target| owned_by(target, anchor))
 }
 
@@ -512,19 +531,20 @@ fn is_ready(target: &Target) -> bool {
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
 /// turn, and Claude Code still reads the JSON.
-pub(crate) async fn bell_check(options: &BellCheckOpts) -> bool {
+pub(crate) async fn bell_check(options: &BellCheckOpts) -> Result<bool> {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
     } = options;
-    let (owned, _) = owned_sessions(discover(&live_owners().await.answered).live, session_pid);
+    let anchor = session_anchor(session_pid, process::parent_of(std::process::id()))?;
+    let (owned, _) = owned_sessions(discover(&live_owners().await.answered).live, anchor);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
     let deadline = std::time::Instant::now() + Duration::from_millis(grace_ms);
     loop {
         let missing = unarmed(&owned, is_ready, bell::is_armed);
         if missing.is_empty() {
-            return false;
+            return Ok(false);
         }
         if std::time::Instant::now() >= deadline {
             let reason = format!(
@@ -535,7 +555,7 @@ pub(crate) async fn bell_check(options: &BellCheckOpts) -> bool {
                 "{}",
                 serde_json::json!({ "decision": "block", "reason": reason })
             );
-            return true;
+            return Ok(true);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -549,7 +569,7 @@ mod tests {
 
     use super::{
         Owner, Owners, Target, confirm_owner, owned_by, parse_owner, reported_target,
-        select_explicit, split_owned, unarmed, walked,
+        select_explicit, session_anchor, split_owned, unarmed, walked,
     };
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
@@ -817,6 +837,43 @@ mod tests {
         assert!(
             walked(&same, &owner),
             "a file that agrees on all three still hides the duplicate"
+        );
+    }
+
+    #[test]
+    fn a_session_pid_of_init_or_below_names_no_session() {
+        for pid in [0, 1] {
+            let error = session_anchor(Some(pid), Some(500))
+                .expect_err("pid 0 and pid 1 are ancestors of every process")
+                .to_string();
+            assert!(
+                error.contains("init or invalid") && error.contains(&pid.to_string()),
+                "the error says which pid and why: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_anchor_that_is_init_or_unknown_names_no_session() {
+        for parent in [None, Some(0), Some(1)] {
+            assert!(
+                session_anchor(None, parent).is_err(),
+                "a parent of {parent:?} would select the daemons of every session"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_session_pid_is_the_anchor_and_the_flag_wins_over_the_parent() {
+        assert_eq!(
+            session_anchor(None, Some(500)).expect("a normal parent names the session"),
+            500,
+            "without the flag the parent names the session"
+        );
+        assert_eq!(
+            session_anchor(Some(700), Some(500)).expect("a normal pid names the session"),
+            700,
+            "the flag names the session before the parent does"
         );
     }
 }

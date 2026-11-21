@@ -4457,6 +4457,48 @@ fn leave_sweeps_what_the_stopped_daemon_left() {
     );
 }
 
+/// Pid 0 and pid 1 are ancestors of every process, so a command that selects daemons by them
+/// selects the daemons of every session. Every flag that names a session refuses them. This test
+/// runs only commands that cannot stop a daemon even if the refusal were gone: the two read-only
+/// commands, and `leave` with a gossip id that no daemon has. A `leave --session-pid 1` with no
+/// gossip would stop every daemon on the host, and it is never run here.
+#[test]
+fn a_session_pid_of_init_is_refused_and_stops_nothing() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("anchor-guard");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+
+    let no_such_gossip = "AbCdEf1234AbCdEf1234AbCdEf1234AbCdEf1234AbCdEf1234AbCdEf1234AbCd";
+    let refused: [&[&str]; 5] = [
+        &["session", "--session-pid", "1"],
+        &["session", "--session-pid", "0"],
+        &["bell-check", "--session-pid", "1"],
+        &["leave", no_such_gossip, "--session-pid", "1"],
+        &["leave", no_such_gossip, "--session-pid", "0"],
+    ];
+    for args in refused {
+        let mut command = common::test_cmd();
+        command.args(args);
+        let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("init or invalid"),
+            "{args:?} must fail with a clear error, and it gave {out:?}"
+        );
+    }
+
+    let sessions = session_report(&owner_pid);
+    assert_eq!(
+        sessions["sessions"]
+            .as_array()
+            .expect("the JSON field is an array in this test")
+            .len(),
+        1,
+        "the daemon that this test started is still serving: {sessions}"
+    );
+}
+
 /// The sweep removes only what a refused connection proves dead: a live member and a member that
 /// does not answer in time keep every file.
 #[test]
