@@ -27,6 +27,13 @@ pub(super) async fn is_refused(socket: &Path) -> bool {
 /// Remove what the members behind these sockets left in the runtime base. The caller passes the
 /// sockets that refused a connection. Each one is asked again just before the sweep: a member that
 /// restarted in between answers now, and its files stay.
+///
+/// Two races remain, each a window of microseconds. A member with the same mesh and nickname that
+/// restarts between the second check and the removal loses its socket and its chunk folder until it
+/// restarts again. The member key lock would close that window, but it sits beside the state file,
+/// and the state file of a dead member is unknown when it is outside the runtime base. A member that
+/// restarts after 7 days appends to a log that is 7 days old, and the orphan scan can remove that log
+/// before the first write, so one log is lost.
 pub(super) async fn sweep(dead_sockets: &[PathBuf]) {
     let base = runtime_base();
     for socket in dead_sockets {
@@ -48,6 +55,7 @@ fn sweep_orphan_logs(base: &Path, now: SystemTime) {
         if !is_folder {
             continue;
         }
+        let mut removed_any = false;
         for file in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = file.file_name();
             let Some(nickname) = name
@@ -57,12 +65,14 @@ fn sweep_orphan_logs(base: &Path, now: SystemTime) {
                 continue;
             };
             let socket = dir.join(format!("{nickname}.ipc.sock"));
-            if std::fs::symlink_metadata(socket).is_err() {
-                remove_old_log(&file.path(), now);
+            if std::fs::symlink_metadata(socket).is_err() && remove_old_log(&file.path(), now) {
+                removed_any = true;
             }
         }
-        // `remove_dir` refuses a folder that holds anything, so only an empty folder goes.
-        let _ = std::fs::remove_dir(&dir);
+        // `remove_dir` refuses a folder that holds anything. Only a folder that this scan emptied goes.
+        if removed_any {
+            let _ = std::fs::remove_dir(&dir);
+        }
     }
 }
 
@@ -84,48 +94,49 @@ fn sweep_member(base: &Path, socket: &Path, now: SystemTime) {
     let Some((dir, nickname)) = member_of(base, socket) else {
         return;
     };
-    remove_socket(socket);
-    remove_folder(&dir.join(format!("{nickname}.chunks")));
-    remove_old_log(&dir.join(format!("{nickname}.tracing.log")), now);
+    let removed = [
+        remove_socket(socket),
+        remove_folder(&dir.join(format!("{nickname}.chunks"))),
+        remove_old_log(&dir.join(format!("{nickname}.tracing.log")), now),
+    ];
     // `remove_dir` refuses a folder that holds anything, so the folder of a live member, or one with
     // a file of another kind, stays.
-    let _ = std::fs::remove_dir(dir);
-}
-
-fn remove_socket(path: &Path) {
-    let is_socket =
-        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket());
-    if is_socket {
-        let _ = std::fs::remove_file(path);
+    if removed.contains(&true) {
+        let _ = std::fs::remove_dir(dir);
     }
 }
 
-fn remove_folder(path: &Path) {
+/// Each of the three `remove_` functions says whether it removed something. A caller removes the
+/// folder only after something in it went: an empty folder that the sweep did not empty can be the
+/// folder that a starting daemon just made, and the daemon has not yet written its first file in it.
+fn remove_socket(path: &Path) -> bool {
+    let is_socket =
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket());
+    is_socket && std::fs::remove_file(path).is_ok()
+}
+
+fn remove_folder(path: &Path) -> bool {
     // `symlink_metadata` does not follow a link, so a link in this place is never walked into.
     let is_folder =
         std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir());
-    if is_folder {
-        let _ = std::fs::remove_dir_all(path);
-    }
+    is_folder && std::fs::remove_dir_all(path).is_ok()
 }
 
-fn remove_old_log(path: &Path, now: SystemTime) {
+fn remove_old_log(path: &Path, now: SystemTime) -> bool {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return;
+        return false;
     };
     if !metadata.file_type().is_file() {
-        return;
+        return false;
     }
     let Ok(modified) = metadata.modified() else {
-        return;
+        return false;
     };
     // A file dated in the future gives no age, and it is not old.
     let Ok(age) = now.duration_since(modified) else {
-        return;
+        return false;
     };
-    if age >= DEAD_LOG_KEEP {
-        let _ = std::fs::remove_file(path);
-    }
+    age >= DEAD_LOG_KEEP && std::fs::remove_file(path).is_ok()
 }
 
 #[cfg(test)]
@@ -298,6 +309,29 @@ mod tests {
         assert!(
             kept.exists(),
             "a log beside a socket is a member that this scan does not judge"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_empty_member_folder_that_the_sweep_did_not_empty_stays() {
+        let base = scratch("fresh-folder");
+        // A starting daemon creates its folder before it writes its first file in it.
+        let starting = base.join("startingmesh");
+        std::fs::create_dir_all(&starting).expect("writable");
+        let much_later = SystemTime::now() + DEAD_LOG_KEEP * 2;
+
+        sweep_orphan_logs(&base, much_later);
+        assert!(
+            starting.exists(),
+            "the orphan scan removes only a folder that it emptied"
+        );
+
+        let nothing_to_sweep = starting.join("someone.ipc.sock");
+        sweep_member(&base, &nothing_to_sweep, much_later);
+        assert!(
+            starting.exists(),
+            "a sweep that found nothing of the member leaves its folder alone"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
