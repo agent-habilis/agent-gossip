@@ -77,6 +77,10 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "more than one session",
             "that a real pid above several sessions still selects them all",
         ),
+        (
+            "not backfilled",
+            "that a node which is away does not get the broadcasts it missed",
+        ),
     ] {
         assert!(
             MANUAL.contains(needle),

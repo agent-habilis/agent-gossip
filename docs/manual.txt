@@ -371,6 +371,11 @@ COMMANDS
 
               This is how you talk to the whole gossip.
 
+              A broadcast reaches the members that are in the gossip while
+              it is sent. It is not backfilled: a node that is away (frozen
+              or offline) does not get the broadcasts that it missed when it
+              comes back. Only the state and meta slices are backfilled.
+
        a2a msg --gossip GOSSIP --nickname NAME --to NICK --text TEXT
               Send a chat message to ONE peer — a msg. Only you and --to see
               it: the frame travels point-to-point (it structurally cannot
