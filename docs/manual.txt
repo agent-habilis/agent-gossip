@@ -186,6 +186,8 @@ COMMANDS
                      value is an error. Omit for all three lookups, a
                      cross-machine gossip. Name loopback for a gossip that
                      works on the local machine only. Baked into the id.
+                     Only the beacon publishes to the DHT; see "NETWORKING"
+                     for what the record holds.
 
               --relay-url URLS
                      Ordered, comma-separated relay ladder, e.g.
@@ -1162,6 +1164,11 @@ NETWORKING
        Each lookup is sufficient on its own; combining them only adds
        reliability. Name mdns,dht,relay unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
+
+       What the DHT publishes. Only the beacon publishes to the DHT. With
+       relay in --lookup, the record holds the relay URL and no IP address.
+       With dht and no relay, the beacon puts its IP addresses
+       in the public DHT, so everyone who reads the DHT sees them.
 
        discover, a2a expose, and a2a discover take the same --lookup and
        --relay-url flags, and the all-on preset is the no-flag default for

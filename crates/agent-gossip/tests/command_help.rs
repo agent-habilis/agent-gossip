@@ -81,10 +81,47 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "not backfilled",
             "that a node which is away does not get the broadcasts it missed",
         ),
+        (
+            "Only the beacon publishes to the DHT",
+            "who publishes to the DHT",
+        ),
+        (
+            "no IP address",
+            "that a record with a relay lookup holds no IP address",
+        ),
+        (
+            "in the public DHT",
+            "that a DHT-only gossip puts the IP addresses of the beacon in the public DHT",
+        ),
     ] {
         assert!(
             MANUAL.contains(needle),
             "docs/manual.txt does not name {why}: it has no {needle:?}"
+        );
+    }
+}
+
+/// The DHT is public. A user who picks the lookups must read in the help of the flag what the beacon
+/// puts there, so the choice between a relay lookup and a DHT-only gossip is an informed one.
+#[test]
+fn the_lookup_help_says_what_the_dht_publishes() {
+    let command = agent_gossip::cli_command();
+    let create = command
+        .find_subcommand("create")
+        .expect("the CLI has the `create` command");
+    let flag = create
+        .get_arguments()
+        .find(|arg| arg.get_id() == "lookup")
+        .expect("`create` takes --lookup");
+    let help = flag.get_help().map(ToString::to_string).unwrap_or_default();
+    for needle in [
+        "Only the beacon publishes to the DHT",
+        "no IP address",
+        "in the public DHT",
+    ] {
+        assert!(
+            help.contains(needle),
+            "the --lookup help does not say what the DHT publishes: it has no {needle:?}"
         );
     }
 }

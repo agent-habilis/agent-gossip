@@ -33,7 +33,10 @@ pub(crate) enum Lookup {
 #[derive(Parser, Debug)]
 pub(crate) struct LookupArgs {
     /// Comma-separated networking lookups: mdns, dht, relay, or loopback
-    /// (`create` only, alone). An unknown value is an error.
+    /// (`create` only, alone). An unknown value is an error. Only the beacon
+    /// publishes to the DHT. With `relay` in the lookups, the record holds the
+    /// relay URL and no IP address. With `dht` and no `relay`, the beacon puts
+    /// its IP addresses in the public DHT.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub lookup: Vec<Lookup>,
 
