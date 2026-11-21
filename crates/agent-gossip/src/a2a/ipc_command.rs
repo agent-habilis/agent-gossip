@@ -528,6 +528,12 @@ impl IpcRequest<'_> {
     fn info(self) -> bool {
         let peer_count = self.state.roster_snapshot().count;
         let state_file = self.app.state_file().and_then(std::path::Path::to_str);
+        if state_file.is_none() && self.app.state_file().is_some() {
+            tracing::debug!(
+                target: "agent_gossip::a2a",
+                "the state file path is not UTF-8, so the Info reply names none"
+            );
+        }
         let reply = serde_json::json!({
             "ok": true,
             "gossip": self.mesh.as_str(),

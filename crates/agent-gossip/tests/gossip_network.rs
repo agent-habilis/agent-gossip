@@ -4221,6 +4221,30 @@ fn a_relative_state_file_is_found_from_another_directory() {
     let _ = fs::remove_dir_all(&workdir);
 }
 
+/// Stops a daemon with `SIGSTOP` and resumes it with `SIGCONT` when it goes out of scope, so a
+/// failed assertion cannot leave a stopped daemon behind: it could not see its owner die.
+struct StoppedDaemon(String);
+
+impl StoppedDaemon {
+    fn new(pid: String) -> Self {
+        let status = Command::new("kill")
+            .args(["-STOP", &pid])
+            .status()
+            .expect("kill is on PATH on every unix host, so it spawns");
+        assert!(
+            status.success(),
+            "the signal reaches the daemon it was read from"
+        );
+        Self(pid)
+    }
+}
+
+impl Drop for StoppedDaemon {
+    fn drop(&mut self) {
+        let _ = Command::new("kill").args(["-CONT", &self.0]).status();
+    }
+}
+
 /// A stopped daemon (`SIGSTOP`) still accepts a connection and never answers. The Stop hook
 /// runs `session` discovery at the end of every turn, so it must not wait for such a daemon.
 #[test]
@@ -4230,22 +4254,11 @@ fn a_stopped_daemon_does_not_hold_up_session() {
     wait_ready(&daemon.state_file);
     let owner_pid = daemon.owner.0.id().to_string();
     let daemon_pid = session_report(&owner_pid)["sessions"][0]["pid"].to_string();
-    let signal = |name: &str| {
-        let status = Command::new("kill")
-            .args([name, &daemon_pid])
-            .status()
-            .expect("kill is on PATH on every unix host, so it spawns");
-        assert!(
-            status.success(),
-            "the signal reaches the daemon it was read from"
-        );
-    };
+    let _stopped = StoppedDaemon::new(daemon_pid);
 
-    signal("-STOP");
     let started = Instant::now();
     let sessions = session_report(&owner_pid);
     let took = started.elapsed();
-    signal("-CONT");
 
     assert!(
         took < Duration::from_secs(10),
@@ -4258,6 +4271,36 @@ fn a_stopped_daemon_does_not_hold_up_session() {
             .len(),
         1,
         "the state file in the runtime base still lists the stopped daemon: {sessions}"
+    );
+}
+
+/// A daemon that gives no answer in time can be alive: stopped, or slow under load. `leave` must
+/// not read the silence as death, so it keeps the state file and does not claim the daemon is gone.
+#[test]
+fn leave_keeps_the_state_file_of_a_daemon_that_does_not_answer() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("silent-daemon");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let daemon_pid = session_report(&owner_pid)["sessions"][0]["pid"].to_string();
+    let _stopped = StoppedDaemon::new(daemon_pid);
+
+    let report = leave_by_owner(&owner_pid);
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
+    assert_eq!(
+        left.len(),
+        1,
+        "leave still reports the daemon it matched: {report}"
+    );
+    assert_eq!(
+        left[0]["confirmed"], false,
+        "nobody signalled this daemon, so it is not confirmed gone: {report}"
+    );
+    assert!(
+        daemon.state_file.exists(),
+        "a timeout says nothing about the daemon, and the file is the one it writes"
     );
 }
 

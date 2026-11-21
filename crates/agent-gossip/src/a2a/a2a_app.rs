@@ -461,14 +461,11 @@ impl A2aApp {
         rx
     }
 
-    /// Record the state file this daemon was started with, as an absolute path: `leave` runs in
-    /// another working directory than the daemon, so a relative path would name another file.
-    ///
-    /// # Errors
-    /// The working directory cannot be read, so the path cannot be made absolute.
-    pub(crate) fn set_state_file(&mut self, path: &Path) -> std::io::Result<()> {
-        self.state_file = Some(std::path::absolute(path)?);
-        Ok(())
+    /// Record the state file this daemon was started with. The caller passes an absolute path:
+    /// `leave` runs in another working directory than the daemon, so a relative path would name
+    /// another file.
+    pub(crate) fn set_state_file(&mut self, path: PathBuf) {
+        self.state_file = Some(path);
     }
 
     pub(crate) fn state_file(&self) -> Option<&Path> {

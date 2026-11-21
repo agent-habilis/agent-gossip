@@ -70,7 +70,14 @@ fn discover(owners: &[Owner]) -> Discovery {
 /// ours to delete.
 fn reported_target(owner: &Owner, path: &Path) -> Option<Target> {
     let entry = read_session_entry(path)?;
-    if entry.pid != Some(owner.pid) || entry.mesh.as_deref() != Some(owner.gossip.as_str()) {
+    let wrong_nickname = entry
+        .nickname
+        .as_deref()
+        .is_some_and(|nickname| nickname != owner.nickname);
+    if entry.pid != Some(owner.pid)
+        || entry.mesh.as_deref() != Some(owner.gossip.as_str())
+        || wrong_nickname
+    {
         return None;
     }
     Some(Target {
@@ -99,7 +106,7 @@ fn owned_by(target: &Target, anchor: u32) -> bool {
 /// the session's runtime dir without retyping the mesh id (e.g. `a2a fetch`
 /// landing a blob under `<nick>.recv`). `None` if no live session claims it.
 pub(crate) async fn mesh_for_nickname(nickname: &str) -> Option<String> {
-    discover(&live_owners().await)
+    discover(&live_owners().await.answered)
         .live
         .into_iter()
         .find(|target| target.nickname.as_deref() == Some(nickname))
@@ -201,21 +208,63 @@ fn parse_owner(response: &str) -> Option<Owner> {
     })
 }
 
+/// How one daemon socket answered the `Info` probe.
+enum Probe {
+    Answered(Owner),
+    /// No answer in time. The daemon can be alive: stopped, or slow under load.
+    TimedOut(PathBuf),
+    /// A refused connection or an unreadable reply: nothing serves there.
+    Dead,
+}
+
+async fn probe(path: PathBuf) -> Probe {
+    match tokio::time::timeout(OWNER_PROBE_TIMEOUT, ipc::send_to_path(&path, &Info)).await {
+        Err(_) => Probe::TimedOut(path),
+        Ok(Err(_)) => Probe::Dead,
+        Ok(Ok(reply)) => parse_owner(&reply).map_or(Probe::Dead, Probe::Answered),
+    }
+}
+
+/// What the daemon sockets of this machine answered.
+struct Owners {
+    answered: Vec<Owner>,
+    /// The sockets that gave no answer in time.
+    silent: Vec<PathBuf>,
+}
+
+impl Owners {
+    /// Whether the probe of this target's own socket timed out. Such a daemon can be alive, and
+    /// a timeout says nothing about it, so nobody removes its file or reports it gone.
+    fn unknown(&self, target: &Target) -> bool {
+        let Some(nickname) = &target.nickname else {
+            return !self.silent.is_empty();
+        };
+        let dir = habilis_network::util::mesh_runtime_dir(&runtime_base(), &target.mesh);
+        self.silent
+            .contains(&dir.join(format!("{nickname}.ipc.sock")))
+    }
+}
+
 /// Ask every daemon socket on this machine to identify itself.
 ///
 /// Best-effort by design: a stale socket left by a `SIGKILL`ed daemon simply
 /// fails to answer and is skipped, which is exactly the case this is here to
 /// tell apart from a live one.
-async fn live_owners() -> Vec<Owner> {
+async fn live_owners() -> Owners {
     let base = runtime_base();
-    let probes = ipc::active_socket_paths(&base).map(|path| async move {
-        let reply = tokio::time::timeout(OWNER_PROBE_TIMEOUT, ipc::send_to_path(&path, &Info))
-            .await
-            .ok()?
-            .ok()?;
-        parse_owner(&reply)
-    });
-    join_all(probes).await.into_iter().flatten().collect()
+    let probes = ipc::active_socket_paths(&base).map(probe);
+    let mut owners = Owners {
+        answered: Vec::new(),
+        silent: Vec::new(),
+    };
+    for result in join_all(probes).await {
+        match result {
+            Probe::Answered(owner) => owners.answered.push(owner),
+            Probe::TimedOut(path) => owners.silent.push(path),
+            Probe::Dead => {}
+        }
+    }
+    owners
 }
 
 /// Does a live daemon actually answer for this target's mesh *at this pid*?
@@ -264,7 +313,8 @@ pub(crate) async fn live_owner_of(path: &Path) -> Option<String> {
         pid,
         owner_pid: entry.owner_pid,
     };
-    if !confirm_owner(&live_owners().await, &target) {
+    let owners = live_owners().await;
+    if !confirm_owner(&owners.answered, &target) && !owners.unknown(&target) {
         return None;
     }
     let who = nickname.map_or_else(
@@ -285,7 +335,7 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     } = options;
     let mesh = gossip.or(gossip_flag);
     let owners = live_owners().await;
-    let Discovery { live, cleaned } = discover(&owners);
+    let Discovery { live, cleaned } = discover(&owners.answered);
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
         (
             select_explicit(
@@ -308,8 +358,12 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         // state file behind, and once the OS reissues that pid to another
         // daemon, the file points at a stranger. Signalling on the file's word
         // alone terminates that stranger's gossip.
-        if !confirm_owner(&owners, target) {
-            let _ = std::fs::remove_file(&target.path);
+        if !confirm_owner(&owners.answered, target) {
+            // A probe that timed out says nothing: a stopped or slow daemon is alive, and the
+            // file is the one it writes.
+            if !owners.unknown(target) {
+                let _ = std::fs::remove_file(&target.path);
+            }
             left.push((target.clone(), false));
             continue;
         }
@@ -338,7 +392,10 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
             if !*signalled || *gone {
                 continue;
             }
-            if target.path.exists() || confirm_owner(&still_serving, target) {
+            if target.path.exists()
+                || confirm_owner(&still_serving.answered, target)
+                || still_serving.unknown(target)
+            {
                 waiting = true;
             } else {
                 *gone = true;
@@ -373,7 +430,7 @@ pub(crate) async fn session(options: &SessionOpts) {
         session_pid,
         legacy_output: _,
     } = options;
-    let Discovery { live, cleaned } = discover(&live_owners().await);
+    let Discovery { live, cleaned } = discover(&live_owners().await.answered);
     let (owned, other_sessions) = owned_sessions(live, *session_pid);
 
     let sessions: Vec<_> = owned
@@ -438,7 +495,7 @@ pub(crate) async fn bell_check(options: &BellCheckOpts) -> bool {
         session_pid,
         grace_ms,
     } = options;
-    let (owned, _) = owned_sessions(discover(&live_owners().await).live, session_pid);
+    let (owned, _) = owned_sessions(discover(&live_owners().await.answered).live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
     let deadline = std::time::Instant::now() + Duration::from_millis(grace_ms);
@@ -469,8 +526,8 @@ mod tests {
     use habilis_network::util::process;
 
     use super::{
-        Owner, Target, confirm_owner, owned_by, parse_owner, reported_target, select_explicit,
-        split_owned, unarmed,
+        Owner, Owners, Target, confirm_owner, owned_by, parse_owner, reported_target,
+        select_explicit, split_owned, unarmed,
     };
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
@@ -671,5 +728,51 @@ mod tests {
         let found = reported_target(&owner, &path).expect("the file agrees with the reply");
         assert_eq!(found.owner_pid, Some(5), "the file keeps its owner pid");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_reported_file_of_another_nickname_is_ignored() {
+        let dir = std::env::temp_dir().join(format!("reported-nick-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the temp dir is writable");
+        let path = dir.join("same-pid.json");
+        std::fs::write(
+            &path,
+            r#"{"gossip":"aaaa","pid":10,"nickname":"someone-else"}"#,
+        )
+        .expect("the temp dir is writable");
+        let owner = Owner {
+            gossip: "aaaa".to_owned(),
+            nickname: "one-two".to_owned(),
+            pid: 10,
+            state_file: Some(path.clone()),
+        };
+        assert!(
+            reported_target(&owner, &path).is_none(),
+            "confirm_owner would refuse this file, so discovery must not offer it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_silent_socket_makes_only_its_own_daemon_unknown() {
+        let mesh = "aaaabbbbccccdddd1111";
+        let socket = habilis_network::util::mesh_runtime_dir(&crate::runtime_base(), mesh)
+            .join("one-two.ipc.sock");
+        let owners = Owners {
+            answered: Vec::new(),
+            silent: vec![socket],
+        };
+        assert!(
+            owners.unknown(&target(mesh, "one-two", 10)),
+            "the daemon behind the silent socket may be alive"
+        );
+        assert!(
+            !owners.unknown(&target(mesh, "three-four", 20)),
+            "a silent socket of another member says nothing about this one"
+        );
+        assert!(
+            !owners.unknown(&target("zzzzyyyyxxxxwwww2222", "one-two", 10)),
+            "the same nickname on another gossip is another socket"
+        );
     }
 }

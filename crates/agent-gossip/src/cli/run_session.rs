@@ -18,6 +18,13 @@ use crate::emission::{Output, OutputMode};
 /// and advertise directory (see [`habilis_network::runtime::Resolved`]).
 pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     detach_if_owned(&shared)?;
+    // One absolute path, read once: the engine writes the file and the app names it in the `Info`
+    // reply, and a second read of the working directory could name another file.
+    let state_file = shared
+        .state_file
+        .as_deref()
+        .map(std::path::absolute)
+        .transpose()?;
     let Resolved {
         kind,
         author,
@@ -29,7 +36,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     // for the rest of the session, which is silent and corrupts identity
     // resolution for both. Checked before any network setup so the refusal
     // costs nothing.
-    if let Some(path) = shared.state_file.as_ref()
+    if let Some(path) = state_file.as_ref()
         && let Some(owner) = super::session::live_owner_of(path).await
     {
         anyhow::bail!(
@@ -72,8 +79,8 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     });
     let sink = io.sink();
     let mut app = A2aApp::new_with_io(io);
-    if let Some(path) = shared.state_file.as_deref() {
-        app.set_state_file(path)?;
+    if let Some(path) = &state_file {
+        app.set_state_file(path.clone());
     }
     let http_rx = binding.map(|bound| app.serve_a2a(bound));
     // Advertising needs a live-peer counter shared with the re-broadcast task.
@@ -90,7 +97,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         // The CLI daemon writes its status file to the default state path, and keeps its member key and its
         // run counter there too: a restart after a crash is the same member. The in-process sessions do not.
         .keys_in_default_state(true);
-    setup_params.state_file = shared.state_file;
+    setup_params.state_file = state_file;
     setup_params.live_count = live_count.clone();
     let config = setup_mesh(kind, setup_params).await?;
     let config = match shared.owner_pid {
