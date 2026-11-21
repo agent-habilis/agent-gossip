@@ -42,13 +42,14 @@ pub(crate) enum Commands {
     /// Leave a gossip: stop this session's local daemon.
     ///
     /// Finds running create/join/topic daemons through their state files
-    /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
-    /// and removes its state file on the way out. With no GOSSIP, stops
-    /// only the daemons owned by the calling session — those with
-    /// `--session-pid` among their process ancestors — and never touches
-    /// other sessions'. An explicit GOSSIP targets that gossip's local
-    /// member(s) regardless of owner. State files whose daemon is gone
-    /// (SIGKILL, power loss) are cleaned up along the way.
+    /// and their sockets, and sends each a SIGTERM; a daemon broadcasts
+    /// `left` to its peers and removes its state file on the way out. With
+    /// no GOSSIP, stops only the daemons owned by the calling session —
+    /// those with `--session-pid` among their process ancestors — and never
+    /// touches other sessions'. An explicit GOSSIP, or `--gossip`, targets
+    /// that gossip's local member(s) regardless of owner. State files in the
+    /// runtime base whose daemon is gone (SIGKILL, power loss) are cleaned
+    /// up along the way.
     Leave {
         #[command(flatten)]
         options: LeaveOpts,
@@ -114,7 +115,8 @@ pub(crate) enum Commands {
     /// Queries the running daemon for current peers (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
     /// task target picker; prints a JSON object with `peers`
-    /// and `peer_count`.
+    /// and `peer_count`. `peer_count` is the active peers plus self: the live
+    /// size of the gossip, one more than the other live peers.
     Peers {
         #[command(flatten)]
         options: PeersOpts,

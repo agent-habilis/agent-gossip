@@ -42,7 +42,10 @@ pub(crate) struct SharedServerOpts {
     /// on clean shutdown — for external tools (e.g. a shell statusline) to
     /// render live count + liveness without IPC. Defaults to
     /// `<runtime-base>/<mesh-prefix>/<nick>.state.json` (beside the socket +
-    /// log); pass this to write elsewhere instead.
+    /// log); pass this to write elsewhere instead. `leave` and `session` find
+    /// a file outside the runtime base through the daemon's socket. If the
+    /// daemon dies without cleaning up (SIGKILL, power loss), nothing names
+    /// that file any more, so it stays.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 

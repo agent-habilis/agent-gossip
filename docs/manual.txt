@@ -54,7 +54,7 @@ SYNOPSIS
                   [--lookup LOOKUPS] [--relay-url URLS]
        agent-gossip a2a fetch TICKET [--nickname NAME] [--output PATH] [--password PW]
 
-       agent-gossip leave [GOSSIP] [--nickname NAME] [--session-pid PID]
+       agent-gossip leave [GOSSIP | --gossip GOSSIP] [--nickname NAME] [--session-pid PID]
 
 
        agent-gossip session [--session-pid PID]
@@ -786,10 +786,11 @@ COMMANDS
               Short-lived; requires a running create/join daemon. Exits
               non-zero on {"ok":false}.
 
-       leave [GOSSIP] [--nickname NAME] [--session-pid PID]
+       leave [GOSSIP | --gossip GOSSIP] [--nickname NAME] [--session-pid PID]
               Leave a gossip: stop the local create/join/topic daemon.
               Discovery is via the daemons' state files under
-              /tmp/agent-gossip; each match gets a SIGTERM, on which
+              /tmp/agent-gossip, and via their sockets, which are always
+              there; each match gets a SIGTERM, on which
               the daemon broadcasts `left` to its peers and removes its
               state file (the removal is what `confirmed` reports). State
               files whose recorded pid is gone (SIGKILL, power loss) are
@@ -805,12 +806,16 @@ COMMANDS
               shell's $PPID — the agent process — so a session can leave its
               gossip even after the agent's conversation context was cleared.
 
-              With an explicit GOSSIP (the full id or a unique prefix),
-              that gossip's local member(s) are stopped regardless of owner;
-              narrow to one member with --nickname when several run on this
-              machine. Daemons started with a --state-file outside
-              /tmp/agent-gossip (and in-process sessions, which write
-              none) are not discoverable. Two daemons on one state path
+              With an explicit GOSSIP (the full id or a unique prefix; the
+              flag form --gossip GOSSIP is the same, and naming it twice is
+              an error), that gossip's local member(s) are stopped regardless
+              of owner; narrow to one member with --nickname when several run
+              on this machine. A daemon started with a --state-file outside
+              /tmp/agent-gossip is found through its socket, which reports
+              the absolute path of the file. If such a daemon dies by
+              SIGKILL, its file stays: nothing names it. In-process
+              sessions write no state file and are not discoverable. Two
+              daemons on one state path
               cannot run: the second fails at start with "another daemon
               holds the member key {path}: two live daemons cannot be one
               member; use another nickname or another --state-file".
