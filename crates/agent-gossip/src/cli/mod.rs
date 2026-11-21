@@ -27,6 +27,7 @@ mod finish_send;
 mod install_tuning;
 mod invite;
 mod join;
+mod key_policy;
 mod leftovers;
 mod meta;
 mod msg_response;

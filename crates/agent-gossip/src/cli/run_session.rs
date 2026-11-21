@@ -7,6 +7,7 @@ use habilis_network::util::logging;
 use super::args::SharedServerOpts;
 use super::detach_if_owned::detach_if_owned;
 use super::drift_warning::drift_warning;
+use super::key_policy;
 use crate::a2a::a2a_app::{A2aApp, Startup, SurfacedIo};
 use crate::a2a::a2a_binding;
 use crate::api;
@@ -47,6 +48,9 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
             path.display(),
         );
     }
+    // Decide what the kept member key of this path means before any network setup: a start that is
+    // refused, or that makes a new member, costs nothing then.
+    let key_owner = key_policy::prepare_member_key(state_file.as_deref(), shared.owner_pid)?;
     // The advertiser reaches the directory over this mesh's own lookups
     // (only `create` advertises, so only `Create` carries them).
     let directory_lookups = if let SetupKind::Create { config, .. } = &kind {
@@ -100,7 +104,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
     setup_params.state_file = state_file;
     setup_params.live_count = live_count.clone();
     let config = setup_mesh(kind, setup_params).await?;
-    let config = match shared.owner_pid {
+    let config = match shared.owner_pid.or(key_owner) {
         Some(owner) => config.set_owner_pid(owner)?,
         None => config,
     };

@@ -4499,6 +4499,495 @@ fn a_session_pid_of_init_is_refused_and_stops_nothing() {
     );
 }
 
+/// The kept member key of a state file, as raw bytes: the seed, then the start time of its owner (0 when the
+/// key is bound to none). The tests compare bytes and never print them.
+fn kept_key(state: &std::path::Path) -> Vec<u8> {
+    fs::read(state.with_extension("key")).unwrap_or_default()
+}
+
+/// The start time of the owner that the key is bound to, and 0 when it is bound to none.
+fn owner_start(key: &[u8]) -> u64 {
+    let tail = key
+        .get(32..40)
+        .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok());
+    tail.map_or(0, u64::from_le_bytes)
+}
+
+fn same_member(first: &[u8], second: &[u8]) -> bool {
+    first.len() >= 32 && first.get(..32) == second.get(..32)
+}
+
+/// What names a member that a test starts: its mesh, its nickname and its state file.
+struct NodeSpec<'spec> {
+    mesh: &'spec str,
+    nickname: &'spec str,
+    state: &'spec std::path::Path,
+}
+
+/// A member that a test starts on a state file: the process that it must kill, and the daemon's pid.
+struct KeyedNode {
+    holder: KillOnDrop,
+    daemon_pid: u32,
+}
+
+fn child_pid(parent: u32) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut command = Command::new("pgrep");
+        command.args(["-P", &parent.to_string()]);
+        let out = command
+            .output()
+            .expect("pgrep is on PATH on every unix host");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let first = text.lines().next();
+        if let Some(pid) = first.and_then(|line| line.trim().parse().ok()) {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the wrapper never started its daemon"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Start `join` on `state`, behind a `sh` wrapper when `wrapped`, as the e2e suite does: a new wrapper
+/// is a new parent of the daemon. The stale state file of an earlier run is removed first, so that
+/// `ready` waits for this run.
+fn start_keyed_node(
+    spec: &NodeSpec<'_>,
+    wrapped: bool,
+    stderr_file: &std::path::Path,
+) -> KeyedNode {
+    let NodeSpec {
+        mesh,
+        nickname,
+        state,
+    } = *spec;
+    let _ = fs::remove_file(state);
+    let stderr = File::create(stderr_file).expect("the test temp dir is writable");
+    let holder = if wrapped {
+        let line = format!(
+            "{} --log-dir {} join {mesh} --nickname {nickname} --state-file {}; true",
+            bin().display(),
+            common::test_log_dir(),
+            state.display()
+        );
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(line);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        command.stderr(stderr);
+        command.spawn().expect("sh is on every unix host")
+    } else {
+        let mut command = common::test_cmd();
+        command.args(["join", mesh, "--nickname", nickname, "--state-file"]);
+        command.arg(state);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        command.stderr(stderr);
+        command
+            .spawn()
+            .expect("the test binary is built before the suite runs, so its path always spawns")
+    };
+    let daemon_pid = if wrapped {
+        child_pid(holder.id())
+    } else {
+        holder.id()
+    };
+    wait_ready(state);
+    KeyedNode {
+        holder: KillOnDrop(holder),
+        daemon_pid,
+    }
+}
+
+/// `SIGKILL` the daemon and its wrapper: a crash, not a leave.
+fn crash(mut node: KeyedNode) {
+    let status = Command::new("kill")
+        .args(["-KILL", &node.daemon_pid.to_string()])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    let _ = node.holder.0.kill();
+    let _ = node.holder.0.wait();
+    std::thread::sleep(Duration::from_millis(1500));
+}
+
+fn remove_state_files(state: &std::path::Path) {
+    for extension in ["json", "key", "run", "run.tmp", "key.lock", "run.lock"] {
+        let _ = fs::remove_file(state.with_extension(extension));
+    }
+}
+
+fn sessions_file(name: &str) -> PathBuf {
+    let dir = common::runtime_base().join("sessions");
+    fs::create_dir_all(&dir).expect("the runtime base is writable");
+    dir.join(name)
+}
+
+fn stderr_of(path: &std::path::Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+/// A session file (`<runtime base>/sessions/<pid>.json`) whose pid is an ancestor of the daemon is the
+/// file of that agent session. The key is bound to the ancestor, so a restart keeps the member, also with a
+/// shell between the ancestor and the daemon, and a later process with a reused pid would not inherit it.
+#[test]
+fn a_session_file_named_for_an_ancestor_keeps_its_member() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("keyowner-anchor-a");
+    let state = sessions_file(&format!("{}.json", std::process::id()));
+    let stderr = tmp_log("keyowner-a");
+    remove_state_files(&state);
+
+    for wrapped in [false, true] {
+        let first = start_keyed_node(
+            &NodeSpec {
+                mesh: &mesh,
+                nickname: "keyed-a",
+                state: &state,
+            },
+            wrapped,
+            &stderr,
+        );
+        let before = kept_key(&state);
+        assert_ne!(
+            owner_start(&before),
+            0,
+            "the key is bound to the start time of its owner, the ancestor (wrapped: {wrapped})"
+        );
+        crash(first);
+        let second = start_keyed_node(
+            &NodeSpec {
+                mesh: &mesh,
+                nickname: "keyed-a",
+                state: &state,
+            },
+            wrapped,
+            &stderr,
+        );
+        let after = kept_key(&state);
+        crash(second);
+        assert!(
+            same_member(&before, &after),
+            "a restart of the same agent keeps its member (wrapped: {wrapped})"
+        );
+        assert!(
+            !stderr_of(&stderr).contains("new member identity"),
+            "an ancestor session keeps its identity and says nothing"
+        );
+        remove_state_files(&state);
+    }
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// A session file whose pid is dead, or alive but no ancestor of the daemon, is not the file of this session.
+/// The start succeeds as a NEW member, with one warning on stderr, and the old key is never reused.
+#[test]
+fn a_session_file_that_no_ancestor_owns_starts_a_new_member() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("keyowner-anchor-b");
+    let mut gone = Command::new("sleep")
+        .arg("0")
+        .spawn()
+        .expect("sleep is on PATH on every unix host");
+    let dead_pid = gone.id();
+    gone.wait().expect("a finished child can be waited on");
+    let stranger = KillOnDrop(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("sleep is on PATH on every unix host"),
+    );
+    let stderr = tmp_log("keyowner-b");
+
+    for (label, pid) in [
+        ("dead", dead_pid),
+        ("alive, not an ancestor", stranger.0.id()),
+    ] {
+        let state = sessions_file(&format!("{pid}.json"));
+        remove_state_files(&state);
+        let first = start_keyed_node(
+            &NodeSpec {
+                mesh: &mesh,
+                nickname: "keyed-b",
+                state: &state,
+            },
+            false,
+            &stderr,
+        );
+        let before = kept_key(&state);
+        assert!(
+            !stderr_of(&stderr).contains("new member identity"),
+            "no key was kept, so nothing is dropped and nothing is said ({label})"
+        );
+        crash(first);
+        let second = start_keyed_node(
+            &NodeSpec {
+                mesh: &mesh,
+                nickname: "keyed-b",
+                state: &state,
+            },
+            false,
+            &stderr,
+        );
+        let after = kept_key(&state);
+        let warning = stderr_of(&stderr);
+        let doc_text = fs::read_to_string(&state).unwrap_or_default();
+        let doc: serde_json::Value = serde_json::from_str(&doc_text).unwrap_or_default();
+        let owner = doc["owner_pid"].clone();
+        crash(second);
+        assert!(
+            !same_member(&before, &after),
+            "a pid that owns nothing never gives its old member back ({label})"
+        );
+        assert!(
+            warning.contains("not an ancestor")
+                && warning.contains("a new member identity was made"),
+            "the start says why the identity is new ({label}): {warning}"
+        );
+        assert!(
+            owner.is_null(),
+            "a process that is no ancestor does not become the owner of the daemon ({label})"
+        );
+        remove_state_files(&state);
+    }
+    drop(stranger);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// A state file that the user chose, outside the session folder, keeps its member after a restart under
+/// another parent: the e2e case, where every start has its own `sh` wrapper. No owner is bound.
+#[test]
+fn a_state_file_that_the_user_chose_keeps_its_member_under_another_parent() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("keyowner-anchor-c");
+    let dir = std::env::temp_dir().join(format!("keyowner-chosen-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("keyowner-c");
+
+    let first = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "keyed-c",
+            state: &state,
+        },
+        true,
+        &stderr,
+    );
+    let before = kept_key(&state);
+    crash(first);
+    let second = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "keyed-c",
+            state: &state,
+        },
+        true,
+        &stderr,
+    );
+    let after = kept_key(&state);
+    crash(second);
+
+    assert!(
+        same_member(&before, &after),
+        "a restart under a new wrapper of a path that the user chose is the same member"
+    );
+    assert_eq!(
+        owner_start(&before),
+        0,
+        "no owner is bound to a path that the user chose"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// A session file whose pid names no ancestor, and whose daemon has init for its parent (it was started
+/// detached by something else), is still a new member: the start succeeds, and the old key is not reused.
+#[test]
+fn a_session_file_of_an_orphan_daemon_starts_a_new_member() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("keyowner-anchor-d");
+    let mut gone = Command::new("sleep")
+        .arg("0")
+        .spawn()
+        .expect("sleep is on PATH on every unix host");
+    let dead_pid = gone.id();
+    gone.wait().expect("a finished child can be waited on");
+    let state = sessions_file(&format!("{dead_pid}.json"));
+    remove_state_files(&state);
+    let stderr = tmp_log("keyowner-d");
+    let orphan = |stderr_file: &std::path::Path| {
+        let _ = fs::remove_file(&state);
+        // The outer shell exits at once, so the daemon is re-parented to init before it runs.
+        let line = format!(
+            "(sleep 0.6; exec {} --log-dir {} join {mesh} --nickname keyed-d --state-file {} 2> {}) &",
+            bin().display(),
+            common::test_log_dir(),
+            state.display(),
+            stderr_file.display()
+        );
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(line)
+            .status()
+            .expect("sh is on every unix host");
+        assert!(status.success(), "the outer shell starts the orphan");
+        wait_ready(&state);
+    };
+    let kill_orphan = || {
+        let mut command = Command::new("pkill");
+        command
+            .args(["-KILL", "-f", "--"])
+            .arg(format!("--state-file {}", state.display()));
+        let _ = command.status();
+        std::thread::sleep(Duration::from_millis(1500));
+    };
+
+    orphan(&stderr);
+    let before = kept_key(&state);
+    kill_orphan();
+    orphan(&stderr);
+    let after = kept_key(&state);
+    let warning = stderr_of(&stderr);
+    kill_orphan();
+
+    assert!(
+        !same_member(&before, &after),
+        "a session file that no ancestor owns never gives its old member back, whoever the parent is"
+    );
+    assert!(
+        warning.contains("a new member identity was made"),
+        "the start succeeds and says why the identity is new: {warning}"
+    );
+    remove_state_files(&state);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// `--owner-pid` wins on a session file: the daemon is bound to the owner that the flag names, whatever the
+/// name of the file says, and a restart under the same owner keeps its member with no warning.
+#[test]
+fn the_owner_pid_flag_wins_on_a_session_file() {
+    let _serial = serial_guard();
+    let owner = KillOnDrop(
+        Command::new("sleep")
+            .arg("600")
+            .spawn()
+            .expect("sleep is on PATH on every unix host"),
+    );
+    let owner_pid = owner.0.id().to_string();
+    // A name that no ancestor owns: without the flag this file would be forgotten at every start.
+    let mut gone = Command::new("sleep")
+        .arg("0")
+        .spawn()
+        .expect("sleep is on PATH on every unix host");
+    let state = sessions_file(&format!("{}.json", gone.id()));
+    gone.wait().expect("a finished child can be waited on");
+    remove_state_files(&state);
+    let stderr = tmp_log("keyowner-flag");
+
+    let launch = || {
+        let mut command = common::test_cmd();
+        command.args(["create", "--name", "owner-flag", "--lookup", "loopback"]);
+        command.args(["--owner-pid", &owner_pid, "--state-file"]);
+        command.arg(&state);
+        command.stdin(Stdio::null()).stdout(Stdio::null());
+        command.stderr(File::create(&stderr).expect("the test temp dir is writable"));
+        let status = command.status().expect("the launcher spawns");
+        assert!(
+            status.success(),
+            "the launcher of a detached daemon exits zero"
+        );
+        wait_ready(&state);
+    };
+    let crash_daemon = || {
+        let pid = session_report(&owner_pid)["sessions"][0]["pid"].to_string();
+        let status = Command::new("kill")
+            .args(["-KILL", &pid])
+            .status()
+            .expect("kill is on PATH on every unix host");
+        assert!(
+            status.success(),
+            "the signal reaches the daemon that the test started"
+        );
+        std::thread::sleep(Duration::from_millis(1500));
+        let _ = fs::remove_file(&state);
+    };
+
+    launch();
+    let before = kept_key(&state);
+    crash_daemon();
+    launch();
+    let after = kept_key(&state);
+    crash_daemon();
+
+    assert_ne!(
+        owner_start(&before),
+        0,
+        "the key is bound to the owner of the flag"
+    );
+    assert!(
+        same_member(&before, &after),
+        "a restart under the same owner keeps the member, whatever the file is called"
+    );
+    assert!(
+        !stderr_of(&stderr).contains("new member identity"),
+        "the flag decides, so no key of the path is forgotten"
+    );
+    remove_state_files(&state);
+}
+
+/// The member key and the run counter are the identity of a node across a restart. `session` and `leave`
+/// remove the stale state file of a crashed daemon, and nothing in the app may remove the key or the counter.
+#[test]
+fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("key-keeper");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    let key = kept_key(&daemon.state_file);
+    let run = fs::read(daemon.state_file.with_extension("run")).unwrap_or_default();
+    assert!(
+        !key.is_empty() && !run.is_empty(),
+        "a running daemon keeps its key and its run counter"
+    );
+
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    std::thread::sleep(Duration::from_millis(1500));
+    session_report(&owner_pid);
+    leave_by_owner(&owner_pid);
+
+    assert!(
+        !daemon.state_file.exists(),
+        "the stale state file of the crashed daemon is the one thing that goes"
+    );
+    assert_eq!(
+        kept_key(&daemon.state_file),
+        key,
+        "the member key is still there, byte for byte"
+    );
+    assert_eq!(
+        fs::read(daemon.state_file.with_extension("run")).unwrap_or_default(),
+        run,
+        "the run counter is still there, byte for byte"
+    );
+}
+
 /// The sweep removes only what a refused connection proves dead: a live member and a member that
 /// does not answer in time keep every file.
 #[test]
