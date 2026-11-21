@@ -3603,11 +3603,40 @@ fn spawn_decoy(name: &str) -> (Child, String, String, String, PathBuf) {
     (decoy, decoy_pid, mesh, nickname, log)
 }
 
+/// Run `command` to its end, or kill it and fail the test after `limit`. A hang in the code under
+/// test then fails the test, and a `StoppedDaemon` guard still resumes its daemon.
+fn output_within(command: &mut Command, limit: Duration) -> std::process::Output {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .expect("the test binary is built before the suite runs, so its path always spawns");
+    let deadline = Instant::now() + limit;
+    loop {
+        let exited = child
+            .try_wait()
+            .expect("a child of this test can be polled");
+        if exited.is_some() {
+            return child
+                .wait_with_output()
+                .expect("an exited child hands over its output");
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{command:?} ran past {limit:?}, so the daemon never answered it");
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The longest a `session` or `leave` query may take in these tests. Leave waits up to its own
+/// budget for a daemon to stop, so the bound sits well above it.
+const QUERY_LIMIT: Duration = Duration::from_secs(90);
+
 fn session_report(session_pid: &str) -> serde_json::Value {
-    let out: std::process::Output = common::test_cmd()
-        .args(["session", "--session-pid", session_pid])
-        .output()
-        .expect("failed to run agent-gossip session");
+    let mut command = common::test_cmd();
+    command.args(["session", "--session-pid", session_pid]);
+    let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
     assert!(
         out.status.success(),
         "the session query needs no daemon and exits zero, output was {out:?}"
@@ -4118,9 +4147,7 @@ fn wait_ready(state_file: &std::path::Path) {
 fn leave_by_owner(owner_pid: &str) -> serde_json::Value {
     let mut command = common::test_cmd();
     command.args(["leave", "--session-pid", owner_pid]);
-    let out: std::process::Output = command
-        .output()
-        .expect("the test binary is built before the suite runs, so its path always spawns");
+    let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
     assert!(
         out.status.success(),
         "a daemon that cannot be stopped exits non-zero: {out:?}"

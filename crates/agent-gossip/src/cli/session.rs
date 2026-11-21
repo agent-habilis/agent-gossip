@@ -54,15 +54,19 @@ fn discover(owners: &[Owner]) -> Discovery {
         let Some(path) = &owner.state_file else {
             continue;
         };
-        let walked = live
-            .iter()
-            .any(|target| target.pid == owner.pid && target.mesh == owner.gossip);
-        if walked {
+        if walked(&live, owner) {
             continue;
         }
         live.extend(reported_target(owner, path));
     }
     Discovery { live, cleaned }
+}
+
+/// Whether the walk already found the daemon that `owner` describes: the test of [`confirm_owner`],
+/// so a stale file of another nickname does not hide the file that the daemon reports.
+fn walked(live: &[Target], owner: &Owner) -> bool {
+    live.iter()
+        .any(|target| confirm_owner(std::slice::from_ref(owner), target))
 }
 
 /// The target that a daemon's own reply points at, or `None` when the file does not agree with the
@@ -389,6 +393,8 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
         let still_serving = live_owners().await;
         let mut waiting = false;
         for (target, signalled, gone) in &mut outcomes {
+            // Only a signalled daemon has a departure to wait for. An unknown one was never asked
+            // to leave, so waiting on it adds delay and no news.
             if !*signalled || *gone {
                 continue;
             }
@@ -527,7 +533,7 @@ mod tests {
 
     use super::{
         Owner, Owners, Target, confirm_owner, owned_by, parse_owner, reported_target,
-        select_explicit, split_owned, unarmed,
+        select_explicit, split_owned, unarmed, walked,
     };
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
@@ -773,6 +779,27 @@ mod tests {
         assert!(
             !owners.unknown(&target("zzzzyyyyxxxxwwww2222", "one-two", 10)),
             "the same nickname on another gossip is another socket"
+        );
+    }
+
+    #[test]
+    fn a_walked_file_of_another_nickname_does_not_hide_the_reported_one() {
+        let owner = Owner {
+            gossip: "aaaa".to_owned(),
+            nickname: "new-name".to_owned(),
+            pid: 10,
+            state_file: None,
+        };
+        // A stale file with this pid and gossip, left by an earlier member whose pid was reused.
+        let stale = [target("aaaa", "old-name", 10)];
+        assert!(
+            !walked(&stale, &owner),
+            "a file of another nickname is not the file of this daemon"
+        );
+        let same = [target("aaaa", "new-name", 10)];
+        assert!(
+            walked(&same, &owner),
+            "a file that agrees on all three still hides the duplicate"
         );
     }
 }
