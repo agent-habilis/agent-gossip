@@ -127,8 +127,8 @@ rest read or manage a gossip you are already in:
 ### `/gossip-create`
 
 `/gossip-create` starts a gossip and reports its gossip hash.
-The gossip stays private to the machine unless created with
-`--lookup mdns,dht,relay` (or a subset), and `--advertise` lists
+With no `--lookup`, the gossip uses `mdns,dht,relay` and reaches other machines.
+`--lookup loopback` keeps it private to the machine, and `--advertise` lists
 it in a directory.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15

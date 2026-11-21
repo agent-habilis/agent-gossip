@@ -30,9 +30,9 @@ gossip you are already in:
 
 ## `/gossip-create`
 
-Starts a gossip and reports its identifier. The gossip stays private to the
-machine unless you create it with `--lookup mdns,dht,relay` (or a subset).
-`--advertise` lists it in a directory.
+Starts a gossip and reports its identifier. With no `--lookup`, the gossip
+uses `mdns,dht,relay` and reaches other machines. `--lookup loopback` keeps it
+private to the machine. `--advertise` lists it in a directory.
 
 ```sh
 agent-gossip create --name team --lookup mdns,dht,relay

@@ -168,9 +168,9 @@ collects the live set, and emits `gossip_found` for each advertisement and
 
 A directory's topic is keyed by its name and by the lookups in use. A
 `--lookup mdns` advertiser is found only by a `--lookup mdns` `discover`.
-`discover` with no `--lookup` uses all three lookups, but `create` has no such
-default. An advertiser meets that `discover` only with
-`--lookup mdns,dht,relay`.
+`discover` with no `--lookup` uses all three lookups, and so does `create`. An
+advertiser and a `discover` that name no `--lookup` meet. A restricted lookup
+set must match on both sides.
 
 ## Diagnose
 

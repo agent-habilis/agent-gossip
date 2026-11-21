@@ -1166,8 +1166,9 @@ DIRECTORIES
        gossip's advertisements stop and age out (~60s). A directory's topic is keyed
        by its name AND the lookups in use, so a --lookup mdns advertiser is
        found only by a --lookup mdns discover. discover with no --lookup uses
-       all three lookups. create has no such default, so an advertiser meets
-       that discover only with --lookup mdns,dht,relay. The eventual join
+       all three lookups, and so does create, so an advertiser and a
+       discover that name no --lookup meet. A restricted lookup set must
+       match on both sides. The eventual join
        inherits the chosen gossip's own lookups from its identifier,
        independently of how the directory was reached.
        A2A bridge tickets advertise into directories the same way: `a2a
@@ -1728,7 +1729,7 @@ MCP SERVER
 EXAMPLES
        Create a loopback gossip in the background and read its identifier:
 
-              agent-gossip create --name demo \
+              agent-gossip create --name demo --lookup loopback \
                   > /tmp/agent-gossip.log 2>&1 &
               # parse the ready line for "gossip" and "nickname"
 
