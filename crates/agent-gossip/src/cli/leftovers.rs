@@ -94,6 +94,14 @@ fn sweep_member(base: &Path, socket: &Path, now: SystemTime) {
     let Some((dir, nickname)) = member_of(base, socket) else {
         return;
     };
+    // \`active_socket_paths\` follows a link, so a socket can be listed through a mesh folder that is a link
+    // to a place outside the base. A path inside such a folder is checked through the link, and the sweep
+    // would remove files that are not the daemon's.
+    let is_real_folder =
+        std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.file_type().is_dir());
+    if !is_real_folder {
+        return;
+    }
     let removed = [
         remove_socket(socket),
         remove_folder(&dir.join(format!("{nickname}.chunks"))),
@@ -332,6 +340,34 @@ mod tests {
         assert!(
             starting.exists(),
             "a sweep that found nothing of the member leaves its folder alone"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_mesh_folder_that_is_a_link_is_not_swept_through() {
+        let base = scratch("folder-link");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(outside.join("one-two.chunks")).expect("writable");
+        let socket_outside = outside.join("one-two.ipc.sock");
+        stale_socket(&socket_outside);
+        // \`active_socket_paths\` lists the sockets through a link, because it follows links.
+        let mesh_folder = base.join("meshfolder");
+        symlink(&outside, &mesh_folder).expect("writable");
+
+        sweep_member(
+            &base,
+            &mesh_folder.join("one-two.ipc.sock"),
+            SystemTime::now(),
+        );
+
+        assert!(
+            socket_outside.exists(),
+            "a socket behind a linked folder is not in the runtime base"
+        );
+        assert!(
+            outside.join("one-two.chunks").exists(),
+            "a chunk folder behind a linked folder is not in the runtime base"
         );
         let _ = std::fs::remove_dir_all(&base);
     }
