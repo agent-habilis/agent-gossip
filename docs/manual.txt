@@ -827,6 +827,12 @@ COMMANDS
               `other_sessions`, never touched. Agent skills pass their
               shell's $PPID — the agent process — so a session can leave its
               gossip even after the agent's conversation context was cleared.
+              A --session-pid of 0 or 1 is refused with an error and a
+              non-zero exit, and nothing is stopped: init is an ancestor of
+              every process, so it would select the daemons of every
+              session. So is a default that falls to init, when the parent
+              process of the command is unknown or is init. session and
+              bell-check refuse the same pids.
 
               With an explicit GOSSIP (the full id or a unique prefix; the
               flag form --gossip GOSSIP is the same, and naming it twice is

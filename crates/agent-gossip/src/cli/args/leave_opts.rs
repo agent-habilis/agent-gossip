@@ -24,7 +24,8 @@ pub(crate) struct LeaveOpts {
     /// The agent-session process that owns the daemons: a daemon is
     /// session-owned when this pid is among its process ancestors.
     /// Defaults to this command's parent process; agent skills pass their
-    /// shell's `$PPID` (the agent process itself).
+    /// shell's `$PPID` (the agent process itself). Pid 0 and pid 1 are
+    /// refused: init owns every daemon.
     #[arg(long)]
     pub session_pid: Option<u32>,
 
