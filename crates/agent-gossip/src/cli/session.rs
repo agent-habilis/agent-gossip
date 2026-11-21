@@ -276,12 +276,14 @@ pub(crate) async fn live_owner_of(path: &Path) -> Option<String> {
 
 pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
     let LeaveOpts {
-        gossip: mesh,
+        gossip,
+        gossip_flag,
         nickname,
         session_pid,
         confirm_timeout_secs,
         legacy_output: _,
     } = options;
+    let mesh = gossip.or(gossip_flag);
     let owners = live_owners().await;
     let Discovery { live, cleaned } = discover(&owners);
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {

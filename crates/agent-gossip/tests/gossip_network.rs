@@ -3337,6 +3337,42 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let _ = fs::remove_file(&bystander_log);
 }
 
+/// `peers`, `topology` and `poll` take the gossip as `--gossip <id>`, so `leave` takes it
+/// in that spelling too, with `--nickname` beside it.
+#[test]
+fn leave_takes_the_gossip_as_a_flag() {
+    let (mut daemon, log, mesh, nickname) = spawn_discoverable_daemon("leave-flag");
+
+    let mut command = common::test_cmd();
+    command.args(["leave", "--gossip", &mesh, "--nickname", &nickname]);
+    let out: std::process::Output = command.output().expect("failed to run leave");
+    assert!(
+        out.status.success(),
+        "the flag form is refused as an unexpected argument: {out:?}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim())
+            .expect("leave prints JSON on success");
+    let left = report["left"]
+        .as_array()
+        .expect("the JSON field is an array in this test");
+    assert_eq!(
+        left.len(),
+        1,
+        "the flag names the one daemon to stop: {report}"
+    );
+    assert_eq!(
+        left[0]["confirmed"], true,
+        "the daemon is still serving: {report}"
+    );
+    assert!(
+        !default_state_file(&mesh, &nickname).exists(),
+        "the daemon removes its own state file on the way out"
+    );
+    let _ = daemon.wait();
+    let _ = fs::remove_file(&log);
+}
+
 /// Three skills tell an agent "if the ready output carries `drift`, print it
 /// verbatim" — so `ready` has to be able to carry it.
 ///
