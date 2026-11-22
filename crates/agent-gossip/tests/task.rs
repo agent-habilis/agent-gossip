@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use agent_gossip::a2a::status_update_params;
 use agent_gossip::output_event::{OutputEvent, TaskGoneReason};
 use agent_gossip::{TaskId, TaskState};
 use agent_gossip_test_fixtures as common;
@@ -323,6 +324,52 @@ async fn cancel_advances_the_cancellers_own_record_and_response() {
 
     alice.leave().await;
     bob.leave().await;
+}
+
+/// A cancel is recorded by the canceller at the call, whether or not its leg reaches the worker.
+/// What makes that safe is the repair: a second `CancelTask` on a task that the canceller holds as
+/// canceled sends the canceled leg again, so a worker that missed the first leg can take the second.
+/// Without this, a change that answers the repeat from the record and sends nothing would pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_second_cancel_sends_the_canceled_leg_again() {
+    let mut alice = InProcNode::create("t-cancel-twice").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-cancel-twice-bob").await;
+    common::warm_up(&alice, &mut [&mut bob]).await;
+    let task_id = task_id_of(&alice.create_task("t-cancel-twice-bob", "never mind").await);
+    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+    let alice_nick = alice.nickname.clone();
+    let cancel = serde_json::json!({ "id": task_id.as_str() });
+
+    bob.a2a_call(&alice_nick, "CancelTask", cancel.clone())
+        .await;
+    assert!(
+        alice
+            .wait_for(TASK_WAIT, |events| canceled_legs(events) >= 1)
+            .await,
+        "the first cancel sends its leg"
+    );
+    bob.a2a_call(&alice_nick, "CancelTask", cancel).await;
+
+    assert!(
+        alice
+            .wait_for(TASK_WAIT, |events| canceled_legs(events) >= 2)
+            .await,
+        "the second cancel sends the canceled leg again, so a worker that missed the first can take it"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
+/// How many canceled legs the node sent, counted by the echo that it prints once the peer has the
+/// leg.
+fn canceled_legs(events: &[OutputEvent]) -> usize {
+    let is_canceled = |event: &&OutputEvent| {
+        matches!(event, OutputEvent::Task { message, .. }
+            if status_update_params::frame_task_state(message)
+                == Some(TaskState::Canceled))
+    };
+    events.iter().filter(is_canceled).count()
 }
 
 /// Two tasks created on the same worker get **distinct** server-minted ids and

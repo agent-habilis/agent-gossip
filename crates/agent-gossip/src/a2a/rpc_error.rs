@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 
 use super::TaskId;
 use super::extensions::META_WAITING;
-use super::task_record::{TaskRecord, TaskRole};
+use super::task_record::{self, LegInfo, LegKind, TaskRecord, TaskRole};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
     BroadcastParams, emit_task_status, log_pending, send_broadcast,
@@ -338,7 +338,32 @@ pub(crate) async fn handle_op(
             .await
             .map_err(|error| RpcError::internal(&error.to_string()))?;
             // The task is canceled in our record whether or not the peer is
-            // reached; awaiting the dial here would stop the event loop.
+            // reached: a cancel is the decision of the canceller, not a copy of a
+            // state of the peer. Awaiting the dial here would stop the event loop.
+            // The answer below reads that record, so it advances now. The queue of
+            // own legs advances it only when the peer has acknowledged the leg,
+            // after this answer is built. (The leg that the queue takes later
+            // finds the task canceled already, and advancing twice is safe.)
+            //
+            // If the leg is not delivered, a repeated cancel sends it again, while
+            // the record exists: a terminal record is swept after `task_timeout_secs`
+            // (120 s by default) with no activity, and then the answer is `task not
+            // found`. A worker that missed every leg in that window keeps the task open.
+            let canceller_view = app.tasks.get(&task_id).map(|rec| rec.peer_key);
+            if let Some(peer_key) = canceller_view {
+                task_record::apply(
+                    &mut app.tasks,
+                    &LegInfo {
+                        task_id: &task_id,
+                        peer_key: &peer_key,
+                        peer: None,
+                        kind: LegKind::Status(super::TaskState::Canceled),
+                        mine: true,
+                        fraction: None,
+                    },
+                    std::time::Instant::now(),
+                );
+            }
             log_pending(pending);
             app.tasks
                 .get(&task_id)
