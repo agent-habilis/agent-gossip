@@ -4379,6 +4379,22 @@ fn leave_confirms_a_stop_only_after_the_daemon_removed_its_files() {
     wait_ready(&daemon.state_file);
     let owner_pid = daemon.owner.0.id().to_string();
     let member = member_files(&owner_pid);
+    // A path that does not exist before the leave passes the `!exists()` checks below with nothing
+    // removed, so each file that the daemon must remove is shown to exist first.
+    assert!(
+        daemon.state_file.exists(),
+        "the daemon wrote its state file when it was ready"
+    );
+    assert!(
+        member.socket.exists(),
+        "the daemon made its socket at {:?}",
+        member.socket
+    );
+    assert!(
+        member.chunks.exists(),
+        "the daemon made its chunk folder at {:?}",
+        member.chunks
+    );
 
     let report = leave_by_owner(&owner_pid);
     assert_eq!(
