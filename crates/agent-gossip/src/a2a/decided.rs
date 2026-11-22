@@ -10,7 +10,9 @@ use crate::a2a::tuning;
 /// reads the clock for it: 1 deadline for all the handles of the send. The task that it spawns gives
 /// the same value to every effect of the send (the sent flag of the shard cache, the record of an own
 /// leg, the echo) and then to the caller. A layer above takes a `Decided` with [`Decided::follow`] and
-/// has no deadline of its own, so nothing judges a value that another layer has judged.
+/// has no deadline of its own, so nothing judges a value that another layer has judged. The CLI has no
+/// clock on the answer of the daemon either (the IPC client reads the reply with no timeout), so this is
+/// the only clock of a send.
 #[derive(Debug)]
 pub(crate) struct Decided(oneshot::Receiver<SendVerdict>);
 
