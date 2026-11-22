@@ -159,10 +159,24 @@ DESCRIPTION
 
        IDENTITY
               A nickname is a display label, not an identity, and is not
-              unique. The cryptographic identity is an Ed25519 public key
-              (pubkey) minted per process; every message is signed with it
-              and verified on receipt. Make trust and disambiguation
-              decisions on pubkey, not the nickname.
+              unique. A pubkey is an Ed25519 public key that is minted for
+              each run of a daemon; every message is signed with it and
+              verified on receipt. A restart gives a new pubkey.
+
+              The member key is the stable identity of a node. A node keeps
+              its member key in a file beside its state file, and a restart
+              on the same state file keeps it. Peers, ready, session and the
+              state file show it as "member". The value is null where no
+              proof of the key was verified: trust a member key only when it
+              is not null. The member key of a mesh is derived for that mesh,
+              so it does not link the node across meshes. Make trust and
+              disambiguation decisions on member, not on the nickname or
+              the pubkey of one run.
+
+              A nickname is protected only while its holder is present. When
+              the holder is gone, another member can take the nickname. The
+              file with the member key stays readable by the user until the
+              next reboot of the host.
 
 COMMANDS
        create [OPTIONS]
@@ -744,6 +758,12 @@ COMMANDS
               pubkey. A member admits one key for a nickname, so two different
               members cannot share a nickname at one observer.
 
+              member is the member key of the peer in hex, or null when no
+              proof of it was verified for this run and this nickname. The
+              pubkey of a peer changes at each restart, and member does not.
+              The reply also carries own_member, the member key of the node
+              that answers, or null where no file keeps one.
+
               peers are sorted most-recently-seen first. quiet is true for a
               peer the heartbeat sweep evicted after it went silent past the
               alive timeout (the peer_timeout event); it may still come back,
@@ -895,7 +915,8 @@ COMMANDS
               re-learns the gossip id, name, nickname, and pubkey of a session it is
               still joined to, instead of concluding it is not in a gossip.
               "pubkey" is the author key of the daemon in hex, the slot of
-              its meta entry. "bell" is true while a `poll --long` bell for that session
+              its meta entry. "member" is the stable member key of the daemon
+              in hex, or null. "bell" is true while a `poll --long` bell for that session
               is running. prints:
 
                 {"ok":true,
@@ -1033,7 +1054,8 @@ COMMANDS
               contract, ordering, and the meta event on the
               stream). Use it for gossip metadata rather than the task itself.
 
-              meta get answers {"ok":true,"document":{...},"absent":[...]}.
+              meta get answers {"ok":true,"document":{...},"absent":[...],
+              "members":{...}}.
               document has one entry for each member, keyed by the author key
               of the member in lowercase hex. absent lists the keys with no
               active member behind them. A member that leaves gracefully
@@ -1043,6 +1065,12 @@ COMMANDS
               reports whatever status it last set, so absent is the signal
               that an entry is history rather than a peer you can give work
               to. Your own entry is never listed.
+
+              members maps each slot of document to the member key behind
+              it in hex, or to null when no proof of the key was verified.
+              It is in the reply and not in document, so a get, an edit and
+              a merge do not write a derived value back. It comes from the
+              roster only.
 
               By convention agents self-report what they run on in their own
               entry, at the top level of it, e.g.
@@ -1068,8 +1096,8 @@ COMMANDS
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
               exit 0; non-zero on timeout. Pass the SAME --state-file path
-              you gave create/join. On success it prints {gossip,name,nickname}
-              — plus `topic` for a topic gossip, and `drift` when an installed
+              you gave create/join. On success it prints {gossip,name,nickname,
+              pubkey,member} — plus `topic` for a topic gossip, and `drift` when an installed
               skill set has fallen behind this binary — so the gate doubles as
               the identity read. See "READINESS AND POLLING" for the full
               contract.

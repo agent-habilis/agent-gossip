@@ -98,6 +98,22 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "where the warning lands in the launch of the skills",
         ),
         (
+            "The member key is the stable identity of a node",
+            "the stable identity beside the pubkey of one run",
+        ),
+        (
+            "protected only while its holder is present",
+            "the limit of the nickname protection",
+        ),
+        (
+            "own_member, the member key of the",
+            "the member key of the node itself in the peers reply",
+        ),
+        (
+            "members maps each slot of document",
+            "the member key of each slot in the meta get reply",
+        ),
+        (
             "Only the beacon publishes to the DHT",
             "who publishes to the DHT",
         ),
