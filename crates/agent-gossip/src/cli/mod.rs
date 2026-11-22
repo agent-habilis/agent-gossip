@@ -19,7 +19,6 @@ mod detach_if_owned;
 mod detached_stdio;
 mod discover;
 mod discover_params;
-mod discovery;
 mod dispatch;
 mod doctor;
 mod drift_warning;

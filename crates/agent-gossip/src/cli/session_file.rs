@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use habilis_network::util::process;
+use habilis_network::util::process_start::ProcessStart;
 
 use super::args::SessionFileOpts;
 use super::session;
@@ -17,8 +18,15 @@ pub(super) fn session_file(options: &SessionFileOpts) -> Result<()> {
 /// tell the two apart. A pid with no live process names no file: there is no fallback to the pid alone.
 fn session_file_path(base: &Path, pid: u32) -> Result<PathBuf> {
     let pid = session::session_anchor(Some(pid), None)?;
-    let start = process::live_start_time(pid)
-        .ok_or_else(|| anyhow!("no live process has pid {pid}, so no session file is named"))?;
+    let start = match process::start_of(pid) {
+        ProcessStart::Live(start) => start,
+        ProcessStart::Gone => {
+            anyhow::bail!("no live process has pid {pid}, so no session file is named")
+        }
+        ProcessStart::Unknown(error) => anyhow::bail!(
+            "the system gave no start time for pid {pid}, so no session file is named: {error}"
+        ),
+    };
     Ok(base.join("sessions").join(session_file_name(pid, start)))
 }
 

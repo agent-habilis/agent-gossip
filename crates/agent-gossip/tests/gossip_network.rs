@@ -22,6 +22,7 @@ use common::{
     wait_total, wait_until,
 };
 use habilis_network::util::process;
+use habilis_network::util::process_start::ProcessStart;
 use serde_json::json;
 
 /// Heal cadence for the reliability tests, injected through the hidden
@@ -1011,9 +1012,10 @@ fn second_daemon_refuses_a_state_file_already_in_use() {
         use std::io::Read;
         let _ = pipe.read_to_string(&mut stderr);
     }
+    // The refusal is the engine's: the key lock of the state file is held. The CLI has no check of its own.
     assert!(
-        stderr.contains("already in use"),
-        "the refusal should say the file is taken, got: {stderr}"
+        stderr.contains("another daemon still runs on this state file"),
+        "the refusal should say that a daemon runs on the file, got: {stderr}"
     );
 
     // The first daemon still owns the file and is unharmed.
@@ -4334,7 +4336,7 @@ fn leave_keeps_the_state_file_of_a_daemon_that_does_not_answer() {
 /// A member as `session` reports it, with the files that its daemon keeps in its runtime folder.
 struct MemberFiles {
     pid: String,
-    dir: PathBuf,
+    lock: PathBuf,
     socket: PathBuf,
     chunks: PathBuf,
     log: PathBuf,
@@ -4354,88 +4356,24 @@ fn member_files(owner_pid: &str) -> MemberFiles {
         .parent()
         .expect("a state file sits in a folder")
         .to_path_buf();
+    let mesh_folder: String = mesh.chars().take(16).collect();
+    let lock = common::runtime_base()
+        .join("locks")
+        .join(format!("{mesh_folder}-{nickname}.lock"));
     MemberFiles {
         pid: member["pid"].to_string(),
+        lock,
         socket: dir.join(format!("{nickname}.ipc.sock")),
         chunks: dir.join(format!("{nickname}.chunks")),
         log: dir.join(format!("{nickname}.tracing.log")),
-        dir,
     }
 }
 
-/// `SIGKILL` leaves the files of a daemon behind, and `leave` and `session` sweep what a dead
-/// member left: its socket and its chunk folder at once, its tracing log (the debug record of the
-/// run) only when it is 7 days old, and the folder when nothing else is in it.
+/// A daemon that stops cleanly removes its own state file, socket and chunk folder before it lets go of its
+/// lock, and `leave` confirms the stop when it gets that lock. So `confirmed` means that the daemon is gone
+/// and has removed its files, and no command sweeps after it.
 #[test]
-fn session_sweeps_the_leftovers_of_a_dead_member() {
-    let _serial = serial_guard();
-    let daemon = launch_detached_daemon("swept-member");
-    wait_ready(&daemon.state_file);
-    let owner_pid = daemon.owner.0.id().to_string();
-    let member = member_files(&owner_pid);
-    assert!(
-        member.socket.exists() && member.chunks.exists(),
-        "a running daemon keeps its socket and its chunk folder in {:?}",
-        member.dir
-    );
-    // The test harness sends the log to \`--log-dir\`. A default daemon writes it here.
-    fs::write(&member.log, "a run's tracing log").expect("the member folder is writable");
-
-    let status = Command::new("kill")
-        .args(["-KILL", &member.pid])
-        .status()
-        .expect("kill is on PATH on every unix host, so it spawns");
-    assert!(
-        status.success(),
-        "the signal reaches the daemon it was read from"
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while process::is_alive(member.pid.parse().expect("a pid is a number")) {
-        assert!(
-            Instant::now() < deadline,
-            "the killed daemon is still alive"
-        );
-        std::thread::sleep(POLL);
-    }
-
-    session_report(&owner_pid);
-    assert!(
-        !member.socket.exists(),
-        "a socket that refuses the connection belongs to no daemon"
-    );
-    assert!(
-        !member.chunks.exists(),
-        "the chunk folder of a dead member is a cache that nobody reads"
-    );
-    assert!(
-        member.log.exists(),
-        "the log of a run that ended a moment ago is the record of why it ended"
-    );
-
-    let week_and_a_day = Duration::from_hours(8 * 24);
-    let old = fs::OpenOptions::new()
-        .write(true)
-        .open(&member.log)
-        .expect("the log is a file of this user");
-    old.set_modified(std::time::SystemTime::now() - week_and_a_day)
-        .expect("the owner of a file sets its modification time");
-    drop(old);
-    session_report(&owner_pid);
-    assert!(
-        !member.log.exists(),
-        "the log of a dead member goes after 7 days"
-    );
-    assert!(
-        !member.dir.exists(),
-        "an empty member folder goes with its last file"
-    );
-}
-
-/// A clean stop removes the state file, and the engine removes neither the socket nor the chunk
-/// folder. `leave` sweeps them once the daemon is gone, so a member that it stopped leaves no
-/// files of its own behind.
-#[test]
-fn leave_sweeps_what_the_stopped_daemon_left() {
+fn leave_confirms_a_stop_only_after_the_daemon_removed_its_files() {
     let _serial = serial_guard();
     let daemon = launch_detached_daemon("stopped-member");
     wait_ready(&daemon.state_file);
@@ -4445,16 +4383,148 @@ fn leave_sweeps_what_the_stopped_daemon_left() {
     let report = leave_by_owner(&owner_pid);
     assert_eq!(
         report["left"][0]["confirmed"], true,
-        "the daemon is gone before its files are swept: {report}"
+        "the lock is free when the daemon has ended: {report}"
     );
     assert!(
         !member.socket.exists(),
-        "the socket of the daemon that leave stopped is swept"
+        "the daemon removed its own socket before it ended"
     );
     assert!(
         !member.chunks.exists(),
-        "the chunk folder of the daemon that leave stopped is swept"
+        "the daemon removed its own chunk folder before it ended"
     );
+}
+
+/// A daemon that was killed is not listed any more, because its record names a process that is gone. Its lock
+/// file stays: no command removes a lock file, so that two starts of one member keep one lock.
+#[test]
+fn a_killed_daemon_is_not_listed_and_its_lock_file_stays() {
+    let _serial = serial_guard();
+    let daemon = launch_detached_daemon("killed-member");
+    wait_ready(&daemon.state_file);
+    let owner_pid = daemon.owner.0.id().to_string();
+    let member = member_files(&owner_pid);
+    assert!(
+        member.lock.exists(),
+        "a running daemon has its lock file in the registry: {:?}",
+        member.lock
+    );
+
+    let status = Command::new("kill")
+        .args(["-KILL", &member.pid])
+        .status()
+        .expect("kill is on PATH on every unix host, so it spawns");
+    assert!(
+        status.success(),
+        "the signal reaches the daemon that the test started"
+    );
+    let dead_pid: u32 = member.pid.parse().expect("a pid is a number");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while process::is_alive(dead_pid) {
+        assert!(
+            Instant::now() < deadline,
+            "the killed daemon is still alive"
+        );
+        std::thread::sleep(POLL);
+    }
+
+    let report = session_report(&owner_pid);
+    let listed = report["sessions"].as_array().map_or(usize::MAX, Vec::len);
+    assert_eq!(
+        listed, 0,
+        "a daemon that is gone is not a session: {report}"
+    );
+    assert!(
+        member.lock.exists(),
+        "the lock file of a dead member stays, with its old record"
+    );
+}
+
+/// `confirmed` means that the daemon let go of its lock, so a start of the same mesh and nickname right after
+/// `leave` finds the lock free and is not refused. There is no retry in the start and no wait in the test.
+#[test]
+fn a_start_right_after_leave_is_not_refused() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("restart-anchor");
+    let dir = std::env::temp_dir().join(format!("restart-after-leave-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("restart-after-leave");
+    let spec = NodeSpec {
+        mesh: &mesh,
+        nickname: "restart-node",
+        state: &state,
+    };
+    let mut first = start_keyed_node(&spec, false, &stderr);
+
+    let mut leave = common::test_cmd();
+    leave.args(["leave", "--gossip", &mesh, "--nickname", "restart-node"]);
+    let out = output_within(&mut leave, QUERY_LIMIT);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("leave prints JSON");
+    first.crashed = true;
+    let second = start_keyed_node(&spec, false, &stderr);
+    crash(second);
+
+    assert_eq!(
+        report["left"][0]["confirmed"], true,
+        "leave got the lock, so the daemon had ended: {report}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// A second start of one mesh and nickname is refused at once with the message of the host, and the first
+/// daemon is not harmed: it still answers on its own socket.
+#[test]
+fn a_second_start_of_one_member_is_refused_and_the_first_daemon_still_answers() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("refuse-anchor");
+    let dir = std::env::temp_dir().join(format!("refuse-second-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let first_state = dir.join("first.json");
+    let stderr = tmp_log("refuse-second");
+    let first = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "one-member",
+            state: &first_state,
+        },
+        false,
+        &stderr,
+    );
+
+    let mut second = common::test_cmd();
+    second.args(["join", &mesh, "--nickname", "one-member", "--state-file"]);
+    second.arg(dir.join("second.json"));
+    let began = Instant::now();
+    let refused = output_within(&mut second, QUERY_LIMIT);
+    let waited = began.elapsed();
+    let mut peers = common::test_cmd();
+    peers.args(["peers", "--gossip", &mesh, "--nickname", "one-member"]);
+    let answer = output_within(&mut peers, QUERY_LIMIT);
+    crash(first);
+
+    let message = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        !refused.status.success(),
+        "the second start exits non-zero: {refused:?}"
+    );
+    assert!(
+        message.contains("another daemon already runs as one-member"),
+        "the refusal is the message of the host: {message}"
+    );
+    assert!(
+        waited < Duration::from_secs(10),
+        "the refusal is at once, and it took {waited:?}"
+    );
+    assert!(
+        answer.status.success(),
+        "the first daemon still answers on its own socket: {answer:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
 }
 
 /// Pid 0 and pid 1 are ancestors of every process, so a command that selects daemons by them
@@ -4682,7 +4752,8 @@ fn a_state_file_that_the_user_chose_keeps_its_member_under_another_parent() {
 }
 
 /// The member key and the run counter are the identity of a node across a restart. `session` and `leave`
-/// remove the stale state file of a crashed daemon, and nothing in the app may remove the key or the counter.
+/// remove nothing of a crashed daemon: its state file stays until the same member starts again, and nothing
+/// in the app may remove the key or the counter.
 #[test]
 fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
     let _serial = serial_guard();
@@ -4710,8 +4781,8 @@ fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
     leave_by_owner(&owner_pid);
 
     assert!(
-        !daemon.state_file.exists(),
-        "the stale state file of the crashed daemon is the one thing that goes"
+        daemon.state_file.exists(),
+        "the stale state file of the crashed daemon stays: no command cleans it"
     );
     assert_eq!(
         kept_key(&daemon.state_file),
@@ -5193,7 +5264,7 @@ fn owner_pid_rejects_init_and_dead_owner() {
         .expect("`true` is on PATH on every unix host, so it spawns");
     let zombie_pid = zombie.id().to_string();
     let exited = Instant::now() + Duration::from_secs(2);
-    while process::live_start_time(zombie.id()).is_some() {
+    while matches!(process::start_of(zombie.id()), ProcessStart::Live(_)) {
         assert!(Instant::now() < exited, "the zombie owner never exited");
         std::thread::sleep(POLL);
     }

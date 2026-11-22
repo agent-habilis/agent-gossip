@@ -43,9 +43,10 @@ pub(crate) struct SharedServerOpts {
     /// render live count + liveness without IPC. Defaults to
     /// `<runtime-base>/<mesh-prefix>/<nick>.state.json` (beside the socket +
     /// log); pass this to write elsewhere instead. `leave` and `session` find
-    /// a file outside the runtime base through the daemon's socket. If the
-    /// daemon dies without cleaning up (SIGKILL, power loss), nothing names
-    /// that file any more, so it stays.
+    /// the daemon through its record in the registry, which names this file.
+    /// If the daemon dies without cleaning up (SIGKILL, power loss), the file
+    /// stays: no command removes it, and the next start of the same mesh and
+    /// nickname writes it again.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 

@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 
-/// One live daemon on this machine, resolved from its state file. `mesh`
+/// One live daemon on this machine, resolved from its record in the registry. `mesh`
 /// and `pid` are required to act on an entry; `name`/`nickname`/`topic` are
 /// carried for reporting only.
 #[derive(Debug, Clone)]
 pub(crate) struct Target {
     pub(super) path: PathBuf,
+    /// The lock file of the member in the registry: its record is the proof that the daemon runs, and
+    /// `leave` waits on the lock until the daemon has ended.
+    pub(super) lock: PathBuf,
     pub(super) mesh: String,
     pub(super) name: Option<String>,
     pub(super) nickname: Option<String>,

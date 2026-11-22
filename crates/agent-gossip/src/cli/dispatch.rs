@@ -73,7 +73,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             Box::pin(topic(options)).await
         }
         Commands::Leave { options } => super::session::leave(options).await,
-        Commands::Session { options } => super::session::session(&options).await,
+        Commands::Session { options } => super::session::session(&options),
         Commands::SessionFile { options } => super::session_file::session_file(&options),
         Commands::BellCheck { options } => {
             if super::session::bell_check(&options).await? {

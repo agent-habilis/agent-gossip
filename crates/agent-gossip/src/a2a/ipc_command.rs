@@ -521,35 +521,10 @@ impl IpcRequest<'_> {
         false
     }
 
-    /// The `doctor` identity probe response: this daemon's own mesh id, human
-    /// name, nickname, and mesh size. `peer_count` matches the field name
-    /// `peers` / the state file / MCP `gossip_info` already use for mesh size
-    /// (roster peers + 1 for self).
     fn info(self) -> bool {
-        let peer_count = self.state.roster_snapshot().count;
-        let state_file = self.app.state_file().and_then(std::path::Path::to_str);
-        if state_file.is_none() && self.app.state_file().is_some() {
-            tracing::debug!(
-                target: "agent_gossip::a2a",
-                "the state file path is not UTF-8, so the Info reply names none"
-            );
-        }
-        let reply = serde_json::json!({
-            "ok": true,
-            "gossip": self.mesh.as_str(),
-            "name": self.name.as_str(),
-            "nickname": self.author.as_str(),
-            "peer_count": peer_count,
-            // The daemon answering, not the pid some file claims. A state file
-            // outlives a SIGKILLed daemon, and the OS reissues pids, so a file's
-            // pid alone cannot say whether *this* session is the one still
-            // running there — see `cli::session::confirm_owner`.
-            "pid": std::process::id(),
-            // Null when the state file is at the engine default under the runtime base, where
-            // `leave` and `session` walk for it. A path elsewhere is found only through this reply.
-            "state_file": state_file,
-        });
-        let _ = self.resp_tx.send(reply.to_string());
+        let _ = self
+            .resp_tx
+            .send(info_response(self.mesh, self.name, self.author, self.state));
         false
     }
 
@@ -709,6 +684,28 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
         Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
         Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
+}
+
+/// The `doctor` identity probe response: this daemon's own mesh id, human
+/// name, nickname, and mesh size. `peer_count` matches the field name
+/// `peers` / the state file / MCP `gossip_info` already use for mesh size
+/// (roster peers + 1 for self).
+fn info_response(
+    mesh: &MeshId,
+    name: &MeshName,
+    author: &Nickname,
+    state: &EventLoopState,
+) -> String {
+    serde_json::json!({
+        "ok": true,
+        "gossip": mesh.as_str(),
+        "name": name.as_str(),
+        "nickname": author.as_str(),
+        "peer_count": state.roster_snapshot().count,
+        // The daemon answering, not the pid some file claims.
+        "pid": std::process::id(),
+    })
+    .to_string()
 }
 
 /// Map a state-merge outcome to its IPC response JSON and whether anything was

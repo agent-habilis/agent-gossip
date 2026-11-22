@@ -20,25 +20,25 @@ fn peers_help_says_that_peer_count_is_the_active_peers_plus_self() {
     );
 }
 
-/// `leave` finds a daemon through its state file, and through its socket when the state file is
-/// outside the runtime base, so the help names both.
+/// `leave` finds a daemon through the registry of the runtime base and not through a socket, so the help
+/// names the registry.
 #[test]
-fn leave_help_names_the_sockets_beside_the_state_files() {
+fn leave_help_names_the_registry_of_the_daemons() {
     let command = agent_gossip::cli_command();
     let leave = command
         .find_subcommand("leave")
         .expect("the CLI has the `leave` command");
     let help = long_help(leave);
     assert!(
-        help.contains("sockets"),
-        "`leave --help` says that discovery reads state files only: {help}"
+        help.contains("registry"),
+        "`leave --help` does not say where discovery looks: {help}"
     );
 }
 
-/// A state file outside the runtime base is found through its daemon's socket, so a daemon that
-/// died without cleaning up leaves a file that nothing names. The help of the flag says so.
+/// A daemon that died without cleaning up leaves its state file, and no command removes it. The help of
+/// the flag says so.
 #[test]
-fn the_state_file_help_names_the_limit_of_a_path_outside_the_runtime_base() {
+fn the_state_file_help_says_that_a_crash_leaves_the_file() {
     let command = agent_gossip::cli_command();
     let create = command
         .find_subcommand("create")
@@ -49,8 +49,8 @@ fn the_state_file_help_names_the_limit_of_a_path_outside_the_runtime_base() {
         .expect("`create` takes --state-file");
     let help = flag.get_help().map(ToString::to_string).unwrap_or_default();
     assert!(
-        help.contains("outside the runtime base"),
-        "the --state-file help is silent about a path that no discovery can clean: {help}"
+        help.contains("no command removes it"),
+        "the --state-file help is silent about the file that a crash leaves: {help}"
     );
 }
 

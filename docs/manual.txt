@@ -826,21 +826,28 @@ COMMANDS
 
        leave [GOSSIP | --gossip GOSSIP] [--nickname NAME] [--session-pid PID]
               Leave a gossip: stop the local create/join/topic daemon.
-              Discovery is via the daemons' state files under
-              /tmp/agent-gossip, and via their sockets, which are always
-              there; each match gets a SIGTERM, on which
-              the daemon broadcasts `left` to its peers and removes its
-              state file (the removal is what `confirmed` reports). State
-              files whose recorded pid is gone (SIGKILL, power loss) are
-              deleted along the way and counted in `cleaned`.
+              Discovery reads the registry of the daemons: each mesh and
+              nickname that ran has a lock file in /tmp/agent-gossip/locks,
+              and a running daemon keeps its record there: its pid, its
+              start time, its mesh, its nickname and the path of its state
+              file. A daemon runs when a process has that pid and that start
+              time. No daemon is asked and no lock is taken, so a stopped
+              daemon (SIGSTOP) is still listed. Each daemon that runs gets a
+              SIGTERM, on which it broadcasts `left` to its peers, removes
+              its state file, its socket and its chunk folder, and lets go
+              of its lock. leave then waits for that lock, and `confirmed`
+              is true when it got it: the daemon has ended and has removed
+              its files.
 
-              leave and session also sweep what a dead member left in its
-              folder under /tmp/agent-gossip: a socket that refuses the
-              connection goes at once, with the member's `<nick>.chunks`
-              folder; its `<nick>.tracing.log` goes when it has no socket
-              beside it and is 7 days old; the folder goes when it is
-              empty. A member that does not answer in time is not dead and
-              keeps every file.
+              leave and session remove one more thing: a `<nick>.tracing.log`
+              that has no socket beside it and is 7 days old, and the
+              folder that this removal empties. A daemon that dies by
+              SIGKILL (or power loss) leaves its socket, its chunk folder
+              and its state file, and no command removes them. The next
+              start of the same mesh and nickname cleans the socket and the
+              chunk folder and writes the state file again. If it starts
+              with another --state-file, the old state file stays until the
+              host restarts. The lock file of the registry stays too.
 
               A daemon stops within about 0.5 s. When a peer does not
               acknowledge the close (the peer is stopped, gone, or on a slow
@@ -881,21 +888,23 @@ COMMANDS
               an error), that gossip's local member(s) are stopped regardless
               of owner; narrow to one member with --nickname when several run
               on this machine. A daemon started with a --state-file outside
-              /tmp/agent-gossip is found through its socket, which reports
-              the absolute path of the file. If such a daemon dies by
-              SIGKILL, its file stays: nothing names it. In-process
-              sessions write no state file and are not discoverable. Two
-              daemons on one state path
-              cannot run: the second fails at start with "another daemon
-              holds the member key {path}: two live daemons cannot be one
-              member; use another nickname or another --state-file".
+              /tmp/agent-gossip is found like any other: its record names
+              the file. In-process sessions take no lock and write no state
+              file, so they are not discoverable. One daemon runs for each
+              mesh and nickname on a host. A second start of the same mesh
+              and nickname fails at once with "another daemon already runs
+              as {nick} on mesh {id} in this runtime folder (pid {pid}): use
+              another nickname", and the first daemon is not touched. Two
+              daemons on one state path cannot run either: the second fails
+              at start with "another daemon still runs on this state file and
+              holds the member key {path}".
               Exits 0 whether or not anything matched; prints:
 
                 {"ok":true,
                  "left":[{"gossip":"<hash>","name":"cool-team",
                           "nickname":"swift-cedar","pid":34299,
                           "confirmed":true}],
-                 "other_sessions":0,"cleaned":0}
+                 "other_sessions":0}
 
        session [--session-pid PID]
               Report the gossip the calling session is joined to — the
@@ -914,7 +923,7 @@ COMMANDS
                  "sessions":[{"gossip":"<hash>","name":"cool-team",
                               "nickname":"swift-cedar","pubkey":"<hex>",
                               "pid":34299,"bell":true}],
-                 "other_sessions":0,"cleaned":0}
+                 "other_sessions":0}
 
        session-file --session-pid PID
               Print the state file path for the agent session with process

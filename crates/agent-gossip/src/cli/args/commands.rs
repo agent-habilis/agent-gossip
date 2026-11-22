@@ -42,16 +42,15 @@ pub(crate) enum Commands {
 
     /// Leave a gossip: stop this session's local daemon.
     ///
-    /// Finds running create/join/topic daemons through their state files
-    /// and their sockets, and sends each a SIGTERM; a daemon broadcasts
-    /// `left` to its peers and removes its state file on the way out. With
-    /// no GOSSIP, stops only the daemons owned by the calling session —
-    /// those with `--session-pid` among their process ancestors — and never
-    /// touches other sessions'. An explicit GOSSIP, or `--gossip`, targets
-    /// that gossip's local member(s) regardless of owner. State files in the
-    /// runtime base whose daemon is gone (SIGKILL, power loss) are cleaned
-    /// up along the way, and so are the socket and the chunk folder of a
-    /// dead member. A member that does not answer in time is not dead.
+    /// Finds running create/join/topic daemons in the registry of the
+    /// runtime base (a record of pid and start time in a lock file), and
+    /// sends each a SIGTERM; a daemon broadcasts `left` to its peers and
+    /// removes its own files on the way out, and `leave` then waits for its
+    /// lock. With no GOSSIP, stops only the daemons owned by the calling
+    /// session — those with `--session-pid` among their process ancestors —
+    /// and never touches other sessions'. An explicit GOSSIP, or `--gossip`,
+    /// targets that gossip's local member(s) regardless of owner. A tracing
+    /// log that is 7 days old and has no socket is removed along the way.
     Leave {
         #[command(flatten)]
         options: LeaveOpts,

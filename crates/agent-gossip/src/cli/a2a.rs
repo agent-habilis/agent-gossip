@@ -371,14 +371,12 @@ async fn fetch(
         Some(path) => Some(path),
         None => match nickname {
             Some(nick) => {
-                let mesh = super::session::mesh_for_nickname(nick.as_str())
-                    .await
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "no live session for nickname '{}' — start one, or pass --output",
-                            nick.as_str()
-                        )
-                    })?;
+                let mesh = super::session::mesh_for_nickname(nick.as_str()).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no live session for nickname '{}' — start one, or pass --output",
+                        nick.as_str()
+                    )
+                })?;
                 // Validate the private base (fail closed) before the
                 // receive dir is created under it.
                 let dir = crate::ensure_mesh_runtime_dir(&mesh)
