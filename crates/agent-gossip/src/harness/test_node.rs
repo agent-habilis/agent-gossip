@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use habilis_network::protocol::AuthorKey;
 
-use crate::api::{CreateConfig, CreateError, JoinConfig, JoinError, MeshSession, SessionError};
+use crate::api::{
+    CreateConfig, CreateError, JoinConfig, JoinError, MeshSession, SessionError, TopicConfig,
+};
 
 impl MeshSession {
     /// Create a mesh whose runtime files go to `base`, not to the runtime base of the host. A test gives
@@ -21,6 +23,14 @@ impl MeshSession {
     /// The same as [`MeshSession::join`].
     pub async fn join_in(config: JoinConfig, base: PathBuf) -> Result<Self, JoinError> {
         Self::join_with_base(config, base).await
+    }
+
+    /// Join a topic whose runtime files go to `base`. Test-only, as [`MeshSession::create_in`].
+    ///
+    /// # Errors
+    /// The same as [`MeshSession::topic`].
+    pub async fn topic_in(config: TopicConfig, base: PathBuf) -> Result<Self, JoinError> {
+        Self::topic_with_base(config, base).await
     }
 
     /// The author key of this member, which a test needs when two members share a nickname and the

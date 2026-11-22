@@ -32,7 +32,9 @@ pub struct InProcNode {
     pub mesh: String,
     /// The nickname of the node in that mesh.
     pub nickname: String,
-    /// The runtime base of this node. It is the last field, so that the folder goes after the session.
+    /// The runtime base of this node, which the fixture removes on drop. It is the last field, so that the
+    /// folder goes after the session. The loop of the session can still run for a moment after its drop,
+    /// so an error about a file of the base that is gone can be this.
     _base: OwnBase,
 }
 
@@ -185,11 +187,12 @@ impl InProcNode {
         init_test_tracing();
         let config = agent_gossip::api::TopicConfig::new(string.to_owned())
             .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::topic(config)
+            MeshSession::topic_in(config, base.path())
                 .await
                 .expect("in-process topic join failed"),
-            OwnBase::new(),
+            base,
         )
     }
 

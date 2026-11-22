@@ -69,8 +69,19 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
+        Self::topic_with_base(config, crate::runtime_base()).await
+    }
+
+    /// [`Self::topic`] with the runtime base named, as [`Self::join_with_base`] does for a join.
+    ///
+    /// # Errors
+    /// The same as [`Self::topic`].
+    pub(crate) async fn topic_with_base(
+        config: TopicConfig,
+        base: PathBuf,
+    ) -> Result<Self, JoinError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io) = topic_setup(config, output, crate::runtime_base()).await?;
+        let (elc, io) = topic_setup(config, output, base).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
