@@ -4,8 +4,7 @@ use std::time::Duration;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::iroh::Endpoint;
 use habilis_network::ops::{
-    MergeCtx, MeshSender, PendingSend, StateMergeParams, broadcast_state_merge, invite,
-    start_ping_round,
+    MergeCtx, MeshSender, StateMergeParams, broadcast_state_merge, invite, start_ping_round,
 };
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
@@ -21,6 +20,7 @@ use crate::a2a::broadcast_params::{
     BroadcastParams, FileRef, MsgParams, TaskArtifactEmitParams, TaskStatusParams,
     emit_task_artifact, emit_task_status, live_holders, send_broadcast, send_msg, when_sent,
 };
+use crate::a2a::decided::Decided;
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths, row_endpoint};
 use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
@@ -534,7 +534,7 @@ impl IpcRequest<'_> {
     }
 }
 
-fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<PendingSend>) {
+fn respond_when_sent(resp_tx: oneshot::Sender<String>, ok: String, pending: Vec<Decided>) {
     when_sent(pending, move |verdict| {
         let _ = resp_tx.send(match verdict {
             Ok(()) => ok,
