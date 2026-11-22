@@ -56,7 +56,7 @@ fn target_from(lock: &Path, record: DaemonRecord) -> Target {
         owner_pid,
         lock: lock.to_path_buf(),
         mesh,
-        nickname: Some(nickname),
+        nickname,
         pid: record.pid,
         path: record.state_file,
     }
@@ -78,7 +78,7 @@ fn owned_by(target: &Target, anchor: u32) -> bool {
 pub(crate) fn mesh_for_nickname(nickname: &str) -> Option<String> {
     discover(&runtime_base())
         .into_iter()
-        .find(|target| target.nickname.as_deref() == Some(nickname))
+        .find(|target| target.nickname == nickname)
         .map(|target| target.mesh)
 }
 
@@ -100,7 +100,7 @@ fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec
         .into_iter()
         .filter(|target| target.mesh.starts_with(mesh));
     in_mesh
-        .filter(|target| nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted)))
+        .filter(|target| nickname.is_none_or(|wanted| target.nickname == wanted))
         .collect()
 }
 
@@ -132,9 +132,7 @@ fn target_json(target: &Target) -> serde_json::Value {
     if let Some(name) = &target.name {
         obj.insert("name".into(), name.clone().into());
     }
-    if let Some(nickname) = &target.nickname {
-        obj.insert("nickname".into(), nickname.clone().into());
-    }
+    obj.insert("nickname".into(), target.nickname.clone().into());
     if let Some(pubkey) = &target.pubkey {
         obj.insert("pubkey".into(), pubkey.clone().into());
     }
@@ -219,9 +217,13 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
 /// alone, so the record is read again just before the signal, and the pids 0 and 1 are never signalled.
 fn runs_now(target: &Target) -> bool {
     let record = read_record(&target.lock).ok().flatten();
-    record.is_some_and(|record| {
-        record.pid == target.pid && record.pid > 1 && record.state() == DaemonState::Live
-    })
+    record.is_some_and(|record| may_signal(target.pid, record.pid, record.state()))
+}
+
+/// The 3 conditions of a signal: the record names the pid of the target, that pid is not 0 or 1 (a signal to 0
+/// goes to a whole process group, and 1 is init), and the daemon of the record runs.
+fn may_signal(target_pid: u32, record_pid: u32, state: DaemonState) -> bool {
+    record_pid == target_pid && record_pid > 1 && state == DaemonState::Live
 }
 
 /// Wait on a plain thread for the lock of a daemon, which is free when the daemon has ended. The thread is
@@ -256,11 +258,7 @@ pub(crate) fn session(options: &SessionOpts) -> Result<()> {
         .iter()
         .map(|target| {
             let mut json = target_json(target);
-            json["bell"] = target
-                .nickname
-                .as_deref()
-                .is_some_and(|nickname| bell::is_armed(&target.mesh, nickname))
-                .into();
+            json["bell"] = bell::is_armed(&target.mesh, &target.nickname).into();
             json
         })
         .collect();
@@ -285,13 +283,10 @@ fn unarmed(
     is_ready: impl Fn(&Target) -> bool,
     is_armed: impl Fn(&str, &str) -> bool,
 ) -> Vec<&str> {
-    owned
+    let deaf = owned
         .iter()
-        .filter_map(|target| {
-            let nickname = target.nickname.as_deref()?;
-            (!is_armed(&target.mesh, nickname) && is_ready(target)).then_some(nickname)
-        })
-        .collect()
+        .filter(|target| !is_armed(&target.mesh, &target.nickname) && is_ready(target));
+    deaf.map(|target| target.nickname.as_str()).collect()
 }
 
 fn is_ready(target: &Target) -> bool {
@@ -343,11 +338,13 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    use habilis_network::runtime::DaemonState;
     use habilis_network::util::process;
     use habilis_network::util::process_start::ProcessStart;
 
     use super::{
-        Target, discover, owned_by, runs_now, select_explicit, session_anchor, split_owned, unarmed,
+        Target, discover, may_signal, owned_by, runs_now, select_explicit, session_anchor,
+        split_owned, unarmed,
     };
 
     /// A mesh id that the engine accepts, for the records that these tests write.
@@ -359,7 +356,7 @@ mod tests {
             lock: PathBuf::from("/nonexistent.lock"),
             mesh: mesh.to_owned(),
             name: Some("cool-team".to_owned()),
-            nickname: Some(nickname.to_owned()),
+            nickname: nickname.to_owned(),
             pubkey: None,
             topic: None,
             pid,
@@ -407,13 +404,10 @@ mod tests {
 
     #[test]
     fn unarmed_skips_unready_and_armed_sessions() {
-        let mut anonymous = target("m4", "x", 4);
-        anonymous.nickname = None;
         let owned = [
             target("m1", "armed", 1),
             target("m2", "starting", 2),
             target("m3", "deaf", 3),
-            anonymous,
         ];
         let missing = unarmed(
             &owned,
@@ -466,8 +460,7 @@ mod tests {
             "a daemon that is not ready yet is listed: {listed:?}"
         );
         assert_eq!(
-            listed[0].nickname.as_deref(),
-            Some("one-two"),
+            listed[0].nickname, "one-two",
             "the record names the nickname"
         );
         assert!(listed[0].name.is_none(), "nobody waits for the state file");
@@ -548,12 +541,35 @@ mod tests {
             !runs_now(&live),
             "a record read again that names another start says gone"
         );
-
-        let init = write_record(&base, "init-one", (1, 1), &state);
-        let mut init_target = target("m", "init-one", 1);
-        init_target.lock = init;
-        assert!(!runs_now(&init_target), "pid 1 is never signalled");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_signal_needs_the_same_pid_a_pid_above_1_and_a_live_daemon() {
+        assert!(
+            may_signal(10, 10, DaemonState::Live),
+            "the daemon that runs"
+        );
+        assert!(
+            !may_signal(10, 11, DaemonState::Live),
+            "a record of another pid"
+        );
+        assert!(
+            !may_signal(10, 10, DaemonState::Gone),
+            "a daemon that is gone"
+        );
+        assert!(
+            !may_signal(10, 10, DaemonState::Unknown),
+            "a daemon that may run is not signalled"
+        );
+        assert!(
+            !may_signal(1, 1, DaemonState::Live),
+            "init is never signalled"
+        );
+        assert!(
+            !may_signal(0, 0, DaemonState::Live),
+            "pid 0 would signal a process group"
+        );
     }
 
     #[test]

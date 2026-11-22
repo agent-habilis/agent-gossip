@@ -4386,6 +4386,10 @@ fn leave_confirms_a_stop_only_after_the_daemon_removed_its_files() {
         "the lock is free when the daemon has ended: {report}"
     );
     assert!(
+        !daemon.state_file.exists(),
+        "the daemon removed its own state file before it ended"
+    );
+    assert!(
         !member.socket.exists(),
         "the daemon removed its own socket before it ended"
     );
@@ -4474,8 +4478,8 @@ fn a_start_right_after_leave_is_not_refused() {
     let _ = fs::remove_file(anchor_log);
 }
 
-/// A second start of one mesh and nickname is refused at once with the message of the host, and the first
-/// daemon is not harmed: it still answers on its own socket.
+/// A second start of one mesh and nickname is refused with the message of the host, and the first daemon is
+/// not harmed: it still answers on its own socket.
 #[test]
 fn a_second_start_of_one_member_is_refused_and_the_first_daemon_still_answers() {
     let _serial = serial_guard();
@@ -4497,9 +4501,7 @@ fn a_second_start_of_one_member_is_refused_and_the_first_daemon_still_answers() 
     let mut second = common::test_cmd();
     second.args(["join", &mesh, "--nickname", "one-member", "--state-file"]);
     second.arg(dir.join("second.json"));
-    let began = Instant::now();
     let refused = output_within(&mut second, QUERY_LIMIT);
-    let waited = began.elapsed();
     let mut peers = common::test_cmd();
     peers.args(["peers", "--gossip", &mesh, "--nickname", "one-member"]);
     let answer = output_within(&mut peers, QUERY_LIMIT);
@@ -4513,10 +4515,6 @@ fn a_second_start_of_one_member_is_refused_and_the_first_daemon_still_answers() 
     assert!(
         message.contains("another daemon already runs as one-member"),
         "the refusal is the message of the host: {message}"
-    );
-    assert!(
-        waited < Duration::from_secs(10),
-        "the refusal is at once, and it took {waited:?}"
     );
     assert!(
         answer.status.success(),

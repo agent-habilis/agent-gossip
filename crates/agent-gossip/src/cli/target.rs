@@ -11,7 +11,7 @@ pub(crate) struct Target {
     pub(super) lock: PathBuf,
     pub(super) mesh: String,
     pub(super) name: Option<String>,
-    pub(super) nickname: Option<String>,
+    pub(super) nickname: String,
     /// The author key of the daemon, hex: the slot of its meta entry. A skill that lost its
     /// context recovers it from the session report.
     pub(super) pubkey: Option<String>,
