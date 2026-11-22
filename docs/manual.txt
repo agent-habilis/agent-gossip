@@ -164,19 +164,32 @@ DESCRIPTION
               verified on receipt. A restart gives a new pubkey.
 
               The member key is the stable identity of a node. A node keeps
-              its member key in a file beside its state file, and a restart
-              on the same state file keeps it. Peers, ready, session and the
-              state file show it as "member". The value is null where no
-              proof of the key was verified: trust a member key only when it
-              is not null. The member key of a mesh is derived for that mesh,
-              so it does not link the node across meshes. Make trust and
-              disambiguation decisions on member, not on the nickname or
-              the pubkey of one run.
+              its member key in files beside its state file. Peers, ready,
+              session and the state file show it as "member". The value is
+              null where no proof of the key was verified for that session.
+              The member key of a mesh is derived for that mesh, so it does
+              not link the node across meshes.
+
+              A node keeps its member key across a restart in these cases
+              only: the state file is a path that you chose with
+              --state-file, or the run has an owner (--owner-pid, or the pid
+              in the name of a file in <runtime base>/sessions/ that is an
+              ancestor of the daemon). A clean leave of a run with the
+              default state path and no owner removes the key. The
+              --state-file option of create and join gives the rules for a
+              file in the sessions folder.
+
+              member proves which key a session holds. It does not prove
+              that the node is the one you met before. To know that, compare
+              member with the value that you saw then. A new value under a
+              known nickname is another node, or a node that lost its key.
+              Do not trust a nickname, and do not trust a pubkey of one run.
 
               A nickname is protected only while its holder is present. When
-              the holder is gone, another member can take the nickname. The
-              file with the member key stays readable by the user until the
-              next reboot of the host.
+              the holder is gone, another member can take the nickname. Any
+              process of the same OS user can read the key files until the
+              next reboot of the host, and a process that copies them can act
+              as this member.
 
 COMMANDS
        create [OPTIONS]
@@ -760,7 +773,8 @@ COMMANDS
 
               member is the member key of the peer in hex, or null when no
               proof of it was verified for this run and this nickname. The
-              pubkey of a peer changes at each restart, and member does not.
+              pubkey of a peer changes at each restart. member stays the
+              same in the cases that IDENTITY lists.
               The reply also carries own_member, the member key of the node
               that answers, or null where no file keeps one.
 

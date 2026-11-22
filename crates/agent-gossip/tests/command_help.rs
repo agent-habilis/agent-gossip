@@ -106,6 +106,14 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "the limit of the nickname protection",
         ),
         (
+            "member proves which key a session holds",
+            "that a member is a proof of a key and not of a node",
+        ),
+        (
+            "A clean leave of a run with the",
+            "that the default path with no owner loses the key",
+        ),
+        (
             "own_member, the member key of the",
             "the member key of the node itself in the peers reply",
         ),
