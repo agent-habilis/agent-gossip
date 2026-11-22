@@ -90,6 +90,10 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "the limit of the nickname protection",
         ),
         (
+            "A session file is named for 1 process",
+            "that a session file is named for one process instance",
+        ),
+        (
             "member proves which key a session holds",
             "that a member is a proof of a key and not of a node",
         ),

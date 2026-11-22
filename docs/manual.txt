@@ -916,6 +916,16 @@ COMMANDS
                               "pid":34299,"bell":true}],
                  "other_sessions":0,"cleaned":0}
 
+       session-file --session-pid PID
+              Print the state file path for the agent session with process
+              PID, and nothing else. A session file is named for 1 process
+              instance: the name is the pid and the start time of that
+              process, so a later process that gets the same pid gets
+              another file. The skills call it for each command that takes
+              --state-file for the session. It prints 1 line and makes no
+              file. For pid 0, pid 1 and a pid with no live process it exits
+              non-zero, prints nothing on stdout and 1 line on stderr.
+
        state merge --gossip GOSSIP --nickname NAME --merge MERGE
        state get   --gossip GOSSIP --nickname NAME
               Read or change the gossip's shared state — a JSON document the whole
