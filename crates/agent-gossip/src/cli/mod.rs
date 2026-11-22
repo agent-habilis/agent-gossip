@@ -43,6 +43,7 @@ mod reject_id_encoded_flag;
 mod run_session;
 mod send;
 mod session;
+mod session_file;
 mod signal;
 mod state;
 mod target;

@@ -71,6 +71,7 @@ mod tests {
             | Commands::Leave { .. }
             | Commands::Invite { .. }
             | Commands::Session { .. }
+            | Commands::SessionFile { .. }
             | Commands::BellCheck { .. } => panic!("expected Discover"),
         }
     }

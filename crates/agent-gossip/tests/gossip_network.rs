@@ -4725,6 +4725,105 @@ fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
     );
 }
 
+fn session_file_output(pid: &str) -> std::process::Output {
+    let mut command = common::test_cmd();
+    command.args(["session-file", "--session-pid", pid]);
+    output_within(&mut command, QUERY_LIMIT)
+}
+
+/// The path that `session-file` prints for a pid, or a failed test when it exits non-zero.
+fn session_file_path_of(pid: u32) -> PathBuf {
+    let out = session_file_output(&pid.to_string());
+    assert!(out.status.success(), "a live pid names a file: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "one line, and no more: {stdout:?}"
+    );
+    PathBuf::from(stdout.trim())
+}
+
+/// A session file is named for one process instance: the same live pid prints the same path twice, and the
+/// path is in the sessions folder of the runtime base, whose folder and file the command does not make.
+#[test]
+fn session_file_prints_one_path_in_the_sessions_folder_for_a_live_pid() {
+    let pid = std::process::id();
+
+    let first = session_file_path_of(pid);
+    let second = session_file_path_of(pid);
+
+    assert_eq!(first, second, "one process instance has one name");
+    assert_eq!(
+        first.parent(),
+        Some(common::runtime_base().join("sessions").as_path()),
+        "the path is where the skills keep the state file of one agent session"
+    );
+    assert!(!first.exists(), "the command makes no file");
+}
+
+/// Init, the pid 0 and a pid with no process name no file. The command prints nothing on stdout, so a skill line
+/// that builds `--state-file` from it stops where it would have taken an empty path.
+#[test]
+fn session_file_refuses_init_and_a_dead_pid_and_prints_nothing() {
+    let mut gone = Command::new("sleep")
+        .arg("0")
+        .spawn()
+        .expect("sleep is on PATH on every unix host");
+    let dead_pid = gone.id();
+    gone.wait().expect("a gone child can be waited on");
+
+    for pid in ["0", "1", &dead_pid.to_string()] {
+        let out = session_file_output(pid);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "pid {pid} names no file: {out:?}");
+        assert!(out.stdout.is_empty(), "pid {pid} printed a path: {out:?}");
+        assert_eq!(stderr.lines().count(), 1, "one line on stderr: {stderr:?}");
+    }
+}
+
+/// The contract of the skills: a daemon that starts on the printed path is found by `ready` and by `session`.
+#[test]
+fn a_daemon_on_the_printed_session_file_is_found_by_ready_and_session() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("session-file-anchor");
+    let state = session_file_path_of(std::process::id());
+    let stderr = tmp_log("session-file");
+
+    let node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "session-file-node",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+    let ready = ready_json(&state);
+    let report = session_report(&std::process::id().to_string());
+    let sessions = report["sessions"]
+        .as_array()
+        .expect("session prints a list of sessions");
+    let listed = sessions
+        .iter()
+        .find(|row| row["nickname"] == "session-file-node");
+    crash(node);
+    for extension in ["json", "key", "run", "run.tmp", "key.lock", "run.lock"] {
+        let _ = fs::remove_file(state.with_extension(extension));
+    }
+
+    assert_eq!(
+        ready["nickname"], "session-file-node",
+        "ready names the node that started on the printed path: {ready}"
+    );
+    assert!(
+        listed.is_some(),
+        "session finds a daemon that runs under this process on that path: {report}"
+    );
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
 /// The JSON that `command` prints, or a failed test when it exits non-zero.
 fn json_of(command: &mut Command) -> serde_json::Value {
     let out: std::process::Output = output_within(command, QUERY_LIMIT);

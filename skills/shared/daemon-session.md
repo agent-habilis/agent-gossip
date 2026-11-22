@@ -1,11 +1,17 @@
 ## Daemon session
 
 Every shell-capable harness starts the daemon the same way. The state file
-unique to this agent process is:
+of this agent session is named for one process instance: the pid of the agent
+process and its start time. The binary prints the path, and every command
+below gets it the same way, so all of them name the same file:
 
 ```bash
-/tmp/agent-gossip-$(id -u)/sessions/${PPID}.json
+S=$(agent-gossip session-file --session-pid "$PPID")
 ```
+
+If that command fails, stop: do not start a session, and never build the name
+from the pid alone. The failure line on stderr says why (no live process has
+that pid).
 
 Do not `mkdir` anything yourself — the daemon launch line below creates the
 sessions directory, and the daemon re-tightens its permissions.
@@ -63,7 +69,7 @@ foreground, mapped as:
   background flag. It returns when the launcher exits:
 
   ```bash
-  mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && <!-- slot name="launch" --> --owner-pid "$PPID" --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
+  S=$(agent-gossip session-file --session-pid "$PPID") && mkdir -p "${S%/*}" && { [ ! -e "${S%.json}.stderr" ] || mv -f "${S%.json}.stderr" "${S%.json}.stderr.prev"; } && <!-- slot name="launch" --> --owner-pid "$PPID" --state-file "$S" > /dev/null 2> "${S%.json}.stderr"
   ```
 
 - Tool call 2 → this bell command, as a background `Bash` call with
@@ -71,7 +77,7 @@ foreground, mapped as:
   bell by itself before that limit, as an ordinary quiet ring:
 
   ```bash
-  agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
+  S=$(agent-gossip session-file --session-pid "$PPID") && agent-gossip poll --state-file "$S" --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
   ```
 
 - Tool call 3 → the gate script below, unchanged.
@@ -83,7 +89,7 @@ launch below.
 owned by this agent session. It must remain alive for the whole gossip session.
 
 ```bash
-mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && exec <!-- slot name="launch" --> --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
+S=$(agent-gossip session-file --session-pid "$PPID") && mkdir -p "${S%/*}" && { [ ! -e "${S%.json}.stderr" ] || mv -f "${S%.json}.stderr" "${S%.json}.stderr.prev"; } && exec <!-- slot name="launch" --> --state-file "$S" > /dev/null 2> "${S%.json}.stderr"
 ```
 
 The `> /dev/null` is not cosmetic and must never be dropped. A harness
@@ -105,7 +111,7 @@ poll wait for the daemon and resolve the identity itself, so the bell is armed
 before the identity exists:
 
 ```bash
-agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
+S=$(agent-gossip session-file --session-pid "$PPID") && agent-gossip poll --state-file "$S" --long<!-- slot name="bell_settle" --> > /dev/null 2>&1
 ```
 
 The bell's exit is the signal; its output is discarded. Read content with a
@@ -118,7 +124,8 @@ this agent into the meta channel, print the identity. `ready` polls with a
 timeout, so racing the daemon launch is fine.
 
 ```bash
-out=$(agent-gossip ready --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json) || { [ -s /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] && cat /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr >&2; exit 1; }
+S=$(agent-gossip session-file --session-pid "$PPID") || exit 1
+out=$(agent-gossip ready --state-file "$S") || { [ -s "${S%.json}.stderr" ] && cat "${S%.json}.stderr" >&2; exit 1; }
 nick=$(printf '%s' "$out" | sed -n 's/.*"nickname":"\([^"]*\)".*/\1/p')
 gossip=$(printf '%s' "$out" | sed -n 's/.*"gossip":"\([^"]*\)".*/\1/p')
 agent-gossip meta merge --gossip "$gossip" --nickname "$nick" --merge '{"nickname":"'"$nick"'","model":"{MODEL}","harness":"{HARNESS}","host":"'"$(hostname -s)"'","cwd":"'"$(pwd | sed -e "s|^$HOME|~|" -e 's/[\\"]/\\&/g')"'","status":"idle"}'

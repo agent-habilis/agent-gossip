@@ -169,7 +169,7 @@ fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec
 /// Pid 0 and pid 1 name no session: init is an ancestor of every process, so a daemon is "owned" by
 /// it, and a command that selected by it would stop the daemons of every session on the host. They
 /// are refused as `--owner-pid` is, and so is a parent that is unknown or is init (an orphaned shell).
-fn session_anchor(session_pid: Option<u32>, parent: Option<u32>) -> Result<u32> {
+pub(super) fn session_anchor(session_pid: Option<u32>, parent: Option<u32>) -> Result<u32> {
     let Some(pid) = session_pid.or(parent) else {
         anyhow::bail!(
             "the parent process of this command is unknown, so no session is named: pass --session-pid"

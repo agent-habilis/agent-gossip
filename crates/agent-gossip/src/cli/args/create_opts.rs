@@ -130,6 +130,7 @@ mod tests {
             | Commands::Leave { .. }
             | Commands::Invite { .. }
             | Commands::Session { .. }
+            | Commands::SessionFile { .. }
             | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
@@ -170,6 +171,7 @@ mod tests {
             | Commands::Leave { .. }
             | Commands::Invite { .. }
             | Commands::Session { .. }
+            | Commands::SessionFile { .. }
             | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
@@ -203,6 +205,7 @@ mod tests {
             | Commands::Leave { .. }
             | Commands::Invite { .. }
             | Commands::Session { .. }
+            | Commands::SessionFile { .. }
             | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }
@@ -257,6 +260,7 @@ mod tests {
                 | Commands::Leave { .. }
                 | Commands::Invite { .. }
                 | Commands::Session { .. }
+                | Commands::SessionFile { .. }
                 | Commands::BellCheck { .. } => panic!("expected Create"),
             }
         }
@@ -318,6 +322,7 @@ mod tests {
                 | Commands::Leave { .. }
                 | Commands::Invite { .. }
                 | Commands::Session { .. }
+                | Commands::SessionFile { .. }
                 | Commands::BellCheck { .. } => panic!("expected Create"),
             }
         }
@@ -394,6 +399,7 @@ mod tests {
             | Commands::Leave { .. }
             | Commands::Invite { .. }
             | Commands::Session { .. }
+            | Commands::SessionFile { .. }
             | Commands::BellCheck { .. } => {
                 panic!("expected Create command")
             }

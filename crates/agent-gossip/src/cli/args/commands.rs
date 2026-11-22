@@ -13,6 +13,7 @@ use super::peers_opts::PeersOpts;
 use super::ping_opts::PingOpts;
 use super::poll_opts::PollOpts;
 use super::ready_opts::ReadyOpts;
+use super::session_file_opts::SessionFileOpts;
 use super::session_opts::SessionOpts;
 use super::state_opts::StateOpts;
 use super::topic_opts::TopicOpts;
@@ -66,6 +67,17 @@ pub(crate) enum Commands {
     Session {
         #[command(flatten)]
         options: SessionOpts,
+    },
+
+    /// Print the state file path for an agent session.
+    ///
+    /// The name is the pid and the start time of the agent process, so a later process that gets the
+    /// same pid gets another file. Skills pass this path as `--state-file` to every command that names
+    /// the session. Prints one line and makes no file. Fails, and prints nothing on stdout, for pid 0,
+    /// pid 1 and a pid that has no live process.
+    SessionFile {
+        #[command(flatten)]
+        options: SessionFileOpts,
     },
 
     /// Exit 3 when a gossip session of the calling agent has no bell armed.
