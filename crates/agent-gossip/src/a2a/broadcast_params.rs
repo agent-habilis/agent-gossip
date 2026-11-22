@@ -148,11 +148,18 @@ fn build_msg(frame: ChatFrameParams<'_>, shard: Option<Shard>, signer: &Identity
 }
 
 /// Wait for the sends that run on a task of their own. The first verdict that is not `Delivered` is
-/// the verdict of the leg. A send with no outcome by its deadline, or whose task ended with none,
-/// is `Unconfirmed`: the node does not know whether the peer took the frame.
+/// the verdict of the leg. A send with no outcome by its deadline, a verdict that comes after it, or a
+/// task that ended with none, is `Unconfirmed`: the node does not know whether the peer took the frame.
 async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> SendVerdict {
     for handle in pending {
         let verdict = match tokio::time::timeout_at(deadline, handle).await {
+            // `timeout_at` polls the handle before it reads the clock, so a verdict that is ready after
+            // the deadline still arrives here. The layer that wraps this one can have answered
+            // `Unconfirmed` already, and the log must not take a leg that its caller was told is not
+            // confirmed.
+            Ok(Ok(SendVerdict::Delivered)) if tokio::time::Instant::now() > deadline => {
+                SendVerdict::Unconfirmed("the peer confirmed after the deadline".to_owned())
+            }
             Ok(Ok(verdict)) => verdict,
             Ok(Err(_)) => {
                 SendVerdict::Unconfirmed("a send task ended before it gave its outcome".to_owned())
@@ -2936,6 +2943,26 @@ mod sharded_leg_tests {
             app.take_delivered_legs().len(),
             1,
             "the resend that the peer confirmed enters the record"
+        );
+    }
+
+    /// A verdict that is ready only after the deadline is not `Delivered` for the layer that already
+    /// gave up: the caller of an outer layer that timed out was told `Unconfirmed`, and the log and the
+    /// shard cache must not take a leg that the caller was told is not confirmed.
+    #[tokio::test(start_paused = true)]
+    async fn a_verdict_that_is_ready_after_the_deadline_is_not_confirmed() {
+        let deadline = send_deadline();
+        let ready = verdict(SendVerdict::Delivered);
+        tokio::time::sleep(std::time::Duration::from_secs(
+            tuning::send_outcome_timeout_secs() + 1,
+        ))
+        .await;
+
+        let outcome = settle(vec![ready], deadline).await;
+
+        assert!(
+            matches!(outcome, SendVerdict::Unconfirmed(_)),
+            "a verdict that comes after the deadline is {outcome:?}, and the caller heard Unconfirmed"
         );
     }
 
