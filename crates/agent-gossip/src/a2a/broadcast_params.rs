@@ -233,7 +233,7 @@ pub(crate) fn log_pending(pending: Vec<PendingSend>) {
     let deadline = send_deadline();
     tokio::spawn(async move {
         if let Err(error) = delivered_or_error(settle(pending, deadline).await) {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "directed send not delivered");
+            tracing::warn!(target: "agent_gossip::a2a", %error, "directed send did not end as delivered");
         }
     });
 }
@@ -2940,7 +2940,7 @@ mod sharded_leg_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_send_that_gives_no_outcome_fails_after_the_timeout() {
+    async fn a_send_that_gives_no_outcome_is_not_confirmed_after_the_timeout() {
         let (_held, silent) = oneshot::channel::<SendVerdict>();
         let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
 
