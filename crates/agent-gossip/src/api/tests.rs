@@ -123,14 +123,30 @@ async fn directory_session_holds_no_event_stream() {
     session.leave().await.ok();
 }
 
-/// The app default carries no multihop: a mesh that wants it names it.
+/// The app default carries multihop and no gossip: a mesh that wants gossip names it.
 #[test]
-fn create_config_default_transport_is_udp_webrtc_gossip() {
+fn create_config_default_transport_is_udp_webrtc_multihop() {
     let config = CreateConfig::new(MeshName::try_new("defaults").expect("valid name"));
     assert_eq!(
         config.transport,
-        TransportPolicy::default().multihop(false),
-        "existing meshes only connect if the app default keeps udp and webrtc with gossip on"
+        TransportPolicy::default().relay_transport(false),
+        "a loopback create takes udp, webrtc and multihop, with no relay and no gossip"
+    );
+}
+
+/// A browser tab holds 8; every native config starts from the same default.
+#[test]
+fn every_config_defaults_to_16_direct_connections() {
+    let name = MeshName::try_new("capdefault").expect("valid name");
+    assert_eq!(
+        CreateConfig::new(name).max_connections,
+        16,
+        "a create holds 16 direct connections by default"
+    );
+    assert_eq!(
+        TopicConfig::new("capdefault".to_owned()).max_connections,
+        16,
+        "a topic holds 16 direct connections by default"
     );
 }
 
@@ -139,10 +155,13 @@ fn create_config_builder_sets_only_the_named_fields() {
     let name = MeshName::try_new("builder").expect("valid name");
     let untouched = CreateConfig::new(name.clone());
     let config = CreateConfig::new(name)
-        .with_max_peers(3)
+        .with_max_connections(3)
         .with_password("secret".to_owned())
         .with_advertise(true);
-    assert_eq!(config.max_peers, 3, "with_max_peers sets the cap");
+    assert_eq!(
+        config.max_connections, 3,
+        "with_max_connections sets the cap"
+    );
     assert_eq!(
         config.password.as_deref(),
         Some("secret"),

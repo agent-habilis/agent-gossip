@@ -43,8 +43,7 @@ impl From<Transport> for habilis_network::protocol::Transport {
 /// by the CLI and the MCP `create_gossip` tool.
 ///
 /// # Errors
-/// The list is empty (the engine would give its own default, with multihop
-/// on; an absent flag takes the app default instead), names neither `udp` nor
+/// The list is empty (an absent flag takes the app default instead), names neither `udp` nor
 /// `webrtc`, or names `multihop` with no direct path next to it.
 pub(crate) fn transport_policy(transports: &[Transport]) -> anyhow::Result<TransportPolicy> {
     anyhow::ensure!(!transports.is_empty(), "the transport list is empty");
@@ -66,7 +65,9 @@ mod tests {
         assert_eq!(
             transport_policy(&[Transport::Udp, Transport::WebRtc])
                 .expect("this transport combination is valid"),
-            TransportPolicy::default().multihop(false).gossip(false),
+            TransportPolicy::default()
+                .multihop(false)
+                .relay_transport(false),
             "udp and webrtc alone enable no multihop, gossip or relay"
         );
     }

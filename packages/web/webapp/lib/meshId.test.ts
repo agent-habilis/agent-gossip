@@ -3,12 +3,15 @@ import { expect, test } from 'bun:test'
 import { GOLDEN_MESH_ID, decodeBase58, isMeshId, parseMeshInput } from './meshId.ts'
 
 // The id that habilis-network pins in its own suite (mesh id version 2; seed
-// `[7u8; 32]`, name "test", public preset: udp, webrtc, multihop, gossip). If
+// `[7u8; 32]`, name "test", public preset: udp, webrtc, multihop, relay). If
 // this stops validating, this decoder and the engine have diverged and every
 // link the site produces is suspect.
-const ENGINE_V2_ID = 'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqazmpTSgH'
-// The same mesh as an older default made it: no gossip bit. The engine still
+const ENGINE_V2_ID = 'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqayqqpWMQ'
+// The same mesh as the earlier default made it: gossip on. The engine still
 // decodes it, so this decoder must too.
+const GOSSIP_DEFAULT_ID = 'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqazmpTSgH'
+// The same mesh as an older default made it: no gossip and no multihop. The
+// engine still decodes it, so this decoder must too.
 const OLDER_DEFAULT_ID = 'DqrLWcbLaiVzMV2mvqefxWxWmgLCYmGWAK5jCxeTgFqc6dk1MQrfiqay2YxkRe'
 // The version 1 id of the previous engine for the same seed and name. Every id
 // of that version is refused with a request to upgrade.
@@ -73,6 +76,10 @@ test('the golden vector is the one the engine pins', () => {
 
 test('the engine golden vector validates', async () => {
   expect(await isMeshId(GOLDEN)).toBe(true)
+})
+
+test('an id of the earlier default mesh, with the gossip bit, validates', async () => {
+  expect(await isMeshId(GOSSIP_DEFAULT_ID)).toBe(true)
 })
 
 test('an id of an older default mesh, with no gossip bit, validates', async () => {

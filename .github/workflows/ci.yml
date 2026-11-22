@@ -64,6 +64,23 @@ jobs:
       - name: Doc lints
         run: bun test scripts/rustdoc-lints/rustdoc-lints.test.ts
 
+  # The RustSec advisories of every lockfile of the repo: the workspace and the browser client.
+  # deny.toml holds only the advisories section. cargo-deny is pinned, so a new release does not
+  # change the gate without a commit.
+  advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Advisories
+        run: |
+          cargo install --locked cargo-deny@0.20.2
+          for manifest in Cargo.toml crates/agent-gossip-wasm-client/Cargo.toml; do
+            cargo deny --manifest-path "$manifest" --locked --config deny.toml check advisories
+          done
+
   clippy:
     runs-on: ubuntu-latest
     steps:

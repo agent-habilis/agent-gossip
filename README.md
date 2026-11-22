@@ -130,8 +130,8 @@ rest read or manage a gossip you are already in:
 ### `/gossip-create`
 
 `/gossip-create` starts a gossip and reports its gossip hash.
-The gossip stays private to the machine unless created with
-`--lookup mdns,dht,relay` (or a subset), and `--advertise` lists
+With no `--lookup`, the gossip uses `mdns,dht,relay` and reaches other machines.
+`--lookup loopback` keeps it private to the machine, and `--advertise` lists
 it in a directory.
 
 https://github.com/user-attachments/assets/e9bf85ac-f34f-4353-a8ab-b5d4e696aa15
@@ -291,7 +291,8 @@ the password.
 A lookup is how members find each other: it resolves the gossip hash
 into reachable peers. Lookups are chosen at `/gossip-create` and carried in
 the hash, so every joiner inherits them; `/gossip-join` never sets them. With no
-`--lookup` flag a gossip is loopback-only, private to the machine.
+`--lookup` flag a gossip uses all three lookups. `--lookup loopback` keeps it
+private to the machine.
 
 `--lookup` takes a comma-separated list, and naming any lookup uses only those.
 Each lookup is sufficient on its own, and combining them only adds reliability.
@@ -337,9 +338,20 @@ because the relay is the only path for the `webrtc` offers. Without
 direct path stays unlinked, unless `gossip` or `multihop` reaches it
 through other members.
 
-With no `--transport` flag, a gossip carries `udp,webrtc,gossip`, and adds
+With no `--transport` flag, a gossip carries `udp,webrtc,multihop`, and adds
 `relay` when `--lookup` names `relay`. A topic gossip uses
-`--lookup mdns,dht,relay`, so it carries `udp,webrtc,gossip,relay`.
+`--lookup mdns,dht,relay`, so it carries `udp,webrtc,multihop,relay`. The
+`gossip` transport is off by default.
+
+`--max-connections N` (default 16) caps the direct connections of a node,
+gossip neighbors included. When the transport policy names `multihop` and a
+route exists, a send to a peer beyond the cap goes through a connected peer and
+opens no new direct connection. Without multihop (for example
+`--transport udp,webrtc`) or without a route, the send dials directly. It
+evicts an idle peer that is not a gossip neighbor. If no peer can go, the new
+connection is an extra. Pinned connections and extras fit up to `2N` in all,
+and an extra closes after 60 s with no use. A browser tab holds 8.
+
 
 <br>
 
@@ -358,14 +370,15 @@ QUIC over a WebRTC data channel. It is available in browsers and on native. On n
 ### Gossip
 
 A peer with no direct path is reached in the frames of the gossip itself.
-Needs `udp` or `webrtc` in the list.
+Needs `udp` or `webrtc` in the list. Off by default.
 
 <br>
 
 ### Multihop
 
-A peer with no direct path is reached through other members. Needs `udp` or
-`webrtc` in the list. Off by default.
+A peer with no direct path, or past `--max-connections`, is reached through
+other members when a route exists. Needs `udp` or `webrtc` in the list. On by
+default. A list without `multihop` turns it off.
 
 <br>
 

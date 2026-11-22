@@ -5,7 +5,7 @@ use habilis_network::runtime::tuning::NODE_INBOUND_CAP;
 use habilis_network::runtime::{
     CoHostPolicy, EventLoopConfig, SetupKind, SetupParams, SignalHandling, setup_mesh,
 };
-use habilis_network::util::tuning::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use habilis_network::util::tuning::MAX_CONNECTIONS;
 use tokio::sync::{broadcast, mpsc};
 
 use super::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
@@ -103,7 +103,7 @@ impl MeshSession {
             // Router: the A2A binding stands up a separate endpoint of its own
             // (see `tunnel::expose`), so there is no accept() loop to share.
             SetupParams::new(author, sink)
-                .max_peers(GOSSIP_ACTIVE_VIEW_CAPACITY)
+                .max_connections(MAX_CONNECTIONS)
                 .runtime_base(crate::runtime_base())
                 .cohost(cohost),
         )

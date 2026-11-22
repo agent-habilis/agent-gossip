@@ -99,11 +99,11 @@ impl InProcNode {
     /// # Panics
     ///
     /// Panics if `nick` is not a valid nickname, or if the mesh cannot be created.
-    pub async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
+    pub async fn create_with_peers(name: &str, nick: &str, max_connections: usize) -> Self {
         init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name))
             .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
-            .with_max_peers(max_peers);
+            .with_max_connections(max_connections);
         Self::with_session(
             MeshSession::create(config)
                 .await
@@ -116,12 +116,12 @@ impl InProcNode {
     /// # Panics
     ///
     /// Panics if `mesh` or `nick` is invalid, or if the join fails.
-    pub async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
+    pub async fn join_with_peers(mesh: &str, nick: &str, max_connections: usize) -> Self {
         init_test_tracing();
         let target: JoinTarget = mesh.parse().expect("valid test join target");
         let config = JoinConfig::new(target)
             .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
-            .with_max_peers(max_peers);
+            .with_max_connections(max_connections);
         Self::with_session(
             MeshSession::join(config)
                 .await
