@@ -90,15 +90,26 @@ pub(super) fn forget_kept_key(state_file: &Path) -> io::Result<KeptFiles> {
         return Ok(KeptFiles::NothingKept);
     }
     let lock_path = state_file.with_extension("key.lock");
-    if is_link(&lock_path) {
-        return Err(io::Error::other(format!(
-            "the lock file {} is a link, so it cannot keep two starts apart",
+    let not_a_regular_file = || {
+        io::Error::other(format!(
+            "the lock file {} is a link, a pipe or another thing that is not a regular file, so it cannot keep two starts apart",
             lock_path.display()
-        )));
+        ))
+    };
+    if std::fs::symlink_metadata(&lock_path).is_ok_and(|metadata| !metadata.file_type().is_file()) {
+        return Err(not_a_regular_file());
     }
+    // A write-only open of a pipe with no reader waits for ever. The flag turns that wait into an error, and
+    // the check below refuses what a swap between the two checks put in the place of the file.
+    let non_blocking = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits())
+        .expect("the flag that opens without waiting is a small number");
     let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(false).mode(0o600);
+    options.write(true).create(true).truncate(false);
+    options.mode(0o600).custom_flags(non_blocking);
     let lock = options.open(&lock_path)?;
+    if !lock.metadata()?.file_type().is_file() {
+        return Err(not_a_regular_file());
+    }
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return Ok(KeptFiles::DaemonHoldsIt),
@@ -117,10 +128,6 @@ pub(super) fn forget_kept_key(state_file: &Path) -> io::Result<KeptFiles> {
     } else {
         KeptFiles::NothingKept
     })
-}
-
-fn is_link(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 fn is_regular_file(path: &Path) -> bool {
@@ -148,17 +155,35 @@ pub(super) fn prepare_member_key(
     match (policy, state_file) {
         (KeyPolicy::Bound(pid), _) => Ok(Some(pid)),
         (KeyPolicy::Fresh(named), Some(path)) => {
-            if forget_kept_key(path)? == KeptFiles::Removed {
-                let reason = named.map_or_else(
-                    || "the state file names no pid".to_owned(),
-                    |pid| format!("the state file names pid {pid}, which is not an ancestor of this daemon"),
-                );
-                crate::status::warn(&format!("{reason}: a new member identity was made"));
-            }
+            start_as_new_member(path, named)?;
             Ok(None)
         }
         (KeyPolicy::Chosen | KeyPolicy::Fresh(_), _) => Ok(None),
     }
+}
+
+/// A fresh start must not leave a kept key where the engine can load it. While a daemon still holds the key
+/// lock, the key cannot be removed, and the engine would load it when that daemon ends: the start is refused.
+fn start_as_new_member(state_file: &Path, named_pid: Option<u32>) -> Result<()> {
+    match forget_kept_key(state_file)? {
+        KeptFiles::NothingKept => {}
+        KeptFiles::Removed => {
+            let reason = named_pid.map_or_else(
+                || "the state file names no pid".to_owned(),
+                |pid| {
+                    format!(
+                        "the state file names pid {pid}, which is not an ancestor of this daemon"
+                    )
+                },
+            );
+            crate::status::warn(&format!("{reason}: a new member identity was made"));
+        }
+        KeptFiles::DaemonHoldsIt => anyhow::bail!(
+            "a daemon still holds the member key of {}, so this start cannot make a new member: wait for that daemon to stop, or use another state file",
+            state_file.display()
+        ),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -166,8 +191,11 @@ mod tests {
     use std::fs::{self, File};
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
-    use super::{KeptFiles, KeyPolicy, forget_kept_key, key_policy};
+    use super::{KeptFiles, KeyPolicy, forget_kept_key, key_policy, start_as_new_member};
 
     const BASE: &str = "/run/agent-gossip-501";
 
@@ -360,6 +388,54 @@ mod tests {
             "a link cannot keep two starts apart, and the engine refuses it too"
         );
         assert!(state.with_extension("key").exists(), "nothing was removed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lock_file_that_is_a_pipe_is_refused_without_blocking() {
+        let dir = scratch("lock-pipe");
+        let state = dir.join("12.json");
+        let made = Command::new("mkfifo")
+            .arg(state.with_extension("key.lock"))
+            .status()
+            .expect("mkfifo is on PATH on every unix host");
+        assert!(made.success(), "the temp dir allows a pipe");
+        kept(&state);
+        let (sender, receiver) = mpsc::channel();
+        let path = state.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(forget_kept_key(&path).is_err());
+        });
+
+        let answered = receiver.recv_timeout(Duration::from_secs(5));
+        assert_eq!(
+            answered,
+            Ok(true),
+            "a pipe with no reader must be refused at once, and not waited on"
+        );
+        assert!(state.with_extension("key").exists(), "nothing was removed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fresh_start_is_refused_while_a_daemon_holds_the_key_lock() {
+        let dir = scratch("fresh-held");
+        let state = dir.join("12.json");
+        kept(&state);
+        let holder =
+            File::create(state.with_extension("key.lock")).expect("the temp dir is writable");
+        holder.try_lock().expect("the test is the only holder");
+
+        let outcome = start_as_new_member(&state, Some(12));
+
+        assert!(
+            outcome.is_err(),
+            "the engine would load the kept key when the holder ends, and a fresh start forbids that"
+        );
+        assert!(
+            state.with_extension("key").exists(),
+            "the held key was not touched"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
