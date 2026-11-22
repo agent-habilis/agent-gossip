@@ -15,6 +15,7 @@ use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::own_base::OwnBase;
+use crate::owned_session::OwnedSession;
 use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
@@ -24,19 +25,15 @@ use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, t
 /// subprocess [`Node`](crate::Node), but everything runs in the test process — so
 /// coverage is recorded and teardown is deterministic.
 pub struct InProcNode {
-    /// The live session, for calls the wrappers of this harness do not cover. Borrow it. A test that moves it
-    /// out of the node drops the runtime base of the node, which is removed under the running session.
-    pub session: MeshSession,
+    /// The live session, for calls the wrappers of this harness do not cover. It holds the runtime base of
+    /// the node, so a test that moves it out of the node takes the base with it.
+    pub session: OwnedSession,
     pub(crate) rx: UnboundedReceiver<OutputEvent>,
     pub(crate) drained: Vec<OutputEvent>,
     /// The mesh id the node joined.
     pub mesh: String,
     /// The nickname of the node in that mesh.
     pub nickname: String,
-    /// The runtime base of this node, which the fixture removes on drop. It is the last field, so that the
-    /// folder goes after the session. The loop of the session can still run for a moment after its drop,
-    /// so an error about a file of the base that is gone can be this.
-    _base: OwnBase,
 }
 
 // `MeshSession` and the event receiver are not `Debug`; the identity plus how
@@ -150,12 +147,11 @@ impl InProcNode {
         let mesh = session.mesh_id().to_string();
         let nickname = session.nickname().to_string();
         Self {
-            session,
+            session: OwnedSession::new(session, base),
             rx,
             drained: Vec::new(),
             mesh,
             nickname,
-            _base: base,
         }
     }
 

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use crate::counter::COUNTER;
@@ -21,6 +21,10 @@ impl OwnBase {
 
     pub(crate) fn path(&self) -> PathBuf {
         self.path.clone()
+    }
+
+    pub(crate) fn as_path(&self) -> &Path {
+        &self.path
     }
 }
 
