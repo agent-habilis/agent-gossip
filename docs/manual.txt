@@ -269,10 +269,12 @@ COMMANDS
                      daemon is the sole writer; a fresh, complete document
                      each time), refreshed on every membership change and a
                      ~10s heartbeat, and remove it on clean shutdown. `pid`
-                     is the daemon's own process id — what `leave` / `session`
-                     use to map the file back to a running daemon; they
-                     garbage-collect a stale file whose pid is gone (SIGKILL,
-                     power loss). Gate on the `ready` flag with `agent-gossip
+                     is the daemon's own process id. `leave` and `session`
+                     read the registry of the daemons, not this file, to find
+                     a running daemon. A stale file whose pid is gone (SIGKILL,
+                     power loss) stays: no command removes it, and the next
+                     start of the same mesh and nickname writes it again (see
+                     `leave`). Gate on the `ready` flag with `agent-gossip
                      ready` (see "READINESS AND POLLING").
 
               --owner-pid PID
@@ -836,8 +838,10 @@ COMMANDS
               SIGTERM, on which it broadcasts `left` to its peers, removes
               its state file, its socket and its chunk folder, and lets go
               of its lock. leave then waits for that lock, and `confirmed`
-              is true when it got it: the daemon has ended and has removed
-              its files.
+              is true when it got it: the daemon has ended. A daemon that
+              ended on that SIGTERM has removed its files. A daemon that
+              was killed (SIGKILL) while leave waited also frees the lock,
+              and its files stay, as the next paragraph says.
 
               leave and session remove one more thing: a `<nick>.tracing.log`
               that has no socket beside it and is 7 days old, and the
