@@ -19,6 +19,9 @@ pub(crate) struct Target {
     /// echoes instead of the lossy derived `name`.
     pub(super) topic: Option<String>,
     pub(super) pid: u32,
+    /// The start time of the process, from the record that discovery read. A pid that a new process
+    /// takes later has another start, so a signal needs both.
+    pub(super) start: u64,
     /// The agent process a detached daemon (`--owner-pid`) answers to. Such a
     /// daemon is no descendant of it, so ancestry alone cannot match.
     pub(super) owner_pid: Option<u32>,

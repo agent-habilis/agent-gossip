@@ -58,6 +58,7 @@ fn target_from(lock: &Path, record: DaemonRecord) -> Target {
         mesh,
         nickname,
         pid: record.pid,
+        start: record.start,
         path: record.state_file,
     }
 }
@@ -217,13 +218,21 @@ pub(crate) async fn leave(options: LeaveOpts) -> Result<()> {
 /// alone, so the record is read again just before the signal, and the pids 0 and 1 are never signalled.
 fn runs_now(target: &Target) -> bool {
     let record = read_record(&target.lock).ok().flatten();
-    record.is_some_and(|record| may_signal(target.pid, record.pid, record.state()))
+    record.is_some_and(|record| {
+        may_signal(
+            (target.pid, target.start),
+            (record.pid, record.start),
+            record.state(),
+        )
+    })
 }
 
-/// The 3 conditions of a signal: the record names the pid of the target, that pid is not 0 or 1 (a signal to 0
-/// goes to a whole process group, and 1 is init), and the daemon of the record runs.
-fn may_signal(target_pid: u32, record_pid: u32, state: DaemonState) -> bool {
-    record_pid == target_pid && record_pid > 1 && state == DaemonState::Live
+/// The 3 conditions of a signal. The record names the process of the target: the pid and the start that
+/// discovery read, because a new daemon that takes the pid of an ended one has another start. The pid is
+/// not 0 or 1 (a signal to 0 goes to a whole process group, and 1 is init). And the daemon of the record
+/// runs. The 2 pairs are `(pid, start)`.
+fn may_signal(target: (u32, u64), record: (u32, u64), state: DaemonState) -> bool {
+    record == target && record.0 > 1 && state == DaemonState::Live
 }
 
 /// Wait on a plain thread for the lock of a daemon, which is free when the daemon has ended. The thread is
@@ -360,6 +369,7 @@ mod tests {
             pubkey: None,
             topic: None,
             pid,
+            start: 0,
             owner_pid: None,
         }
     }
@@ -524,6 +534,7 @@ mod tests {
         let lock = write_record(&base, "one-two", (own, own_start()), &state);
         let mut live = target("m", "one-two", own);
         live.lock = lock;
+        live.start = own_start();
         assert!(
             runs_now(&live),
             "the record names a live process with its start"
@@ -544,30 +555,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A daemon that ended and a new one that took its pid are 2 daemons. The record of the new one
+    /// names a live process, so its own check passes: only the start that discovery read tells them apart.
     #[test]
-    fn a_signal_needs_the_same_pid_a_pid_above_1_and_a_live_daemon() {
+    fn a_new_daemon_with_the_pid_of_the_discovered_one_is_not_signalled() {
+        let base = scratch("reused-pid");
+        let state = base.join("x.json");
+        let own = std::process::id();
+        let lock = write_record(&base, "one-two", (own, own_start()), &state);
+        let mut discovered = target("m", "one-two", own);
+        discovered.lock = lock;
+        discovered.start = own_start() + 1;
+
         assert!(
-            may_signal(10, 10, DaemonState::Live),
+            !runs_now(&discovered),
+            "the record names a live process with the pid of the target and another start"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_signal_needs_the_same_process_a_pid_above_1_and_a_live_daemon() {
+        assert!(
+            may_signal((10, 5), (10, 5), DaemonState::Live),
             "the daemon that runs"
         );
         assert!(
-            !may_signal(10, 11, DaemonState::Live),
+            !may_signal((10, 5), (11, 5), DaemonState::Live),
             "a record of another pid"
         );
         assert!(
-            !may_signal(10, 10, DaemonState::Gone),
+            !may_signal((10, 5), (10, 6), DaemonState::Live),
+            "a record of a new process that took the pid"
+        );
+        assert!(
+            !may_signal((10, 5), (10, 5), DaemonState::Gone),
             "a daemon that is gone"
         );
         assert!(
-            !may_signal(10, 10, DaemonState::Unknown),
+            !may_signal((10, 5), (10, 5), DaemonState::Unknown),
             "a daemon that may run is not signalled"
         );
         assert!(
-            !may_signal(1, 1, DaemonState::Live),
+            !may_signal((1, 5), (1, 5), DaemonState::Live),
             "init is never signalled"
         );
         assert!(
-            !may_signal(0, 0, DaemonState::Live),
+            !may_signal((0, 5), (0, 5), DaemonState::Live),
             "pid 0 would signal a process group"
         );
     }
