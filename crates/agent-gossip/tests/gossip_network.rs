@@ -4748,6 +4748,9 @@ fn session_file_path_of(pid: u32) -> PathBuf {
 /// path is in the sessions folder of the runtime base, whose folder and file the command does not make.
 #[test]
 fn session_file_prints_one_path_in_the_sessions_folder_for_a_live_pid() {
+    // The daemon test below starts a node on the same path, because both name this process, so this test
+    // must not run while that state file exists.
+    let _serial = serial_guard();
     let pid = std::process::id();
 
     let first = session_file_path_of(pid);
