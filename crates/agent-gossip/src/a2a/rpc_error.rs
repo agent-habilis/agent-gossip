@@ -300,6 +300,9 @@ pub(crate) async fn handle_op(
         a2a_port,
         app,
     } = params;
+    // The own legs that the peer has acknowledged enter the task records at the start of each
+    // request, as they do for an IPC command and a session request. The op reads those records.
+    app.drain_delivered_legs();
     match op {
         A2aOp::SendMessage { to, message } => {
             send_message(
