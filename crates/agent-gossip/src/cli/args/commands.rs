@@ -74,7 +74,7 @@ pub(crate) enum Commands {
     /// The name is the pid and the start time of the agent process, so a later process that gets the
     /// same pid gets another file. Skills pass this path as `--state-file` to every command that names
     /// the session. Prints one line and makes no file. Fails, and prints nothing on stdout, for pid 0,
-    /// pid 1 and a pid that has no live process.
+    /// pid 1 and a pid that has no live process; the reason is the first line on stderr.
     SessionFile {
         #[command(flatten)]
         options: SessionFileOpts,

@@ -4778,7 +4778,15 @@ fn session_file_refuses_init_and_a_dead_pid_and_prints_nothing() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "pid {pid} names no file: {out:?}");
         assert!(out.stdout.is_empty(), "pid {pid} printed a path: {out:?}");
-        assert_eq!(stderr.lines().count(), 1, "one line on stderr: {stderr:?}");
+        // The CLI prints an `anyhow` error with its backtrace when RUST_BACKTRACE is set, as CI does, so the
+        // reason is the first line and not the only one.
+        assert!(
+            stderr
+                .lines()
+                .next()
+                .is_some_and(|line| line.starts_with("Error: ")),
+            "the reason is the first line on stderr: {stderr:?}"
+        );
     }
 }
 
@@ -4788,6 +4796,10 @@ fn a_daemon_on_the_printed_session_file_is_found_by_ready_and_session() {
     let _serial = serial_guard();
     let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("session-file-anchor");
     let state = session_file_path_of(std::process::id());
+    // The command makes no folder, and the engine does not make the folder of a state file: the launch line of
+    // the skills runs `mkdir -p` first, and a fresh CI runner has no sessions folder yet.
+    fs::create_dir_all(state.parent().expect("a state file has a folder"))
+        .expect("the runtime base is writable");
     let stderr = tmp_log("session-file");
 
     let node = start_keyed_node(

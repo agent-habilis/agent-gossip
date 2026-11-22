@@ -14,7 +14,7 @@ S=$(agent-gossip session-file --session-pid "$PPID")
 ```
 
 If that command fails, stop: do not start a session, and never build the name
-from the pid alone. The failure line on stderr says why (no live process has
+from the pid alone. The first line on stderr says why (no live process has
 that pid).
 
 Do not `mkdir` anything yourself — the daemon launch line below creates the
