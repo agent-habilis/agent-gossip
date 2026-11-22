@@ -76,8 +76,8 @@ pub mod api;
 pub mod status;
 
 // Feature-gated test-support API, outside the supported surface. These shims expose the engine's
-// internals to the crate's own bench/adversarial suites. See harness/mod.rs.
-#[cfg(any(feature = "bench", feature = "adversarial"))]
+// internals to the crate's own bench, adversarial and test-fixture suites. See harness/mod.rs.
+#[cfg(any(feature = "bench", feature = "adversarial", feature = "test-node"))]
 pub mod harness;
 
 pub use self::app_log_pins::APP_LOG_PINS;

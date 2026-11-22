@@ -61,6 +61,7 @@ mod meta_slot_of;
 mod msg_timeout;
 mod names_lookup;
 mod node;
+mod own_base;
 mod park_bell;
 mod parse_messages;
 mod poll;

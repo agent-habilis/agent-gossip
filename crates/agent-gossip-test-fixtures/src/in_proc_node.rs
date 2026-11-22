@@ -14,6 +14,7 @@ use habilis_network::protocol::AuthorKey;
 use habilis_network::protocol::messages::Authored;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::own_base::OwnBase;
 use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, test_mesh_name};
 
 /// One in-process mesh node with its captured [`OutputEvent`] stream.
@@ -31,6 +32,8 @@ pub struct InProcNode {
     pub mesh: String,
     /// The nickname of the node in that mesh.
     pub nickname: String,
+    /// The runtime base of this node. It is the last field, so that the folder goes after the session.
+    _base: OwnBase,
 }
 
 // `MeshSession` and the event receiver are not `Debug`; the identity plus how
@@ -55,10 +58,12 @@ impl InProcNode {
     /// Panics if the mesh cannot be created.
     pub async fn create(name: &str) -> Self {
         init_test_tracing();
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::create(CreateConfig::new(test_mesh_name(name)))
+            MeshSession::create_in(CreateConfig::new(test_mesh_name(name)), base.path())
                 .await
                 .expect("in-process create failed"),
+            base,
         )
     }
 
@@ -71,10 +76,12 @@ impl InProcNode {
         init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name))
             .with_nickname(Nickname::try_new(nick).expect("valid test nickname"));
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::create(config)
+            MeshSession::create_in(config, base.path())
                 .await
                 .expect("in-process create failed"),
+            base,
         )
     }
 
@@ -86,10 +93,12 @@ impl InProcNode {
     pub async fn create_with_password(name: &str, password: &str) -> Self {
         init_test_tracing();
         let config = CreateConfig::new(test_mesh_name(name)).with_password(password.to_owned());
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::create(config)
+            MeshSession::create_in(config, base.path())
                 .await
                 .expect("in-process passworded create failed"),
+            base,
         )
     }
 
@@ -104,10 +113,12 @@ impl InProcNode {
         let config = CreateConfig::new(test_mesh_name(name))
             .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
             .with_max_connections(max_connections);
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::create(config)
+            MeshSession::create_in(config, base.path())
                 .await
                 .expect("in-process transport create failed"),
+            base,
         )
     }
 
@@ -122,14 +133,16 @@ impl InProcNode {
         let config = JoinConfig::new(target)
             .with_nickname(Nickname::try_new(nick).expect("valid test nickname"))
             .with_max_connections(max_connections);
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::join(config)
+            MeshSession::join_in(config, base.path())
                 .await
                 .expect("in-process transport join failed"),
+            base,
         )
     }
 
-    fn with_session(mut session: MeshSession) -> Self {
+    fn with_session(mut session: MeshSession, base: OwnBase) -> Self {
         let rx = session.events().expect("events() receiver");
         let mesh = session.mesh_id().to_string();
         let nickname = session.nickname().to_string();
@@ -139,6 +152,7 @@ impl InProcNode {
             drained: Vec::new(),
             mesh,
             nickname,
+            _base: base,
         }
     }
 
@@ -152,10 +166,12 @@ impl InProcNode {
         let target: JoinTarget = mesh.parse().expect("valid test join target");
         let config = JoinConfig::new(target)
             .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"));
+        let base = OwnBase::new();
         Self::with_session(
-            MeshSession::join(config)
+            MeshSession::join_in(config, base.path())
                 .await
                 .expect("in-process join failed"),
+            base,
         )
     }
 
@@ -173,6 +189,7 @@ impl InProcNode {
             MeshSession::topic(config)
                 .await
                 .expect("in-process topic join failed"),
+            OwnBase::new(),
         )
     }
 
@@ -195,7 +212,11 @@ impl InProcNode {
         let config = JoinConfig::new(target)
             .with_nickname(Nickname::try_new(nickname).expect("valid test nickname"))
             .with_password(password.to_owned());
-        Ok(Self::with_session(MeshSession::join(config).await?))
+        let base = OwnBase::new();
+        Ok(Self::with_session(
+            MeshSession::join_in(config, base.path()).await?,
+            base,
+        ))
     }
 
     /// Broadcast a plain message to everyone; returns the new message id.

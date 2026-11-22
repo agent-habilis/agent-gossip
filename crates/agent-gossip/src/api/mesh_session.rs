@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use habilis_network::embed::RosterSnapshot;
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{Mesh, MeshId, MeshName, MessageBody, Nickname};
@@ -42,8 +44,20 @@ impl MeshSession {
     /// [`JoinError::Resolve`] if the target can't be resolved;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn join(config: JoinConfig) -> Result<Self, JoinError> {
+        Self::join_with_base(config, crate::runtime_base()).await
+    }
+
+    /// [`Self::join`] with the runtime base named. The public call always passes `runtime_base()`; the
+    /// base is a parameter so that the test harness can give each node a base of its own.
+    ///
+    /// # Errors
+    /// The same as [`Self::join`].
+    pub(crate) async fn join_with_base(
+        config: JoinConfig,
+        base: PathBuf,
+    ) -> Result<Self, JoinError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io) = join_setup(config, output).await?;
+        let (elc, io) = join_setup(config, output, base).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
@@ -56,7 +70,7 @@ impl MeshSession {
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn topic(config: TopicConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io) = topic_setup(config, output).await?;
+        let (elc, io) = topic_setup(config, output, crate::runtime_base()).await?;
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
@@ -67,8 +81,19 @@ impl MeshSession {
     /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
     /// loopback-only mesh; [`CreateError::Setup`] on endpoint/gossip failure.
     pub async fn create(config: CreateConfig) -> Result<Self, CreateError> {
+        Self::create_with_base(config, crate::runtime_base()).await
+    }
+
+    /// [`Self::create`] with the runtime base named, as [`Self::join_with_base`] does for a join.
+    ///
+    /// # Errors
+    /// The same as [`Self::create`].
+    pub(crate) async fn create_with_base(
+        config: CreateConfig,
+        base: PathBuf,
+    ) -> Result<Self, CreateError> {
         let (output, events_rx) = capture_events::capture_events();
-        let (elc, io, advertiser) = create_setup(config, output).await?;
+        let (elc, io, advertiser) = create_setup(config, output, base).await?;
         Ok(Self::with_events(elc, io, advertiser, events_rx))
     }
 
