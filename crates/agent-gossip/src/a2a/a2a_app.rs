@@ -167,6 +167,9 @@ pub(crate) struct A2aApp {
     /// means the engine default under the runtime base. The `Info` reply reports it: a state file
     /// elsewhere is found only through the daemon's socket, which always sits in the runtime base.
     state_file: Option<PathBuf>,
+    /// The member key of this node on its mesh, or `None` where no file keeps one. The state file
+    /// shows it as `member`.
+    member: Option<AuthorKey>,
     /// The a2a layer's concrete render sink (the tapped `Output`). Used for
     /// a2a-specific surfacings (`print_task` / `task_message` / `print_message`
     /// / `task_timeout`) the engine's generic `NodeSink` doesn't cover; generic
@@ -269,6 +272,7 @@ impl A2aApp {
             a2a_port: None,
             a2a_token: None,
             state_file: None,
+            member: None,
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
@@ -301,6 +305,7 @@ impl A2aApp {
             a2a_port: None,
             a2a_token: None,
             state_file: None,
+            member: None,
             output,
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
@@ -470,6 +475,14 @@ impl A2aApp {
 
     pub(crate) fn state_file(&self) -> Option<&Path> {
         self.state_file.as_deref()
+    }
+
+    pub(crate) fn set_member(&mut self, member: Option<AuthorKey>) {
+        self.member = member;
+    }
+
+    pub(crate) fn member(&self) -> Option<AuthorKey> {
+        self.member
     }
 
     /// The a2a bind port + bearer token, if the local binding is on.

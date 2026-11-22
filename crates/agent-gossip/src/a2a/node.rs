@@ -89,16 +89,22 @@ impl NodeDriver for A2aApp {
     type Ipc = IpcCommand;
 
     fn init_state_file(&self, state_file: Option<&StateFile>) {
-        if let (Some(state_file), Some((port, token))) = (state_file, self.a2a_discovery()) {
-            // The `a2a_port` / `a2a_token` keys are a documented contract — the
-            // manual specifies them and the skills read them — so they are named
-            // here, in the layer that owns A2A, and merged into a state file the
-            // engine writes without interpreting.
-            let mut fields = serde_json::Map::new();
+        let Some(state_file) = state_file else {
+            return;
+        };
+        // The `a2a_port` / `a2a_token` keys are a documented contract — the
+        // manual specifies them and the skills read them — so they are named
+        // here, in the layer that owns A2A, and merged into a state file the
+        // engine writes without interpreting. `member` is always there: `null` means that
+        // no key is kept for this node.
+        let mut fields = serde_json::Map::new();
+        if let Some((port, token)) = self.a2a_discovery() {
             fields.insert("a2a_port".to_owned(), port.into());
             fields.insert("a2a_token".to_owned(), token.to_owned().into());
-            state_file.set_discovery(fields);
         }
+        let member = self.member().map(|key| key.to_string());
+        fields.insert("member".to_owned(), member.into());
+        state_file.set_discovery(fields);
     }
 
     async fn on_tick(&mut self, state: &mut EventLoopState, context: &HandlerCtx<'_>) {

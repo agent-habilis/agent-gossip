@@ -113,6 +113,7 @@ pub(crate) fn respond_with_paths(
                 "ok": true,
                 "peers": rows,
                 "peer_count": snapshot.count,
+                "own_member": snapshot.own_member.map(|key| key.to_string()),
             })
             .to_string(),
         );

@@ -4,6 +4,7 @@ use habilis_network::runtime::{state_file, tuning};
 
 use super::args::ReadyOpts;
 use super::print_ready_identity::print_ready_identity;
+use super::read_member::read_member;
 
 /// A state file that `wait_for_ready` saw report a fresh `ready: true`. Only
 /// `wait_for_ready` builds one, so an identity read through it follows a passed
@@ -15,6 +16,10 @@ pub(super) struct ReadyStateFile {
 impl ReadyStateFile {
     pub(super) fn identity(&self) -> SessionIdentity {
         state_file::read_identity(&self.path)
+    }
+
+    pub(super) fn member(&self) -> serde_json::Value {
+        read_member(&self.path)
     }
 }
 

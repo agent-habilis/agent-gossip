@@ -10,6 +10,7 @@ use habilis_network::util::process;
 
 use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
 use super::discovery::Discovery;
+use super::read_member::read_member;
 use super::target::Target;
 use super::{bell, leftovers};
 use crate::a2a::ipc_command::IpcCommand::Info;
@@ -194,6 +195,7 @@ fn target_json(target: &Target) -> serde_json::Value {
     if let Some(pubkey) = &target.pubkey {
         obj.insert("pubkey".into(), pubkey.clone().into());
     }
+    obj.insert("member".into(), read_member(&target.path));
     if let Some(topic) = &target.topic {
         obj.insert("topic".into(), topic.clone().into());
     }

@@ -38,6 +38,7 @@ mod ping;
 mod plug;
 mod poll;
 mod print_ready_identity;
+mod read_member;
 mod ready_state_file;
 mod reject_id_encoded_flag;
 mod run_session;

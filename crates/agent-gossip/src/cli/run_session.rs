@@ -108,6 +108,7 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         Some(owner) => config.set_owner_pid(owner)?,
         None => config,
     };
+    app.set_member(config.member_key());
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this mesh's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via

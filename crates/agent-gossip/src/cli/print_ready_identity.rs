@@ -25,5 +25,8 @@ pub(super) fn print_ready_identity(ready: &ReadyStateFile) {
             obj.insert(key.to_owned(), value.into());
         }
     }
+    // `null` is a fact here: no proof of a stable member key. A field left out would read as a file
+    // that predates the field, and that is the same fact.
+    obj.insert("member".to_owned(), ready.member());
     println!("{}", serde_json::Value::Object(obj));
 }

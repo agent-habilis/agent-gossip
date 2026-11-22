@@ -525,7 +525,7 @@ impl AgentGossipServer {
     }
 
     #[tool(
-        description = "Return the gossip's current `meta` channel (the gossip-metadata counterpart of `get_state`) — one entry for each member, keyed by the author key of the member in lowercase hex, each entry the value of that member's slice. Starts as {} before any write. By convention each entry holds {nickname, model, harness, host, cwd, status}: a nickname is a label that two members can share. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the author keys with no active member behind them: a member that leaves gracefully removes its entry, but one that died without leaving stays for about 1 hour, still reporting whatever status it last set. Treat those entries as history, not as candidates for work."
+        description = "Return the gossip's current `meta` channel (the gossip-metadata counterpart of `get_state`) — one entry for each member, keyed by the author key of the member in lowercase hex, each entry the value of that member's slice. Starts as {} before any write. By convention each entry holds {nickname, model, harness, host, cwd, status}: a nickname is a label that two members can share. Requires an active gossip. Read it to decide your next `apply_meta_merge` or to see what peers run on. `absent` lists the author keys with no active member behind them: a member that leaves gracefully removes its entry, but one that died without leaving stays for about 1 hour, still reporting whatever status it last set. Treat those entries as history, not as candidates for work. `members` names the stable member key behind each slot (a slot is the key of one run), or null when no proof of it was verified."
     )]
     async fn get_meta(
         &self,
@@ -535,8 +535,12 @@ impl AgentGossipServer {
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
         // The loop derives `absent`, with the same function as the CLI's `meta get`, so the two
         // agent-facing surfaces cannot drift apart on what "absent" means.
-        let MetaView { document, absent } = session.meta_get().await.map_err(to_mcp_error)?;
-        ok_json(serde_json::json!({ "document": document, "absent": absent }))
+        let MetaView {
+            document,
+            absent,
+            members,
+        } = session.meta_get().await.map_err(to_mcp_error)?;
+        ok_json(serde_json::json!({ "document": document, "absent": absent, "members": members }))
     }
 }
 

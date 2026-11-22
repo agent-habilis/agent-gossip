@@ -4988,6 +4988,235 @@ fn session_and_leave_keep_the_member_key_of_a_crashed_daemon() {
     );
 }
 
+/// The JSON that `command` prints, or a failed test when it exits non-zero.
+fn json_of(command: &mut Command) -> serde_json::Value {
+    let out: std::process::Output = output_within(command, QUERY_LIMIT);
+    assert!(out.status.success(), "the query exits zero: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(stdout.trim()).expect("a query prints one JSON document")
+}
+
+fn ready_json(state: &std::path::Path) -> serde_json::Value {
+    let mut command = common::test_cmd();
+    command.arg("ready").arg("--state-file").arg(state);
+    json_of(&mut command)
+}
+
+fn is_hex_key(value: &serde_json::Value) -> bool {
+    let Some(text) = value.as_str() else {
+        return false;
+    };
+    text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The roster row of `nickname` in the `peers` reply of `observer`, polled until its `member` is proved.
+fn proved_row(
+    mesh: &str,
+    observer: &str,
+    nickname: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let mut command = common::test_cmd();
+        command.args(["peers", "--gossip", mesh, "--nickname", observer]);
+        let reply = json_of(&mut command);
+        let rows = reply["peers"].as_array().cloned().unwrap_or_default();
+        let live: Vec<&serde_json::Value> = rows
+            .iter()
+            .filter(|row| row["nickname"] == nickname && row["quiet"] == false)
+            .collect();
+        if let [row] = live.as_slice()
+            && is_hex_key(&row["member"])
+        {
+            return ((*row).clone(), reply);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the member of {nickname} was never proved to {observer}: {rows:?}"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The member key is the stable identity of a node: `peers` shows it for every peer, and `ready`, `session`
+/// and the state file show it for the node itself. `pubkey` is the key of one run and still shows beside it.
+/// `member` is `null` where no proof was verified, never the old value.
+#[test]
+fn the_member_key_is_shown_in_peers_ready_session_and_the_state_file() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, anchor_nick) = spawn_discoverable_daemon("member-anchor");
+    let dir = std::env::temp_dir().join(format!("member-shown-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("member-shown");
+    let node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "member-node",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+
+    let ready = ready_json(&state);
+    let own = ready["member"].clone();
+    assert!(
+        is_hex_key(&own),
+        "ready shows the member key of the node: {ready}"
+    );
+    assert_ne!(
+        own, ready["pubkey"],
+        "the member key is not the key of the run"
+    );
+    let written = fs::read_to_string(&state).expect("the daemon wrote its state file");
+    let file: serde_json::Value = serde_json::from_str(&written)
+        .expect("the daemon writes the file atomically, so a read never sees half of it");
+    assert_eq!(
+        file["member"], own,
+        "the state file shows the same member key"
+    );
+    let session = session_report(&std::process::id().to_string());
+    let sessions = session["sessions"]
+        .as_array()
+        .expect("session prints a list of sessions");
+    let listed = sessions
+        .iter()
+        .find(|row| row["nickname"] == "member-node")
+        .expect("the node is a descendant of this test, so session lists it");
+    assert_eq!(listed["member"], own, "session shows the same member key");
+
+    let (row, reply) = proved_row(&mesh, &anchor_nick, "member-node");
+    assert_eq!(
+        row["member"], own,
+        "a peer sees the member key that the node reports"
+    );
+    assert_ne!(
+        row["pubkey"], row["member"],
+        "the row keeps the key of the run beside it"
+    );
+    assert!(
+        is_hex_key(&reply["own_member"]),
+        "peers shows the member key of the observer too: {reply}"
+    );
+    crash(node);
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// The scenario that failed in the e2e run: a node is killed and started again on the same state file, under a
+/// new wrapper. Its member key is the same and shows once in the roster, and the key of the run is new.
+#[test]
+fn a_restart_on_the_same_state_file_shows_the_same_member_once() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, anchor_nick) = spawn_discoverable_daemon("member-restart");
+    let dir = std::env::temp_dir().join(format!("member-restart-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("member-restart");
+    let spec = NodeSpec {
+        mesh: &mesh,
+        nickname: "member-again",
+        state: &state,
+    };
+
+    let first = start_keyed_node(&spec, true, &stderr);
+    let before = ready_json(&state);
+    let (row_before, _) = proved_row(&mesh, &anchor_nick, "member-again");
+    crash(first);
+    let second = start_keyed_node(&spec, true, &stderr);
+    let after = ready_json(&state);
+    let key_of_run_after = after["pubkey"].clone();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let row_after = loop {
+        let (row, _) = proved_row(&mesh, &anchor_nick, "member-again");
+        if row["pubkey"] == key_of_run_after || Instant::now() >= deadline {
+            break row;
+        }
+        std::thread::sleep(POLL);
+    };
+    crash(second);
+
+    assert!(
+        is_hex_key(&before["member"]),
+        "ready shows a member key, so the comparison below is not null against null: {before}"
+    );
+    assert_eq!(
+        before["member"], after["member"],
+        "the node that restarts on its own state file is the same member"
+    );
+    assert_ne!(
+        before["pubkey"], after["pubkey"],
+        "the key of the run is new at every start, by design"
+    );
+    assert_eq!(
+        row_before["member"], row_after["member"],
+        "the other nodes see the same member key after the restart"
+    );
+    assert_eq!(
+        row_after["pubkey"], key_of_run_after,
+        "a row names the key of the run that started last"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
+/// `meta get` names the member key of each slot beside the document and not in it, so that a `get`, an edit
+/// and a `merge` do not write a derived value back. The slot is the key of a run, and the value comes from the
+/// roster only.
+#[test]
+fn meta_get_names_the_member_of_each_slot_beside_the_document() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, anchor_nick) = spawn_discoverable_daemon("member-meta");
+    let dir = std::env::temp_dir().join(format!("member-meta-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("member-meta");
+    let node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "member-slot",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+    let own = ready_json(&state);
+    let (row, _) = proved_row(&mesh, &anchor_nick, "member-slot");
+
+    let mut report = common::test_cmd();
+    report.args([
+        "meta",
+        "merge",
+        "--gossip",
+        &mesh,
+        "--nickname",
+        "member-slot",
+    ]);
+    report.args(["--merge", "{\"status\":\"busy\"}"]);
+    let _ = output_within(&mut report, QUERY_LIMIT);
+    let mut get = common::test_cmd();
+    get.args(["meta", "get", "--gossip", &mesh, "--nickname", &anchor_nick]);
+    let reply = json_of(&mut get);
+    let slot = own["pubkey"]
+        .as_str()
+        .expect("ready shows the key of the run");
+    assert_eq!(
+        reply["members"][slot], row["member"],
+        "the slot of the key of a run names the member that the roster proved: {reply}"
+    );
+    assert!(
+        reply["document"][slot].get("member").is_none(),
+        "the document itself carries no derived field"
+    );
+    crash(node);
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
 /// The sweep removes only what a refused connection proves dead: a live member and a member that
 /// does not answer in time keep every file.
 #[test]
