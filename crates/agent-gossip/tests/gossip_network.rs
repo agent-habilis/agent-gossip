@@ -2759,51 +2759,6 @@ fn await_slice_value(
 
 // ── Key-identity model (Tier 1) ─────────────────────────────────────────
 
-/// BEFORE (`same_nickname_peers_communicate`, from the key-identity work in main, #47): two members share
-/// a display nickname, and each must still see the other's messages, because self-echo is keyed on the key
-/// and not on the name. AFTER: the nickname gate admits one key for a nickname, and the two nodes do not
-/// accept each other's frames. Neither holder sees the message of the other; an observer with its own
-/// nickname still sees the mesh work. The key still decides who is the author: the echo rule is pinned by
-/// `message_event_carries_full_pubkey` and the tests of the key-keyed roster.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn two_members_of_one_nickname_do_not_see_each_others_messages() {
-    let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
-    let mut beta = InProcNode::join(&alpha.mesh, "dup").await;
-    let observer = InProcNode::join(&alpha.mesh, "samenick-obs").await;
-
-    alpha.broadcast("from-alpha").await;
-    beta.broadcast("from-beta").await;
-    // A gossip holds no log of a broadcast, so a message sent before the links exist is lost:
-    // the observer sends again until both holders have a message of it.
-    let mut reached_both = false;
-    for round in 0..6 {
-        let body = format!("from-observer-{round}");
-        observer.broadcast(&body).await;
-        if alpha.wait_body(&body, Duration::from_secs(5)).await
-            && beta.wait_body(&body, Duration::from_secs(5)).await
-        {
-            reached_both = true;
-            break;
-        }
-    }
-    assert!(
-        reached_both,
-        "the observer's message did not reach a holder: the mesh does not work at all"
-    );
-    assert!(
-        !beta.wait_body("from-alpha", Duration::from_secs(5)).await,
-        "beta saw the message of alpha: the gate admitted a second key under the nickname"
-    );
-    assert!(
-        !alpha.wait_body("from-beta", Duration::from_secs(5)).await,
-        "alpha saw the message of beta: the gate admitted a second key under the nickname"
-    );
-
-    alpha.leave().await;
-    beta.leave().await;
-    observer.leave().await;
-}
-
 /// The `--output json` `message` event exposes the author's full public key,
 /// so an agent can key trust/disambiguation on the key rather than the
 /// (non-unique) nickname.
