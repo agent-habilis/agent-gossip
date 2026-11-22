@@ -156,8 +156,10 @@ async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> Se
             // `timeout_at` polls the handle before it reads the clock, so a verdict that is ready after
             // the deadline still arrives here. The layer that wraps this one can have answered
             // `Unconfirmed` already, and the log must not take a leg that its caller was told is not
-            // confirmed.
-            Ok(Ok(SendVerdict::Delivered)) if tokio::time::Instant::now() > deadline => {
+            // confirmed. A `Delivered` that is read at or after the deadline is recorded as
+            // `Unconfirmed` on purpose, although the peer did confirm: the resend, a new leg, then makes
+            // the record right.
+            Ok(Ok(SendVerdict::Delivered)) if tokio::time::Instant::now() >= deadline => {
                 SendVerdict::Unconfirmed("the peer confirmed after the deadline".to_owned())
             }
             Ok(Ok(verdict)) => verdict,
