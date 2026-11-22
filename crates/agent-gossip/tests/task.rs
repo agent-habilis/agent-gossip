@@ -340,8 +340,14 @@ async fn a_second_cancel_sends_the_canceled_leg_again() {
     let alice_nick = alice.nickname.clone();
     let cancel = serde_json::json!({ "id": task_id.as_str() });
 
-    bob.a2a_call(&alice_nick, "CancelTask", cancel.clone())
+    let first = bob
+        .a2a_call(&alice_nick, "CancelTask", cancel.clone())
         .await;
+    // The canceller records the cancel at the call, so the repeat below mends a leg and not a record.
+    assert_eq!(
+        first["result"]["status"]["state"], "TASK_STATE_CANCELED",
+        "the first cancel answers from the record that it has just changed: {first}"
+    );
     assert!(
         alice
             .wait_for(TASK_WAIT, |events| canceled_legs(events) >= 1)
