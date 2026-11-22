@@ -90,18 +90,8 @@ pub(super) fn forget_kept_key(state_file: &Path) -> io::Result<KeptFiles> {
         return Ok(KeptFiles::NothingKept);
     }
     let lock_path = state_file.with_extension("key.lock");
-    let not_a_regular_file = || {
-        io::Error::other(format!(
-            "the lock file {} is a link, a pipe or another thing that is not a regular file, so it cannot keep two starts apart",
-            lock_path.display()
-        ))
-    };
-    if std::fs::symlink_metadata(&lock_path).is_ok_and(|metadata| !metadata.file_type().is_file()) {
-        return Err(not_a_regular_file());
-    }
-    // A write-only open of a pipe with no reader waits for ever. The first flag turns that wait into an error.
-    // The second makes the open fail where a link took the place of the file after the check above, and the
-    // check below refuses any other thing that a swap put there.
+    // The flags make the open itself refuse a link (`O_NOFOLLOW`) and a pipe with no reader, which would
+    // otherwise wait for ever (`O_NONBLOCK`). The check below refuses any other thing that is no regular file.
     let flags = rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::NOFOLLOW;
     let non_blocking = i32::try_from(flags.bits())
         .expect("the flags that open without waiting or following are small numbers");
@@ -110,7 +100,10 @@ pub(super) fn forget_kept_key(state_file: &Path) -> io::Result<KeptFiles> {
     options.mode(0o600).custom_flags(non_blocking);
     let lock = options.open(&lock_path)?;
     if !lock.metadata()?.file_type().is_file() {
-        return Err(not_a_regular_file());
+        return Err(io::Error::other(format!(
+            "the lock file {} is not a regular file, so it cannot keep two starts apart",
+            lock_path.display()
+        )));
     }
     match lock.try_lock() {
         Ok(()) => {}
