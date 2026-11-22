@@ -292,8 +292,11 @@ COMMANDS
                      of this daemon: a new member identity was made". In
                      the launch of the skills, stderr is the
                      <pid>.stderr file next to the state file, so read it
-                     there. It never reuses that key and never refuses the
-                     start. A state file in any other place is a path that
+                     there. It never reuses that key. It refuses the start
+                     in 1 case only: a daemon still holds the member key of
+                     that path, for example while it stops, so the new
+                     start waits for that daemon or uses another state file.
+                     A state file in any other place is a path that
                      you chose: its key is kept and reused after a restart under
                      any parent, and no owner is bound to it. --owner-pid,
                      when given, wins over all of this.
