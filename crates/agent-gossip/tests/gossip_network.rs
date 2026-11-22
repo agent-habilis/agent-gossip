@@ -4878,6 +4878,19 @@ fn session_file_refuses_init_and_a_dead_pid_and_prints_nothing() {
     }
 }
 
+/// Removes the files that a daemon keeps beside its state file, when it drops. A test that fails after the
+/// daemon wrote them must not leave the session file of its process, which the next test of the file looks at.
+/// Declare it before the node: the node is killed first, and then the files go.
+struct StateFilesGuard<'path>(&'path std::path::Path);
+
+impl Drop for StateFilesGuard<'_> {
+    fn drop(&mut self) {
+        for extension in ["json", "key", "run", "run.tmp", "key.lock", "run.lock"] {
+            let _ = fs::remove_file(self.0.with_extension(extension));
+        }
+    }
+}
+
 /// The contract of the skills: a daemon that starts on the printed path is found by `ready` and by `session`.
 #[test]
 fn a_daemon_on_the_printed_session_file_is_found_by_ready_and_session() {
@@ -4889,6 +4902,7 @@ fn a_daemon_on_the_printed_session_file_is_found_by_ready_and_session() {
     fs::create_dir_all(state.parent().expect("a state file has a folder"))
         .expect("the runtime base is writable");
     let stderr = tmp_log("session-file");
+    let _files = StateFilesGuard(&state);
 
     let node = start_keyed_node(
         &NodeSpec {
@@ -4908,9 +4922,6 @@ fn a_daemon_on_the_printed_session_file_is_found_by_ready_and_session() {
         .iter()
         .find(|row| row["nickname"] == "session-file-node");
     crash(node);
-    for extension in ["json", "key", "run", "run.tmp", "key.lock", "run.lock"] {
-        let _ = fs::remove_file(state.with_extension(extension));
-    }
 
     assert_eq!(
         ready["nickname"], "session-file-node",
