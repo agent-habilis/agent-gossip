@@ -24,7 +24,8 @@ use crate::{MSG_TIMEOUT, POLL, RPC_ATTEMPT, init_test_tracing, is_rpc_timeout, t
 /// subprocess [`Node`](crate::Node), but everything runs in the test process — so
 /// coverage is recorded and teardown is deterministic.
 pub struct InProcNode {
-    /// The live session, for calls the wrappers of this harness do not cover.
+    /// The live session, for calls the wrappers of this harness do not cover. Borrow it. A test that moves it
+    /// out of the node drops the runtime base of the node, which is removed under the running session.
     pub session: MeshSession,
     pub(crate) rx: UnboundedReceiver<OutputEvent>,
     pub(crate) drained: Vec<OutputEvent>,
