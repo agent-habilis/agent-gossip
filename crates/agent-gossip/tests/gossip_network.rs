@@ -4524,10 +4524,23 @@ struct NodeSpec<'spec> {
     state: &'spec std::path::Path,
 }
 
-/// A member that a test starts on a state file: the process that it must kill, and the daemon's pid.
+/// A member that a test starts on a state file: the process that it must kill, and the daemon's pid. Behind a
+/// wrapper the daemon is a child of the process that `holder` owns, so a test that panics before `crash` kills
+/// the daemon here, and `crash` says that it did.
 struct KeyedNode {
     holder: KillOnDrop,
     daemon_pid: u32,
+    crashed: bool,
+}
+
+impl Drop for KeyedNode {
+    fn drop(&mut self) {
+        if !self.crashed {
+            let _ = Command::new("kill")
+                .args(["-KILL", &self.daemon_pid.to_string()])
+                .status();
+        }
+    }
 }
 
 fn child_pid(parent: u32) -> u32 {
@@ -4566,15 +4579,16 @@ fn start_keyed_node(
     } = *spec;
     let _ = fs::remove_file(state);
     let stderr = File::create(stderr_file).expect("the test temp dir is writable");
-    let holder = if wrapped {
-        let line = format!(
-            "{} --log-dir {} join {mesh} --nickname {nickname} --state-file {}; true",
-            bin().display(),
-            common::test_log_dir(),
-            state.display()
-        );
+    let child = if wrapped {
+        // The paths are arguments of the shell, and not words of its program: a path with a space is one word.
         let mut command = Command::new("sh");
-        command.arg("-c").arg(line);
+        command.args([
+            "-c",
+            r#""$1" --log-dir "$2" join "$3" --nickname "$4" --state-file "$5"; true"#,
+            "sh",
+        ]);
+        command.arg(bin()).arg(common::test_log_dir());
+        command.args([mesh, nickname]).arg(state);
         command.stdin(Stdio::null()).stdout(Stdio::null());
         command.stderr(stderr);
         command.spawn().expect("sh is on every unix host")
@@ -4588,16 +4602,19 @@ fn start_keyed_node(
             .spawn()
             .expect("the test binary is built before the suite runs, so its path always spawns")
     };
+    let holder = KillOnDrop(child);
     let daemon_pid = if wrapped {
-        child_pid(holder.id())
+        child_pid(holder.0.id())
     } else {
-        holder.id()
+        holder.0.id()
+    };
+    let node = KeyedNode {
+        holder,
+        daemon_pid,
+        crashed: false,
     };
     wait_ready(state);
-    KeyedNode {
-        holder: KillOnDrop(holder),
-        daemon_pid,
-    }
+    node
 }
 
 /// `SIGKILL` the daemon and its wrapper: a crash, not a leave.
@@ -4606,6 +4623,7 @@ fn crash(mut node: KeyedNode) {
         .args(["-KILL", &node.daemon_pid.to_string()])
         .status()
         .expect("kill is on PATH on every unix host, so it spawns");
+    node.crashed = true;
     assert!(
         status.success(),
         "the signal reaches the daemon that the test started"
@@ -4826,18 +4844,12 @@ fn a_session_file_of_an_orphan_daemon_starts_a_new_member() {
     let orphan = |stderr_file: &std::path::Path| {
         let _ = fs::remove_file(&state);
         // The outer shell exits at once, so the daemon is re-parented to init before it runs.
-        let line = format!(
-            "(sleep 0.6; exec {} --log-dir {} join {mesh} --nickname keyed-d --state-file {} 2> {}) &",
-            bin().display(),
-            common::test_log_dir(),
-            state.display(),
-            stderr_file.display()
-        );
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg(line)
-            .status()
-            .expect("sh is on every unix host");
+        let line = r#"(sleep 0.6; exec "$1" --log-dir "$2" join "$3" --nickname keyed-d --state-file "$4" 2> "$5") &"#;
+        let mut command = Command::new("sh");
+        command.args(["-c", line, "sh"]);
+        command.arg(bin()).arg(common::test_log_dir());
+        command.arg(&mesh).arg(&state).arg(stderr_file);
+        let status = command.status().expect("sh is on every unix host");
         assert!(status.success(), "the outer shell starts the orphan");
         wait_ready(&state);
     };
