@@ -396,7 +396,7 @@ impl A2aApp {
     /// The legs at the head of the queue that the peer got, in the order they were sent. A leg
     /// whose send has no outcome yet holds back every leg behind it. A leg that was not delivered
     /// is dropped.
-    fn take_delivered_legs(&mut self) -> Vec<DeliveredLeg> {
+    pub(crate) fn take_delivered_legs(&mut self) -> Vec<DeliveredLeg> {
         let mut ready = Vec::new();
         while let Some(head) = self.own_legs.front_mut() {
             let delivered = match head.delivered.try_recv() {

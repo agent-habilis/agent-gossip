@@ -8,8 +8,8 @@ use std::time::Instant;
 use habilis_network::embed::{EventLoopState, HandlerCtx};
 use habilis_network::ops::blob::{ContentId, OffloadRequest};
 use habilis_network::ops::{
-    Delivered, MergeCtx, MeshSender, PendingSend, StateMergeParams, blob, broadcast_state_merge,
-    seal_broadcast_body,
+    Delivered, MergeCtx, MeshSender, PendingSend, SendVerdict, StateMergeParams, blob,
+    broadcast_state_merge, seal_broadcast_body,
 };
 use habilis_network::protocol::messages::{Authored, Verified, WireFrame};
 use habilis_network::protocol::{
@@ -147,15 +147,34 @@ fn build_msg(frame: ChatFrameParams<'_>, shard: Option<Shard>, signer: &Identity
     message.shard(shard).sign(signer)
 }
 
-/// Wait for the sends that run on a task of their own. The first failure is the verdict.
-async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> anyhow::Result<()> {
+/// Wait for the sends that run on a task of their own. The first verdict that is not `Delivered` is
+/// the verdict of the leg. A send with no outcome by its deadline, or whose task ended with none,
+/// is `Unconfirmed`: the node does not know whether the peer took the frame.
+async fn settle(pending: Vec<PendingSend>, deadline: tokio::time::Instant) -> SendVerdict {
     for handle in pending {
-        tokio::time::timeout_at(deadline, handle)
-            .await
-            .map_err(|_| anyhow::anyhow!("a send gave no outcome by its deadline"))?
-            .map_err(|_| anyhow::anyhow!("a send task ended before it gave its outcome"))??;
+        let verdict = match tokio::time::timeout_at(deadline, handle).await {
+            Ok(Ok(verdict)) => verdict,
+            Ok(Err(_)) => {
+                SendVerdict::Unconfirmed("a send task ended before it gave its outcome".to_owned())
+            }
+            Err(_) => SendVerdict::Unconfirmed("a send gave no outcome by its deadline".to_owned()),
+        };
+        if verdict != SendVerdict::Delivered {
+            return verdict;
+        }
     }
-    Ok(())
+    SendVerdict::Delivered
+}
+
+/// The verdict as the error of a caller that goes on with `?`: its text says `not delivered` or
+/// `not confirmed`, never `failed`, because an unconfirmed frame can have arrived.
+fn delivered_or_error(verdict: SendVerdict) -> anyhow::Result<()> {
+    match verdict {
+        SendVerdict::Delivered => Ok(()),
+        not_delivered @ (SendVerdict::NotDelivered(_) | SendVerdict::Unconfirmed(_)) => {
+            Err(anyhow::Error::new(not_delivered))
+        }
+    }
 }
 
 /// Whether a leg waits in `A2aApp::unsent_legs` until every shard has a verdict: only a content leg
@@ -203,7 +222,7 @@ pub(crate) fn when_sent(
         return;
     }
     let deadline = send_deadline();
-    tokio::spawn(async move { then(settle(pending, deadline).await) });
+    tokio::spawn(async move { then(delivered_or_error(settle(pending, deadline).await)) });
 }
 
 /// For a caller with no one to tell: a failure of a send on a task is only logged.
@@ -213,8 +232,8 @@ pub(crate) fn log_pending(pending: Vec<PendingSend>) {
     }
     let deadline = send_deadline();
     tokio::spawn(async move {
-        if let Err(error) = settle(pending, deadline).await {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "directed send failed");
+        if let Err(error) = delivered_or_error(settle(pending, deadline).await) {
+            tracing::warn!(target: "agent_gossip::a2a", %error, "directed send not delivered");
         }
     });
 }
@@ -1636,7 +1655,7 @@ fn queue_sharded_leg(
     let deadline = send_deadline();
     tokio::spawn(async move {
         let verdict = settle(pending, deadline).await;
-        let _ = sent_tx.send(verdict.is_ok());
+        let _ = sent_tx.send(verdict == SendVerdict::Delivered);
         let _ = verdict_tx.send(verdict);
     });
     vec![verdict_rx]
@@ -1704,7 +1723,7 @@ fn echo_when_sent(
     let deadline = send_deadline();
     tokio::spawn(async move {
         let verdict = settle(pending, deadline).await;
-        if verdict.is_ok() {
+        if verdict == SendVerdict::Delivered {
             print_echo(&out, &message, echo_as, addressee.as_ref());
         }
         let _ = verdict_tx.send(verdict);
@@ -1766,7 +1785,7 @@ fn ingest_own_leg_when_sent(
     let deadline = send_deadline();
     tokio::spawn(async move {
         let verdict = settle(pending, deadline).await;
-        let _ = queue_tx.send(verdict.is_ok());
+        let _ = queue_tx.send(verdict == SendVerdict::Delivered);
         let _ = verdict_tx.send(verdict);
     });
     vec![verdict_rx]
@@ -2582,7 +2601,7 @@ mod echo_when_sent_tests {
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::oneshot;
 
-    use super::{EchoAs, OwnEcho, PendingSend, echo_when_sent};
+    use super::{EchoAs, OwnEcho, PendingSend, SendVerdict, echo_when_sent};
     use crate::a2a::wire;
     use crate::emission;
     use crate::output_event::OutputEvent;
@@ -2619,12 +2638,19 @@ mod echo_when_sent_tests {
             addressee: None,
         };
         let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
-        verdict_tx.send(Ok(())).expect("receiver is held");
+        verdict_tx
+            .send(SendVerdict::Delivered)
+            .expect("receiver is held");
         let verdict = pending.into_iter().next().expect("verdict handle");
-        verdict
+        let outcome = verdict
             .await
-            .expect("the echo task sends the outcome before it drops its end")
-            .expect("the test fed Ok(()), and the echo task passes it on unchanged");
+            .expect("the echo task sends the outcome before it drops its end");
+
+        assert_eq!(
+            outcome,
+            SendVerdict::Delivered,
+            "the echo task passes the verdict on unchanged"
+        );
 
         assert_eq!(echoes(&mut events), 1, "one echo is sent");
     }
@@ -2641,7 +2667,7 @@ mod echo_when_sent_tests {
         };
         let pending = echo_when_sent(&out, own_echo, vec![verdict_rx]);
         verdict_tx
-            .send(Err(anyhow::anyhow!("unicast dial failed")))
+            .send(SendVerdict::NotDelivered("unicast dial failed".to_owned()))
             .expect("receiver is held");
         let verdict = pending
             .into_iter()
@@ -2650,7 +2676,11 @@ mod echo_when_sent_tests {
             .await
             .expect("the echo task sends the outcome before it drops its end");
 
-        assert!(verdict.is_err(), "the caller still sees the failure");
+        assert_eq!(
+            verdict,
+            SendVerdict::NotDelivered("unicast dial failed".to_owned()),
+            "the caller still sees the failure"
+        );
         assert_eq!(echoes(&mut events), 0, "no echo follows a failure");
     }
 }
@@ -2664,8 +2694,9 @@ mod sharded_leg_tests {
     use tokio::sync::oneshot;
 
     use super::{
-        MAX_MESSAGE_SIZE, OwnLeg, PendingSend, ingest_own_leg_when_sent, needs_unsent_slot,
-        queue_sharded_leg, send_deadline, settle, take_sent_legs,
+        MAX_MESSAGE_SIZE, OwnLeg, PendingSend, SendVerdict, delivered_or_error,
+        ingest_own_leg_when_sent, needs_unsent_slot, queue_sharded_leg, send_deadline, settle,
+        take_sent_legs,
     };
     use crate::a2a::a2a_app::{A2aApp, UnsentLeg};
     use crate::a2a::{tuning, wire};
@@ -2683,7 +2714,7 @@ mod sharded_leg_tests {
         )
     }
 
-    fn verdict(outcome: anyhow::Result<()>) -> PendingSend {
+    fn verdict(outcome: SendVerdict) -> PendingSend {
         let (verdict_tx, verdict_rx) = oneshot::channel();
         verdict_tx.send(outcome).expect("receiver is held");
         verdict_rx
@@ -2709,13 +2740,14 @@ mod sharded_leg_tests {
     async fn a_sharded_leg_with_one_failed_shard_enters_no_log() {
         let mut app = A2aApp::new();
         let pending = vec![
-            Some(verdict(Ok(()))),
-            Some(verdict(Err(anyhow::anyhow!("dial failed")))),
+            Some(verdict(SendVerdict::Delivered)),
+            Some(verdict(SendVerdict::NotDelivered("dial failed".to_owned()))),
         ];
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(
-            settle(handles, send_deadline()).await.is_err(),
+        assert_eq!(
+            settle(handles, send_deadline()).await,
+            SendVerdict::NotDelivered("dial failed".to_owned()),
             "one lost shard makes the receiver unable to reassemble the whole payload"
         );
 
@@ -2747,12 +2779,13 @@ mod sharded_leg_tests {
     #[tokio::test]
     async fn a_sharded_leg_whose_shards_were_all_sent_enters_the_log_whole() {
         let mut app = A2aApp::new();
-        let pending = vec![None, Some(verdict(Ok(())))];
+        let pending = vec![None, Some(verdict(SendVerdict::Delivered))];
 
         let handles = queue_sharded_leg(&mut app, vec![shard("a"), shard("b")], None, pending);
-        assert!(
-            settle(handles, send_deadline()).await.is_ok(),
-            "the leg was sent"
+        assert_eq!(
+            settle(handles, send_deadline()).await,
+            SendVerdict::Delivered,
+            "every shard has a verdict, so the leg can enter the log"
         );
 
         let logged: usize = take_sent_legs(&mut app)
@@ -2766,7 +2799,7 @@ mod sharded_leg_tests {
         let (verdict_tx, verdict_rx) = oneshot::channel();
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
-            let _ = verdict_tx.send(Ok(()));
+            let _ = verdict_tx.send(SendVerdict::Delivered);
         });
         verdict_rx
     }
@@ -2776,7 +2809,7 @@ mod sharded_leg_tests {
     #[tokio::test(start_paused = true)]
     async fn the_timeout_covers_all_the_shards_of_a_leg_together() {
         let mut app = A2aApp::new();
-        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
+        let (_held, silent) = oneshot::channel::<SendVerdict>();
         let late = verdict_after(std::time::Duration::from_secs(100));
         let handles = queue_sharded_leg(
             &mut app,
@@ -2790,8 +2823,8 @@ mod sharded_leg_tests {
         let outcome = tokio::time::timeout(limit, verdict).await;
 
         assert!(
-            matches!(outcome, Ok(Ok(Err(_)))),
-            "the leg must fail at the limit, not at the limit of each shard"
+            matches!(outcome, Ok(Ok(SendVerdict::Unconfirmed(_)))),
+            "the leg must end unconfirmed at the limit, not at the limit of each shard"
         );
     }
 
@@ -2824,8 +2857,8 @@ mod sharded_leg_tests {
         tokio::time::sleep(std::time::Duration::from_secs(100)).await;
 
         assert!(
-            matches!(outcome, Ok(Ok(Err(_)))),
-            "the caller must hear a failure at the limit"
+            matches!(outcome, Ok(Ok(SendVerdict::Unconfirmed(_)))),
+            "the caller must hear that the leg is not confirmed at the limit"
         );
         assert!(
             take_sent_legs(&mut app).is_empty(),
@@ -2833,16 +2866,89 @@ mod sharded_leg_tests {
         );
     }
 
+    #[test]
+    fn the_error_of_a_verdict_says_what_the_node_knows() {
+        assert!(
+            delivered_or_error(SendVerdict::Delivered).is_ok(),
+            "a caller that goes on with ? continues after a delivered frame"
+        );
+        let not_delivered = delivered_or_error(SendVerdict::NotDelivered("no dial".to_owned()))
+            .expect_err("only a delivered frame is no error")
+            .to_string();
+        let not_confirmed = delivered_or_error(SendVerdict::Unconfirmed("no answer".to_owned()))
+            .expect_err("an unconfirmed frame is still no success")
+            .to_string();
+
+        assert_eq!(
+            not_delivered, "not delivered: no dial",
+            "a frame that the peer never took says so, and a resend is safe"
+        );
+        assert_eq!(
+            not_confirmed, "not confirmed: no answer",
+            "an unconfirmed frame is not said to have failed, because the peer can hold it"
+        );
+    }
+
+    /// The record of an own task leg is a function of what the node knows: it takes a leg that the
+    /// peer confirmed and no other. The resend of a leg that was not confirmed is a new leg, and it
+    /// enters the record when the peer confirms it.
+    #[tokio::test]
+    async fn a_leg_that_is_not_confirmed_stays_out_of_the_record_and_its_resend_enters_it() {
+        let mut app = A2aApp::new();
+        let task = crate::a2a::TaskId::from("550e8400-e29b-41d4-a716-446655440000");
+        let own_leg = |text: &str| OwnLeg {
+            echo: shard(text).authored(),
+            task_id: Some(&task),
+        };
+
+        let first = ingest_own_leg_when_sent(
+            &mut app,
+            own_leg("first"),
+            vec![verdict(SendVerdict::Unconfirmed("no answer".to_owned()))],
+        );
+        let [first] = <[PendingSend; 1]>::try_from(first).expect("one verdict for the leg");
+        assert_eq!(
+            first
+                .await
+                .expect("the spawned task answers before it drops its end"),
+            SendVerdict::Unconfirmed("no answer".to_owned()),
+            "the caller hears the verdict that the send had"
+        );
+        assert!(
+            app.take_delivered_legs().is_empty(),
+            "a leg that the peer did not confirm must not advance the record"
+        );
+
+        let resend = ingest_own_leg_when_sent(
+            &mut app,
+            own_leg("resend"),
+            vec![verdict(SendVerdict::Delivered)],
+        );
+        let [resend] = <[PendingSend; 1]>::try_from(resend).expect("one verdict for the leg");
+        assert_eq!(
+            resend
+                .await
+                .expect("the spawned task answers before it drops its end"),
+            SendVerdict::Delivered,
+            "the peer confirmed the resend"
+        );
+        assert_eq!(
+            app.take_delivered_legs().len(),
+            1,
+            "the resend that the peer confirmed enters the record"
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_send_that_gives_no_outcome_fails_after_the_timeout() {
-        let (_held, silent) = oneshot::channel::<anyhow::Result<()>>();
+        let (_held, silent) = oneshot::channel::<SendVerdict>();
         let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
 
         let outcome = tokio::time::timeout(limit, settle(vec![silent], send_deadline())).await;
 
         assert!(
-            matches!(outcome, Ok(Err(_))),
-            "a send with no outcome must end as a failure, not wait for ever"
+            matches!(outcome, Ok(SendVerdict::Unconfirmed(_))),
+            "a send with no outcome must end as not confirmed, not wait for ever"
         );
     }
 }

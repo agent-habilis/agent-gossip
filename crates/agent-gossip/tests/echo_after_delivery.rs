@@ -76,6 +76,11 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
             std::thread::sleep(Duration::from_secs(2));
             continue;
         }
+        let reason = String::from_utf8_lossy(&sent.stderr).to_string();
+        assert!(
+            reason.contains("not delivered") && !reason.contains("not confirmed"),
+            "a send to a killed peer is certainly not delivered, and the CLI says so: {reason}"
+        );
         let polled = common::cli_poll(&mesh, &alice.nickname, None);
         assert!(
             !polled.contains(&body),
@@ -111,10 +116,13 @@ fn a_msg_whose_send_failed_never_arrives_later() {
     let mut failed = None;
     for attempt in 0..30 {
         let body = format!("reported as failed {attempt}");
-        if !common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, &body)
-            .status
-            .success()
-        {
+        let sent = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, &body);
+        if !sent.status.success() {
+            let reason = String::from_utf8_lossy(&sent.stderr).to_string();
+            assert!(
+                reason.contains("not delivered") && !reason.contains("not confirmed"),
+                "a paused peer never says that it holds the frame, so the send is certainly not delivered: {reason}"
+            );
             failed = Some(body);
             break;
         }
