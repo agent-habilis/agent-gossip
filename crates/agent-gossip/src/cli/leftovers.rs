@@ -322,6 +322,30 @@ mod tests {
     }
 
     #[test]
+    fn the_daemon_locks_folder_of_the_base_is_never_swept() {
+        let base = scratch("locks");
+        let dir = base.join("meshfolder");
+        let locks = base.join("locks");
+        std::fs::create_dir_all(&dir).expect("writable");
+        std::fs::create_dir_all(&locks).expect("writable");
+        let lock = locks.join("meshfolder-one-two.lock");
+        std::fs::write(&lock, "4242").expect("writable");
+        let socket = dir.join("one-two.ipc.sock");
+        stale_socket(&socket);
+        let much_later = SystemTime::now() + DEAD_LOG_KEEP * 10;
+
+        sweep_member(&base, &socket, much_later);
+        sweep_orphan_logs(&base, much_later);
+
+        assert!(!dir.exists(), "the member folder of a dead member goes");
+        assert!(
+            lock.exists(),
+            "a lock file is never removed, so that two starts keep one lock"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn an_empty_member_folder_that_the_sweep_did_not_empty_stays() {
         let base = scratch("fresh-folder");
         // A starting daemon creates its folder before it writes its first file in it.
