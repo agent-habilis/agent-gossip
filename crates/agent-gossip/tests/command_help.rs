@@ -82,32 +82,12 @@ fn the_manual_says_what_a_stop_leaves_and_how_long_it_takes() {
             "that a node which is away does not get the broadcasts it missed",
         ),
         (
-            "is the state of the agent session",
-            "the contract of the sessions folder",
-        ),
-        (
-            "which is not an ancestor",
-            "that a session file with no ancestor pid starts a new member",
-        ),
-        (
-            "a new member identity was made",
-            "the warning of a session file that starts a new member",
-        ),
-        (
-            "pid>.stderr file",
-            "where the warning lands in the launch of the skills",
-        ),
-        (
             "The member key is the stable identity of a node",
             "the stable identity beside the pubkey of one run",
         ),
         (
             "protected only while its holder is present",
             "the limit of the nickname protection",
-        ),
-        (
-            "a daemon still holds the member key of",
-            "the one case where a start on a session file is refused",
         ),
         (
             "member proves which key a session holds",

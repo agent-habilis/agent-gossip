@@ -72,7 +72,7 @@ unicode-width = "0.2"
 # that is, and a second declaration here would resolve the published crate
 # beside it. See the root manifest.
 anyhow.workspace = true
-rustix = { version = "1", default-features = false, features = ["fs", "process"] }
+rustix = { version = "1", default-features = false, features = ["process"] }
 uuid.workspace = true
 sha2.workspace = true
 bytes.workspace = true
