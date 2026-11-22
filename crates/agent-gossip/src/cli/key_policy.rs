@@ -99,10 +99,12 @@ pub(super) fn forget_kept_key(state_file: &Path) -> io::Result<KeptFiles> {
     if std::fs::symlink_metadata(&lock_path).is_ok_and(|metadata| !metadata.file_type().is_file()) {
         return Err(not_a_regular_file());
     }
-    // A write-only open of a pipe with no reader waits for ever. The flag turns that wait into an error, and
-    // the check below refuses what a swap between the two checks put in the place of the file.
-    let non_blocking = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits())
-        .expect("the flag that opens without waiting is a small number");
+    // A write-only open of a pipe with no reader waits for ever. The first flag turns that wait into an error.
+    // The second makes the open fail where a link took the place of the file after the check above, and the
+    // check below refuses any other thing that a swap put there.
+    let flags = rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::NOFOLLOW;
+    let non_blocking = i32::try_from(flags.bits())
+        .expect("the flags that open without waiting or following are small numbers");
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(false);
     options.mode(0o600).custom_flags(non_blocking);
