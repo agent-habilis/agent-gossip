@@ -1721,9 +1721,9 @@ struct OwnLeg<'source> {
     task_id: Option<&'source crate::a2a::TaskId>,
 }
 
-/// Queue an own task leg for the task record, behind the legs sent before it. The record takes a
-/// leg when the peer got it, and in send order: a leg to a cold peer that waits on its dial holds
-/// back the later legs, and a leg whose dial failed leaves no record. A leg with nothing pending
+/// Queue an own task leg for the task record, behind the legs of its task sent before it. The record
+/// takes a leg when the peer got it, and in send order inside 1 task: a leg to a cold peer that waits
+/// on its dial holds back the later legs of its task, and a leg whose dial failed leaves no record. A leg with nothing pending
 /// is delivered already. The handles are replaced by one that gives the same verdict, after the
 /// queue has it: the answer to the caller then comes after the record can take the leg.
 fn ingest_own_leg_when_sent(

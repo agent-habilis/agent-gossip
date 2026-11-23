@@ -178,10 +178,14 @@ pub(crate) struct A2aApp {
     pub(crate) surfaced_rx: Option<mpsc::Receiver<OutputEvent>>,
     /// The sender end of the tap, kept to read how many events it dropped.
     surfaced_tap: Option<SurfacedTap>,
-    /// Our own task legs in the order they were sent, waiting to enter the task record. A leg
-    /// enters it when the peer got it, and never before an earlier leg has been settled: the
-    /// record then holds only what the peer got, in the order the peer got it.
-    own_legs: VecDeque<QueuedLeg>,
+    /// Our own task legs waiting to enter the task record, 1 queue for each task, in the order they
+    /// were sent. A leg enters it when the peer got it, and never before an earlier leg of its task
+    /// has been settled: the record of a task then holds only what the peer got, in the order the
+    /// peer got it. The order matters inside 1 task (a leg that comes before its predecessor is
+    /// ignored by the state machine) and nowhere else: the legs of 1 task go to 1 peer and touch 1
+    /// record, so a peer that does not answer holds back only its own tasks. All the queues
+    /// together hold at most [`tuning::OWN_LEGS_CAP`] legs, and a queue that is empty is removed.
+    own_legs: HashMap<TaskId, VecDeque<QueuedLeg>>,
     /// Our own content legs whose send has no outcome yet. Each enters the dev log and the shard
     /// cache only if it was sent: a repair ask is served from the cache, so a leg whose send failed
     /// would otherwise reach the peer after the user was told it failed.
@@ -234,6 +238,26 @@ struct QueuedLeg {
     delivered: Receiver<bool>,
 }
 
+/// The legs at the head of one task queue whose send has an outcome, in order: the ones that the peer
+/// got. A leg without an outcome stops the walk, and a leg that was not delivered is dropped.
+fn take_settled_head(queue: &mut VecDeque<QueuedLeg>) -> Vec<DeliveredLeg> {
+    let mut ready = Vec::new();
+    while let Some(head) = queue.front_mut() {
+        let delivered = match head.delivered.try_recv() {
+            Ok(delivered) => delivered,
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Closed) => false,
+        };
+        let Some(QueuedLeg { leg, .. }) = queue.pop_front() else {
+            break;
+        };
+        if delivered {
+            ready.push(leg);
+        }
+    }
+    ready
+}
+
 impl A2aApp {
     /// Build a detached a2a-application state (a silent sink, no surfacing tap)
     /// — for unit tests that drive handlers without a live event loop.
@@ -271,7 +295,7 @@ impl A2aApp {
             surfaced: SurfacedState::new(),
             surfaced_rx: Some(surfaced_rx),
             surfaced_tap: Some(tap),
-            own_legs: VecDeque::new(),
+            own_legs: HashMap::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             repair_budget: RepairBudget::new(Instant::now()),
@@ -303,7 +327,7 @@ impl A2aApp {
             surfaced: SurfacedState::new(),
             surfaced_rx: None,
             surfaced_tap: None,
-            own_legs: VecDeque::new(),
+            own_legs: HashMap::new(),
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             repair_budget: RepairBudget::new(Instant::now()),
@@ -316,9 +340,9 @@ impl A2aApp {
     /// [`tuning::OWN_LEGS_CAP`] legs or [`tuning::OWN_LEGS_BYTES_CAP`] bytes.
     pub(crate) fn admit_own_leg(&self, bytes: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.own_legs.len() < tuning::own_legs_cap(),
+            self.own_legs_len() < tuning::own_legs_cap(),
             "{} own task legs still wait for their send (limit {}), so this leg was not sent",
-            self.own_legs.len(),
+            self.own_legs_len(),
             tuning::own_legs_cap()
         );
         self.admit_own_bytes_within(bytes, tuning::own_legs_bytes_cap())
@@ -355,12 +379,15 @@ impl A2aApp {
         Ok(())
     }
 
-    /// The bytes of body that the own legs in the queue hold.
+    /// How many own legs wait in all the queues together.
+    pub(crate) fn own_legs_len(&self) -> usize {
+        self.own_legs.values().map(VecDeque::len).sum()
+    }
+
+    /// The bytes of body that the own legs in the queues hold.
     pub(crate) fn own_legs_held_bytes(&self) -> usize {
-        let lengths = self
-            .own_legs
-            .iter()
-            .map(|queued| queued.leg.echo.body.as_str().len());
+        let queued = self.own_legs.values().flatten();
+        let lengths = queued.map(|queued| queued.leg.echo.body.as_str().len());
         lengths.sum()
     }
 
@@ -387,30 +414,24 @@ impl A2aApp {
         Ok(())
     }
 
-    /// Queue an own task leg behind the legs sent before it. `delivered` resolves to whether the
-    /// peer got the leg.
+    /// Queue an own task leg behind the legs of its task that were sent before it. `delivered`
+    /// resolves to whether the peer got the leg.
     pub(crate) fn queue_own_leg(&mut self, leg: DeliveredLeg, delivered: Receiver<bool>) {
-        self.own_legs.push_back(QueuedLeg { leg, delivered });
+        self.own_legs
+            .entry(leg.task_id.clone())
+            .or_default()
+            .push_back(QueuedLeg { leg, delivered });
     }
 
-    /// The legs at the head of the queue that the peer got, in the order they were sent. A leg
-    /// whose send has no outcome yet holds back every leg behind it. A leg that was not delivered
-    /// is dropped.
+    /// The legs at the head of each task queue that the peer got, in the order they were sent. A
+    /// leg whose send has no outcome yet holds back the legs of its own task behind it, and no other.
+    /// A leg that was not delivered is dropped, and a queue that is empty is removed.
     pub(crate) fn take_delivered_legs(&mut self) -> Vec<DeliveredLeg> {
         let mut ready = Vec::new();
-        while let Some(head) = self.own_legs.front_mut() {
-            let delivered = match head.delivered.try_recv() {
-                Ok(delivered) => delivered,
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Closed) => false,
-            };
-            let Some(QueuedLeg { leg, .. }) = self.own_legs.pop_front() else {
-                break;
-            };
-            if delivered {
-                ready.push(leg);
-            }
+        for queue in self.own_legs.values_mut() {
+            ready.extend(take_settled_head(queue));
         }
+        self.own_legs.retain(|_, queue| !queue.is_empty());
         ready
     }
 
@@ -1027,6 +1048,10 @@ mod tests {
     use crate::emission::{Output, OutputEvent};
 
     fn leg(body: &str) -> DeliveredLeg {
+        leg_of("550e8400-e29b-41d4-a716-446655440000", body)
+    }
+
+    fn leg_of(task: &str, body: &str) -> DeliveredLeg {
         let echo = Message::new_frame(
             &MeshId::from("test"),
             &Nickname::from("alice"),
@@ -1041,7 +1066,7 @@ mod tests {
             echo: echo
                 .sign(&habilis_network::protocol::Identity::generate())
                 .authored(),
-            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            task_id: TaskId::from(task),
         }
     }
 
@@ -1310,7 +1335,7 @@ mod tests {
         }
 
         assert_eq!(
-            app.own_legs.len(),
+            app.own_legs_len(),
             tuning::OWN_LEGS_CAP,
             "10 times the cap was offered: the queue must not grow past the cap"
         );
@@ -1467,6 +1492,28 @@ mod tests {
             "both legs are taken in order"
         );
         assert!(app.take_delivered_legs().is_empty(), "a leg enters once");
+    }
+
+    /// The order that the record needs is the order of the legs of 1 task: a leg of another task
+    /// touches another record, so a peer that does not answer holds back only its own tasks.
+    #[test]
+    fn a_leg_of_another_task_enters_the_record_while_a_dead_peer_task_has_no_verdict() {
+        let mut app = super::A2aApp::new();
+        let dead = "550e8400-e29b-41d4-a716-446655440000";
+        let live = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
+        let (_dead_tx, dead_rx) = oneshot::channel();
+        let (live_tx, live_rx) = oneshot::channel();
+        app.queue_own_leg(leg_of(dead, "to the dead peer"), dead_rx);
+        app.queue_own_leg(leg_of(live, "to the live peer"), live_rx);
+
+        live_tx.send(true).expect("the queue holds the receiver");
+
+        let taken = app.take_delivered_legs();
+        assert_eq!(
+            bodies(&taken),
+            ["to the live peer"],
+            "the leg of the live peer does not wait for the verdict of the dead one"
+        );
     }
 
     /// A leg that the dial did not send leaves no record, and does not hold back the next one.
