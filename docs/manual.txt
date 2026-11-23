@@ -867,6 +867,14 @@ COMMANDS
               process creates and locks a new file, and two processes hold
               the lock. The next daemon on that state path reuses them.
 
+              A run that keeps its member key also leaves the key file
+              `<state>.key` and the run counter `<state>.run` beside the
+              state file. A run keeps its member key when the state file is
+              a path that you chose with --state-file, or when the run has
+              an owner (--owner-pid). The next start on that state path, in
+              the same mesh, is the same member, with a new pubkey. A run
+              with the default state path and no owner removes both files.
+
               With no GOSSIP, only daemons OWNED BY THE CALLING SESSION are
               stopped: a daemon is session-owned when --session-pid (default:
               this command's parent process) appears among its process
