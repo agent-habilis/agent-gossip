@@ -238,7 +238,7 @@ pub(crate) struct DeliveredLeg {
 
 struct QueuedLeg {
     /// The place of the leg in send order, among all the own legs.
-    sent_at: u64,
+    send_order: u64,
     leg: DeliveredLeg,
     /// Whether the send of the leg reached the peer. Resolved when the send has an outcome.
     delivered: Receiver<bool>,
@@ -254,11 +254,14 @@ fn take_settled_head(queue: &mut VecDeque<QueuedLeg>) -> Vec<(u64, DeliveredLeg)
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Closed) => false,
         };
-        let Some(QueuedLeg { sent_at, leg, .. }) = queue.pop_front() else {
+        let Some(QueuedLeg {
+            send_order, leg, ..
+        }) = queue.pop_front()
+        else {
             break;
         };
         if delivered {
-            ready.push((sent_at, leg));
+            ready.push((send_order, leg));
         }
     }
     ready
@@ -425,13 +428,13 @@ impl A2aApp {
     /// Queue an own task leg behind the legs of its task that were sent before it. `delivered`
     /// resolves to whether the peer got the leg.
     pub(crate) fn queue_own_leg(&mut self, leg: DeliveredLeg, delivered: Receiver<bool>) {
-        let sent_at = self.next_own_leg;
+        let send_order = self.next_own_leg;
         self.next_own_leg += 1;
         self.own_legs
             .entry(leg.task_id.clone())
             .or_default()
             .push_back(QueuedLeg {
-                sent_at,
+                send_order,
                 leg,
                 delivered,
             });
@@ -447,7 +450,7 @@ impl A2aApp {
             ready.extend(take_settled_head(queue));
         }
         self.own_legs.retain(|_, queue| !queue.is_empty());
-        ready.sort_by_key(|(sent_at, _)| *sent_at);
+        ready.sort_by_key(|(send_order, _)| *send_order);
         ready.into_iter().map(|(_, leg)| leg).collect()
     }
 

@@ -71,6 +71,10 @@ pub(crate) const TASK_STALL_CHECK_SECS: u64 = 30 * 60;
 /// The cost of the larger value is that a genuinely unreachable peer takes
 /// longer to report as such. That is the right way round: a false failure
 /// against a healthy peer is worse than a slow answer about a dead one.
+///
+/// The wait also covers the send of the request. The engine waits up to 18 s (the path idle time of
+/// 15 s and 3 s) for a peer whose path is dead before it gives its verdict, so the time that is left
+/// for the reply is this value minus the send: 45 - 18 = 27 s, which is still above the heal interval.
 pub(crate) const CALL_TIMEOUT_SECS: u64 = 45;
 
 /// Longest a blocking `poll` / `fetch_messages` parks before returning empty
