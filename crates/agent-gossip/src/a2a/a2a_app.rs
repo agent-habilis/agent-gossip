@@ -186,6 +186,10 @@ pub(crate) struct A2aApp {
     /// record, so a peer that does not answer holds back only its own tasks. All the queues
     /// together hold at most [`tuning::OWN_LEGS_CAP`] legs, and a queue that is empty is removed.
     own_legs: HashMap<TaskId, VecDeque<QueuedLeg>>,
+    /// The place of the next own leg in send order. Each queued leg keeps its number, and the legs
+    /// that are ready in 1 drain are returned sorted by it, so that the order of the queues in the map
+    /// (random per process) never shows.
+    next_own_leg: u64,
     /// Our own content legs whose send has no outcome yet. Each enters the dev log and the shard
     /// cache only if it was sent: a repair ask is served from the cache, so a leg whose send failed
     /// would otherwise reach the peer after the user was told it failed.
@@ -233,6 +237,8 @@ pub(crate) struct DeliveredLeg {
 }
 
 struct QueuedLeg {
+    /// The place of the leg in send order, among all the own legs.
+    sent_at: u64,
     leg: DeliveredLeg,
     /// Whether the send of the leg reached the peer. Resolved when the send has an outcome.
     delivered: Receiver<bool>,
@@ -240,7 +246,7 @@ struct QueuedLeg {
 
 /// The legs at the head of one task queue whose send has an outcome, in order: the ones that the peer
 /// got. A leg without an outcome stops the walk, and a leg that was not delivered is dropped.
-fn take_settled_head(queue: &mut VecDeque<QueuedLeg>) -> Vec<DeliveredLeg> {
+fn take_settled_head(queue: &mut VecDeque<QueuedLeg>) -> Vec<(u64, DeliveredLeg)> {
     let mut ready = Vec::new();
     while let Some(head) = queue.front_mut() {
         let delivered = match head.delivered.try_recv() {
@@ -248,11 +254,11 @@ fn take_settled_head(queue: &mut VecDeque<QueuedLeg>) -> Vec<DeliveredLeg> {
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Closed) => false,
         };
-        let Some(QueuedLeg { leg, .. }) = queue.pop_front() else {
+        let Some(QueuedLeg { sent_at, leg, .. }) = queue.pop_front() else {
             break;
         };
         if delivered {
-            ready.push(leg);
+            ready.push((sent_at, leg));
         }
     }
     ready
@@ -296,6 +302,7 @@ impl A2aApp {
             surfaced_rx: Some(surfaced_rx),
             surfaced_tap: Some(tap),
             own_legs: HashMap::new(),
+            next_own_leg: 0,
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             repair_budget: RepairBudget::new(Instant::now()),
@@ -328,6 +335,7 @@ impl A2aApp {
             surfaced_rx: None,
             surfaced_tap: None,
             own_legs: HashMap::new(),
+            next_own_leg: 0,
             unsent_legs: Vec::new(),
             sent_refs: BoundedFifoSet::new(tuning::CHAT_SURFACED_IDS_CAP),
             repair_budget: RepairBudget::new(Instant::now()),
@@ -417,22 +425,30 @@ impl A2aApp {
     /// Queue an own task leg behind the legs of its task that were sent before it. `delivered`
     /// resolves to whether the peer got the leg.
     pub(crate) fn queue_own_leg(&mut self, leg: DeliveredLeg, delivered: Receiver<bool>) {
+        let sent_at = self.next_own_leg;
+        self.next_own_leg += 1;
         self.own_legs
             .entry(leg.task_id.clone())
             .or_default()
-            .push_back(QueuedLeg { leg, delivered });
+            .push_back(QueuedLeg {
+                sent_at,
+                leg,
+                delivered,
+            });
     }
 
-    /// The legs at the head of each task queue that the peer got, in the order they were sent. A
-    /// leg whose send has no outcome yet holds back the legs of its own task behind it, and no other.
-    /// A leg that was not delivered is dropped, and a queue that is empty is removed.
+    /// The legs at the head of each task queue that the peer got, in the order they were sent
+    /// (across the tasks too: the order of the queues in the map does not show). A leg whose send
+    /// has no outcome yet holds back the legs of its own task behind it, and no other. A leg that
+    /// was not delivered is dropped, and a queue that is empty is removed.
     pub(crate) fn take_delivered_legs(&mut self) -> Vec<DeliveredLeg> {
         let mut ready = Vec::new();
         for queue in self.own_legs.values_mut() {
             ready.extend(take_settled_head(queue));
         }
         self.own_legs.retain(|_, queue| !queue.is_empty());
-        ready
+        ready.sort_by_key(|(sent_at, _)| *sent_at);
+        ready.into_iter().map(|(_, leg)| leg).collect()
     }
 
     /// Remember that `ref_id` went to `to`, so its receipts can be checked.
@@ -1513,6 +1529,35 @@ mod tests {
             bodies(&taken),
             ["to the live peer"],
             "the leg of the live peer does not wait for the verdict of the dead one"
+        );
+    }
+
+    /// The legs of different tasks that are ready in 1 drain enter the record in the order they were
+    /// sent, whatever order the queues are walked in: the events that a reader sees are a function of
+    /// what was sent. 16 tasks make a chance order agree 1 time in 16 factorial.
+    #[test]
+    fn the_ready_legs_of_many_tasks_come_back_in_send_order() {
+        let mut app = super::A2aApp::new();
+        let mut senders = Vec::new();
+        for index in 0..16 {
+            let task = format!("6ba7b810-9dad-41d1-80b4-00c04fd430{index:02x}");
+            let (verdict_tx, verdict_rx) = oneshot::channel();
+            app.queue_own_leg(leg_of(&task, &format!("leg {index:02}")), verdict_rx);
+            senders.push(verdict_tx);
+        }
+
+        // The verdicts come in the opposite order of the sends.
+        for verdict_tx in senders.into_iter().rev() {
+            verdict_tx.send(true).expect("the queue holds the receiver");
+        }
+
+        let taken = app.take_delivered_legs();
+        let sent: Vec<String> = (0..16).map(|index| format!("leg {index:02}")).collect();
+        let sent_bodies: Vec<&str> = sent.iter().map(String::as_str).collect();
+        assert_eq!(
+            bodies(&taken),
+            sent_bodies,
+            "1 drain gives the ready legs of all the tasks in the order they were sent"
         );
     }
 
