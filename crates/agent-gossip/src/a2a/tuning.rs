@@ -9,7 +9,9 @@
 //! the hidden flag.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
+use habilis_network::ops::LONGEST_SEND_CALL;
 use habilis_network::util::consts::MAX_LOGICAL_BODY_BYTES;
 use habilis_network::util::tuning;
 
@@ -22,8 +24,8 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 /// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
 /// is refused with a failed reason: the caller must know that nothing was sent. The cap counts the
 /// legs in all the queues, 1 queue for each task, so a leg to a dead peer holds back only the later
-/// legs of its own task until its send times out (see [`send_outcome_timeout_secs`]); at the default
-/// 120 s the cap is reached at 8.5 legs per second.
+/// legs of its own task until its send ends, at the longest at the backstop (see [`send_backstop`]), which
+/// is about 100 s: the cap is reached at about 10 legs per second.
 pub(crate) const OWN_LEGS_CAP: usize = 1024;
 
 /// How many own content legs may wait for the outcome of their send. Each holds its sealed frames,
@@ -241,12 +243,21 @@ pub(crate) fn task_timeout_secs() -> u64 {
     current().task_timeout_secs
 }
 
-/// How long a send may wait for its outcome before it counts as failed (seconds). A peer that
-/// stays silent as long as a task may be quiet has failed its tasks too, so a longer wait only
-/// keeps the body of the leg in memory. Read from the run-time task timeout, so the hidden flag
-/// moves both.
-pub(crate) fn send_outcome_timeout_secs() -> u64 {
-    task_timeout_secs()
+/// The slack that the backstop of a send adds to the longest send call of the engine. The engine
+/// answers by its own timers, so the backstop only has to be above them, by the time that a task needs
+/// to be scheduled.
+pub(crate) const SEND_BACKSTOP_MARGIN: Duration = Duration::from_secs(6);
+
+/// How long the node waits for the verdict of a send before it gives up: the longest send call of
+/// the engine plus a margin, 1 expression. It is a backstop for an engine that never answers (a task
+/// that ended, a runtime that stops), and the engine answers by its own bound, so no honest send is cut
+/// by it. It does not read `--task-timeout-secs`: that flag is how long a task waits for its peer to
+/// work, and a backstop under the bound of the engine would answer for the engine, so that a send the
+/// engine ends as `NotDelivered` would end as `Unconfirmed` first. The bound of the engine is not
+/// strict (a call that waits again behind a new dial after its connection was lost has none), and the
+/// backstop is the net for that case.
+pub(crate) fn send_backstop() -> Duration {
+    LONGEST_SEND_CALL.saturating_add(SEND_BACKSTOP_MARGIN)
 }
 
 pub(crate) fn task_keepalive_secs() -> u64 {

@@ -25,8 +25,7 @@ impl Decided {
         raw: Vec<PendingSend>,
         effect: impl FnOnce(&SendVerdict) + Send + 'static,
     ) -> Self {
-        let deadline = tokio::time::Instant::now()
-            + std::time::Duration::from_secs(tuning::send_outcome_timeout_secs());
+        let deadline = tokio::time::Instant::now() + tuning::send_backstop();
         let (verdict_tx, verdict_rx) = oneshot::channel();
         tokio::spawn(async move {
             let verdict = settle(raw, deadline).await;
@@ -88,7 +87,7 @@ async fn settle(raw: Vec<PendingSend>, deadline: tokio::time::Instant) -> SendVe
 mod tests {
     use std::time::Duration;
 
-    use habilis_network::ops::SendVerdict;
+    use habilis_network::ops::{LONGEST_SEND_CALL, SendVerdict};
     use tokio::sync::oneshot;
 
     use super::{Decided, first_verdict};
@@ -102,12 +101,23 @@ mod tests {
         let decided = Decided::decide(vec![silent], |_| {});
         let above = Decided::follow(vec![decided], |_| {});
 
-        tokio::time::advance(Duration::from_secs(tuning::send_outcome_timeout_secs() + 1)).await;
+        tokio::time::advance(tuning::send_backstop() + Duration::from_secs(1)).await;
 
         assert_eq!(
             first_verdict(vec![above]).await,
             SendVerdict::Unconfirmed("a send gave no outcome by its deadline".to_owned()),
             "the verdict of the layer above is the verdict that decide gave, with the text of decide"
+        );
+    }
+
+    /// The backstop is a net under the engine, not a second decider: it is above the longest send call
+    /// that the engine promises, so the engine answers first, and it is built from that constant, so the
+    /// 2 cannot drift. It does not read the task timeout (`--task-timeout-secs`).
+    #[test]
+    fn the_backstop_is_above_the_longest_send_call_of_the_engine() {
+        assert!(
+            tuning::send_backstop() > LONGEST_SEND_CALL,
+            "a backstop at or under the engine bound would answer for the engine"
         );
     }
 

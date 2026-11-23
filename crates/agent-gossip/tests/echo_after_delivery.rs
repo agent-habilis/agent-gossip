@@ -91,6 +91,46 @@ fn msg_whose_dial_fails_leaves_no_self_echo() {
     panic!("no send to the killed peer failed in 90 seconds");
 }
 
+/// The deadline of a send is the backstop of the node, not the task timeout. A short `--task-timeout-secs` is how
+/// long a task waits for its peer to work, and it must not answer for the engine: a peer that never says that it
+/// holds the frame is certainly not delivered, and the engine says so after its own wait. A backstop under that wait
+/// would end the send as not confirmed first, and the CLI would say that the frame may have arrived.
+#[test]
+fn a_send_to_a_paused_peer_says_not_delivered_when_the_task_timeout_is_short() {
+    let _serial = common::serial_guard();
+    let flags = [("--alive-timeout-secs", "60"), ("--task-timeout-secs", "3")];
+    let (alice, mesh) = Node::create_flags("echo-short-task", &flags);
+    let bob = Node::join_flags(&mesh, "echo-short-task-bob", &flags);
+    assert!(
+        alice.wait_ready(&mesh),
+        "without a ready first peer the test cannot tell a failed send from a slow start"
+    );
+    assert!(
+        bob.wait_ready(&mesh),
+        "without a ready second peer the test cannot tell a failed send from a slow start"
+    );
+    common::await_peer_card_cli(&mesh, &alice.nickname, &bob.nickname);
+
+    bob.stop();
+    let mut reason = None;
+    for attempt in 0..30 {
+        let body = format!("to the paused peer {attempt}");
+        let sent = common::cli_msg_raw(&mesh, &alice.nickname, &bob.nickname, &body);
+        if !sent.status.success() {
+            reason = Some(String::from_utf8_lossy(&sent.stderr).to_string());
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    bob.cont();
+
+    let reason = reason.expect("a stopped process holds no frame, so 1 of the 30 sends must fail");
+    assert!(
+        reason.contains("not delivered") && !reason.contains("not confirmed"),
+        "the engine says not delivered for a peer that never holds the frame, and a task timeout of 3 s must not turn it into not confirmed: {reason}"
+    );
+}
+
 /// A send that reported an error must not reach the peer later through
 /// anti-entropy: the user was told it failed, and may send it again.
 #[test]

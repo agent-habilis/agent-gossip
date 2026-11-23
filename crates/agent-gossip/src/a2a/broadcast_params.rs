@@ -2767,14 +2767,14 @@ mod sharded_leg_tests {
     async fn the_timeout_covers_all_the_shards_of_a_leg_together() {
         let mut app = A2aApp::new();
         let (_held, silent) = oneshot::channel::<SendVerdict>();
-        let late = verdict_after(std::time::Duration::from_secs(100));
+        let late = verdict_after(std::time::Duration::from_secs(60));
         let handles = queue_sharded_leg(
             &mut app,
             vec![shard("a"), shard("b")],
             None,
             vec![Some(late), Some(silent)],
         );
-        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
+        let limit = tuning::send_backstop() + std::time::Duration::from_secs(5);
 
         let outcome = tokio::time::timeout(limit, first_verdict(handles)).await;
 
@@ -2806,7 +2806,7 @@ mod sharded_leg_tests {
             },
             inner,
         );
-        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
+        let limit = tuning::send_backstop() + std::time::Duration::from_secs(5);
 
         let outcome = tokio::time::timeout(limit, first_verdict(outer)).await;
         tokio::time::sleep(std::time::Duration::from_secs(100)).await;
@@ -2903,10 +2903,7 @@ mod sharded_leg_tests {
         };
         let handles = ingest_own_leg_when_sent(&mut app, own, decided(SendVerdict::Delivered));
 
-        tokio::time::advance(std::time::Duration::from_secs(
-            tuning::send_outcome_timeout_secs(),
-        ))
-        .await;
+        tokio::time::advance(tuning::send_backstop()).await;
 
         assert_eq!(
             first_verdict(handles).await,
@@ -2923,7 +2920,7 @@ mod sharded_leg_tests {
     #[tokio::test(start_paused = true)]
     async fn a_send_that_gives_no_outcome_is_not_confirmed_after_the_timeout() {
         let (_held, silent) = oneshot::channel::<SendVerdict>();
-        let limit = std::time::Duration::from_secs(tuning::send_outcome_timeout_secs() + 5);
+        let limit = tuning::send_backstop() + std::time::Duration::from_secs(5);
         let handles = vec![Decided::decide(vec![silent], |_| {})];
 
         let outcome = tokio::time::timeout(limit, first_verdict(handles)).await;
