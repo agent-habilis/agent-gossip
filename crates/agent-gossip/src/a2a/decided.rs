@@ -25,7 +25,7 @@ impl Decided {
         raw: Vec<PendingSend>,
         effect: impl FnOnce(&SendVerdict) + Send + 'static,
     ) -> Self {
-        let deadline = tokio::time::Instant::now() + tuning::send_backstop();
+        let deadline = tokio::time::Instant::now() + tuning::SEND_BACKSTOP;
         let (verdict_tx, verdict_rx) = oneshot::channel();
         tokio::spawn(async move {
             let verdict = settle(raw, deadline).await;
@@ -101,7 +101,7 @@ mod tests {
         let decided = Decided::decide(vec![silent], |_| {});
         let above = Decided::follow(vec![decided], |_| {});
 
-        tokio::time::advance(tuning::send_backstop() + Duration::from_secs(1)).await;
+        tokio::time::advance(tuning::SEND_BACKSTOP + Duration::from_secs(1)).await;
 
         assert_eq!(
             first_verdict(vec![above]).await,
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn the_backstop_is_above_the_longest_send_call_of_the_engine() {
         assert!(
-            tuning::send_backstop() > LONGEST_SEND_CALL,
+            tuning::SEND_BACKSTOP > LONGEST_SEND_CALL,
             "a backstop at or under the engine bound would answer for the engine"
         );
     }

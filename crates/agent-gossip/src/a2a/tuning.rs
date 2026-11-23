@@ -24,7 +24,7 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 120;
 /// the logical body cap. Same size as the engine `PENDING_OUTBOUND_CAP`. A new leg past the cap
 /// is refused with a failed reason: the caller must know that nothing was sent. The cap counts the
 /// legs in all the queues, 1 queue for each task, so a leg to a dead peer holds back only the later
-/// legs of its own task until its send ends, at the longest at the backstop (see [`send_backstop`]), which
+/// legs of its own task until its send ends, at the longest at the backstop (see [`SEND_BACKSTOP`]), which
 /// is about 100 s: the cap is reached at about 10 legs per second.
 pub(crate) const OWN_LEGS_CAP: usize = 1024;
 
@@ -256,9 +256,7 @@ pub(crate) const SEND_BACKSTOP_MARGIN: Duration = Duration::from_secs(6);
 /// engine ends as `NotDelivered` would end as `Unconfirmed` first. The bound of the engine is not
 /// strict (a call that waits again behind a new dial after its connection was lost has none), and the
 /// backstop is the net for that case.
-pub(crate) fn send_backstop() -> Duration {
-    LONGEST_SEND_CALL.saturating_add(SEND_BACKSTOP_MARGIN)
-}
+pub(crate) const SEND_BACKSTOP: Duration = LONGEST_SEND_CALL.saturating_add(SEND_BACKSTOP_MARGIN);
 
 pub(crate) fn task_keepalive_secs() -> u64 {
     current().task_keepalive_secs
