@@ -1,11 +1,14 @@
 //! The topic path: an empty string is rejected, and two peers deriving the
 //! same mesh from the same string converge and exchange.
 
+use std::fs::DirBuilder;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{
-    Mesh, MeshConfig, MeshName, MessageBody, Nickname, TransportPolicy,
+    LookupSet, Mesh, MeshConfig, MeshName, MessageBody, Nickname, TransportPolicy,
 };
 use habilis_network::runtime::CoHostPolicy;
 use tokio::sync::broadcast::Receiver;
@@ -126,13 +129,29 @@ async fn directory_session_holds_no_event_stream() {
     session.leave().await.ok();
 }
 
-/// The base that a caller names is the base of every session of the call, a directory session too.
-/// A directory session that took the base of the host would leave its files where the caller did not
-/// look, and where the leave of the caller would not find them.
+/// A runtime base that this test made, with mode 0700: a name that exists already is not taken, so a
+/// folder that a crashed run left, or that an other user made first, is never reused.
+fn fresh_base(label: &str) -> PathBuf {
+    let mut names = (0..64).map(|number| {
+        std::env::temp_dir().join(format!("agp-{label}-{}-{number}", std::process::id()))
+    });
+    let made = |path: &PathBuf| DirBuilder::new().mode(0o700).create(path).is_ok();
+    names
+        .find(made)
+        .expect("a free folder name exists within 64 tries")
+}
+
+/// The number of runtime records of a base: 1 file for each session that holds a lock there.
+fn lock_count(base: &std::path::Path) -> usize {
+    std::fs::read_dir(base.join("locks")).map_or(0, Iterator::count)
+}
+
+/// The base that a caller names is the base of a directory session too. A directory session that took
+/// the base of the host would leave its files where the caller did not look, and where the leave of the
+/// caller would not find them.
 #[tokio::test]
 async fn a_directory_session_writes_its_runtime_files_under_the_base_it_is_given() {
-    let base = std::env::temp_dir().join(format!("agp-dir-base-{}", std::process::id()));
-    std::fs::create_dir_all(&base).expect("the temp dir is writable");
+    let base = fresh_base("dir-base");
     let mesh = Mesh::for_topic("directory-named-base", MeshConfig::loopback())
         .expect("the test topic derives a valid mesh id");
     let session = MeshSession::join_decoded(
@@ -146,17 +165,49 @@ async fn a_directory_session_writes_its_runtime_files_under_the_base_it_is_given
 
     // The session takes its lock when its loop starts, a moment after `join_decoded` returns.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    let mut written = 0;
-    while written == 0 && tokio::time::Instant::now() < deadline {
-        written = std::fs::read_dir(&base).expect("the base exists").count();
+    while lock_count(&base) == 0 && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    let written = lock_count(&base);
     session.leave().await.ok();
     std::fs::remove_dir_all(&base).ok();
 
-    assert!(
-        written > 0,
-        "the session wrote its runtime files under the base it was given"
+    assert_eq!(
+        written, 1,
+        "the session wrote its lock under the base it was given"
+    );
+}
+
+/// The wiring of the advertiser: a mesh that is created with a named base and listed in a directory holds
+/// 2 sessions, the mesh and the directory session of its advertiser, and both write under that base.
+/// The advertiser needs a reachable lookup, so the test names mDNS: the sessions open no connection
+/// before they hold their locks.
+#[tokio::test]
+async fn an_advertised_mesh_writes_the_files_of_its_advertiser_under_its_base() {
+    let base = fresh_base("advertise-base");
+    let mut lookups = LookupSet::default();
+    lookups.mdns = true;
+    let name = MeshName::try_new("advertised-base").expect("valid name");
+    let nickname = Nickname::try_new("adv-based").expect("the test nickname is valid");
+    let config = CreateConfig::new(name)
+        .with_nickname(nickname)
+        .with_lookups(lookups)
+        .with_advertise(true);
+    let session = MeshSession::create_with_base(config, base.clone())
+        .await
+        .expect("a mesh with an mDNS lookup can advertise");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while lock_count(&base) < 2 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let written = lock_count(&base);
+    session.leave().await.ok();
+    std::fs::remove_dir_all(&base).ok();
+
+    assert_eq!(
+        written, 2,
+        "the mesh and its advertiser both wrote their locks under the base of the call"
     );
 }
 
