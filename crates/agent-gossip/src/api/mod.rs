@@ -10,7 +10,7 @@
 
 pub use self::a2a_call_params::{A2aCallParams, TaskArtifactParams, TaskStatusParams};
 pub(crate) use self::advertiser::{
-    DIRECTORY_ADVERTISER_COHOST, initial_live_count, spawn_advertiser,
+    DIRECTORY_ADVERTISER_COHOST, DirectoryRoute, initial_live_count, spawn_advertiser,
 };
 pub use self::create_error::{CreateError, JoinError};
 pub use self::directory::{Directory, DirectoryEvent, MeshListing};

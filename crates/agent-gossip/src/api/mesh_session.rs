@@ -121,6 +121,7 @@ impl MeshSession {
         mesh: Mesh,
         nickname: Option<Nickname>,
         cohost: CoHostPolicy,
+        base: PathBuf,
     ) -> anyhow::Result<Self> {
         crate::register_build_version();
         let author = nickname.unwrap_or_else(Nickname::random);
@@ -140,7 +141,7 @@ impl MeshSession {
             // (see `tunnel::expose`), so there is no accept() loop to share.
             SetupParams::new(author, sink)
                 .max_connections(MAX_CONNECTIONS)
-                .runtime_base(crate::runtime_base())
+                .runtime_base(base)
                 .cohost(cohost),
         )
         .await?;

@@ -87,7 +87,12 @@ pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) ->
         .zip(directory_lookups)
         .zip(live_count)
         .map(|((directory, lookups), counter)| {
-            api::spawn_advertiser(&config, counter, directory, lookups)
+            let route = api::DirectoryRoute {
+                directory,
+                lookups,
+                base: crate::runtime_base(),
+            };
+            api::spawn_advertiser(&config, counter, route)
         });
     // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).

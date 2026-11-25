@@ -67,6 +67,7 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
         first,
         Some(Nickname::try_new("alice-topic").expect("the test nickname is valid")),
         CoHostPolicy::EagerProbed,
+        crate::runtime_base(),
     )
     .await
     .expect("the first loopback joiner becomes the host and needs no other peer");
@@ -74,6 +75,7 @@ async fn topic_peers_from_same_string_converge_and_exchange() {
         second,
         Some(Nickname::try_new("bob-topic").expect("the test nickname is valid")),
         CoHostPolicy::EagerProbed,
+        crate::runtime_base(),
     )
     .await
     .expect("the second loopback joiner finds the first one through its beacon");
@@ -111,6 +113,7 @@ async fn directory_session_holds_no_event_stream() {
         mesh,
         Some(Nickname::try_new("dir-quiet").expect("the test nickname is valid")),
         CoHostPolicy::Never,
+        crate::runtime_base(),
     )
     .await
     .expect("a loopback directory session joins alone");
@@ -121,6 +124,40 @@ async fn directory_session_holds_no_event_stream() {
     );
 
     session.leave().await.ok();
+}
+
+/// The base that a caller names is the base of every session of the call, a directory session too.
+/// A directory session that took the base of the host would leave its files where the caller did not
+/// look, and where the leave of the caller would not find them.
+#[tokio::test]
+async fn a_directory_session_writes_its_runtime_files_under_the_base_it_is_given() {
+    let base = std::env::temp_dir().join(format!("agp-dir-base-{}", std::process::id()));
+    std::fs::create_dir_all(&base).expect("the temp dir is writable");
+    let mesh = Mesh::for_topic("directory-named-base", MeshConfig::loopback())
+        .expect("the test topic derives a valid mesh id");
+    let session = MeshSession::join_decoded(
+        mesh,
+        Some(Nickname::try_new("dir-based").expect("the test nickname is valid")),
+        CoHostPolicy::Never,
+        base.clone(),
+    )
+    .await
+    .expect("a loopback directory session joins alone");
+
+    // The session takes its lock when its loop starts, a moment after `join_decoded` returns.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut written = 0;
+    while written == 0 && tokio::time::Instant::now() < deadline {
+        written = std::fs::read_dir(&base).expect("the base exists").count();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    session.leave().await.ok();
+    std::fs::remove_dir_all(&base).ok();
+
+    assert!(
+        written > 0,
+        "the session wrote its runtime files under the base it was given"
+    );
 }
 
 /// The app default carries multihop and no gossip: a mesh that wants gossip names it.

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 use habilis_network::ops::directory;
@@ -43,13 +44,25 @@ pub(crate) fn initial_live_count() -> LiveCount {
     live_count
 }
 
+/// How an advertiser reaches its directory: the name, the lookups that meet it, and the runtime base of
+/// the call that created the advertised mesh, so that the directory session writes its files there too.
+pub(crate) struct DirectoryRoute {
+    pub(crate) directory: MeshName,
+    pub(crate) lookups: LookupOpts,
+    pub(crate) base: PathBuf,
+}
+
 pub(crate) fn spawn_advertiser(
     config: &EventLoopConfig,
     live_count: LiveCount,
-    directory: MeshName,
-    lookups: LookupOpts,
+    route: DirectoryRoute,
 ) -> Advertiser {
     let mesh_id = config.mesh_id().clone();
+    let DirectoryRoute {
+        directory,
+        lookups,
+        base,
+    } = route;
     Advertiser(tokio::spawn(async move {
         // Reach the directory over the advertised mesh's own lookups, so an
         // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and
@@ -59,19 +72,19 @@ pub(crate) fn spawn_advertiser(
         // before any discoverer subscribes (a `Deferred` advertiser would
         // only beacon at the first heal tick, after discoverers already
         // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
-        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
-        {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::warn!(
-                    target: "agent_gossip::directory",
-                    %error,
-                    directory = %directory,
-                    "directory advertise: could not join the directory; gossip stays unlisted"
-                );
-                return;
-            }
-        };
+        let session =
+            match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST, base).await {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "agent_gossip::directory",
+                        %error,
+                        directory = %directory,
+                        "directory advertise: could not join the directory; gossip stays unlisted"
+                    );
+                    return;
+                }
+            };
         let mut ticker = tokio::time::interval(advertise_interval());
         loop {
             ticker.tick().await;

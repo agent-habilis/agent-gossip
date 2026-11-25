@@ -5,7 +5,7 @@ use habilis_network::runtime::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, SetupParams, SignalHandling, setup_mesh,
 };
 
-use super::advertiser::{Advertiser, initial_live_count, spawn_advertiser};
+use super::advertiser::{Advertiser, DirectoryRoute, initial_live_count, spawn_advertiser};
 use super::create_error::{CreateError, JoinError};
 use super::join_config::{CreateConfig, JoinConfig, TopicConfig};
 use crate::a2a::a2a_app::SurfacedIo;
@@ -68,7 +68,7 @@ pub(crate) async fn create_setup(
     // (see `tunnel::expose`), so there is no accept() loop to share.
     let mut setup_params = SetupParams::new(author, sink)
         .max_connections(max_connections)
-        .runtime_base(base);
+        .runtime_base(base.clone());
     setup_params.live_count = live_count.clone();
     let elc = setup_mesh(kind, setup_params).await.map_err(|error| {
         CreateError::Setup(anyhow::Error::from(error).context("setup_mesh failed"))
@@ -78,7 +78,14 @@ pub(crate) async fn create_setup(
     // at-most-once closure, so no clone).
     let advertiser = advertise_directory
         .zip(live_count)
-        .map(|(directory, counter)| spawn_advertiser(&elc, counter, directory, directory_lookups));
+        .map(|(directory, counter)| {
+            let route = DirectoryRoute {
+                directory,
+                lookups: directory_lookups,
+                base,
+            };
+            spawn_advertiser(&elc, counter, route)
+        });
     Ok((elc, io, advertiser))
 }
 

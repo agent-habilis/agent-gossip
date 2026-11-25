@@ -181,7 +181,13 @@ pub(crate) fn spawn_ticket_advertiser(
     let body = ad.to_body()?;
     Ok(tokio::spawn(async move {
         let mesh = directory::directory_mesh(&directory, lookups);
-        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
+        let session = match MeshSession::join_decoded(
+            mesh,
+            None,
+            DIRECTORY_ADVERTISER_COHOST,
+            crate::runtime_base(),
+        )
+        .await
         {
             Ok(session) => session,
             Err(error) => {
@@ -249,7 +255,9 @@ impl TicketDirectory {
         let resolved =
             api_directory::resolve_lookups_or_public(!directory_private_for_test(), lookups);
         let mesh = directory::directory_mesh(&name, resolved);
-        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
+        let session =
+            MeshSession::join_decoded(mesh, None, CoHostPolicy::Never, crate::runtime_base())
+                .await?;
         let mut inbound = session.messages();
         let mut listings = TicketListings::new();
         let (events_tx, events_rx) = event_sink::event_feed();

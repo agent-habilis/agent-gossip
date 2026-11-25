@@ -144,9 +144,10 @@ impl Directory {
         let mesh = directory::directory_mesh(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
         // rendezvous (it only dials an advertiser's beacon).
-        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never)
-            .await
-            .map_err(DirectoryError::Join)?;
+        let session =
+            MeshSession::join_decoded(mesh, None, CoHostPolicy::Never, crate::runtime_base())
+                .await
+                .map_err(DirectoryError::Join)?;
         let mut inbound = session.messages();
         let mut listings = Listings::new();
         let (snapshot_tx, snapshot_rx) = watch::channel(Vec::new());
