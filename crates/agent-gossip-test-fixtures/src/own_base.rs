@@ -33,11 +33,11 @@ impl OwnBase {
         // A name in the shared temp folder can exist already: an earlier run that crashed left it, or an other
         // user made it first. Such a folder is not ours, so each try takes the next number, and the count of
         // tries has a limit.
-        let path = (0..MAX_TRIES)
-            .map(|_| {
-                let number = COUNTER.fetch_add(1, Ordering::Relaxed);
-                std::env::temp_dir().join(format!("agp-{pid}-{number}"))
-            })
+        let mut names = (0..MAX_TRIES).map(|_| {
+            let number = COUNTER.fetch_add(1, Ordering::Relaxed);
+            std::env::temp_dir().join(format!("agp-{pid}-{number}"))
+        });
+        let path = names
             .find(|path| create_new(path).expect("the temp dir is writable"))
             .expect("a free folder name exists within the tries");
         Self { path }
@@ -73,12 +73,13 @@ mod tests {
     fn a_base_is_never_a_folder_that_exists_already() {
         let next = COUNTER.load(Ordering::Relaxed);
         let pid = std::process::id();
-        let taken: Vec<PathBuf> = (next..next + 20)
-            .map(|number| std::env::temp_dir().join(format!("agp-{pid}-{number}")))
+        // Only a name that this test makes is its own: a name that exists is the base of a node of an other
+        // test, and the test must not remove it.
+        let candidates = (next..next + 20)
+            .map(|number| std::env::temp_dir().join(format!("agp-{pid}-{number}")));
+        let taken: Vec<PathBuf> = candidates
+            .filter(|path| super::create_new(path).expect("the temp dir is writable"))
             .collect();
-        for path in &taken {
-            std::fs::create_dir_all(path).expect("the temp dir is writable");
-        }
 
         let base = OwnBase::new();
         let mode = std::fs::metadata(base.as_path())
