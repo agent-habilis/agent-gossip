@@ -130,6 +130,14 @@ pub(crate) struct TaskRecord {
 }
 
 impl TaskRecord {
+    /// End the task in `state`, a terminal one. A finished task waits for nothing, so the reason goes with
+    /// it: this is the one place that sets a terminal state, whether a leg, the timeout sweep or the
+    /// departure of the peer ends the task.
+    fn end(&mut self, state: TaskState) {
+        self.state = state;
+        self.waiting = None;
+    }
+
     /// Both parties beat every live task, whoever holds the ball: a human
     /// deciding, a reviewer reading, and a long build all look like silence,
     /// and each lost tasks at ~4 min. A beat proves the daemon is up, and the
@@ -316,18 +324,15 @@ pub(crate) fn ingest(
     // `advance` is idempotent. A finished task waits for nothing.
     if matches!(kind, LegKind::Status(_))
         && let Some(rec) = tasks.get_mut(task_id)
+        && !rec.state.is_terminal()
+        && is_newer_than_waiting(rec, frame.timestamp, order)
+        && !rec.surfaced_legs.contains(&frame.id)
     {
-        if rec.state.is_terminal() {
-            rec.waiting = None;
-        } else if is_newer_than_waiting(rec, frame.timestamp, order)
-            && !rec.surfaced_legs.contains(&frame.id)
-        {
-            rec.waiting = waiting;
-            rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
-            // Remembered here, not only by `note_surfaced`: a replay in the
-            // same second as this leg must not pass the clock check again.
-            rec.surfaced_legs.insert(frame.id.clone());
-        }
+        rec.waiting = waiting;
+        rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
+        // Remembered here, not only by `note_surfaced`: a replay in the
+        // same second as this leg must not pass the clock check again.
+        rec.surfaced_legs.insert(frame.id.clone());
     }
     // Only a beat from the other party says anything about its reader.
     reader.filter(|_| !mine)
@@ -617,11 +622,6 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     }
 
     advance(rec, leg.kind, leg.mine);
-    // A finished task waits for nothing. The ingestion path says so for a leg that arrives later, but a
-    // cancel of our own runs through here alone.
-    if rec.state.is_terminal() {
-        rec.waiting = None;
-    }
     if let Some(fraction) = leg.fraction {
         rec.last_fraction = Some(fraction);
     }
@@ -703,18 +703,18 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
             // real completion and can never be reopened. `Failed` deliberately
             // has no such guard — declining an offer outright is the skills'
             // decline path.
-            rec.state = TaskState::Completed;
+            rec.end(TaskState::Completed);
         }
         LegKind::Status(TaskState::Rejected)
             if sender == TaskRole::Receiver
                 && matches!(rec.state, TaskState::Submitted | TaskState::Working) =>
         {
-            rec.state = TaskState::Rejected;
+            rec.end(TaskState::Rejected);
         }
         LegKind::Status(TaskState::Failed) if sender == TaskRole::Receiver => {
-            rec.state = TaskState::Failed;
+            rec.end(TaskState::Failed);
         }
-        LegKind::Status(TaskState::Canceled) => rec.state = TaskState::Canceled,
+        LegKind::Status(TaskState::Canceled) => rec.end(TaskState::Canceled),
         // No-op here: `Offer` is handled at record creation, `Beat` is
         // liveness-only, and every other combination lands here only when
         // its guard above failed (an out-of-order/backward/misdirected leg,
@@ -856,7 +856,7 @@ fn sweep_registry(
         let peer_silent = now.duration_since(rec.last_peer_activity) > timeout;
         let peer_gone = rec.peer_beats || rec.skill_silence_exceeded(now);
         if !rec.state.is_terminal() && peer_silent && peer_gone {
-            rec.state = TaskState::Canceled;
+            rec.end(TaskState::Canceled);
             rec.last_activity = now;
             expired.push((task_id.clone(), rec.peer_key));
         }
@@ -902,7 +902,7 @@ pub(crate) fn fail_tasks_for_departed_peer(
     let now = Instant::now();
     for (task_id, rec) in tasks.iter_mut() {
         if rec.peer_key == *peer_key && !rec.state.is_terminal() {
-            rec.state = TaskState::Canceled;
+            rec.end(TaskState::Canceled);
             // Start the terminal clock, so "ages into the GC" is true here as
             // well: a task already idle when its peer left would otherwise be
             // cancelled and reaped by the very next sweep, with no window in
@@ -1166,6 +1166,52 @@ mod tests {
             tasks[&tid()].waiting,
             None,
             "a canceled task waits for nothing"
+        );
+    }
+
+    /// The timeout sweep cancels a task straight in the record, not through a leg. A canceled task waits
+    /// for nothing, so its record must not keep the reason either.
+    #[test]
+    fn a_timeout_sweep_clears_the_waiting_reason_of_the_task_it_cancels() {
+        let timeout = Duration::from_mins(2);
+        let now = Instant::now();
+        let day_ago = now
+            .checked_sub(Duration::from_hours(25))
+            .expect("the test instant is far from the clock origin");
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), day_ago);
+        let rec = tasks.get_mut(&tid()).expect("the offer opened the record");
+        rec.state = TaskState::Working;
+        rec.waiting = Some("asking its user".to_owned());
+
+        let (expired, _) = super::sweep_registry(&mut tasks, &mut closed(), now, timeout);
+
+        assert_eq!(expired.len(), 1, "the sweep canceled the one silent task");
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a task that the sweep canceled waits for nothing"
+        );
+    }
+
+    /// The same rule for the task of a peer that left: the cancel is written in the record, and the answer
+    /// must not show `mesh:waiting` for it.
+    #[test]
+    fn a_peer_that_left_takes_the_waiting_reason_of_its_task_with_it() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), now);
+        let rec = tasks.get_mut(&tid()).expect("the offer opened the record");
+        rec.state = TaskState::Working;
+        rec.waiting = Some("asking its user".to_owned());
+
+        let out = crate::emission::Output::silent();
+        super::fail_tasks_for_departed_peer(&mut tasks, &peer_key("calm-otter"), &out);
+
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a task of a peer that left waits for nothing"
         );
     }
 
