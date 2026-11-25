@@ -617,6 +617,11 @@ pub(crate) fn apply(tasks: &mut HashMap<TaskId, TaskRecord>, leg: &LegInfo<'_>, 
     }
 
     advance(rec, leg.kind, leg.mine);
+    // A finished task waits for nothing. The ingestion path says so for a leg that arrives later, but a
+    // cancel of our own runs through here alone.
+    if rec.state.is_terminal() {
+        rec.waiting = None;
+    }
     if let Some(fraction) = leg.fraction {
         rec.last_fraction = Some(fraction);
     }
@@ -1131,6 +1136,36 @@ mod tests {
         assert!(
             tasks[&tid()].should_keepalive(now, cadence),
             "a working task is kept alive at the cadence"
+        );
+    }
+
+    /// A local cancel runs through `apply`, not through the ingestion path that
+    /// clears `waiting` for a finished task. If the cancel is not delivered, the
+    /// record stays, and its answer must not say that a canceled task waits.
+    #[test]
+    fn a_local_cancel_clears_the_waiting_reason() {
+        let now = Instant::now();
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, true), now);
+        let rec = tasks.get_mut(&tid()).expect("the offer opened the record");
+        rec.state = TaskState::Working;
+        rec.waiting = Some("asking its user".to_owned());
+
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Canceled), true),
+            now,
+        );
+
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Canceled,
+            "the leg of our own cancel closed the task"
+        );
+        assert_eq!(
+            tasks[&tid()].waiting,
+            None,
+            "a canceled task waits for nothing"
         );
     }
 
