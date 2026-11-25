@@ -180,8 +180,11 @@ async fn a_directory_session_writes_its_runtime_files_under_the_base_it_is_given
 
 /// The wiring of the advertiser: a mesh that is created with a named base and listed in a directory holds
 /// 2 sessions, the mesh and the directory session of its advertiser, and both write under that base.
-/// The advertiser needs a reachable lookup, so the test names mDNS: the sessions open no connection
-/// before they hold their locks.
+/// The advertiser needs a reachable lookup, so the test names mDNS and uses real mDNS on the host that
+/// runs it: no hermetic form exists here. A loopback mesh cannot advertise, and the switch that allows it
+/// (`directory_private_for_test`) is set once for the whole test process, so it would change every other
+/// test of this binary. The sessions hold their locks before they open a connection, so the test needs
+/// no peer, but it needs a host that lets a process open its mDNS socket.
 #[tokio::test]
 async fn an_advertised_mesh_writes_the_files_of_its_advertiser_under_its_base() {
     let base = fresh_base("advertise-base");
