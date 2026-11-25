@@ -4494,6 +4494,49 @@ fn a_start_right_after_leave_is_not_refused() {
     let _ = fs::remove_file(anchor_log);
 }
 
+/// `leave` reports the member key that the daemon had. A daemon that stops cleanly removes its state file
+/// first, so a report that reads the file after the stop shows `null` for a node that had a key.
+#[test]
+fn leave_reports_the_member_key_of_the_daemon_it_stopped() {
+    let _serial = serial_guard();
+    let (anchor, anchor_log, mesh, _) = spawn_discoverable_daemon("leave-member-anchor");
+    let dir = std::env::temp_dir().join(format!("leave-member-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the test temp dir is writable");
+    let state = dir.join("node.json");
+    let stderr = tmp_log("leave-member");
+    let mut node = start_keyed_node(
+        &NodeSpec {
+            mesh: &mesh,
+            nickname: "leave-member-node",
+            state: &state,
+        },
+        false,
+        &stderr,
+    );
+    let own = ready_json(&state)["member"].clone();
+    assert!(is_hex_key(&own), "the node has a member key to report");
+
+    let mut leave = common::test_cmd();
+    leave.args([
+        "leave",
+        "--gossip",
+        &mesh,
+        "--nickname",
+        "leave-member-node",
+    ]);
+    let out = output_within(&mut leave, QUERY_LIMIT);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("leave prints JSON");
+    node.crashed = true;
+
+    assert_eq!(
+        report["left"][0]["member"], own,
+        "leave reports the key that the stopped daemon had: {report}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    drop(anchor);
+    let _ = fs::remove_file(anchor_log);
+}
+
 /// A second start of one mesh and nickname is refused with the message of the host, and the first daemon is
 /// not harmed: it still answers on its own socket.
 #[test]

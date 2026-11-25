@@ -47,10 +47,12 @@ fn target_from(lock: &Path, record: DaemonRecord) -> Target {
     let topic = entry.as_ref().and_then(|entry| entry.topic.clone());
     let owner_pid = entry.and_then(|entry| entry.owner_pid);
     let pubkey = read_identity(&record.state_file).pubkey;
+    let member = read_member(&record.state_file);
     let mesh = record.mesh.as_str().to_owned();
     let nickname = record.nickname.as_str().to_owned();
     Target {
         pubkey,
+        member,
         name,
         topic,
         owner_pid,
@@ -137,7 +139,7 @@ fn target_json(target: &Target) -> serde_json::Value {
     if let Some(pubkey) = &target.pubkey {
         obj.insert("pubkey".into(), pubkey.clone().into());
     }
-    obj.insert("member".into(), read_member(&target.path));
+    obj.insert("member".into(), target.member.clone());
     if let Some(topic) = &target.topic {
         obj.insert("topic".into(), topic.clone().into());
     }
@@ -367,6 +369,7 @@ mod tests {
             name: Some("cool-team".to_owned()),
             nickname: nickname.to_owned(),
             pubkey: None,
+            member: serde_json::Value::Null,
             topic: None,
             pid,
             start: 0,

@@ -15,6 +15,9 @@ pub(crate) struct Target {
     /// The author key of the daemon, hex: the slot of its meta entry. A skill that lost its
     /// context recovers it from the session report.
     pub(super) pubkey: Option<String>,
+    /// The member key of the daemon, read when discovery found it. A daemon that stops removes its state
+    /// file, so the `leave` report cannot read the key after the stop.
+    pub(super) member: serde_json::Value,
     /// The raw topic string (topic gossips only) — what the leave report
     /// echoes instead of the lossy derived `name`.
     pub(super) topic: Option<String>,
