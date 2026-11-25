@@ -18,8 +18,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # The engine, portable half only: `host` pulls in signals, the control socket
 # and the filesystem, none of which exist in a tab.
-habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "8f54317163753a1be0e3dfde5d11bde08ee311be", default-features = false, features = ["multihop"] }
-habilis-network-iroh-webrtc-transport = { git = "https://github.com/agent-habilis/habilis-network", rev = "8f54317163753a1be0e3dfde5d11bde08ee311be", features = ["web"] }
+habilis-network = { git = "https://github.com/agent-habilis/habilis-network", rev = "81d060d332174e13b10e5d932172f6afdb10b13c", default-features = false, features = ["multihop"] }
+habilis-network-iroh-webrtc-transport = { git = "https://github.com/agent-habilis/habilis-network", rev = "81d060d332174e13b10e5d932172f6afdb10b13c", features = ["web"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
