@@ -183,7 +183,9 @@ impl AgentGossipServer {
         ok_json(result)
     }
 
-    #[tool(description = "Leave the currently active gossip. No-op if not in one.")]
+    #[tool(
+        description = "Leave the currently active gossip. No-op if not in one. Answers ok: false with the error when the node did not close in time; the session is gone then, so a second call answers ok: true and cannot retry."
+    )]
     async fn leave_gossip(
         &self,
         Parameters(_): Parameters<NoArgs>,
