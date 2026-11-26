@@ -923,6 +923,7 @@ async fn handle_a2a_req(
             author: context.author,
             kind,
             body,
+            failure_log: broadcast_params::FailureLog::Warn,
         },
         state,
         context.sender,

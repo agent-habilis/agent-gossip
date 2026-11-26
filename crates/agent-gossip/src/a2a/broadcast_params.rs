@@ -196,21 +196,36 @@ pub(crate) fn when_sent(
     tokio::spawn(async move { then(delivered_or_error(first_verdict(pending).await)) });
 }
 
+/// How loudly a send that did not end as delivered is logged. A query that the next call repeats
+/// (the reader ask of `peers`) fails with no harm to the user, so it is logged at debug.
+#[derive(Clone, Copy)]
+pub(crate) enum FailureLog {
+    Warn,
+    Debug,
+}
+
 /// For a caller with no one to tell: a failure of a send on a task is only logged.
-pub(crate) fn log_pending(pending: Vec<Decided>) {
+pub(crate) fn log_pending(pending: Vec<Decided>, failure_log: FailureLog) {
     if pending.is_empty() {
         return;
     }
     tokio::spawn(async move {
         if let Err(error) = delivered_or_error(first_verdict(pending).await) {
-            tracing::warn!(target: "agent_gossip::a2a", %error, "directed send did not end as delivered");
+            match failure_log {
+                FailureLog::Warn => {
+                    tracing::warn!(target: "agent_gossip::a2a", %error, "directed send did not end as delivered");
+                }
+                FailureLog::Debug => {
+                    tracing::debug!(target: "agent_gossip::a2a", %error, "directed send did not end as delivered");
+                }
+            }
         }
     });
 }
 
-fn log_unless_done(delivered: Delivered) {
+fn log_unless_done(delivered: Delivered, failure_log: FailureLog) {
     if let Delivered::Pending(raw) = delivered {
-        log_pending(vec![Decided::decide(vec![raw], |_| {})]);
+        log_pending(vec![Decided::decide(vec![raw], |_| {})], failure_log);
     }
 }
 
@@ -262,7 +277,10 @@ async fn send_msg_part(
         // unicast, a broadcast over gossip (see `transport::deliver`). Inline,
         // not `deliver_in_background`: the CLI needs the delivery verdict to
         // report an unreachable peer, and each IPC send is one-shot.
-        log_unless_done(habilis_network::ops::deliver(message, bytes, state, sender).await?);
+        log_unless_done(
+            habilis_network::ops::deliver(message, bytes, state, sender).await?,
+            FailureLog::Warn,
+        );
     } else if state.pending_outbound_mut().push((message.clone(), bytes)) {
         // Buffered until the meshed edge flushes it through the send decision.
         commit_outbound_part(state, message, out, echo);
@@ -1948,6 +1966,11 @@ pub(crate) async fn broadcast_a2a_call(
             author,
             kind,
             body,
+            failure_log: if method == served::READER_GET {
+                FailureLog::Debug
+            } else {
+                FailureLog::Warn
+            },
         },
         state,
         sender,
@@ -1969,6 +1992,7 @@ pub(crate) struct DirectedRpcParams<'caller> {
     pub(crate) author: &'caller Nickname,
     pub(crate) kind: MessageKind,
     pub(crate) body: MessageBody,
+    pub(crate) failure_log: FailureLog,
 }
 
 /// Send one directed RPC frame (an `App` request/response), transparently
@@ -1993,13 +2017,17 @@ pub(crate) async fn send_directed_rpc(
         author,
         kind,
         body,
+        failure_log,
     } = params;
     let signer = state.identity().clone();
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).sign(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         logging::log_out(&single);
         let bytes = single.serialize()?;
-        log_unless_done(habilis_network::ops::deliver(&single, bytes, state, sender).await?);
+        log_unless_done(
+            habilis_network::ops::deliver(&single, bytes, state, sender).await?,
+            failure_log,
+        );
         return Ok(());
     }
     // The RPC body is already sealed — gate on the sealed length of the largest
@@ -2031,7 +2059,10 @@ pub(crate) async fn send_directed_rpc(
         logging::log_out(&message);
         let bytes = message.serialize()?;
         cache_frames.push(bytes.clone());
-        log_unless_done(habilis_network::ops::deliver(&message, bytes, state, sender).await?);
+        log_unless_done(
+            habilis_network::ops::deliver(&message, bytes, state, sender).await?,
+            failure_log,
+        );
     }
     if !cache_frames.is_empty() {
         state.shard_cache_mut().insert(series.group, cache_frames);
@@ -3104,6 +3135,78 @@ mod open_task_gate_tests {
         assert_eq!(
             other_name, None,
             "a call that names another peer is not redirected"
+        );
+    }
+}
+
+#[cfg(test)]
+mod failure_log_tests {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    use tokio::sync::oneshot;
+    use tracing::level_filters::LevelFilter;
+
+    use super::{FailureLog, SendVerdict, log_pending};
+    use crate::a2a::decided::Decided;
+
+    #[derive(Clone)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("the test is the only user of the buffer")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// What a send that ended as not delivered writes to the log at warn level or above.
+    async fn warnings_of_a_send_that_was_not_delivered(failure_log: FailureLog) -> String {
+        let captured = Captured(Arc::default());
+        let writer = captured.clone();
+        let builder = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(LevelFilter::WARN);
+        let subscriber = builder.with_ansi(false).finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let (verdict_tx, verdict_rx) = oneshot::channel();
+        verdict_tx
+            .send(SendVerdict::NotDelivered("unicast dial failed".to_owned()))
+            .expect("the receiver is alive");
+        log_pending(vec![Decided::decide(vec![verdict_rx], |_| {})], failure_log);
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        let bytes = captured
+            .0
+            .lock()
+            .expect("the test is the only user of the buffer")
+            .clone();
+        String::from_utf8(bytes).expect("the log is text")
+    }
+
+    #[tokio::test]
+    async fn a_reader_ask_that_was_not_delivered_leaves_no_warning() {
+        let log = warnings_of_a_send_that_was_not_delivered(FailureLog::Debug).await;
+        assert_eq!(
+            log, "",
+            "a failed reader ask is a debug line, not a warning"
+        );
+    }
+
+    #[tokio::test]
+    async fn any_other_send_that_was_not_delivered_still_warns() {
+        let log = warnings_of_a_send_that_was_not_delivered(FailureLog::Warn).await;
+        assert!(
+            log.contains("directed send did not end as delivered"),
+            "a send with a person waiting for it is a warning: {log:?}"
         );
     }
 }

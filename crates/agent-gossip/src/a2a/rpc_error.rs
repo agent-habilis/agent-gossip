@@ -9,7 +9,7 @@ use super::extensions::META_WAITING;
 use super::task_record::{self, LegInfo, LegKind, TaskRecord, TaskRole};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
-    BroadcastParams, emit_task_status, log_pending, send_broadcast,
+    BroadcastParams, FailureLog, emit_task_status, log_pending, send_broadcast,
 };
 use crate::a2a::state_refusal_reply::StateRefusalReply;
 use crate::emission;
@@ -367,7 +367,7 @@ pub(crate) async fn handle_op(
                     std::time::Instant::now(),
                 );
             }
-            log_pending(pending);
+            log_pending(pending, FailureLog::Warn);
             app.tasks
                 .get(&task_id)
                 .map(|rec| task_object(&task_id, rec, mesh))

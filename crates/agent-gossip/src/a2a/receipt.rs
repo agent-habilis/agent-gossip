@@ -3,7 +3,9 @@ use habilis_network::protocol::{AuthorKey, MessageBody, MessageKind};
 use serde::{Deserialize, Serialize};
 
 use crate::a2a::a2a_app::A2aApp;
-use crate::a2a::broadcast_params::{DirectedRpcParams, seal_directed, send_directed_rpc};
+use crate::a2a::broadcast_params::{
+    DirectedRpcParams, FailureLog, seal_directed, send_directed_rpc,
+};
 use crate::a2a::wire;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +79,7 @@ async fn send_sealed(
             author: context.author,
             kind,
             body,
+            failure_log: FailureLog::Warn,
         },
         state,
         context.sender,
