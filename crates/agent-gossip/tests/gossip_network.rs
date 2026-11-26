@@ -3819,18 +3819,47 @@ fn bell_check_and_session_track_the_bell_lock() {
     let _ = fs::remove_file(&log);
 }
 
-/// agy refuses a stop with `continue`, and sets `continuationActive` once a
-/// Stop hook has kept the turn going, so a second refusal in that turn would
-/// loop for ever.
-#[test]
-fn bell_check_speaks_the_agy_protocol_and_skips_a_continued_turn() {
-    let _serial = serial_guard();
-    let (mut decoy, decoy_pid, _mesh, nickname, log) = spawn_decoy("bell-agy");
+/// A decoy session that goes away even when an assertion fails first.
+struct DecoyGuard {
+    child: Child,
+    pid: String,
+    log: PathBuf,
+}
 
-    let first = bell_check_agy(
-        &decoy_pid,
-        r#"{"hookEventName":"Stop","continuationActive":false}"#,
-    );
+impl Drop for DecoyGuard {
+    fn drop(&mut self) {
+        let _ = common::test_cmd()
+            .args(["leave", "--session-pid", &self.pid])
+            .output();
+        let _ = self.child.wait();
+        let _ = fs::remove_file(&self.log);
+    }
+}
+
+fn agy_stop(reason: &str, continuation_active: bool) -> String {
+    format!(
+        r#"{{"hookEventName":"Stop","terminationReason":"{reason}","continuationActive":{continuation_active}}}"#
+    )
+}
+
+/// agy refuses a stop with `continue`, and only for a first normal end of
+/// turn. A turn a hook already continued would loop, and a cancel, an error or
+/// a limit is the user's or the harness's stop to make. agy wants a JSON
+/// object from every hook, so each of those answers `{}`.
+///
+/// Measured once with agy 1.5.12 (`agy --print`): the hook's `$PPID` is the agy
+/// process, and its stdin holds `continuationActive` and `cwd` but no pid.
+#[test]
+fn bell_check_speaks_the_agy_protocol_and_refuses_only_a_normal_first_stop() {
+    let _serial = serial_guard();
+    let (decoy, decoy_pid, _mesh, nickname, log) = spawn_decoy("bell-agy");
+    let _guard = DecoyGuard {
+        child: decoy,
+        pid: decoy_pid.clone(),
+        log,
+    };
+
+    let first = bell_check_agy(&decoy_pid, &agy_stop("NO_TOOL_CALL", false));
     assert_eq!(
         first.status.code(),
         Some(3),
@@ -3847,20 +3876,36 @@ fn bell_check_speaks_the_agy_protocol_and_skips_a_continued_turn() {
         "the reason names the problem and the session: {reason}"
     );
 
-    let continued = bell_check_agy(
-        &decoy_pid,
-        r#"{"hookEventName":"Stop","continuationActive":true}"#,
-    );
+    for (termination, active) in [
+        ("NO_TOOL_CALL", true),
+        ("USER_CANCELED", false),
+        ("ERROR", false),
+        ("MAX_INVOCATIONS", false),
+    ] {
+        let skipped = bell_check_agy(&decoy_pid, &agy_stop(termination, active));
+        assert!(
+            skipped.status.success() && skipped.stdout.trim_ascii() == b"{}",
+            "{termination} (continued: {active}) must answer an empty object: {skipped:?}"
+        );
+    }
+}
+
+/// With no session to check, the agy protocol still answers a JSON object.
+#[test]
+fn bell_check_answers_an_empty_object_to_agy_when_no_session_needs_a_bell() {
+    let mut idle = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let out = bell_check_agy(&idle.id().to_string(), &agy_stop("NO_TOOL_CALL", false));
     assert!(
-        continued.status.success() && continued.stdout.is_empty(),
-        "a turn a hook already continued is not refused again: {continued:?}"
+        out.status.success() && out.stdout.trim_ascii() == b"{}",
+        "no session must answer an empty object: {out:?}"
     );
 
-    let _ = common::test_cmd()
-        .args(["leave", "--session-pid", &decoy_pid])
-        .output();
-    let _ = decoy.wait();
-    let _ = fs::remove_file(&log);
+    let _ = idle.kill();
+    let _ = idle.wait();
 }
 
 fn bell_check_agy(session_pid: &str, stdin_payload: &str) -> std::process::Output {

@@ -54,6 +54,9 @@ const ANTIGRAVITY_PLUGIN_JSON: &str = r#"{
 
 // The hook is the bell contract: agy refuses a stop with no bell armed. It
 // needs the protocol flag because agy names a refusal `continue`, not `block`.
+// `$PPID` is the agy process, not a shell between: measured once with agy
+// 1.5.12 (`agy --print`). The hook's stdin holds `continuationActive` and
+// `cwd`, and no pid.
 const ANTIGRAVITY_HOOKS_JSON: &str = r#"{
   "agent-gossip": {
     "Stop": [
