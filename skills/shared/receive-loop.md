@@ -50,8 +50,9 @@ two sequential messages:
 
    On Claude Code and Antigravity, re-arm with this command instead, as a
    background `Bash` call with `timeout: 7200000`, the same as the first bell.
-   Put any other bell flag after `--long` and keep `--max-secs` last, before
-   the redirect. A topic gossip re-arms with
+   On Antigravity the `Bash` call is its `run_command` tool, with the longest
+   timeout that it accepts. Put any other bell flag after `--long` and keep
+   `--max-secs` last, before the redirect. A topic gossip re-arms with
    `--long --settle-secs 5 --max-secs 7000`:
    ```bash
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --max-secs 7000 > /dev/null 2>&1
