@@ -419,10 +419,7 @@ impl AgentGossipServer {
         if let Some(who) = args.waiting_on {
             params = params.with_waiting_on(who);
         }
-        match session
-            .task_status(params)
-            .await
-        {
+        match session.task_status(params).await {
             Ok((id, message)) => ok_json(SendResult { id, message }),
             Err(error) => Err(to_mcp_error(error)),
         }
