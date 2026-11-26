@@ -7,6 +7,7 @@ use habilis_network::util::logging;
 use super::args::SharedServerOpts;
 use super::detach_if_owned::detach_if_owned;
 use super::drift_warning::drift_warning;
+use super::start_failure;
 use crate::a2a::a2a_app::{A2aApp, Startup, SurfacedIo};
 use crate::a2a::a2a_binding;
 use crate::api;
@@ -17,7 +18,22 @@ use crate::emission::{Output, OutputMode};
 /// already-resolved [`SetupKind`], author,
 /// and advertise directory (see [`habilis_network::runtime::Resolved`]).
 pub(super) async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
+    // Before the launcher spawns the daemon: the error of an earlier start of this session must not
+    // be read by the `ready` of this one.
+    if let Some(state_file) = &shared.state_file {
+        start_failure::clear(state_file);
+    }
     detach_if_owned(&shared)?;
+    let state_file = shared.state_file.clone();
+    let result = serve(resolved, shared).await;
+    if let (Err(error), Some(state_file)) = (&result, &state_file) {
+        start_failure::record(state_file, error);
+    }
+    result
+}
+
+/// The mesh of one session: the setup, then the event loop until it ends.
+async fn serve(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     let Resolved {
         kind,
         author,

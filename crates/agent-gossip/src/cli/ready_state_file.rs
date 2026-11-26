@@ -5,6 +5,7 @@ use habilis_network::runtime::{state_file, tuning};
 use super::args::ReadyOpts;
 use super::print_ready_identity::print_ready_identity;
 use super::read_member::read_member;
+use super::start_failure;
 
 /// A state file that `wait_for_ready` saw report a fresh `ready: true`. Only
 /// `wait_for_ready` builds one, so an identity read through it follows a passed
@@ -56,6 +57,14 @@ pub(super) async fn wait_for_ready(
                 tracing::debug!(%error, path = %state_file.display(), "agent-gossip ready: state-file read failed; retrying");
             }
         }
+        // A start that failed will never serve: say why now, not at the deadline. A daemon that is
+        // killed or panics leaves no such error, and the wait runs to its limit as before.
+        if let Some(reason) = start_failure::read(state_file) {
+            anyhow::bail!(
+                "the daemon at {} ended before it was ready: {reason}",
+                state_file.display()
+            );
+        }
         if tokio::time::Instant::now() >= deadline {
             anyhow::bail!(
                 "daemon at {} not ready within {timeout_secs}s",
@@ -102,4 +111,37 @@ pub(super) async fn ready(options: ReadyOpts) -> Result<()> {
     let ready = wait_for_ready(&state_file, timeout_secs).await?;
     print_ready_identity(&ready);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use crate::cli::start_failure;
+
+    #[tokio::test]
+    async fn a_start_that_failed_ends_the_wait_at_once_with_its_error() {
+        let dir = std::env::temp_dir().join(format!("ready-failed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the temp dir is writable");
+        let state_file = dir.join("session.json");
+        let text = "max connections is 4: the lowest value is 8 (the default is 16)";
+        start_failure::record(&state_file, &anyhow::anyhow!(text));
+
+        let started = Instant::now();
+        let outcome = super::wait_for_ready(&state_file, 5).await;
+        let waited = started.elapsed();
+
+        let error = outcome
+            .err()
+            .expect("a daemon that never served is not ready");
+        assert!(
+            waited < Duration::from_secs(2),
+            "ready must not wait its 5 s limit for a daemon that already ended: waited {waited:?}"
+        );
+        assert!(
+            error.to_string().contains(text),
+            "the error of the failed start reaches the caller: {error}"
+        );
+    }
 }

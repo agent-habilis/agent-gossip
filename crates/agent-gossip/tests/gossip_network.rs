@@ -518,6 +518,47 @@ fn the_help_of_max_connections_names_the_lowest_value_and_the_default() {
     );
 }
 
+/// A detached start that the engine refuses leaves `ready` with the reason at once: the launcher
+/// returns, the daemon has ended with its error, and `ready --state-file` says so without its wait.
+#[test]
+fn ready_reports_a_refused_detached_start_at_once() {
+    let dir = std::env::temp_dir().join(format!("ready-refused-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("the temp dir is writable");
+    let state_file = dir.join("session.json");
+    let owner = process::parent_of(std::process::id()).expect("the test process has a parent");
+    let mut launch = common::test_cmd();
+    launch.args([
+        "create",
+        "--max-connections",
+        "4",
+        "--nickname",
+        "ready-refused",
+        "--owner-pid",
+        &owner.to_string(),
+        "--state-file",
+    ]);
+    launch.arg(&state_file);
+    let launched: std::process::Output = output_within(&mut launch, QUERY_LIMIT);
+    assert!(
+        launched.status.success(),
+        "the detached launcher returns 0 before the daemon is checked: {launched:?}"
+    );
+
+    let started = Instant::now();
+    let mut ready = common::test_cmd();
+    ready.args(["ready", "--timeout-secs", "20", "--state-file"]);
+    ready.arg(&state_file);
+    let out: std::process::Output = output_within(&mut ready, Duration::from_secs(30));
+    let waited = started.elapsed();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let text = "max connections is 4: the lowest value is 8 (the default is 16)";
+    assert!(
+        !out.status.success() && stderr.contains(text) && waited < Duration::from_secs(10),
+        "ready must fail within 10 s with `{text}`, and it gave {out:?} after {waited:?}"
+    );
+}
+
 /// `ask` with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {

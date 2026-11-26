@@ -44,6 +44,7 @@ mod send;
 mod session;
 mod session_file;
 mod signal;
+mod start_failure;
 mod state;
 mod target;
 #[cfg(test)]

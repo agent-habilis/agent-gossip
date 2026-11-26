@@ -1119,8 +1119,9 @@ COMMANDS
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
-              exit 0; non-zero on timeout. Pass the SAME --state-file path
-              you gave create/join. On success it prints {gossip,name,nickname,
+              exit 0; non-zero on timeout. A start that failed (a cap under
+              8, a wrong password) ends the wait at once, with the error of
+              the daemon. Pass the SAME --state-file path you gave create/join. On success it prints {gossip,name,nickname,
               pubkey,member} — plus `topic` for a topic gossip, and `drift` when an installed
               skill set has fallen behind this binary — so the gate doubles as
               the identity read. See "READINESS AND POLLING" for the full
