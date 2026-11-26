@@ -6,7 +6,7 @@ use habilis_network::runtime::state_file::{read_identity, read_session_entry};
 use habilis_network::runtime::{ipc, state_file};
 use habilis_network::util::process;
 
-use super::args::{BellCheckOpts, LeaveOpts, SessionOpts};
+use super::args::{BellCheckOpts, LeaveOpts, SessionOpts, StopProtocol};
 use super::bell;
 use super::discovery::Discovery;
 use super::target::Target;
@@ -380,16 +380,20 @@ fn is_ready(target: &Target) -> bool {
         })
 }
 
-/// The Claude Code Stop hook's probe. It answers in the hook's JSON protocol
+/// The Stop hook's probe. It answers in the hook's JSON protocol
 /// and returns whether it blocked, so the caller exits 3 and a shell
 /// `bell-check && echo armed` tells the truth. The hook wraps it in `|| true`:
 /// a missing binary, or one too old to know this command, never blocks a
-/// turn, and Claude Code still reads the JSON.
+/// turn, and the harness still reads the JSON.
 pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
     let &BellCheckOpts {
         session_pid,
         grace_ms,
+        protocol,
     } = options;
+    if protocol == StopProtocol::Antigravity && continuation_active(std::io::stdin().lock()) {
+        return false;
+    }
     let (owned, _) = owned_sessions(discover().live, session_pid);
     // A bell re-armed in the same breath as the turn ends may not hold its
     // lock yet.
@@ -404,21 +408,40 @@ pub(crate) fn bell_check(options: &BellCheckOpts) -> bool {
                 "gossip bell not armed for {}: run the Receive loop (poll + re-arm) before ending the turn",
                 missing.join(", ")
             );
-            println!(
-                "{}",
-                serde_json::json!({ "decision": "block", "reason": reason })
-            );
+            println!("{}", stop_decision(protocol, &reason));
             return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
+fn stop_decision(protocol: StopProtocol, reason: &str) -> serde_json::Value {
+    let decision = match protocol {
+        StopProtocol::ClaudeCode => "block",
+        StopProtocol::Antigravity => "continue",
+    };
+    serde_json::json!({ "decision": decision, "reason": reason })
+}
+
+/// Whether agy already kept this turn going after an earlier Stop hook. It
+/// sets the flag so a hook that refuses again does not loop. An empty or
+/// unreadable payload counts as a first stop: the check must stay armed.
+fn continuation_active(payload: impl std::io::Read) -> bool {
+    serde_json::from_reader::<_, serde_json::Value>(payload)
+        .ok()
+        .and_then(|value| value.get("continuationActive")?.as_bool())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use habilis_network::util::process;
 
-    use super::{Owner, Target, confirm_owner, owned_by, select_explicit, split_owned, unarmed};
+    use super::{
+        Owner, Target, confirm_owner, continuation_active, owned_by, select_explicit, split_owned,
+        stop_decision, unarmed,
+    };
+    use crate::cli::args::StopProtocol;
 
     fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
@@ -431,6 +454,45 @@ mod tests {
             pid,
             owner_pid: None,
         }
+    }
+
+    /// Claude Code stops a turn on `block`, agy on `continue`: the same
+    /// refusal in two protocols, so each one gets its own word.
+    #[test]
+    fn stop_decision_speaks_each_harness_protocol() {
+        let claude = stop_decision(StopProtocol::ClaudeCode, "no bell");
+        assert_eq!(
+            claude,
+            serde_json::json!({ "decision": "block", "reason": "no bell" }),
+            "Claude Code refuses the stop with `block`"
+        );
+        let agy = stop_decision(StopProtocol::Antigravity, "no bell");
+        assert_eq!(
+            agy,
+            serde_json::json!({ "decision": "continue", "reason": "no bell" }),
+            "agy refuses the stop with `continue`"
+        );
+    }
+
+    /// agy sets `continuationActive` after a Stop hook already kept the turn
+    /// going, so a hook that refuses again would loop for ever.
+    #[test]
+    fn continuation_active_reads_the_agy_stop_payload() {
+        let active = br#"{"hookEventName":"Stop","continuationActive":true}"#;
+        assert!(
+            continuation_active(&active[..]),
+            "true means skip the check"
+        );
+        let first = br#"{"hookEventName":"Stop","continuationActive":false}"#;
+        assert!(!continuation_active(&first[..]), "false means check");
+        assert!(
+            !continuation_active(&b""[..]),
+            "no payload is a first stop, not a loop"
+        );
+        assert!(
+            !continuation_active(&b"not json"[..]),
+            "an unreadable payload must not disarm the check"
+        );
     }
 
     #[test]

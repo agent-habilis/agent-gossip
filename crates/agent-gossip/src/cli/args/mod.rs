@@ -6,7 +6,7 @@
 //! imperative per-command logic lives in the parent [`super`] module.
 
 pub(crate) use self::a2a_action::A2aAction;
-pub(crate) use self::bell_check_opts::BellCheckOpts;
+pub(crate) use self::bell_check_opts::{BellCheckOpts, StopProtocol};
 pub(crate) use self::cli::Cli;
 pub(crate) use self::commands::Commands;
 pub(crate) use self::create_opts::CreateOpts;

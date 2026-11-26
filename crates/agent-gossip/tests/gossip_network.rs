@@ -3819,6 +3819,74 @@ fn bell_check_and_session_track_the_bell_lock() {
     let _ = fs::remove_file(&log);
 }
 
+/// agy refuses a stop with `continue`, and sets `continuationActive` once a
+/// Stop hook has kept the turn going, so a second refusal in that turn would
+/// loop for ever.
+#[test]
+fn bell_check_speaks_the_agy_protocol_and_skips_a_continued_turn() {
+    let _serial = serial_guard();
+    let (mut decoy, decoy_pid, _mesh, nickname, log) = spawn_decoy("bell-agy");
+
+    let first = bell_check_agy(
+        &decoy_pid,
+        r#"{"hookEventName":"Stop","continuationActive":false}"#,
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(3),
+        "a first stop is refused: {first:?}"
+    );
+    let decision: serde_json::Value = serde_json::from_slice(&first.stdout)
+        .expect("bell-check prints JSON when it refuses the stop");
+    assert_eq!(decision["decision"], "continue", "agy keeps the turn going");
+    let reason = decision["reason"]
+        .as_str()
+        .expect("a refusal carries a reason");
+    assert!(
+        reason.contains("gossip bell not armed") && reason.contains(nickname.as_str()),
+        "the reason names the problem and the session: {reason}"
+    );
+
+    let continued = bell_check_agy(
+        &decoy_pid,
+        r#"{"hookEventName":"Stop","continuationActive":true}"#,
+    );
+    assert!(
+        continued.status.success() && continued.stdout.is_empty(),
+        "a turn a hook already continued is not refused again: {continued:?}"
+    );
+
+    let _ = common::test_cmd()
+        .args(["leave", "--session-pid", &decoy_pid])
+        .output();
+    let _ = decoy.wait();
+    let _ = fs::remove_file(&log);
+}
+
+fn bell_check_agy(session_pid: &str, stdin_payload: &str) -> std::process::Output {
+    let mut child = common::test_cmd()
+        .args([
+            "bell-check",
+            "--protocol",
+            "antigravity",
+            "--session-pid",
+            session_pid,
+            "--grace-ms",
+            "0",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn agent-gossip bell-check");
+    std::io::Write::write_all(
+        &mut child.stdin.take().expect("stdin is piped"),
+        stdin_payload.as_bytes(),
+    )
+    .expect("bell-check reads its stdin");
+    child.wait_with_output().expect("bell-check exits")
+}
+
 /// Gossip carries no directed traffic, so a directed A2A task that
 /// round-trips (request out, worker-minted id back) proves the unicast
 /// transport delivers point-to-point — not via the gossip flood. Broadcasts
