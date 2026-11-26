@@ -353,6 +353,11 @@ mod tests {
             manifest["name"], "agent-gossip",
             "agy keys a plugin by its name"
         );
+        assert_eq!(
+            manifest["version"],
+            env!("CARGO_PKG_VERSION"),
+            "agy does not list a plugin with no version, and a release changes the file"
+        );
         let hooks: serde_json::Value = serde_json::from_slice(
             &std::fs::read(root.join("hooks.json")).expect("plug wrote hooks.json"),
         )
@@ -361,9 +366,8 @@ mod tests {
             .as_str()
             .expect("the Stop hook carries a command");
         assert!(
-            command.contains(r#"bell-check --session-pid "$PPID" --protocol antigravity"#)
-                && command.ends_with("|| true"),
-            "the hook asks for the agy protocol and never blocks on a missing binary: {command}"
+            command.contains(r#"bell-check --session-pid "$PPID" --protocol antigravity"#),
+            "the hook asks for the agy protocol: {command}"
         );
         assert!(
             root.join("skills/gossip-join/SKILL.md").is_file(),

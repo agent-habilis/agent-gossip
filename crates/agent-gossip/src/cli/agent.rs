@@ -46,14 +46,25 @@ const _: &str = env!("AGENT_GOSSIP_EMBED_FINGERPRINT");
 /// disagree.
 const SKIP: &[&str] = include!("embed_skip.rs");
 
-const ANTIGRAVITY_PLUGIN_JSON: &str = r#"{
+// agy lists a plugin only with a version. The version of the binary is the
+// version of the text, so a release rewrites the file and `doctor` flags the
+// older copy.
+const ANTIGRAVITY_PLUGIN_JSON: &str = concat!(
+    r#"{
   "name": "agent-gossip",
+  "version": ""#,
+    env!("CARGO_PKG_VERSION"),
+    r#"",
   "description": "Gossip with other agents: create or join a gossip, then message, task and review across the mesh."
 }
-"#;
+"#
+);
 
 // The hook is the bell contract: agy refuses a stop with no bell armed. It
 // needs the protocol flag because agy names a refusal `continue`, not `block`.
+// agy reads exactly one JSON object from every hook, so the command prints
+// `{}` itself when agent-gossip is missing, is too old to know the flag, or
+// fails: bell-check already printed its own object for exit 0 and exit 3.
 // `$PPID` is the agy process, not a shell between: measured once with agy
 // 1.5.12 (`agy --print`). The hook's stdin holds `continuationActive` and
 // `cwd`, and no pid.
@@ -62,7 +73,7 @@ const ANTIGRAVITY_HOOKS_JSON: &str = r#"{
     "Stop": [
       {
         "type": "command",
-        "command": "agent-gossip bell-check --session-pid \"$PPID\" --protocol antigravity || true",
+        "command": "agent-gossip bell-check --session-pid \"$PPID\" --protocol antigravity; case $? in 0|3) ;; *) echo '{}' ;; esac",
         "timeout": 15
       }
     ]
@@ -87,7 +98,7 @@ fn is_plugin_file_of_ours(name: &str, on_disk: &[u8]) -> bool {
             named == Some("agent-gossip")
                 && top_level
                     .keys()
-                    .all(|key| key == "name" || key == "description")
+                    .all(|key| matches!(key.as_str(), "name" | "version" | "description"))
         }
         _ => false,
     }
