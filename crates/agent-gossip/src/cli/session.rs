@@ -427,8 +427,8 @@ fn stop_decision(protocol: StopProtocol, reason: &str) -> serde_json::Value {
 /// sets the flag so a hook that refuses again does not loop. An empty or
 /// unreadable payload counts as a first stop: the check must stay armed.
 fn continuation_active(payload: impl std::io::Read) -> bool {
-    serde_json::from_reader::<_, serde_json::Value>(payload)
-        .ok()
+    let parsed: Option<serde_json::Value> = serde_json::from_reader(payload).ok();
+    parsed
         .and_then(|value| value.get("continuationActive")?.as_bool())
         .unwrap_or(false)
 }

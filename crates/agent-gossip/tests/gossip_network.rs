@@ -3864,27 +3864,28 @@ fn bell_check_speaks_the_agy_protocol_and_skips_a_continued_turn() {
 }
 
 fn bell_check_agy(session_pid: &str, stdin_payload: &str) -> std::process::Output {
-    let mut child = common::test_cmd()
-        .args([
-            "bell-check",
-            "--protocol",
-            "antigravity",
-            "--session-pid",
-            session_pid,
-            "--grace-ms",
-            "0",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut command = common::test_cmd();
+    command.args([
+        "bell-check",
+        "--protocol",
+        "antigravity",
+        "--session-pid",
+        session_pid,
+        "--grace-ms",
+        "0",
+    ]);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    let mut child: Child = command
         .spawn()
-        .expect("failed to spawn agent-gossip bell-check");
-    std::io::Write::write_all(
-        &mut child.stdin.take().expect("stdin is piped"),
-        stdin_payload.as_bytes(),
-    )
-    .expect("bell-check reads its stdin");
-    child.wait_with_output().expect("bell-check exits")
+        .expect("the agent-gossip binary under test exists");
+    let mut stdin = child.stdin.take().expect("stdin is piped above");
+    std::io::Write::write_all(&mut stdin, stdin_payload.as_bytes())
+        .expect("bell-check stays alive until it has read its stdin");
+    drop(stdin);
+    child
+        .wait_with_output()
+        .expect("bell-check exits once stdin closes")
 }
 
 /// Gossip carries no directed traffic, so a directed A2A task that

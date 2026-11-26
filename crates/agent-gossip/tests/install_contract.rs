@@ -205,7 +205,7 @@ fn plug_populates_a_clean_machine_and_unplug_reverses_it() {
             "roster should report {harness} installed:\n{roster}"
         );
     }
-    for absent in ["pi", "cursor", "opencode"] {
+    for absent in ["pi", "cursor", "opencode", "antigravity"] {
         assert!(
             roster.contains(&format!("Skipped {absent} (not detected)")),
             "roster should skip the absent harness {absent}:\n{roster}"

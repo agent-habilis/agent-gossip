@@ -46,6 +46,27 @@ const _: &str = env!("AGENT_GOSSIP_EMBED_FINGERPRINT");
 /// disagree.
 const SKIP: &[&str] = include!("embed_skip.rs");
 
+const ANTIGRAVITY_PLUGIN_JSON: &str = r#"{
+  "name": "agent-gossip",
+  "description": "Gossip with other agents: create or join a gossip, then message, task and review across the mesh."
+}
+"#;
+
+// The hook is the bell contract: agy refuses a stop with no bell armed. It
+// needs the protocol flag because agy names a refusal `continue`, not `block`.
+const ANTIGRAVITY_HOOKS_JSON: &str = r#"{
+  "agent-gossip": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "agent-gossip bell-check --session-pid \"$PPID\" --protocol antigravity || true",
+        "timeout": 15
+      }
+    ]
+  }
+}
+"#;
+
 /// An agent the mesh integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
@@ -147,6 +168,26 @@ impl Agent {
         home.join(relative)
     }
 
+    /// The folder an agent loads as one plugin, when it has no bare skill
+    /// root. `plug` owns the whole folder, so `unplug` removes all of it.
+    pub(crate) fn plugin_root(self, home: &Path) -> Option<PathBuf> {
+        match self {
+            Agent::Antigravity => Some(home.join(".gemini/config/plugins/agent-gossip")),
+            Agent::ClaudeCode | Agent::Pi | Agent::Codex | Agent::Cursor | Agent::OpenCode => None,
+        }
+    }
+
+    /// The files `plug` writes beside the skills inside [`Self::plugin_root`].
+    pub(crate) fn plugin_files(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Agent::Antigravity => &[
+                ("plugin.json", ANTIGRAVITY_PLUGIN_JSON),
+                ("hooks.json", ANTIGRAVITY_HOOKS_JSON),
+            ],
+            Agent::ClaudeCode | Agent::Pi | Agent::Codex | Agent::Cursor | Agent::OpenCode => &[],
+        }
+    }
+
     pub(crate) fn installed(self, home: &Path) -> bool {
         let dirs = self.owned_skill_dirs(home);
         dirs.into_iter()
@@ -155,7 +196,17 @@ impl Agent {
 
     /// Does the installed copy match the embedded one?
     fn in_sync(self, home: &Path) -> bool {
-        dir_in_sync(&SKILLS, &self.install_path(home))
+        self.plugin_files_in_sync(home) && dir_in_sync(&SKILLS, &self.install_path(home))
+    }
+
+    fn plugin_files_in_sync(self, home: &Path) -> bool {
+        let Some(root) = self.plugin_root(home) else {
+            return true;
+        };
+        let matches = |&(name, contents): &(&str, &str)| {
+            std::fs::read(root.join(name)).is_ok_and(|on_disk| on_disk == contents.as_bytes())
+        };
+        self.plugin_files().iter().all(matches)
     }
 
     pub(crate) fn owned_skill_dirs(self, home: &Path) -> Vec<PathBuf> {
@@ -871,7 +922,11 @@ mod tests {
             home.join(".gemini/config/plugins/agent-gossip/skills"),
             "agy skills live in the agent-gossip plugin"
         );
-        assert_eq!(Agent::Antigravity.label(), "antigravity");
+        assert_eq!(
+            Agent::Antigravity.label(),
+            "antigravity",
+            "the --agent value and the roster line use the full name"
+        );
 
         std::fs::create_dir_all(home.join(".gemini")).expect("the test temp directory is writable");
         assert!(

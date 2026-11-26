@@ -111,7 +111,9 @@ fn dedup_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
 /// The `unplug` summary line — `plug` reports via [`print_roster`] instead.
 fn finish(acted: usize) {
     if acted == 0 {
-        warn("nothing to do (try --agent claude-code|pi|codex|cursor|opencode or --path DIR)");
+        warn(
+            "nothing to do (try --agent claude-code|pi|codex|cursor|opencode|antigravity or --path DIR)",
+        );
     } else {
         let noun = if acted == 1 { "target" } else { "targets" };
         status("Finished", &format!("unplugging gossip · {acted} {noun}"));
@@ -127,6 +129,13 @@ fn install(agent: Agent, home: &Path) -> Result<()> {
     }
     remove_owned(agent, home)?;
     write_dir(&SKILLS, &agent.install_path(home))?;
+    if let Some(root) = agent.plugin_root(home) {
+        for &(name, contents) in agent.plugin_files() {
+            let target = root.join(name);
+            std::fs::write(&target, contents)
+                .with_context(|| format!("writing {}", target.display()))?;
+        }
+    }
     Ok(())
 }
 
@@ -171,6 +180,9 @@ fn remove_root(root: &Path) -> Result<bool> {
 }
 
 fn remove_owned(agent: Agent, home: &Path) -> Result<bool> {
+    if let Some(root) = agent.plugin_root(home) {
+        return remove_existing(&root);
+    }
     let mut removed = false;
     for path in agent.owned_skill_dirs(home) {
         removed |= remove_existing(&path)?;
@@ -239,7 +251,7 @@ fn remove_existing(path: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{install_root, remove_root};
+    use super::{Agent, AgentState, install, install_root, remove, remove_root};
 
     /// `--path` install writes the skill tree into the directory as a root, and
     /// `--path` unplug removes only the skill dirs — never the folder or files
@@ -292,5 +304,69 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).expect("the test temp directory is writable");
+    }
+
+    /// agy loads skills and hooks only from a plugin folder, so `plug` writes
+    /// the manifest and the bell Stop hook beside the skills, and `unplug`
+    /// removes the whole folder: nothing in it belongs to the user.
+    #[test]
+    fn antigravity_plugs_a_plugin_and_unplugs_the_whole_folder() {
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-agy-plug-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        let root = home.join(".gemini/config/plugins/agent-gossip");
+
+        install(Agent::Antigravity, &home).expect("the temp home is writable");
+
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("plugin.json")).expect("plug wrote plugin.json"),
+        )
+        .expect("agy rejects a plugin whose manifest is not JSON");
+        assert_eq!(
+            manifest["name"], "agent-gossip",
+            "agy keys a plugin by its name"
+        );
+        let hooks: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("hooks.json")).expect("plug wrote hooks.json"),
+        )
+        .expect("agy drops a hooks file that is not JSON");
+        let command = hooks["agent-gossip"]["Stop"][0]["command"]
+            .as_str()
+            .expect("the Stop hook carries a command");
+        assert!(
+            command.contains(r#"bell-check --session-pid "$PPID" --protocol antigravity"#)
+                && command.ends_with("|| true"),
+            "the hook asks for the agy protocol and never blocks on a missing binary: {command}"
+        );
+        assert!(
+            root.join("skills/gossip-join/SKILL.md").is_file(),
+            "the skills sit inside the plugin"
+        );
+        assert_eq!(
+            Agent::Antigravity.state(&home),
+            AgentState::UpToDate,
+            "a fresh plug is up to date"
+        );
+
+        std::fs::write(root.join("hooks.json"), "{}").expect("the test temp directory is writable");
+        assert_eq!(
+            Agent::Antigravity.state(&home),
+            AgentState::OutOfDate,
+            "an edited hooks.json is drift, since it carries the bell contract"
+        );
+
+        let removed =
+            remove(Agent::Antigravity, &home).expect("the plugin folder is ours to delete");
+        assert!(removed, "unplug reports that it acted");
+        assert!(!root.exists(), "unplug removes the plugin folder");
+        assert_eq!(
+            Agent::Antigravity.state(&home),
+            AgentState::NotSetUp,
+            "agy is still present but no longer set up"
+        );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 }

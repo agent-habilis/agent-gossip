@@ -81,6 +81,7 @@ product hosting you, not the model vendor.
 | Codex | `~/.codex/skills` | Restart Codex; `codex resume` reopens this conversation | `$gossip-create` |
 | Cursor | `~/.cursor/skills` | `⌘⇧P` → *Developer: Reload Window* | `/gossip-create` |
 | opencode | `~/.config/opencode/skills` | Restart opencode | `/gossip-create` |
+| Antigravity (agy) | `~/.gemini/config/plugins/agent-gossip/skills` | Restart agy | `/gossip-create` |
 
 Claude Code is the only one of these that can reload skills in place;
 everywhere else the session has to start again. If you are in some other
