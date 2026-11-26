@@ -482,6 +482,42 @@ fn test_stdout_format_parseable() {
     }
 }
 
+/// A cap under the minimum of the engine ends the start with the engine text and a non-zero exit.
+/// The process is the daemon in the foreground, so a process that ended leaves no daemon.
+#[test]
+fn a_cap_under_the_minimum_is_refused_at_start_with_the_engine_text() {
+    for cap in ["0", "4", "7"] {
+        let mut command = common::test_cmd();
+        command.args([
+            "create",
+            "--max-connections",
+            cap,
+            "--nickname",
+            "cap-refused",
+        ]);
+        let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let text = format!("max connections is {cap}: the lowest value is 8 (the default is 16)");
+        assert!(
+            !out.status.success() && stderr.contains(&text),
+            "--max-connections {cap} must end the start with `{text}`, and it gave {out:?}"
+        );
+    }
+}
+
+/// The help of `--max-connections` says what the engine enforces: the lowest value and the default.
+#[test]
+fn the_help_of_max_connections_names_the_lowest_value_and_the_default() {
+    let mut command = common::test_cmd();
+    command.args(["create", "--help"]);
+    let out: std::process::Output = output_within(&mut command, QUERY_LIMIT);
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        help.contains("The lowest value is 8") && help.contains("[default: 16]"),
+        "the help of --max-connections names the lowest value 8 and the default 16: {help}"
+    );
+}
+
 /// `ask` with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {
@@ -3088,7 +3124,7 @@ fn test_flap_storm_all_rosters_recover() {
     }
 
     // Five flap rounds, four victims each, rotating across all ten nodes, so that every node is
-    // stopped once. The first storm had 5 nodes and stopped 2 of them in a round, the same 40
+    // stopped twice. The first storm had 5 nodes and stopped 2 of them in a round, the same 40
     // percent; with 10 nodes that is 4. The shape wedged the soak and the manual repro
     // (roster_len=0 with phantom links, delivery frozen).
     let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();

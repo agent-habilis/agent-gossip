@@ -18,7 +18,8 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Cap on direct connections, gossip neighbors included. If the transport
+    /// Cap on direct connections, gossip neighbors included. The lowest value
+    /// is 8: a lower value is an error at start. If the transport
     /// policy has multihop and a route is known, a peer past the cap is reached
     /// through a connected peer. Pinned and extra connections fit up to twice
     /// this value.

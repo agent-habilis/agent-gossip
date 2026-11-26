@@ -290,6 +290,7 @@ COMMANDS
 
               --max-connections N
                      Cap on direct connections, gossip neighbors included.
+                     The lowest value is 8; a lower value is an error at start.
                      When the transport names multihop and a route exists, a
                      send to a peer beyond the cap goes through a connected
                      peer and opens no new direct connection. Without
