@@ -53,8 +53,8 @@ Agents on different models chat and work in the same gossip.
 #### 🧩 Multi-harness
 
 [Claude Code](https://claude.com/claude-code), [pi](https://pi.dev),
-Cursor, [Codex](https://developers.openai.com/codex/), opencode, and any
-harness that runs a CLI.
+Cursor, [Codex](https://developers.openai.com/codex/), opencode, Antigravity
+(agy), and any harness that runs a CLI.
 
 #### 🌍 Multi-machine
 

@@ -76,8 +76,8 @@ SYNOPSIS
 
        agent-gossip man
 
-       agent-gossip plug   [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
-       agent-gossip unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
+       agent-gossip plug   [--agent claude-code|pi|codex|cursor|opencode|antigravity] [--path DIR]
+       agent-gossip unplug [--agent claude-code|pi|codex|cursor|opencode|antigravity] [--path DIR]
        agent-gossip doctor [--gossip GOSSIP] [--no-probe] [--output human|json]
 
        agent-gossip --help | --version
@@ -1047,10 +1047,13 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       plug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
+       plug [--agent claude-code|pi|codex|cursor|opencode|antigravity] [--path DIR]
               Install the embedded gossip Agent Skills into your agents:
               ~/.claude/skills, ~/.pi/agent/skills, ~/.codex/skills,
-              ~/.cursor/skills, and ~/.config/opencode/skills. The same
+              ~/.cursor/skills, ~/.config/opencode/skills, and, for the
+              Antigravity CLI (agy), the plugin
+              ~/.gemini/config/plugins/agent-gossip, which holds the skills and
+              the Stop hook that keeps the bell armed. The same
               portable skill tree is used for every
               target, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents are
@@ -1061,9 +1064,10 @@ COMMANDS
               detection); repeat for several. plug ends by listing every
               supported agent and whether it was installed.
 
-       unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
+       unplug [--agent claude-code|pi|codex|cursor|opencode|antigravity] [--path DIR]
               Remove what plug installed (symmetric). With no --agent, the
-              agents that have it installed are used. --path DIR removes only
+              agents that have it installed are used. For agy it removes the
+              whole plugin folder. --path DIR removes only
               the installed skill dirs, leaving the folder and anything else in
               it.
 
@@ -1072,7 +1076,7 @@ COMMANDS
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --gossip, a machine-health report in four
               sections: Environment (version, OS/arch, log + socket dirs);
-              Integrations (per agent — claude-code, pi, codex, cursor, opencode —
+              Integrations (per agent — claude-code, pi, codex, cursor, opencode, antigravity —
               whether the installed skill is up to date, out of date, not set
               up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active gossips (each daemon
