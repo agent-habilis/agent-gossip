@@ -172,7 +172,8 @@ impl Agent {
     }
 
     /// The folder an agent loads as one plugin, when it has no bare skill
-    /// root. `plug` owns the whole folder, so `unplug` removes all of it.
+    /// root. The user can keep their own files in it, so `plug` and `unplug`
+    /// touch only what `plug` wrote.
     pub(crate) fn plugin_root(self, home: &Path) -> Option<PathBuf> {
         match self {
             Agent::Antigravity => Some(home.join(".gemini/config/plugins/agent-gossip")),

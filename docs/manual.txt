@@ -1066,8 +1066,9 @@ COMMANDS
 
        unplug [--agent claude-code|pi|codex|cursor|opencode|antigravity] [--path DIR]
               Remove what plug installed (symmetric). With no --agent, the
-              agents that have it installed are used. For agy it removes the
-              whole plugin folder. --path DIR removes only
+              agents that have it installed are used. For agy it removes only
+              what plug wrote, and the plugin folder once it is empty: your own
+              files in it stay. --path DIR removes only
               the installed skill dirs, leaving the folder and anything else in
               it.
 
