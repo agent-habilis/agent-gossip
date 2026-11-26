@@ -21,7 +21,8 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
     let task_open = common::cli_task_create(&mesh, &alice.nickname, &open.nickname, "build it");
 
     let status = |worker: &Node, task: &str| {
-        common::test_cmd()
+        let mut command = common::test_cmd();
+        command
             .args([
                 "a2a",
                 "status",
@@ -31,7 +32,8 @@ fn a_task_leg_past_the_own_legs_cap_is_refused_with_the_reason() {
                 &worker.nickname,
             ])
             .args(["--task-id", task, "--state", "working"])
-            .args(["--text", "on it", "--progress", "50"])
+            .args(["--text", "on it", "--progress", "50"]);
+        command
             .output()
             .expect("the test binary must start, or no refusal can be read")
     };

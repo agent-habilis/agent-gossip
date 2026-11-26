@@ -1732,7 +1732,8 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
     assert_eq!(saw_completed, 1, "the initiator never saw the task close");
 
     let late_note = |text: &str| {
-        let out = common::test_cmd()
+        let mut command = common::test_cmd();
+        command
             .args([
                 "a2a",
                 "status",
@@ -1742,9 +1743,8 @@ async fn test_a_late_leg_on_a_closed_task_is_not_surfaced() {
                 worker_nick,
             ])
             .args(["--task-id", &tid, "--state", "working", "--text", text])
-            .args(["--progress", "50"])
-            .output()
-            .expect("a2a status failed to spawn");
+            .args(["--progress", "50"]);
+        let out = command.output().expect("a2a status failed to spawn");
         assert!(out.status.success(), "late status refused: {out:?}");
     };
     // Condition 2: the initiator still holds the closed record.

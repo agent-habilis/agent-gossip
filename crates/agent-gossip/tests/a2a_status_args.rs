@@ -19,7 +19,7 @@ fn status(state: &str, extra: &[&str]) -> std::process::Output {
         ])
         .args(extra)
         .output()
-        .expect("a2a status spawns")
+        .expect("the test binary is built before the tests run")
 }
 
 /// `--waiting-on` and `--progress` only mean something while a task runs. On
@@ -58,7 +58,10 @@ fn working_needs_a_text_and_a_progress_on_the_cli_side() {
     ] {
         let out = status("working", extra);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "{extra:?} must be refused");
+        assert!(
+            !out.status.success(),
+            "{extra:?} is an incomplete check-in, so the CLI must refuse it"
+        );
         assert!(
             stderr.contains("working requires a text and a progress"),
             "{extra:?}: the error must name the rule, got: {stderr}"
@@ -88,7 +91,10 @@ fn a_progress_out_of_range_is_a_parse_error() {
     for value in ["101", "50%", "half"] {
         let out = status("working", &["--text", "on it", "--progress", value]);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "--progress {value} must fail");
+        assert!(
+            !out.status.success(),
+            "--progress {value} is not a whole percentage, so the parser must fail"
+        );
         assert!(
             stderr.contains("progress"),
             "{value}: the parser must name the flag, got: {stderr}"
@@ -103,7 +109,10 @@ fn a_state_a_worker_never_sends_is_refused_by_the_parser() {
     for state in ["submitted", "rejected", "auth-required"] {
         let out = status(state, &[]);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "{state} must fail");
+        assert!(
+            !out.status.success(),
+            "{state} is a state only the peer sets, so the parser must fail"
+        );
         assert!(
             stderr.contains("invalid task state"),
             "{state}: the parser must refuse it, got: {stderr}"
