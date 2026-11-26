@@ -8,4 +8,6 @@ when_to_use: The user invokes the gossip-doctor command or asks to check install
 
 <!-- include path="../shared/quiet.md" -->
 
+<!-- include path="../shared/agy-sandbox.md" -->
+
 <!-- include path="workflow.md" -->

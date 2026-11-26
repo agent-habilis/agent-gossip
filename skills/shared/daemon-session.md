@@ -80,11 +80,6 @@ foreground, mapped as:
 
 On Antigravity, run each `Bash` call above with its `run_command` tool:
 
-- Set `BypassSandbox` true on every call that runs `agent-gossip`, here and
-  in every later section. The Standard Sandbox cannot reach the daemon: a
-  sandboxed call fails with `No active gossip server running`. Prefer a
-  command that starts with `agent-gossip`: Always Allow matches the start of
-  a command, and `&&` chains, `$(id -u)` and `$VAR` can defeat the match.
 - Tool call 1 and tool call 3 run in the foreground. agy moves a command to
   the background when it runs longer than `WaitMsBeforeAsync` (500 to 10000
   ms). Set `WaitMsBeforeAsync` to 10000. If the result is a task id and not

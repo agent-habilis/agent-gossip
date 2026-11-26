@@ -760,6 +760,23 @@ mod tests {
         );
     }
 
+    /// Every skill runs `agent-gossip` in a shell, and in agy the Standard
+    /// Sandbox cannot reach the daemon. A one-shot skill such as ping or
+    /// status never carries the daemon launch text, so the rule has to ride
+    /// in every skill, or its commands fail with no daemon found.
+    #[test]
+    fn every_skill_tells_agy_to_bypass_the_sandbox() {
+        for skill in OWNED_SKILL_DIRS {
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            let body = flat.join(" ");
+            assert!(
+                body.contains("`BypassSandbox` true")
+                    && body.contains("No active gossip server running"),
+                "{skill}: its agent-gossip commands fail in the agy sandbox unless the text says so"
+            );
+        }
+    }
+
     /// The settle window delays the bell so that a turn ends before the next
     /// wake and the printed lines render. The three places that mention it
     /// must agree on which harnesses carry it.
