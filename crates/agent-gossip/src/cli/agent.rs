@@ -414,9 +414,6 @@ mod tests {
                 );
             }
             if let Some(references) = dir.get_dir(format!("{skill}/references")) {
-                let is_markdown = |file: &&include_dir::File<'_>| {
-                    file.path().extension().is_some_and(|ext| ext == "md")
-                };
                 let no_subdirs = references.dirs().next().is_none();
                 assert!(
                     no_subdirs && references.files().all(is_markdown),
@@ -446,12 +443,12 @@ mod tests {
     fn every_reference_is_named_by_its_skill_and_exists() {
         for skill in OWNED_SKILL_DIRS {
             let mentions = skill_body(skill).split("references/").skip(1);
-            let names = mentions.filter_map(|rest| rest.split_once(".md"));
+            let candidates = mentions.filter_map(|rest| rest.split_once(".md"));
             let is_name = |name: &&str| name.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-');
-            let named: Vec<&str> = names.map(|(name, _)| name).filter(is_name).collect();
+            let mentioned: Vec<&str> = candidates.map(|(name, _)| name).filter(is_name).collect();
             let files = skill_files(skill);
             let present: Vec<String> = files.iter().skip(1).map(|file| stem_of(file)).collect();
-            for name in &named {
+            for name in &mentioned {
                 assert!(
                     present.iter().any(|have| have == name),
                     "{skill}: the SKILL.md names references/{name}.md, which is not rendered"
@@ -459,7 +456,7 @@ mod tests {
             }
             for have in &present {
                 assert!(
-                    named.iter().any(|name| name == have),
+                    mentioned.iter().any(|name| name == have),
                     "{skill}: references/{have}.md is rendered but the SKILL.md never names it"
                 );
             }
@@ -559,6 +556,10 @@ mod tests {
         let mut files = vec![main];
         files.extend(references);
         files
+    }
+
+    fn is_markdown(file: &include_dir::File<'_>) -> bool {
+        file.path().extension().is_some_and(|ext| ext == "md")
     }
 
     fn stem_of(file: &include_dir::File<'_>) -> String {
