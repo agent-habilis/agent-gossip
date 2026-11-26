@@ -132,6 +132,15 @@ fn install(agent: Agent, home: &Path) -> Result<()> {
     if let Some(root) = agent.plugin_root(home) {
         for &(name, contents) in agent.plugin_files() {
             let target = root.join(name);
+            if target.exists() {
+                // `remove_owned` just deleted every copy that is ours, so one
+                // that is still here belongs to the user.
+                warn(&format!(
+                    "not overwriting {}: it differs from the file plug writes",
+                    home_path(&target)
+                ));
+                continue;
+            }
             std::fs::write(&target, contents)
                 .with_context(|| format!("writing {}", target.display()))?;
         }
@@ -180,14 +189,30 @@ fn remove_root(root: &Path) -> Result<bool> {
 }
 
 fn remove_owned(agent: Agent, home: &Path) -> Result<bool> {
-    if let Some(root) = agent.plugin_root(home) {
-        return remove_existing(&root);
-    }
     let mut removed = false;
+    for path in agent.owned_plugin_files(home) {
+        removed |= remove_existing(&path)?;
+    }
     for path in agent.owned_skill_dirs(home) {
         removed |= remove_existing(&path)?;
     }
+    if let Some(root) = agent.plugin_root(home) {
+        remove_dir_if_empty(&agent.install_path(home))?;
+        remove_dir_if_empty(&root)?;
+    }
     Ok(removed)
+}
+
+/// Remove `path` only when it holds nothing: the folder is shared with the
+/// user, so an empty one is the only one that is certainly ours to delete.
+fn remove_dir_if_empty(path: &Path) -> Result<()> {
+    let Ok(mut entries) = std::fs::read_dir(path) else {
+        return Ok(());
+    };
+    if entries.next().is_none() {
+        std::fs::remove_dir(path).with_context(|| format!("removing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// List every supported agent and whether the integration is now installed for
@@ -308,7 +333,7 @@ mod tests {
 
     /// agy loads skills and hooks only from a plugin folder, so `plug` writes
     /// the manifest and the bell Stop hook beside the skills, and `unplug`
-    /// removes the whole folder: nothing in it belongs to the user.
+    /// removes what `plug` wrote and then the folder, once it is empty.
     #[test]
     fn antigravity_plugs_a_plugin_and_unplugs_the_whole_folder() {
         let home =
@@ -356,16 +381,112 @@ mod tests {
             AgentState::OutOfDate,
             "an edited hooks.json is drift, since it carries the bell contract"
         );
+        std::fs::remove_file(root.join("hooks.json")).expect("the test temp directory is writable");
 
         let removed =
             remove(Agent::Antigravity, &home).expect("the plugin folder is ours to delete");
         assert!(removed, "unplug reports that it acted");
-        assert!(!root.exists(), "unplug removes the plugin folder");
+        assert!(
+            !root.exists(),
+            "unplug removes the plugin folder once nothing else is in it"
+        );
         assert_eq!(
             Agent::Antigravity.state(&home),
             AgentState::NotSetUp,
             "agy is still present but no longer set up"
         );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+    }
+
+    fn plugin_file_we_write(name: &str) -> &'static str {
+        let files = Agent::Antigravity.plugin_files();
+        let found = files.iter().find(|&&(file, _)| file == name);
+        found
+            .map(|&(_, contents)| contents)
+            .expect("the agy plugin writes this file")
+    }
+
+    /// The agy plugin folder can hold the user's own files, since a plugin is
+    /// the only place agy reads rules, MCP servers and skills from. `plug`
+    /// and `unplug` touch only the `gossip-*` skills and the two files `plug`
+    /// wrote byte for byte, and never overwrite a manifest or hooks file that
+    /// differs.
+    #[test]
+    fn antigravity_plug_and_unplug_keep_the_user_files_in_the_plugin_folder() {
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-agy-user-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        let root = home.join(".gemini/config/plugins/agent-gossip");
+        std::fs::create_dir_all(root.join("rules")).expect("the test temp directory is writable");
+        std::fs::create_dir_all(root.join("skills/my-skill"))
+            .expect("the test temp directory is writable");
+        let user_files = [
+            ("plugin.json", r#"{"name":"mine"}"#),
+            ("hooks.json", r#"{"mine":{}}"#),
+            ("rules/AGENTS.md", "be kind"),
+            ("mcp_config.json", "{}"),
+            ("skills/my-skill/SKILL.md", "my skill"),
+        ];
+        for (name, contents) in user_files {
+            std::fs::write(root.join(name), contents).expect("the test temp directory is writable");
+        }
+
+        install(Agent::Antigravity, &home).expect("the temp home is writable");
+
+        for (name, contents) in user_files {
+            assert_eq!(
+                std::fs::read_to_string(root.join(name)).expect("plug left the user file in place"),
+                contents,
+                "plug must not overwrite or delete {name}"
+            );
+        }
+        assert!(
+            root.join("skills/gossip-join/SKILL.md").is_file(),
+            "the gossip skills are still installed beside the user's"
+        );
+
+        let removed = remove(Agent::Antigravity, &home).expect("the home is writable");
+        assert!(removed, "unplug removed the gossip skills");
+        for (name, contents) in user_files {
+            assert_eq!(
+                std::fs::read_to_string(root.join(name))
+                    .expect("unplug left the user file in place"),
+                contents,
+                "unplug must not delete {name}"
+            );
+        }
+        assert!(
+            !root.join("skills/gossip-join").exists(),
+            "unplug removes the gossip skills it wrote"
+        );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
+    }
+
+    /// A user who deletes the skills by hand leaves the Stop hook behind. It
+    /// still counts as installed, so `unplug` removes it, and the folder with it.
+    #[test]
+    fn antigravity_unplug_removes_a_lone_stop_hook_and_the_empty_folder() {
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-agy-lone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        let root = home.join(".gemini/config/plugins/agent-gossip");
+        std::fs::create_dir_all(&root).expect("the test temp directory is writable");
+        std::fs::write(root.join("hooks.json"), plugin_file_we_write("hooks.json"))
+            .expect("the test temp directory is writable");
+
+        assert!(
+            Agent::Antigravity.installed(&home),
+            "a hooks.json that plug wrote is part of the install"
+        );
+        let removed = remove(Agent::Antigravity, &home).expect("the home is writable");
+        assert!(removed, "unplug acts on a lone Stop hook");
+        assert!(!root.exists(), "an empty plugin folder is removed");
 
         std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }

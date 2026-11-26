@@ -188,10 +188,25 @@ impl Agent {
         }
     }
 
+    /// The plugin files on disk that are byte for byte what `plug` writes. A
+    /// file that differs is the user's, and `plug` and `unplug` leave it alone.
+    pub(crate) fn owned_plugin_files(self, home: &Path) -> Vec<PathBuf> {
+        let Some(root) = self.plugin_root(home) else {
+            return Vec::new();
+        };
+        let is_ours = |&&(name, contents): &&(&str, &str)| {
+            std::fs::read(root.join(name)).is_ok_and(|on_disk| on_disk == contents.as_bytes())
+        };
+        let ours = self.plugin_files().iter().filter(is_ours);
+        ours.map(|&(name, _)| root.join(name)).collect()
+    }
+
     pub(crate) fn installed(self, home: &Path) -> bool {
         let dirs = self.owned_skill_dirs(home);
-        dirs.into_iter()
-            .any(|path| path.is_symlink() || path.exists())
+        let has_skills = dirs
+            .into_iter()
+            .any(|path| path.is_symlink() || path.exists());
+        has_skills || !self.owned_plugin_files(home).is_empty()
     }
 
     /// Does the installed copy match the embedded one?
