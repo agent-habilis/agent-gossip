@@ -99,7 +99,8 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut step = 1_u32;
     while Instant::now() < deadline {
-        let percent = (step * 5).min(100).to_string();
+        // Staying inside the first quarter: only a move to another quarter wakes.
+        let percent = step.min(24).to_string();
         common::cli_task_status(
             &mesh,
             &bob.nickname,
@@ -125,13 +126,20 @@ fn a_worker_that_checks_in_is_not_reported_and_does_not_wake_the_sender() {
         "a worker that checks in must not be reported, got:\n{seen}"
     );
 
-    // A result is news: it wakes the sender.
-    common::cli_task_artifact(&mesh, &bob.nickname, &task_id, "done");
+    // A check-in that moves the progress into another quarter wakes the sender.
+    common::cli_task_status(
+        &mesh,
+        &bob.nickname,
+        &task_id,
+        "working",
+        Some("half way there"),
+        Some("55"),
+    );
     let events = rang
         .recv_timeout(Duration::from_secs(15))
-        .expect("an artifact must ring the sender's bell");
+        .expect("a quarter move must ring the sender's bell");
     assert!(
-        events.contains("artifact-update"),
-        "the bell rang for the artifact, got:\n{events}"
+        events.contains("half way there"),
+        "the bell rang for the quarter move, got:\n{events}"
     );
 }

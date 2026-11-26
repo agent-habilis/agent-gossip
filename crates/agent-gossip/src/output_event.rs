@@ -3,6 +3,7 @@ use std::sync::Arc;
 use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, MeshId, MeshName, MessageId, Nickname};
 
+use crate::a2a::status_update_params::ReaderBeat;
 use crate::a2a::{TaskId, TaskState};
 
 /// One thing a daemon surfaced to its operator or agent. Each variant maps to
@@ -100,6 +101,9 @@ pub enum OutputEvent {
         /// The addressee's name, read from the roster when the line printed. `None` when the
         /// addressee is not live.
         to_name: Option<Nickname>,
+        /// `true` when the progress of this check-in is in another quarter than the last one
+        /// the record held, which wakes the sender so its row can show the move.
+        quarter_moved: bool,
     },
     /// A task leg that arrived over the request/response binding, so no frame backs it.
     TaskMessage {
@@ -151,7 +155,7 @@ pub enum OutputEvent {
         /// `true` when the worker never accepted the task.
         not_picked_up: bool,
         /// What the worker's last beat said about its agent.
-        reader: Option<crate::a2a::status_update_params::ReaderBeat>,
+        reader: Option<ReaderBeat>,
     },
     /// This worker owes a check-in. Rings its bell only; it is never shown.
     CheckinDue {

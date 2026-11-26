@@ -27,7 +27,7 @@ use habilis_network::protocol::messages::Authored;
 use habilis_network::protocol::{AuthorKey, Message, MessageId, MessageKind, Nickname, UnixSecs};
 use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-use super::status_update_params::ReaderBeat;
+use super::status_update_params::{Progress, ReaderBeat};
 use super::{META_REASON, TaskId, TaskState, status_update_params, wire};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::tuning::{
@@ -310,19 +310,25 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
         if rec.state.is_terminal() {
             rec.waiting_on = None;
         } else if first_seen && is_newer_than_waiting(rec, frame.timestamp, order) {
-            if let Some(checkin) = checkin {
-                rec.waiting_on = checkin.waiting_on;
-                if checkin.text.is_some() {
-                    rec.status_text = checkin.text;
-                }
-                if checkin.fraction.is_some() {
-                    rec.last_fraction = checkin.fraction;
-                }
-            } else {
-                rec.waiting_on = None;
-            }
+            record_checkin(rec, checkin);
             rec.waiting_mark = Some(WaitingMark::new(frame.timestamp, order));
         }
+    }
+}
+
+/// Keep what a status leg says about the work. A check-in sets the tag, the
+/// text and the progress it carries; any other status leg clears the tag.
+fn record_checkin(rec: &mut TaskRecord, checkin: Option<CheckinFields>) {
+    let Some(checkin) = checkin else {
+        rec.waiting_on = None;
+        return;
+    };
+    rec.waiting_on = checkin.waiting_on;
+    if checkin.text.is_some() {
+        rec.status_text = checkin.text;
+    }
+    if checkin.fraction.is_some() {
+        rec.last_fraction = checkin.fraction;
     }
 }
 
@@ -331,6 +337,24 @@ struct CheckinFields {
     waiting_on: Option<String>,
     text: Option<String>,
     fraction: Option<(u64, u64)>,
+}
+
+/// Whether an inbound check-in puts the progress in another quarter than the
+/// one the record holds. The first progress after none does not count, and a
+/// beat never does: it only replays the last progress.
+pub(crate) fn quarter_moved(rec: Option<&TaskRecord>, frame: &Authored) -> bool {
+    let Ok(payload) = status_update_params::status_payload(frame) else {
+        return false;
+    };
+    if payload.status.state != TaskState::Working || status_update_params::is_beat(&payload) {
+        return false;
+    }
+    let quarter = |fraction| Progress::from_fraction(fraction).map(Progress::quarter);
+    let held = rec
+        .and_then(|rec| rec.last_fraction)
+        .and_then(quarter);
+    let new = status_update_params::leg_fraction(&payload).and_then(quarter);
+    matches!((held, new), (Some(held), Some(new)) if held != new)
 }
 
 /// Remember `leg_id` for the task and say whether it is new. A task with no
@@ -1193,6 +1217,7 @@ mod tests {
     use habilis_network::protocol::{AuthorKey, Identity, Message, Nickname, UnixSecs};
 
     use super::{IngestLegParams, LegInfo, LegKind, TaskRecord, TaskRole, TaskState, apply};
+    use crate::a2a::tuning::{TASK_STATUS_TEXT_MAX_CHARS, TASK_SURFACED_LEGS_CAP};
     use crate::a2a::{
         TaskId, extensions, rpc_error, status_update_params, task_record, tuning, wire,
     };
@@ -1472,6 +1497,8 @@ mod tests {
 
     /// The check-in interval of the tests, X.
     const CHECKIN: Duration = Duration::from_mins(5);
+    const JUST_BEFORE_X: Duration = Duration::from_secs(299);
+    const JUST_BEFORE_TWO_X: Duration = Duration::from_secs(599);
 
     /// A check-in leg from the worker: the note, a percentage, and whom it waits on.
     fn checkin_leg(text: &str, percent: &str, waiting_on: Option<&str>) -> Message {
@@ -1534,11 +1561,11 @@ mod tests {
     fn the_reminder_fires_at_x_and_then_every_x() {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
-        let due = |tasks: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
-            super::due_checkins(tasks, CHECKIN, later(start, after)).1.len()
+        let due = |registry: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
+            super::due_checkins(registry, CHECKIN, later(start, after)).1.len()
         };
         assert_eq!(
-            due(&mut tasks, CHECKIN - Duration::from_secs(1)),
+            due(&mut tasks, JUST_BEFORE_X),
             0,
             "nothing is due before X"
         );
@@ -1556,12 +1583,12 @@ mod tests {
     fn the_alarm_fires_at_two_x_and_then_every_x() {
         let start = Instant::now();
         let mut tasks = task_we_opened_with_checkins(start);
-        let overdue = |tasks: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
-            super::due_checkins(tasks, CHECKIN, later(start, after)).0.len()
+        let overdue = |registry: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
+            super::due_checkins(registry, CHECKIN, later(start, after)).0.len()
         };
         assert_eq!(overdue(&mut tasks, CHECKIN), 0, "X is a reminder, not an alarm");
         assert_eq!(
-            overdue(&mut tasks, CHECKIN * 2 - Duration::from_secs(1)),
+            overdue(&mut tasks, JUST_BEFORE_TWO_X),
             0,
             "nothing is overdue before 2·X"
         );
@@ -1655,7 +1682,7 @@ mod tests {
             super::due_checkins(
                 &mut tasks,
                 CHECKIN,
-                later(waiting, CHECKIN * 2 - Duration::from_secs(1))
+                later(waiting, JUST_BEFORE_TWO_X)
             )
             .0
             .is_empty(),
@@ -1759,7 +1786,7 @@ mod tests {
     fn the_seen_legs_are_bounded() {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
-        let cap = crate::a2a::tuning::TASK_SURFACED_LEGS_CAP;
+        let cap = TASK_SURFACED_LEGS_CAP;
         for index in 0..cap * 10 {
             super::mark_seen(&mut tasks, &tid(), &format!("leg-{index}"));
         }
@@ -1840,14 +1867,56 @@ mod tests {
             None,
             "a check-in without the tag clears it"
         );
-        let long = "x".repeat(crate::a2a::tuning::TASK_STATUS_TEXT_MAX_CHARS * 2);
+        let long = "x".repeat(TASK_STATUS_TEXT_MAX_CHARS * 2);
         let mut capped = checkin_leg(&long, "50", None);
         capped.timestamp = first + Duration::from_secs(10);
         ingest_inbound(&mut tasks, &capped);
         assert_eq!(
             tasks[&tid()].status_text.as_deref().map(str::len),
-            Some(crate::a2a::tuning::TASK_STATUS_TEXT_MAX_CHARS),
+            Some(TASK_STATUS_TEXT_MAX_CHARS),
             "the text is capped"
+        );
+    }
+
+    /// The sender wakes when a check-in moves the progress to another quarter, in
+    /// either direction, and not otherwise.
+    #[test]
+    fn a_check_in_wakes_only_when_the_quarter_moves() {
+        let mut tasks = task_we_opened_with_checkins(Instant::now());
+        let moved = |registry: &mut HashMap<TaskId, TaskRecord>, held: Option<u64>, percent: &str| {
+            registry
+                .get_mut(&tid())
+                .expect("the test inserted this task earlier")
+                .last_fraction = held.map(|done| (done, 100));
+            super::quarter_moved(
+                registry.get(&tid()),
+                &authored_by("calm-otter", &checkin_leg("step", percent, None)),
+            )
+        };
+        assert!(!moved(&mut tasks, Some(30), "40"), "same quarter");
+        assert!(!moved(&mut tasks, Some(25), "49"), "same quarter at both ends");
+        assert!(moved(&mut tasks, Some(24), "25"), "24 to 25 moves up");
+        assert!(moved(&mut tasks, Some(60), "45"), "60 to 45 moves down");
+        assert!(moved(&mut tasks, Some(99), "100"), "99 to 100 moves up");
+        assert!(!moved(&mut tasks, None, "0"), "the first progress after none");
+        assert!(!moved(&mut tasks, None, "80"), "the first progress after none");
+    }
+
+    /// A beat only replays the last progress, so it never moves the quarter.
+    #[test]
+    fn a_beat_with_a_new_fraction_does_not_move_the_quarter() {
+        let mut tasks = task_we_opened_with_checkins(Instant::now());
+        tasks
+            .get_mut(&tid())
+            .expect("the test inserted this task earlier")
+            .last_fraction = Some((10, 100));
+        let beat = status_frame(
+            TaskState::Working,
+            Some(status_update_params::beat_metadata(Some((90, 100)))),
+        );
+        assert!(
+            !super::quarter_moved(tasks.get(&tid()), &authored_by("calm-otter", &beat)),
+            "a beat never wakes"
         );
     }
 
@@ -2891,6 +2960,7 @@ mod tests {
             message: Box::new(plaintext.sign(&Identity::generate()).authored()),
             is_self: true,
             to_name: None,
+            quarter_moved: false,
         })
         .expect("a task event renders a JSON line");
         let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");

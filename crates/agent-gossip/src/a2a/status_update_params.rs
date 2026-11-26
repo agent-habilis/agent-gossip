@@ -483,9 +483,11 @@ pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
     reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
 }
 
-/// The metadata of a status leg: its order value, the `mesh:waiting` tag when
-/// it has one, and the progress of a check-in as `done/total` out of 100. The
-/// counterpart of [`status_order`], [`status_waiting`] and [`leg_fraction`].
+/// The metadata of a status leg.
+///
+/// It holds the order value, the `mesh:waiting` tag when there is one, and the
+/// progress of a check-in as `done/total` out of 100. The counterpart of
+/// [`status_order`], [`status_waiting`] and [`leg_fraction`].
 #[must_use]
 pub fn status_metadata(
     waiting_on: Option<&str>,
@@ -525,12 +527,14 @@ static LAST_ORDER_MS: AtomicU64 = AtomicU64::new(0);
 /// above the last value handed out, then one more than the last.
 fn next_order_ms(now_ms: u64, last: &AtomicU64) -> u64 {
     use std::sync::atomic::Ordering::Relaxed;
-    let previous = last
-        .fetch_update(Relaxed, Relaxed, |last| {
-            Some(now_ms.max(last.saturating_add(1)))
-        })
-        .unwrap_or_default();
-    now_ms.max(previous.saturating_add(1))
+    let mut previous = last.load(Relaxed);
+    loop {
+        let next = now_ms.max(previous.saturating_add(1));
+        match last.compare_exchange_weak(previous, next, Relaxed, Relaxed) {
+            Ok(_) => return next,
+            Err(actual) => previous = actual,
+        }
+    }
 }
 
 fn wall_clock_ms() -> u64 {
@@ -588,6 +592,22 @@ impl Progress {
     #[must_use]
     pub fn percent(self) -> u8 {
         self.0
+    }
+
+    /// The quarter of the work this progress is in, rounded down: 0 for 0-24,
+    /// 1 for 25-49, 2 for 50-74, 3 for 75-99 and 4 for 100. A sender shows one
+    /// glyph per quarter, so it wakes only when the quarter moves.
+    #[must_use]
+    pub fn quarter(self) -> u8 {
+        if self.0 >= 100 { 4 } else { self.0 / 25 }
+    }
+
+    /// The progress a `done/total` fraction stands for, `None` for a total of
+    /// zero. A done above the total counts as complete.
+    #[must_use]
+    pub fn from_fraction((done, total): (u64, u64)) -> Option<Self> {
+        let percent = done.min(total).checked_mul(100)?.checked_div(total)?;
+        u8::try_from(percent).ok().map(Self)
     }
 }
 
@@ -941,6 +961,36 @@ mod tests {
             serde_json::from_str::<Progress>("101").is_err(),
             "a progress above 100 does not deserialize"
         );
+    }
+
+    /// A sender shows one glyph per quarter: 0-24, 25-49, 50-74, 75-99, then 100.
+    #[test]
+    fn a_progress_quarter_rounds_down() {
+        for (percent, quarter) in [
+            (0, 0),
+            (24, 0),
+            (25, 1),
+            (49, 1),
+            (50, 2),
+            (74, 2),
+            (75, 3),
+            (99, 3),
+            (100, 4),
+        ] {
+            let progress = Progress::try_from(percent).expect("the test passes a valid percentage");
+            assert_eq!(progress.quarter(), quarter, "{percent}% is in quarter {quarter}");
+        }
+        assert_eq!(
+            Progress::from_fraction((6, 12)).map(Progress::percent),
+            Some(50),
+            "a fraction stands for its percentage"
+        );
+        assert_eq!(
+            Progress::from_fraction((150, 100)).map(Progress::percent),
+            Some(100),
+            "more done than the total counts as complete"
+        );
+        assert_eq!(Progress::from_fraction((1, 0)), None, "a zero total has no progress");
     }
 
     /// The wall clock can step back, so two legs of one worker must still get

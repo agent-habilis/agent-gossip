@@ -599,7 +599,11 @@ impl InProcNode {
     /// # Panics
     ///
     /// Panics if the send fails.
-    pub async fn task_status(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
+    )]
+pub async fn task_status(
         &self,
         task_id: &TaskId,
         state: TaskState,
@@ -617,7 +621,11 @@ impl InProcNode {
     /// # Errors
     ///
     /// Fails when the daemon refuses the leg or the event loop has stopped.
-    pub async fn try_task_status(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
+    )]
+pub async fn try_task_status(
         &self,
         task_id: &TaskId,
         state: TaskState,
@@ -640,7 +648,11 @@ impl InProcNode {
     /// # Panics
     ///
     /// Panics if the send fails.
-    pub async fn task_waiting_on(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
+    )]
+pub async fn task_waiting_on(
         &self,
         task_id: &TaskId,
         who: &str,

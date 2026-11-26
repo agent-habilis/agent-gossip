@@ -24,6 +24,7 @@ use crate::a2a::broadcast_params::{
 use crate::a2a::reader_asks::{ReaderAskParams, ask_readers, respond_with_paths, row_endpoint};
 use crate::a2a::rpc_error::PeerRef;
 use crate::a2a::state_refusal_reply::StateRefusalReply;
+use crate::a2a::status_update_params::Progress;
 use crate::a2a::surfaced_event::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState, broadcast_params, card, receipt};
 use crate::emission;
@@ -76,7 +77,7 @@ pub(crate) enum IpcCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        progress: Option<crate::a2a::status_update_params::Progress>,
+        progress: Option<Progress>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         waiting_on: Option<String>,
     },
@@ -213,7 +214,7 @@ struct StatusRequest {
     task_id: TaskId,
     task_state: TaskState,
     note: Option<String>,
-    progress: Option<crate::a2a::status_update_params::Progress>,
+    progress: Option<Progress>,
     waiting_on: Option<String>,
 }
 
@@ -909,6 +910,7 @@ mod tests {
         EndpointCandidate, IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState,
         endpoint_entries,
     };
+    use crate::a2a::status_update_params::Progress;
 
     // ── Topology endpoints ─────────────────────────────────────────
 
@@ -1163,7 +1165,7 @@ mod tests {
                 );
                 assert_eq!(note.as_deref(), Some("on it"), "the status keeps its note");
                 assert_eq!(
-                    progress.map(crate::a2a::status_update_params::Progress::percent),
+                    progress.map(Progress::percent),
                     Some(40),
                     "the status keeps its progress"
                 );

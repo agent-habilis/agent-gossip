@@ -1131,6 +1131,7 @@ mod tests {
             message: Box::new(message.sign(&Identity::generate()).authored()),
             is_self: true,
             to_name: None,
+            quarter_moved: false,
         }
     }
 
@@ -1250,6 +1251,7 @@ mod tests {
                 message: Box::new(directed_frame(tag, "worker", "me")),
                 is_self: false,
                 to_name: None,
+                quarter_moved: false,
             });
         }
         assert_eq!(

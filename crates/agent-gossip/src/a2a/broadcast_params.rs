@@ -909,7 +909,14 @@ fn print_echo(
     addressee: Option<&Nickname>,
 ) {
     match echo_as {
-        EchoAs::Task => out.print_task(echo, true, addressee),
+        EchoAs::Task => out.print_task(
+            echo,
+            emission::TaskView {
+                is_self: true,
+                addressee_name: addressee,
+                quarter_moved: false,
+            },
+        ),
         EchoAs::Chat => out.print_message_ex(echo, true, addressee),
     }
 }

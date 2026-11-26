@@ -358,23 +358,24 @@ pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> Simpl
         reader,
     } = *fields;
     let name = label.map_or_else(|| task_id.as_str().chars().take(8).collect(), str::to_owned);
-    let mut display = format!(
+    let mut parts = vec![format!(
         "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {} min",
         age_secs / 60
-    );
+    )];
     if let Some(waiting_on) = waiting_on {
-        display.push_str(&format!(" · waiting on {waiting_on}"));
+        parts.push(format!(" · waiting on {waiting_on}"));
     }
     if not_picked_up {
-        display.push_str(" · not picked up");
+        parts.push(" · not picked up".to_owned());
     }
     if let Some(reader) = reader {
         let bell = if reader.bell { "on" } else { "off" };
-        display.push_str(&format!(
+        parts.push(format!(
             " · bell {bell}, last poll {} min ago",
             reader.last_poll_secs / 60
         ));
     }
+    let display = parts.concat();
     SimpleEvent::TaskOverdue {
         task_id: task_id.as_str(),
         peer: peer.as_str(),
@@ -936,6 +937,7 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
             message,
             is_self,
             to_name,
+            ..
         } => format_task_json(message, *is_self, to_name.as_ref()),
         OutputEvent::TaskMessage {
             id,

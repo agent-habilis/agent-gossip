@@ -357,6 +357,7 @@ fn task_event_json_shape() {
         message: Box::new(message),
         is_self: false,
         to_name: Some(nick("calm-otter")),
+        quarter_moved: false,
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -406,6 +407,7 @@ fn task_self_echo_flag() {
         message: Box::new(message),
         is_self: true,
         to_name: Some(nick("calm-otter")),
+        quarter_moved: false,
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -439,6 +441,7 @@ fn task_event_carries_the_waiting_reason_only_when_the_leg_has_one() {
             message: Box::new(message),
             is_self: false,
             to_name: Some(nick("drift-oak")),
+            quarter_moved: false,
         })
         .expect("task event produces a JSON line");
         parse(&json)
@@ -475,6 +478,7 @@ fn task_event_has_no_waiting_key_on_a_leg_that_is_not_working() {
         message: Box::new(message),
         is_self: false,
         to_name: Some(nick("drift-oak")),
+        quarter_moved: false,
     })
     .expect("task event produces a JSON line");
     let parsed = parse(&json);
@@ -502,6 +506,7 @@ fn task_progress_event_json_shape() {
         message: Box::new(message),
         is_self: false,
         to_name: Some(nick("drift-oak")),
+        quarter_moved: false,
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);

@@ -281,8 +281,10 @@ pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, 
 ///
 /// A peer's routine check-in (a `working` status) is data, not news: it goes on
 /// the ring without a wake, like a receipt, and the sender's skill updates its
-/// badge on the next batch. An alarm that says the worker waits on its user is
-/// shown but does not wake either, since there is nothing to do.
+/// badge on the next batch. It wakes only when its progress moves into another
+/// quarter, so the sender's row can show the move. An alarm that says the worker
+/// waits on its user is shown but does not wake either, since there is nothing
+/// to do.
 pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
     use emission::OutputEvent;
     if is_self_task_echo(event) {
@@ -290,7 +292,11 @@ pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
     }
     match event {
         OutputEvent::TaskOverdue { waiting_on, .. } => !waits_on_user(waiting_on.as_deref()),
-        OutputEvent::Task { message, .. } if is_working_checkin(message) => false,
+        OutputEvent::Task {
+            message,
+            quarter_moved,
+            ..
+        } if is_working_checkin(message) => *quarter_moved,
         OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
@@ -553,6 +559,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
     } = leg;
     let mut surface = surfaceable;
     let mut replay = false;
+    let mut quarter_moved = false;
     // Only the addressee is a party: a third-party relay tracks nothing. The
     // receiver's body is already unsealed here, so the task id parses out of it.
     if *to == context.our_pubkey
@@ -582,6 +589,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
             surface = false;
             replay = true;
         }
+        quarter_moved = !replay && task_record::quarter_moved(app.tasks.get(&task_id), message);
         let now = Instant::now();
         task_record::ingest(
             &mut app.tasks,
@@ -601,6 +609,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
             surfaceable: surface,
             self_key: &context.our_pubkey,
             self_name: context.author,
+            quarter_moved,
         },
     );
     // A beat is liveness plumbing and never logged, so it earns no receipt.
@@ -711,6 +720,7 @@ struct TaskDisplayParams<'caller> {
     surfaceable: bool,
     self_key: &'caller AuthorKey,
     self_name: &'caller Nickname,
+    quarter_moved: bool,
 }
 
 /// A task leg: surfaced + logged only by the addressee (`to == self_key`)
@@ -726,12 +736,20 @@ fn handle_task(out: &emission::Output, params: TaskDisplayParams<'_>) -> bool {
         surfaceable,
         self_key,
         self_name,
+        quarter_moved,
     } = params;
     if to != self_key {
         return false;
     }
     if surfaceable {
-        out.print_task(message, false, Some(self_name));
+        out.print_task(
+            message,
+            emission::TaskView {
+                is_self: false,
+                addressee_name: Some(self_name),
+                quarter_moved,
+            },
+        );
     }
     // Content legs log; a liveness beat (a status marked `mesh:beat`) is
     // plumbing — surfaced as a `task_progress` widget event but never retained.
@@ -1207,6 +1225,7 @@ mod classify_tests {
             message: Box::new(message),
             is_self,
             to_name: None,
+            quarter_moved: false,
         }
     }
 
@@ -1381,6 +1400,27 @@ mod classify_tests {
                 "a peer's {state:?} status wakes"
             );
         }
+    }
+
+    // A check-in whose progress moves into another quarter wakes the sender, so its
+    // row can show the move; any other working status stays quiet.
+    #[test]
+    fn a_check_in_wakes_the_bell_only_when_its_quarter_moved() {
+        let check_in = |quarter_moved| OutputEvent::Task {
+            message: Box::new(working_with(Some("built it"), None)),
+            is_self: false,
+            to_name: None,
+            quarter_moved,
+        };
+        assert!(wakes(&check_in(true)), "a quarter move wakes");
+        assert!(!wakes(&check_in(false)), "the same quarter does not");
+        let own = OutputEvent::Task {
+            message: Box::new(working_with(Some("built it"), None)),
+            is_self: true,
+            to_name: None,
+            quarter_moved: true,
+        };
+        assert!(!wakes(&own), "an own echo never wakes");
     }
 
     // An alarm that says the worker waits on its user is shown, nothing else.

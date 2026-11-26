@@ -7,6 +7,10 @@ use crate::test_cmd;
 /// # Panics
 ///
 /// Panics if the CLI process fails to spawn or exits with an error.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
+)]
 pub fn cli_task_status(
     mesh: &str,
     nickname: &str,

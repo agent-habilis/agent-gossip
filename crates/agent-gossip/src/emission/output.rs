@@ -53,6 +53,15 @@ pub(crate) enum Output {
     },
 }
 
+/// How a task leg is shown: who sent it, to whom, and whether its progress moved
+/// into another quarter.
+#[derive(Clone, Copy)]
+pub(crate) struct TaskView<'caller> {
+    pub(crate) is_self: bool,
+    pub(crate) addressee_name: Option<&'caller Nickname>,
+    pub(crate) quarter_moved: bool,
+}
+
 /// The sender end of the tap that feeds the surfaced ring: a bounded channel, so a loop that does not
 /// turn cannot make it hold events without end. An event that finds it full is dropped and counted,
 /// and the loop turns the count into one marker in the ring (see `A2aApp::drain_surfaced_ring`).
@@ -248,12 +257,12 @@ impl Output {
     /// Distinct top-level `task` event (not the `message` family) so skills
     /// branch on `event`. When `filter_self` is enabled, self-authored legs are
     /// suppressed.
-    pub(crate) fn print_task(
-        &self,
-        message: &Authored,
-        is_self: bool,
-        addressee_name: Option<&Nickname>,
-    ) {
+    pub(crate) fn print_task(&self, message: &Authored, view: TaskView<'_>) {
+        let TaskView {
+            is_self,
+            addressee_name,
+            quarter_moved,
+        } = view;
         // Only worker-pushed status/artifact frames surface as a `task` event.
         let MessageKind::App {
             tag, to: Some(_), ..
@@ -272,6 +281,7 @@ impl Output {
                 message: Box::new(message.clone()),
                 is_self,
                 to_name: addressee_name.cloned(),
+                quarter_moved,
             },
             |mode| match mode {
                 OutputMode::Json => simple_event::print_task_json(message, is_self, addressee_name),

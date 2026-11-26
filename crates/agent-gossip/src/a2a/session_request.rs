@@ -7,6 +7,7 @@ use tokio::sync::oneshot;
 use crate::a2a::TaskId;
 use crate::a2a::broadcast_params::FileRef;
 use crate::a2a::ipc_command::MetaView;
+use crate::a2a::status_update_params::Progress;
 use crate::a2a::surfaced_event::PollBatch;
 
 /// A typed in-process request from an in-process session to the event
@@ -38,7 +39,7 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
-        progress: Option<crate::a2a::status_update_params::Progress>,
+        progress: Option<Progress>,
         waiting_on: Option<String>,
         response: oneshot::Sender<Result<Authored>>,
     },

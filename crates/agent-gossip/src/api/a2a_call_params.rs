@@ -3,6 +3,7 @@ use std::time::Duration;
 use habilis_network::protocol::Nickname;
 
 use crate::a2a::TaskId;
+use crate::a2a::status_update_params::Progress;
 
 /// The call that a directed [`MeshSession::a2a_call`](super::MeshSession::a2a_call) makes.
 ///
@@ -59,7 +60,7 @@ pub struct TaskStatusParams {
     /// The status message text. Required on `working`, where it says what changed.
     pub note: Option<String>,
     /// How far the work is. Required on `working`, refused on any other state.
-    pub progress: Option<crate::a2a::status_update_params::Progress>,
+    pub progress: Option<Progress>,
     /// Whom the worker waits on (a peer or `user`), if it does.
     pub waiting_on: Option<String>,
 }
@@ -125,7 +126,7 @@ impl TaskStatusParams {
 
     /// Report how far the work is.
     #[must_use]
-    pub fn with_progress(mut self, progress: crate::a2a::status_update_params::Progress) -> Self {
+    pub fn with_progress(mut self, progress: Progress) -> Self {
         self.progress = Some(progress);
         self
     }
