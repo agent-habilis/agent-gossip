@@ -246,11 +246,11 @@ fn create_config_builder_sets_only_the_named_fields() {
     let name = MeshName::try_new("builder").expect("valid name");
     let untouched = CreateConfig::new(name.clone());
     let config = CreateConfig::new(name)
-        .with_max_connections(3)
+        .with_max_connections(12)
         .with_password("secret".to_owned())
         .with_advertise(true);
     assert_eq!(
-        config.max_connections, 3,
+        config.max_connections, 12,
         "with_max_connections sets the cap"
     );
     assert_eq!(

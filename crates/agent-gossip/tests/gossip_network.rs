@@ -1747,11 +1747,12 @@ fn multihop_self_id(mesh: &str, nickname: &str, node: &str) -> String {
 }
 
 /// `--max-connections` reaches the engine, and the `topology` reply reports the
-/// cap, its use, and a link to the joined peer.
+/// cap, its use, and a link to the joined peer. The cap is 8, the lowest the engine accepts and
+/// not the default 16, so the reply tells the flag from the default.
 #[test]
 fn test_topology_reports_the_cap_and_the_links() {
     let _serial = serial_guard();
-    let (creator, mesh) = Node::create_args("topology-cap", &["--max-connections", "5"], &[]);
+    let (creator, mesh) = Node::create_args("topology-cap", &["--max-connections", "8"], &[]);
     assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     let joiner = Node::join(&mesh, "cap-joiner");
     assert!(
@@ -1771,11 +1772,11 @@ fn test_topology_reports_the_cap_and_the_links() {
         reply = topology_reply(&mesh, &creator.nickname, "creator");
     }
     assert_eq!(
-        reply["cap"]["max_connections"], 5,
+        reply["cap"]["max_connections"], 8,
         "the flag reaches the engine\n{reply}"
     );
     assert_eq!(
-        reply["cap"]["connected_cap"], 10,
+        reply["cap"]["connected_cap"], 16,
         "the total cap is twice the flag\n{reply}"
     );
     let links = reply["links"]
@@ -3039,20 +3040,20 @@ fn test_lone_creator_never_trips_starvation() {
     );
 }
 
-/// The 2026-05-31 roster-collapse, mechanized: a 5-node mesh at
-/// `--max-connections 2` (the partial-mesh churn regime) put through
-/// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
+/// The 2026-05-31 roster-collapse, mechanized: a 10-node mesh at
+/// `--max-connections 8` (the lowest cap the engine accepts: a node holds 8 of the 9 others, so
+/// the mesh is partial) put through SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
 /// loss. Post-fix (link truth + starvation watchdog), every node must
 /// deliver again once the storm passes.
 #[test]
 fn test_flap_storm_all_rosters_recover() {
-    const CAP2_STARVE: [(&str, &str); 5] = [
+    const CAP8_STARVE: [(&str, &str); 5] = [
         ("--alive-timeout-secs", "3"),
         ("--sweep-interval-secs", "1"),
         ("--heal-interval-secs", "3"),
         ("--starvation-threshold-secs", "6"),
-        ("--max-connections", "2"),
+        ("--max-connections", "8"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -3065,9 +3066,9 @@ fn test_flap_storm_all_rosters_recover() {
     // for re-bridge/re-announce to propagate, plus margin.
     let recover = RECOVERY_TIMEOUT;
 
-    let (creator, mesh) = Node::create_flags("itest", &CAP2_STARVE);
-    let joiners: Vec<Node> = (0..4)
-        .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP2_STARVE))
+    let (creator, mesh) = Node::create_flags("itest", &CAP8_STARVE);
+    let joiners: Vec<Node> = (0..9)
+        .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP8_STARVE))
         .collect();
     assert!(
         creator.wait_ready(&mesh),
@@ -3077,7 +3078,7 @@ fn test_flap_storm_all_rosters_recover() {
         assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
     }
     // Baseline delivery gets the same generous bound as the post-storm
-    // probe: at cap 2 even a healthy broadcast is partial-mesh-routed
+    // probe: at cap 8 with ten nodes even a healthy broadcast is partial-mesh-routed
     // (multi-hop, convergence-dependent), so the standard 30s message
     // timeout is occasionally short here. Adaptive — healthy runs pass
     // in seconds.
@@ -3086,7 +3087,7 @@ fn test_flap_storm_all_rosters_recover() {
         assert_received(joiner, &creator.nickname, "fs-base", recover);
     }
 
-    // Three flap rounds, two victims each, rotating across all five
+    // Three flap rounds, two victims each, rotating across all ten
     // nodes — the same storm shape that wedged the soak and the manual
     // repro (roster_len=0 with phantom links, delivery frozen).
     let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
