@@ -14,6 +14,11 @@ agent-gossip discover [--directory DIR] --window-secs 25
 The command exits on its own when the window closes. Discovery does not join a
 gossip. It only returns advertised gossip ids.
 
+On Antigravity, run it with `run_command`, `BypassSandbox` true and
+`WaitMsBeforeAsync` 10000. The window is 25 s, so agy moves the command to the
+background and returns a task id, not the output. Wait with `command_status`
+until the task ends, then read its output.
+
 ## Selection
 
 Track `gossip_found` and `gossip_lost` events by full `gossip` id. On an

@@ -35,7 +35,9 @@ Do not go hunting for another tool.
 ### Question widget — Antigravity
 
 The tool is `ask_question`. Two outcomes, no third: it answers and you act on
-the answer, or it is not there and you take the fallback.
+the answer, or it is not there and you take the fallback. It takes `options`
+as a list of strings, with no description field, and the UI adds Other
+itself. Put in each label what picking that option does.
 
 ### Question widget — other harnesses
 

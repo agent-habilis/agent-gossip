@@ -205,9 +205,11 @@ impl Agent {
         home.join(relative)
     }
 
-    /// The folder an agent loads as one plugin, when it has no bare skill
-    /// root. The user can keep their own files in it, so `plug` and `unplug`
-    /// touch only what `plug` wrote.
+    /// The folder an agent loads as one plugin. agy also loads bare skills from
+    /// `~/.gemini/config/skills`, but the plugin keeps the skills and the Stop
+    /// hook in one unit that installs and uninstalls together. The user can
+    /// keep their own files in it, so `plug` and `unplug` touch only what
+    /// `plug` wrote.
     pub(crate) fn plugin_root(self, home: &Path) -> Option<PathBuf> {
         match self {
             Agent::Antigravity => Some(home.join(".gemini/config/plugins/agent-gossip")),
@@ -597,6 +599,100 @@ mod tests {
         );
     }
 
+    /// agy reaches its shell through `run_command`, which has no `timeout` and
+    /// no background flag. Its parameters decide whether the bell is a bell,
+    /// and the Standard Sandbox cannot reach the daemon socket.
+    #[test]
+    fn agy_text_names_the_run_command_parameters_and_the_sandbox() {
+        for skill in [
+            "gossip-create",
+            "gossip-join",
+            "gossip-topic",
+            "gossip-reattach",
+        ] {
+            let flat: Vec<&str> = rendered(skill).split_whitespace().collect();
+            let body = flat.join(" ");
+            for needle in [
+                "`WaitMsBeforeAsync`",
+                "`IsDaemon`",
+                "`NotificationTimeoutSeconds`",
+                "`BypassSandbox` true",
+                "exits with code 1 within seconds is the sandbox",
+            ] {
+                assert!(
+                    body.contains(needle),
+                    "{skill}: agy gets a wrong or missing parameter unless the text says {needle}"
+                );
+            }
+            // Only the skills that launch the daemon run a foreground command
+            // that agy can move to the background.
+            assert!(
+                skill == "gossip-reattach" || body.contains("`command_status`"),
+                "{skill}: no `command_status` for a command that agy backgrounds"
+            );
+            assert!(
+                !body.contains("give the background bell the longest timeout that it accepts"),
+                "{skill}: agy has no timeout parameter to give"
+            );
+            assert!(
+                !body.contains("On Claude Code and Antigravity, a background task ends"),
+                "{skill}: only Claude Code stops a background task at its timeout"
+            );
+        }
+        assert!(
+            rendered("gossip-leave").contains("`BypassSandbox` true"),
+            "gossip-leave runs agent-gossip too, so the sandbox must be off"
+        );
+        let discover = rendered("gossip-discover");
+        assert!(
+            discover.contains("`command_status`") && discover.contains("`BypassSandbox` true"),
+            "gossip-discover waits 25 s, longer than agy keeps a command in the foreground"
+        );
+    }
+
+    /// The settle window delays the bell so that a turn ends before the next
+    /// wake and the printed lines render. The three places that mention it
+    /// must agree on which harnesses carry it.
+    #[test]
+    fn the_settle_window_text_agrees_for_agy() {
+        assert!(
+            rendered("gossip-topic").contains("## Settle bell — Claude Code and Antigravity"),
+            "the topic skill must give agy the bell that its daemon text gives it"
+        );
+        assert!(
+            rendered("gossip-topic").contains("a topic gossip on Claude Code and Antigravity"),
+            "the receive loop must name agy beside Claude Code for the settle flag"
+        );
+    }
+
+    /// agy has the detached daemon, so `leave` takes the detached path there
+    /// too, and the wording of the generic text must not name another
+    /// harness's tools.
+    #[test]
+    fn leave_and_generic_text_fit_agy() {
+        assert!(
+            rendered("gossip-leave")
+                .contains("On Claude Code and Antigravity, the daemon is detached"),
+            "agy has the detached daemon, so its leave is the detached leave"
+        );
+        let join = rendered("gossip-join");
+        let generic = join
+            .split_once("#### Task widget — Claude Code")
+            .map_or(join, |(head, _)| head);
+        assert!(
+            !generic.contains("`TaskGet`"),
+            "the generic task text must not name a Claude Code tool"
+        );
+        assert!(
+            join.contains("`ask_question`") && join.contains("no description field"),
+            "agy's question widget takes strings, so what an option does goes in its label"
+        );
+        assert!(
+            join.contains("`Pi`, `Antigravity CLI`"),
+            "the harness list names the product as the README and the manual do"
+        );
+    }
+
     /// The Monitor prohibition, pinned on the *generated* content: the daemon
     /// starters must never tell an agent to use a watch/push tool (it
     /// truncates message bodies and persists them to disk).
@@ -965,9 +1061,9 @@ mod tests {
         );
     }
 
-    /// agy reads skills only from a plugin, so its skill root sits inside the
-    /// plugin folder, and only `~/.gemini/antigravity-cli` proves agy is here:
-    /// `~/.gemini` alone also belongs to other Gemini tools.
+    /// The plugin is the unit for the skills and the Stop hook, so the skill
+    /// root sits inside the plugin folder. Only `~/.gemini/antigravity-cli`
+    /// proves agy is here: `~/.gemini` alone also belongs to other Gemini tools.
     #[test]
     fn antigravity_installs_into_a_plugin_and_is_detected_by_its_cli_dir() {
         let home = std::env::temp_dir().join(format!("agent-gossip-agy-{}", std::process::id()));

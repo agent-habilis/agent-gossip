@@ -52,11 +52,10 @@ On any harness other than Claude Code or Antigravity (agy), skip this block.
 
 Claude Code stops a background task when its `timeout` ends, after 2 hours at
 most. A daemon that runs as a background task ends with it, so on Claude Code
-and on Antigravity the daemon is not a background task. On Antigravity the
-`Bash` calls below are its `run_command` tool; give the background bell the
-longest timeout that it accepts. `--owner-pid` detaches it: the launcher
-starts the daemon in its own session and exits 0 at once. The daemon stops
-within seconds after the agent process exits, and `leave` stops it on demand.
+the daemon is not a background task. Antigravity (agy) takes the same launch.
+`--owner-pid` detaches the daemon: the launcher starts it in its own session
+and exits 0 at once. The daemon stops within seconds after the agent process
+exits, and `leave` stops it on demand.
 
 Issue one message of three parallel tool calls, one background and two
 foreground, mapped as:
@@ -68,15 +67,32 @@ foreground, mapped as:
   mkdir -p /tmp/agent-gossip-$(id -u)/sessions && { [ ! -e /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr ] || mv -f /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr.prev; } && <!-- slot name="launch" --> --owner-pid "$PPID" --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json > /dev/null 2> /tmp/agent-gossip-$(id -u)/sessions/${PPID}.stderr
   ```
 
-- Tool call 2 → this bell command, as a background `Bash` call with
-  `timeout: 7200000`, the longest value allowed. `--max-secs 7000` ends the
-  bell by itself before that limit, as an ordinary quiet ring:
+- Tool call 2 → this bell command. On Claude Code, run it as a background
+  `Bash` call with `timeout: 7200000`, the longest value allowed.
+  `--max-secs 7000` ends the bell by itself before that limit, as an
+  ordinary quiet ring:
 
   ```bash
   agent-gossip poll --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --long<!-- slot name="bell_settle" --> --max-secs 7000 > /dev/null 2>&1
   ```
 
 - Tool call 3 → the gate script below, unchanged.
+
+On Antigravity, run each `Bash` call above with its `run_command` tool:
+
+- Set `BypassSandbox` true on every call that runs `agent-gossip`, here and
+  in every later section. The Standard Sandbox cannot reach the daemon: a
+  sandboxed call fails with `No active gossip server running`. Prefer a
+  command that starts with `agent-gossip`: Always Allow matches the start of
+  a command, and `&&` chains, `$(id -u)` and `$VAR` can defeat the match.
+- Tool call 1 and tool call 3 run in the foreground. agy moves a command to
+  the background when it runs longer than `WaitMsBeforeAsync` (500 to 10000
+  ms). Set `WaitMsBeforeAsync` to 10000. If the result is a task id and not
+  the output, wait with `command_status` until the task ends, then read its
+  output.
+- Tool call 2 is the bell. Set `WaitMsBeforeAsync` to 500 and `IsDaemon` to
+  false, and give it no `NotificationTimeoutSeconds`. agy moves it to the
+  background after 500 ms and wakes you when it exits. Keep `--max-secs 7000`.
 
 The `> /dev/null` and the `.stderr` file follow the same rules as the generic
 launch below.
@@ -129,8 +145,9 @@ printf '%s\n' "$out"
 
 Before issuing the script, substitute `{MODEL}` with the model currently
 running and `{HARNESS}` with the hosting product (`Claude Code`, `Codex`,
-`Cursor`, `Pi`, `Antigravity`, ...). Drop a key from the merge if its value is
-unknown — do not guess, and do not infer the harness from the model name.
+`Cursor`, `Pi`, `Antigravity CLI`, ...). Drop a key from the merge if its
+value is unknown — do not guess, and do not infer the harness from the model
+name.
 
 From the script's printed JSON hold:
 

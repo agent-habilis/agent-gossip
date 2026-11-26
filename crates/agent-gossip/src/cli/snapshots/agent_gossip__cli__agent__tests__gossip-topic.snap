@@ -98,8 +98,9 @@ printf '%s\n' "$out"
 
 Before issuing the script, substitute `{MODEL}` with the model currently
 running and `{HARNESS}` with the hosting product (`Claude Code`, `Codex`,
-`Cursor`, `Pi`, `Antigravity`, ...). Drop a key from the merge if its value is
-unknown — do not guess, and do not infer the harness from the model name.
+`Cursor`, `Pi`, `Antigravity CLI`, ...). Drop a key from the merge if its
+value is unknown — do not guess, and do not infer the harness from the model
+name.
 
 From the script's printed JSON hold:
 

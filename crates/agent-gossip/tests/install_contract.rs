@@ -122,6 +122,17 @@ fn reload_table_covers_every_harness() {
     );
 }
 
+/// agy's Standard Sandbox cannot reach the gossip daemon, so the doc the
+/// installing agent reads must say that every `agent-gossip` call in agy runs
+/// with the sandbox off.
+#[test]
+fn the_doc_tells_agy_to_bypass_the_sandbox() {
+    assert!(
+        DOC.contains("BypassSandbox") && DOC.contains("No active gossip server running"),
+        "the installation doc never explains the agy sandbox"
+    );
+}
+
 /// The closing banner is the doc's only output template, and it is presented
 /// inside a fence it must not reproduce: an agent that copies the block
 /// verbatim prints literal backticks instead of inline code. Three ways that

@@ -37,8 +37,8 @@ two sequential messages:
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME"
    ```
 2. **Re-armed bell** (background, output discarded), keeping whatever flags
-   this session's bell carries (a topic gossip on Claude Code adds
-   `--settle-secs 5` — its settle window):
+   this session's bell carries (a topic gossip on Claude Code and Antigravity
+   adds `--settle-secs 5` — its settle window):
    ```bash
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
@@ -48,11 +48,14 @@ two sequential messages:
    the session-start bell. It blocks until an unserved event needs your
    attention, then exits. Its exit is the only signal you need.
 
-   On Claude Code and Antigravity, re-arm with this command instead, as a
-   background `Bash` call with `timeout: 7200000`, the same as the first bell.
-   On Antigravity the `Bash` call is its `run_command` tool, with the longest
-   timeout that it accepts. Put any other bell flag after `--long` and keep
-   `--max-secs` last, before the redirect. A topic gossip re-arms with
+   On Claude Code and Antigravity, re-arm with this command instead. On
+   Claude Code run it as a background `Bash` call with `timeout: 7200000`. On
+   Antigravity run it with `run_command` as the Daemon session section says:
+   `WaitMsBeforeAsync` 500, `IsDaemon` false, no `NotificationTimeoutSeconds`,
+   and `BypassSandbox` true. An Antigravity bell that exits with code 1 within
+   seconds is the sandbox, not an event: set `BypassSandbox` true and re-arm.
+   Put any other bell flag after `--long` and keep `--max-secs` last, before
+   the redirect. A topic gossip re-arms with
    `--long --settle-secs 5 --max-secs 7000`:
    ```bash
    agent-gossip poll --gossip "$GOSSIP" --nickname "$NICKNAME" --long --max-secs 7000 > /dev/null 2>&1
@@ -108,10 +111,10 @@ notification that
 arrives later for a bell you already replaced needs only the foreground poll:
 the replacement bell is still armed, and a second re-arm leaves two bells.
 
-On Claude Code and Antigravity, a background task ends when its `timeout`
-ends. The bell ends
+On Claude Code, a background task ends when its `timeout` ends. The bell ends
 itself first: `--max-secs 7000` makes it print `[]` and exit 0 after 7000
-seconds, plus at most one 60-second park. This is an ordinary bell exit, and
+seconds, plus at most one 60-second park. Antigravity keeps the same flag, and
+its bell rings the same way. This is an ordinary bell exit, and
 the exit itself is silent: do not mention it. Run the loop pair and handle the
 foreground poll's batch per **Event handling**, as for any bell. The batch
 can hold an event that landed after the bell ended: the foreground poll serves

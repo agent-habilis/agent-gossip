@@ -411,11 +411,10 @@ mod tests {
             .expect("the agy plugin writes this file")
     }
 
-    /// The agy plugin folder can hold the user's own files, since a plugin is
-    /// the only place agy reads rules, MCP servers and skills from. `plug`
-    /// and `unplug` touch only the `gossip-*` skills and the two files `plug`
-    /// wrote byte for byte, and never overwrite a manifest or hooks file that
-    /// differs.
+    /// The agy plugin folder can hold the user's own rules, MCP servers and
+    /// skills. `plug` and `unplug` touch only the `gossip-*` skills and the
+    /// plugin files that carry the `agent-gossip` marker, and never overwrite
+    /// a manifest or hooks file that holds more.
     #[test]
     fn antigravity_plug_and_unplug_keep_the_user_files_in_the_plugin_folder() {
         let home =

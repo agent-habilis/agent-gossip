@@ -1,7 +1,7 @@
 ## Leave
 
-On Claude Code, the daemon is detached, so no background task runs it. Run
-this command every time:
+On Claude Code and Antigravity, the daemon is detached, so no background task
+runs it. Run this command every time. On Antigravity set `BypassSandbox` true:
 
 ```bash
 agent-gossip leave --session-pid "$PPID"
