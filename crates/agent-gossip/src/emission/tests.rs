@@ -566,36 +566,105 @@ fn task_peer_left_event_json_shape() {
 }
 
 #[test]
-fn task_stalled_event_json_shape() {
+fn task_overdue_event_json_shape() {
     use super::OutputEvent;
     use crate::a2a::TaskId;
-    let event = OutputEvent::TaskStalled {
+    use crate::a2a::status_update_params::ReaderBeat;
+    let event = OutputEvent::TaskOverdue {
         task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
         peer: habilis_network::protocol::Nickname::from("calm-otter"),
-        last_poll_secs_ago: 2_400,
-        check_secs: 1_800,
+        label: Some("review the diff".to_owned()),
+        age_secs: 660,
+        waiting_on: Some("rope-crypt".to_owned()),
+        not_picked_up: true,
+        reader: Some(ReaderBeat {
+            bell: true,
+            last_poll_secs: 120,
+        }),
     };
-    let json = simple_event::event_json(&event).expect("task_stalled event produces a JSON line");
+    let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(
-        parsed["event"], "task_stalled",
-        "the event field is task_stalled"
-    );
-    assert_eq!(
-        parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000",
-        "the task_id field is 550e8400-e29b-41d4-a716-446655440000"
+        parsed["event"], "task_overdue",
+        "the event field is task_overdue"
     );
     assert_eq!(parsed["peer"], "calm-otter", "the peer field is calm-otter");
+    assert_eq!(parsed["age_secs"], 660, "the age is in seconds");
     assert_eq!(
-        parsed["last_poll_secs_ago"], 2_400,
-        "the last_poll_secs_ago field is 2_400"
-    );
-    assert_eq!(parsed["check_secs"], 1_800, "the check_secs field is 1_800");
-    assert_eq!(
-        parsed["display"], "💬️ task stalled · `<calm-otter>` has not polled for 40 min",
-        "the stalled line names the silent peer and its 40 minutes"
+        parsed["display"],
+        "💬️ task overdue · `<calm-otter>` · review the diff · no check-in for 11 min \
+         · waiting on rope-crypt · not picked up · bell on, last poll 2 min ago",
+        "the line carries every part that is set"
     );
     assert!(simple_event::is_visible(&event), "the user must see it");
+    assert!(node::wakes(&event), "it must ring the bell");
+    assert!(node::is_pollable(&event), "poll must serve it");
+}
+
+/// A bare alarm names the short task id and leaves out every unset part.
+#[test]
+fn task_overdue_display_leaves_out_unset_parts() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskOverdue {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        peer: habilis_network::protocol::Nickname::from("calm-otter"),
+        label: None,
+        age_secs: 600,
+        waiting_on: None,
+        not_picked_up: false,
+        reader: None,
+    };
+    let json = simple_event::event_json(&event).expect("task_overdue event produces a JSON line");
+    assert_eq!(
+        parse(&json)["display"],
+        "💬️ task overdue · `<calm-otter>` · 550e8400 · no check-in for 10 min",
+        "unset parts are absent"
+    );
+}
+
+/// An alarm that says the worker waits on its user is shown, but does not wake.
+#[test]
+fn task_overdue_waiting_on_user_does_not_wake() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::TaskOverdue {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        peer: habilis_network::protocol::Nickname::from("calm-otter"),
+        label: None,
+        age_secs: 600,
+        waiting_on: Some("user".to_owned()),
+        not_picked_up: false,
+        reader: None,
+    };
+    assert!(simple_event::is_visible(&event), "the user must see it");
+    assert!(!node::wakes(&event), "nothing is done, so no wake");
+    assert!(node::is_pollable(&event), "poll must serve it");
+}
+
+/// The worker's reminder rings the bell and is never shown.
+#[test]
+fn checkin_due_event_json_shape() {
+    use super::OutputEvent;
+    use crate::a2a::TaskId;
+    let event = OutputEvent::CheckinDue {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        peer: habilis_network::protocol::Nickname::from("calm-otter"),
+        followup_seq: Some(41),
+        followup_aged_out: false,
+    };
+    let json = simple_event::event_json(&event).expect("checkin_due event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(
+        parsed["event"], "checkin_due",
+        "the event field is checkin_due"
+    );
+    assert_eq!(parsed["followup_seq"], 41, "the reminder names the follow-up");
+    assert_eq!(
+        parsed["followup_aged_out"], false,
+        "the follow-up is still in the ring"
+    );
+    assert!(!simple_event::is_visible(&event), "it is never shown");
     assert!(node::wakes(&event), "it must ring the bell");
     assert!(node::is_pollable(&event), "poll must serve it");
 }

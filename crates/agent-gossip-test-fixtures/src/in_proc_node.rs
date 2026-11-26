@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use agent_gossip::a2a::status_update_params;
+use agent_gossip::a2a::status_update_params::{self, Progress};
 use agent_gossip::api::{
     A2aCallParams, CreateConfig, JoinConfig, MeshSession, SessionError, TaskArtifactParams,
     TaskStatusParams,
@@ -593,34 +593,68 @@ impl InProcNode {
         }
     }
 
-    /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving. `note` and
+    /// `progress` go on the leg as given: a `working` leg needs both.
     ///
     /// # Panics
     ///
     /// Panics if the send fails.
-    pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
-        let status = match note {
-            Some(text) => TaskStatusParams::new(task_id.clone(), state).with_note(text.to_owned()),
-            None => TaskStatusParams::new(task_id.clone(), state),
-        };
-        self.session
-            .task_status(status)
+    pub async fn task_status(
+        &self,
+        task_id: &TaskId,
+        state: TaskState,
+        note: Option<&str>,
+        progress: Option<Progress>,
+    ) {
+        self.try_task_status(task_id, state, note, progress)
             .await
             .expect("in-process task_status failed");
     }
 
-    /// Worker-emit a `working` status that says the worker waits on its user.
+    /// As [`Self::task_status`], returning the refusal instead of panicking, for
+    /// a test of the check-in rule.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the daemon refuses the leg or the event loop has stopped.
+    pub async fn try_task_status(
+        &self,
+        task_id: &TaskId,
+        state: TaskState,
+        note: Option<&str>,
+        progress: Option<Progress>,
+    ) -> Result<(), SessionError> {
+        let mut status = TaskStatusParams::new(task_id.clone(), state);
+        if let Some(text) = note {
+            status = status.with_note(text.to_owned());
+        }
+        if let Some(progress) = progress {
+            status = status.with_progress(progress);
+        }
+        self.session.task_status(status).await.map(|_| ())
+    }
+
+    /// Worker-emit a `working` check-in that says the worker waits on `who` (a
+    /// peer or `user`).
     ///
     /// # Panics
     ///
     /// Panics if the send fails.
-    pub async fn task_waiting(&self, task_id: &TaskId, reason: &str) {
+    pub async fn task_waiting_on(
+        &self,
+        task_id: &TaskId,
+        who: &str,
+        note: &str,
+        progress: Progress,
+    ) {
         let status = TaskStatusParams::new(task_id.clone(), TaskState::Working)
-            .with_waiting(reason.to_owned());
+            .with_note(note.to_owned())
+            .with_progress(progress)
+            .with_waiting_on(who.to_owned());
         self.session
             .task_status(status)
             .await
-            .expect("in-process task_waiting failed");
+            .expect("in-process task_waiting_on failed");
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.

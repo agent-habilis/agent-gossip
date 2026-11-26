@@ -38,7 +38,8 @@ pub(crate) enum SessionRequest {
         task_id: TaskId,
         state: crate::a2a::TaskState,
         note: Option<String>,
-        waiting: Option<String>,
+        progress: Option<crate::a2a::status_update_params::Progress>,
+        waiting_on: Option<String>,
         response: oneshot::Sender<Result<Authored>>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving

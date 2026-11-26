@@ -135,17 +135,34 @@ pub enum OutputEvent {
         /// Which trigger removed it.
         reason: TaskGoneReason,
     },
-    /// The worker's agent has not polled for `check_secs` and holds no bell.
-    /// States the fact only; the task is not canceled.
-    TaskStalled {
-        /// The stalled task.
+    /// The worker's agent has not checked in for 2·X. States the fact only; the
+    /// task is not canceled.
+    TaskOverdue {
+        /// The overdue task.
         task_id: TaskId,
-        /// The worker whose agent is not reading.
+        /// The worker whose agent has not checked in.
         peer: Nickname,
-        /// Whole seconds since the agent last polled.
-        last_poll_secs_ago: u64,
-        /// The silence threshold, in seconds, that triggered this event.
-        check_secs: u64,
+        /// The initiator's name for the task, when the brief carried one.
+        label: Option<String>,
+        /// Whole seconds since the last check-in.
+        age_secs: u64,
+        /// Whom the worker said it waits on in its last check-in.
+        waiting_on: Option<String>,
+        /// `true` when the worker never accepted the task.
+        not_picked_up: bool,
+        /// What the worker's last beat said about its agent.
+        reader: Option<crate::a2a::status_update_params::ReaderBeat>,
+    },
+    /// This worker owes a check-in. Rings its bell only; it is never shown.
+    CheckinDue {
+        /// The task that waits for a check-in.
+        task_id: TaskId,
+        /// The initiator.
+        peer: Nickname,
+        /// The ring seq of the follow-up the worker has not answered yet.
+        followup_seq: Option<u64>,
+        /// `true` when that follow-up left the ring, so the worker must ask again.
+        followup_aged_out: bool,
     },
     /// A delivery or read receipt for a message the local node sent.
     Receipt {

@@ -108,6 +108,7 @@ impl NodeDriver for A2aApp {
         broadcast_params::retain_sent_legs(self, state);
         task_record::tick_task_sweep(state, self, context, &out).await;
         task_record::tick_task_keepalive(state, self, context).await;
+        task_record::tick_checkins(self);
         // Chase down any stalled big (unlogged) shard groups: ask their authors
         // to re-send the missing shards from their sender-side cache.
         broadcast_params::send_shard_repair_requests(
@@ -256,27 +257,6 @@ impl NodeDriver for A2aApp {
     }
 }
 
-/// A peer's `working` with no text on a task already `working` changes nothing
-/// the agent can act on. A 0.8/0.9 worker still re-sends one every minute to
-/// keep the task alive, and each one woke the initiator's bell, so it is kept
-/// off the surface like a beat. It still reaches the state machine, which
-/// counts it as the peer's activity. A leg that sets or clears the waiting
-/// reason (`prior_waiting` is the record's current one) is news and surfaces.
-fn is_empty_working_repeat(
-    prior: Option<super::TaskState>,
-    prior_waiting: Option<&str>,
-    message: &Authored,
-) -> bool {
-    use super::TaskState;
-    prior == Some(TaskState::Working)
-        && status_update_params::status_payload(message).is_ok_and(|payload| {
-            !status_update_params::is_beat(&payload)
-                && payload.status.state == TaskState::Working
-                && status_update_params::status_waiting(&payload).as_deref() == prior_waiting
-        })
-        && status_update_params::task_text(message).trim().is_empty()
-}
-
 /// Whether the local agent is reading: `(bell armed, seconds since its last
 /// poll)`. One source for `mesh/reader.get` and for the reader keys of our beats.
 pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, Option<u64>) {
@@ -298,19 +278,48 @@ pub(crate) fn reader_liveness(app: &A2aApp, context: &HandlerCtx<'_>) -> (bool, 
 /// The agent's own task echoes are quiet for the same reason: it already holds
 /// the id of every leg it sent, and an echo landing right after a re-arm rang
 /// the bell for nothing and made the Stop hook refuse the turn.
+///
+/// A peer's routine check-in (a `working` status) is data, not news: it goes on
+/// the ring without a wake, like a receipt, and the sender's skill updates its
+/// badge on the next batch. An alarm that says the worker waits on its user is
+/// shown but does not wake either, since there is nothing to do.
 pub(crate) fn wakes(event: &emission::OutputEvent) -> bool {
     use emission::OutputEvent;
     if is_self_task_echo(event) {
         return false;
     }
-    emission::simple_event::is_visible(event)
-        || matches!(
-            event,
-            OutputEvent::Task { .. }
-                | OutputEvent::TaskMessage { .. }
-                | OutputEvent::TaskTimeout { .. }
-                | OutputEvent::TaskStalled { .. }
-        )
+    match event {
+        OutputEvent::TaskOverdue { waiting_on, .. } => !waits_on_user(waiting_on.as_deref()),
+        OutputEvent::Task { message, .. } if is_working_checkin(message) => false,
+        OutputEvent::Task { .. }
+        | OutputEvent::TaskMessage { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::CheckinDue { .. } => true,
+        OutputEvent::Message { .. }
+        | OutputEvent::Presence { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Receipt { .. }
+        | OutputEvent::StateChanged { .. }
+        | OutputEvent::EventsLost { .. }
+        | OutputEvent::NicknameHeld { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Ready { .. } => emission::simple_event::is_visible(event),
+    }
+}
+
+fn waits_on_user(waiting_on: Option<&str>) -> bool {
+    waiting_on.is_some_and(|who| who.trim().eq_ignore_ascii_case("user"))
+}
+
+/// A `working` status that is not a beat: a check-in, or the accept leg.
+fn is_working_checkin(message: &Authored) -> bool {
+    status_update_params::status_payload(message).is_ok_and(|payload| {
+        !status_update_params::is_beat(&payload) && payload.status.state == super::TaskState::Working
+    })
 }
 
 fn is_self_task_echo(event: &emission::OutputEvent) -> bool {
@@ -338,7 +347,8 @@ pub(crate) fn is_pollable(event: &emission::OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
@@ -561,12 +571,6 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
         {
             return Routed::default();
         }
-        let prior = app.tasks.get(&task_id).map(|rec| rec.state);
-        let prior_waiting = app
-            .tasks
-            .get(&task_id)
-            .and_then(|rec| rec.waiting.as_deref());
-        surface &= !is_empty_working_repeat(prior, prior_waiting, message);
         if task_record::is_replay(&app.tasks, &app.closed_tasks, &task_id, &message.id) {
             tracing::info!(
                 target: "agent_gossip::a2a",
@@ -579,7 +583,7 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
             replay = true;
         }
         let now = Instant::now();
-        let reader = task_record::ingest(
+        task_record::ingest(
             &mut app.tasks,
             task_record::IngestLegParams {
                 frame: message,
@@ -588,14 +592,6 @@ fn handle_task_leg(leg: TaskLegParams<'_>, app: &mut A2aApp, context: &HandlerCt
                 now,
             },
         );
-        if let Some(reader) = reader
-            && let Some(notice) = task_record::stall_notice(&mut app.tasks, &task_id, reader, now)
-        {
-            app.output.task_stalled(&notice);
-        }
-        if surface {
-            task_record::note_surfaced(&mut app.tasks, &task_id, message);
-        }
     }
     let loggable = handle_task(
         &app.output,
@@ -1045,6 +1041,10 @@ fn ingest_remote_message(
         // loop, so an unbounded registry is a stall as well as a leak.
         return Err(error);
     }
+    // A relay can replay a follow-up; only its first copy restarts the clock.
+    let first_seen = kind == LegKind::Offer
+        || task_record::mark_seen(&mut app.tasks, &task_id, payload.message_id.as_str());
+    let label = status_update_params::task_label(payload);
     task_record::apply(
         &mut app.tasks,
         &LegInfo {
@@ -1054,13 +1054,20 @@ fn ingest_remote_message(
             kind,
             mine: false,
             fraction: None,
+            first_seen,
         },
         now,
     );
+    if kind == LegKind::Offer {
+        task_record::mark_seen(&mut app.tasks, &task_id, payload.message_id.as_str());
+        if let Some(rec) = app.tasks.get_mut(&task_id) {
+            rec.label.clone_from(&label);
+        }
+    }
     // Surface the incoming message to our skill (a `task` event, kind:message).
     let rec_state = app.tasks.get(&task_id).map(|rec| rec.state);
     let text = status_update_params::display_text(payload);
-    let label = status_update_params::task_label(payload);
+    let seq_before = task_record::ring_bounds(app).map(|(_, newest)| newest);
     let mesh_name: &str = context.mesh.as_str();
     let peer_name: &str = context.author.as_str();
     app.output.task_message(&emission::TaskMessageLeg {
@@ -1076,6 +1083,17 @@ fn ingest_remote_message(
         message: Some(payload),
         is_self: false,
     });
+    // The worker re-reads an unanswered follow-up by its ring seq, so the
+    // reminder names it. The event gets its seq when the tap drains.
+    if kind == LegKind::Text
+        && first_seen
+        && let Some((_, newest)) = task_record::ring_bounds(app)
+        && seq_before.is_none_or(|before| newest > before)
+        && let Some(rec) = app.tasks.get_mut(&task_id)
+        && rec.role == task_record::TaskRole::Receiver
+    {
+        rec.followup_seq = Some(newest);
+    }
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
     // yields `{"task": <Task>}`.
     app.tasks
@@ -1092,7 +1110,7 @@ mod classify_tests {
     };
     use habilis_network::util::bounded_fifo_set::BoundedFifoSet;
 
-    use super::{classify, is_empty_working_repeat, is_replayed_chat, seals, surface_chat, wakes};
+    use super::{classify, is_replayed_chat, seals, surface_chat, wakes};
     use crate::a2a::a2a_app::A2aApp;
     use crate::a2a::{TaskState, status_update_params, wire};
     use crate::emission::OutputEvent;
@@ -1222,6 +1240,12 @@ mod classify_tests {
         ] {
             let own = task_event(status_frame_in(state, to), true);
             assert!(!wakes(&own), "own {state:?} echo is quiet");
+        }
+        for state in [
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+        ] {
             let peer = task_event(status_frame_in(state, to), false);
             assert!(wakes(&peer), "a peer's {state:?} status still wakes");
         }
@@ -1332,62 +1356,53 @@ mod classify_tests {
         view(working_with_raw(note, metadata))
     }
 
-    // Only an empty `working` on a task already `working` is a repeat: the
-    // accept, a progress note, a beat and every other state still surface.
+    // A peer's routine check-in is data: it goes on the ring without a wake, like a
+    // receipt. Only a question, an artifact and a terminal state wake the sender.
     #[test]
-    fn only_an_empty_working_on_a_working_task_is_a_repeat() {
-        let working = Some(TaskState::Working);
+    fn a_peers_working_check_in_does_not_wake_the_bell() {
+        let check_in = working_with(Some("built it"), None);
         assert!(
-            is_empty_working_repeat(working, None, &working_with(None, None)),
-            "a repeated working status is recognized"
+            !wakes(&task_event(check_in, false)),
+            "a check-in does not wake"
         );
+        let bare = working_with(None, None);
         assert!(
-            !is_empty_working_repeat(Some(TaskState::Submitted), None, &working_with(None, None)),
-            "the accept surfaces"
+            !wakes(&task_event(bare, false)),
+            "a bare working from an older peer does not wake either"
         );
-        assert!(
-            !is_empty_working_repeat(working, None, &working_with(Some("tests pass"), None)),
-            "a progress note surfaces"
-        );
-        let beat = working_with(None, Some(status_update_params::beat_metadata(None)));
-        assert!(
-            !is_empty_working_repeat(working, None, &beat),
-            "a beat keeps its own path"
-        );
-        assert!(
-            !is_empty_working_repeat(
-                working,
-                None,
-                &status_frame_in(TaskState::InputRequired, None)
-            ),
-            "a question surfaces"
-        );
+        let to = Some(key("initiator"));
+        for state in [
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+        ] {
+            assert!(
+                wakes(&task_event(status_frame_in(state, to), false)),
+                "a peer's {state:?} status wakes"
+            );
+        }
     }
 
-    /// The `--waiting` leg and the leg that clears it change what the initiator
-    /// can act on, so each surfaces once. Pre-fix both were empty `working`
-    /// repeats and stayed off the surface, so the initiator agent never saw
-    /// that the worker waits on its user.
+    // An alarm that says the worker waits on its user is shown, nothing else.
     #[test]
-    fn a_waiting_leg_and_its_clear_each_surface_once() {
-        let working = Some(TaskState::Working);
-        let reason = "asks its user";
-        let waiting = working_with(None, status_update_params::waiting_metadata(Some(reason)));
+    fn an_overdue_alarm_wakes_unless_the_worker_waits_on_its_user() {
+        let overdue = |waiting_on: Option<&str>| OutputEvent::TaskOverdue {
+            task_id: crate::a2a::TaskId::random(),
+            peer: Nickname::from("worker"),
+            label: None,
+            age_secs: 600,
+            waiting_on: waiting_on.map(str::to_owned),
+            not_picked_up: false,
+            reader: None,
+        };
+        assert!(wakes(&overdue(None)), "a plain alarm wakes");
         assert!(
-            !is_empty_working_repeat(working, None, &waiting),
-            "the --waiting leg surfaces"
+            wakes(&overdue(Some("rope-crypt"))),
+            "waiting on a peer still wakes"
         );
         assert!(
-            is_empty_working_repeat(working, Some(reason), &waiting),
-            "the same reason again stays off the surface"
-        );
-        assert!(
-            !is_empty_working_repeat(working, Some(reason), &working_with(None, None)),
-            "the clear surfaces"
-        );
-        assert!(
-            is_empty_working_repeat(working, None, &working_with(None, None)),
-            "a plain repeat stays off the surface"
+            !wakes(&overdue(Some("user"))),
+            "waiting on the user does not wake"
         );
     }
 

@@ -2,7 +2,9 @@ use std::sync::atomic::AtomicU64;
 
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
-use super::extensions::{META_BELL, META_LAST_POLL, META_ORDER_MS, META_WAITING};
+use super::extensions::{
+    META_BELL, META_CHECKIN_AGE, META_LAST_POLL, META_ORDER_MS, META_WAITING,
+};
 use super::frame_payload_error::FramePayloadError;
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
@@ -313,16 +315,31 @@ pub struct ReaderBeat {
     pub last_poll_secs: u64,
 }
 
-/// As [`beat_metadata`], plus the worker's [`ReaderBeat`] when it has polled.
+/// What a worker adds to a beat beyond the plumbing marker.
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+pub struct BeatExtras {
+    /// The last progress reported, replayed so a lost check-in costs nothing.
+    pub fraction: Option<(u64, u64)>,
+    /// Whether the worker agent is reading.
+    pub reader: Option<ReaderBeat>,
+    /// Seconds since the worker's agent last checked in on this task. Its presence
+    /// tells the sender that the worker supports check-ins.
+    pub checkin_age_secs: Option<u64>,
+}
+
+/// As [`beat_metadata`], plus the worker's [`ReaderBeat`] and check-in age.
 #[must_use]
-pub fn beat_metadata_with_reader(
-    fraction: Option<(u64, u64)>,
-    reader: Option<ReaderBeat>,
-) -> serde_json::Value {
-    let mut meta = beat_metadata(fraction);
-    if let (Some(reader), Some(map)) = (reader, meta.as_object_mut()) {
-        map.insert(META_BELL.to_string(), reader.bell.into());
-        map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
+pub fn beat_metadata_with_extras(extras: BeatExtras) -> serde_json::Value {
+    let mut meta = beat_metadata(extras.fraction);
+    if let Some(map) = meta.as_object_mut() {
+        if let Some(reader) = extras.reader {
+            map.insert(META_BELL.to_string(), reader.bell.into());
+            map.insert(META_LAST_POLL.to_string(), reader.last_poll_secs.into());
+        }
+        if let Some(age) = extras.checkin_age_secs {
+            map.insert(META_CHECKIN_AGE.to_string(), age.into());
+        }
     }
     meta
 }
@@ -424,9 +441,15 @@ pub fn beat_reader(update: &TaskStatusUpdate) -> Option<ReaderBeat> {
     })
 }
 
-/// The `done/total` fraction a beat carries, if any.
+/// Seconds since the worker agent last checked in, as its beat states them.
 #[must_use]
-pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
+pub fn beat_checkin_age(update: &TaskStatusUpdate) -> Option<u64> {
+    update.metadata.as_ref()?.get(META_CHECKIN_AGE)?.as_u64()
+}
+
+/// The `done/total` fraction a beat or a check-in carries, if any.
+#[must_use]
+pub fn leg_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
     let meta = update.metadata.as_ref()?;
     Some((
         meta.get(META_DONE)?.as_u64()?,
@@ -440,10 +463,16 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
 /// (a `\n` would forge a second row) are stripped and the length capped.
 #[must_use]
 pub fn task_label(message: &Message) -> Option<String> {
-    let label: &str = message.metadata.as_ref()?.get(META_LABEL)?.as_str()?;
-    let visible = label.chars().filter(|ch| !ch.is_control());
-    let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
-    let trimmed = raw.trim();
+    clean_label(message.metadata.as_ref()?.get(META_LABEL)?.as_str()?)
+}
+
+/// `raw` as a task label: control characters stripped, length capped, `None`
+/// when nothing is left.
+#[must_use]
+pub(crate) fn clean_label(raw: &str) -> Option<String> {
+    let visible = raw.chars().filter(|ch| !ch.is_control());
+    let capped: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
+    let trimmed = capped.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
@@ -454,13 +483,23 @@ pub fn waiting_metadata(reason: Option<&str>) -> Option<serde_json::Value> {
     reason.map(|reason| serde_json::json!({ META_WAITING: reason }))
 }
 
-/// The metadata of a status leg: its order value, and the `mesh:waiting` reason
-/// when it has one. The counterpart of [`status_order`] and [`status_waiting`].
+/// The metadata of a status leg: its order value, the `mesh:waiting` tag when
+/// it has one, and the progress of a check-in as `done/total` out of 100. The
+/// counterpart of [`status_order`], [`status_waiting`] and [`leg_fraction`].
 #[must_use]
-pub fn status_metadata(waiting: Option<&str>, order_ms: u64) -> serde_json::Value {
+pub fn status_metadata(
+    waiting_on: Option<&str>,
+    progress: Option<Progress>,
+    order_ms: u64,
+) -> serde_json::Value {
     let mut meta = serde_json::json!({ META_ORDER_MS: order_ms });
-    if let Some(reason) = waiting {
+    if let Some(reason) = waiting_on {
         meta[META_WAITING] = reason.into();
+    }
+    if let Some(progress) = progress {
+        let (done, total) = progress.as_fraction();
+        meta[META_DONE] = done.into();
+        meta[META_TOTAL] = total.into();
     }
     meta
 }
@@ -512,6 +551,73 @@ pub fn status_waiting(update: &TaskStatusUpdate) -> Option<String> {
     let raw: String = visible.take(super::tuning::TASK_LABEL_MAX_CHARS).collect();
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The note of a status leg, the "what changed" line of a check-in.
+///
+/// Peer-controlled text that `GetTask` and `task_progress` echo, so it gets the
+/// control-character strip of [`task_label`] and its own length cap.
+#[must_use]
+pub fn status_text(update: &TaskStatusUpdate) -> Option<String> {
+    let message = update.status.message.as_ref()?;
+    let text = parts_text(&message.parts);
+    let visible = text.chars().filter(|ch| !ch.is_control());
+    let raw: String = visible
+        .take(super::tuning::TASK_STATUS_TEXT_MAX_CHARS)
+        .collect();
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// A check-in's progress: a whole percentage, 0 to 100.
+///
+/// Built only by a checked parse, so every value is in range. It goes on the
+/// wire as `done/total` with a total of 100, the shape a beat already carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct Progress(u8);
+
+impl Progress {
+    /// The percentage as a `done/total` fraction out of 100.
+    #[must_use]
+    pub fn as_fraction(self) -> (u64, u64) {
+        (u64::from(self.0), 100)
+    }
+
+    /// The percentage.
+    #[must_use]
+    pub fn percent(self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for Progress {
+    type Error = String;
+
+    fn try_from(percent: u8) -> Result<Self, Self::Error> {
+        if percent <= 100 {
+            Ok(Self(percent))
+        } else {
+            Err(format!("progress {percent} is not between 0 and 100"))
+        }
+    }
+}
+
+impl From<Progress> for u8 {
+    fn from(progress: Progress) -> Self {
+        progress.0
+    }
+}
+
+impl std::str::FromStr for Progress {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let percent: u8 = text
+            .parse()
+            .map_err(|_| format!("progress `{text}` is not a whole number from 0 to 100"))?;
+        Self::try_from(percent)
+    }
 }
 
 /// The task a **logical** frame belongs to, if any.
@@ -618,7 +724,7 @@ mod tests {
     use habilis_network::protocol::{MeshId, MessageId, MessageKind};
 
     use super::{
-        Frame, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
+        Frame, Progress, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
         msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
         status_waiting, waiting_metadata,
     };
@@ -793,7 +899,7 @@ mod tests {
                     .with_metadata(metadata),
             )
         };
-        let leg = update(status_metadata(Some("asks its user"), 7));
+        let leg = update(status_metadata(Some("asks its user"), None, 7));
         assert_eq!(
             status_order(&leg),
             Some(7),
@@ -810,6 +916,30 @@ mod tests {
             )),
             None,
             "the status payload carries its fields"
+        );
+    }
+
+    /// A progress is a whole percentage from 0 to 100; anything else is a parse
+    /// error, and an out-of-range value never reaches the wire.
+    #[test]
+    fn a_progress_is_a_whole_percentage() {
+        for text in ["0", "55", "100"] {
+            assert!(text.parse::<Progress>().is_ok(), "{text} is a percentage");
+        }
+        for text in ["101", "-1", "5.5", "50%", "", " 5", "fast"] {
+            assert!(
+                text.parse::<Progress>().is_err(),
+                "{text:?} is not a percentage"
+            );
+        }
+        assert_eq!(
+            Progress::try_from(100).map(Progress::as_fraction),
+            Ok((100, 100)),
+            "a progress goes on the wire as a fraction out of 100"
+        );
+        assert!(
+            serde_json::from_str::<Progress>("101").is_err(),
+            "a progress above 100 does not deserialize"
         );
     }
 

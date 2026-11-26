@@ -3,8 +3,9 @@ pub(crate) use self::output_mode::OutputMode;
 pub(crate) use self::ready_params::ReadyParams;
 pub(crate) use self::receipt_params::ReceiptParams;
 use self::simple_event::{
-    SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
-    ping_report_display, print_message_json, task_stalled_event,
+    SimpleEvent, TaskOverdueFields, checkin_due_event, emit, emit_json, format_presence_json,
+    peer_return_display, peer_timeout_display, ping_report_display, print_message_json,
+    task_overdue_event,
 };
 pub use self::simple_event::{event_json, surfaced_event_json};
 pub(crate) use self::state_changed_params::StateChangedParams;

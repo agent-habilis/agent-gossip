@@ -76,7 +76,9 @@ pub(crate) enum IpcCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        waiting: Option<String>,
+        progress: Option<crate::a2a::status_update_params::Progress>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting_on: Option<String>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
     /// An optional `file` is offloaded over the blob channel and referenced as a
@@ -211,7 +213,8 @@ struct StatusRequest {
     task_id: TaskId,
     task_state: TaskState,
     note: Option<String>,
-    waiting: Option<String>,
+    progress: Option<crate::a2a::status_update_params::Progress>,
+    waiting_on: Option<String>,
 }
 
 struct A2aCallRequest {
@@ -307,7 +310,8 @@ impl IpcRequest<'_> {
             task_id,
             task_state,
             note,
-            waiting,
+            progress,
+            waiting_on,
         } = request;
         match emit_task_status(
             TaskStatusParams {
@@ -316,7 +320,8 @@ impl IpcRequest<'_> {
                 task_id: &task_id,
                 task_state,
                 note: note.as_deref(),
-                waiting: waiting.as_deref(),
+                progress,
+                waiting_on: waiting_on.as_deref(),
                 app,
             },
             state,
@@ -606,7 +611,8 @@ pub(crate) async fn handle_ipc_command(
             task_id,
             state: task_state,
             note,
-            waiting,
+            progress,
+            waiting_on,
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
             request
@@ -614,7 +620,8 @@ pub(crate) async fn handle_ipc_command(
                     task_id,
                     task_state,
                     note,
-                    waiting,
+                    progress,
+                    waiting_on,
                 })
                 .await
         }
@@ -1127,7 +1134,8 @@ mod tests {
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
-            waiting: Some("asks its user".to_string()),
+            progress: Some("40".parse().expect("40 is a valid progress")),
+            waiting_on: Some("user".to_string()),
         };
         let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
         assert!(
@@ -1144,7 +1152,8 @@ mod tests {
             IpcCommand::A2aStatus {
                 state,
                 note,
-                waiting,
+                progress,
+                waiting_on,
                 ..
             } => {
                 assert_eq!(
@@ -1154,9 +1163,14 @@ mod tests {
                 );
                 assert_eq!(note.as_deref(), Some("on it"), "the status keeps its note");
                 assert_eq!(
-                    waiting.as_deref(),
-                    Some("asks its user"),
-                    "the status keeps its waiting reason"
+                    progress.map(crate::a2a::status_update_params::Progress::percent),
+                    Some(40),
+                    "the status keeps its progress"
+                );
+                assert_eq!(
+                    waiting_on.as_deref(),
+                    Some("user"),
+                    "the status keeps its waiting tag"
                 );
             }
             IpcCommand::Broadcast { .. }
@@ -1176,23 +1190,45 @@ mod tests {
         }
     }
 
-    /// An older CLI sends no `waiting`; the daemon must still accept the line.
+    /// A status with no progress and no tag omits both keys; the daemon decides
+    /// whether the state needs them.
     #[test]
-    fn ipc_command_a2a_status_without_waiting_still_parses() {
+    fn ipc_command_a2a_status_without_progress_or_tag_omits_them() {
         let command = IpcCommand::A2aStatus {
             mesh: MeshId::from("test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: None,
-            waiting: None,
+            progress: None,
+            waiting_on: None,
         };
         let json = serde_json::to_string(&command).expect("a test value serializes to JSON");
-        assert!(!json.contains("waiting"), "the key must be absent: {json}");
+        assert!(
+            !json.contains("waiting_on") && !json.contains("progress"),
+            "the keys must be absent: {json}"
+        );
         let parsed: IpcCommand =
             serde_json::from_str(&json).expect("the JSON text comes from the test itself");
         assert!(
-            matches!(parsed, IpcCommand::A2aStatus { waiting: None, .. }),
-            "a status with a waiting reason matches the status arm"
+            matches!(
+                parsed,
+                IpcCommand::A2aStatus {
+                    progress: None,
+                    waiting_on: None,
+                    ..
+                }
+            ),
+            "a status with neither matches the status arm"
+        );
+    }
+
+    /// A progress out of range does not parse, so the daemon never sees one.
+    #[test]
+    fn ipc_command_a2a_status_refuses_a_progress_above_100() {
+        let json = r#"{"command":"a2a_status","mesh":"test","task_id":"550e8400-e29b-41d4-a716-446655440000","state":"working","progress":101}"#;
+        assert!(
+            serde_json::from_str::<IpcCommand>(json).is_err(),
+            "101 is not a percentage"
         );
     }
 

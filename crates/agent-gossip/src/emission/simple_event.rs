@@ -62,12 +62,28 @@ pub(super) enum SimpleEvent<'source> {
         task_id: &'source str,
         reason: TaskGoneReason,
     },
-    TaskStalled {
+    TaskOverdue {
         task_id: &'source str,
         peer: &'source str,
-        last_poll_secs_ago: u64,
-        check_secs: u64,
-        /// Pre-formatted line (see [`task_stalled_event`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<&'source str>,
+        age_secs: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        waiting_on: Option<&'source str>,
+        not_picked_up: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        bell: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_poll_secs_ago: Option<u64>,
+        /// Pre-formatted line (see [`task_overdue_event`]).
+        display: String,
+    },
+    CheckinDue {
+        task_id: &'source str,
+        peer: &'source str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        followup_seq: Option<u64>,
+        followup_aged_out: bool,
         display: String,
     },
     Receipt {
@@ -329,23 +345,75 @@ pub(super) fn peer_timeout_display(nickname: &str) -> String {
     format!("{DISPLAY_GLYPH} `<{nickname}>` went quiet")
 }
 
-/// The `task_stalled` event. Its `display` states the silence as a fact: a
-/// worker with no bell can poll rarely while it works.
-pub(super) fn task_stalled_event<'a>(
-    task_id: &'a TaskId,
-    peer: &'a Nickname,
-    last_poll_secs_ago: u64,
-    check_secs: u64,
-) -> SimpleEvent<'a> {
-    SimpleEvent::TaskStalled {
+/// The `task_overdue` event. Its `display` states the silence as a fact; each
+/// bracketed part appears only when it is set.
+pub(super) fn task_overdue_event<'a>(fields: &'a TaskOverdueFields<'a>) -> SimpleEvent<'a> {
+    let TaskOverdueFields {
+        task_id,
+        peer,
+        label,
+        age_secs,
+        waiting_on,
+        not_picked_up,
+        reader,
+    } = *fields;
+    let name = label.map_or_else(|| task_id.as_str().chars().take(8).collect(), str::to_owned);
+    let mut display = format!(
+        "{DISPLAY_GLYPH} task overdue · `<{peer}>` · {name} · no check-in for {} min",
+        age_secs / 60
+    );
+    if let Some(waiting_on) = waiting_on {
+        display.push_str(&format!(" · waiting on {waiting_on}"));
+    }
+    if not_picked_up {
+        display.push_str(" · not picked up");
+    }
+    if let Some(reader) = reader {
+        let bell = if reader.bell { "on" } else { "off" };
+        display.push_str(&format!(
+            " · bell {bell}, last poll {} min ago",
+            reader.last_poll_secs / 60
+        ));
+    }
+    SimpleEvent::TaskOverdue {
         task_id: task_id.as_str(),
         peer: peer.as_str(),
-        last_poll_secs_ago,
-        check_secs,
-        display: format!(
-            "{DISPLAY_GLYPH} task stalled · `<{peer}>` has not polled for {} min",
-            last_poll_secs_ago / 60
-        ),
+        label,
+        age_secs,
+        waiting_on,
+        not_picked_up,
+        bell: reader.map(|reader| reader.bell),
+        last_poll_secs_ago: reader.map(|reader| reader.last_poll_secs),
+        display,
+    }
+}
+
+/// The values of a `task_overdue` event, borrowed from its source.
+#[derive(Clone, Copy)]
+pub(super) struct TaskOverdueFields<'a> {
+    pub(super) task_id: &'a TaskId,
+    pub(super) peer: &'a Nickname,
+    pub(super) label: Option<&'a str>,
+    pub(super) age_secs: u64,
+    pub(super) waiting_on: Option<&'a str>,
+    pub(super) not_picked_up: bool,
+    pub(super) reader: Option<status_update_params::ReaderBeat>,
+}
+
+/// The `checkin_due` event: the worker's reminder. It is never shown, so its
+/// `display` only keeps the line readable in a raw poll.
+pub(super) fn checkin_due_event<'a>(
+    task_id: &'a TaskId,
+    peer: &'a Nickname,
+    followup_seq: Option<u64>,
+    followup_aged_out: bool,
+) -> SimpleEvent<'a> {
+    SimpleEvent::CheckinDue {
+        task_id: task_id.as_str(),
+        peer: peer.as_str(),
+        followup_seq,
+        followup_aged_out,
+        display: format!("{DISPLAY_GLYPH} check-in due · `<{peer}>`"),
     }
 }
 
@@ -412,7 +480,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::EventsLost { .. }
         | OutputEvent::NicknameHeld { .. }
-        | OutputEvent::TaskStalled { .. } => true,
+        | OutputEvent::TaskOverdue { .. } => true,
         OutputEvent::Presence { message, .. } => matches!(
             &message.kind,
             MessageKind::Presence {
@@ -422,6 +490,7 @@ pub(crate) fn is_visible(event: &OutputEvent) -> bool {
         OutputEvent::Task { .. }
         | OutputEvent::TaskMessage { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::CheckinDue { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Info { .. }
@@ -556,7 +625,7 @@ pub(super) fn format_task_json(
     if let Ok(payload) = status_update_params::status_payload(message)
         && status_update_params::is_beat(&payload)
     {
-        let (done, total) = status_update_params::beat_fraction(&payload)
+        let (done, total) = status_update_params::leg_fraction(&payload)
             .map_or((None, None), |(done, total)| (Some(done), Some(total)));
         let author = message.author.as_str();
         let to_text = to_label(to, addressee_name);
@@ -907,7 +976,8 @@ fn formatted_json(event: &OutputEvent) -> Formatted {
         } => format_state_json(*channel, event, document.as_deref(), *is_self),
         OutputEvent::Ready { .. }
         | OutputEvent::TaskTimeout { .. }
-        | OutputEvent::TaskStalled { .. }
+        | OutputEvent::TaskOverdue { .. }
+        | OutputEvent::CheckinDue { .. }
         | OutputEvent::Receipt { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
@@ -946,16 +1016,34 @@ fn serialized_json(event: &OutputEvent) -> Option<String> {
             })
             .ok()
         }
-        OutputEvent::TaskStalled {
+        OutputEvent::TaskOverdue {
             task_id,
             peer,
-            last_poll_secs_ago,
-            check_secs,
-        } => serde_json::to_string(&task_stalled_event(
+            label,
+            age_secs,
+            waiting_on,
+            not_picked_up,
+            reader,
+        } => serde_json::to_string(&task_overdue_event(&TaskOverdueFields {
             task_id,
             peer,
-            *last_poll_secs_ago,
-            *check_secs,
+            label: label.as_deref(),
+            age_secs: *age_secs,
+            waiting_on: waiting_on.as_deref(),
+            not_picked_up: *not_picked_up,
+            reader: *reader,
+        }))
+        .ok(),
+        OutputEvent::CheckinDue {
+            task_id,
+            peer,
+            followup_seq,
+            followup_aged_out,
+        } => serde_json::to_string(&checkin_due_event(
+            task_id,
+            peer,
+            *followup_seq,
+            *followup_aged_out,
         ))
         .ok(),
         OutputEvent::Receipt {

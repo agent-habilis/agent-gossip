@@ -22,7 +22,7 @@ use crate::a2a::repair_budget::RepairBudget;
 use crate::a2a::rpc_error::{A2aRequest, RpcError};
 use crate::a2a::surfaced_event::SurfacedState;
 use crate::a2a::task_record::{ClosedTasks, TaskRecord};
-use crate::a2a::{TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
+use crate::a2a::{META_LABEL, TaskId, a2a_binding, broadcast_params, node, task_record, tuning};
 use crate::emission::{Output, OutputEvent, SurfacedTap};
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
@@ -766,6 +766,11 @@ impl A2aApp {
                 now: Instant::now(),
             },
         );
+        // The worker echoes the label of the brief, so the alarm can name the task.
+        let label = task["metadata"][META_LABEL]
+            .as_str()
+            .and_then(super::status_update_params::clean_label);
+        task_record::set_label(&mut self.tasks, &task_id, peer_key, label);
         // `adopt_initiator` refuses a snapshot from a peer that is not the
         // task's worker, and only a task in the registry is ever reaped.
         if self

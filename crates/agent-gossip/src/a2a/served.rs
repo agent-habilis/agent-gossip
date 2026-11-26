@@ -216,6 +216,7 @@ mod tests {
                 kind: Offer,
                 mine: false,
                 fraction: None,
+                first_seen: true,
             },
             std::time::Instant::now(),
         );

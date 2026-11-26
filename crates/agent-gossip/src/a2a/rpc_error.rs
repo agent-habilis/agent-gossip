@@ -5,7 +5,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use super::TaskId;
-use super::extensions::META_WAITING;
+use super::extensions::{META_DONE, META_LABEL, META_STATUS_TEXT, META_TOTAL, META_WAITING};
 use super::task_record::{TaskRecord, TaskRole};
 use crate::a2a::a2a_app::A2aApp;
 use crate::a2a::broadcast_params::{
@@ -232,8 +232,18 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
         "mesh:ball": role(rec.ball),
         "mesh:review": rec.review,
     });
-    if let Some(reason) = &rec.waiting {
-        metadata[META_WAITING] = Value::from(reason.as_str());
+    if let Some(who) = &rec.waiting_on {
+        metadata[META_WAITING] = Value::from(who.as_str());
+    }
+    if let Some(label) = &rec.label {
+        metadata[META_LABEL] = Value::from(label.as_str());
+    }
+    if let Some(text) = &rec.status_text {
+        metadata[META_STATUS_TEXT] = Value::from(text.as_str());
+    }
+    if let Some((done, total)) = rec.last_fraction {
+        metadata[META_DONE] = Value::from(done);
+        metadata[META_TOTAL] = Value::from(total);
     }
     serde_json::json!({
         "id": task_id.as_str(),
@@ -328,7 +338,8 @@ pub(crate) async fn handle_op(
                     task_id: &task_id,
                     task_state: super::TaskState::Canceled,
                     note: Some("canceled"),
-                    waiting: None,
+                    progress: None,
+                    waiting_on: None,
                     app,
                 },
                 state,

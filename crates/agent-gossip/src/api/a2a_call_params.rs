@@ -46,8 +46,9 @@ pub struct TaskArtifactParams {
 
 /// The status leg for [`MeshSession::task_status`](super::MeshSession::task_status).
 ///
-/// It holds the new state, plus an optional note and an optional reason that the
-/// worker waits on its own user (only meaningful with `working`).
+/// It holds the new state, plus a note, a progress and an optional tag naming
+/// whom the worker waits on. A `working` status is a check-in and needs the note
+/// and the progress; no other state takes a progress or a tag.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct TaskStatusParams {
@@ -55,10 +56,12 @@ pub struct TaskStatusParams {
     pub task_id: TaskId,
     /// The new state.
     pub state: crate::a2a::TaskState,
-    /// The status message text, if any.
+    /// The status message text. Required on `working`, where it says what changed.
     pub note: Option<String>,
-    /// Why the worker waits on its own user, if it does.
-    pub waiting: Option<String>,
+    /// How far the work is. Required on `working`, refused on any other state.
+    pub progress: Option<crate::a2a::status_update_params::Progress>,
+    /// Whom the worker waits on (a peer or `user`), if it does.
+    pub waiting_on: Option<String>,
 }
 
 impl A2aCallParams {
@@ -101,14 +104,15 @@ impl TaskArtifactParams {
 }
 
 impl TaskStatusParams {
-    /// A status with no note and no waiting reason.
+    /// A status with no note, no progress and no waiting tag.
     #[must_use]
     pub fn new(task_id: TaskId, state: crate::a2a::TaskState) -> Self {
         Self {
             task_id,
             state,
             note: None,
-            waiting: None,
+            progress: None,
+            waiting_on: None,
         }
     }
 
@@ -119,10 +123,17 @@ impl TaskStatusParams {
         self
     }
 
-    /// The worker waits on its own user for this reason.
+    /// Report how far the work is.
     #[must_use]
-    pub fn with_waiting(mut self, reason: String) -> Self {
-        self.waiting = Some(reason);
+    pub fn with_progress(mut self, progress: crate::a2a::status_update_params::Progress) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
+    /// The worker waits on `who` (a peer or `user`).
+    #[must_use]
+    pub fn with_waiting_on(mut self, who: String) -> Self {
+        self.waiting_on = Some(who);
         self
     }
 }

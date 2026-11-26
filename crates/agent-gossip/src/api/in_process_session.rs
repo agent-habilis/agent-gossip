@@ -208,13 +208,15 @@ impl InProcessSession {
             task_id,
             state,
             note,
-            waiting,
+            progress,
+            waiting_on,
         } = status;
         self.call_loop(|response| SessionRequest::TaskStatus {
             task_id,
             state,
             note,
-            waiting,
+            progress,
+            waiting_on,
             response,
         })
         .await
