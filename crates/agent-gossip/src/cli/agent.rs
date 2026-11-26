@@ -61,6 +61,10 @@ pub(crate) enum Agent {
     /// opencode — skills under `~/.config/opencode/skills`.
     #[value(name = "opencode")]
     OpenCode,
+    /// Antigravity CLI — skills in the `agent-gossip` plugin under
+    /// `~/.gemini/config/plugins`.
+    #[value(name = "antigravity", alias = "agy")]
+    Antigravity,
 }
 
 /// Whether the mesh integration is set up for an agent, as `doctor` reports.
@@ -90,12 +94,13 @@ impl AgentState {
 
 impl Agent {
     /// Every agent, in display order.
-    pub(crate) const ALL: [Agent; 5] = [
+    pub(crate) const ALL: [Agent; 6] = [
         Agent::ClaudeCode,
         Agent::Pi,
         Agent::Codex,
         Agent::Cursor,
         Agent::OpenCode,
+        Agent::Antigravity,
     ];
 
     /// The agent's CLI label, for display.
@@ -106,6 +111,7 @@ impl Agent {
             Agent::Codex => "codex",
             Agent::Cursor => "cursor",
             Agent::OpenCode => "opencode",
+            Agent::Antigravity => "antigravity",
         }
     }
 
@@ -119,6 +125,7 @@ impl Agent {
             Agent::Codex => ".codex",
             Agent::Cursor => ".cursor",
             Agent::OpenCode => ".config/opencode",
+            Agent::Antigravity => ".gemini/antigravity-cli",
         };
         home.join(part)
     }
@@ -135,6 +142,7 @@ impl Agent {
             Agent::Codex => ".codex/skills",
             Agent::Cursor => ".cursor/skills",
             Agent::OpenCode => ".config/opencode/skills",
+            Agent::Antigravity => ".gemini/config/plugins/agent-gossip/skills",
         };
         home.join(relative)
     }
@@ -849,6 +857,40 @@ mod tests {
             opencode.ends_with(".config/opencode/skills"),
             "OpenCode must install under .config/opencode/skills, got {opencode:?}"
         );
+    }
+
+    /// agy reads skills only from a plugin, so its skill root sits inside the
+    /// plugin folder, and only `~/.gemini/antigravity-cli` proves agy is here:
+    /// `~/.gemini` alone also belongs to other Gemini tools.
+    #[test]
+    fn antigravity_installs_into_a_plugin_and_is_detected_by_its_cli_dir() {
+        let home = std::env::temp_dir().join(format!("agent-gossip-agy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(
+            Agent::Antigravity.install_path(&home),
+            home.join(".gemini/config/plugins/agent-gossip/skills"),
+            "agy skills live in the agent-gossip plugin"
+        );
+        assert_eq!(Agent::Antigravity.label(), "antigravity");
+
+        std::fs::create_dir_all(home.join(".gemini")).expect("the test temp directory is writable");
+        assert!(
+            !Agent::Antigravity.detected(&home),
+            "a bare ~/.gemini is not agy"
+        );
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli"))
+            .expect("the test temp directory is writable");
+        assert!(
+            Agent::Antigravity.detected(&home),
+            "~/.gemini/antigravity-cli marks agy as present"
+        );
+        assert_eq!(
+            Agent::ALL.last(),
+            Some(&Agent::Antigravity),
+            "agy is listed last, after the agents that already shipped"
+        );
+
+        std::fs::remove_dir_all(&home).expect("the test temp directory is writable");
     }
 
     #[test]
