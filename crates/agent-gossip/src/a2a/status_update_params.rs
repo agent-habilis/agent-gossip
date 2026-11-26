@@ -2,9 +2,7 @@ use std::sync::atomic::AtomicU64;
 
 use habilis_network::protocol::{MeshId, Message as Frame, MessageBody};
 
-use super::extensions::{
-    META_BELL, META_CHECKIN_AGE, META_LAST_POLL, META_ORDER_MS, META_WAITING,
-};
+use super::extensions::{META_BELL, META_CHECKIN_AGE, META_LAST_POLL, META_ORDER_MS, META_WAITING};
 use super::frame_payload_error::FramePayloadError;
 use super::{
     EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_LABEL, META_TOTAL, Message, Part, Role,
@@ -744,9 +742,9 @@ mod tests {
     use habilis_network::protocol::{MeshId, MessageId, MessageKind};
 
     use super::{
-        Frame, Progress, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg, display_text,
-        msg_payload, next_order_ms, payload_body, status_metadata, status_order, status_update,
-        status_waiting, waiting_metadata,
+        Frame, Progress, StatusUpdateParams, broadcast_payload, compose_broadcast, compose_msg,
+        display_text, msg_payload, next_order_ms, payload_body, status_metadata, status_order,
+        status_update, status_waiting, waiting_metadata,
     };
     use crate::a2a::wire;
 
@@ -978,7 +976,11 @@ mod tests {
             (100, 4),
         ] {
             let progress = Progress::try_from(percent).expect("the test passes a valid percentage");
-            assert_eq!(progress.quarter(), quarter, "{percent}% is in quarter {quarter}");
+            assert_eq!(
+                progress.quarter(),
+                quarter,
+                "{percent}% is in quarter {quarter}"
+            );
         }
         assert_eq!(
             Progress::from_fraction((6, 12)).map(Progress::percent),
@@ -990,7 +992,11 @@ mod tests {
             Some(100),
             "more done than the total counts as complete"
         );
-        assert_eq!(Progress::from_fraction((1, 0)), None, "a zero total has no progress");
+        assert_eq!(
+            Progress::from_fraction((1, 0)),
+            None,
+            "a zero total has no progress"
+        );
     }
 
     /// The wall clock can step back, so two legs of one worker must still get

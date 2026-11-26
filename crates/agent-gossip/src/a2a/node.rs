@@ -324,7 +324,8 @@ fn waits_on_user(waiting_on: Option<&str>) -> bool {
 /// A `working` status that is not a beat: a check-in, or the accept leg.
 fn is_working_checkin(message: &Authored) -> bool {
     status_update_params::status_payload(message).is_ok_and(|payload| {
-        !status_update_params::is_beat(&payload) && payload.status.state == super::TaskState::Working
+        !status_update_params::is_beat(&payload)
+            && payload.status.state == super::TaskState::Working
     })
 }
 

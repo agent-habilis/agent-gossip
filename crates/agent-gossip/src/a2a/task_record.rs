@@ -350,9 +350,7 @@ pub(crate) fn quarter_moved(rec: Option<&TaskRecord>, frame: &Authored) -> bool 
         return false;
     }
     let quarter = |fraction| Progress::from_fraction(fraction).map(Progress::quarter);
-    let held = rec
-        .and_then(|rec| rec.last_fraction)
-        .and_then(quarter);
+    let held = rec.and_then(|rec| rec.last_fraction).and_then(quarter);
     let new = status_update_params::leg_fraction(&payload).and_then(quarter);
     matches!((held, new), (Some(held), Some(new)) if held != new)
 }
@@ -1093,7 +1091,13 @@ pub(crate) async fn tick_task_keepalive(
     context: &HandlerCtx<'_>,
 ) {
     /// `(task_id, peer, state, last_fraction, check-in age)` for one keepalive-due task.
-    type KeepaliveDue = (TaskId, AuthorKey, TaskState, Option<(u64, u64)>, Option<u64>);
+    type KeepaliveDue = (
+        TaskId,
+        AuthorKey,
+        TaskState,
+        Option<(u64, u64)>,
+        Option<u64>,
+    );
 
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
@@ -1562,13 +1566,11 @@ mod tests {
         let start = Instant::now();
         let mut tasks = task_we_serve(start);
         let due = |registry: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
-            super::due_checkins(registry, CHECKIN, later(start, after)).1.len()
+            super::due_checkins(registry, CHECKIN, later(start, after))
+                .1
+                .len()
         };
-        assert_eq!(
-            due(&mut tasks, JUST_BEFORE_X),
-            0,
-            "nothing is due before X"
-        );
+        assert_eq!(due(&mut tasks, JUST_BEFORE_X), 0, "nothing is due before X");
         assert_eq!(due(&mut tasks, CHECKIN), 1, "the reminder is due at X");
         assert_eq!(
             due(&mut tasks, CHECKIN + Duration::from_secs(1)),
@@ -1584,15 +1586,25 @@ mod tests {
         let start = Instant::now();
         let mut tasks = task_we_opened_with_checkins(start);
         let overdue = |registry: &mut HashMap<TaskId, TaskRecord>, after: Duration| {
-            super::due_checkins(registry, CHECKIN, later(start, after)).0.len()
+            super::due_checkins(registry, CHECKIN, later(start, after))
+                .0
+                .len()
         };
-        assert_eq!(overdue(&mut tasks, CHECKIN), 0, "X is a reminder, not an alarm");
+        assert_eq!(
+            overdue(&mut tasks, CHECKIN),
+            0,
+            "X is a reminder, not an alarm"
+        );
         assert_eq!(
             overdue(&mut tasks, JUST_BEFORE_TWO_X),
             0,
             "nothing is overdue before 2·X"
         );
-        assert_eq!(overdue(&mut tasks, CHECKIN * 2), 1, "the alarm is due at 2·X");
+        assert_eq!(
+            overdue(&mut tasks, CHECKIN * 2),
+            1,
+            "the alarm is due at 2·X"
+        );
         assert_eq!(
             overdue(&mut tasks, CHECKIN * 2 + Duration::from_secs(1)),
             0,
@@ -1607,7 +1619,8 @@ mod tests {
     fn no_alarm_before_the_first_beat_with_a_check_in_age() {
         let start = Instant::now();
         let mut tasks = working_task_we_opened(start);
-        let (overdue, reminders) = super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 10));
+        let (overdue, reminders) =
+            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 10));
         assert!(overdue.is_empty(), "an older peer is never overdue");
         assert!(reminders.is_empty(), "the sender is never reminded");
     }
@@ -1673,19 +1686,21 @@ mod tests {
         );
         let waiting = later(start, CHECKIN * 10);
         assert!(
-            super::due_checkins(&mut tasks, CHECKIN, waiting).0.is_empty(),
+            super::due_checkins(&mut tasks, CHECKIN, waiting)
+                .0
+                .is_empty(),
             "a question waiting on the sender is no silence of the worker"
         );
         apply(&mut tasks, &leg(LegKind::Text, true), waiting);
-        assert_eq!(tasks[&tid()].state, TaskState::Working, "the answer resumes it");
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "the answer resumes it"
+        );
         assert!(
-            super::due_checkins(
-                &mut tasks,
-                CHECKIN,
-                later(waiting, JUST_BEFORE_TWO_X)
-            )
-            .0
-            .is_empty(),
+            super::due_checkins(&mut tasks, CHECKIN, later(waiting, JUST_BEFORE_TWO_X))
+                .0
+                .is_empty(),
             "the follow-up restarted the clock"
         );
         assert_eq!(
@@ -1703,7 +1718,9 @@ mod tests {
         let start = Instant::now();
         let mut tasks = task_we_opened_with_checkins(start);
         assert_eq!(
-            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2)).0.len(),
+            super::due_checkins(&mut tasks, CHECKIN, later(start, CHECKIN * 2))
+                .0
+                .len(),
             1,
             "the alarm fired"
         );
@@ -1856,7 +1873,11 @@ mod tests {
         waiting.timestamp = first;
         ingest_inbound(&mut tasks, &waiting);
         let rec = &tasks[&tid()];
-        assert_eq!(rec.status_text.as_deref(), Some("waits for review"), "the text");
+        assert_eq!(
+            rec.status_text.as_deref(),
+            Some("waits for review"),
+            "the text"
+        );
         assert_eq!(rec.last_fraction, Some((30, 100)), "the progress");
         assert_eq!(rec.waiting_on.as_deref(), Some("user"), "the tag");
         let mut plain = checkin_leg("review done", "40", None);
@@ -1883,23 +1904,33 @@ mod tests {
     #[test]
     fn a_check_in_wakes_only_when_the_quarter_moves() {
         let mut tasks = task_we_opened_with_checkins(Instant::now());
-        let moved = |registry: &mut HashMap<TaskId, TaskRecord>, held: Option<u64>, percent: &str| {
-            registry
-                .get_mut(&tid())
-                .expect("the test inserted this task earlier")
-                .last_fraction = held.map(|done| (done, 100));
-            super::quarter_moved(
-                registry.get(&tid()),
-                &authored_by("calm-otter", &checkin_leg("step", percent, None)),
-            )
-        };
+        let moved =
+            |registry: &mut HashMap<TaskId, TaskRecord>, held: Option<u64>, percent: &str| {
+                registry
+                    .get_mut(&tid())
+                    .expect("the test inserted this task earlier")
+                    .last_fraction = held.map(|done| (done, 100));
+                super::quarter_moved(
+                    registry.get(&tid()),
+                    &authored_by("calm-otter", &checkin_leg("step", percent, None)),
+                )
+            };
         assert!(!moved(&mut tasks, Some(30), "40"), "same quarter");
-        assert!(!moved(&mut tasks, Some(25), "49"), "same quarter at both ends");
+        assert!(
+            !moved(&mut tasks, Some(25), "49"),
+            "same quarter at both ends"
+        );
         assert!(moved(&mut tasks, Some(24), "25"), "24 to 25 moves up");
         assert!(moved(&mut tasks, Some(60), "45"), "60 to 45 moves down");
         assert!(moved(&mut tasks, Some(99), "100"), "99 to 100 moves up");
-        assert!(!moved(&mut tasks, None, "0"), "the first progress after none");
-        assert!(!moved(&mut tasks, None, "80"), "the first progress after none");
+        assert!(
+            !moved(&mut tasks, None, "0"),
+            "the first progress after none"
+        );
+        assert!(
+            !moved(&mut tasks, None, "80"),
+            "the first progress after none"
+        );
     }
 
     /// A beat only replays the last progress, so it never moves the quarter.
@@ -2209,7 +2240,10 @@ mod tests {
         );
         beat.timestamp = UnixSecs::now() - Duration::from_secs(super::task_timeout_secs() + 1);
         ingest_inbound(&mut tasks, &beat);
-        assert!(!tasks[&tid()].peer_checkins, "a replayed beat proves nothing");
+        assert!(
+            !tasks[&tid()].peer_checkins,
+            "a replayed beat proves nothing"
+        );
     }
 
     /// A working leg with `mesh:waiting` records the reason, and the next

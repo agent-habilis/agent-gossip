@@ -664,7 +664,10 @@ fn checkin_due_event_json_shape() {
         parsed["event"], "checkin_due",
         "the event field is checkin_due"
     );
-    assert_eq!(parsed["followup_seq"], 41, "the reminder names the follow-up");
+    assert_eq!(
+        parsed["followup_seq"], 41,
+        "the reminder names the follow-up"
+    );
     assert_eq!(
         parsed["followup_aged_out"], false,
         "the follow-up is still in the ring"

@@ -603,7 +603,7 @@ impl InProcNode {
         clippy::too_many_arguments,
         reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
     )]
-pub async fn task_status(
+    pub async fn task_status(
         &self,
         task_id: &TaskId,
         state: TaskState,
@@ -625,7 +625,7 @@ pub async fn task_status(
         clippy::too_many_arguments,
         reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
     )]
-pub async fn try_task_status(
+    pub async fn try_task_status(
         &self,
         task_id: &TaskId,
         state: TaskState,
@@ -652,7 +652,7 @@ pub async fn try_task_status(
         clippy::too_many_arguments,
         reason = "the helper mirrors the CLI flags one for one, so a test names each of them"
     )]
-pub async fn task_waiting_on(
+    pub async fn task_waiting_on(
         &self,
         task_id: &TaskId,
         who: &str,

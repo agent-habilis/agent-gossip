@@ -6,10 +6,8 @@ use std::time::{Duration, Instant};
 use agent_gossip_test_fixtures as common;
 use common::Node;
 
-const FAST_CHECKIN: [(&str, &str); 2] = [
-    ("--task-keepalive-secs", "1"),
-    ("--task-checkin-secs", "2"),
-];
+const FAST_CHECKIN: [(&str, &str); 2] =
+    [("--task-keepalive-secs", "1"), ("--task-checkin-secs", "2")];
 
 /// A worker that accepts a task and then falls silent is reported to the
 /// initiator at 2·X. The chain is the real one: the worker's beat carries its

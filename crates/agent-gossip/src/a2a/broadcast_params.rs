@@ -24,8 +24,8 @@ use tokio::sync::oneshot::error::TryRecvError::{Closed, Empty};
 
 use crate::a2a::a2a_app::{A2aApp, A2aResponder, A2aWaiter, DeliveredLeg, UnsentLeg};
 use crate::a2a::rpc_error::PeerRef;
-use crate::a2a::status_update_params::Progress;
 use crate::a2a::session_request::SessionRequest;
+use crate::a2a::status_update_params::Progress;
 use crate::a2a::surfaced_event::PollResponder::Typed;
 use crate::a2a::surfaced_event::{PollBatch, PollOrRegisterParams};
 use crate::a2a::task_record::TaskRecord;
@@ -1161,8 +1161,8 @@ fn worker_status_leg(leg: StatusLegParams<'_>) -> crate::a2a::TaskStatusUpdate {
         leg.progress(),
         status_update_params::leg_order_ms(),
     );
-    let update = status_update_params::StatusUpdateParams::new(task_id, leg.state())
-        .with_metadata(metadata);
+    let update =
+        status_update_params::StatusUpdateParams::new(task_id, leg.state()).with_metadata(metadata);
     let update = match leg.note() {
         Some(note) => update.with_note(note),
         None => update,
