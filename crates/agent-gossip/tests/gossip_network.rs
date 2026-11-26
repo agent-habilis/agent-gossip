@@ -3087,18 +3087,23 @@ fn test_flap_storm_all_rosters_recover() {
         assert_received(joiner, &creator.nickname, "fs-base", recover);
     }
 
-    // Three flap rounds, two victims each, rotating across all ten
-    // nodes — the same storm shape that wedged the soak and the manual
-    // repro (roster_len=0 with phantom links, delivery frozen).
+    // Five flap rounds, four victims each, rotating across all ten nodes, so that every node is
+    // stopped once. The first storm had 5 nodes and stopped 2 of them in a round, the same 40
+    // percent; with 10 nodes that is 4. The shape wedged the soak and the manual repro
+    // (roster_len=0 with phantom links, delivery frozen).
     let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
-    for round in 0..3usize {
-        let first = all[round % all.len()];
-        let second = all[(round + 2) % all.len()];
-        first.stop();
-        second.stop();
+    for round in 0..5usize {
+        let victims: Vec<&Node> = [0, 1, 5, 6]
+            .iter()
+            .map(|offset| all[(2 * round + offset) % all.len()])
+            .collect();
+        for victim in &victims {
+            victim.stop();
+        }
         std::thread::sleep(stop_window);
-        first.cont();
-        second.cont();
+        for victim in &victims {
+            victim.cont();
+        }
         std::thread::sleep(resume_gap);
     }
 
